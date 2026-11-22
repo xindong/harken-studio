@@ -4,7 +4,7 @@
 #include <QFileInfo>
 
 
-namespace VNX::BucketFolderStore {
+namespace harken::studio::BucketFolderStore {
 
 namespace {
 

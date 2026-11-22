@@ -4,7 +4,7 @@
 #include <QColor>
 #include <QString>
 
-namespace VNX {
+namespace harken::studio {
 namespace AIMarkdownRenderer {
 
 // Converts untrusted AI response text into a safe Qt rich-text (HTML subset)

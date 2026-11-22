@@ -20,9 +20,9 @@
 
 #include <dr_wav/dr_wav.h>
 
-#include "RuntimeBridge/PackagingBridge.h"
+#include "Core/Build/PackagingBridge.h"
 
-namespace VNX {
+namespace harken::studio {
 
 void AssetImporter::setProjectRoot(const QString& root)
 {

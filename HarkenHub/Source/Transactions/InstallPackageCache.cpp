@@ -7,7 +7,7 @@
 #include <QFile>
 #include <QSaveFile>
 
-namespace VNH {
+namespace harken::hub {
 
 namespace {
 

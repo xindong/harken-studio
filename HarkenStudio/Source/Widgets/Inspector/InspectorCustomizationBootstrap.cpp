@@ -19,7 +19,7 @@
 
 #include <memory>
 
-namespace VNX {
+namespace harken::studio {
 
 void registerBuiltinInspectorCustomizations()
 {

@@ -3,7 +3,7 @@
 #include <QString>
 #include <QStringList>
 
-namespace VNX {
+namespace harken::studio {
 
 struct StartupArguments
 {
@@ -14,7 +14,6 @@ struct StartupArguments
     QString projectName;
     QString projectLocation;
     QString projectTemplateId;
-    QString projectTemplatePath;
 
     static StartupArguments parse(const QStringList& args);
 };

@@ -7,7 +7,7 @@
 #include <optional>
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 namespace Monitor {
 
 enum class EffectCellState
@@ -31,7 +31,7 @@ struct EffectMonitorRow
 {
     std::uint64_t instanceHandle = 0;
     std::uint64_t instanceGeneration = 0;
-    harkenstudio::ObjectId stableId = {};
+    harken::studio::types::ObjectId stableId = {};
     std::uint64_t executeFrame = 0;
     std::uint32_t bypass01 = 0;
     bool bypassPublished = false;
@@ -57,4 +57,4 @@ EffectMonitorProjection projectEffectRows(
     std::optional<std::int64_t> executeFrame);
 
 } // namespace Monitor
-} // namespace VNX
+} // namespace harken::studio

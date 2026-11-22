@@ -8,7 +8,7 @@
 #include <utility>
 #include <vector>
 
-namespace harkenprojectschema {
+namespace harken::studio::project_schema {
 namespace {
 
 constexpr std::int64_t kNanosPerMicro = 1000;
@@ -181,4 +181,4 @@ std::optional<CapacityEstimate> EstimateCapacity(const SegmentIR& ir) {
     return estimate;
 }
 
-}  // namespace harkenprojectschema
+}  // namespace harken::studio::project_schema

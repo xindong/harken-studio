@@ -1,4 +1,5 @@
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 
 #include "MonitorCaptureHubTestHooks.h"
 #include "MonitorCaptureHub.h"
@@ -118,19 +119,16 @@ TEST(MonitorHubPlan, KeepUntilExplicitStopIsZero) {
     EXPECT_EQ(VN_MONITOR_DEDICATED_STOP_SLOTS, caps.dedicatedStopSlots);
 }
 
-TEST(MonitorHubPlan, CaptureControlAndRecordAccepted) {
+TEST(MonitorHubPlan, CaptureControlAccepted) {
     harkentest::EngineSession engine(harkentest::MakeNullConfig());
     ASSERT_EQ(VN_OK, engine.InitResult());
     VnMonitorSessionDesc desc = MakeControlDesc();
-    desc.requestedPermissionMask |= VN_MONITOR_PERM_RECORD;
     VnMonitorSessionHandle handle = 0;
     ASSERT_EQ(VN_OK, Vn_MonitorOpenSession(&desc, &handle));
     VnMonitorSubscriptionStatus status{};
     status.structSize = sizeof(status);
     ASSERT_EQ(VN_OK, Vn_MonitorGetSubscriptionStatus(handle, &status));
     EXPECT_NE(0u, status.acceptedPermissionMask & VN_MONITOR_PERM_CAPTURE_CONTROL);
-    EXPECT_NE(0u, status.acceptedPermissionMask & VN_MONITOR_PERM_RECORD);
-    EXPECT_EQ(0u, status.unsupportedPermissionMask & VN_MONITOR_PERM_RECORD);
     EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(handle));
 }
 

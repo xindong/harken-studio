@@ -10,25 +10,23 @@
 #include "../AssetPipeline/ImportSoundSourcesCommand.h"
 #include "../AssetPipeline/AudioImportGate.h"
 #include "../AssetPipeline/AssetRegistry.h"
-#include "../AssetPipeline/AssetConverter.h"
 #include "../AssetPipeline/AssetGarbageCollector.h"
-#include "../AssetPipeline/PlatformProfile.h"
 #include "../AssetPipeline/MediaPool.h"
 #include "AssetPipeline/AudioImportTarget.h"
 #include "ActionSelectors.h"
-#include "RuntimeBridge/PackagingBridge.h"
+#include "Core/Build/PackagingBridge.h"
 #include <QJsonArray>
 #include <cmath>
 #include <limits>
 #include <optional>
 
-namespace VNX { ProjectItem* findItemByPathInProject(ProjectData* project, const QString& path); }
-namespace VNX {
+namespace harken::studio { ProjectItem* findItemByPathInProject(ProjectData* project, const QString& path); }
+namespace harken::studio {
 ProjectItem* findItemByObjectIDInProject(ProjectData* project, uint32_t objectID);
 uint32_t itemShortID(const ProjectItem* item);
 }
 
-namespace VNX {
+namespace harken::studio {
 
 
 static std::optional<QMap<uint32_t, QString>> replacementMapFromArgs(const QJsonObject& args)
@@ -141,7 +139,7 @@ void registerAssetActions(ActionManager& mgr,
             const auto normalized = ProjectLanguageSemantics::normalize({lang});
             if (!normalized.ok())
                 return {false, {}, "INVALID_ARGS", normalized.error};
-            uint32_t langId = HarkenEditor::Bridge::packLanguageIdFromName(lang);
+            uint32_t langId = harken::studio::bridge::packLanguageIdFromName(lang);
             if (engine)
                 engine->setRuntimeLanguage(lang);
             return {true, QJsonObject{
@@ -453,65 +451,6 @@ void registerAssetActions(ActionManager& mgr,
             if (failCount > 0)
                 return {false, data, "IMPORT_PARTIAL_FAILURE", "Some audio files could not be imported; successful imports remain in the project"};
             return {true, data};
-        };
-        mgr.registerAction(def);
-    }
-
-    {
-        ActionDef def;
-        def.id = "set_conversion_settings";
-        def.displayName = "Set Conversion Settings";
-        def.category = "asset";
-        def.paramSchema = commandInputSchema(def.id);
-        def.undoable = false;
-        def.handler = [](const QJsonObject& args) -> ActionResult {
-            uint32_t sourceID = static_cast<uint32_t>(args["source_id"].toInteger());
-            if (sourceID == 0)
-                return {false, {}, "HARKEN_ERR_MISSING_PARAM", "source_id is required"};
-            AssetInfo* asset = AssetRegistry::instance().getAsset(sourceID);
-            if (!asset)
-                return {false, {}, "HARKEN_ERR_NOT_FOUND",
-                    QString("Asset %1 not found").arg(sourceID)};
-            ConversionSettings settings = asset->settings;
-            const uint32_t oldProcessingHash = settings.hash();
-            if (args.contains("codec")) {
-                const QString codec = args["codec"].toString();
-                if (codec != "PCM_Float" && codec != "ADPCM" && codec != "Vorbis")
-                    return {false, {}, "INVALID_ARGS", "codec must be PCM_Float, ADPCM, or Vorbis"};
-                settings.format = ConversionSettings::codecFromString(codec);
-            }
-            if (args.contains("quality"))
-                settings.vorbisQuality = static_cast<float>(args["quality"].toDouble());
-            if (args.contains("resample"))
-                settings.performResample = args["resample"].toBool();
-            if (args.contains("target_sample_rate"))
-                settings.targetSampleRate = static_cast<uint32_t>(args["target_sample_rate"].toInteger());
-            if (args.contains("force_mono") || args.contains("trim_silence") || args.contains("trim_threshold_db")
-                || args.contains("normalize") || args.contains("normalize_target_db"))
-                return {false, {}, "INVALID_ARGS", "Mono conversion, silence trimming and normalization settings are no longer supported"};
-            asset->settings = settings;
-            bool asOverride = args["as_override"].toBool(false);
-            if (asOverride)
-                PlatformProfileManager::instance().setFileOverride(sourceID, settings);
-            if (settings.hash() != oldProcessingHash)
-                AssetRegistry::instance().invalidateAllCaches(sourceID);
-            return {true, QJsonObject{
-                {"source_id", static_cast<qint64>(sourceID)},
-                {"settings", settings.toJson()}}};
-        };
-        mgr.registerAction(def);
-    }
-
-    {
-        ActionDef def;
-        def.id = "set_platform_profile";
-        def.displayName = "Set Platform Profile";
-        def.category = "asset";
-        def.paramSchema = QJsonObject{{"platform", "string"}, {"default_config", "object"}};
-        def.undoable = false;
-        def.handler = [](const QJsonObject&) -> ActionResult {
-            return {false, {}, "PLATFORM_INSTANCES_REQUIRED",
-                    "Use set_project_platform_profile with platform_id and profile; global platform profiles are no longer editable"};
         };
         mgr.registerAction(def);
     }

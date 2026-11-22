@@ -49,12 +49,9 @@ add_library(harken_editor_monitor STATIC
     MonitorVoicesPanel.h
     MonitorVoicesSource.cpp
     MonitorVoicesSource.h
-    MonitorPanelKeys.cpp
     MonitorPanelKeys.h
     MonitorPerformanceChartSource.cpp
     MonitorPerformanceChartSource.h
-    MonitorPlaceholderPage.cpp
-    MonitorPlaceholderPage.h
     MonitorCaptureControlStrip.cpp
     MonitorCaptureControlStrip.h
     MonitorRemoteStatusStrip.cpp

@@ -23,7 +23,7 @@
 
 #include <string>
 
-namespace harkenprojectschema {
+namespace harken::studio::project_schema {
 
 // Renders a full front-end result: the diagnostics (in the order the front-end
 // produced them) and, when the compile succeeded, the canonical model followed
@@ -68,6 +68,6 @@ std::string RenderEffectChainSelection(const EffectChainSelectionFacts& facts);
 // Renders only the diagnostics, one per line, in the given order.
 std::string RenderDiagnostics(const std::vector<Diagnostic>& diagnostics);
 
-}  // namespace harkenprojectschema
+}  // namespace harken::studio::project_schema
 
 #endif  // HARKEN_PROJECT_SCHEMA_SERIALIZE_H

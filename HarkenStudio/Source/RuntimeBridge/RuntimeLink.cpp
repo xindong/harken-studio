@@ -4,13 +4,14 @@
 #include "RuntimeLinkInternal.h"
 
 #include "DiagnosticsBridge.h"
-#include "PackagingBridge.h"
+#include "MediaRegistry.h"
+#include "MediaServices.h"
+#include "TransitionalVorbisPreviewDecoder.h"
+#include "Tooling/Harkenizer/Core/SoundSourceDerivative.h"
 #include "CurrentWorldSyncBridgeInternal.h"
 
 #include <harken/Harken.h>
-#include <harken_studio_build/PackImage.h>
-#include <harken_preview/PreviewAbi.h>
-#include <harken_preview/PreviewProject.h>
+#include <harken/HarkenDevelopment.h>
 
 #include <QCoreApplication>
 #include <QFileInfo>
@@ -23,6 +24,7 @@
 #include <QThread>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <tuple>
@@ -30,8 +32,8 @@
 #include <unordered_set>
 #include <vector>
 
-namespace HarkenEditor {
-namespace Bridge {
+namespace harken::studio {
+namespace bridge {
 namespace Detail {
 
 static_assert(VN_OK == 0, "EngineResult success expects harken_core zero success");
@@ -60,12 +62,12 @@ void runtimeTrace(const QString& message)
 }
 
 struct SoundBinding {
-    harkenstudio::ObjectId soundId = {};
+    harken::studio::types::ObjectId soundId = {};
     uint32_t sourceId = 0;
     uint32_t loopCount = 1;
     bool spatialized3D = false;
-    harkenstudio::ObjectId objectId = {};
-    harkenstudio::ObjectId attenuationId = {};
+    harken::studio::types::ObjectId objectId = {};
+    harken::studio::types::ObjectId attenuationId = {};
 };
 
 enum class RuntimePlaybackKind : uint8_t {
@@ -103,16 +105,19 @@ struct RuntimeState {
     EngineSessionConfig requestedConfig;
     int sampleRate = 48000;
     int blockFrames = 256;
+    bool realtimeAnchorValid = false;
+    std::chrono::steady_clock::time_point realtimeAnchor{};
+    uint64_t realtimeBlocksPumped = 0;
     VnSnapshot snapshot{};
     bool snapshotValid = false;
     VnPreviewChannelPeaksV1 meterPeaks{};
     bool meterPeaksValid = false;
     std::function<void(int level, const QString& msg)> logHandler;
-    std::unordered_map<harkenstudio::ObjectId, SoundBinding> soundsById;
-    std::unordered_map<harkenstudio::ObjectId, QString> soundNameByObjectId;
-    std::unordered_map<harkenstudio::ObjectId, harkenstudio::ObjectId> soundIdByObjectId;
-    std::unordered_map<QString, harkenstudio::ObjectId> actionsByName;
-    std::unordered_map<harkenstudio::ObjectId, QString> actionNameById;
+    std::unordered_map<harken::studio::types::ObjectId, SoundBinding> soundsById;
+    std::unordered_map<harken::studio::types::ObjectId, QString> soundNameByObjectId;
+    std::unordered_map<harken::studio::types::ObjectId, harken::studio::types::ObjectId> soundIdByObjectId;
+    std::unordered_map<QString, harken::studio::types::ObjectId> actionsByName;
+    std::unordered_map<harken::studio::types::ObjectId, QString> actionNameById;
     struct RawPcmDecodeCache {
         QString path;
         std::vector<float> interleaved;
@@ -127,11 +132,11 @@ struct RuntimeState {
         uint64_t playbackHandle = 0;
     };
 
-    std::unordered_set<harkenstudio::ObjectId> registeredSounds;
-    std::unordered_map<harkenstudio::ObjectId, uint64_t> registeredSoundRevisions;
-    std::unordered_set<harkenstudio::ObjectId> preparedSounds;
-    std::unordered_set<harkenstudio::ObjectId> registeredRawPcm;
-    std::unordered_map<harkenstudio::ObjectId, RawPcmDecodeCache> rawPcmDecodes;
+    std::unordered_set<harken::studio::types::ObjectId> registeredSounds;
+    std::unordered_map<harken::studio::types::ObjectId, uint64_t> registeredSoundRevisions;
+    std::unordered_set<harken::studio::types::ObjectId> preparedSounds;
+    std::unordered_set<harken::studio::types::ObjectId> registeredRawPcm;
+    std::unordered_map<harken::studio::types::ObjectId, RawPcmDecodeCache> rawPcmDecodes;
     std::unordered_map<QString, LoadedPack> loadedPacksByPath;
     VnPackHandle initPackHandle = 0;
     uint64_t packSetRevision = 0;
@@ -152,8 +157,8 @@ struct RuntimeState {
     std::unordered_map<QString, float> voiceVolumeDbByName;
     std::unordered_map<QString, float> voiceSpatMixByName;
     std::unordered_map<QString, float> voiceDistanceScaleByName;
-    std::unordered_map<QString, std::vector<std::pair<harkenstudio::ObjectId, float>>> voiceSendsByName;
-    std::unordered_map<harkenstudio::ObjectId, harkenstudio::ObjectId> objectBusById;
+    std::unordered_map<QString, std::vector<std::pair<harken::studio::types::ObjectId, float>>> voiceSendsByName;
+    std::unordered_map<harken::studio::types::ObjectId, harken::studio::types::ObjectId> objectBusById;
 };
 
 RuntimeState g_runtime;
@@ -176,7 +181,7 @@ bool activatePackSet(std::unordered_map<QString, LoadedPack> desired, EngineResu
     std::vector<LoadedPack*> packs;
     for (auto& [path, pack] : desired) {
         Q_UNUSED(path);
-        if (pack.stableId != 0) packs.push_back(&pack);
+        packs.push_back(&pack);
     }
     std::sort(packs.begin(), packs.end(), [](const auto* a, const auto* b) {
         if (a->kind != b->kind) return a->kind == VN_CANONICAL_PACK_SET_MEMBER_INIT;
@@ -185,34 +190,39 @@ bool activatePackSet(std::unordered_map<QString, LoadedPack> desired, EngineResu
     if (outResult) *outResult = VN_CONTENT_NOT_LOADED;
     if (packs.empty() || packs.front()->kind != VN_CANONICAL_PACK_SET_MEMBER_INIT)
         return false;
-    std::vector<VnCanonicalPackSetMemberV1> members(packs.size());
+    std::vector<VnCanonicalPackSetMemberV2> members(packs.size());
     std::vector<VnCanonicalPackSetMemberResultV1> results(packs.size());
     for (size_t i = 0; i < packs.size(); ++i) {
         auto& member = members[i];
         member.structSize = sizeof(member);
-        member.flags = VN_CANONICAL_PACK_SET_MEMBER_PROVIDER;
-        member.packStableId = packs[i]->stableId;
-        member.expectedHandle = packs[i]->handle;
-        member.packKind = packs[i]->kind;
-        member.providerUserData = packs[i];
-        member.provide = provideLoadedPack;
-        member.release = [](void*, uint64_t, VnPackByteSpan) {};
+        member.operation = packs[i]->handle ? VN_PACK_MEMBER_KEEP : VN_PACK_MEMBER_CONTENT;
+        auto& source = member.source;
+        source.structSize = sizeof(source);
+        source.packStableId = packs[i]->stableId;
+        source.expectedHandle = packs[i]->handle;
+        source.packKind = packs[i]->kind;
+        if (member.operation == VN_PACK_MEMBER_CONTENT) {
+            source.flags = VN_CANONICAL_PACK_SET_MEMBER_PROVIDER;
+            source.providerUserData = packs[i];
+            source.provide = provideLoadedPack;
+            source.release = [](void*, uint64_t, VnPackByteSpan) {};
+        }
         results[i].structSize = sizeof(results[i]);
     }
-    VnCanonicalPackSetActivationDescV1 desc{};
+    VnCanonicalPackSetActivationDescV2 desc{};
     desc.structSize = sizeof(desc);
     desc.expectedCurrentInitHandle = g_runtime.initPackHandle;
     desc.baseSetRevision = g_runtime.packSetRevision;
     desc.setRevision = g_runtime.packSetRevision + 1;
     desc.memberCount = static_cast<uint32_t>(members.size());
-    desc.memberStructSize = sizeof(VnCanonicalPackSetMemberV1);
+    desc.memberStructSize = sizeof(VnCanonicalPackSetMemberV2);
     desc.members = members.data();
     desc.outputMemberCapacity = static_cast<uint32_t>(results.size());
     desc.outputMemberStructSize = sizeof(VnCanonicalPackSetMemberResultV1);
     desc.outputMembers = results.data();
     VnCanonicalPackSetActivationReportV1 report{};
     report.structSize = sizeof(report);
-    const auto result = Vn_ActivateCanonicalPackSetV1(&desc, &report);
+    const auto result = Vn_ActivateCanonicalPackSetV2(&desc, &report);
     if (outResult) *outResult = result;
     if (result != VN_OK) {
         qWarning() << "[PlaybackRoute] pack set activation failed: result=" << result;
@@ -517,9 +527,9 @@ VnConfig makeConfig(const EngineSessionConfig& config)
     c.maxActions = 65536;
     c.voiceSendSlots = 8;
     c.fxSlotsPerVoice = 8;
-    c.deviceMode = config.deviceMode == EngineDeviceMode::Null
-        ? VN_DEVICE_NULL
-        : VN_DEVICE_REAL;
+    c.deviceMode = config.deviceMode == EngineDeviceMode::Real
+        ? VN_DEVICE_REAL
+        : VN_DEVICE_NULL;
     c.mixChannelLayout = VN_CHANNEL_LAYOUT_STEREO;
     c.deviceChannelLayout = VN_CHANNEL_LAYOUT_STEREO;
     c.onNotification = &notificationCallback;
@@ -531,6 +541,15 @@ bool ensureRuntimeStarted()
 {
     if (g_runtime.initialized)
         return true;
+
+    VnAbiVersionInfo abi{};
+    abi.structSize = sizeof(abi);
+    if (Vn_QueryAbiVersion(&abi) != VN_OK || abi.major != VN_ABI_VERSION_MAJOR)
+    {
+        qWarning() << "RuntimeLink: Engine ABI major" << abi.major
+                   << "does not match" << VN_ABI_VERSION_MAJOR;
+        return false;
+    }
 
     VnConfig c = makeConfig(g_runtime.requestedConfig);
     qInfo() << "RuntimeLink: before Vn_Init"
@@ -566,6 +585,7 @@ bool ensureRuntimeStarted()
     g_runtime.monitorHostSequence = 0;
     g_runtime.sampleRate = static_cast<int>(c.sampleRate);
     g_runtime.blockFrames = static_cast<int>(c.blockFrames);
+    g_runtime.realtimeAnchorValid = false;
     g_runtime.snapshot = VnSnapshot{};
     g_runtime.snapshot.structSize = sizeof(VnSnapshot);
     g_runtime.snapshotValid = false;
@@ -589,14 +609,24 @@ bool ensureRuntimeStarted()
     return true;
 }
 
-VnResult registerDecodedSound(harkenstudio::ObjectId soundId, const std::vector<float>& samples,
+bool decodeMedia(const QString& path, std::vector<float>& outInterleaved,
+                 int& outChannels, int& outSampleRate)
+{
+    const auto services = mediaServices();
+    return services && services->decodeInterleaved(path, outInterleaved, outChannels, outSampleRate);
+}
+
+VnResult registerDecodedSound(harken::studio::types::ObjectId soundId, const std::vector<float>& samples,
                                 uint32_t channels, uint32_t sampleRate,
-                                uint64_t loopStartFrame, uint64_t loopEndFrame)
+                                uint64_t loopStartFrame, uint64_t loopEndFrame,
+                                uint64_t expectedRevision = 0)
 {
     uint64_t revision = soundPcmContentRevision(samples, channels, sampleRate,
                                                 loopStartFrame, loopEndFrame);
-    if (harkenstudio::IsNull(soundId) || revision == 0)
+    if (harken::studio::types::IsNull(soundId) || revision == 0)
         return VN_INVALID_ARG;
+    if (expectedRevision != 0 && expectedRevision != revision)
+        return VN_REVISION_CONFLICT;
     const auto cached = g_runtime.registeredSoundRevisions.find(soundId);
     if (cached != g_runtime.registeredSoundRevisions.end()
         && cached->second == revision)
@@ -628,7 +658,7 @@ bool registerPcmForBinding(const SoundBinding& binding)
     if (binding.sourceId == 0)
         return false;
 
-    const harkenstudio::ObjectId soundId = binding.soundId;
+    const harken::studio::types::ObjectId soundId = binding.soundId;
     if (g_runtime.preparedSounds.count(soundId) != 0)
         return g_runtime.registeredSoundRevisions.count(soundId) != 0;
     const QString path = mediaRegistryFindPath(binding.sourceId);
@@ -643,7 +673,7 @@ bool registerPcmForBinding(const SoundBinding& binding)
     std::vector<float> interleaved;
     int channels = 0;
     int sampleRate = 0;
-    if (!decodeAudioFileInterleaved(path, interleaved, channels, sampleRate))
+    if (!decodeMedia(path, interleaved, channels, sampleRate))
     {
         qWarning() << "[PlaybackRoute] runtime pcm register failed:"
                    << "sourceId=" << binding.sourceId
@@ -663,16 +693,16 @@ bool registerPcmForBinding(const SoundBinding& binding)
                                   static_cast<uint32_t>(sampleRate), 0, 0) == VN_OK;
 }
 
-void forgetRawPcmPlayback(harkenstudio::ObjectId soundId);
+void forgetRawPcmPlayback(harken::studio::types::ObjectId soundId);
 
-EngineResult registerDecodedPcmSlice(harkenstudio::ObjectId soundId,
+EngineResult registerDecodedPcmSlice(harken::studio::types::ObjectId soundId,
                                      const std::vector<float>& interleaved,
                                      int channels,
                                      int sampleRate,
                                      uint64_t startFrame,
                                      uint64_t frameCount)
 {
-    if (harkenstudio::IsNull(soundId) || channels <= 0 || sampleRate <= 0 || interleaved.empty())
+    if (harken::studio::types::IsNull(soundId) || channels <= 0 || sampleRate <= 0 || interleaved.empty())
         return kEngineInvalidArg;
 
     const uint64_t decodedFrames =
@@ -710,7 +740,7 @@ EngineResult registerDecodedPcmSlice(harkenstudio::ObjectId soundId,
     return kEngineOk;
 }
 
-EngineResult registerRotatedPcmWindow(harkenstudio::ObjectId soundId,
+EngineResult registerRotatedPcmWindow(harken::studio::types::ObjectId soundId,
                                       const std::vector<float>& interleaved,
                                       int channels,
                                       int sampleRate,
@@ -718,7 +748,7 @@ EngineResult registerRotatedPcmWindow(harkenstudio::ObjectId soundId,
                                       uint64_t windowFrameCount,
                                       uint64_t startFrame)
 {
-    if (harkenstudio::IsNull(soundId) || channels <= 0 || sampleRate <= 0 || interleaved.empty())
+    if (harken::studio::types::IsNull(soundId) || channels <= 0 || sampleRate <= 0 || interleaved.empty())
         return kEngineInvalidArg;
     if (windowFrameCount == 0)
         return kEngineInvalidArg;
@@ -752,7 +782,7 @@ EngineResult registerRotatedPcmWindow(harkenstudio::ObjectId soundId,
     return registerDecodedPcmSlice(soundId, rotated, channels, sampleRate, 0, windowFrameCount);
 }
 
-void rememberRawPcmDecode(harkenstudio::ObjectId soundId,
+void rememberRawPcmDecode(harken::studio::types::ObjectId soundId,
                           const QString& path,
                           std::vector<float> interleaved,
                           int channels,
@@ -776,7 +806,7 @@ void rememberRawPcmDecode(harkenstudio::ObjectId soundId,
     g_runtime.rawPcmDecodes[soundId] = std::move(cache);
 }
 
-void forgetRawPcmPlayback(harkenstudio::ObjectId soundId)
+void forgetRawPcmPlayback(harken::studio::types::ObjectId soundId)
 {
     const auto cachedIt = g_runtime.rawPcmDecodes.find(soundId);
     if (cachedIt == g_runtime.rawPcmDecodes.end() || cachedIt->second.voiceHandle == 0)
@@ -920,10 +950,34 @@ void runtimeStopOutput()
     runtimeTerm();
 }
 
+static void pumpNullRealtime()
+{
+    if (g_runtime.requestedConfig.deviceMode != EngineDeviceMode::NullRealtime)
+        return;
+    if (!g_runtime.outputRunning) {
+        g_runtime.realtimeAnchorValid = false;
+        return;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    if (!g_runtime.realtimeAnchorValid) {
+        g_runtime.realtimeAnchorValid = true;
+        g_runtime.realtimeAnchor = now;
+        g_runtime.realtimeBlocksPumped = 0;
+        return;
+    }
+    const double elapsed = std::chrono::duration<double>(now - g_runtime.realtimeAnchor).count();
+    const auto due = static_cast<uint64_t>(elapsed * g_runtime.sampleRate / g_runtime.blockFrames);
+    if (due > g_runtime.realtimeBlocksPumped) {
+        VnPreview_PumpNullMixer(static_cast<uint32_t>(due - g_runtime.realtimeBlocksPumped));
+        g_runtime.realtimeBlocksPumped = due;
+    }
+}
+
 void runtimeUpdate()
 {
     if (!g_runtime.initialized)
         return;
+    pumpNullRealtime();
     if (g_runtime.requestedConfig.deviceMode == EngineDeviceMode::Null
         && hasAcceptedActionSeek()) {
         VnPreview_PumpNullMixer(1);
@@ -960,20 +1014,6 @@ void runtimeDrainStudioNotifications(std::vector<EngineNotification>& out)
     g_runtime.pendingNotifications.clear();
 }
 
-void runtimeInjectNotificationForTest(uint32_t type,
-                                      uint64_t voiceHandle,
-                                      uint64_t blockTimestamp)
-{
-    enqueueStudioNotification(type, voiceHandle, blockTimestamp);
-}
-
-void runtimeInvalidateNotificationsForTest()
-{
-    QMutexLocker lock(&g_runtime.notificationMutex);
-    ++g_runtime.notificationGeneration;
-    g_runtime.pendingNotifications.clear();
-}
-
 void runtimePublishMeterPeaks()
 {
     VnPreviewChannelPeaksV1 peaks{};
@@ -983,10 +1023,10 @@ void runtimePublishMeterPeaks()
     g_runtime.meterPeaks = peaks;
 }
 
-bool runtimeBusMeterPeak(harkenstudio::ObjectId busId, float& l, float& r)
+bool runtimeBusMeterPeak(harken::studio::types::ObjectId busId, float& l, float& r)
 {
     l = r = 0.0f;
-    if (!g_runtime.meterPeaksValid || harkenstudio::IsNull(busId))
+    if (!g_runtime.meterPeaksValid || harken::studio::types::IsNull(busId))
         return false;
     const auto& peaks = g_runtime.meterPeaks;
     for (uint32_t bus = 0; bus < peaks.busCount; ++bus)
@@ -1062,17 +1102,17 @@ bool runtimeSetMasterFade(float volume, int fadeMs)
                     fadeMs > 0 ? static_cast<uint32_t>(fadeMs) : 0u) == VN_OK;
 }
 
-void runtimeRegisterSoundName(const QString& name, harkenstudio::ObjectId objectId,
-                              harkenstudio::ObjectId soundId, uint32_t sourceId,
+void runtimeRegisterSoundName(const QString& name, harken::studio::types::ObjectId objectId,
+                              harken::studio::types::ObjectId soundId, uint32_t sourceId,
                               uint32_t loopCount, bool spatialized3D,
-                              harkenstudio::ObjectId attenuationId)
+                              harken::studio::types::ObjectId attenuationId)
 {
-    if (name.isEmpty() || harkenstudio::IsNull(soundId) || sourceId == 0)
+    if (name.isEmpty() || harken::studio::types::IsNull(soundId) || sourceId == 0)
         return;
     const SoundBinding binding{ soundId, sourceId, loopCount, spatialized3D,
                                 objectId, attenuationId };
     g_runtime.soundsById[soundId] = binding;
-    if (!harkenstudio::IsNull(objectId))
+    if (!harken::studio::types::IsNull(objectId))
     {
         g_runtime.soundNameByObjectId[objectId] = name;
         g_runtime.soundIdByObjectId[objectId] = soundId;
@@ -1091,13 +1131,63 @@ bool runtimePrepareMedia(uint32_t sourceId)
     return prepared;
 }
 
-uint64_t runtimeRegisteredSoundRevision(harkenstudio::ObjectId soundId)
+uint64_t runtimeRegisteredSoundRevision(harken::studio::types::ObjectId soundId)
 {
     const auto found = g_runtime.registeredSoundRevisions.find(soundId);
     return found == g_runtime.registeredSoundRevisions.end() ? 0 : found->second;
 }
 
-VnResult runtimeRegisterSoundPcm(harkenstudio::ObjectId soundId, const std::vector<float>& samples,
+std::optional<PreparedPreviewMedia> runtimePreparePreviewMedia(
+    const harken::studio::SoundSourceDerivative::MaterializedArtifact& artifact, QString* error)
+{
+    const auto fail = [&](const QString& message) -> std::optional<PreparedPreviewMedia> {
+        if (error) *error = message;
+        return std::nullopt;
+    };
+    PreparedPreviewMedia prepared;
+    if (artifact.format == harken::studio::ConversionFormat::PCM) {
+        prepared.samples = artifact.samples;
+    } else if (artifact.format == harken::studio::ConversionFormat::Vorbis) {
+        if (!artifact.encodedMedia)
+            return fail(QStringLiteral("Vorbis preview has no encoded media"));
+        const auto& encoded = *artifact.encodedMedia;
+        if (encoded.channels != artifact.channels || encoded.sampleRate != artifact.sampleRate
+            || encoded.loopStartFrame != artifact.loopStartFrame || encoded.loopEndFrame != artifact.loopEndFrame)
+            return fail(QStringLiteral("Vorbis preview metadata does not match the artifact"));
+        auto decoded = decodeTransitionalVorbisPreview(encoded, error);
+        if (!decoded) return std::nullopt;
+        prepared.samples = std::make_shared<const std::vector<float>>(std::move(*decoded));
+    } else {
+        return fail(QStringLiteral("Preview media format is invalid"));
+    }
+    if (!prepared.samples || artifact.channels == 0 || artifact.channels > 8 || artifact.sampleRate == 0
+        || prepared.samples->empty() || prepared.samples->size() % artifact.channels != 0)
+        return fail(QStringLiteral("Preview media samples are invalid"));
+    const auto frames = prepared.samples->size() / artifact.channels;
+    if (artifact.loopEndFrame == 0 ? artifact.loopStartFrame != 0
+        : artifact.loopStartFrame >= artifact.loopEndFrame || artifact.loopEndFrame > frames)
+        return fail(QStringLiteral("Preview media loop range is invalid"));
+    prepared.contentRevision = soundPcmContentRevision(*prepared.samples, artifact.channels,
+        artifact.sampleRate, artifact.loopStartFrame, artifact.loopEndFrame);
+    if (prepared.contentRevision == 0)
+        return fail(QStringLiteral("Cannot compute preview media revision"));
+    prepared.artifact = std::make_shared<const harken::studio::SoundSourceDerivative::MaterializedArtifact>(artifact);
+    return prepared;
+}
+
+VnResult runtimeRegisterPreviewMedia(harken::studio::types::ObjectId soundId, const PreparedPreviewMedia& media)
+{
+    if (!media.artifact || !media.samples || media.contentRevision == 0)
+        return VN_INVALID_ARG;
+    const auto& artifact = *media.artifact;
+    const auto result = registerDecodedSound(soundId, *media.samples, artifact.channels,
+        artifact.sampleRate, artifact.loopStartFrame, artifact.loopEndFrame, media.contentRevision);
+    if (result == VN_OK)
+        g_runtime.preparedSounds.insert(soundId);
+    return result;
+}
+
+VnResult runtimeRegisterSoundPcm(harken::studio::types::ObjectId soundId, const std::vector<float>& samples,
                                   uint32_t channels, uint32_t sampleRate,
                                   uint64_t loopStartFrame, uint64_t loopEndFrame)
 {
@@ -1108,7 +1198,7 @@ VnResult runtimeRegisterSoundPcm(harkenstudio::ObjectId soundId, const std::vect
     return result;
 }
 
-void runtimeUnregisterSoundObject(harkenstudio::ObjectId objectId)
+void runtimeUnregisterSoundObject(harken::studio::types::ObjectId objectId)
 {
     g_runtime.soundNameByObjectId.erase(objectId);
 
@@ -1120,25 +1210,25 @@ void runtimeUnregisterSoundObject(harkenstudio::ObjectId objectId)
     }
 }
 
-void runtimeSetObjectOutputBus(harkenstudio::ObjectId objectId, harkenstudio::ObjectId busId)
+void runtimeSetObjectOutputBus(harken::studio::types::ObjectId objectId, harken::studio::types::ObjectId busId)
 {
-    if (harkenstudio::IsNull(objectId))
+    if (harken::studio::types::IsNull(objectId))
         return;
-    if (harkenstudio::IsNull(busId))
+    if (harken::studio::types::IsNull(busId))
         g_runtime.objectBusById.erase(objectId);
     else
         g_runtime.objectBusById[objectId] = busId;
 }
 
-void runtimeRegisterActionName(const QString& name, harkenstudio::ObjectId actionId)
+void runtimeRegisterActionName(const QString& name, harken::studio::types::ObjectId actionId)
 {
-    if (name.isEmpty() || harkenstudio::IsNull(actionId))
+    if (name.isEmpty() || harken::studio::types::IsNull(actionId))
         return;
     g_runtime.actionsByName[name] = actionId;
     g_runtime.actionNameById[actionId] = name;
 }
 
-void runtimeUnregisterActionName(harkenstudio::ObjectId actionId)
+void runtimeUnregisterActionName(harken::studio::types::ObjectId actionId)
 {
     const auto it = g_runtime.actionNameById.find(actionId);
     if (it == g_runtime.actionNameById.end())
@@ -1159,10 +1249,10 @@ void runtimeClearSoundNames()
     runtimeUpdate();
     if (g_runtime.initialized)
     {
-        std::unordered_set<harkenstudio::ObjectId> sounds = g_runtime.registeredSounds;
+        std::unordered_set<harken::studio::types::ObjectId> sounds = g_runtime.registeredSounds;
         sounds.insert(g_runtime.registeredRawPcm.begin(),
                       g_runtime.registeredRawPcm.end());
-        for (harkenstudio::ObjectId soundId : sounds)
+        for (harken::studio::types::ObjectId soundId : sounds)
             Vn_UnregisterPCM(toNative(soundId));
     }
     g_runtime.soundsById.clear();
@@ -1188,17 +1278,17 @@ void runtimeClearSoundNames()
     g_runtime.objectBusById.clear();
 }
 
-harkenstudio::ObjectId runtimeMintRawPcmSoundId()
+harken::studio::types::ObjectId runtimeMintRawPcmSoundId()
 {
     if (!g_runtime.initialized) return {};
     for (;;) {
-        const auto id = VNX::createObjectId();
+        const auto id = harken::studio::createObjectId();
         if (!g_runtime.registeredSounds.contains(id) && !g_runtime.registeredRawPcm.contains(id))
             return id;
     }
 }
 
-EngineResult runtimeRegisterRawPcmSlice(harkenstudio::ObjectId soundId,
+EngineResult runtimeRegisterRawPcmSlice(harken::studio::types::ObjectId soundId,
                                         const QString& absolutePath,
                                         uint64_t startFrame,
                                         uint64_t frameCount,
@@ -1216,7 +1306,7 @@ EngineResult runtimeRegisterRawPcmSlice(harkenstudio::ObjectId soundId,
         *outWindowStartFrame = 0;
     if (outWindowFrameCount)
         *outWindowFrameCount = 0;
-    if (harkenstudio::IsNull(soundId) || absolutePath.isEmpty() || frameCount == 0)
+    if (harken::studio::types::IsNull(soundId) || absolutePath.isEmpty() || frameCount == 0)
         return kEngineInvalidArg;
     if (!ensureRuntimeStarted())
         return kEngineNotInit;
@@ -1238,7 +1328,7 @@ EngineResult runtimeRegisterRawPcmSlice(harkenstudio::ObjectId soundId,
         channels = cachedIt->second.channels;
         sampleRate = cachedIt->second.sampleRate;
     } else {
-        if (!decodeAudioFileInterleaved(normalized, decoded, channels, sampleRate))
+        if (!decodeMedia(normalized, decoded, channels, sampleRate))
             return kEngineInvalidArg;
         interleaved = &decoded;
     }
@@ -1269,13 +1359,13 @@ EngineResult runtimeRegisterRawPcmSlice(harkenstudio::ObjectId soundId,
     return kEngineOk;
 }
 
-EngineResult runtimeRegisterRawPcmSlice(harkenstudio::ObjectId soundId,
+EngineResult runtimeRegisterRawPcmSlice(harken::studio::types::ObjectId soundId,
                                         std::vector<float> interleaved,
                                         int channels, int sampleRate,
                                         uint64_t startFrame, uint64_t frameCount,
                                         bool loops)
 {
-    if (harkenstudio::IsNull(soundId) || frameCount == 0)
+    if (harken::studio::types::IsNull(soundId) || frameCount == 0)
         return kEngineInvalidArg;
     if (!ensureRuntimeStarted())
         return kEngineNotInit;
@@ -1292,7 +1382,7 @@ EngineResult runtimeRegisterRawPcmSlice(harkenstudio::ObjectId soundId,
     return result;
 }
 
-EngineResult runtimeRelocateRawPcmSlice(harkenstudio::ObjectId soundId,
+EngineResult runtimeRelocateRawPcmSlice(harken::studio::types::ObjectId soundId,
                                         uint64_t startFrame,
                                         uint64_t* outStartFrame,
                                         uint64_t* outFrameCount,
@@ -1316,7 +1406,7 @@ EngineResult runtimeRelocateRawPcmSlice(harkenstudio::ObjectId soundId,
         *outWindowFrameCount = 0;
     if (outLoops)
         *outLoops = false;
-    if (harkenstudio::IsNull(soundId))
+    if (harken::studio::types::IsNull(soundId))
         return kEngineInvalidArg;
     if (!g_runtime.initialized)
         return kEngineNotInit;
@@ -1381,9 +1471,9 @@ EngineResult runtimeRelocateRawPcmSlice(harkenstudio::ObjectId soundId,
     return kEngineOk;
 }
 
-EngineResult runtimeUnregisterRawPcm(harkenstudio::ObjectId soundId)
+EngineResult runtimeUnregisterRawPcm(harken::studio::types::ObjectId soundId)
 {
-    if (harkenstudio::IsNull(soundId))
+    if (harken::studio::types::IsNull(soundId))
         return kEngineInvalidArg;
     if (!g_runtime.initialized)
         return kEngineNotInit;
@@ -1400,11 +1490,11 @@ EngineResult runtimeUnregisterRawPcm(harkenstudio::ObjectId soundId)
     return kEngineOk;
 }
 
-uint64_t runtimePlayRawPcm(harkenstudio::ObjectId soundId, bool loops, EngineResult* outResult)
+uint64_t runtimePlayRawPcm(harken::studio::types::ObjectId soundId, bool loops, EngineResult* outResult)
 {
     if (outResult)
         *outResult = kEngineOk;
-    if (harkenstudio::IsNull(soundId)) {
+    if (harken::studio::types::IsNull(soundId)) {
         if (outResult)
             *outResult = kEngineInvalidArg;
         return 0;
@@ -1476,64 +1566,34 @@ bool runtimeStopRawPcm(uint64_t playbackHandle, uint32_t fadeMs)
     return false;
 }
 
-bool runtimeLoadPack(const QString& path, EngineResult* outResult)
+bool runtimeLoadCanonicalPack(const QString& path, const QByteArray& bytes,
+                              uint64_t packStableId, uint32_t packKind,
+                              EngineResult* outResult)
 {
     if (outResult) *outResult = VN_INVALID_ARG;
-    if (path.isEmpty() || !QFileInfo::exists(path))
+    if (path.isEmpty() || packStableId == 0
+        || (packKind != VN_CANONICAL_PACK_SET_MEMBER_INIT
+            && packKind != VN_CANONICAL_PACK_SET_MEMBER_CONTENT))
         return false;
     if (outResult) *outResult = VN_DEVICE_ERROR;
     if (!ensureRuntimeStarted())
         return false;
-
     const QString normalized = QFileInfo(path).absoluteFilePath();
     if (g_runtime.loadedPacksByPath.find(normalized) != g_runtime.loadedPacksByPath.end()) {
         if (outResult) *outResult = VN_OK;
         return true;
     }
-
     if (outResult) *outResult = VN_INVALID_ARG;
-    QFile file(normalized);
-    if (!file.open(QIODevice::ReadOnly)) return false;
-    const QByteArray bytes = file.readAll();
-    if (file.error() != QFileDevice::NoError) return false;
-    harkenstudiobuild::PackFileHeader header{};
-    if (bytes.size() >= harkenstudiobuild::kPackFileHeaderBytes
-        && harkenstudiobuild::ReadPackFileHeader(
-            reinterpret_cast<const uint8_t*>(bytes.constData()), &header)
-        && header.headerBytes == harkenstudiobuild::kPackFileHeaderBytes
-        && (header.packKind == harkenstudiobuild::kPackKindInit
-            || header.packKind == harkenstudiobuild::kPackKindCanonicalContent)) {
-        harkenstudiobuild::PackCanonicalImage image;
-        if (harkenstudiobuild::ParsePackCanonicalImage(
-                reinterpret_cast<const uint8_t*>(bytes.constData()), bytes.size(), &image)
-            != harkenstudiobuild::kPackOk)
+    for (const auto& [loadedPath, loaded] : g_runtime.loadedPacksByPath) {
+        Q_UNUSED(loadedPath);
+        if (loaded.stableId == packStableId
+            || (loaded.kind == VN_CANONICAL_PACK_SET_MEMBER_INIT
+                && packKind == VN_CANONICAL_PACK_SET_MEMBER_INIT))
             return false;
-        for (const auto& [loadedPath, loaded] : g_runtime.loadedPacksByPath) {
-            Q_UNUSED(loadedPath);
-            if (loaded.stableId == image.packStableId
-                || (loaded.kind == VN_CANONICAL_PACK_SET_MEMBER_INIT
-                    && image.packKind == VN_CANONICAL_PACK_SET_MEMBER_INIT))
-                return false;
-        }
-        auto desired = g_runtime.loadedPacksByPath;
-        desired.emplace(normalized, LoadedPack{0, image.packStableId, image.packKind, bytes});
-        return activatePackSet(std::move(desired), outResult);
     }
-    const QByteArray utf8 = normalized.toUtf8();
-    VnPackDesc desc{};
-    desc.structSize = sizeof(VnPackDesc);
-    desc.utf8Path = utf8.constData();
-    VnPackHandle handle = 0;
-    const VnResult result = Vn_LoadPack(&desc, &handle);
-    if (outResult) *outResult = result == VN_OK && handle == 0 ? VN_DEVICE_ERROR : result;
-    if (result != VN_OK || handle == 0)
-    {
-        qWarning() << "[PlaybackRoute] runtime pack load failed:"
-                   << normalized << "result=" << static_cast<int>(result);
-        return false;
-    }
-    g_runtime.loadedPacksByPath[normalized] = LoadedPack{handle};
-    return true;
+    auto desired = g_runtime.loadedPacksByPath;
+    desired.emplace(normalized, LoadedPack{0, packStableId, packKind, bytes});
+    return activatePackSet(std::move(desired), outResult);
 }
 
 bool runtimeUnloadPack(const QString& path, EngineResult* outResult)
@@ -1563,24 +1623,14 @@ bool runtimeUnloadPack(const QString& path, EngineResult* outResult)
             qWarning() << "[PlaybackRoute] pack set unload failed: result=" << result;
             return false;
         }
-        std::erase_if(g_runtime.loadedPacksByPath,
-            [](const auto& entry) { return entry.second.stableId != 0; });
+        g_runtime.loadedPacksByPath.clear();
         g_runtime.initPackHandle = 0;
         g_runtime.packSetRevision = 0;
         return true;
     }
-    if (it->second.stableId != 0) {
-        auto desired = g_runtime.loadedPacksByPath;
-        desired.erase(normalized);
-        return activatePackSet(std::move(desired), outResult);
-    }
-    const VnResult result = Vn_UnloadPack(it->second.handle);
-    if (outResult) *outResult = result == VN_STALE_HANDLE ? VN_OK : result;
-    if (result == VN_OK || result == VN_STALE_HANDLE) {
-        g_runtime.loadedPacksByPath.erase(it);
-        return true;
-    }
-    return false;
+    auto desired = g_runtime.loadedPacksByPath;
+    desired.erase(normalized);
+    return activatePackSet(std::move(desired), outResult);
 }
 
 bool runtimeSetListenerTransform(VnVec3 position, VnVec3 forward, VnVec3 up)
@@ -1617,9 +1667,9 @@ QStringList runtimeLoadedPackPaths()
     return paths;
 }
 
-bool runtimeHasActionProgram(harkenstudio::ObjectId actionId)
+bool runtimeHasActionProgram(harken::studio::types::ObjectId actionId)
 {
-    if (!g_runtime.initialized || harkenstudio::IsNull(actionId))
+    if (!g_runtime.initialized || harken::studio::types::IsNull(actionId))
         return false;
     return VnPreview_HasAction(toNative(actionId)) != 0;
 }
@@ -1955,20 +2005,20 @@ EngineResult runtimeRefreshPreviewVoiceBindings(uint64_t voiceInstance)
 }
 
 EngineResult runtimeSetPreviewVoiceProperty(uint64_t voiceInstance, uint8_t property,
-    float value, harkenstudio::ObjectId sendBusId)
+    float value, harken::studio::types::ObjectId sendBusId)
 {
     return VnPreview_SetVoiceProperty(voiceInstance, property, value, toNative(sendBusId));
 }
 
-EngineResult runtimeSetPreviewVoiceEffect(uint64_t voiceInstance, harkenstudio::ObjectId effectId,
+EngineResult runtimeSetPreviewVoiceEffect(uint64_t voiceInstance, harken::studio::types::ObjectId effectId,
     uint32_t effectType, const std::vector<float>& parameters, bool bypass)
 {
     return VnPreview_SetVoiceEffect(voiceInstance, toNative(effectId), effectType,
         parameters.data(), static_cast<uint32_t>(parameters.size()), bypass ? 1u : 0u);
 }
 
-EngineResult runtimeSetPreviewBusEffect(uint64_t ownerId, harkenstudio::ObjectId busId,
-    harkenstudio::ObjectId effectId, uint32_t effectType,
+EngineResult runtimeSetPreviewBusEffect(uint64_t ownerId, harken::studio::types::ObjectId busId,
+    harken::studio::types::ObjectId effectId, uint32_t effectType,
     const std::vector<float>& parameters, bool bypass)
 {
     return VnPreview_SetBusEffect(ownerId, toNative(busId), toNative(effectId), effectType,
@@ -2073,7 +2123,7 @@ void runtimeSetVoiceDistanceScaleByName(const QString& name, float scale)
 }
 
 void runtimeSetVoiceSendsByName(const QString& name,
-                                const std::vector<std::pair<harkenstudio::ObjectId, float>>& sends)
+                                const std::vector<std::pair<harken::studio::types::ObjectId, float>>& sends)
 {
     if (name.isEmpty())
         return;
@@ -2142,28 +2192,6 @@ RuntimeProjectGenerationPrepareStatus runtimePrepareProjectGeneration(
 }
 
 RuntimeProjectGenerationPrepareStatus runtimePrepareProjectGeneration(
-    const VnPreviewProjectDescV2& view, RuntimePreparedProject& out)
-{
-    if (out.Valid())
-        return RuntimeProjectGenerationPrepareStatus::InvalidView;
-    if (!runtimeIsActive())
-        return RuntimeProjectGenerationPrepareStatus::RuntimeUnavailable;
-    return static_cast<RuntimeProjectGenerationPrepareStatus>(
-        VnPreview_PrepareProjectV2(&view, &out.handle));
-}
-
-RuntimeProjectGenerationPrepareStatus runtimePrepareProjectGeneration(
-    const VnPreviewProjectDescV3& view, RuntimePreparedProject& out)
-{
-    if (out.Valid())
-        return RuntimeProjectGenerationPrepareStatus::InvalidView;
-    if (!runtimeIsActive())
-        return RuntimeProjectGenerationPrepareStatus::RuntimeUnavailable;
-    return static_cast<RuntimeProjectGenerationPrepareStatus>(
-        VnPreview_PrepareProjectV3(&view, &out.handle));
-}
-
-RuntimeProjectGenerationPrepareStatus runtimePrepareProjectGeneration(
     const VnPreviewProjectDescV4& view, RuntimePreparedProject& out)
 {
     if (out.Valid())
@@ -2213,7 +2241,7 @@ void runtimeConfirmBusTopologyWithoutApply(
     EngineSession::confirmActiveBusTopologyWithoutApply(buses, sends);
 }
 
-EngineResult runtimeSetBusMute(harkenstudio::ObjectId busId, bool mute, std::uint32_t fadeMs)
+EngineResult runtimeSetBusMute(harken::studio::types::ObjectId busId, bool mute, std::uint32_t fadeMs)
 {
     if (!runtimeIsActive())
         return kEngineNotInit;
@@ -2221,7 +2249,7 @@ EngineResult runtimeSetBusMute(harkenstudio::ObjectId busId, bool mute, std::uin
         Vn_SetBusMute(toNative(busId), mute ? 1u : 0u, fadeMs));
 }
 
-EngineResult runtimeSetBusSolo(harkenstudio::ObjectId busId, bool solo, std::uint32_t fadeMs)
+EngineResult runtimeSetBusSolo(harken::studio::types::ObjectId busId, bool solo, std::uint32_t fadeMs)
 {
     if (!runtimeIsActive())
         return kEngineNotInit;
@@ -2229,7 +2257,7 @@ EngineResult runtimeSetBusSolo(harkenstudio::ObjectId busId, bool solo, std::uin
         Vn_SetBusSolo(toNative(busId), solo ? 1u : 0u, fadeMs));
 }
 
-EngineResult runtimeSetBusOutputVolume(harkenstudio::ObjectId busId, float db,
+EngineResult runtimeSetBusOutputVolume(harken::studio::types::ObjectId busId, float db,
                                        std::uint32_t fadeMs)
 {
     if (!runtimeIsActive())
@@ -2239,5 +2267,5 @@ EngineResult runtimeSetBusOutputVolume(harkenstudio::ObjectId busId, float db,
 }
 
 } // namespace Detail
-} // namespace Bridge
-} // namespace HarkenEditor
+} // namespace bridge
+} // namespace harken::studio

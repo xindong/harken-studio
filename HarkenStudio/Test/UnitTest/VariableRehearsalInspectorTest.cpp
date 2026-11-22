@@ -31,7 +31,7 @@ void ensureApp()
 {
     if (qApp) return;
     static int argc = 1;
-    static char arg0[] = "harken_editor_tests";
+    static char arg0[] = "harken_studio_tests";
     static char* argv[] = {arg0, nullptr};
     static QApplication app(argc, argv);
 }
@@ -52,62 +52,62 @@ protected:
     void SetUp() override
     {
         ensureApp();
-        auto& projectManager = VNX::ProjectManager::instance();
+        auto& projectManager = harken::studio::ProjectManager::instance();
         if (projectManager.isProjectOpen())
             projectManager.closeProject();
-        VNX::ActionManager::instance().clearAllForTesting();
-        VNX::registerProjectActions(VNX::ActionManager::instance(), &projectManager,
+        harken::studio::ActionManager::instance().clearAllForTesting();
+        harken::studio::registerProjectActions(harken::studio::ActionManager::instance(), &projectManager,
                                     nullptr);
         ASSERT_TRUE(tempDir_.isValid());
-        VNX::ProjectConfig config;
+        harken::studio::ProjectConfig config;
         config.name = QStringLiteral("VariableRehearsalProject");
         config.location = tempDir_.path();
         ASSERT_TRUE(projectManager.createProject(config));
 
         container_ = projectManager.createItem(nullptr, QStringLiteral("VR_Container"),
-                                               VNX::ProjectItem::Type::Container);
+                                               harken::studio::ProjectItem::Type::Container);
         child_ = projectManager.createItem(container_, QStringLiteral("VR_Child"),
-                                           VNX::ProjectItem::Type::Sound);
+                                           harken::studio::ProjectItem::Type::Sound);
         smooth_ = projectManager.createItem(nullptr, QStringLiteral("VR_Smooth"),
-                                            VNX::ProjectItem::Type::Variable);
+                                            harken::studio::ProjectItem::Type::Variable);
         ASSERT_NE(container_, nullptr);
         ASSERT_NE(child_, nullptr);
         ASSERT_NE(smooth_, nullptr);
 
-        auto* smoothVariable = smooth_->compOrCreate<VNX::VVariable>();
+        auto* smoothVariable = smooth_->compOrCreate<harken::studio::VVariable>();
         smoothVariable->rangeMin = 0.0f;
         smoothVariable->rangeMax = 100.0f;
         smoothVariable->defaultValue = 0.0f;
 
-        auto* selection = container_->compOrCreate<VNX::VSelection>();
-        selection->mode = VNX::SelectionMode::Match;
+        auto* selection = container_->compOrCreate<harken::studio::VSelection>();
+        selection->mode = harken::studio::SelectionMode::Match;
         auto grid = selection->matchGrid();
         ASSERT_TRUE(grid.addAxis(smooth_->guid));
         ASSERT_TRUE(grid.addRow(child_->guid));
         ASSERT_TRUE(grid.setCell(0, 0, 0));
         ASSERT_TRUE(selection->selections.shared.setMatchGrid(grid));
 
-        VNX::UndoRedoManager::instance().clear();
+        harken::studio::UndoRedoManager::instance().clear();
     }
 
     void TearDown() override
     {
-        VNX::UndoRedoManager::instance().clear();
-        auto& projectManager = VNX::ProjectManager::instance();
+        harken::studio::UndoRedoManager::instance().clear();
+        auto& projectManager = harken::studio::ProjectManager::instance();
         if (projectManager.isProjectOpen())
             projectManager.closeProject();
-        VNX::ActionManager::instance().clearAllForTesting();
+        harken::studio::ActionManager::instance().clearAllForTesting();
     }
 
     QTemporaryDir tempDir_;
-    VNX::ProjectItem* container_ = nullptr;
-    VNX::ProjectItem* child_ = nullptr;
-    VNX::ProjectItem* smooth_ = nullptr;
+    harken::studio::ProjectItem* container_ = nullptr;
+    harken::studio::ProjectItem* child_ = nullptr;
+    harken::studio::ProjectItem* smooth_ = nullptr;
 };
 
 TEST(VariableDeclaration, EveryRangeEntryPointRejectsCollapsedDomainsAtomically)
 {
-    VNX::VVariable variable;
+    harken::studio::VVariable variable;
     for (const auto& edit : QList<QPair<QString, QVariant>>{
              {QStringLiteral("rangeMin"), 100.0f},
              {QStringLiteral("rangeMax"), 0.0f},
@@ -118,10 +118,10 @@ TEST(VariableDeclaration, EveryRangeEntryPointRejectsCollapsedDomainsAtomically)
     }
     ASSERT_TRUE(variable.setField(QStringLiteral("range"), QVariantList{0.1f, 0.2f}));
     const auto beforeKind = variable.toJson();
-    EXPECT_FALSE(variable.setField(QStringLiteral("kind"), static_cast<int>(VNX::VariableKind::Step)));
+    EXPECT_FALSE(variable.setField(QStringLiteral("kind"), static_cast<int>(harken::studio::VariableKind::Step)));
     EXPECT_EQ(variable.toJson(), beforeKind);
     ASSERT_TRUE(variable.setField(QStringLiteral("range"), QVariantList{0.0f, 3.0f}));
-    ASSERT_TRUE(variable.setField(QStringLiteral("kind"), static_cast<int>(VNX::VariableKind::Step)));
+    ASSERT_TRUE(variable.setField(QStringLiteral("kind"), static_cast<int>(harken::studio::VariableKind::Step)));
     const auto beforeRange = variable.toJson();
     EXPECT_FALSE(variable.setField(QStringLiteral("range"), QVariantList{0.1f, 0.2f}));
     EXPECT_EQ(variable.toJson(), beforeRange);
@@ -129,14 +129,14 @@ TEST(VariableDeclaration, EveryRangeEntryPointRejectsCollapsedDomainsAtomically)
 
 TEST_F(VariableRehearsalInspectorTest, RangeChangesPreserveConsumerShapeAndUndoAcrossPlatforms)
 {
-    auto& manager = VNX::ProjectManager::instance();
-    auto* selection = container_->comp<VNX::VSelection>();
-    selection->mode = VNX::SelectionMode::Blend;
+    auto& manager = harken::studio::ProjectManager::instance();
+    auto* selection = container_->comp<harken::studio::VSelection>();
+    selection->mode = harken::studio::SelectionMode::Blend;
     selection->selections = {};
-    VNX::MixingChildDef curve{child_->guid,
+    harken::studio::MixingChildDef curve{child_->guid,
         {{0.0f, 0.0f}, {40.0f, 0.8f}, {100.0f, 0.2f}},
         {{10.0f, 0.1f, 30.0f, 0.7f}, {55.0f, 0.9f, 80.0f, 0.4f}}};
-    VNX::MixingDef mixing{{{smooth_->guid, {curve}}}};
+    harken::studio::MixingDef mixing{{{smooth_->guid, {curve}}}};
     ASSERT_TRUE(selection->selections.shared.setMixing(mixing));
     const auto platform = manager.currentProject()->platforms.front().id;
     auto platformMixing = mixing;
@@ -144,27 +144,27 @@ TEST_F(VariableRehearsalInspectorTest, RangeChangesPreserveConsumerShapeAndUndoA
     ASSERT_TRUE(selection->selections.editTable(platform).setMixing(platformMixing));
     const auto before = selection->selections;
     auto* otherContainer = manager.createItem(nullptr, QStringLiteral("Other_Container"),
-        VNX::ProjectItem::Type::Container);
+        harken::studio::ProjectItem::Type::Container);
     ASSERT_NE(otherContainer, nullptr);
     auto* otherChild = manager.createItem(otherContainer, QStringLiteral("Other_Child"),
-        VNX::ProjectItem::Type::Sound);
+        harken::studio::ProjectItem::Type::Sound);
     ASSERT_NE(otherChild, nullptr);
-    auto* otherSelection = otherContainer->comp<VNX::VSelection>();
+    auto* otherSelection = otherContainer->comp<harken::studio::VSelection>();
     auto otherMixing = mixing;
     otherMixing.rows.front().children.front().target = otherChild->guid;
     ASSERT_TRUE(otherSelection->selections.shared.setMixing(otherMixing));
     const auto otherBefore = otherSelection->selections.toJson();
 
-    VNX::MixingEditorWidget editor;
+    harken::studio::MixingEditorWidget editor;
     editor.setBoundItem(container_);
     editor.selectChild(0, 0);
-    VNX::UndoRedoManager::instance().clear();
-    const auto result = VNX::ActionManager::instance().execute(QStringLiteral("set_item_property"),
+    harken::studio::UndoRedoManager::instance().clear();
+    const auto result = harken::studio::ActionManager::instance().execute(QStringLiteral("set_item_property"),
         QJsonObject{{"authoring_handle", static_cast<qint64>(smooth_->objectID)},
                     {"property", "range"}, {"value", QJsonArray{10.0, 10.01}},
                     {"range_policy", "stretch"}});
     ASSERT_TRUE(result.success) << result.errorMessage.toStdString();
-    const auto* variable = smooth_->comp<VNX::VVariable>();
+    const auto* variable = smooth_->comp<harken::studio::VVariable>();
     const float span = variable->rangeMax - variable->rangeMin;
     const auto oldTables = before.tables();
     const auto newTables = selection->selections.tables();
@@ -186,12 +186,12 @@ TEST_F(VariableRehearsalInspectorTest, RangeChangesPreserveConsumerShapeAndUndoA
     const auto midpoint = editor.canvas(0)->curve()[1];
     EXPECT_GT(midpoint.x, variable->rangeMin);
     EXPECT_LT(midpoint.x, variable->rangeMax);
-    ASSERT_TRUE(VNX::UndoRedoManager::instance().undo());
+    ASSERT_TRUE(harken::studio::UndoRedoManager::instance().undo());
     EXPECT_EQ(selection->selections.toJson(), before.toJson());
     EXPECT_EQ(otherSelection->selections.toJson(), otherBefore);
     EXPECT_FLOAT_EQ(variable->rangeMin, 0.0f);
     EXPECT_FLOAT_EQ(variable->rangeMax, 100.0f);
-    ASSERT_TRUE(VNX::UndoRedoManager::instance().redo());
+    ASSERT_TRUE(harken::studio::UndoRedoManager::instance().redo());
     EXPECT_EQ(selection->selections.toJson(), after);
     EXPECT_EQ(otherSelection->selections.toJson(), otherAfter);
     EXPECT_FLOAT_EQ(variable->rangeMin, 10.0f);
@@ -200,33 +200,33 @@ TEST_F(VariableRehearsalInspectorTest, RangeChangesPreserveConsumerShapeAndUndoA
 
 TEST_F(VariableRehearsalInspectorTest, UnrepresentableRangeChangesLeaveNoPartialEdits)
 {
-    auto* selection = container_->comp<VNX::VSelection>();
+    auto* selection = container_->comp<harken::studio::VSelection>();
     selection->selections = {};
-    VNX::MixingChildDef curve{child_->guid,
+    harken::studio::MixingChildDef curve{child_->guid,
         {{0.0f, 0.0f}, {50.0f, 1.0f}, {100.0f, 0.0f}}, {}};
     curve.normalize();
     ASSERT_TRUE(selection->selections.shared.setMixing({{{smooth_->guid, {curve}}}}));
     const auto before = selection->selections.toJson();
-    const auto declaration = smooth_->comp<VNX::VVariable>()->toJson();
-    VNX::UndoRedoManager::instance().clear();
-    const auto result = VNX::ActionManager::instance().execute(QStringLiteral("set_item_property"),
+    const auto declaration = smooth_->comp<harken::studio::VVariable>()->toJson();
+    harken::studio::UndoRedoManager::instance().clear();
+    const auto result = harken::studio::ActionManager::instance().execute(QStringLiteral("set_item_property"),
         QJsonObject{{"authoring_handle", static_cast<qint64>(smooth_->objectID)},
                     {"property", "range"}, {"value", QJsonArray{16777216.0, 16777218.0}},
                     {"range_policy", "stretch"}});
     EXPECT_FALSE(result.success);
     EXPECT_EQ(selection->selections.toJson(), before);
-    EXPECT_EQ(smooth_->comp<VNX::VVariable>()->toJson(), declaration);
-    EXPECT_FALSE(VNX::UndoRedoManager::instance().canUndo());
+    EXPECT_EQ(smooth_->comp<harken::studio::VVariable>()->toJson(), declaration);
+    EXPECT_FALSE(harken::studio::UndoRedoManager::instance().canUndo());
 }
 
 TEST_F(VariableRehearsalInspectorTest, RehearsalDoesNotTouchDirtyUndoOrProjectBytes)
 {
-    auto& projectManager = VNX::ProjectManager::instance();
+    auto& projectManager = harken::studio::ProjectManager::instance();
     ASSERT_TRUE(projectManager.saveProject());
     const QString projectPath = projectManager.currentProject()->projectPath;
     const QByteArray before = readFile(projectPath);
     ASSERT_FALSE(before.isEmpty());
-    auto* undo = VNX::UndoRedoManager::instance().undoStack();
+    auto* undo = harken::studio::UndoRedoManager::instance().undoStack();
     undo->setClean();
     const int count = undo->count();
     const int index = undo->index();
@@ -246,13 +246,13 @@ TEST_F(VariableRehearsalInspectorTest, RehearsalDoesNotTouchDirtyUndoOrProjectBy
 
 TEST_F(VariableRehearsalInspectorTest, RangePoliciesPreserveConsumerFunctionsAndAtomicHistory)
 {
-    auto& manager = VNX::ProjectManager::instance();
-    auto* selection = container_->comp<VNX::VSelection>();
-    auto* variable = smooth_->comp<VNX::VVariable>();
+    auto& manager = harken::studio::ProjectManager::instance();
+    auto* selection = container_->comp<harken::studio::VSelection>();
+    auto* variable = smooth_->comp<harken::studio::VVariable>();
     variable->defaultValue = 75.0f;
-    selection->mode = VNX::SelectionMode::Blend;
+    selection->mode = harken::studio::SelectionMode::Blend;
     selection->selections = {};
-    VNX::MixingChildDef curve{child_->guid,
+    harken::studio::MixingChildDef curve{child_->guid,
         {{0.0f, 0.1f}, {40.0f, 0.8f}, {100.0f, 0.3f}},
         {{10.0f, 0.2f, 30.0f, 0.7f}, {55.0f, 0.9f, 80.0f, 0.4f}}};
     ASSERT_TRUE(selection->selections.shared.setMixing({{{smooth_->guid, {curve}}}}));
@@ -264,23 +264,23 @@ TEST_F(VariableRehearsalInspectorTest, RangePoliciesPreserveConsumerFunctionsAnd
     ASSERT_TRUE(selection->selections.editTable(platform).setMixing({{{smooth_->guid, {outside}}}}));
     const auto oldSelection = selection->selections;
 
-    auto* mix = child_->comp<VNX::VMixNode>();
-    auto binding = VNX::BindingSemantics::defaultBinding(VNX::BindingSemantics::volumeAddress(), smooth_->guid);
+    auto* mix = child_->comp<harken::studio::VMixNode>();
+    auto binding = harken::studio::BindingSemantics::defaultBinding(harken::studio::BindingSemantics::volumeAddress(), smooth_->guid);
     binding.guid = QUuid::createUuid();
     binding.curve = {{0.0f, -48.0f}, {0.4f, -6.0f}, {1.0f, -24.0f}};
     binding.handles = {{0.1f, -72.0f, 0.3f, 0.0f}, {0.5f, -3.0f, 0.8f, -48.0f}};
     ASSERT_TRUE(mix->bindings.upsert(binding));
     const auto oldBinding = *mix->bindings.find(binding.runtimeId());
-    auto unrelated = VNX::BindingSemantics::defaultBinding(VNX::BindingSemantics::pitchAddress(), QUuid::createUuid());
+    auto unrelated = harken::studio::BindingSemantics::defaultBinding(harken::studio::BindingSemantics::pitchAddress(), QUuid::createUuid());
     unrelated.guid = QUuid::createUuid();
     ASSERT_TRUE(mix->bindings.upsert(unrelated));
 
-    auto* actionItem = manager.createItem(nullptr, QStringLiteral("Range_Action"), VNX::ProjectItem::Type::Action);
+    auto* actionItem = manager.createItem(nullptr, QStringLiteral("Range_Action"), harken::studio::ProjectItem::Type::Action);
     ASSERT_NE(actionItem, nullptr);
-    auto* action = actionItem->comp<VNX::VAction>();
+    auto* action = actionItem->comp<harken::studio::VAction>();
     for (float value : {80.0f, 50.0f, 10.0f}) {
-        VNX::VActionStep step;
-        step.type = VNX::VActionStep::Type::SetVariable;
+        harken::studio::VActionStep step;
+        step.type = harken::studio::VActionStep::Type::SetVariable;
         step.targetObjectID = smooth_->objectID;
         step.value = value;
         action->steps.push_back(step);
@@ -290,24 +290,24 @@ TEST_F(VariableRehearsalInspectorTest, RangePoliciesPreserveConsumerFunctionsAnd
                            {"bindings", mix->bindings.toJson()}, {"action", action->toJson()}};
     };
     const auto before = snapshot();
-    VNX::UndoRedoManager::instance().clear();
+    harken::studio::UndoRedoManager::instance().clear();
     std::vector<QJsonObject> observations;
-    const auto connection = QObject::connect(&manager, &VNX::ProjectManager::itemPropertyChanged,
-        &manager, [&](VNX::ProjectItem*, const QString&, const QObject*) { observations.push_back(snapshot()); });
+    const auto connection = QObject::connect(&manager, &harken::studio::ProjectManager::itemPropertyChanged,
+        &manager, [&](harken::studio::ProjectItem*, const QString&, const QObject*) { observations.push_back(snapshot()); });
     const auto disconnect = qScopeGuard([&] { QObject::disconnect(connection); });
     QJsonObject args{{"authoring_handle", static_cast<qint64>(smooth_->objectID)},
                      {"property", "range"}, {"value", QJsonArray{20.0, 60.0}}};
-    const auto pending = VNX::ActionManager::instance().execute(QStringLiteral("set_item_property"), args);
+    const auto pending = harken::studio::ActionManager::instance().execute(QStringLiteral("set_item_property"), args);
     EXPECT_FALSE(pending.success);
     EXPECT_EQ(pending.errorCode, QStringLiteral("VARIABLE_RANGE_POLICY_REQUIRED"));
     EXPECT_EQ(snapshot(), before);
     EXPECT_TRUE(observations.empty());
-    EXPECT_FALSE(VNX::UndoRedoManager::instance().canUndo());
+    EXPECT_FALSE(harken::studio::UndoRedoManager::instance().canUndo());
 
     for (const auto& policy : {QStringLiteral("stretch"), QStringLiteral("fix")}) {
         const bool stretch = policy == QLatin1String("stretch");
         args[QStringLiteral("range_policy")] = policy;
-        const auto result = VNX::ActionManager::instance().execute(QStringLiteral("set_item_property"), args);
+        const auto result = harken::studio::ActionManager::instance().execute(QStringLiteral("set_item_property"), args);
         ASSERT_TRUE(result.success) << result.errorMessage.toStdString();
         const auto after = snapshot();
         ASSERT_FALSE(observations.empty());
@@ -325,8 +325,8 @@ TEST_F(VariableRehearsalInspectorTest, RangePoliciesPreserveConsumerFunctionsAnd
         for (int sample = 0; sample <= 40; ++sample) {
             const float x = 20.0f + sample;
             const float oldX = stretch ? (x - 20.0f) * 2.5f : x;
-            EXPECT_NEAR(VNX::BindingSemantics::contribution(*updatedBinding, variable->kind, x, 20.0f, 60.0f),
-                        VNX::BindingSemantics::contribution(oldBinding, variable->kind, oldX, 0.0f, 100.0f), 0.001f);
+            EXPECT_NEAR(harken::studio::BindingSemantics::contribution(*updatedBinding, variable->kind, x, 20.0f, 60.0f),
+                        harken::studio::BindingSemantics::contribution(oldBinding, variable->kind, oldX, 0.0f, 100.0f), 0.001f);
             for (int table = 0; table < oldTables.size(); ++table) {
                 const auto original = oldTables[table]->mixing().rows.front().children.front();
                 const auto updated = newTables[table]->mixing().rows.front().children.front();
@@ -334,42 +334,42 @@ TEST_F(VariableRehearsalInspectorTest, RangePoliciesPreserveConsumerFunctionsAnd
                 EXPECT_NEAR(updated.gainAt(x), original.gainAt(oldX), 0.0001f);
             }
         }
-        ASSERT_TRUE(VNX::UndoRedoManager::instance().undo());
+        ASSERT_TRUE(harken::studio::UndoRedoManager::instance().undo());
         EXPECT_EQ(snapshot(), before);
         for (const auto& state : observations) EXPECT_EQ(state, before);
         observations.clear();
-        ASSERT_TRUE(VNX::UndoRedoManager::instance().redo());
+        ASSERT_TRUE(harken::studio::UndoRedoManager::instance().redo());
         EXPECT_EQ(snapshot(), after);
         for (const auto& state : observations) EXPECT_EQ(state, after);
         observations.clear();
-        ASSERT_TRUE(VNX::UndoRedoManager::instance().undo());
+        ASSERT_TRUE(harken::studio::UndoRedoManager::instance().undo());
         observations.clear();
-        VNX::UndoRedoManager::instance().clear();
+        harken::studio::UndoRedoManager::instance().clear();
     }
 }
 
 TEST_F(VariableRehearsalInspectorTest, InspectorCancelIsReadOnlyAndEachChoiceCommitsOnce)
 {
-    VNX::registerBuiltinInspectorCustomizations();
-    auto& manager = VNX::ProjectManager::instance();
-    auto* selection = container_->comp<VNX::VSelection>();
+    harken::studio::registerBuiltinInspectorCustomizations();
+    auto& manager = harken::studio::ProjectManager::instance();
+    auto* selection = container_->comp<harken::studio::VSelection>();
     selection->selections = {};
-    selection->mode = VNX::SelectionMode::Blend;
-    auto curve = VNX::MixingChildDef::unity(child_->guid, 0.0f, 100.0f);
+    selection->mode = harken::studio::SelectionMode::Blend;
+    auto curve = harken::studio::MixingChildDef::unity(child_->guid, 0.0f, 100.0f);
     curve.points.back().value = 0.0f;
     curve.handles = {{0.0f, 1.0f, 100.0f, 0.0f}};
     ASSERT_TRUE(selection->selections.shared.setMixing({{{smooth_->guid, {curve}}}}));
     ASSERT_TRUE(manager.saveProject());
-    VNX::UndoRedoManager::instance().clear();
+    harken::studio::UndoRedoManager::instance().clear();
     const auto before = selection->selections.toJson();
     const bool wasDirty = smooth_->isDirtyObject();
     const bool containerWasDirty = container_->isDirtyObject();
-    VNX::InspectorPanel inspector;
+    harken::studio::InspectorPanel inspector;
     inspector.showItemInspector(smooth_);
-    auto* range = inspector.findChild<VNX::RangeField*>(QStringLiteral("prop_range"));
+    auto* range = inspector.findChild<harken::studio::RangeField*>(QStringLiteral("prop_range"));
     ASSERT_NE(range, nullptr);
     int commits = 0;
-    QObject::connect(&inspector, &VNX::InspectorPanel::propertyChanged, &inspector, [&] { ++commits; });
+    QObject::connect(&inspector, &harken::studio::InspectorPanel::propertyChanged, &inspector, [&] { ++commits; });
     for (const auto& choice : {QStringLiteral("cancel"), QStringLiteral("Stretch"), QStringLiteral("Fix")}) {
         bool sawDialog = false;
         QTimer::singleShot(0, &inspector, [&] {
@@ -377,7 +377,7 @@ TEST_F(VariableRehearsalInspectorTest, InspectorCancelIsReadOnlyAndEachChoiceCom
             if (!dialog) { ADD_FAILURE() << "Range edit did not open a dialog"; return; }
             sawDialog = true;
             EXPECT_EQ(dialog->objectName(), QStringLiteral("variableRangePolicyDialog"));
-            EXPECT_FLOAT_EQ(smooth_->comp<VNX::VVariable>()->rangeMax, 100.0f);
+            EXPECT_FLOAT_EQ(smooth_->comp<harken::studio::VVariable>()->rangeMax, 100.0f);
             EXPECT_EQ(selection->selections.toJson(), before);
             if (choice == QLatin1String("cancel")) dialog->reject();
             else {
@@ -397,15 +397,15 @@ TEST_F(VariableRehearsalInspectorTest, InspectorCancelIsReadOnlyAndEachChoiceCom
             EXPECT_EQ(range->highValue(), 100.0);
             EXPECT_EQ(smooth_->isDirtyObject(), wasDirty);
             EXPECT_EQ(container_->isDirtyObject(), containerWasDirty);
-            EXPECT_FALSE(VNX::UndoRedoManager::instance().canUndo());
+            EXPECT_FALSE(harken::studio::UndoRedoManager::instance().canUndo());
         } else {
-            EXPECT_EQ(VNX::UndoRedoManager::instance().undoStack()->count(), 1);
-            EXPECT_FLOAT_EQ(smooth_->comp<VNX::VVariable>()->rangeMax, 50.0f);
+            EXPECT_EQ(harken::studio::UndoRedoManager::instance().undoStack()->count(), 1);
+            EXPECT_FLOAT_EQ(smooth_->comp<harken::studio::VVariable>()->rangeMax, 50.0f);
             const auto updated = selection->mixing().rows.front().children.front();
             EXPECT_NEAR(updated.gainAt(25.0f), choice == QLatin1String("Stretch") ? 0.5f : 0.75f, 0.0001f);
-            ASSERT_TRUE(VNX::UndoRedoManager::instance().undo());
+            ASSERT_TRUE(harken::studio::UndoRedoManager::instance().undo());
             EXPECT_EQ(selection->selections.toJson(), before);
-            VNX::UndoRedoManager::instance().clear();
+            harken::studio::UndoRedoManager::instance().clear();
         }
     }
     EXPECT_EQ(commits, 2);
@@ -413,20 +413,20 @@ TEST_F(VariableRehearsalInspectorTest, InspectorCancelIsReadOnlyAndEachChoiceCom
 
 TEST_F(VariableRehearsalInspectorTest, FixedBindingDomainsPreserveEndpointExtensionAndRejectPointOverflow)
 {
-    auto* variable = smooth_->comp<VNX::VVariable>();
+    auto* variable = smooth_->comp<harken::studio::VVariable>();
     variable->rangeMin = 100.0f;
     variable->rangeMax = 200.0f;
     variable->defaultValue = 150.0f;
-    container_->comp<VNX::VSelection>()->selections = {};
-    auto* mix = child_->comp<VNX::VMixNode>();
-    auto binding = VNX::BindingSemantics::defaultBinding(VNX::BindingSemantics::pitchAddress(), smooth_->guid);
+    container_->comp<harken::studio::VSelection>()->selections = {};
+    auto* mix = child_->comp<harken::studio::VMixNode>();
+    auto binding = harken::studio::BindingSemantics::defaultBinding(harken::studio::BindingSemantics::pitchAddress(), smooth_->guid);
     binding.guid = QUuid::createUuid();
     binding.curve = {{0.0f, -100.0f}, {0.5f, 50.0f}, {1.0f, 100.0f}};
     binding.handles = {{0.0f, -100.0f, 0.3f, 50.0f}, {0.7f, -50.0f, 1.0f, 100.0f}};
     ASSERT_TRUE(mix->bindings.upsert(binding));
     const auto original = *mix->bindings.find(binding.runtimeId());
     for (const auto bounds : {QJsonArray{0.0, 300.0}, QJsonArray{10.0, 20.0}, QJsonArray{250.0, 300.0}}) {
-        const auto result = VNX::ActionManager::instance().execute(QStringLiteral("set_item_property"),
+        const auto result = harken::studio::ActionManager::instance().execute(QStringLiteral("set_item_property"),
             QJsonObject{{"authoring_handle", static_cast<qint64>(smooth_->objectID)},
                          {"property", "range"}, {"value", bounds}, {"range_policy", "fix"}});
         ASSERT_TRUE(result.success) << result.errorMessage.toStdString();
@@ -436,71 +436,71 @@ TEST_F(VariableRehearsalInspectorTest, FixedBindingDomainsPreserveEndpointExtens
         EXPECT_FLOAT_EQ(updated->curve.back().x, 1.0f);
         for (int sample = 0; sample <= 40; ++sample) {
             const float x = variable->rangeMin + (variable->rangeMax - variable->rangeMin) * sample / 40.0f;
-            EXPECT_NEAR(VNX::BindingSemantics::contribution(*updated, variable->kind, x,
+            EXPECT_NEAR(harken::studio::BindingSemantics::contribution(*updated, variable->kind, x,
                             variable->rangeMin, variable->rangeMax),
-                        VNX::BindingSemantics::contribution(original, variable->kind, x, 100.0f, 200.0f), 0.001f);
+                        harken::studio::BindingSemantics::contribution(original, variable->kind, x, 100.0f, 200.0f), 0.001f);
         }
-        ASSERT_TRUE(VNX::UndoRedoManager::instance().undo());
+        ASSERT_TRUE(harken::studio::UndoRedoManager::instance().undo());
         EXPECT_EQ(mix->bindings.find(binding.runtimeId())->toJson(), original.toJson());
-        VNX::UndoRedoManager::instance().clear();
+        harken::studio::UndoRedoManager::instance().clear();
     }
     binding.curve.clear();
     binding.handles.clear();
-    for (int point = 0; point < VNX::kCurveMaxPoints; ++point)
-        binding.curve.append({point / static_cast<float>(VNX::kCurveMaxPoints - 1), point * 25.0f});
+    for (int point = 0; point < harken::studio::kCurveMaxPoints; ++point)
+        binding.curve.append({point / static_cast<float>(harken::studio::kCurveMaxPoints - 1), point * 25.0f});
     ASSERT_TRUE(mix->bindings.upsert(binding));
     const auto before = mix->bindings.toJson();
     const auto declaration = variable->toJson();
     QJsonObject args{{"authoring_handle", static_cast<qint64>(smooth_->objectID)},
                      {"property", "range"}, {"value", QJsonArray{0.0, 300.0}}};
-    const auto pending = VNX::ActionManager::instance().execute(QStringLiteral("set_item_property"), args);
+    const auto pending = harken::studio::ActionManager::instance().execute(QStringLiteral("set_item_property"), args);
     EXPECT_EQ(pending.errorCode, QStringLiteral("VARIABLE_RANGE_POLICY_REQUIRED"));
     args[QStringLiteral("range_policy")] = QStringLiteral("fix");
-    const auto rejected = VNX::ActionManager::instance().execute(QStringLiteral("set_item_property"), args);
+    const auto rejected = harken::studio::ActionManager::instance().execute(QStringLiteral("set_item_property"), args);
     EXPECT_EQ(rejected.errorCode, QStringLiteral("VARIABLE_RANGE_CURVE_CONFLICT"));
     EXPECT_EQ(variable->toJson(), declaration);
     EXPECT_EQ(mix->bindings.toJson(), before);
-    EXPECT_FALSE(VNX::UndoRedoManager::instance().canUndo());
+    EXPECT_FALSE(harken::studio::UndoRedoManager::instance().canUndo());
 }
 
 TEST_F(VariableRehearsalInspectorTest, RangePoliciesKeepDiscreteWritesLegalWithoutMovingMatchLabels)
 {
-    auto& manager = VNX::ProjectManager::instance();
-    auto* variable = smooth_->comp<VNX::VVariable>();
-    variable->kind = VNX::VariableKind::Step;
+    auto& manager = harken::studio::ProjectManager::instance();
+    auto* variable = smooth_->comp<harken::studio::VVariable>();
+    variable->kind = harken::studio::VariableKind::Step;
     variable->defaultValue = 50.0f;
     variable->labels = {{0, QStringLiteral("Zero")}, {50, QStringLiteral("Middle")}};
     const auto oldLabels = variable->getField(QStringLiteral("labels"));
-    auto* selection = container_->comp<VNX::VSelection>();
+    auto* selection = container_->comp<harken::studio::VSelection>();
     const auto before = selection->selections.toJson();
-    auto* actionItem = manager.createItem(nullptr, QStringLiteral("Step_Action"), VNX::ProjectItem::Type::Action);
+    auto* actionItem = manager.createItem(nullptr, QStringLiteral("Step_Action"), harken::studio::ProjectItem::Type::Action);
     ASSERT_NE(actionItem, nullptr);
-    auto* action = actionItem->comp<VNX::VAction>();
-    VNX::VActionStep step;
-    step.type = VNX::VActionStep::Type::SetVariable;
+    auto* action = actionItem->comp<harken::studio::VAction>();
+    harken::studio::VActionStep step;
+    step.type = harken::studio::VActionStep::Type::SetVariable;
     step.targetObjectID = smooth_->objectID;
     step.value = 50.0f;
     action->steps = {step};
-    VNX::UndoRedoManager::instance().clear();
+    harken::studio::UndoRedoManager::instance().clear();
     for (const auto& policy : {QStringLiteral("stretch"), QStringLiteral("fix")}) {
         const auto declaration = variable->toJson();
         QJsonObject args{{"authoring_handle", static_cast<qint64>(smooth_->objectID)},
                          {"property", "range"}, {"value", QJsonArray{1.0, 8.0}}, {"range_policy", policy}};
-        const auto blocked = VNX::ActionManager::instance().execute(QStringLiteral("set_item_property"), args);
+        const auto blocked = harken::studio::ActionManager::instance().execute(QStringLiteral("set_item_property"), args);
         EXPECT_EQ(blocked.errorCode, QStringLiteral("VARIABLE_RANGE_CONFLICT"));
         EXPECT_EQ(variable->toJson(), declaration);
         EXPECT_FLOAT_EQ(action->steps.front().value, 50.0f);
-        EXPECT_FALSE(VNX::UndoRedoManager::instance().canUndo());
+        EXPECT_FALSE(harken::studio::UndoRedoManager::instance().canUndo());
         args[QStringLiteral("allow_invalid_references")] = true;
-        const auto accepted = VNX::ActionManager::instance().execute(QStringLiteral("set_item_property"), args);
+        const auto accepted = harken::studio::ActionManager::instance().execute(QStringLiteral("set_item_property"), args);
         ASSERT_TRUE(accepted.success) << accepted.errorMessage.toStdString();
         EXPECT_FLOAT_EQ(variable->defaultValue, policy == QLatin1String("stretch") ? 5.0f : 8.0f);
         EXPECT_FLOAT_EQ(action->steps.front().value, variable->defaultValue);
         EXPECT_EQ(variable->getField(QStringLiteral("labels")), oldLabels);
         EXPECT_EQ(selection->selections.toJson(), before);
-        ASSERT_TRUE(VNX::UndoRedoManager::instance().undo());
+        ASSERT_TRUE(harken::studio::UndoRedoManager::instance().undo());
         EXPECT_EQ(variable->toJson(), declaration);
         EXPECT_FLOAT_EQ(action->steps.front().value, 50.0f);
-        VNX::UndoRedoManager::instance().clear();
+        harken::studio::UndoRedoManager::instance().clear();
     }
 }

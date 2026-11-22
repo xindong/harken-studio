@@ -61,10 +61,7 @@ TEST(MonitorRequest, NativeRefusalsAllocateOnceAndEngineReinitChangesIncarnation
         previousInstance = source.EngineInstance();
         const auto before = source.LastSequence();
         EXPECT_EQ(Vn_PostAction(nullptr, nullptr), VN_INVALID_ARG);
-        EXPECT_EQ(Vn_PostActionByName(nullptr, nullptr), VN_INVALID_ARG);
-        EXPECT_EQ(Vn_PostActionPinned(nullptr, nullptr), VN_INVALID_ARG);
-        EXPECT_EQ(Vn_PostActionResolved(nullptr, 0, 0, nullptr), VN_INVALID_ARG);
-        EXPECT_EQ(source.LastSequence(), before + 4);
+        EXPECT_EQ(source.LastSequence(), before + 1);
         EXPECT_EQ(source.EngineInstance(), previousInstance);
     }
 }

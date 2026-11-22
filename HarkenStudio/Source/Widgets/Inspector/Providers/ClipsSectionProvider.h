@@ -2,7 +2,7 @@
 
 #include "Widgets/Inspector/InspectorCustomizationRegistry.h"
 
-namespace VNX {
+namespace harken::studio {
 
 class ClipsSectionProvider final : public ISectionProvider
 {

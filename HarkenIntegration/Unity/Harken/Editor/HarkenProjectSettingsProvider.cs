@@ -11,7 +11,7 @@ namespace Harken.Unity.Editor
 {
     public static class HarkenProjectSettingsProvider
     {
-        public const string AssetPath = "Assets/Harken/Resources/HarkenProjectSettings.asset";
+        public const string AssetPath = "Assets/Resources/HarkenProjectSettings.asset";
 
         [SettingsProvider]
         public static SettingsProvider CreateSettingsProvider()
@@ -68,7 +68,6 @@ namespace Harken.Unity.Editor
                     serialized.Update();
                     EditorGUILayout.PropertyField(serialized.FindProperty("enableCommunicationInBuilds"),
                         new GUIContent("Enable Communication in Builds"));
-                    // EditorGUILayout.PropertyField(serialized.FindProperty("remoteBindAddress"), new GUIContent("Bind Address"));
                     EditorGUILayout.LabelField("Bind Address", "127.0.0.1");
                     EditorGUILayout.PropertyField(serialized.FindProperty("remotePort"), new GUIContent("Port"));
                     EditorGUILayout.PropertyField(serialized.FindProperty("enableRemoteDiscovery"), new GUIContent("Auto Discover"));
@@ -90,6 +89,11 @@ namespace Harken.Unity.Editor
                 state.EditorProject = editorProject = new SerializedObject(HarkenEditorProjectSettings.GetOrCreate());
             project.Update();
             editorProject.Update();
+            EditorGUILayout.LabelField("Native library", EditorStyles.boldLabel);
+            SerializedProperty nativeLibrary = editorProject.FindProperty("nativeLibrary");
+            int previousNativeLibrary = nativeLibrary.enumValueIndex;
+            EditorGUILayout.PropertyField(nativeLibrary, new GUIContent("Native Library"));
+            bool nativeLibraryChanged = nativeLibrary.enumValueIndex != previousNativeLibrary;
             EditorGUILayout.LabelField("Audio project", EditorStyles.boldLabel);
             DrawFolder(editorProject.FindProperty("audioProjectDirectory"), "Audio project directory");
             EditorGUILayout.LabelField("Generated packs", EditorStyles.boldLabel);
@@ -101,6 +105,13 @@ namespace Harken.Unity.Editor
                 AssetDatabase.SaveAssetIfDirty(editorProject.targetObject);
                 AssetDatabase.SaveAssetIfDirty(project.targetObject);
             }
+            if (nativeLibraryChanged)
+            {
+                HarkenNativeLibrarySelection.ApplyScriptingDefines();
+                HarkenPluginImporterSetup.ConfigureImporters();
+                EditorUtility.DisplayDialog("Harken",
+                    "Restart Unity to load the selected native library.", "OK");
+            }
             if (!HarkenProjectSettings.TryResolvePackDirectory(out string packRoot, out string packError))
                 EditorGUILayout.HelpBox(packError, MessageType.Warning);
             else
@@ -110,17 +121,6 @@ namespace Harken.Unity.Editor
             project.Update();
             DrawCapacity(project, "maxVoices", "Max Voices");
             EditorGUILayout.PropertyField(project.FindProperty("language"), new GUIContent("Language"));
-            // Temporarily hide inventory-only platform ids until current Pack companions provide this selector.
-            if (HarkenEditorPublicationSupport.IsAvailable)
-                EditorGUILayout.PropertyField(project.FindProperty("packPlatformId"), new GUIContent("Platform Id"));
-            else if (!string.IsNullOrEmpty(project.FindProperty("packPlatformId").stringValue))
-            {
-                // Existing settings must remain recoverable while the legacy selector is suspended.
-                EditorGUILayout.HelpBox("Clear the saved legacy platform selection to use the configured Pack directory and platform name.",
-                    MessageType.Warning);
-                if (GUILayout.Button("Clear legacy platform selection"))
-                    project.FindProperty("packPlatformId").stringValue = string.Empty;
-            }
             EditorGUILayout.PropertyField(project.FindProperty("packPlatform"), new GUIContent("Platform Name"));
             EditorGUILayout.PropertyField(project.FindProperty("initPack"), new GUIContent("Init Pack"));
             EditorGUILayout.PropertyField(project.FindProperty("suppressUnityAudio"), new GUIContent("Suppress Unity Audio"));
@@ -194,10 +194,8 @@ namespace Harken.Unity.Editor
             if (settings != null) return settings;
             if (AssetDatabase.LoadMainAssetAtPath(AssetPath) != null || File.Exists(AssetPath))
                 throw new InvalidOperationException("The Harken settings path contains a different asset: " + AssetPath);
-            if (!AssetDatabase.IsValidFolder("Assets/Harken"))
-                AssetDatabase.CreateFolder("Assets", "Harken");
-            if (!AssetDatabase.IsValidFolder("Assets/Harken/Resources"))
-                AssetDatabase.CreateFolder("Assets/Harken", "Resources");
+            if (!AssetDatabase.IsValidFolder("Assets/Resources"))
+                AssetDatabase.CreateFolder("Assets", "Resources");
             settings = ScriptableObject.CreateInstance<HarkenProjectSettings>();
             AssetDatabase.CreateAsset(settings, AssetPath);
             AssetDatabase.SaveAssetIfDirty(settings);

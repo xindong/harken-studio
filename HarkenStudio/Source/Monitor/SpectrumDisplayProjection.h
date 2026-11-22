@@ -5,7 +5,7 @@
 #include <cstdint>
 #include <memory>
 
-namespace VNX {
+namespace harken::studio {
 namespace Monitor {
 
 enum class SpectrumFace
@@ -29,4 +29,4 @@ SpectrumDisplayProjection projectSpectrumFace(
     const std::shared_ptr<const MonitorStoreSnapshot>& snapshot);
 
 } // namespace Monitor
-} // namespace VNX
+} // namespace harken::studio

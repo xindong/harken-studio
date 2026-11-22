@@ -2,22 +2,22 @@
 
 #include <harken_studio/AudioValues.h>
 
-namespace harkenstudiobuild {
+namespace harken::studio::build {
 
 struct ParameterCurvePoint { float x = 0; float y = 0; };
 struct ParameterCurveHandles { float h1x = 0; float h1y = 0; float h2x = 0; float h2y = 0; };
 
 struct BindingCurve {
     std::uint32_t pointCount = 0;
-    ParameterCurvePoint points[harkenstudio::kCurveMaxPoints]{};
-    ParameterCurveHandles handles[harkenstudio::kCurveMaxPoints - 1]{};
+    ParameterCurvePoint points[harken::studio::types::kCurveMaxPoints]{};
+    ParameterCurveHandles handles[harken::studio::types::kCurveMaxPoints - 1]{};
 };
 
 struct AttenuationCurve {
     std::uint32_t enabled = 0;
     std::uint32_t pointCount = 0;
-    ParameterCurvePoint points[harkenstudio::kAttenuationMaxCurvePoints]{};
-    ParameterCurveHandles handles[harkenstudio::kAttenuationMaxCurvePoints - 1]{};
+    ParameterCurvePoint points[harken::studio::types::kAttenuationMaxCurvePoints]{};
+    ParameterCurveHandles handles[harken::studio::types::kAttenuationMaxCurvePoints - 1]{};
 };
 
 struct AttenuationDefinition {
@@ -40,7 +40,7 @@ struct AttenuationDefinition {
 };
 
 struct BindingDefinition {
-    harkenstudio::ObjectId variableId{};
+    harken::studio::types::ObjectId variableId{};
     std::uint32_t targetScopeKind = 0;
     std::uint32_t targetId = 0;
     BindingCurve curve{};

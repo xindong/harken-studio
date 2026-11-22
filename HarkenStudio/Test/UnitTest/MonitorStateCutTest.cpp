@@ -1,4 +1,5 @@
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 #include "Monitor/MonitorStateCut.h"
 #include "Monitor/MonitorStore.h"
 
@@ -7,11 +8,11 @@
 #include <cstring>
 #include <memory>
 
-using VNX::Monitor::MonitorCutViewStatus;
-using VNX::Monitor::MonitorDecodedRecord;
-using VNX::Monitor::MonitorRecordId;
-using VNX::Monitor::MonitorStoreSnapshot;
-using VNX::Monitor::projectStateCut;
+using harken::studio::Monitor::MonitorCutViewStatus;
+using harken::studio::Monitor::MonitorDecodedRecord;
+using harken::studio::Monitor::MonitorRecordId;
+using harken::studio::Monitor::MonitorStoreSnapshot;
+using harken::studio::Monitor::projectStateCut;
 
 namespace {
 
@@ -26,7 +27,7 @@ MonitorDecodedRecord makeRecord(uint32_t kind,
                                 uint64_t generation = 0)
 {
     MonitorDecodedRecord rec;
-    rec.header.structSize = sizeof(VNX::Monitor::MonitorRecordHeader);
+    rec.header.structSize = sizeof(harken::studio::Monitor::MonitorRecordHeader);
     rec.header.recordKind = kind;
     rec.header.streamKind = VN_MONITOR_STREAM_STATE;
     rec.header.streamId = streamId;
@@ -46,19 +47,19 @@ void addRecord(MonitorStoreSnapshot& snap, MonitorDecodedRecord rec)
     snap.records.push_back(std::move(rec));
 }
 
-VNX::Monitor::MonitorStateCutBegin beginPayload(uint64_t cutId, uint64_t world)
+harken::studio::Monitor::MonitorStateCutBegin beginPayload(uint64_t cutId, uint64_t world)
 {
-    VNX::Monitor::MonitorStateCutBegin payload {};
-    payload.structSize = sizeof(VNX::Monitor::MonitorStateCutBegin);
+    harken::studio::Monitor::MonitorStateCutBegin payload {};
+    payload.structSize = sizeof(harken::studio::Monitor::MonitorStateCutBegin);
     payload.stateCutId = cutId;
     payload.worldGeneration = world;
     return payload;
 }
 
-VNX::Monitor::MonitorStateUpsert upsertPayload(uint64_t cutId, uint64_t handle, uint64_t generation)
+harken::studio::Monitor::MonitorStateUpsert upsertPayload(uint64_t cutId, uint64_t handle, uint64_t generation)
 {
-    VNX::Monitor::MonitorStateUpsert payload {};
-    payload.structSize = sizeof(VNX::Monitor::MonitorStateUpsert);
+    harken::studio::Monitor::MonitorStateUpsert payload {};
+    payload.structSize = sizeof(harken::studio::Monitor::MonitorStateUpsert);
     payload.stateCutId = cutId;
     payload.instanceHandle = handle;
     payload.instanceGeneration = generation;
@@ -66,10 +67,10 @@ VNX::Monitor::MonitorStateUpsert upsertPayload(uint64_t cutId, uint64_t handle, 
     return payload;
 }
 
-VNX::Monitor::MonitorStateCutEnd endPayload(uint64_t cutId, uint32_t result)
+harken::studio::Monitor::MonitorStateCutEnd endPayload(uint64_t cutId, uint32_t result)
 {
-    VNX::Monitor::MonitorStateCutEnd payload {};
-    payload.structSize = sizeof(VNX::Monitor::MonitorStateCutEnd);
+    harken::studio::Monitor::MonitorStateCutEnd payload {};
+    payload.structSize = sizeof(harken::studio::Monitor::MonitorStateCutEnd);
     payload.stateCutId = cutId;
     payload.result = result;
     return payload;

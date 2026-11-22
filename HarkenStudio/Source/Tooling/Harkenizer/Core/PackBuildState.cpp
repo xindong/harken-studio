@@ -3,15 +3,17 @@
 #include "AssetPipeline/BuildSourceInputs.h"
 #include "AssetPipeline/SourceFileState.h"
 #include "AssetPipeline/PathUtils.h"
-#include "AssetPipeline/PlatformProfile.h"
 #include "ProjectSerializer.h"
 #include "Components/VAction.h"
 #include "Components/VEffect.h"
 #include "Components/VMixNode.h"
 #include "PlayablePropertyAuthoringV1.h"
 #include "SoundSourceSemantics.h"
+#include "Tooling/Harkenizer/Core/CanonicalRuntimeProjectAdapterPrivate.h"
 #include "Tooling/Harkenizer/Core/PackBuildPlan.h"
 #include "Tooling/Harkenizer/Core/SoundSourceDerivative.h"
+
+#include <harken_pack/PackFile.h>
 
 #include <QCryptographicHash>
 #include <QDebug>
@@ -22,7 +24,7 @@
 #include <QJsonDocument>
 #include <QSaveFile>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 using ExportResult = ProjectPackExporter::ExportResult;
@@ -34,7 +36,7 @@ QString digest(const QJsonObject& object)
         QJsonDocument(object).toJson(QJsonDocument::Compact), QCryptographicHash::Sha256).toHex());
 }
 
-QString companionPath(const QString& path)
+QString packMetadataPath(const QString& path)
 {
     const QFileInfo file(path);
     return QDir::cleanPath(QDir(file.path()).filePath(file.completeBaseName() + QStringLiteral(".json")));
@@ -60,7 +62,7 @@ PackBuildState::PackBuildState(std::shared_ptr<const ProjectBuildSnapshot> snaps
     QFile file(cachePath_);
     if (file.open(QIODevice::ReadOnly)) {
         const auto state = QJsonDocument::fromJson(file.readAll()).object();
-        if (state.value(QStringLiteral("version")).toInt() == 2) {
+        if (state.value(QStringLiteral("version")).toInt() == kPackBuildStateVersion) {
             legacyCleanup_ = false;
             targets_ = state.value(QStringLiteral("targets")).toObject();
             waveforms_ = state.value(QStringLiteral("waveforms")).toObject();
@@ -82,11 +84,11 @@ void PackBuildState::select(const ProjectPackExporter::ExportOptions& options, c
     packs_ = targets_.value(outputDirectory_).toObject().value(QStringLiteral("packs")).toObject();
     inputs_.clear();
     packMatches_.clear();
-    companionMatches_.clear();
+    packMetadataMatches_.clear();
     current_.clear();
     resources_.clear();
     records_.clear();
-    objectCount_ = mediaCount_ = actionCount_ = emptyActionCount_ = 0;
+    objectCount_ = mediaCount_ = actionCount_ = 0;
     inputsReady_ = false;
     reusable_ = false;
     if (!options.forceReexport && !packs_.isEmpty()) deriveInputs();
@@ -102,6 +104,7 @@ void PackBuildState::deriveInputs(const QSet<QString>* successfulPaths)
     const auto& project = snapshot_->project;
     const auto* platform = ProjectPlatformSemantics::find(project.platforms, QUuid(options.platform));
     if (!platform) { reusable_ = false; return; }
+    const auto& sourceIndex = *options.buildContext->capabilities->sourceIndex();
     ProjectSerializer serializer;
     if (!serializer.prepareReferenceWrite(project)) { reusable_ = false; return; }
     const auto itemDigest = [&](const ProjectItem* item) {
@@ -109,6 +112,13 @@ void PackBuildState::deriveInputs(const QSet<QString>* successfulPaths)
         if (cached != objectDigests_.cend()) return *cached;
         auto json = serializer.projectItemToJson(*item, false);
         if (json.isEmpty()) return QString();
+        if (json.value(QStringLiteral("fieldGroups")).isObject()) {
+            auto groups = json.value(QStringLiteral("fieldGroups")).toObject();
+            auto shared = groups.value(QStringLiteral("shared")).toObject();
+            shared.remove(QStringLiteral("conversion"));
+            groups.insert(QStringLiteral("shared"), shared);
+            json.insert(QStringLiteral("fieldGroups"), groups);
+        }
         if (const auto* mix = item->comp<VMixNode>()) {
             QJsonObject effects;
             bool valid = true;
@@ -144,7 +154,7 @@ void PackBuildState::deriveInputs(const QSet<QString>* successfulPaths)
     };
     QJsonObject globals;
     QSet<const ProjectItem*> visited;
-    QSet<harkenstudio::ObjectId> objects, actions, emptyActions;
+    QSet<harken::studio::types::ObjectId> objects, actions;
     QSet<QString> media;
     const auto visit = [&](const auto& self, const ProjectItem* item) -> void {
         if (!item || visited.contains(item)) return;
@@ -197,7 +207,6 @@ void PackBuildState::deriveInputs(const QSet<QString>* successfulPaths)
                 actions.insert(member.stableId);
                 const auto* action = item->comp<VAction>();
                 if (action && !action->steps.empty()) hasSteps = true;
-                else emptyActions.insert(member.stableId);
                 if (!unit.grouped && member.stableId == unit.actionStableIds.front()) objectId = item->objectID;
             } else {
                 objects.insert(member.stableId);
@@ -218,12 +227,24 @@ void PackBuildState::deriveInputs(const QSet<QString>* successfulPaths)
                 for (const auto& member : *members) addMember(member);
             for (const auto* entries : {&variant.closure.media, &variant.closure.controlMedia}) {
                 for (const auto& entry : *entries) {
-                    const auto id = QString::number(entry.authoringSourceId);
+                    const auto soundGuid = QUuid(objectIdString(entry.soundStableId));
+                    const auto id = soundGuid.toString(QUuid::WithoutBraces)
+                        + QLatin1Char('/') + entry.sourceEntryId.toString(QUuid::WithoutBraces);
                     media.insert(entry.artifactId);
                     if (sources.contains(id)) continue;
-                    const auto input = snapshot_->media.inspectRequest(entry.authoringSourceId, platform->id);
-                    if (!input) { valid = false; continue; }
-                    sources.insert(id, input->fingerprint());
+                    const auto owner = sourceIndex.byQtGuid.find(soundGuid);
+                    const auto* sound = owner == sourceIndex.byQtGuid.end()
+                        ? nullptr : owner->second->comp<VSound>();
+                    const auto* source = sound
+                        ? SoundSourceSemantics::findEntry(*sound, entry.sourceEntryId) : nullptr;
+                    const auto input = snapshot_->media.inspectRequest(
+                        soundGuid, entry.authoringSourceId, platform->id);
+                    if (!source || !input) { valid = false; continue; }
+                    const auto authored = SoundSourceSemantics::authoredView(*source, &input->asset);
+                    const auto key = SoundSourceDerivative::cacheKey(input->asset.contentHash,
+                        authored, sound->scheduleOffsetSec, input->conversion, input->asset.metadata);
+                    valid = valid && !key.isEmpty();
+                    sources.insert(id, key);
                 }
             }
         }
@@ -266,7 +287,6 @@ void PackBuildState::deriveInputs(const QSet<QString>* successfulPaths)
     objectCount_ = objects.size();
     mediaCount_ = media.size();
     actionCount_ = actions.size();
-    emptyActionCount_ = emptyActions.size();
     inputsReady_ = true;
     reusable_ = reusable_ && !successfulPaths;
 }
@@ -281,13 +301,13 @@ bool PackBuildState::savedPackMatches(const QString& path) const
     return current;
 }
 
-bool PackBuildState::savedCompanionMatches(const QString& path) const
+bool PackBuildState::savedPackMetadataMatches(const QString& path) const
 {
-    const auto found = companionMatches_.constFind(path);
-    if (found != companionMatches_.cend()) return *found;
-    const auto current = matches(QDir(outputDirectory_).filePath(companionPath(path)),
-        packs_.value(path).toObject().value(QStringLiteral("companionState")));
-    companionMatches_.insert(path, current);
+    const auto found = packMetadataMatches_.constFind(path);
+    if (found != packMetadataMatches_.cend()) return *found;
+    const auto current = matches(QDir(outputDirectory_).filePath(packMetadataPath(path)),
+        packs_.value(path).toObject().value(QStringLiteral("packMetadataState")));
+    packMetadataMatches_.insert(path, current);
     return current;
 }
 
@@ -299,8 +319,9 @@ bool PackBuildState::isCurrent(const QString& path) const
         const auto input = inputs_.value(path);
         const auto row = packs_.value(path).toObject();
         if (input.isEmpty() || row.value(QStringLiteral("input")).toString() != input) return false;
+        if (!row.value(QStringLiteral("media")).isArray()) return false;
         if (!savedPackMatches(path)
-            || !savedCompanionMatches(path)) return false;
+            || !savedPackMetadataMatches(path)) return false;
         for (const auto& waveform : row.value(QStringLiteral("waveforms")).toArray())
             if (!isWaveformCurrent(path, waveform.toString())) return false;
         return true;
@@ -363,7 +384,7 @@ bool PackBuildState::restore(ExportResult* result, std::vector<BuildRecord>* rec
         artifact.packName = record.packName;
         artifact.outputPath = record.outputPath;
         artifact.bytes = record.fileSize;
-        artifact.version = HARKEN_PACK_SCHEMA_VERSION;
+        artifact.version = HK_PACK_FORMAT_VERSION;
         artifact.modified = file.lastModified();
         restored.artifacts.append(artifact);
         restored.fileSize += record.fileSize;
@@ -371,18 +392,24 @@ bool PackBuildState::restore(ExportResult* result, std::vector<BuildRecord>* rec
             ++restored.skippedPackCount;
         const auto path = QDir(outputDirectory_).relativeFilePath(record.outputPath);
         const auto row = packs_.value(path).toObject();
+        const auto media = row.value(QStringLiteral("media")).toArray();
+        for (const auto& value : media) {
+            auto entry = value.toObject();
+            entry.insert(QStringLiteral("pack"), path);
+            restored.media.append(entry);
+        }
         QJsonArray waveforms;
         for (const auto& path : row.value(QStringLiteral("waveforms")).toArray())
             waveforms.append(QJsonObject{{QStringLiteral("file"), path}});
         restored.outputs.append(QJsonObject{{QStringLiteral("path"), path},
             {QStringLiteral("key"), record.unitKey},
-            {QStringLiteral("companion"), QJsonObject{{QStringLiteral("waveforms"), waveforms}}}});
+            {QStringLiteral("media"), media},
+            {QStringLiteral("packMetadata"), QJsonObject{{QStringLiteral("waveforms"), waveforms}}}});
     }
-    if (emptyActionCount_ != 0)
-        restored.warnings.append(QStringLiteral("%1 action(s) have no steps and were not packed")
-            .arg(emptyActionCount_));
     if (options_.updateSelectedOnly)
         std::erase_if(restoredRecords, [](const auto& record) { return record.source == BuildRecord::Source::Init; });
+    for (const auto& record : restoredRecords)
+        restored.warnings.append(record.warnings);
     restored.success = true;
     *result = std::move(restored);
     *records = std::move(restoredRecords);
@@ -393,8 +420,16 @@ QString PackBuildState::resourceFingerprint(const QString& path) const
 {
     const auto row = packs_.value(path).toObject();
     return savedPackMatches(path)
-        && savedCompanionMatches(path)
+        && savedPackMetadataMatches(path)
         ? row.value(QStringLiteral("resourceFingerprint")).toString() : QString();
+}
+
+std::optional<QJsonArray> PackBuildState::mediaResults(const QString& path) const
+{
+    const auto media = packs_.value(path).toObject().value(QStringLiteral("media"));
+    if (!media.isArray() || !savedPackMatches(path) || !savedPackMetadataMatches(path))
+        return std::nullopt;
+    return media.toArray();
 }
 
 void PackBuildState::setResourceFingerprint(const QString& path, const QString& fingerprint)
@@ -418,18 +453,19 @@ void PackBuildState::save(const ExportResult& result, const std::vector<BuildRec
         const auto previous = packs_.value(path).toObject();
         QJsonObject row;
         row.insert(QStringLiteral("key"), output.value(QStringLiteral("key")));
+        row.insert(QStringLiteral("media"), output.value(QStringLiteral("media")));
         row.insert(QStringLiteral("state"), fileState(directory.filePath(path)));
         const bool unchanged = previous.value(QStringLiteral("state")) == row.value(QStringLiteral("state"));
         row.insert(QStringLiteral("input"), path == QStringLiteral("Init.bytes") && !result.success
             ? QString() : inputs_.value(path, inputsReady_ || unchanged
                 ? previous.value(QStringLiteral("input")).toString() : QString()));
-        row.insert(QStringLiteral("companionState"), fileState(directory.filePath(companionPath(path))));
+        row.insert(QStringLiteral("packMetadataState"), fileState(directory.filePath(packMetadataPath(path))));
         const auto fingerprint = resources_.value(path,
             unchanged
                 ? previous.value(QStringLiteral("resourceFingerprint")).toString() : QString());
         if (!fingerprint.isEmpty()) row.insert(QStringLiteral("resourceFingerprint"), fingerprint);
         QJsonArray waveforms;
-        for (const auto& value : output.value(QStringLiteral("companion")).toObject().value(QStringLiteral("waveforms")).toArray()) {
+        for (const auto& value : output.value(QStringLiteral("packMetadata")).toObject().value(QStringLiteral("waveforms")).toArray()) {
             const auto file = value.toObject().value(QStringLiteral("file")).toString();
             if (!waveforms.contains(file)) waveforms.append(file);
         }
@@ -480,7 +516,7 @@ bool PackBuildState::flush()
             if (!referenced.contains(path)) waveforms_.remove(path);
     }
     if (!QDir().mkpath(QFileInfo(cachePath_).absolutePath())) return false;
-    QJsonObject state{{QStringLiteral("version"), 2}, {QStringLiteral("targets"), targets_}};
+    QJsonObject state{{QStringLiteral("version"), kPackBuildStateVersion}, {QStringLiteral("targets"), targets_}};
     if (!waveforms_.isEmpty()) state.insert(QStringLiteral("waveforms"), waveforms_);
     const auto bytes = QJsonDocument(state).toJson(QJsonDocument::Compact);
     QSaveFile file(cachePath_);
@@ -493,7 +529,6 @@ bool PackBuildState::flush()
 void PackBuildState::prune() const
 {
     const auto& snapshot = *snapshot_;
-    const auto assets = snapshot.media.sourceInputs->assets();
     QSet<QString> keys;
     QSet<const ProjectItem*> visited;
     const auto visit = [&](const auto& self, const ProjectItem* item) -> void {
@@ -501,19 +536,18 @@ void PackBuildState::prune() const
         visited.insert(item);
         if (const auto* sound = item->comp<VSound>()) {
             QStringList languages = sound->distinguishLanguage ? snapshot.project.projectLanguages : QStringList{QString()};
-            for (const auto& platform : snapshot.project.platforms) {
+            for (const auto& platform : snapshot.media.platforms) {
                 for (const auto& language : languages) {
-                    const auto selected = SoundSourceSemantics::resolveSourceSelection(
-                        *sound, ProjectPlatformSemantics::idString(platform.id), language);
-                    if (!selected) continue;
-                    const auto asset = assets.constFind(selected.source->sourceId);
-                    if (asset == assets.cend() || asset->contentHash.isEmpty()) continue;
-                    const auto override = snapshot.media.fileOverrides.constFind(selected.source->sourceId);
-                    const auto settings = PlatformProfileManager::effectiveSettingsForAsset(
-                        *asset, platform, override == snapshot.media.fileOverrides.cend() ? nullptr : &*override);
-                    const auto source = SoundSourceSemantics::authoredView(*selected.source, &*asset);
-                    keys.insert(SoundSourceDerivative::cacheKey(asset->contentHash, source,
-                        sound->scheduleOffsetSec, settings, asset->metadata));
+                    const auto* set = SoundSourceSemantics::sourceSet(*sound, language);
+                    if (!set) continue;
+                    for (const auto& entry : set->entries) {
+                        const auto input = snapshot.media.inspectRequest(
+                            item->guid, entry.sourceId, platform.id);
+                        if (!input) continue;
+                        const auto source = SoundSourceSemantics::authoredView(entry, &input->asset);
+                        keys.insert(SoundSourceDerivative::cacheKey(input->asset.contentHash, source,
+                            sound->scheduleOffsetSec, input->conversion, input->asset.metadata));
+                    }
                 }
             }
         }
@@ -524,8 +558,10 @@ void PackBuildState::prune() const
     const QDir cache(PathUtils::getDotCacheDir(snapshot.media.projectRoot));
     const QDir conversions(cache.filePath(QStringLiteral("pack/media")));
     for (const auto& file : conversions.entryInfoList(
-            {QStringLiteral("*.pcm"), QStringLiteral("*.pcm.??????")}, QDir::Files))
-        if ((file.suffix() != QStringLiteral("pcm") || !keys.contains(file.completeBaseName()))
+            {QStringLiteral("*.pcm"), QStringLiteral("*.pcm.??????"),
+             QStringLiteral("*.vcm"), QStringLiteral("*.vcm.??????")}, QDir::Files))
+        if (((file.suffix() != QStringLiteral("pcm") && file.suffix() != QStringLiteral("vcm"))
+             || !keys.contains(file.completeBaseName()))
             && !QFile::remove(file.absoluteFilePath()))
             qWarning().noquote() << QStringLiteral("Could not remove unused Pack media: %1").arg(file.absoluteFilePath());
     if (!legacyCleanup_) return;

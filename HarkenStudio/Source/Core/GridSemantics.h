@@ -13,7 +13,7 @@
 #include <utility>
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 
 struct ProjectItem;
 class VVariable;

@@ -5,7 +5,7 @@
 
 #include <cstdint>
 
-namespace harkenprojectschema {
+namespace harken::studio::project_schema {
 namespace {
 
 AuthoringGuid G(std::uint64_t low) { return harkentest::StudioObjectId(low); }

@@ -3,7 +3,7 @@
 
 #include "Dialogs/Settings/SettingsPanel.h"
 
-namespace VNX {
+namespace harken::studio {
 
 class ProjectConfigPage;
 class ProjectPublishPage;

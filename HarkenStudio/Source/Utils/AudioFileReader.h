@@ -10,7 +10,7 @@
 #include <io.h>
 #endif
 
-namespace VNX {
+namespace harken::studio {
 
 class AudioFileReader final : public QFile
 {

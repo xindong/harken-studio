@@ -19,7 +19,7 @@
 class QJsonObject;
 class QDialog;
 
-namespace VNX {
+namespace harken::studio {
 
 // Walks from anchor along direction for min(length, distance to the box
 // boundary), preserving direction instead of clamping components. Returns

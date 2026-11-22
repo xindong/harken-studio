@@ -10,7 +10,7 @@ class QLineEdit;
 class QPushButton;
 class QLabel;
 
-namespace VNX {
+namespace harken::studio {
 
 struct ProjectData;
 

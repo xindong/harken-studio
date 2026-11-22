@@ -4,7 +4,7 @@
 
 #include <algorithm>
 
-namespace VNX {
+namespace harken::studio {
 
 UndoCommand::UndoCommand(UndoCommand* parent)
 {

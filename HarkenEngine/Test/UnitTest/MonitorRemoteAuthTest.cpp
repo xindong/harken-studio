@@ -1,9 +1,10 @@
 #include "Common/ObjectIdTestSupport.h"
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 
 #include "MonitorCaptureHubTestHooks.h"
 #include "Common/TestUtil.h"
-#include "monitor_remote_codec.h"
+#include "MonitorRemoteCodec.h"
 
 #include <gtest/gtest.h>
 
@@ -98,7 +99,7 @@ bool WaitActiveGeneration(VnMonitorSessionHandle handle,
 }
 
 VnMonitorDropSummary RemoteTransportDrop() {
-    return harken::monitor::InternalDropForTests(1);
+    return harken::monitor::InternalDropForTests(0);
 }
 
 } // namespace
@@ -146,7 +147,7 @@ TEST(MonitorRemote, AuthLocalAclIgnoresSelfReportedPrincipal) {
                   0xFFFFFFFFFFFFFFFFull,
                   VN_MONITOR_PERM_OBSERVE_STATE | VN_MONITOR_PERM_OBSERVE_EVENTS |
                       VN_MONITOR_PERM_OBSERVE_MEASUREMENTS |
-                      VN_MONITOR_PERM_CAPTURE_CONTROL | VN_MONITOR_PERM_RECORD |
+                      VN_MONITOR_PERM_CAPTURE_CONTROL |
                       VN_MONITOR_PERM_RAW_AUDIO | VN_MONITOR_PERM_SYMBOLS));
     EXPECT_EQ(osHash, harken::monitor::MonitorEndpointLocalAclSidHashForTests());
     EXPECT_EQ(0u, harken::monitor::MonitorEndpointGrantedPermissionMaskForTests());
@@ -162,7 +163,7 @@ TEST(MonitorRemote, AuthHandshakeFailureLeavesNoHalfGrant) {
               harken::monitor::FailMonitorHandshakeForTests());
     EXPECT_EQ(0u, harken::monitor::MonitorEndpointEpochForTests());
     EXPECT_EQ(0u, harken::monitor::MonitorEndpointGrantedPermissionMaskForTests());
-    EXPECT_EQ(0u, harken::monitor::InternalQueuedCountForTests(1));
+    EXPECT_EQ(0u, harken::monitor::InternalQueuedCountForTests(0));
     harken::monitor::DisableMonitorEndpointForTests();
 }
 
@@ -218,7 +219,6 @@ TEST(MonitorRemote, AuthRawAudioNeedsPermissionAndPlan) {
     ASSERT_EQ(VN_OK, Vn_MonitorGetSubscriptionStatus(handle, &status));
     EXPECT_NE(0u, status.acceptedPermissionMask & VN_MONITOR_PERM_RAW_AUDIO);
     EXPECT_NE(1u, status.rawAudioDecision);
-    EXPECT_FALSE(harken::monitor::MonitorEndpointEmitsRawAudioForTests());
     EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(handle));
     harken::monitor::DisableMonitorEndpointForTests();
 }
@@ -261,12 +261,12 @@ TEST(MonitorRemote, AuthTwoClientsDoNotStealRecords) {
                          VN_MONITOR_SECURITY_LOCAL_ACL));
     ASSERT_EQ(VN_OK, harken::monitor::ConnectMonitorEndpointForTests());
     harken::monitor::StopDrainForTests();
-    harken::monitor::EnableInternalConsumersForTests((1u << 1) | (1u << 2));
+    harken::monitor::EnableInternalConsumersForTests((1u << 0) | (1u << 1));
     ASSERT_TRUE(harken::monitor::PublishSyntheticTimeSeriesForTests(1));
     harken::monitor::DrainOnceForTests();
     harken::monitor::StartDrainForTests();
-    const std::uint32_t a = harken::monitor::InternalQueuedCountForTests(1);
-    const std::uint32_t b = harken::monitor::InternalQueuedCountForTests(2);
+    const std::uint32_t a = harken::monitor::InternalQueuedCountForTests(0);
+    const std::uint32_t b = harken::monitor::InternalQueuedCountForTests(1);
     EXPECT_EQ(a, b);
     EXPECT_GE(a, 1u);
     harken::monitor::DisableMonitorEndpointForTests();
@@ -357,7 +357,7 @@ TEST(MonitorRemote, AuthNoAudioChangeWhenRemoteStalls) {
         }
 
         harken::monitor::StopDrainForTests();
-        harken::monitor::EnableInternalConsumersForTests((1u << 1) | (1u << 2));
+        harken::monitor::EnableInternalConsumersForTests((1u << 0) | (1u << 1));
         const VnMonitorDropSummary seeded = RemoteTransportDrop();
         VnMonitorDropSummary filled = seeded;
         const auto start = std::chrono::steady_clock::now();

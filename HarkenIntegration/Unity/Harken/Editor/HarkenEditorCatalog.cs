@@ -7,16 +7,9 @@ using UnityEngine;
 
 namespace Harken.Unity.Editor
 {
-    internal static class HarkenEditorPublicationSupport
-    {
-        internal static bool IsAvailable => false;
-        internal static bool CompanionAvailable => true;
-        internal const string Diagnostic = "Legacy publication and symbol tools are unavailable. Use current Pack companions.";
-    }
-
     public sealed class HarkenEditorPack
     {
-        internal HarkenEditorPack(PackCatalogSnapshot.Entry row)
+        internal HarkenEditorPack(ActionCatalogSnapshot.Entry row)
         {
             Name = row.Input.Names.Name; PackStableId = row.Input.Facts.packStableId;
             BytesPath = row.Path + ".bytes"; JsonPath = row.Path + ".json";
@@ -34,7 +27,7 @@ namespace Harken.Unity.Editor
 
     public sealed class HarkenActionDuration
     {
-        internal HarkenActionDuration(PackCatalogSnapshot.Entry row, uint revision)
+        internal HarkenActionDuration(ActionCatalogSnapshot.Entry row, uint revision)
         {
             ActionId = row.Input.Names.RootId; ContentHash = row.Input.Facts.contentHash;
             CatalogRevision = revision;
@@ -65,10 +58,10 @@ namespace Harken.Unity.Editor
 
     public sealed partial class HarkenEditorCatalog
     {
-        private PackCatalogSnapshot snapshot;
+        private ActionCatalogSnapshot snapshot;
         private object sourceIdentity;
-        public GameplayPublication Publication => snapshot?.Publication;
-        public HarkenPreparedPacks PreparedPacks { get; private set; }
+        public ActionCatalog Catalog => snapshot?.Catalog;
+        public HarkenPreviewContent PreviewContent { get; private set; }
         public string DirectoryPath { get; private set; }
         public VnResult LastResult { get; private set; } = VnResult.VN_CAPABILITY_UNAVAILABLE;
         public string Diagnostic { get; private set; } = "No Pack source is selected.";
@@ -76,7 +69,7 @@ namespace Harken.Unity.Editor
         public VnResult WaveformResult { get; private set; } = VnResult.VN_CAPABILITY_UNAVAILABLE;
         public string WaveformDiagnostic { get; private set; } = "No waveform is selected.";
 
-        public VnResult RefreshPlatform(string root, string platformId, string platformName,
+        public VnResult RefreshPlatform(string root, string platformName,
             string basePlatform, string language = null)
             => Refresh(Path.Combine(root ?? "", string.IsNullOrEmpty(platformName) ? basePlatform ?? "" : platformName), language);
 
@@ -86,21 +79,27 @@ namespace Harken.Unity.Editor
             {
                 if (string.IsNullOrWhiteSpace(directory)) return Fail(VnResult.VN_CAPABILITY_UNAVAILABLE, "No Pack directory is selected.");
                 string full = Path.GetFullPath(directory);
-                var names = CandidateFiles(full).ToList();
+                var source = PackSource.FromDirectory(full, language);
+                var names = CandidateFiles(full, source.IsResidentDirectory).ToList();
                 if (!string.IsNullOrEmpty(language) && PackDirectorySource.ValidLanguage(language) && Directory.Exists(Path.Combine(full, language)))
-                    names.AddRange(CandidateFiles(Path.Combine(full, language)));
+                    names.AddRange(CandidateFiles(Path.Combine(full, language), source.IsResidentDirectory));
                 var resources = HarkenEditorResources.FromDirectory(Path.GetDirectoryName(full) ?? full, full);
-                return RefreshCore(PackSource.FromDirectory(full, language), names, full + "|" + (language ?? ""), full, resources);
+                return RefreshCore(source, names, full + "|" + (language ?? ""), full, resources);
             }
             catch (Exception ex) { return Fail(VnResult.VN_PACK_PROVIDER_FAILED, ex.Message); }
         }
 
-        private static IEnumerable<string> CandidateFiles(string directory)
+        private static IEnumerable<string> CandidateFiles(string directory, bool resident)
         {
             foreach (string path in Directory.EnumerateFiles(directory, "*", SearchOption.TopDirectoryOnly))
             {
                 string name = Path.GetFileNameWithoutExtension(path);
-                if (name == "Init" || !PackCompanion.IsName(name)) continue;
+                if (name == "Init" || !PackMetadata.IsName(name)) continue;
+                if (resident)
+                {
+                    if (path.EndsWith(".hrp", StringComparison.Ordinal)) yield return name;
+                    continue;
+                }
                 if (path.EndsWith(".bytes", StringComparison.Ordinal)) yield return name;
                 else if (path.EndsWith(".json", StringComparison.Ordinal))
                 {
@@ -122,31 +121,29 @@ namespace Harken.Unity.Editor
         public VnResult Refresh(PackSource source, IEnumerable<string> actionNames, HarkenEditorResources resources)
             => RefreshCore(source, actionNames, source, null, resources);
         public VnResult Refresh(HarkenPackSource source, string language = null) => Refresh(source, language, null);
-        public VnResult Refresh(HarkenPackSource source, string language, TextAsset companion)
-            => Refresh(source, language, companion, null);
-        public VnResult Refresh(HarkenPackSource source, string language, TextAsset companion, HarkenEditorResources resources)
+        public VnResult Refresh(HarkenPackSource source, string language, TextAsset initJson)
+            => Refresh(source, language, initJson, null);
+        public VnResult Refresh(HarkenPackSource source, string language, TextAsset initJson, HarkenEditorResources resources)
         {
             if (source == null) return Fail(VnResult.VN_CONTENT_NOT_LOADED, "A Pack source is required.");
-            VnResult result = source.CaptureCompanion(companion, out PackSource captured, out string error, language);
+            VnResult result = source.CapturePackSource(initJson, out PackSource captured, out string error, language);
             return result == VnResult.VN_OK ? RefreshCore(captured, source.CandidateNames(language), source, null, resources) : Fail(result, error);
         }
-        public VnResult Refresh(string manifestPath, Func<string, byte[]> readBytes, string language = null)
-            => Fail(VnResult.VN_PACK_INCOMPATIBLE, "Use Refresh(PackSource, actionNames) for current companion readers.");
 
         private VnResult RefreshCore(PackSource source, IEnumerable<string> names, object identity, string directory,
             HarkenEditorResources resources = null)
         {
-            VnResult result = PackCatalogSnapshot.Capture(source, names, out PackCatalogSnapshot next, out string error);
+            VnResult result = ActionCatalogSnapshot.Capture(source, names, out ActionCatalogSnapshot next, out string error);
             if (result != VnResult.VN_OK) return Fail(result, error);
             bool keepExecution = Equals(sourceIdentity, identity) && next.SameExecution(snapshot);
             snapshot = next;
             sourceIdentity = identity;
-            if (!keepExecution) PreparedPacks = new HarkenPreparedPacks(next);
-            else PreparedPacks.Snapshot.RefreshOrigin(next);
+            if (!keepExecution) PreviewContent = new HarkenPreviewContent(next);
+            else PreviewContent.Snapshot.RefreshOrigin(next);
             DirectoryPath = directory;
             ResetWaveforms(resources);
             ++Revision;
-            ++PreparedPacks.PresentationRevision;
+            ++PreviewContent.PresentationRevision;
             LastResult = VnResult.VN_OK; Diagnostic = string.Empty;
             WaveformResult = VnResult.VN_CAPABILITY_UNAVAILABLE;
             WaveformDiagnostic = "No waveform is selected.";
@@ -156,8 +153,8 @@ namespace Harken.Unity.Editor
         private VnResult Fail(VnResult result, string error)
         {
             ++Revision;
-            if (PreparedPacks != null) ++PreparedPacks.PresentationRevision;
-            snapshot = null; PreparedPacks = null; sourceIdentity = null; DirectoryPath = null;
+            if (PreviewContent != null) ++PreviewContent.PresentationRevision;
+            snapshot = null; PreviewContent = null; sourceIdentity = null; DirectoryPath = null;
             ResetWaveforms(null);
             LastResult = result; Diagnostic = error;
             WaveformResult = result; WaveformDiagnostic = error;
@@ -168,9 +165,9 @@ namespace Harken.Unity.Editor
         {
             diagnostic = Diagnostic;
             if (snapshot == null) return LastResult;
-            VnResult result = !string.IsNullOrEmpty(projectId) && projectId != Publication.ProjectId
+            VnResult result = !string.IsNullOrEmpty(projectId) && projectId != Catalog.ProjectId
                 ? VnResult.VN_GAMEPLAY_WRONG_PROJECT
-                : Publication.TryFindAction(name, out _) ? VnResult.VN_OK : VnResult.VN_UNKNOWN_ID;
+                : Catalog.TryFindAction(name, out _) ? VnResult.VN_OK : VnResult.VN_UNKNOWN_ID;
             diagnostic = result == VnResult.VN_OK ? string.Empty : name + ": " + result;
             return result;
         }
@@ -182,7 +179,7 @@ namespace Harken.Unity.Editor
             Undo.RecordObject(action, "Select Harken Action");
             var properties = new SerializedObject(action);
             properties.FindProperty("actionName").stringValue = name;
-            properties.FindProperty("projectId").stringValue = Publication.ProjectId;
+            properties.FindProperty("projectId").stringValue = Catalog.ProjectId;
             properties.ApplyModifiedProperties();
             EditorUtility.SetDirty(action);
             return VnResult.VN_OK;
@@ -191,7 +188,7 @@ namespace Harken.Unity.Editor
         {
             ids = Array.Empty<ulong>();
             VnResult result = CheckReference(name, null, out diagnostic);
-            return result == VnResult.VN_OK ? Publication.GetActionPreparationOrder(new[] { name }, Publication.ProjectId, out ids) : result;
+            return result == VnResult.VN_OK ? Catalog.GetPreparationOrder(new[] { name }, Catalog.ProjectId, out ids) : result;
         }
         public VnResult GetPack(string name, out HarkenEditorPack pack, out string diagnostic)
         {

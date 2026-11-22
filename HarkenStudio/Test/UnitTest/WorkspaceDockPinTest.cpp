@@ -41,13 +41,13 @@ protected:
         ads::CDockManager::setConfigFlags(ads::CDockManager::DefaultOpaqueConfig);
         ads::CDockManager::setConfigFlag(ads::CDockManager::AlwaysShowTabs, true);
         ads::CDockManager::setConfigFlag(ads::CDockManager::DockAreaHasUndockButton, false);
-        VNX::ContextInfoService::instance().setLocked(false);
-        auto& theme = VNX::ThemeManager::instance();
-        VNX::QtAdsThemeAdapter::applyIcons(theme.assetResolver(), theme.snapshot());
+        harken::studio::ContextInfoService::instance().setLocked(false);
+        auto& theme = harken::studio::ThemeManager::instance();
+        harken::studio::QtAdsThemeAdapter::applyIcons(theme.assetResolver(), theme.snapshot());
         window_ = std::make_unique<QMainWindow>();
         window_->resize(1000, 700);
         manager_ = new ads::CDockManager(window_.get());
-        manager_->setStyleSheet(VNX::QtAdsThemeAdapter(theme.snapshot()).styleSheet());
+        manager_->setStyleSheet(harken::studio::QtAdsThemeAdapter(theme.snapshot()).styleSheet());
         window_->show();
     }
 
@@ -55,16 +55,16 @@ protected:
     {
         window_.reset();
         drainEvents();
-        VNX::ContextInfoService::instance().setFreezeRoot(nullptr);
-        VNX::ContextInfoService::instance().setActive(false);
-        VNX::ContextInfoService::instance().setLocked(false);
+        harken::studio::ContextInfoService::instance().setFreezeRoot(nullptr);
+        harken::studio::ContextInfoService::instance().setActive(false);
+        harken::studio::ContextInfoService::instance().setLocked(false);
         ads::CDockManager::setConfigFlags(previousFlags_);
     }
 
     ads::CDockWidget* addDock(QWidget* content, ads::CDockAreaWidget* area = nullptr)
     {
         const QString name = QStringLiteral("PinTestDock_%1").arg(++nextId_);
-        auto* dock = VNX::WorkspaceDockFactory::createDock(manager_, {
+        auto* dock = harken::studio::WorkspaceDockFactory::createDock(manager_, {
             name, name, content, false, true, false,
             area ? ads::CenterDockWidgetArea : ads::LeftDockWidgetArea, area
         });
@@ -80,9 +80,9 @@ protected:
 
 TEST_F(WorkspaceDockPinTest, DeletingTheActiveTabDisconnectsItsAction)
 {
-    auto* first = new VNX::InspectorPanel();
+    auto* first = new harken::studio::InspectorPanel();
     auto* firstDock = addDock(first);
-    auto* second = new VNX::InspectorPanel();
+    auto* second = new harken::studio::InspectorPanel();
     second->setPinned(true);
     auto* secondDock = addDock(second, firstDock->dockAreaWidget());
     QPointer<QAction> oldAction = pinButton(secondDock)->defaultAction();

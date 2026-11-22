@@ -1,17 +1,17 @@
 #include "UI/HubIcons.h"
 
 #include <QApplication>
-#include <QImageReader>
+#include <QIconEngine>
 #include <QPainter>
+#include <QPalette>
 #include <QPixmap>
 #include <QSvgRenderer>
 
 #ifdef Q_OS_WIN
-#include "Platform/Windows/SystemTheme.h"
 #include "Platform/Windows/TaskbarIcon.h"
 #endif
 
-namespace VNH::HubIcons {
+namespace harken::hub::HubIcons {
 
 namespace {
 
@@ -30,6 +30,8 @@ QPixmap renderSettings(qreal devicePixelRatio)
     QPainter painter(&pixmap);
     QSvgRenderer renderer(QStringLiteral(":/Resources/icons/Settings.svg"));
     renderer.render(&painter, QRectF(QPointF(0, 0), QSizeF(logicalSize)));
+    painter.setCompositionMode(QPainter::CompositionMode_SourceIn);
+    painter.fillRect(pixmap.rect(), QApplication::palette().color(QPalette::ButtonText));
     return pixmap;
 }
 
@@ -43,79 +45,62 @@ QPixmap renderMore(qreal devicePixelRatio)
     QPainter painter(&pixmap);
     painter.setRenderHint(QPainter::Antialiasing);
     painter.setPen(Qt::NoPen);
-    painter.setBrush(QColor(0xAA, 0xB0, 0xBA));
+    painter.setBrush(QApplication::palette().color(QPalette::ButtonText));
     for (const qreal x : {4.0, 8.0, 12.0})
         painter.drawEllipse(QPointF(x, 8.0), 1.25, 1.25);
     return pixmap;
 }
 
-QIcon iconWithAllStates(const QPixmap& pixmap)
+class ControlIconEngine final : public QIconEngine
 {
-    QIcon icon;
-    icon.addPixmap(pixmap, QIcon::Normal);
-    icon.addPixmap(pixmap, QIcon::Disabled);
-    icon.addPixmap(pixmap, QIcon::Active);
-    icon.addPixmap(pixmap, QIcon::Selected);
-    return icon;
-}
-
-}
-
-QIcon applicationIcon(const QColor& color)
-{
-    QImageReader reader(QStringLiteral(":/Resources/icons/HubIcon.ico"));
-    QIcon icon;
-    for (int frame = 0; frame < reader.imageCount(); ++frame) {
-        if (!reader.jumpToImage(frame))
-            continue;
-        QImage image = reader.read().convertToFormat(QImage::Format_ARGB32_Premultiplied);
-        if (image.isNull())
-            continue;
-        QPainter painter(&image);
-        painter.setCompositionMode(QPainter::CompositionMode_SourceIn);
-        painter.fillRect(image.rect(), color);
-        painter.end();
-        icon.addPixmap(QPixmap::fromImage(image));
+public:
+    explicit ControlIconEngine(bool settings) : settings_(settings) {}
+    QIconEngine* clone() const override { return new ControlIconEngine(settings_); }
+    void paint(QPainter* painter, const QRect& rect, QIcon::Mode, QIcon::State) override
+    {
+        const auto image = settings_ ? renderSettings(painter->device()->devicePixelRatioF())
+                                     : renderMore(painter->device()->devicePixelRatioF());
+        painter->drawPixmap(rect, image);
     }
-    return icon;
+    QPixmap pixmap(const QSize& size, QIcon::Mode mode, QIcon::State state) override
+    {
+        QPixmap image(size);
+        image.fill(Qt::transparent);
+        QPainter painter(&image);
+        paint(&painter, image.rect(), mode, state);
+        return image;
+    }
+private:
+    bool settings_;
+};
+
 }
 
-ApplicationIcon::ApplicationIcon(QObject* parent)
-    : QObject(parent)
+QIcon applicationIcon()
 {
-    QApplication::setWindowIcon(applicationIcon(Qt::white));
+    return QIcon(QStringLiteral(":/Resources/icons/HubIcon.ico"));
+}
+
+void installApplicationIcon(QApplication& app)
+{
+    const QIcon icon = applicationIcon();
+    app.setWindowIcon(icon);
 #ifdef Q_OS_WIN
-    taskbar_ = new TaskbarIcon(this);
-    auto* theme = new SystemTheme(this);
-    connect(theme, &SystemTheme::iconColorChanged, this, &ApplicationIcon::applyColor);
-    applyColor(theme->iconColor());
-#else
-    applyColor(Qt::white);
+    auto* taskbar = new TaskbarIcon(&app);
+    taskbar->setIcon(icon);
 #endif
-}
-
-QIcon ApplicationIcon::systemIcon() const
-{
-    return systemIcon_;
-}
-
-void ApplicationIcon::applyColor(const QColor& color)
-{
-    systemIcon_ = applicationIcon(color);
-#ifdef Q_OS_WIN
-    taskbar_->setIcon(systemIcon_);
-#endif
-    emit changed(systemIcon_);
 }
 
 QIcon settingsIcon(qreal devicePixelRatio)
 {
-    return iconWithAllStates(renderSettings(devicePixelRatio));
+    Q_UNUSED(devicePixelRatio);
+    return QIcon(new ControlIconEngine(true));
 }
 
 QIcon moreIcon(qreal devicePixelRatio)
 {
-    return iconWithAllStates(renderMore(devicePixelRatio));
+    Q_UNUSED(devicePixelRatio);
+    return QIcon(new ControlIconEngine(false));
 }
 
 }

@@ -28,7 +28,7 @@
 #include <QStylePainter>
 #include <QTimer>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 
@@ -36,11 +36,6 @@ QSize colorSwatchSize(const ThemeMetrics& metrics)
 {
     return {metrics.colorPreview.swatchWidth,
             metrics.colorPreview.swatchHeight + metrics.colorPreview.alphaHeight + metrics.borderWidth};
-}
-
-QString colorText(const QColor& color)
-{
-    return color.name(color.alpha() == 255 ? QColor::HexRgb : QColor::HexArgb).toUpper();
 }
 
 QIcon colorIcon(const QColor& color, const QPalette& palette, const QColor& border,
@@ -560,10 +555,10 @@ void AppearancePage::refreshColors()
         }
         const QColor value = effectiveColor(*role);
         const QColor original = basePalette_->colors.value(role->key);
-        item->setText(1, colorText(value));
+        item->setText(1, ColorEditorDialog::hexText(value));
         item->setIcon(1, colorIcon(value, palette(), themeManager_->colors().borderSecondary,
                                   devicePixelRatioF(), themeManager_->metrics()));
-        item->setText(2, colorText(original));
+        item->setText(2, ColorEditorDialog::hexText(original));
         item->setIcon(2, colorIcon(original, palette(), themeManager_->colors().borderSecondary,
                                   devicePixelRatioF(), themeManager_->metrics()));
         item->setToolTip(1, value == original ? tr("Palette default") : tr("Customized palette color"));

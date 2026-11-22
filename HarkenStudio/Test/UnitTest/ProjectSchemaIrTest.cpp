@@ -12,7 +12,7 @@
 #include <utility>
 #include <vector>
 
-namespace harkenprojectschema {
+namespace harken::studio::project_schema {
 namespace {
 
 ResourceInput OneSecondResident(bool seekable = true) {

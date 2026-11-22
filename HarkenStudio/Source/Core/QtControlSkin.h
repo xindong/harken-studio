@@ -16,7 +16,7 @@ class QFontMetrics;
 class QStyleOptionMenuItem;
 class QStyleOptionToolButton;
 
-namespace VNX {
+namespace harken::studio {
 
 class ThemeAssetResolver;
 
@@ -39,6 +39,7 @@ public:
     QPalette applicationPalette() const;
     QString applicationStyleSheet() const;
     int fieldHeight() const;
+    int toolBarControlHeight() const;
     QMargins fieldTextMargins() const;
     QIcon toolBarIcon(const QStyleOptionToolButton& option, qreal devicePixelRatio) const;
     static QIcon iconButtonIcon(const QIcon& icon);

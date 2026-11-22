@@ -6,7 +6,7 @@
 
 #include <vector>
 
-namespace VNH {
+namespace harken::hub {
 
 enum class LaunchVerdict
 {
@@ -20,7 +20,6 @@ struct LaunchDecision
     QString blockCode;
     QString reason;
     InstalledVersion version;
-    int projectSchema = 0;
 };
 
 class LaunchPreflight

@@ -32,7 +32,7 @@ template<class Updater>
 class UpdateRecoveryTest : public ::testing::Test
 {
 protected:
-    static constexpr bool isHub = std::is_same_v<Updater, VNH::HubSelfUpdate>;
+    static constexpr bool isHub = std::is_same_v<Updater, harken::hub::HubSelfUpdate>;
 
     void SetUp() override
     {
@@ -45,7 +45,7 @@ protected:
         QByteArray package("installer");
         if constexpr (!isHub) {
             const QByteArray binary("studio");
-            const QJsonObject file{{"path", VNH::studioBinaryRelativePath()},
+            const QJsonObject file{{"path", harken::hub::studioBinaryRelativePath()},
                 {"size", binary.size()}, {"sha256", QString::fromLatin1(
                     QCryptographicHash::hash(binary, QCryptographicHash::Sha256).toHex())}};
             const QJsonObject manifest{{"product", "HarkenStudio"}, {"version", "1.4.0"},
@@ -55,7 +55,7 @@ protected:
                 {"buildId", "run12.abcd1234"}, {"capabilitiesVersion", 2}};
             const QString path = dir.filePath("studio.zip");
             ASSERT_TRUE(HarkenHubTest::writeArchive(path, {
-                {VNH::studioBinaryRelativePath().toUtf8(), binary},
+                {harken::hub::studioBinaryRelativePath().toUtf8(), binary},
                 {"package-manifest.json", QJsonDocument(manifest).toJson()},
                 {"capabilities.json", QJsonDocument(capabilities).toJson()}}));
             QFile archive(path);
@@ -69,7 +69,7 @@ protected:
         payload["sha256"] = QString::fromLatin1(
             QCryptographicHash::hash(package, QCryptographicHash::Sha256).toHex());
         const auto envelope = HarkenHubTest::signEnvelope(QJsonDocument(payload).toJson(), keys);
-        const QString channel = VNH::ServerEndpoints::hostChannel();
+        const QString channel = harken::hub::ServerEndpoints::hostChannel();
         const QJsonObject entry{{"version", "1.4.0"},
             {"file", QStringLiteral("release/%1/%2/1.4.0/%3/%4")
                 .arg(isHub ? "hub" : "harken", channel,
@@ -86,7 +86,7 @@ protected:
         if constexpr (isHub)
             options.currentVersion = "1.0.0";
         update.configure(options);
-        checker = update.template findChild<VNH::UpdateChecker*>();
+        checker = update.template findChild<harken::hub::UpdateChecker*>();
         ASSERT_NE(checker, nullptr);
         checkerOptions.latestUrl = feed.packageUrl();
         checkerOptions.trustedHttpOrigin = feed.baseUrl();
@@ -94,7 +94,7 @@ protected:
         checkerOptions.channel = channel;
         checkerOptions.manifestPublicKey = keys.publicKey;
         QObject::connect(&update, &Updater::stateChanged, checker,
-                         [this](const VNH::UpdateStateRecord& announced) {
+                         [this](const harken::hub::UpdateStateRecord& announced) {
             const auto stored = update.currentState();
             EXPECT_TRUE(stored.found);
             EXPECT_EQ(stored.state, announced.state);
@@ -128,10 +128,10 @@ protected:
     {
         qunsetenv("HARKEN_HUB_BRIDGE_DISABLE");
         qputenv("HARKEN_HUB_BRIDGE_COMMAND", " ");
-        reader.setFileName(VNH::UpdateStateStore::filePath());
+        reader.setFileName(harken::hub::UpdateStateStore::filePath());
         QObject observer;
         QObject::connect(&update, &Updater::stateChanged, &observer,
-                         [&](const VNH::UpdateStateRecord& record) {
+                         [&](const harken::hub::UpdateStateRecord& record) {
             if (record.state == QStringLiteral("AwaitingBridge"))
                 EXPECT_TRUE(reader.open(QIODevice::ReadOnly));
         });
@@ -148,7 +148,7 @@ protected:
         }
         ASSERT_TRUE(reader.isOpen());
         EXPECT_EQ(update.currentState().state, QStringLiteral("AwaitingBridge"));
-        EXPECT_TRUE(VNH::UpdateQueue::pendingEntries().empty());
+        EXPECT_TRUE(harken::hub::UpdateQueue::pendingEntries().empty());
     }
 
     bool ready() const
@@ -162,11 +162,11 @@ protected:
     HarkenHubTest::RangeHttpServer feed;
     HarkenHubTest::RangeHttpServer download;
     Updater update;
-    VNH::UpdateChecker* checker = nullptr;
-    VNH::UpdateChecker::Options checkerOptions;
+    harken::hub::UpdateChecker* checker = nullptr;
+    harken::hub::UpdateChecker::Options checkerOptions;
 };
 
-using Updaters = ::testing::Types<VNH::UpdateCoordinator, VNH::HubSelfUpdate>;
+using Updaters = ::testing::Types<harken::hub::UpdateCoordinator, harken::hub::HubSelfUpdate>;
 TYPED_TEST_SUITE(UpdateRecoveryTest, Updaters);
 
 #if defined(Q_OS_WIN)
@@ -192,7 +192,7 @@ TYPED_TEST(UpdateRecoveryTest, FailedLaunchRollbackCannotOverwriteANewerTransact
     auto newer = this->update.currentState();
     newer.transactionId = QStringLiteral("newer-transaction");
     const auto now = QDateTime::currentDateTimeUtc();
-    ASSERT_TRUE(VNH::UpdateStateStore::save(newer, now));
+    ASSERT_TRUE(harken::hub::UpdateStateStore::save(newer, now));
     QElapsedTimer elapsed;
     elapsed.start();
     ASSERT_TRUE(spinUntil([&]() { return elapsed.elapsed() > 1500; }));
@@ -204,13 +204,13 @@ TYPED_TEST(UpdateRecoveryTest, FailedLaunchRollbackCannotOverwriteANewerTransact
 
 TYPED_TEST(UpdateRecoveryTest, RequiresDurableStateBeforeDownload)
 {
-    const QString path = VNH::UpdateStateStore::filePath();
+    const QString path = harken::hub::UpdateStateStore::filePath();
     ASSERT_TRUE(QDir().mkpath(path));
     QStringList announced;
     QObject observer;
     const auto connection = QObject::connect(
         &this->update, &TypeParam::stateChanged, &observer,
-        [&announced](const VNH::UpdateStateRecord& record) {
+        [&announced](const harken::hub::UpdateStateRecord& record) {
             announced.append(record.state);
         });
     ASSERT_TRUE(this->checker->start(this->checkerOptions));
@@ -249,7 +249,7 @@ TYPED_TEST(UpdateRecoveryTest, RecoversMissingPackageAndManifestAfterConditional
     for (const auto& path : {state.downloadPath, state.manifestEnvelopePath}) {
         const int requests = this->download.requestCount();
         ASSERT_TRUE(QFile::remove(path));
-        if constexpr (std::is_same_v<TypeParam, VNH::HubSelfUpdate>) {
+        if constexpr (std::is_same_v<TypeParam, harken::hub::HubSelfUpdate>) {
             if (path == state.downloadPath) {
                 QString error;
                 EXPECT_FALSE(this->update.approve(&error, QDateTime::currentDateTimeUtc()));
@@ -268,13 +268,13 @@ TYPED_TEST(UpdateRecoveryTest, RecoversMissingPackageAndManifestAfterConditional
 
 TYPED_TEST(UpdateRecoveryTest, RecoversMissingDownloadFromPersistedState)
 {
-    VNH::UpdateStateRecord record;
+    harken::hub::UpdateStateRecord record;
     record.product = this->isHub ? "HarkenHub" : "HarkenStudio";
     record.state = this->isHub ? "AwaitingRestart" : "InstallFailed";
     record.version = "1.4.0";
     record.buildId = "run12.abcd1234";
     record.releaseSequence = 7;
-    ASSERT_TRUE(VNH::UpdateStateStore::save(record, QDateTime::currentDateTimeUtc()));
+    ASSERT_TRUE(harken::hub::UpdateStateStore::save(record, QDateTime::currentDateTimeUtc()));
     ASSERT_TRUE(this->checker->start(this->checkerOptions));
     ASSERT_TRUE(spinUntil([this]() { return this->ready(); }));
     EXPECT_EQ(this->download.requestCount(), 1);
@@ -318,13 +318,13 @@ TYPED_TEST(UpdateRecoveryTest, DoesNotRedownloadRejectedPackageOnUnchangedFeed)
 
 TYPED_TEST(UpdateRecoveryTest, KeepsQueuedInstallWhenOriginalDownloadIsMissing)
 {
-    VNH::UpdateStateRecord record;
+    harken::hub::UpdateStateRecord record;
     record.product = this->isHub ? "HarkenHub" : "HarkenStudio";
     record.state = "AwaitingBridge";
     record.version = "1.4.0";
     record.buildId = "run12.abcd1234";
     record.releaseSequence = 7;
-    ASSERT_TRUE(VNH::UpdateStateStore::save(record, QDateTime::currentDateTimeUtc()));
+    ASSERT_TRUE(harken::hub::UpdateStateStore::save(record, QDateTime::currentDateTimeUtc()));
     ASSERT_TRUE(this->checker->start(this->checkerOptions));
     ASSERT_TRUE(spinUntil([this]() { return !this->checker->isChecking(); }));
     EXPECT_EQ(this->update.currentState().state, "AwaitingBridge");

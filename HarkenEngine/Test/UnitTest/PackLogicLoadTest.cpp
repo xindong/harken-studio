@@ -31,8 +31,9 @@
 // and the staged v2 replace's activation timing (staged at the call,
 // swapped at the next Vn_Update). Every refusal asserts zero observable
 // mutation.
+#include <harken/HarkenDevelopment.h>
 #include "Common/ObjectIdTestSupport.h"
-#include "Common/ResourceCompilerTestUtil.h"
+#include "Common/TestPackWriter.h"
 #include "UnitTest/CanonicalPackSetActivate.h"
 #include "Common/RecipePackTestUtil.h"
 #include "Common/TestUtil.h"
@@ -191,7 +192,7 @@ void WriteWavF32(const std::string& path,
             return false;
         }
     }
-    return harkentest::CompileResources({manifestPath}) == 0;
+    return harkentest::BuildTestPack({manifestPath}) == 0;
 }
 
 harkentest::RecipePackArtifact BuildDelayAndToneRecipePack(
@@ -519,51 +520,51 @@ public:
 
     void AddBus(VnBusId busId, VnBusId parentBusId) {
         Entry entry;
-        entry.kind = harken::kPackEntryKindBus;
-        entry.vintage = harken::kPackBusVintage;
+        entry.kind = HK_PACK_ENTRY_KIND_BUS;
+        entry.vintage = HK_PACK_BUS_VINTAGE;
         entry.id = busId;
         entry.payload.resize(
-            static_cast<std::size_t>(harken::kPackBusBytes));
+            static_cast<std::size_t>(harken::kPackBytes<HkPackBus>));
         harken::PackBusEntry bus;
         bus.busId = busId;
         bus.parentBusId = parentBusId;
-        harken::SerializePackBus(bus, entry.payload.data());
+        harken::SerializePackRow<HkPackBus>(bus, entry.payload.data());
         m_entries.push_back(std::move(entry));
     }
 
     void AddBusMix(VnBusId busId, VnBusId parentBusId, float volume,
                    float outputBusVolume, float makeUpGain) {
         Entry entry;
-        entry.kind = harken::kPackEntryKindBus;
-        entry.vintage = harken::kPackBusVintage;
+        entry.kind = HK_PACK_ENTRY_KIND_BUS;
+        entry.vintage = HK_PACK_BUS_VINTAGE;
         entry.id = busId;
         entry.payload.resize(
-            static_cast<std::size_t>(harken::kPackBusBytes));
+            static_cast<std::size_t>(harken::kPackBytes<HkPackBus>));
         harken::PackBusEntry bus;
         bus.busId = busId;
         bus.parentBusId = parentBusId;
         bus.volume = volume;
         bus.outputBusVolume = outputBusVolume;
         bus.makeUpGain = makeUpGain;
-        harken::SerializePackBus(bus, entry.payload.data());
+        harken::SerializePackRow<HkPackBus>(bus, entry.payload.data());
         m_entries.push_back(std::move(entry));
     }
 
     void AddBusSend(VnBusId from, VnBusId to, float levelDb) {
         Entry entry;
-        entry.kind = harken::kPackEntryKindBusSend;
-        entry.payload.resize(harken::kPackBusSendBytes);
+        entry.kind = HK_PACK_ENTRY_KIND_BUS_SEND;
+        entry.payload.resize(harken::kPackBytes<HkPackBusSend>);
         harken::PackBusSendEntry send;
         send.fromBusId = from;
         send.toBusId = to;
         send.levelDb = levelDb;
-        harken::SerializePackBusSend(send, entry.payload.data());
+        harken::SerializePackRow<HkPackBusSend>(send, entry.payload.data());
         m_entries.push_back(std::move(entry));
     }
 
     void AddDiscreteVariable(VnVariableId variableId) {
         Entry entry;
-        entry.kind = harken::kPackEntryKindDiscreteVariable;
+        entry.kind = HK_PACK_ENTRY_KIND_RETIRED_DISCRETE_VARIABLE;
         entry.id = variableId;
         entry.payload = {0};
         m_entries.push_back(std::move(entry));
@@ -571,7 +572,7 @@ public:
 
     void AddMeterWiring(VnBusId busId, VnVariableId) {
         Entry entry;
-        entry.kind = harken::kPackEntryKindMeterWiring;
+        entry.kind = HK_PACK_ENTRY_KIND_RETIRED_METER_WIRING;
         entry.id = busId;
         entry.payload = {0};
         m_entries.push_back(std::move(entry));
@@ -579,7 +580,7 @@ public:
 
     void AddMedia(VnSoundId soundId, std::vector<float> planar) {
         Entry entry;
-        entry.kind = harken::kPackEntryKindMedia;
+        entry.kind = HK_PACK_ENTRY_KIND_MEDIA;
         entry.id = soundId;
         entry.isMedia = true;
         entry.soundId = soundId;
@@ -590,10 +591,10 @@ public:
     void AddBindingDefinition(VnBindingId bindingId,
                               const VnBindingDesc& desc) {
         Entry entry;
-        entry.kind = harken::kPackEntryKindBindingDefinition;
+        entry.kind = HK_PACK_ENTRY_KIND_BINDING_DEFINITION;
         entry.id = bindingId;
         entry.payload.resize(static_cast<std::size_t>(
-            harken::kPackBindingDefinitionBytes));
+            harken::kPackBytes<HkPackBindingDefinition>));
         harken::WritePackBindingDefinition(bindingId, desc,
                                                  entry.payload.data());
         m_entries.push_back(std::move(entry));
@@ -603,15 +604,15 @@ public:
                               std::uint32_t scopeKind,
                               VnObjectId objectId) {
         Entry entry;
-        entry.kind = harken::kPackEntryKindBindingAttachment;
+        entry.kind = HK_PACK_ENTRY_KIND_BINDING_ATTACHMENT;
         entry.relationOrdinal = ordinal;
         entry.payload.resize(static_cast<std::size_t>(
-            harken::kPackBindingAttachmentBytes));
+            harken::kPackBytes<HkPackBindingAttachment>));
         harken::PackBindingAttachmentEntry attachment;
         attachment.bindingId = bindingId;
         attachment.scopeKind = scopeKind;
         attachment.objectId = harkentest::ObjectId(objectId);
-        harken::SerializePackBindingAttachment(attachment,
+        harken::SerializePackRow<HkPackBindingAttachment>(attachment,
                                                 entry.payload.data());
         m_entries.push_back(std::move(entry));
     }
@@ -620,8 +621,8 @@ public:
                         std::uint32_t slot, std::uint32_t effectType,
                         const float* params, std::uint32_t paramCount) {
         Entry entry;
-        entry.kind = harken::kPackEntryKindVoiceRecipe;
-        entry.vintage = harken::kPackVoiceRecipeVintage;
+        entry.kind = HK_PACK_ENTRY_KIND_VOICE_RECIPE;
+        entry.vintage = HK_PACK_VOICE_RECIPE_VINTAGE;
         entry.id = playableId;
         entry.payload.resize(static_cast<std::size_t>(
             harken::PackVoiceRecipePayloadBytes(1, 1)));
@@ -629,69 +630,69 @@ public:
         header.playableId = playableId;
         header.installCount = 1;
         header.bindingCount = 1;
-        harken::SerializePackVoiceRecipeHeader(header,
+        harken::SerializePackRow<HkPackVoiceRecipeHeader>(header,
                                                 entry.payload.data());
         harken::PackVoiceRecipeTone tone;
-        harken::SerializePackVoiceRecipeTone(
-            tone, entry.payload.data() + harken::kPackVoiceRecipeHeaderBytes);
+        harken::SerializePackRow<HkPackVoiceRecipeTone>(
+            tone, entry.payload.data() + harken::kPackBytes<HkPackVoiceRecipeHeader>);
         harken::PackVoiceRecipeSpatial spatial;
         spatial.distanceScale = 0.0f;
-        harken::SerializePackVoiceRecipeSpatial(
+        harken::SerializePackRow<HkPackVoiceRecipeSpatial>(
             spatial,
-            entry.payload.data() + harken::kPackVoiceRecipeHeaderBytes +
-                harken::kPackVoiceRecipeToneBytes);
+            entry.payload.data() + harken::kPackBytes<HkPackVoiceRecipeHeader> +
+                harken::kPackBytes<HkPackVoiceRecipeTone>);
         harken::PackVoiceRecipePlayback playback;
-        harken::SerializePackVoiceRecipePlayback(
+        harken::SerializePackRow<HkPackVoiceRecipePlayback>(
             playback,
-            entry.payload.data() + harken::kPackVoiceRecipeHeaderBytes +
-                harken::kPackVoiceRecipeToneBytes +
-                harken::kPackVoiceRecipeSpatialBytes);
+            entry.payload.data() + harken::kPackBytes<HkPackVoiceRecipeHeader> +
+                harken::kPackBytes<HkPackVoiceRecipeTone> +
+                harken::kPackBytes<HkPackVoiceRecipeSpatial>);
         std::uint8_t* installBase =
-            entry.payload.data() + harken::kPackVoiceRecipeHeaderBytes +
-            harken::kPackVoiceRecipeToneBytes +
-            harken::kPackVoiceRecipeSpatialBytes +
-            harken::kPackVoiceRecipePlaybackBytes;
+            entry.payload.data() + harken::kPackBytes<HkPackVoiceRecipeHeader> +
+            harken::kPackBytes<HkPackVoiceRecipeTone> +
+            harken::kPackBytes<HkPackVoiceRecipeSpatial> +
+            harken::kPackBytes<HkPackVoiceRecipePlayback>;
         harken::PackVoiceRecipeInstall install;
         install.slot = slot;
         install.effectType = effectType;
         install.descriptorVintage =
-            harken::kPackEffectDescriptorVintage;
+            HK_PACK_EFFECT_DESCRIPTOR_VINTAGE;
         install.bypass = 0;
         install.paramCount = paramCount;
         for (std::uint32_t i = 0; i < paramCount; ++i) {
             install.params[i] = params[i];
         }
         harken::WritePackVoiceRecipeInstall(install, installBase);
-        harken::SerializePackVoiceRecipeBinding(
-            bindingId, installBase + harken::kPackVoiceRecipeInstallBytes);
+        harken::SerializePackRow<HkPackVoiceRecipeBinding>(
+            bindingId, installBase + harken::kPackBytes<HkPackVoiceRecipeInstall>);
         m_entries.push_back(std::move(entry));
     }
 
     std::vector<std::uint8_t> Build() {
-        const std::uint64_t dirOffset = harken::kPackFileHeaderBytes;
+        const std::uint64_t dirOffset = harken::kPackBytes<HkPackFileHeader>;
         const std::uint64_t dirBytes =
             static_cast<std::uint64_t>(m_entries.size()) *
-            harken::kPackDirectoryEntryBytes;
+            harken::kPackBytes<HkPackDirectoryEntry>;
         const std::uint64_t dirEnd = dirOffset + dirBytes;
 
         m_payloadOffsets.assign(m_entries.size(), 0);
         std::vector<std::uint64_t> blobOffsets(m_entries.size(), 0);
 
-        std::uint64_t cursor = AlignUp(dirEnd, harken::kPackPayloadAlign);
+        std::uint64_t cursor = AlignUp(dirEnd, HK_PACK_PAYLOAD_ALIGN);
         std::uint64_t contentEnd = dirEnd;
         for (std::size_t i = 0; i < m_entries.size(); ++i) {
             m_payloadOffsets[i] = cursor;
             contentEnd = cursor + PayloadSize(m_entries[i]);
-            cursor = AlignUp(contentEnd, harken::kPackPayloadAlign);
+            cursor = AlignUp(contentEnd, HK_PACK_PAYLOAD_ALIGN);
         }
-        std::uint64_t blobCursor = AlignUp(contentEnd, harken::kPackBlobAlign);
+        std::uint64_t blobCursor = AlignUp(contentEnd, HK_PACK_BLOB_ALIGN);
         for (std::size_t i = 0; i < m_entries.size(); ++i) {
             if (!m_entries[i].isMedia) {
                 continue;
             }
             blobOffsets[i] = blobCursor;
             contentEnd = blobCursor + BlobBytes(m_entries[i]);
-            blobCursor = AlignUp(contentEnd, harken::kPackBlobAlign);
+            blobCursor = AlignUp(contentEnd, HK_PACK_BLOB_ALIGN);
         }
         const std::uint64_t fileBytes = contentEnd;
 
@@ -710,7 +711,7 @@ public:
                 toc.soundId = entry.soundId;
                 toc.sampleRate = kRate;
                 toc.channelCount = 1;
-                toc.sampleFormat = harken::kPackSampleFormatF32Planar;
+                toc.sampleFormat = HK_PACK_SAMPLE_FORMAT_F32_PLANAR;
                 toc.frameCount = entry.planar.size();
                 toc.blobOffset = blobOffsets[i];
                 toc.blobBytes = BlobBytes(entry);
@@ -720,7 +721,7 @@ public:
                 toc.flags = 0;
                 toc.loopStartFrame = 0;
                 toc.loopEndFrame = 0;
-                harken::SerializePackMedia(toc, payload);
+                harken::SerializePackRow<HkPackMedia>(toc, payload);
             } else {
                 std::memcpy(payload, entry.payload.data(),
                             entry.payload.size());
@@ -738,13 +739,13 @@ public:
             record.payloadChecksum = harken::Fnv1a64(
                 bytes.data() + static_cast<std::size_t>(m_payloadOffsets[i]),
                 static_cast<std::size_t>(record.size));
-            harken::SerializePackDirectoryEntry(
+            harken::SerializePackRow<HkPackDirectoryEntry>(
                 record, bytes.data() + static_cast<std::size_t>(dirOffset) +
-                            i * harken::kPackDirectoryEntryBytes);
+                            i * harken::kPackBytes<HkPackDirectoryEntry>);
         }
         harken::PackFileHeader header;
-        header.formatVersion = harken::kPackFormatVersion;
-        header.headerBytes = harken::kPackFileHeaderBytes;
+        header.formatVersion = HK_PACK_FORMAT_VERSION;
+        header.headerBytes = harken::kPackBytes<HkPackFileHeader>;
         header.fileBytes = fileBytes;
         header.packKind = m_packKind;
         header.entryCount = static_cast<std::uint32_t>(m_entries.size());
@@ -752,7 +753,7 @@ public:
         header.directoryChecksum = harken::Fnv1a64(
             bytes.data() + static_cast<std::size_t>(dirOffset),
             static_cast<std::size_t>(dirBytes));
-        harken::SerializePackFileHeader(header, bytes.data());
+        harken::SerializePackRow<HkPackFileHeader>(header, bytes.data());
         return bytes;
     }
 
@@ -776,7 +777,7 @@ private:
         return (value + align - 1) / align * align;
     }
     static std::uint64_t PayloadSize(const Entry& entry) {
-        return entry.isMedia ? harken::kPackMediaBytes
+        return entry.isMedia ? harken::kPackBytes<HkPackMedia>
                              : entry.payload.size();
     }
     static std::uint64_t BlobBytes(const Entry& entry) {
@@ -970,14 +971,14 @@ TEST(PackLogicLoad, OnlyCurrentContainerVersionReachesLogicLoader) {
     ASSERT_EQ(VN_OK, session.InitResult());
     const auto sound = harkentest::ObjectId(71);
     const auto path = TempPath("pll_container_versions.pack");
-    for (const auto version : {3u, harken::kPackFormatVersion}) {
-        V2Builder builder(harken::kPackKindContent);
+    for (const auto version : {3u, HK_PACK_FORMAT_VERSION}) {
+        V2Builder builder(HK_PACK_KIND_CONTENT);
         builder.AddMedia(sound, harkentest::MakeDC(16, 0.25f));
         auto bytes = builder.Build();
         harken::StoreLE32(bytes.data() + 4, version);
         WriteFileBytes(path, bytes);
         VnPackHandle pack = 0;
-        if (version != harken::kPackFormatVersion) {
+        if (version != HK_PACK_FORMAT_VERSION) {
             EXPECT_EQ(VN_BAD_PACK, LoadPack(path, &pack));
             EXPECT_EQ(0u, pack);
             EXPECT_EQ(0u, session.Engine()->packs.LoadedCount());
@@ -1167,7 +1168,7 @@ TEST(PackLogicLoad, BusMixFieldsApplyAtSeparateGainStages) {
     harken::Engine* engine = session.Engine();
 
     const std::string packPath = TempPath("pll_bus_mix_apply.pack");
-    V2Builder builder(harken::kPackKindResident);
+    V2Builder builder(HK_PACK_KIND_RESIDENT);
     builder.AddBusMix(harkentest::ObjectId(13001), VN_BUS_MASTER, -6.0f, -3.5f, 2.0f);
     builder.AddBusMix(harkentest::ObjectId(13002), VN_BUS_MASTER, 0.0f, 0.0f, 0.0f);
     builder.AddBusSend(harkentest::ObjectId(13001), harkentest::ObjectId(13002), 0.0f);
@@ -1234,7 +1235,7 @@ TEST(PackLogicLoad, VintageTwoBusPayloadAppliesAsZeroMix) {
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
 
-    V2Builder builder(harken::kPackKindResident);
+    V2Builder builder(HK_PACK_KIND_RESIDENT);
     builder.AddBus(harkentest::ObjectId(13011), VN_BUS_MASTER);
     const std::string packPath = TempPath("pll_bus_mix_v2.pack");
     WriteFileBytes(packPath, builder.Build());
@@ -1280,7 +1281,7 @@ TEST(PackLogicReplace, BusMixRelevelPreservesOutputGain) {
                                    float outputBusVolume,
                                    float makeUpGain) {
         const std::string path = TempPath(std::string(name) + ".pack");
-        V2Builder builder(harken::kPackKindResident);
+        V2Builder builder(HK_PACK_KIND_RESIDENT);
         builder.AddBusMix(harkentest::ObjectId(13021), VN_BUS_MASTER, volume,
                           outputBusVolume, makeUpGain);
         WriteFileBytes(path, builder.Build());
@@ -1507,7 +1508,7 @@ TEST(PackLogicLoad, NonFiniteBusMixFieldRefusesWithoutMutation) {
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
 
-    V2Builder builder(harken::kPackKindResident);
+    V2Builder builder(HK_PACK_KIND_RESIDENT);
     builder.AddBusMix(harkentest::ObjectId(13121), VN_BUS_MASTER,
                       std::numeric_limits<float>::quiet_NaN(), 0.0f, 0.0f);
     const std::string packPath = TempPath("pll_bus_mix_overflow.pack");
@@ -1526,7 +1527,7 @@ TEST(PackLogicLoad, FiniteOverflowingBusMixRefusesWithoutMutation) {
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
 
-    V2Builder builder(harken::kPackKindResident);
+    V2Builder builder(HK_PACK_KIND_RESIDENT);
     builder.AddBusMix(harkentest::ObjectId(13191), VN_BUS_MASTER, 800.0f, 0.0f, 0.0f);
     const std::string packPath = TempPath("pll_bus_mix_finite_overflow.pack");
     WriteFileBytes(packPath, builder.Build());
@@ -1545,7 +1546,7 @@ TEST(PackLogicLoad, OverflowingSendRejectsLoadAndReplaceWithoutMutation) {
     auto* engine = session.Engine();
     const auto source = harkentest::ObjectId(13201);
     const auto target = harkentest::ObjectId(13202);
-    V2Builder overflow(harken::kPackKindResident);
+    V2Builder overflow(HK_PACK_KIND_RESIDENT);
     overflow.AddBus(source, VN_BUS_MASTER);
     overflow.AddBus(target, VN_BUS_MASTER);
     overflow.AddBusSend(source, target, 800.0f);
@@ -1557,7 +1558,7 @@ TEST(PackLogicLoad, OverflowingSendRejectsLoadAndReplaceWithoutMutation) {
     EXPECT_EQ(0u, engine->packs.LoadedCount());
     EXPECT_EQ(1u, engine->buses.BusCount());
 
-    V2Builder accepted(harken::kPackKindResident);
+    V2Builder accepted(HK_PACK_KIND_RESIDENT);
     accepted.AddBus(source, VN_BUS_MASTER);
     accepted.AddBus(target, VN_BUS_MASTER);
     accepted.AddBusSend(source, target, -6.0f);
@@ -1608,7 +1609,7 @@ TEST(PackLogicReplace, NonFiniteBusMixFieldLeavesLoadedRevisionIntact) {
         index, harken::kBusTargetBusVolume);
     const std::uint32_t generation = engine->buses.GenerationAt(index);
 
-    V2Builder overflow(harken::kPackKindResident);
+    V2Builder overflow(HK_PACK_KIND_RESIDENT);
     overflow.AddBusMix(harkentest::ObjectId(13131), VN_BUS_MASTER,
                       std::numeric_limits<float>::quiet_NaN(), 0.0f, 0.0f);
     const std::string overflowPath =
@@ -1637,7 +1638,7 @@ TEST(PackLogicReplace, FiniteOverflowingBusMixLeavesLoadedRevisionIntact) {
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
 
-    V2Builder first(harken::kPackKindResident);
+    V2Builder first(HK_PACK_KIND_RESIDENT);
     first.AddBusMix(harkentest::ObjectId(13192), VN_BUS_MASTER, -6.0f, -3.5f, 2.0f);
     const std::string v1Path =
         TempPath("plr_bus_mix_finite_overflow_v1.pack");
@@ -1658,7 +1659,7 @@ TEST(PackLogicReplace, FiniteOverflowingBusMixLeavesLoadedRevisionIntact) {
         index, harken::kBusTargetBusVolume);
     const std::uint32_t generation = engine->buses.GenerationAt(index);
 
-    V2Builder overflow(harken::kPackKindResident);
+    V2Builder overflow(HK_PACK_KIND_RESIDENT);
     overflow.AddBusMix(harkentest::ObjectId(13192), VN_BUS_MASTER, 800.0f, 0.0f, 0.0f);
     const std::string overflowPath =
         TempPath("plr_bus_mix_finite_overflow_v2.pack");
@@ -1689,7 +1690,7 @@ TEST(PackLogicReplace, SingleStageOverflowLeavesLoadedRevisionIntact) {
         harken::Engine* engine = session.Engine();
         const float oldVolume = outputOnly ? 600.0f : 0.0f;
         const float oldOutput = outputOnly ? 0.0f : 600.0f;
-        V2Builder first(harken::kPackKindResident);
+        V2Builder first(HK_PACK_KIND_RESIDENT);
         first.AddBusMix(harkentest::ObjectId(13193), VN_BUS_MASTER, oldVolume, oldOutput, 0.0f);
         const std::string firstPath = TempPath("plr_single_stage_v1.pack");
         WriteFileBytes(firstPath, first.Build());
@@ -1705,7 +1706,7 @@ TEST(PackLogicReplace, SingleStageOverflowLeavesLoadedRevisionIntact) {
         const float oldOutputGain = bus->outputGain.target;
         const std::uint32_t generation = engine->buses.GenerationAt(index);
 
-        V2Builder overflow(harken::kPackKindResident);
+        V2Builder overflow(HK_PACK_KIND_RESIDENT);
         overflow.AddBusMix(harkentest::ObjectId(13193), VN_BUS_MASTER, 600.0f, 600.0f, 0.0f);
         const std::string overflowPath = TempPath("plr_single_stage_v2.pack");
         WriteFileBytes(overflowPath, overflow.Build());
@@ -1729,7 +1730,7 @@ TEST(PackLogicReplace, ConvertibleReducedMixPublishesAuthoredContribution) {
     EngineSession session(PackLogicConfig(4, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
-    V2Builder first(harken::kPackKindResident);
+    V2Builder first(HK_PACK_KIND_RESIDENT);
     first.AddBusMix(harkentest::ObjectId(13194), VN_BUS_MASTER, 0.0f, 0.0f, 0.0f);
     const std::string firstPath = TempPath("plr_reduced_mix_v1.pack");
     WriteFileBytes(firstPath, first.Build());
@@ -1738,7 +1739,7 @@ TEST(PackLogicReplace, ConvertibleReducedMixPublishesAuthoredContribution) {
     ASSERT_EQ(VN_OK, Vn_SetBusVolume(harkentest::ObjectId(13194), -800.0f, 0));
     engine->nullBackend.Pump(1);
 
-    V2Builder replacement(harken::kPackKindResident);
+    V2Builder replacement(HK_PACK_KIND_RESIDENT);
     replacement.AddBusMix(harkentest::ObjectId(13194), VN_BUS_MASTER, 800.0f, 0.0f, 0.0f);
     const std::string replacementPath = TempPath("plr_reduced_mix_v2.pack");
     WriteFileBytes(replacementPath, replacement.Build());
@@ -1764,7 +1765,7 @@ TEST(PackLogicLoad, FiniteAuthoredMixPlusApiDirectOverflowRefusesSetter) {
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
 
-    V2Builder builder(harken::kPackKindResident);
+    V2Builder builder(HK_PACK_KIND_RESIDENT);
     builder.AddBusMix(harkentest::ObjectId(13141), VN_BUS_MASTER, -6.0f, 0.0f, 0.0f);
     const std::string packPath =
         TempPath("pll_bus_mix_full_reduce_setter.pack");
@@ -1802,7 +1803,7 @@ TEST(PackLogicReplace, FiniteAuthoredMixPlusApiDirectOverflowLeavesLoadedRevisio
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
 
-    V2Builder first(harken::kPackKindResident);
+    V2Builder first(HK_PACK_KIND_RESIDENT);
     first.AddBusMix(harkentest::ObjectId(13151), VN_BUS_MASTER, -6.0f, -3.5f, 2.0f);
     const std::string v1Path =
         TempPath("plr_bus_mix_full_reduce_v1.pack");
@@ -1834,7 +1835,7 @@ TEST(PackLogicReplace, FiniteAuthoredMixPlusApiDirectOverflowLeavesLoadedRevisio
     // Finite 3e38/0/0 is no longer a legal LoadPack image. This v2 uses a
     // non-finite volume+makeup mix sum so ReplacePack stays VN_BAD_PACK
     // without planting an overflowing API-direct slot.
-    V2Builder overflow(harken::kPackKindResident);
+    V2Builder overflow(HK_PACK_KIND_RESIDENT);
     overflow.AddBusMix(harkentest::ObjectId(13151), VN_BUS_MASTER, 3.0e38f, 0.0f, 3.0e38f);
     const std::string overflowPath =
         TempPath("plr_bus_mix_full_reduce_v2.pack");
@@ -1865,7 +1866,7 @@ TEST(PackLogicLoad, FiniteAuthoredMixPlusVariableOverflowLeavesAuthoredIntact) {
               harkentest::InstallSmoothDefinitions(
                   engine, {harkentest::ObjectId(13161)}, 0.0f, 1.0f).status);
 
-    V2Builder builder(harken::kPackKindResident);
+    V2Builder builder(HK_PACK_KIND_RESIDENT);
     builder.AddBusMix(harkentest::ObjectId(13162), VN_BUS_MASTER, -6.0f, 0.0f, 0.0f);
     const std::string packPath =
         TempPath("pll_bus_mix_variable_overflow.pack");
@@ -1917,7 +1918,7 @@ TEST(PackLogicLoad, FiniteAuthoredMixPlusMeterProbeOverflowLeavesAuthoredIntact)
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
 
-    V2Builder builder(harken::kPackKindResident);
+    V2Builder builder(HK_PACK_KIND_RESIDENT);
     builder.AddBusMix(harkentest::ObjectId(13172), VN_BUS_MASTER, -6.0f, 0.0f, 0.0f);
     const std::string packPath =
         TempPath("pll_bus_mix_meter_overflow.pack");
@@ -2168,7 +2169,7 @@ TEST(PackLogicLoad, InvalidVoiceEffectRecipeLocatorsRefuseWithoutResidue) {
         const VnBindingId bindingId = harkentest::ObjectId(7930 + i);
         const std::string packPath =
             TempPath(std::string("pll_scope2_") + test.name + ".pack");
-        V2Builder builder(harken::kPackKindContent);
+        V2Builder builder(HK_PACK_KIND_CONTENT);
         builder.AddMedia(playable, harkentest::MakeDC(kBlock, 0.5f));
         if (test.includeDefinition) {
             VnBindingDesc desc{};
@@ -2208,7 +2209,7 @@ TEST(PackLogicLoad, PlayingSoundRespondsToEachOfTwentyFourPackBindings) {
     auto* engine = session.Engine();
     const auto sound = harkentest::ObjectId(7100);
     constexpr float sourceLevel = 0.25f;
-    V2Builder builder(harken::kPackKindContent);
+    V2Builder builder(HK_PACK_KIND_CONTENT);
     builder.AddMedia(sound, harkentest::MakeDC(kBlock * 4, sourceLevel));
 
     std::array<harken::VariableDefinitionV1, 24> variables{};
@@ -2273,7 +2274,7 @@ TEST(PackLogicLoad, ThousandDefinitionsAndTwoThousandAttachmentsPlayAndUnload) {
     auto& engine = *session.Engine();
     const auto variable = harkentest::ObjectId(7100);
     ASSERT_EQ(harken::WorldInstallStatus::Ok, harkentest::InstallSmoothDefinitions(&engine, {variable}, 0, 1).status);
-    V2Builder builder(harken::kPackKindContent);
+    V2Builder builder(HK_PACK_KIND_CONTENT);
     const std::array sounds{harkentest::ObjectId(7101), harkentest::ObjectId(7102)};
     for (auto sound : sounds) builder.AddMedia(sound, harkentest::MakeDC(kBlock * 4, 0.25f));
     VnBindingDesc binding{};
@@ -2316,7 +2317,7 @@ TEST(PackLogicLoad, BindingTransitionRangeRefusesBeforeEngineStateChanges) {
     ASSERT_EQ(VN_OK, session.InitResult());
     auto* engine = session.Engine();
     for (std::uint32_t ms : {60000u, 60001u, UINT32_MAX}) {
-        V2Builder builder(harken::kPackKindContent);
+        V2Builder builder(HK_PACK_KIND_CONTENT);
         VnBindingDesc desc{};
         desc.structSize = sizeof(desc);
         desc.variableId = harkentest::ObjectId(7991);
@@ -2580,7 +2581,7 @@ TEST(PackLogicLoad, BusEffectScope3LoadAppliesAndUnloadsAtomically) {
     const std::uint32_t publisherBefore =
         engine->propertyPublisher.WorstCaseCommits();
 
-    V2Builder builder(harken::kPackKindContent);
+    V2Builder builder(HK_PACK_KIND_CONTENT);
     builder.AddBindingAttachment(0, harkentest::ObjectId(6001),
                                  VN_TARGET_SCOPE_BUS_EFFECT_PARAM,
                                  VN_BUS_MASTER);
@@ -2658,7 +2659,7 @@ TEST(PackLogicLoad, BusEffectScope3LoadRefusesStaleTargetsWithoutResidue) {
         VnBindingDesc desc = CraftedBusEffectBinding();
         desc.targetId = cases[i].target;
         const VnBindingId bindingId = harkentest::ObjectId(6100 + i);
-        V2Builder builder(harken::kPackKindContent);
+        V2Builder builder(HK_PACK_KIND_CONTENT);
         builder.AddBindingDefinition(bindingId, desc);
         builder.AddBindingAttachment(0, bindingId,
                                      VN_TARGET_SCOPE_BUS_EFFECT_PARAM,
@@ -2714,7 +2715,7 @@ TEST(PackLogicLoad, BusEffectScope3AttachmentUsesResolvedDenseBusIndex) {
     const float baseline = MasterProbeLevel(engine);
     EXPECT_NEAR(0.5f * std::pow(10.0f, -6.0f / 20.0f), baseline, 2e-3f);
 
-    V2Builder builder(harken::kPackKindContent);
+    V2Builder builder(HK_PACK_KIND_CONTENT);
     builder.AddBindingDefinition(harkentest::ObjectId(6201), CraftedBusEffectBinding());
     builder.AddBindingAttachment(0, harkentest::ObjectId(6201),
                                  VN_TARGET_SCOPE_BUS_EFFECT_PARAM, harkentest::ObjectId(10));
@@ -2751,7 +2752,7 @@ TEST(PackLogicLoad, BusEffectScope3ActivationGapDiscardsRevisionWhole) {
     PrepareMasterProbe(engine, &probe);
     const float baseline = MasterProbeLevel(engine);
 
-    V2Builder initial(harken::kPackKindContent);
+    V2Builder initial(HK_PACK_KIND_CONTENT);
     initial.AddBindingDefinition(harkentest::ObjectId(6002), CraftedBusEffectBinding());
     initial.AddBindingAttachment(0, harkentest::ObjectId(6002),
                                  VN_TARGET_SCOPE_BUS_EFFECT_PARAM,
@@ -2766,7 +2767,7 @@ TEST(PackLogicLoad, BusEffectScope3ActivationGapDiscardsRevisionWhole) {
 
     VnBindingDesc revised = CraftedBusEffectBinding();
     revised.curve.points[0].y = 3.0f;
-    V2Builder replacement(harken::kPackKindContent);
+    V2Builder replacement(HK_PACK_KIND_CONTENT);
     replacement.AddBindingDefinition(harkentest::ObjectId(6002), revised);
     replacement.AddBindingAttachment(0, harkentest::ObjectId(6002),
                                       VN_TARGET_SCOPE_BUS_EFFECT_PARAM,
@@ -2837,7 +2838,7 @@ TEST(PackLogicLoad, BusEffectScope3ReplaceAddsAttachmentToResolvedBus) {
     harkentest::AdvanceVariableWrite(engine);
     const float baseline = MasterProbeLevel(engine);
 
-    V2Builder initial(harken::kPackKindContent);
+    V2Builder initial(HK_PACK_KIND_CONTENT);
     initial.AddBindingDefinition(harkentest::ObjectId(6301), CraftedBusEffectBinding());
     const std::string initialPath =
         TempPath("pll_scope3_add_attachment_v1.pack");
@@ -2848,7 +2849,7 @@ TEST(PackLogicLoad, BusEffectScope3ReplaceAddsAttachmentToResolvedBus) {
     const std::uint32_t publisherBefore =
         engine->propertyPublisher.WorstCaseCommits();
 
-    V2Builder replacement(harken::kPackKindContent);
+    V2Builder replacement(HK_PACK_KIND_CONTENT);
     replacement.AddBindingDefinition(harkentest::ObjectId(6301), CraftedBusEffectBinding());
     replacement.AddBindingAttachment(0, harkentest::ObjectId(6301),
                                       VN_TARGET_SCOPE_BUS_EFFECT_PARAM, harkentest::ObjectId(10));
@@ -2891,7 +2892,7 @@ TEST(PackLogicLoad, ResidentOnlyKindRefusedAtLoad) {
     // shape, so the loader's own refusal is what stands between a
     // tampered file and an unreclaimable bus.
     {
-        V2Builder builder(harken::kPackKindContent);
+        V2Builder builder(HK_PACK_KIND_CONTENT);
         builder.AddBus(harkentest::ObjectId(751), VN_BUS_MASTER);
         builder.AddMedia(harkentest::ObjectId(752), harkentest::MakeDC(64, 0.5f));
         const std::string path = TempPath("pll_kind_content_bus.pack");
@@ -2901,7 +2902,7 @@ TEST(PackLogicLoad, ResidentOnlyKindRefusedAtLoad) {
     }
     // A RESIDENT-kind image carrying media.
     {
-        V2Builder builder(harken::kPackKindResident);
+        V2Builder builder(HK_PACK_KIND_RESIDENT);
         builder.AddBus(harkentest::ObjectId(753), VN_BUS_MASTER);
         builder.AddMedia(harkentest::ObjectId(754), harkentest::MakeDC(64, 0.5f));
         const std::string path = TempPath("pll_kind_resident_media.pack");
@@ -2917,133 +2918,6 @@ TEST(PackLogicLoad, ResidentOnlyKindRefusedAtLoad) {
     EXPECT_EQ(VN_UNKNOWN_ID, Vn_SetBusVolume(harkentest::ObjectId(753), -1.0f, 0));
 }
 
-TEST(PackLogicLoad, CompilerRefusesResidentSectionInContentManifest) {
-    // The compiler half of the defense in depth: a content manifest
-    // carrying a "buses" section refuses at build with a report.
-    const std::vector<float> tone = harkentest::MakeDC(kBlock, 0.5f);
-    const std::string wavPath = TempPath("pll_kind_twin_tone.wav");
-    WriteWavF32(wavPath, tone, 1, kRate);
-
-    const std::string packPath = TempPath("pll_kind_twin.pack");
-    const std::string manifestPath = TempPath("pll_kind_twin_manifest.json");
-    WriteTextFile(
-        manifestPath,
-        V2LogicManifest(packPath, "content",
-                        "\"entries\": [ { \"path\": \"" + wavPath +
-                            "\", \"id\": \"3da91a64-b947-4560-0000-0000000002f9\" } ],\n"
-                            R"("buses": [ { "id": "3da91a64-b947-4560-0000-0000000002fa", "parent": "00000000-0000-0000-0000-000000000001" } ])"));
-    std::filesystem::remove(packPath);
-    std::filesystem::remove(packPath + ".report.json");
-    std::filesystem::remove(manifestPath + ".report.json");
-
-    EXPECT_NE(0, harkentest::CompileResources({manifestPath}));
-    EXPECT_FALSE(std::filesystem::exists(packPath));
-
-    // A refused build still emits its report (the v1 refusal contract,
-    // unchanged for v2). A manifest refused during parsing never
-    // registered its output path, so the report-location fallback lands
-    // the report beside the MANIFEST — the malformed-JSON precedent —
-    // never beside the output it refused to name.
-    EXPECT_FALSE(std::filesystem::exists(packPath + ".report.json"));
-    std::string reportText;
-    ASSERT_TRUE(ReadFileText(manifestPath + ".report.json", &reportText));
-    harkenhost::JsonValue report;
-    std::string error;
-    ASSERT_TRUE(harkenhost::ParseJson(reportText, &report, &error)) << error;
-    const harkenhost::JsonValue* status = report.Find("status");
-    ASSERT_NE(nullptr, status);
-    EXPECT_EQ("refused", status->text);
-    const harkenhost::JsonValue* refusal = report.Find("refusal");
-    ASSERT_NE(nullptr, refusal);
-    const harkenhost::JsonValue* message = refusal->Find("message");
-    ASSERT_NE(nullptr, message);
-    EXPECT_FALSE(message->text.empty());
-}
-
-TEST(PackLogicLoad, CompilerRefusesRetiredActionsSection) {
-    const std::vector<float> tone = harkentest::MakeDC(kBlock, 0.5f);
-    const std::string wavPath = TempPath("pll_dupname_tone.wav");
-    WriteWavF32(wavPath, tone, 1, kRate);
-
-    const std::string packPath = TempPath("pll_dupname.pack");
-    const std::string manifestPath = TempPath("pll_dupname_manifest.json");
-    WriteTextFile(
-        manifestPath,
-        V2LogicManifest(
-            packPath, "content",
-            "\"entries\": [ { \"path\": \"" + wavPath +
-                "\", \"id\": \"3da91a64-b947-4560-0000-0000000003d5\" } ],\n" +
-                std::string(
-                    R"("actions": [ { "id": "3da91a64-b947-4560-0000-0000000003d6", "steps": [
-      { "type": "play", "playable": "3da91a64-b947-4560-0000-0000000003d5", "bus": "00000000-0000-0000-0000-000000000001" } ] } ])")));
-    std::filesystem::remove(packPath);
-
-    EXPECT_NE(0, harkentest::CompileResources({manifestPath}));
-    EXPECT_FALSE(std::filesystem::exists(packPath));
-}
-
-
-// --- compiler determinism: byte-identical output across runs ---
-
-TEST(PackLogicLoad, CompilerOutputByteIdenticalAcrossRuns) {
-    // A full-shape content manifest: media, container, voice binding, and
-    // attachment. The same manifest builds three times — clean,
-    // cache-hit, and cache-deleted — and the cache discipline demands
-    // the pack bytes never move: a cache may only save work, never
-    // change output.
-    const std::vector<float> tone = harkentest::MakeDC(kBlock * 2, 0.5f);
-    const std::string wavPath = TempPath("pll_byteident_tone.wav");
-    WriteWavF32(wavPath, tone, 1, kRate);
-
-    const std::string packPath = TempPath("pll_byteident.pack");
-    const std::string manifestPath = TempPath("pll_byteident_manifest.json");
-    WriteTextFile(
-        manifestPath,
-        V2LogicManifest(
-            packPath, "content",
-            "\"entries\": [ { \"path\": \"" + wavPath +
-                "\", \"id\": \"3da91a64-b947-4560-0000-0000000003cb\" } ],\n" +
-                std::string(
-                    R"("containers": [ { "id": "3da91a64-b947-4560-0000-0000000003cc", "order": "weightedRandom",
-                    "children": [ { "playable": "3da91a64-b947-4560-0000-0000000003cb", "weight": 1 } ] } ],
-"bindings": [ { "id": "3da91a64-b947-4560-0000-0000000003ce", "variable": "3da91a64-b947-4560-0000-000000001d39", "scope": "voice", "target": 0,
-                "curve": { "points": [[0.0, 0.0], [1.0, -6.0]],
-                           "handles": [[0.0, 0.0, 1.0, -6.0]] } } ],
-"attachments": [ { "binding": "3da91a64-b947-4560-0000-0000000003ce", "scope": "voice", "object": "3da91a64-b947-4560-0000-0000000003cb" } ])")));
-
-    const std::string cachePath = packPath + ".cache.json";
-    const std::string reportPath = packPath + ".report.json";
-    std::filesystem::remove(packPath);
-    std::filesystem::remove(cachePath);
-    std::filesystem::remove(reportPath);
-
-    // Build #1: clean decode; the report appears and the cache seeds.
-    ASSERT_EQ(0, harkentest::CompileResources({manifestPath}));
-    std::string first;
-    ASSERT_TRUE(ReadFileText(packPath, &first));
-    ASSERT_FALSE(first.empty());
-    EXPECT_TRUE(std::filesystem::exists(reportPath));
-    ASSERT_TRUE(std::filesystem::exists(cachePath));
-
-    // Build #2: nothing touched, so every entry may serve from the
-    // cache — and the output must still be byte-identical.
-    ASSERT_EQ(0, harkentest::CompileResources({manifestPath}));
-    std::string second;
-    ASSERT_TRUE(ReadFileText(packPath, &second));
-    EXPECT_TRUE(std::filesystem::exists(reportPath));
-    EXPECT_TRUE(first == second) << "cache-hit rebuild moved the pack bytes";
-
-    // Build #3: only the cache file removed — a full re-decode of the
-    // unchanged sources must land on the same bytes again.
-    ASSERT_TRUE(std::filesystem::remove(cachePath));
-    ASSERT_EQ(0, harkentest::CompileResources({manifestPath}));
-    std::string third;
-    ASSERT_TRUE(ReadFileText(packPath, &third));
-    EXPECT_TRUE(std::filesystem::exists(reportPath));
-    EXPECT_TRUE(first == third)
-        << "clean re-decode diverged from the cache-assisted build";
-}
-
 // --- load: corruption ---
 
 TEST(PackLogicLoad, CorruptedPackLeavesEngineUntouched) {
@@ -3051,7 +2925,7 @@ TEST(PackLogicLoad, CorruptedPackLeavesEngineUntouched) {
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
 
-    V2Builder builder(harken::kPackKindResident);
+    V2Builder builder(HK_PACK_KIND_RESIDENT);
     builder.AddBus(harkentest::ObjectId(771), VN_BUS_MASTER);
     const std::vector<std::uint8_t> intact = builder.Build();
 
@@ -3070,7 +2944,7 @@ TEST(PackLogicLoad, CorruptedPackLeavesEngineUntouched) {
     // One flipped directory byte: the directory checksum refuses.
     {
         std::vector<std::uint8_t> bytes = intact;
-        bytes[harken::kPackFileHeaderBytes + 16] ^= 0x01;
+        bytes[harken::kPackBytes<HkPackFileHeader> + 16] ^= 0x01;
         const std::string path = TempPath("pll_corrupt_directory.pack");
         WriteFileBytes(path, bytes);
         VnPackHandle pack = 0;
@@ -3096,13 +2970,13 @@ TEST(PackLogicLoad, LegacyVariableEntryKindsRefuseWithZeroSideEffects) {
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
 
-    V2Builder variableBuilder(harken::kPackKindResident);
+    V2Builder variableBuilder(HK_PACK_KIND_RESIDENT);
     variableBuilder.AddBus(harkentest::ObjectId(772), VN_BUS_MASTER);
     variableBuilder.AddDiscreteVariable(harkentest::ObjectId(7351));
     const std::string variablePath = TempPath("pll_legacy_variable.pack");
     WriteFileBytes(variablePath, variableBuilder.Build());
 
-    V2Builder meterBuilder(harken::kPackKindResident);
+    V2Builder meterBuilder(HK_PACK_KIND_RESIDENT);
     meterBuilder.AddBus(harkentest::ObjectId(773), VN_BUS_MASTER);
     meterBuilder.AddMeterWiring(harkentest::ObjectId(773), harkentest::ObjectId(7352));
     const std::string meterPath = TempPath("pll_legacy_meter.pack");
@@ -3718,7 +3592,7 @@ TEST(PackLogicInitialAtomicity,
     harken::Engine* engine = session.Engine();
 
     constexpr VnSoundId kSound = harkentest::ObjectId(8621);
-    V2Builder builder(harken::kPackKindContent);
+    V2Builder builder(HK_PACK_KIND_CONTENT);
     builder.AddMedia(kSound, harkentest::MakeDC(64, 0.5f));
     const std::string packPath =
         TempPath("plia_command_scratch_bad_alloc.pack");
@@ -3754,7 +3628,7 @@ TEST(PackLogicInitialAtomicity,
     harken::Engine* engine = session.Engine();
 
     constexpr VnSoundId kSound = harkentest::ObjectId(8622);
-    V2Builder builder(harken::kPackKindContent);
+    V2Builder builder(HK_PACK_KIND_CONTENT);
     builder.AddMedia(kSound, harkentest::MakeDC(64, 0.25f));
     const std::string packPath =
         TempPath("plia_zero_command_content.pack");
@@ -4102,7 +3976,7 @@ TEST(PackLogicStaging, PublicMediaAllocationFailureReturnsOutOfMemory) {
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
 
-    V2Builder builder(harken::kPackKindContent);
+    V2Builder builder(HK_PACK_KIND_CONTENT);
     builder.AddMedia(harkentest::ObjectId(851), harkentest::MakeDC(64, 0.5f));
     const std::string packPath = TempPath("pll_pcm_fault.pack");
     WriteFileBytes(packPath, builder.Build());
@@ -5901,7 +5775,7 @@ TEST(PackLogicReplace,
     ASSERT_EQ(VN_OK, LoadPack(initialPath, &pack));
     const auto mediaChecksum = [](const harken::PackLogicRecord& record) {
         for (const harken::PackLogicImage::Stamp& stamp : record.stamps) {
-            if (stamp.kind == harken::kPackEntryKindMedia &&
+            if (stamp.kind == HK_PACK_ENTRY_KIND_MEDIA &&
                 stamp.id == harkentest::ObjectId(967)) {
                 return stamp.checksum;
             }
@@ -7565,7 +7439,7 @@ TEST(PackLogicLoad, MoreThanSixtyFourBusOwnersLoadAndRetireIndependently) {
     auto& engine = *session.Engine();
     std::array<VnPackHandle, 80> packs{};
     for (std::uint32_t i = 0; i < packs.size(); ++i) {
-        V2Builder builder(harken::kPackKindResident);
+        V2Builder builder(HK_PACK_KIND_RESIDENT);
         builder.AddBus(harkentest::ObjectId(50000 + i), VN_BUS_MASTER);
         const auto path = TempPath("bus_owner_growth_" + std::to_string(i) + ".pack");
         WriteFileBytes(path, builder.Build());

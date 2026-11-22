@@ -6,7 +6,7 @@
 
 #include <optional>
 
-namespace VNX {
+namespace harken::studio {
 
 enum class ParameterPresenterId
 {
@@ -46,4 +46,4 @@ bool parameterPresenterSupportsContext(ParameterPresenterId id,
 
 }
 
-Q_DECLARE_OPERATORS_FOR_FLAGS(VNX::ParameterPresenterCapabilities)
+Q_DECLARE_OPERATORS_FOR_FLAGS(harken::studio::ParameterPresenterCapabilities)

@@ -25,13 +25,15 @@
 #include <QJsonObject>
 #include <QLockFile>
 #include <QTemporaryDir>
+#include <QProcess>
+#include "Versions/IntegrityChecker.h"
 
 #include <algorithm>
 #include <memory>
 
-using VNH::InstallExecutor;
-using VNH::InstallIndex;
-using VNH::PackageReader;
+using harken::hub::InstallExecutor;
+using harken::hub::InstallIndex;
+using harken::hub::PackageReader;
 using HarkenHubTest::baseManifestPayload;
 using HarkenHubTest::makeKeypair;
 using HarkenHubTest::signEnvelope;
@@ -71,7 +73,7 @@ QString buildPackage(const QString& path,
 
     QJsonArray files;
     QJsonObject binaryRecord;
-    binaryRecord[QStringLiteral("path")] = VNH::studioBinaryRelativePath();
+    binaryRecord[QStringLiteral("path")] = harken::hub::studioBinaryRelativePath();
     binaryRecord[QStringLiteral("size")] = binary.size();
     binaryRecord[QStringLiteral("sha256")] = QString::fromLatin1(sha256Hex(binary));
     files.append(binaryRecord);
@@ -94,7 +96,7 @@ QString buildPackage(const QString& path,
     capabilities[QStringLiteral("capabilitiesVersion")] = 2;
 
     const std::vector<TestEntry> entries = {
-        {VNH::studioBinaryRelativePath().toUtf8(), binary},
+        {harken::hub::studioBinaryRelativePath().toUtf8(), binary},
         {QByteArrayLiteral("data/asset.bin"), asset},
         {QByteArrayLiteral("package-manifest.json"),
          QJsonDocument(manifest).toJson(QJsonDocument::Compact)},
@@ -138,17 +140,17 @@ protected:
     {
         const auto envelope = signEnvelope(
             QJsonDocument(payload).toJson(QJsonDocument::Compact), keys);
-        const auto placement = VNH::HandoffArea::place(archivePath, envelope);
+        const auto placement = harken::hub::HandoffArea::place(archivePath, envelope);
         EXPECT_TRUE(placement.ok) << placement.error.toStdString();
         return placement.transactionId;
     }
 
     QString targetPath() const
     {
-        return QDir(VNH::studioVersionsRoot()).filePath(
+        return QDir(harken::hub::studioVersionsRoot()).filePath(
             QStringLiteral("1.4.0-stable-%1-%2").arg(
-                VNH::ManifestVerifier::hostPlatform(),
-                VNH::ManifestVerifier::hostArchitecture()));
+                harken::hub::ManifestVerifier::hostPlatform(),
+                harken::hub::ManifestVerifier::hostArchitecture()));
     }
 
     QTemporaryDir dir;
@@ -168,6 +170,32 @@ QByteArray readAll(const QString& path)
 
 }
 
+TEST_F(InstallExecutorTest, ApprovedDestinationAndIndexMustStillMatchAfterElevation)
+{
+    const auto reviewedTransaction = placeHandoff(payloadForArchive());
+    const auto reviewedManifest = PackageReader::fileSha256Hex(harken::hub::HandoffArea::manifestPath(reviewedTransaction));
+    ASSERT_TRUE(harken::hub::HandoffArea::discard(reviewedTransaction));
+    auto substituted = payloadForArchive();
+    substituted["releaseSequence"] = 8;
+    const auto changed = InstallExecutor::run(placeHandoff(substituted), keys.publicKey, kNow,
+        false, targetPath(), PackageReader::fileSha256Hex(InstallIndex::filePath()), reviewedManifest);
+    EXPECT_EQ(changed.failureCode, "ReviewChanged");
+    EXPECT_FALSE(QFileInfo::exists(targetPath()));
+    const auto rejectedIndex = InstallExecutor::run(placeHandoff(payloadForArchive()), keys.publicKey, kNow,
+        false, targetPath(), QStringLiteral("changed-index"));
+    EXPECT_EQ(rejectedIndex.failureCode, "ReviewChanged");
+    ASSERT_TRUE(QDir().mkpath(targetPath()));
+    const auto occupied = InstallExecutor::run(placeHandoff(payloadForArchive()), keys.publicKey, kNow,
+        false, targetPath(), PackageReader::fileSha256Hex(InstallIndex::filePath()));
+    EXPECT_EQ(occupied.failureCode, "ReviewChanged");
+    EXPECT_FALSE(QDir(targetPath() + "-2").exists());
+    ASSERT_TRUE(QDir().rmdir(targetPath()));
+    const auto installed = InstallExecutor::run(placeHandoff(payloadForArchive()), keys.publicKey, kNow,
+        false, targetPath(), PackageReader::fileSha256Hex(InstallIndex::filePath()));
+    EXPECT_TRUE(installed.ok) << installed.error.toStdString();
+    EXPECT_EQ(installed.installPath, targetPath());
+}
+
 TEST_F(InstallExecutorTest, HappyPathInstallsAndCommits)
 {
     const QString transactionId = placeHandoff(payloadForArchive());
@@ -180,17 +208,17 @@ TEST_F(InstallExecutorTest, HappyPathInstallsAndCommits)
     EXPECT_EQ(outcome.buildId, QStringLiteral("run12.abcd1234"));
 
     EXPECT_EQ(readAll(targetPath() + QStringLiteral("/") +
-                      VNH::studioBinaryRelativePath()),
+                      harken::hub::studioBinaryRelativePath()),
               QByteArrayLiteral("stub-binary"));
     EXPECT_EQ(readAll(targetPath() + QStringLiteral("/data/asset.bin")),
               QByteArrayLiteral("payload-data"));
 
-    EXPECT_FALSE(QFile::exists(VNH::HandoffArea::packagePath(transactionId)));
-    EXPECT_FALSE(QFile::exists(VNH::HandoffArea::manifestPath(transactionId)));
-    EXPECT_FALSE(QDir(VNH::machineDataDir() + QStringLiteral("/staging/") +
+    EXPECT_FALSE(QFile::exists(harken::hub::HandoffArea::packagePath(transactionId)));
+    EXPECT_FALSE(QFile::exists(harken::hub::HandoffArea::manifestPath(transactionId)));
+    EXPECT_FALSE(QDir(harken::hub::machineDataDir() + QStringLiteral("/staging/") +
                       transactionId)
                      .exists());
-    EXPECT_FALSE(QDir(VNH::studioVersionsRoot() + QStringLiteral("/.staging-") +
+    EXPECT_FALSE(QDir(harken::hub::studioVersionsRoot() + QStringLiteral("/.staging-") +
                       transactionId)
                      .exists());
 
@@ -202,7 +230,7 @@ TEST_F(InstallExecutorTest, HappyPathInstallsAndCommits)
     EXPECT_EQ(index.records[0].installPath, targetPath());
 
     const QByteArray journal =
-        readAll(VNH::TransactionJournal::filePath());
+        readAll(harken::hub::TransactionJournal::filePath());
     EXPECT_TRUE(journal.contains(QByteArrayLiteral("\"Installed\"")));
 }
 
@@ -218,8 +246,30 @@ TEST_F(InstallExecutorTest, RepairRestoresTamperedInstallFromVerifiedCache)
 
     const EnvGuard trustAnchor("HARKEN_HUB_MANIFEST_PUBKEY",
                                QString::fromLatin1(keys.publicKey.toHex()));
-    const auto repaired = VNH::RepairExecutor::run(
-        QStringLiteral("run12.abcd1234"), kNow.addDays(90));
+    QFile unowned(targetPath() + "/user.txt");
+    ASSERT_TRUE(unowned.open(QIODevice::WriteOnly));
+    unowned.write("user data");
+    unowned.close();
+    const auto snapshot = harken::hub::IntegrityChecker::snapshot(targetPath());
+    const auto source = harken::hub::RepairExecutor::verifySource("run12.abcd1234", kNow.addDays(90));
+    ASSERT_TRUE(source.ok) << source.error.toStdString();
+    const auto rejected = harken::hub::RepairExecutor::run("run12.abcd1234", kNow.addDays(90), QString(), snapshot.hash, "changed-manifest");
+    EXPECT_EQ(rejected.failureCode, "ReviewChanged");
+    EXPECT_EQ(readAll(unowned.fileName()), "user data");
+    {
+        const EnvGuard userRoot("HARKEN_HUB_USER_ROOT", dir.filePath("cli-user"));
+        QProcess cli;
+        cli.start(QString::fromUtf8(HARKEN_HUB_CLI_FIXTURE), {"--cli", "versions", "repair", "--build", "run12.abcd1234"});
+        ASSERT_TRUE(cli.waitForFinished(15000));
+        const auto output = cli.readAllStandardOutput();
+        ASSERT_EQ(cli.exitCode(), 4) << output.toStdString();
+        const auto plan = QJsonDocument::fromJson(output).object()["plan"].toObject();
+        EXPECT_TRUE(plan["changes"].toArray().contains(QJsonObject{{"path", "user.txt"}, {"action", "remove"}}));
+        EXPECT_TRUE(plan["changes"].toArray().contains(QJsonObject{{"path", "data/asset.bin"}, {"action", "replace"}}));
+        EXPECT_EQ(plan["manifestSha256"].toString(), source.manifestHash);
+    }
+    const auto repaired = harken::hub::RepairExecutor::run(
+        QStringLiteral("run12.abcd1234"), kNow.addDays(90), QString(), snapshot.hash, source.manifestHash);
     ASSERT_TRUE(repaired.ok) << repaired.error.toStdString();
     EXPECT_EQ(readAll(targetPath() + QStringLiteral("/data/asset.bin")),
               QByteArrayLiteral("payload-data"));
@@ -247,7 +297,7 @@ TEST_F(InstallExecutorTest, InterruptedActivationIsRecoveredOrRemainsRepairableA
             ASSERT_TRUE(asset.open(QIODevice::WriteOnly));
             asset.write("tampered");
         }
-        const auto reclaimed = VNH::TransactionReclaimer::reclaimAtStartup(kNow);
+        const auto reclaimed = harken::hub::TransactionReclaimer::reclaimAtStartup(kNow);
         EXPECT_EQ(reclaimed.locked, !recoveryBlocked);
         EXPECT_EQ(reclaimed.installRecoveryErrors.isEmpty(), !recoveryBlocked);
         auto index = InstallIndex::snapshot();
@@ -263,10 +313,10 @@ TEST_F(InstallExecutorTest, InterruptedActivationIsRecoveredOrRemainsRepairableA
         const auto retry = InstallExecutor::run(placeHandoff(payloadForArchive()), keys.publicKey, kNow);
         EXPECT_FALSE(retry.ok);
         EXPECT_EQ(retry.failureCode, QStringLiteral("TargetConflict"));
-        const auto repaired = VNH::RepairExecutor::run(original.buildId, kNow);
+        const auto repaired = harken::hub::RepairExecutor::run(original.buildId, kNow);
         ASSERT_TRUE(repaired.ok) << repaired.error.toStdString();
         EXPECT_EQ(readAll(original.installPath + "/data/asset.bin"), "payload-data");
-        EXPECT_EQ(VNH::VersionScanner::scanInstalled().size(), 1u);
+        EXPECT_EQ(harken::hub::VersionScanner::scanInstalled().size(), 1u);
         EXPECT_FALSE(QFileInfo::exists(original.installPath + "-2"));
     }
 }
@@ -282,22 +332,22 @@ TEST_F(InstallExecutorTest, RepairNeverReplacesAReferencedRunningVersion)
     asset.close();
     for (int startAt : {1, 2}) {
         int probes = 0;
-        const QString repairTransactionId = VNH::HandoffArea::newTransactionId();
-        const auto result = VNH::RepairExecutor::run(record.buildId, kNow, [&](const QString& root) {
+        const QString repairTransactionId = harken::hub::HandoffArea::newTransactionId();
+        const auto result = harken::hub::RepairExecutor::run(record.buildId, kNow, [&](const QString& root) {
             EXPECT_EQ(root, record.installPath);
-            return ++probes >= startAt ? QStringList{root + '/' + VNH::studioBinaryRelativePath()} : QStringList{};
+            return ++probes >= startAt ? QStringList{root + '/' + harken::hub::studioBinaryRelativePath()} : QStringList{};
         }, repairTransactionId);
         EXPECT_FALSE(result.ok);
         EXPECT_EQ(result.failureCode, "VersionInUse");
-        const QString diagnostic = VNH::TransactionDiagnostics::failureMessage(repairTransactionId);
+        const QString diagnostic = harken::hub::TransactionDiagnostics::failureMessage(repairTransactionId);
         EXPECT_TRUE(diagnostic.contains(result.error));
         EXPECT_TRUE(diagnostic.contains(QStringLiteral("Close Studio")));
-        EXPECT_TRUE(VNH::TransactionDiagnostics::failureMessage(VNH::HandoffArea::newTransactionId()).isEmpty());
+        EXPECT_TRUE(harken::hub::TransactionDiagnostics::failureMessage(harken::hub::HandoffArea::newTransactionId()).isEmpty());
         EXPECT_EQ(readAll(asset.fileName()), "original damaged data");
-        EXPECT_TRUE(QDir(VNH::studioVersionsRoot()).entryList({".repair-*"},
+        EXPECT_TRUE(QDir(harken::hub::studioVersionsRoot()).entryList({".repair-*"},
             QDir::Dirs | QDir::Hidden | QDir::NoDotAndDotDot).isEmpty());
     }
-    EXPECT_TRUE(VNH::RepairExecutor::run(record.buildId, kNow,
+    EXPECT_TRUE(harken::hub::RepairExecutor::run(record.buildId, kNow,
         [](const QString&) { return QStringList{}; }).ok);
     EXPECT_EQ(readAll(asset.fileName()), "payload-data");
 }
@@ -307,7 +357,7 @@ TEST_F(InstallExecutorTest, FailedRepairVerificationRestoresTheOriginalTreeAndKe
     const QString transactionId = placeHandoff(payloadForArchive());
     ASSERT_TRUE(InstallExecutor::run(transactionId, keys.publicKey, kNow).ok);
     auto record = InstallIndex::snapshot().records.front();
-    record.capabilitiesHash = QString(64, QLatin1Char('f'));
+    record.packageManifestHash = QString(64, QLatin1Char('f'));
     QString error;
     ASSERT_TRUE(InstallIndex::commitInstallation(record, 7, &error));
     QFile damaged(targetPath() + QStringLiteral("/data/asset.bin"));
@@ -317,14 +367,14 @@ TEST_F(InstallExecutorTest, FailedRepairVerificationRestoresTheOriginalTreeAndKe
 
     const EnvGuard trustAnchor("HARKEN_HUB_MANIFEST_PUBKEY",
                                QString::fromLatin1(keys.publicKey.toHex()));
-    const auto repaired = VNH::RepairExecutor::run(record.buildId, kNow);
+    const auto repaired = harken::hub::RepairExecutor::run(record.buildId, kNow);
     EXPECT_FALSE(repaired.ok);
     EXPECT_EQ(repaired.failureCode, QStringLiteral("RepairVerificationFailed"));
     EXPECT_EQ(readAll(targetPath() + QStringLiteral("/data/asset.bin")),
               QByteArrayLiteral("original damaged payload"));
     EXPECT_EQ(InstallIndex::snapshot().records.front().healthState,
               QStringLiteral("NeedsRepair"));
-    EXPECT_TRUE(QDir(VNH::studioVersionsRoot()).entryList(
+    EXPECT_TRUE(QDir(harken::hub::studioVersionsRoot()).entryList(
         {QStringLiteral(".repair-*")}, QDir::Dirs | QDir::Hidden | QDir::NoDotAndDotDot).isEmpty());
 }
 
@@ -334,7 +384,7 @@ TEST_F(InstallExecutorTest, TamperedManifestIsRejected)
     const auto envelope =
         signEnvelope(QJsonDocument(payload).toJson(QJsonDocument::Compact),
                      makeKeypair(0x24));
-    const auto placement = VNH::HandoffArea::place(archivePath, envelope);
+    const auto placement = harken::hub::HandoffArea::place(archivePath, envelope);
     ASSERT_TRUE(placement.ok);
 
     const auto outcome =
@@ -343,13 +393,13 @@ TEST_F(InstallExecutorTest, TamperedManifestIsRejected)
     EXPECT_EQ(outcome.failureCode, QStringLiteral("ManifestRejected"));
     EXPECT_FALSE(QFileInfo::exists(targetPath()));
     EXPECT_FALSE(
-        QFile::exists(VNH::HandoffArea::packagePath(placement.transactionId)));
+        QFile::exists(harken::hub::HandoffArea::packagePath(placement.transactionId)));
 }
 
 TEST_F(InstallExecutorTest, ReplayedSequenceIsRejected)
 {
     QString error;
-    VNH::InstalledVersionRecord existing;
+    harken::hub::InstalledVersionRecord existing;
     existing.buildId = QStringLiteral("run99.99999999");
     existing.semanticVersion = QStringLiteral("2.0.0");
     existing.installPath = dir.filePath("versions/existing");
@@ -380,7 +430,7 @@ TEST_F(InstallExecutorTest, ExpiredManifestIsRejected)
 TEST_F(InstallExecutorTest, ExplicitInstallAcceptsOlderSequence)
 {
     QString error;
-    VNH::InstalledVersionRecord existing;
+    harken::hub::InstalledVersionRecord existing;
     existing.buildId = QStringLiteral("run99.99999999");
     existing.semanticVersion = QStringLiteral("2.0.0");
     existing.installPath = dir.filePath("versions/existing");
@@ -416,7 +466,7 @@ TEST_F(InstallExecutorTest, ExplicitInstallStillRejectsBadSignature)
     const auto envelope =
         signEnvelope(QJsonDocument(payload).toJson(QJsonDocument::Compact),
                      makeKeypair(0x24));
-    const auto placement = VNH::HandoffArea::place(archivePath, envelope);
+    const auto placement = harken::hub::HandoffArea::place(archivePath, envelope);
     ASSERT_TRUE(placement.ok);
 
     const auto outcome = InstallExecutor::run(placement.transactionId,
@@ -453,7 +503,7 @@ TEST_F(InstallExecutorTest, OccupiedTargetIsPreserved)
     EXPECT_NE(outcome.installPath, targetPath());
     EXPECT_EQ(readAll(existing.fileName()), QByteArrayLiteral("keep"));
     ASSERT_EQ(InstallIndex::snapshot().records.size(), 1u);
-    EXPECT_EQ(VNH::VersionScanner::scanInstalled().size(), 1u);
+    EXPECT_EQ(harken::hub::VersionScanner::scanInstalled().size(), 1u);
 }
 
 TEST_F(InstallExecutorTest, RegisteredBuildCannotBeInstalledAgainAtANewPath)
@@ -464,7 +514,7 @@ TEST_F(InstallExecutorTest, RegisteredBuildCannotBeInstalledAgainAtANewPath)
     auto record = InstallIndex::snapshot().records.front();
     for (const bool legacyPath : {false, true}) {
         if (legacyPath) {
-            const QString path = QDir(VNH::studioVersionsRoot()).filePath(
+            const QString path = QDir(harken::hub::studioVersionsRoot()).filePath(
                 record.semanticVersion + QLatin1Char('-') + record.buildId);
             ASSERT_TRUE(QDir().rename(record.installPath, path));
             record.installPath = path;
@@ -475,25 +525,25 @@ TEST_F(InstallExecutorTest, RegisteredBuildCannotBeInstalledAgainAtANewPath)
         outcome = InstallExecutor::run(transactionId, keys.publicKey, kNow, true);
         EXPECT_FALSE(outcome.ok);
         EXPECT_EQ(outcome.failureCode, QStringLiteral("TargetConflict"));
-        const auto summaries = VNH::TransactionDiagnostics::summarize();
+        const auto summaries = harken::hub::TransactionDiagnostics::summarize();
         const auto summary = std::find_if(
             summaries.begin(), summaries.end(), [&transactionId](const auto& item) {
                 return item.transactionId == transactionId;
             });
         ASSERT_NE(summary, summaries.end());
         EXPECT_EQ(summary->failureDetail, outcome.error);
-        const QString message = VNH::TransactionDiagnostics::failureMessage(transactionId);
+        const QString message = harken::hub::TransactionDiagnostics::failureMessage(transactionId);
         EXPECT_TRUE(message.contains(record.installPath));
         EXPECT_TRUE(message.contains(QStringLiteral("TargetConflict")));
         ASSERT_EQ(InstallIndex::snapshot().records.size(), 1u);
         EXPECT_EQ(InstallIndex::snapshot().records.front().installPath, record.installPath);
-        EXPECT_EQ(VNH::VersionScanner::scanInstalled().size(), 1u);
+        EXPECT_EQ(harken::hub::VersionScanner::scanInstalled().size(), 1u);
     }
 }
 
 TEST_F(InstallExecutorTest, MissingRegisteredDirectoryIsReservedForRepair)
 {
-    VNH::InstalledVersionRecord existing;
+    harken::hub::InstalledVersionRecord existing;
     existing.buildId = QStringLiteral("previous-build");
     existing.semanticVersion = QStringLiteral("1.4.0");
     existing.installPath = targetPath();
@@ -520,7 +570,7 @@ TEST_F(InstallExecutorTest, SameVersionBuildsHaveIndependentInstallAndMaintenanc
     ASSERT_TRUE(second.ok) << second.error.toStdString();
     EXPECT_NE(first.installPath, second.installPath);
     ASSERT_EQ(InstallIndex::snapshot().records.size(), 2u);
-    EXPECT_EQ(VNH::VersionScanner::scanInstalled().size(), 2u);
+    EXPECT_EQ(harken::hub::VersionScanner::scanInstalled().size(), 2u);
 
     QFile damaged(second.installPath + QStringLiteral("/data/asset.bin"));
     ASSERT_TRUE(damaged.open(QIODevice::WriteOnly | QIODevice::Truncate));
@@ -528,46 +578,46 @@ TEST_F(InstallExecutorTest, SameVersionBuildsHaveIndependentInstallAndMaintenanc
     damaged.close();
     const EnvGuard trustAnchor("HARKEN_HUB_MANIFEST_PUBKEY",
                                QString::fromLatin1(keys.publicKey.toHex()));
-    const auto repaired = VNH::RepairExecutor::run(secondBuild, kNow.addDays(90));
+    const auto repaired = harken::hub::RepairExecutor::run(secondBuild, kNow.addDays(90));
     ASSERT_TRUE(repaired.ok) << repaired.error.toStdString();
     EXPECT_EQ(readAll(damaged.fileName()), QByteArrayLiteral("payload-data"));
-    const auto removed = VNH::UninstallExecutor::run(secondBuild, kNow);
+    const auto removed = harken::hub::UninstallExecutor::run(secondBuild, kNow);
     ASSERT_TRUE(removed.ok) << removed.error.toStdString();
     EXPECT_FALSE(QFileInfo::exists(second.installPath));
     EXPECT_EQ(readAll(first.installPath + QStringLiteral("/data/asset.bin")),
               QByteArrayLiteral("payload-data"));
     ASSERT_EQ(InstallIndex::snapshot().records.size(), 1u);
     EXPECT_EQ(InstallIndex::snapshot().records.front().buildId, first.buildId);
-    EXPECT_EQ(VNH::VersionScanner::scanInstalled().size(), 1u);
+    EXPECT_EQ(harken::hub::VersionScanner::scanInstalled().size(), 1u);
 }
 
 TEST_F(InstallExecutorTest, MissingHandoffIsRejected)
 {
-    const auto transactionId = VNH::HandoffArea::newTransactionId();
+    const auto transactionId = harken::hub::HandoffArea::newTransactionId();
     const auto outcome = InstallExecutor::run(transactionId, keys.publicKey, kNow);
     EXPECT_FALSE(outcome.ok);
     EXPECT_EQ(outcome.failureCode, QStringLiteral("HandoffRejected"));
     EXPECT_EQ(outcome.exitCode(), 2);
-    EXPECT_TRUE(VNH::TransactionDiagnostics::failureMessage(transactionId).contains(outcome.error));
+    EXPECT_TRUE(harken::hub::TransactionDiagnostics::failureMessage(transactionId).contains(outcome.error));
 }
 
 TEST_F(InstallExecutorTest, UnavailableMachineDirectoryReportsWithoutJournal)
 {
-    QFile blocker(VNH::machineDataDir());
+    QFile blocker(harken::hub::machineDataDir());
     ASSERT_TRUE(blocker.open(QIODevice::WriteOnly));
     blocker.close();
 
-    const auto transactionId = VNH::HandoffArea::newTransactionId();
+    const auto transactionId = harken::hub::HandoffArea::newTransactionId();
     const auto outcome = InstallExecutor::run(transactionId, keys.publicKey, kNow);
     EXPECT_FALSE(outcome.ok);
     EXPECT_EQ(outcome.failureCode, QStringLiteral("MachineDataUnavailable"));
-    EXPECT_EQ(outcome.exitCode(), VNH::kInstallMachineDataUnavailableExitCode);
-    EXPECT_FALSE(QFileInfo::exists(VNH::TransactionJournal::filePath()));
+    EXPECT_EQ(outcome.exitCode(), harken::hub::kInstallMachineDataUnavailableExitCode);
+    EXPECT_FALSE(QFileInfo::exists(harken::hub::TransactionJournal::filePath()));
 
-    const auto message = VNH::TransactionDiagnostics::failureMessage(
+    const auto message = harken::hub::TransactionDiagnostics::failureMessage(
         transactionId, outcome.exitCode());
     EXPECT_TRUE(message.contains(QStringLiteral("could not create its shared data folder")));
-    EXPECT_TRUE(message.contains(VNH::machineDataDir()));
+    EXPECT_TRUE(message.contains(harken::hub::machineDataDir()));
     EXPECT_TRUE(message.contains(QStringLiteral("permissions and available disk space")));
 }
 
@@ -583,8 +633,8 @@ TEST_F(InstallExecutorTest, StaleStagingIsSweptUnderLock)
 {
     const QString staleTx(32, QLatin1Char('e'));
     const QString machineStale =
-        VNH::machineDataDir() + QStringLiteral("/staging/") + staleTx;
-    const QString extractStale = VNH::studioVersionsRoot() +
+        harken::hub::machineDataDir() + QStringLiteral("/staging/") + staleTx;
+    const QString extractStale = harken::hub::studioVersionsRoot() +
                                  QStringLiteral("/.staging-") + staleTx;
     ASSERT_TRUE(QDir().mkpath(machineStale));
     ASSERT_TRUE(QDir().mkpath(extractStale));
@@ -614,7 +664,7 @@ TEST_F(InstallExecutorTest, AuthenticodeGateBlocksWhenRequired)
 
 TEST_F(InstallExecutorTest, CorruptIndexBlocksInstall)
 {
-    ASSERT_TRUE(QDir().mkpath(VNH::machineDataDir()));
+    ASSERT_TRUE(QDir().mkpath(harken::hub::machineDataDir()));
     QFile file(InstallIndex::filePath());
     ASSERT_TRUE(file.open(QIODevice::WriteOnly));
     file.write(QByteArrayLiteral("not json"));
@@ -630,8 +680,8 @@ TEST_F(InstallExecutorTest, CorruptIndexBlocksInstall)
 
 TEST_F(InstallExecutorTest, ConcurrentInstallIsRejected)
 {
-    ASSERT_TRUE(QDir().mkpath(VNH::machineDataDir()));
-    QLockFile heldLock(VNH::machineDataDir() + QStringLiteral("/install.lock"));
+    ASSERT_TRUE(QDir().mkpath(harken::hub::machineDataDir()));
+    QLockFile heldLock(harken::hub::machineDataDir() + QStringLiteral("/install.lock"));
     heldLock.setStaleLockTime(0);
     ASSERT_TRUE(heldLock.tryLock(0));
 
@@ -641,5 +691,5 @@ TEST_F(InstallExecutorTest, ConcurrentInstallIsRejected)
     EXPECT_FALSE(outcome.ok);
     EXPECT_EQ(outcome.failureCode, QStringLiteral("InstallBusy"));
     EXPECT_TRUE(
-        QFile::exists(VNH::HandoffArea::packagePath(transactionId)));
+        QFile::exists(harken::hub::HandoffArea::packagePath(transactionId)));
 }

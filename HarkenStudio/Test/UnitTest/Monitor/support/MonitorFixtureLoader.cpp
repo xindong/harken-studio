@@ -7,14 +7,11 @@
 #include <string>
 #include <vector>
 
-#ifndef HARKEN_MONITOR_FIXTURE_DIR
-#define HARKEN_MONITOR_FIXTURE_DIR "."
-#endif
 #ifndef HARKEN_MONITOR_EDITOR_FIXTURE_DIR
 #define HARKEN_MONITOR_EDITOR_FIXTURE_DIR "."
 #endif
 
-namespace VNX {
+namespace harken::studio {
 namespace Monitor {
 namespace TestSupport {
 namespace {
@@ -63,81 +60,6 @@ LoadedFixture stripCountPrefix(const std::vector<uint8_t>& fileBytes)
 }
 
 } // namespace
-
-LoadedFixture loadRuntimeLegalEvent()
-{
-    const auto bytes = readAll(std::string(HARKEN_MONITOR_FIXTURE_DIR) + "/legal_event.bin");
-    LoadedFixture out;
-    if (bytes.empty())
-    {
-        out.status = VN_MONITOR_INCOMPATIBLE;
-        return out;
-    }
-    // Digest pinned from the committed Runtime fixture at generation time.
-    static const char kLegalDigest[] = "8e3754f285bf1981d655c557409bd64de3ebd5db9bdbb57c74d05dcc270d3fc6";
-    if (sha256Hex(bytes) != kLegalDigest)
-    {
-        out.status = VN_MONITOR_INCOMPATIBLE;
-        return out;
-    }
-    const auto man = readAll(std::string(HARKEN_MONITOR_FIXTURE_DIR) + "/manifest.json");
-    const std::string manText(man.begin(), man.end());
-    if (manText.find("\"path\": \"legal_event.bin\"") == std::string::npos ||
-        manText.find(kLegalDigest) == std::string::npos)
-    {
-        out.status = VN_MONITOR_INCOMPATIBLE;
-        return out;
-    }
-    out = stripCountPrefix(bytes);
-    out.expected = "ok";
-    return out;
-}
-
-bool manifestEntryHas(const std::string& manText,
-                      const char* path,
-                      const char* digest,
-                      const char* producerPackage)
-{
-    const std::string needle = std::string("\"path\": \"") + path + "\"";
-    const auto pathPos = manText.find(needle);
-    if (pathPos == std::string::npos)
-        return false;
-    const auto nextPath = manText.find("\"path\":", pathPos + needle.size());
-    const auto end = nextPath == std::string::npos ? manText.size() : nextPath;
-    const std::string entry = manText.substr(pathPos, end - pathPos);
-    return entry.find(digest) != std::string::npos
-        && entry.find(std::string("\"producerPackage\": \"") + producerPackage + "\"")
-               != std::string::npos
-        && entry.find("\"schemaVersion\": 1") != std::string::npos
-        && entry.find("\"isProvisional\": false") != std::string::npos
-        && entry.find("\"kind\": \"legal-event\"") != std::string::npos
-        && entry.find("\"fingerprint\"") == std::string::npos;
-}
-
-LoadedFixture loadLifecycleLegalEvent()
-{
-    const std::string dir = HARKEN_MONITOR_FIXTURE_DIR;
-    const auto bytes = readAll(dir + "/lifecycle/legal_event.bin");
-    LoadedFixture out;
-    if (bytes.empty())
-    {
-        out.status = VN_MONITOR_INCOMPATIBLE;
-        return out;
-    }
-    static const char kDigest[] =
-        "20176227f20d09bd4406fd1a1f2f3f92658c926f74548a4b468745b3c4cff6cd";
-    const auto man = readAll(dir + "/manifest.json");
-    const std::string manText(man.begin(), man.end());
-    if (sha256Hex(bytes) != kDigest
-        || !manifestEntryHas(manText, "lifecycle/legal_event.bin", kDigest, "m2-1"))
-    {
-        out.status = VN_MONITOR_INCOMPATIBLE;
-        return out;
-    }
-    out = stripCountPrefix(bytes);
-    out.expected = "ok";
-    return out;
-}
 
 LoadedFixture loadEditorFixture(const std::string& fileName)
 {
@@ -190,4 +112,4 @@ LoadedFixture loadEditorFixture(const std::string& fileName)
 
 } // namespace TestSupport
 } // namespace Monitor
-} // namespace VNX
+} // namespace harken::studio

@@ -16,14 +16,14 @@
 #include <type_traits>
 #include <utility>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
-using Guid = harkenprojectschema::AuthoringGuid;
+using Guid = harken::studio::project_schema::AuthoringGuid;
 using Property = harkenplayableproperties::PlayablePropertyIdV1;
 using EditCode = FieldGroupEditDiagnosticCode;
 using Diagnostics = std::vector<FieldGroupEditDiagnostic>;
-using SourceIndex = HarkenEditor::Bridge::CanonicalRuntimeProjectSourceIndexV1;
+using SourceIndex = harken::studio::bridge::CanonicalRuntimeProjectSourceIndexV1;
 
 struct EditingContext {
     std::shared_ptr<const SourceIndex> source;
@@ -139,7 +139,7 @@ EditingContext buildContext(ProjectData& project,
     EditingContext context;
     for (const auto& platform : project.platforms)
         context.platforms.push_back(toFieldGroupGuid(platform.id));
-    context.source = HarkenEditor::Bridge::canonicalRuntimeProjectSourceIndex(project);
+    context.source = harken::studio::bridge::canonicalRuntimeProjectSourceIndex(project);
     if (!context.source->valid || !context.source->duplicateGuids.empty()) {
         for (const auto& diagnostic : context.source->structureDiagnostics)
             addDiagnostic(context.diagnostics, EditCode::InvalidProject, diagnostic.message,
@@ -239,7 +239,7 @@ Diagnostics validateView(const EditingContext& context,
         for (const auto& row : effects.entries()) {
             const auto identity = toFieldGroupGuid(row.guid);
             const auto [found, inserted] = identities.emplace(identity, owner);
-            if (harkenstudio::IsNull(identity) || row.runtimeId() == harkenstudio::kMasterBusObjectId
+            if (harken::studio::types::IsNull(identity) || row.runtimeId() == harken::studio::types::kMasterBusObjectId
                 || (!inserted && found->second != owner))
                 addDiagnostic(diagnostics, EditCode::InvalidProject,
                     QStringLiteral("Effect identity conflicts with another project object"),
@@ -276,7 +276,8 @@ Diagnostics validateView(const EditingContext& context,
             const auto send = resolver.Resolve(definition.guid, scope, FieldGroupId::Send);
             const auto spatial = resolver.Resolve(definition.guid, scope, FieldGroupId::SpatialRating);
             const auto effects = resolver.Resolve(definition.guid, scope, FieldGroupId::Effect);
-            for (const auto* result : {&output, &send, &spatial, &effects}) {
+            const auto conversion = resolver.Resolve(definition.guid, scope, FieldGroupId::Conversion);
+            for (const auto* result : {&output, &send, &spatial, &effects, &conversion}) {
                 appendGroupDiagnostics(diagnostics, context, result->diagnostics);
                 if (result->value)
                     appendGroupDiagnostics(diagnostics, context,
@@ -288,7 +289,7 @@ Diagnostics validateView(const EditingContext& context,
             const auto outputBus = std::get<OutputFieldGroup>(output.value->payload).outputBusRef;
             const auto& sends = std::get<SendFieldGroup>(send.value->payload).sends;
             for (std::size_t row = 0; row < sends.size(); ++row) {
-                if (sends[row].mode != harkenprojectschema::SendMode::Sidechain
+                if (sends[row].mode != harken::studio::project_schema::SendMode::Sidechain
                     && sends[row].targetBusID == outputBus)
                     addDiagnostic(diagnostics, EditCode::OutputSendConflict,
                         QStringLiteral("Only a Sidechain Send can target the effective Output"),
@@ -346,7 +347,7 @@ bool setField(OutputFieldGroup& payload, const SetFieldGroupField& edit, Guid ma
     if (edit.property == Property::OutputBusRef) {
         const auto* value = std::get_if<Guid>(&edit.value);
         if (!value) return false;
-        payload.outputBusRef = harkenprojectschema::IsNull(*value) ? master : *value;
+        payload.outputBusRef = harken::studio::project_schema::IsNull(*value) ? master : *value;
         return true;
     }
     if (edit.property == Property::OutputBusVolume) {
@@ -389,6 +390,11 @@ bool setField(SendFieldGroup&, const SetFieldGroupField&, Guid)
 }
 
 bool setField(EffectFieldGroup&, const SetFieldGroupField&, Guid)
+{
+    return false;
+}
+
+bool setField(ConversionFieldGroup&, const SetFieldGroupField&, Guid)
 {
     return false;
 }
@@ -446,7 +452,8 @@ void editGroup(const EditingContext& context, const FieldGroupResolver& resolver
     const auto* clear = std::get_if<ClearFieldGroupFieldOverride>(&request.operation);
     const bool sendsEdit = std::holds_alternative<ReplaceFieldGroupSends>(request.operation);
     const bool effectsEdit = std::holds_alternative<ReplaceFieldGroupEffects>(request.operation);
-    if (field || sendsEdit || effectsEdit || clear) {
+    const bool conversionEdit = std::holds_alternative<SetConversionFieldGroup>(request.operation);
+    if (field || sendsEdit || effectsEdit || conversionEdit || clear) {
         auto inspected = scopes;
         if (request.scopes.shared) {
             inspected.clear();
@@ -509,7 +516,8 @@ void editGroup(const EditingContext& context, const FieldGroupResolver& resolver
             }
             const auto property = field ? field->property
                 : effectsEdit ? Property::SignalGraph : Property::Sends;
-            const auto bit = FieldGroupFieldMask(property);
+            const auto bit = conversionEdit ? FieldGroupPropertyMask(FieldGroupId::Conversion)
+                                            : FieldGroupFieldMask(property);
             if (field) {
                 if (!setField(*next.localHistory, *field, context.masterBus)) {
                     addDiagnostic(diagnostics, EditCode::InvalidOperation,
@@ -521,6 +529,8 @@ void editGroup(const EditingContext& context, const FieldGroupResolver& resolver
                 *next.localHistory = std::get<ReplaceFieldGroupSends>(request.operation).value;
             } else if constexpr (std::is_same_v<Payload, EffectFieldGroup>) {
                 *next.localHistory = std::get<ReplaceFieldGroupEffects>(request.operation).value;
+            } else if constexpr (std::is_same_v<Payload, ConversionFieldGroup>) {
+                *next.localHistory = std::get<SetConversionFieldGroup>(request.operation).value;
             }
             next.localFields |= bit;
             if (!scope)
@@ -588,6 +598,11 @@ FieldGroupEditResult prepareFieldGroupEdit(
         addDiagnostic(result.diagnostics, EditCode::InvalidOperation,
                       QStringLiteral("An Effect replacement requires the Effect group"),
                       request.definition, request.group, {}, QStringLiteral("effects"));
+    if (std::holds_alternative<SetConversionFieldGroup>(request.operation)
+        && request.group != FieldGroupId::Conversion)
+        addDiagnostic(result.diagnostics, EditCode::InvalidOperation,
+                      QStringLiteral("Conversion settings require the Conversion group"),
+                      request.definition, request.group, {}, QStringLiteral("settingsRef"));
     if (!result.diagnostics.empty()) return result;
     const auto context = buildContext(project);
     result.diagnostics = context.diagnostics;
@@ -605,7 +620,7 @@ FieldGroupEditResult prepareFieldGroupEdit(
     const auto definition = context.identities.at(item);
     const bool canInherit = std::any_of(context.view.definitions.begin(),
         context.view.definitions.end(), [&](const FieldGroupDefinitionView& view) {
-            return view.guid == definition && !harkenprojectschema::IsNull(view.parentGuid);
+            return view.guid == definition && !harken::studio::project_schema::IsNull(view.parentGuid);
         });
     const auto* mode = std::get_if<SetFieldGroupMode>(&request.operation);
     if (!canInherit && ((mode && mode->mode != FieldGroupMode::UseShared)
@@ -632,6 +647,10 @@ FieldGroupEditResult prepareFieldGroupEdit(
     case FieldGroupId::Effect:
         editGroup(context, resolver, definition, canInherit, request, scopes,
                   result.before->effects, candidate.effects, result.diagnostics);
+        break;
+    case FieldGroupId::Conversion:
+        editGroup(context, resolver, definition, canInherit, request, scopes,
+                  result.before->conversion, candidate.conversion, result.diagnostics);
         break;
     }
     if (result.diagnostics.empty())

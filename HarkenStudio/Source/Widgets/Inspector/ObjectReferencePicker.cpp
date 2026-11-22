@@ -8,7 +8,7 @@
 #include <QHBoxLayout>
 #include <QJsonObject>
 
-namespace VNX {
+namespace harken::studio {
 
 ObjectReferencePicker::ObjectReferencePicker(QWidget* parent)
     : QWidget(parent)

@@ -1,3 +1,6 @@
+#if HARKEN_NATIVE_DEVELOPMENT || (!HARKEN_NATIVE_RELEASE && (UNITY_EDITOR || DEVELOPMENT_BUILD))
+#define HARKEN_ENGINE_DEV
+#endif
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -37,11 +40,8 @@ namespace Harken.Unity
         [SerializeField, HideInInspector] private string packRoot = "Audio/GeneratedPacks";
         [SerializeField, HideInInspector] private string initPack = "Init.bytes";
         [SerializeField, HideInInspector] private string packPlatform = string.Empty;
-        [SerializeField, HideInInspector] private string packPlatformId = string.Empty;
         [SerializeField, HideInInspector] private string language = string.Empty;
         [SerializeField, HideInInspector] private ulong[] startupPackStableIds = Array.Empty<ulong>();
-        [SerializeField, HideInInspector] private HarkenPackSource preparedPackSource;
-        private HarkenPreparedPacks preparedPacks;
         private bool lifecycleConfigured;
         private bool languageConfigured;
         private bool platformConfigured;
@@ -246,6 +246,7 @@ namespace Harken.Unity
             return ObserveResult("HarkenAudioSystem.ConfigureLifecycleBeforeStartup", VnResult.VN_OK);
         }
 
+#if HARKEN_ENGINE_DEV
         public VnResult RetryRemoteCommunication()
         {
             if (!IsGameplayThread())
@@ -266,6 +267,7 @@ namespace Harken.Unity
             if (result != VnResult.VN_OK) Debug.LogWarning(LastRemoteError, this);
             return result;
         }
+#endif
 
         public VnResult SetMasterVolume(float volume)
         {
@@ -511,13 +513,11 @@ namespace Harken.Unity
                 "HarkenAudioSystem.ConfigureBeforeStartup", VnResult.VN_OK);
         }
 
-        public VnResult ConfigurePlatformBeforeStartup(string platformId, string platformName = null)
+        public VnResult ConfigurePlatformBeforeStartup(string platformName)
         {
             if (session != null || State == HarkenRuntimeState.Starting || State == HarkenRuntimeState.Ready ||
-                !string.IsNullOrEmpty(platformId) ||
                 (!string.IsNullOrEmpty(platformName) && !PackPaths.IsPlatformName(platformName)))
                 return ObserveResult("HarkenAudioSystem.ConfigurePlatformBeforeStartup", VnResult.VN_INVALID_ARG);
-            packPlatformId = platformId ?? string.Empty;
             packPlatform = platformName ?? string.Empty;
             platformConfigured = true;
             return ObserveResult("HarkenAudioSystem.ConfigurePlatformBeforeStartup", VnResult.VN_OK);
@@ -534,56 +534,17 @@ namespace Harken.Unity
             return ObserveResult("HarkenAudioSystem.ConfigureLanguageBeforeStartup", VnResult.VN_OK);
         }
 
-        public VnResult ConfigurePreparedSourceBeforeStartup(HarkenPackSource source)
-        {
-            return ObserveResult("HarkenAudioSystem.ConfigurePreparedSourceBeforeStartup", VnResult.VN_PACK_INCOMPATIBLE);
-        }
-
-        public VnResult ConfigurePreparedBytesBeforeStartup(HarkenPreparedPacks source)
-        {
-            return ObserveResult("HarkenAudioSystem.ConfigurePreparedBytesBeforeStartup", VnResult.VN_PACK_INCOMPATIBLE);
-        }
-
         public VnResult StartRuntime(string containmentRoot)
-        {
-            if (!TryBeginStartup(out VnResult rejection)) return rejection;
-            try { return StartRuntimeCore(containmentRoot); }
-            finally { starting = false; }
-        }
-
-        private VnResult StartRuntimeCore(string containmentRoot)
-        {
-            if (preparedPackSource != null || preparedPacks != null)
-            {
-                LastStartupError = HarkenPreparedPacks.Diagnostic;
-                return CompleteSessionStartup(VnResult.VN_PACK_INCOMPATIBLE, string.Empty);
-            }
-            if (string.IsNullOrEmpty(containmentRoot) || !IsSafeRelativePath(initPack))
-            {
-                LastStartupError = "A Pack root and Init.bytes are required.";
-                return CompleteSessionStartup(VnResult.VN_INVALID_ARG, string.Empty);
-            }
-            return StartResolvedDirectory(containmentRoot);
-        }
-
-        public VnResult StartRuntime(HarkenPreparedPacks source)
-        {
-            if (!TryBeginStartup(out VnResult rejection)) return rejection;
-            try { return StartRuntimeCore(source); }
-            finally { starting = false; }
-        }
-
-        /// <summary>Starts a named publication using the component's device and lifecycle settings.</summary>
-        public VnResult StartRuntime(string manifestPath, Func<string, byte[]> readBytes, string selectedLanguage = null)
         {
             if (!TryBeginStartup(out VnResult rejection)) return rejection;
             try
             {
-                VnResult result = HarkenPreparedPacks.Capture(manifestPath, readBytes,
-                    out HarkenPreparedPacks source, out _, out string error, selectedLanguage ?? language);
-                LastStartupError = error ?? string.Empty;
-                if (result != VnResult.VN_OK) return CompleteSessionStartup(result, string.Empty);
-                return StartRuntimeCore(source);
+                if (string.IsNullOrEmpty(containmentRoot) || !IsSafeRelativePath(initPack))
+                {
+                    LastStartupError = "A Pack root and Init.bytes are required.";
+                    return CompleteSessionStartup(VnResult.VN_INVALID_ARG, string.Empty);
+                }
+                return StartResolvedDirectory(containmentRoot);
             }
             finally { starting = false; }
         }
@@ -591,14 +552,11 @@ namespace Harken.Unity
         private bool MatchesConfiguredInit(string selectedPath)
             => initPack == selectedPath;
 
-        private VnResult StartRuntimeCore(HarkenPreparedPacks source)
-        {
-            LastStartupError = HarkenPreparedPacks.Diagnostic;
-            return CompleteSessionStartup(VnResult.VN_PACK_INCOMPATIBLE, string.Empty);
-        }
+        private bool TryBeginStartup(out VnResult rejection) => TryBeginStartup(out rejection, out _);
 
-        private bool TryBeginStartup(out VnResult rejection)
+        private bool TryBeginStartup(out VnResult rejection, out HarkenProjectSettings settings)
         {
+            settings = null;
             rejection = VnResult.VN_ALREADY_INITIALIZED;
             // A nested request must not recursively publish the same failed event or acquire a second session.
             if (starting || publishingStartupResult || shuttingDown || hasPendingShutdown ||
@@ -614,47 +572,44 @@ namespace Harken.Unity
             starting = true;
             State = HarkenRuntimeState.Starting;
             LastStartupError = string.Empty;
-            ApplyProjectStartupPolicy();
+            settings = HarkenProjectSettings.ActiveForStartup();
+            ApplyProjectStartupPolicy(settings);
             return true;
         }
 
-        private void ApplyProjectStartupPolicy()
+        private void ApplyProjectStartupPolicy(HarkenProjectSettings settings)
         {
-            HarkenProjectSettings settings = HarkenProjectSettings.ActiveForStartup();
             if (!lifecycleConfigured)
                 suppressUnityAudio = settings.SuppressUnityAudio;
             if (!languageConfigured)
                 language = settings.Language;
             if (!platformConfigured)
-            {
-                packPlatformId = settings.PlatformId;
                 packPlatform = settings.PlatformName;
-            }
             if (!initPackConfigured)
                 initPack = settings.InitPack;
         }
 
-        private VnResult StartFromProjectPackDirectory()
+        private VnResult StartFromProjectPackDirectory(ulong outputTicket)
         {
-            if (!TryBeginStartup(out VnResult rejection)) return rejection;
+            if (!TryBeginStartup(out VnResult rejection, out var settings)) return rejection;
             try
             {
-                if (!HarkenProjectSettings.TryResolvePackDirectory(out string directory, out string error))
+                if (!HarkenProjectSettings.TryResolvePackDirectory(out string directory, out string error, settings))
                 {
                     LastStartupError = error ?? string.Empty;
                     return CompleteSessionStartup(VnResult.VN_INVALID_ARG, string.Empty);
                 }
-#if !UNITY_EDITOR
                 string platformRoot = ResolvePlatformRoot(directory);
                 if (string.IsNullOrEmpty(platformRoot))
                     return CompleteSessionStartup(VnResult.VN_INVALID_ARG, string.Empty);
-                if (!HarkenProjectSettings.PlayerIncludesExport(platformRoot, out string exportError))
+#if !UNITY_EDITOR
+                if (!HarkenProjectSettings.PlayerIncludesExport(platformRoot, out string exportError, settings))
                 {
                     LastStartupError = exportError ?? string.Empty;
                     return CompleteSessionStartup(VnResult.VN_INVALID_ARG, string.Empty);
                 }
 #endif
-                return StartResolvedDirectory(directory);
+                return StartPackDirectory(platformRoot, settings, outputTicket);
             }
             finally { starting = false; }
         }
@@ -664,41 +619,48 @@ namespace Harken.Unity
             string platformRoot = ResolvePlatformRoot(directory);
             if (string.IsNullOrEmpty(platformRoot))
                 return CompleteSessionStartup(VnResult.VN_INVALID_ARG, string.Empty);
-            return StartCompanionDirectory(platformRoot);
+            return StartPackDirectory(platformRoot);
         }
 
-        private VnResult StartCompanionDirectory(string platformRoot)
+        private VnResult StartPackDirectory(string platformRoot, HarkenProjectSettings settings = null,
+            ulong outputTicket = 0)
         {
             if (!MatchesConfiguredInit("Init.bytes"))
             {
-                LastStartupError = "A companion directory uses Init.bytes. Update the explicitly configured Init path.";
+                LastStartupError = "A Pack directory uses Init.bytes. Update the explicitly configured Init path.";
                 return CompleteSessionStartup(VnResult.VN_PACK_STALE_REVISION, string.Empty);
             }
             if (startupPackStableIds != null && startupPackStableIds.Length != 0)
             {
-                LastStartupError = "A companion directory starts with Init only. Preload Actions by name with Session.PrepareActions.";
+                LastStartupError = "A Pack directory starts with Init only. Preload Actions by name with Session.PrepareActions.";
                 return CompleteSessionStartup(VnResult.VN_INVALID_ARG, string.Empty);
             }
-            VnResult result = CreateStartupConfig(out VnConfig config);
+            VnResult result = CreateStartupConfig(out VnConfig config, settings);
             if (result != VnResult.VN_OK) return CompleteSessionStartup(result, platformRoot);
-            result = PackBootstrap.StartDirectory(platformRoot, language, ref config, out session);
+            result = PackBootstrap.StartDirectory(platformRoot, language, ref config, out session, outputTicket);
             if (result == VnResult.VN_CONTENT_NOT_LOADED && session == null)
                 LastStartupError = "The selected directory requires the current Init.bytes and Init.json pair. Re-export Packs with the current Studio.";
             else if (result == VnResult.VN_BAD_PACK || result == VnResult.VN_PACK_INCOMPATIBLE)
-                LastStartupError = "Invalid or unsupported Pack publication. Re-export with the current Studio and provide the paired .bytes and .json files.";
+                LastStartupError = "Invalid or unsupported Pack export. Re-export with the current Studio and provide the paired .bytes and .json files.";
             return CompleteSessionStartup(result, platformRoot);
         }
 
-        private VnResult CreateStartupConfig(out VnConfig config)
+        private VnConfig CreateOutputConfig()
         {
-            config = HarkenEngine.DefaultConfig();
+            var config = HarkenEngine.DefaultConfig();
             config.sampleRate = 48000;
             config.mixChannelLayout = (uint)VnChannelLayout.VN_CHANNEL_LAYOUT_STEREO;
             config.deviceChannelLayout = (uint)VnChannelLayout.VN_CHANNEL_LAYOUT_STEREO;
             config.deviceMode = nullDevice
                 ? (uint)VnDeviceMode.VN_DEVICE_NULL
                 : (uint)VnDeviceMode.VN_DEVICE_REAL;
-            HarkenProjectSettings.ApplyStartupCapacity(ref config);
+            return config;
+        }
+
+        private VnResult CreateStartupConfig(out VnConfig config, HarkenProjectSettings settings = null)
+        {
+            config = CreateOutputConfig();
+            HarkenProjectSettings.ApplyStartupCapacity(ref config, settings);
             try
             {
                 managedFirings = new ManagedFiringTable();
@@ -726,7 +688,9 @@ namespace Harken.Unity
                 startupReadyPending = true;
                 LastRemoteResult = VnResult.VN_OK;
                 LastRemoteError = string.Empty;
+#if HARKEN_ENGINE_DEV
                 if (HarkenProjectSettings.CommunicationEnabled) RetryRemoteCommunication();
+#endif
             }
             else
             {
@@ -797,6 +761,18 @@ namespace Harken.Unity
                 return;
             }
             Instance = this;
+            ulong outputTicket = 0;
+#if UNITY_STANDALONE_WIN && !UNITY_EDITOR
+            if (autoInitialize && isActiveAndEnabled && !nullDevice && configuredPackSource == null &&
+                preparedPackSource == null && preparedPacks == null)
+                outputTicket = HarkenEngine.BeginOutputPreparation(CreateOutputConfig());
+#endif
+            try { InitializeOwnedComponent(outputTicket); }
+            finally { HarkenEngine.CancelOutputPreparation(outputTicket); }
+        }
+
+        private void InitializeOwnedComponent(ulong outputTicket)
+        {
             HarkenSpatialUpdate spatialUpdate = GetComponent<HarkenSpatialUpdate>();
             if (spatialUpdate == null) spatialUpdate = gameObject.AddComponent<HarkenSpatialUpdate>();
             spatialUpdate.hideFlags = HideFlags.HideInInspector;
@@ -810,28 +786,23 @@ namespace Harken.Unity
                 DontDestroyOnLoad(gameObject);
             }
             if (!autoInitialize) return;
-            if (configuredCompanionSource != null)
+            if (configuredPackSource != null)
             {
-                StartConfiguredCompanion();
-                return;
-            }
-            if (preparedPackSource != null || preparedPacks != null)
-            {
-                StartRuntime((string)null);
+                StartConfiguredPackSource();
                 return;
             }
 #if UNITY_ANDROID && !UNITY_EDITOR
-            // Restore Android directory auto-start after it consumes current-schema companions without a legacy inventory.
+            // Restore Android directory auto-start after it consumes current Pack metadata without a legacy inventory.
             if (!TryBeginStartup(out _)) return;
             try
             {
                 LastStartupError = "Android directory auto-start is temporarily unavailable. " +
-                    "Use HarkenStreamingPackSource with StartRuntimeAsync or configure a companion source before startup.";
+                    "Use HarkenStreamingAssetsPackSource with StartRuntimeAsync or configure a Pack source before startup.";
                 CompleteSessionStartup(VnResult.VN_CAPABILITY_UNAVAILABLE, string.Empty);
             }
             finally { starting = false; }
 #else
-            StartFromProjectPackDirectory();
+            StartFromProjectPackDirectory(outputTicket);
 #endif
         }
 
@@ -843,27 +814,24 @@ namespace Harken.Unity
         private string ResolvePlatformRoot(string exportRoot)
         {
             if (string.IsNullOrEmpty(exportRoot)) return null;
-            if (File.Exists(Path.Combine(exportRoot, "Init.json"))) return SelectCompanionDirectory(exportRoot);
+            if (File.Exists(Path.Combine(exportRoot, "Init.json")) || File.Exists(Path.Combine(exportRoot, "Packs.zip")) ||
+                File.Exists(Path.Combine(exportRoot, "Init.hrp")))
+                return SelectPlatformDirectory(exportRoot);
             if (!string.IsNullOrEmpty(packPlatform) && PackPaths.IsPlatformName(packPlatform))
             {
                 string selected = Path.Combine(exportRoot, packPlatform);
-                if (Directory.Exists(selected)) return SelectCompanionDirectory(selected);
+                if (Directory.Exists(selected)) return SelectPlatformDirectory(selected);
             }
-            return SelectCompanionDirectory(exportRoot);
+            return SelectPlatformDirectory(exportRoot);
         }
 
-        private string SelectCompanionDirectory(string directory)
+        private string SelectPlatformDirectory(string directory)
         {
-            if (!string.IsNullOrEmpty(packPlatformId))
-            {
-                LastStartupError = "A companion directory has no platform ID inventory. Clear the legacy platform ID and select its directory by name.";
-                return null;
-            }
             if (!string.IsNullOrEmpty(packPlatform) && (!PackPaths.IsPlatformName(packPlatform) ||
                 !string.Equals(Path.GetFileName(directory.TrimEnd(Path.DirectorySeparatorChar,
                     Path.AltDirectorySeparatorChar)), packPlatform, StringComparison.Ordinal)))
             {
-                LastStartupError = "The companion directory does not match the explicitly selected platform name.";
+                LastStartupError = "The Pack directory does not match the explicitly selected platform name.";
                 return null;
             }
             return directory;
@@ -1258,7 +1226,7 @@ namespace Harken.Unity
             VnResult result;
             try
             {
-                CancelCompanionStartup();
+                CancelPackSourceStartup();
                 if (startupCoroutine != null)
                 {
                     StopCoroutine(startupCoroutine);
@@ -1401,7 +1369,7 @@ namespace Harken.Unity
             {
                 // GameObject deactivation stops coroutines without guaranteeing iterator cleanup.
                 // Disabling only this component leaves its coroutine running in Unity.
-                if (companionStartup != null || (shutdownWhenDisabled && session != null && session.IsActive) ||
+                if (packSourceStartup != null || (shutdownWhenDisabled && session != null && session.IsActive) ||
                     (!gameObject.activeInHierarchy && startupCoroutine != null))
                     ShutdownRuntime();
             }

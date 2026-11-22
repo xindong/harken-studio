@@ -57,13 +57,13 @@
 #include <memory>
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 
 constexpr int kActiveShare = 120;
-constexpr int kRangeShare = 360;
-constexpr int kSourceShare = 1000 - kActiveShare - kRangeShare;
+constexpr int kSourceShare = 360;
+constexpr int kOriginalShare = 1000 - kActiveShare - kSourceShare;
 
 struct SourceRow
 {
@@ -323,7 +323,7 @@ private:
         box_->setColumns(QStringLiteral("Sources"), {
             {QStringLiteral("Number"), {}, 0},
             {QStringLiteral("Source"), {}, kSourceShare},
-            {QStringLiteral("Range"), {}, kRangeShare},
+            {QStringLiteral("Original"), {}, kOriginalShare},
             {QStringLiteral("Active"), {}, kActiveShare}
         });
         applyInspectorTableDescriptor(box_, soundInspectorSchema(), QStringLiteral("sources"));
@@ -399,7 +399,7 @@ private:
         QPointer<SourcesListWidget> self(this);
         const uint32_t ownerAtOpen = boundItem_->objectID;
         SelectorRequest req;
-        req.title = QObject::tr("Add Existing Source");
+        req.title = QObject::tr("Add Existing Resource");
         req.domain = RefDomain::AudioAsset;
         req.onSelected = [self, ownerAtOpen, language](uint32_t id) {
             if (!self || !self->boundItem_ || self->boundItem_->objectID != ownerAtOpen)
@@ -416,7 +416,7 @@ private:
         const QPointer<SourcesListWidget> self(this);
         const uint32_t ownerAtOpen = boundItem_->objectID;
         const QStringList paths = QFileDialog::getOpenFileNames(
-            this, QObject::tr("Import Audio Sources"), {},
+            this, QObject::tr("Import Audio Files"), {},
             QObject::tr("Audio Files (%1)").arg(AudioFormatCatalog::filePatterns().join(' ')));
         if (paths.isEmpty() || !self || !self->boundItem_ || self->boundItem_->objectID != ownerAtOpen)
             return;
@@ -444,7 +444,7 @@ private:
     {
         const QString projectRoot = AssetRegistry::instance().projectRoot();
         const QString path = QFileDialog::getOpenFileName(
-            this, QObject::tr("Relink Audio Source"), {},
+            this, QObject::tr("Relink Original File"), {},
             QObject::tr("Audio Files (%1)").arg(AudioFormatCatalog::filePatterns().join(' ')));
         if (path.isEmpty() || projectRoot != AssetRegistry::instance().projectRoot())
             return;
@@ -753,7 +753,7 @@ private:
         return QString::number(source.sourceId);
     }
 
-    void openRangeEditor(int index)
+    void openSourceEditor(int index)
     {
         if (!boundItem_ || index < 0 || index >= static_cast<int>(sources_.size()))
             return;
@@ -940,12 +940,25 @@ private:
         h->addWidget(number);
 
         auto* sourceCell = box_->createCell(row);
-        DebugTint::tintContainer(sourceCell, DebugTint::Role::Flex);
+        DebugTint::tintContainer(sourceCell, DebugTint::Role::ColDelay);
         sourceCell->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-        auto* reference = new ObjectRefWidget(sourceCell);
-        reference->setObjectName(QStringLiteral("sourceRef"));
+        sourceCell->setEnabled(canEdit);
+        auto* thumb = new SourceRangeThumb(sourceCell);
+        thumb->setSource(source, AssetRegistry::instance().getAsset(source.sourceId));
+        QObject::connect(thumb, &SourceRangeThumb::clicked, this, [this, index]() {
+            selectRow(index);
+            openSourceEditor(index);
+        });
+        sourceCell->addWidget(thumb);
+        h->addWidget(sourceCell);
+
+        auto* originalCell = box_->createCell(row);
+        DebugTint::tintContainer(originalCell, DebugTint::Role::Flex);
+        originalCell->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+        auto* reference = new ObjectRefWidget(originalCell);
+        reference->setObjectName(QStringLiteral("originalRef"));
         reference->setRefDomain(RefDomain::AudioAsset);
-        reference->setSelectorTitle(QObject::tr("Select Source"));
+        reference->setSelectorTitle(QObject::tr("Select Original File"));
         reference->setCompact(true);
         reference->setCompactPickable(true);
         reference->setClearSupport(false);
@@ -953,21 +966,8 @@ private:
         reference->setReadOnly(!canEdit);
         QObject::connect(reference, &ObjectRefWidget::objectChanged, this,
                          [this, index](uint32_t id) { relinkRow(index, id); });
-        sourceCell->addWidget(reference);
-        h->addWidget(sourceCell);
-
-        auto* rangeCell = box_->createCell(row);
-        DebugTint::tintContainer(rangeCell, DebugTint::Role::ColDelay);
-        rangeCell->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-        rangeCell->setEnabled(canEdit);
-        auto* thumb = new SourceRangeThumb(rangeCell);
-        thumb->setSource(source, AssetRegistry::instance().getAsset(source.sourceId));
-        QObject::connect(thumb, &SourceRangeThumb::clicked, this, [this, index]() {
-            selectRow(index);
-            openRangeEditor(index);
-        });
-        rangeCell->addWidget(thumb);
-        h->addWidget(rangeCell);
+        originalCell->addWidget(reference);
+        h->addWidget(originalCell);
 
         auto* activeCell = box_->createCell(row);
         DebugTint::tintContainer(activeCell, DebugTint::Role::ColToggle);
@@ -981,7 +981,7 @@ private:
         activeCell->addWidget(active, 0, Qt::AlignCenter);
         h->addWidget(activeCell);
 
-        box_->registerRow(row, {number, sourceCell, rangeCell, activeCell}, nullptr, sources_[index].language);
+        box_->registerRow(row, {number, sourceCell, originalCell, activeCell}, nullptr, sources_[index].language);
         rowWidgets_.push_back(row);
         return row;
     }

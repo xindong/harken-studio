@@ -3,7 +3,7 @@
 #include <QString>
 #include <QUrl>
 
-namespace VNX {
+namespace harken::studio {
 
 inline bool isValidAIEndpoint(const QString& baseUrl, const QString& model,
                               QUrl* acceptedEndpoint = nullptr)

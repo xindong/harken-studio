@@ -1,5 +1,6 @@
 #include "Common/ObjectIdTestSupport.h"
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 
 #include "MonitorCaptureHubTestHooks.h"
 #include "Common/TestUtil.h"
@@ -278,18 +279,14 @@ TEST(MonitorHubFanout, SlowSessionDropsFanoutOnly) {
     EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(fast));
 }
 
-TEST(MonitorHubFanout, InternalRecorderAndRemoteAreIndependent) {
+TEST(MonitorHubFanout, InternalRemoteQueuesAreIndependent) {
     harkentest::EngineSession engine(harkentest::MakeNullConfig());
     ASSERT_EQ(VN_OK, engine.InitResult());
-    harken::monitor::EnableInternalConsumersForTests(7);
+    harken::monitor::EnableInternalConsumersForTests(3);
     ASSERT_TRUE(harken::monitor::PublishSyntheticTimeSeriesForTests(2));
     harken::monitor::DrainOnceForTests();
     EXPECT_GE(harken::monitor::InternalQueuedCountForTests(0), 1u);
     EXPECT_GE(harken::monitor::InternalQueuedCountForTests(1), 1u);
-    EXPECT_GE(harken::monitor::InternalQueuedCountForTests(2), 1u);
-    const VnMonitorDropSummary recorder = harken::monitor::InternalDropForTests(0);
-    EXPECT_TRUE(recorder.stage == 0 ||
-                recorder.stage == VN_MONITOR_DROP_RECORDER_QUEUE);
 }
 
 TEST(MonitorHubFanout, AllocationFailureDropsRecordAndPreservesQueueBudget) {

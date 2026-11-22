@@ -3,7 +3,6 @@
 #include "Packaging/PackageReader.h"
 #include "Packaging/PackageInventory.h"
 #include "Platform/PlatformPaths.h"
-#include "Versions/StudioCapabilities.h"
 
 #include <QCoreApplication>
 #include <QFileInfo>
@@ -13,12 +12,12 @@
 #include <QRegularExpression>
 #include <QSet>
 
-namespace VNH {
+namespace harken::hub {
 
 namespace {
 
 const QString kPackageManifestName = QStringLiteral("package-manifest.json");
-const QString kCapabilitiesName = QStringLiteral("capabilities.json");
+const QString kLegacyCapabilitiesName = QStringLiteral("capabilities.json");
 
 QString hostPlatformError(const QSet<QString>& filePaths)
 {
@@ -116,10 +115,6 @@ PackageVerifyResult PackageVerifier::verify(const QString& archivePath,
         result.error = QStringLiteral("Package is missing %1").arg(kPackageManifestName);
         return result;
     }
-    if (!filePaths.contains(kCapabilitiesName)) {
-        result.error = QStringLiteral("Package is missing %1").arg(kCapabilitiesName);
-        return result;
-    }
     result.error = hostPlatformError(filePaths);
     if (!result.error.isEmpty())
         return result;
@@ -149,7 +144,7 @@ PackageVerifyResult PackageVerifier::verify(const QString& archivePath,
 
     QSet<QString> payloadPaths = filePaths;
     payloadPaths.remove(kPackageManifestName);
-    payloadPaths.remove(kCapabilitiesName);
+    payloadPaths.remove(kLegacyCapabilitiesName);
     if (payloadPaths != manifestPaths) {
         const QSet<QString> missing = manifestPaths - payloadPaths;
         const QSet<QString> extra = payloadPaths - manifestPaths;
@@ -160,21 +155,9 @@ PackageVerifyResult PackageVerifier::verify(const QString& archivePath,
         return result;
     }
 
-    QByteArray capabilitiesData;
-    if (!PackageReader::readEntry(archivePath, kCapabilitiesName, &capabilitiesData,
-                                  &readError)) {
-        result.error = readError;
-        return result;
-    }
-    QJsonObject capabilities;
-    if (!parseJsonObject(capabilitiesData, &capabilities, &result.error,
-                         kCapabilitiesName))
-        return result;
-
-    if (!validateStudioCapabilities(capabilities, expected.semanticVersion,
-                                    expected.buildId, &result.error,
-                                    &result.capabilitiesVersion))
-        return result;
+    result.metadataEntries = {kPackageManifestName};
+    if (filePaths.contains(kLegacyCapabilitiesName))
+        result.metadataEntries.append(kLegacyCapabilitiesName);
     result.channel = inventory.channel;
     result.fileSha256ByPath = fileSha256ByPath;
     result.ok = true;

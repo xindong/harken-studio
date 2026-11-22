@@ -3,9 +3,9 @@
 
 #include <cstdint>
 
-#include <harken_studio_build/generated/harken_pack_wire_constants.g.h>
+#include <harken_pack/PackFile.h>
 
-namespace harkenstudiobuild {
+namespace harken::studio::build {
 
 inline constexpr std::uint32_t kCurrentWorldBodyVintageV5 = 5;
 inline constexpr std::uint32_t kCurrentWorldBodyVintageV6 = 6;
@@ -23,8 +23,8 @@ inline constexpr std::uint32_t kCurrentWorldBodyVintageV17 = 17;
 inline constexpr std::uint32_t kCurrentWorldBodyVintageV18 = 18;
 inline constexpr std::uint32_t kCurrentWorldBodyVintageV20 = 20;
 inline constexpr std::uint32_t kCurrentWorldShippingBodyVintage =
-    kPackShippingBodyVintage;
+    HK_PACK_SHIPPING_BODY_VINTAGE;
 
-} // namespace harkenstudiobuild
+} // namespace harken::studio::build
 
 #endif // HARKEN_STUDIO_BUILD_CURRENT_WORLD_BODY_VINTAGE_H

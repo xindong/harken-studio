@@ -8,7 +8,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace VNX::MeterScale {
+namespace harken::studio::MeterScale {
 
 float dbToPosition(float db, float maximumDb)
 {

@@ -13,6 +13,7 @@
 // The engine-session entries (RegisterBinding and friends) carry the
 // exact semantics the public verbs surface later; the aggregation golden
 // drives the ParamSystem seam directly, like the publication seam tests.
+#include <harken/HarkenDevelopment.h>
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/TestUtil.h"
 

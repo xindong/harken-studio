@@ -3,7 +3,7 @@
 #include <QWidget>
 #include <utility>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 FramelessChromeInstaller g_installer;

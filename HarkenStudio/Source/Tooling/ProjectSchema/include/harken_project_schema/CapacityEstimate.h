@@ -26,7 +26,7 @@
 #include <optional>
 #include <vector>
 
-namespace harkenprojectschema {
+namespace harken::studio::project_schema {
 
 // The capacity of one arranging scope.
 struct ScopeCapacity {
@@ -59,6 +59,6 @@ struct CapacityEstimate {
 // coordinate rather than a silent wrap.
 std::optional<CapacityEstimate> EstimateCapacity(const SegmentIR& ir);
 
-}  // namespace harkenprojectschema
+}  // namespace harken::studio::project_schema
 
 #endif  // HARKEN_PROJECT_SCHEMA_CAPACITY_ESTIMATE_H

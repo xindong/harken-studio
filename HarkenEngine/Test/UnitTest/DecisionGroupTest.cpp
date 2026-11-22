@@ -27,8 +27,8 @@
 namespace harken::detail {
 struct OriginalGroupMemberTestAccess {
     using Original = TimelineArmTable::OriginalGroupMember;
-    static const Original* Member(const ScheduledTransactionPool& pool, const Plan03GroupSliceIdentity& group) {
-        return group.backing == Plan03GroupBacking::ImmediateLane ?
+    static const Original* Member(const ScheduledTransactionPool& pool, const ScheduleGroupSliceIdentity& group) {
+        return group.backing == ScheduleGroupBacking::ImmediateLane ?
             pool.immediateLaneGroups_[group.committedRow].MemberOriginals() : pool.PageGroupOriginals(group.committedRow);
     }
     static std::uint64_t Count(const TimelineArmTable& table, TimelineArmToken arm) {
@@ -41,7 +41,7 @@ struct OriginalGroupMemberTestAccess {
         TimelineArmToken arm, const std::array<const Original*, N>& originals) {
         return table.CompleteOriginalGroupMemberCoverage(arm, originals.data(), N);
     }
-    static Plan03GroupSliceIdentity ObservePreparedOrigin(const ScheduledTransactionPool& pool,
+    static ScheduleGroupSliceIdentity ObservePreparedOrigin(const ScheduledTransactionPool& pool,
         DecisionToken decision, std::uint32_t slice) {
         for (std::size_t row = 0; row < pool.pageGroupSlots_.size(); ++row) {
             if (!pool.HasPageGroupStorage(row)) continue;
@@ -54,7 +54,7 @@ struct OriginalGroupMemberTestAccess {
         return {};
     }
     static std::uint64_t Serial(const Original* original) { return original->serial_; }
-    static Plan03GroupSliceIdentity Group(const Original* original) { return original->Group(); }
+    static ScheduleGroupSliceIdentity Group(const Original* original) { return original->Group(); }
     static bool ReceiverAttached(const ScheduledTransactionPool& pool) { return pool.groupMemberReceiver_.owner_ != nullptr; }
     static void ExhaustSerial(TimelineArmTable& table) { table.nextGroupMemberSerial_ = UINT64_MAX; }
 };
@@ -174,7 +174,7 @@ harken::ScheduledTransactionPool::Config MakePoolConfig() {
     config.maxEventsPerQuantum = 8;
     config.maxTransactionEvents = 8;
     config.maxCurrentSlicesPerQuantum = 4;
-    config.maxPlan03GroupHeadersPerPage = 1;
+    config.maxScheduleGroupHeadersPerPage = 1;
     config.maxArmsPerGroup = 2;
     return config;
 }
@@ -235,15 +235,15 @@ TEST(DecisionGroup, PreparedTicketHoldBlocksRealMutatorsAbortAndConsumeRetainAud
     harken::ScheduledTransactionPool pool;
     ASSERT_TRUE(pool.Reset(MakePoolConfig(), 0, request.transport));
     harken::TimelineArmTable arms(1);
-    harken::Plan03GroupSliceInput input{};
+    harken::ScheduleGroupSliceInput input{};
     input.decision = token;
-    ASSERT_EQ(harken::Plan03GroupReserveStatus::Committed, pool.ReservePlan03GroupSlice(input, arms));
-    harken::Plan03PageGroupView realGroup{};
-    ASSERT_EQ(1u, pool.CaptureLivePlan03Groups(&realGroup, 1));
+    ASSERT_EQ(harken::ScheduleGroupReserveStatus::Committed, pool.ReserveScheduleGroupSlice(input, arms));
+    harken::SchedulePageGroupView realGroup{};
+    ASSERT_EQ(1u, pool.CaptureLiveScheduleGroups(&realGroup, 1));
     EXPECT_EQ(token.slot, realGroup.identity.decision.slot);
     EXPECT_EQ(token.generation, realGroup.identity.decision.generation);
     harken::DecisionCommitPayload payload{};
-    // This legacy marker matches the production Plan03 carrier; the actual
+    // This legacy marker matches the production Schedule carrier; the actual
     // group identity and lifetime are held by the pool independently.
     payload.pages = {1, 1};
     payload.armGroup = group;
@@ -394,7 +394,7 @@ struct FrontierReceiptHarness {
     harken::TimelineArmTable arms{1};
     harken::DecisionTable decisions{1, 2};
     harken::DecisionToken token{};
-    harken::Plan03PageGroupView group{};
+    harken::SchedulePageGroupView group{};
     harken::FrontierActivationDescriptor descriptor{};
 
     void Prepare() {
@@ -402,11 +402,11 @@ struct FrontierReceiptHarness {
         auto request = MakeRequest();
         request.sliceCount = 1;
         ASSERT_TRUE(decisions.Reserve(request, &token));
-        harken::Plan03GroupSliceInput input{};
+        harken::ScheduleGroupSliceInput input{};
         input.decision = token;
-        ASSERT_EQ(harken::Plan03GroupReserveStatus::Committed,
-            pool.ReservePlan03GroupSlice(input, arms));
-        ASSERT_EQ(1u, pool.CaptureLivePlan03Groups(&group, 1));
+        ASSERT_EQ(harken::ScheduleGroupReserveStatus::Committed,
+            pool.ReserveScheduleGroupSlice(input, arms));
+        ASSERT_EQ(1u, pool.CaptureLiveScheduleGroups(&group, 1));
         descriptor.entry.coordinator = token;
         descriptor.entry.attempt = 1;
         descriptor.entry.owner = {1, 2, 0, 0, 3, 4, 0, 5};
@@ -608,7 +608,7 @@ struct DecisionLaneHarness {
     }
 
     void Bind(harken::ScheduledTransactionPool& pool,
-              const harken::Plan03GroupSliceIdentity* groups,
+              const harken::ScheduleGroupSliceIdentity* groups,
               std::uint32_t count) {
         ASSERT_TRUE(lane.Reset({1, 2, 2, 100, false, 2}));
         ASSERT_TRUE(lane.Reserve(17, {0, count, 0, 1}, &handle));
@@ -620,7 +620,7 @@ struct DecisionLaneHarness {
 
     void Publish(harken::ScheduledTransactionPool& pool,
                  harken::TimelineArmTable& arms,
-                 const harken::Plan03GroupSliceIdentity* groups,
+                 const harken::ScheduleGroupSliceIdentity* groups,
                  std::uint32_t count) {
         for (std::uint32_t index = 0; index < count; ++index)
             ASSERT_TRUE(lane.DeclareGroup(handle, {groups[index], 20}));
@@ -670,35 +670,35 @@ TEST(DecisionGroup, PrivateImmediateCohortCapacityRefusalReclaimsUnpublishedPref
     EXPECT_EQ(0u, queue.PublishedHead());
     EXPECT_FALSE(queue.TryPop(command));
 
-    harken::Plan03GroupSliceInput input{};
+    harken::ScheduleGroupSliceInput input{};
     input.executeFrame = 120;
     input.decision = decisionsByGroup[0];
-    harken::Plan03GroupSliceIdentity primary{};
+    harken::ScheduleGroupSliceIdentity primary{};
     ASSERT_TRUE(pool.ReserveImmediateLaneGroup(17, 100, input, arms, &primary));
     input.decision = decisionsByGroup[1];
     input.members = &members[0];
     input.memberCount = 1;
-    harken::Plan03GroupSliceIdentity first{};
+    harken::ScheduleGroupSliceIdentity first{};
     ASSERT_TRUE(pool.ReserveImmediateLaneGroup(17, 100, input, arms, &first));
-    ASSERT_EQ(harken::Plan03GroupBacking::ImmediateLane, primary.backing);
-    ASSERT_EQ(harken::Plan03GroupBacking::ImmediateLane, first.backing);
-    harken::Plan03GroupReaderPin reader;
-    ASSERT_TRUE(pool.AcquirePlan03GroupReader(first, &reader));
+    ASSERT_EQ(harken::ScheduleGroupBacking::ImmediateLane, primary.backing);
+    ASSERT_EQ(harken::ScheduleGroupBacking::ImmediateLane, first.backing);
+    harken::ScheduleGroupReaderPin reader;
+    ASSERT_TRUE(pool.AcquireScheduleGroupReader(first, &reader));
     ASSERT_TRUE(reader.Valid());
 
     input.decision = decisionsByGroup[2];
     input.members = &members[1];
-    harken::Plan03GroupSliceIdentity refused{};
+    harken::ScheduleGroupSliceIdentity refused{};
     EXPECT_FALSE(pool.ReserveImmediateLaneGroup(17, 100, input, arms, &refused));
     EXPECT_FALSE(refused.Valid());
-    std::array<harken::Plan03ImmediateLaneGroupDescriptor, 2> cohort{};
+    std::array<harken::ScheduleImmediateLaneGroupDescriptor, 2> cohort{};
     ASSERT_EQ(2u, pool.CaptureImmediateLaneCohortGroups(
                       17, cohort.data(), cohort.size()));
     EXPECT_EQ(primary, cohort[0].identity);
     EXPECT_EQ(first, cohort[1].identity);
     for (const auto& identity : {primary, first}) {
-        harken::Plan03PageGroupView view{};
-        ASSERT_TRUE(pool.ResolvePlan03GroupSliceProducer(identity, &view));
+        harken::SchedulePageGroupView view{};
+        ASSERT_TRUE(pool.ResolveScheduleGroupSliceProducer(identity, &view));
         EXPECT_EQ(identity, view.identity);
         EXPECT_EQ(nullptr, view.frontier);
         ASSERT_NE(nullptr, view.lease);
@@ -716,9 +716,9 @@ TEST(DecisionGroup, PrivateImmediateCohortCapacityRefusalReclaimsUnpublishedPref
     EXPECT_FALSE(reader.Valid());
     ASSERT_TRUE(pool.CancelImmediateLaneGroups(17, 0));
     EXPECT_EQ(0u, pool.CaptureImmediateLaneCohortGroups(17, nullptr, 0));
-    harken::Plan03PageGroupView retired{};
-    EXPECT_FALSE(pool.ResolvePlan03GroupSliceProducer(primary, &retired));
-    EXPECT_FALSE(pool.ResolvePlan03GroupSliceProducer(first, &retired));
+    harken::SchedulePageGroupView retired{};
+    EXPECT_FALSE(pool.ResolveScheduleGroupSliceProducer(primary, &retired));
+    EXPECT_FALSE(pool.ResolveScheduleGroupSliceProducer(first, &retired));
     for (const auto& member : members) {
         ASSERT_TRUE(arms.CancelPrepared(member));
         harken::TimelineArmObservation observation{};
@@ -774,18 +774,18 @@ TEST(DecisionGroup, FrontierMembersBorrowOnlyEntryClaimAndKeepExactPageRetiremen
     harken::ScheduledTransactionPool pool;
     harken::TimelineArmTable arms(1);
     auto config = MakePoolConfig();
-    config.maxPlan03GroupHeadersPerPage = 3;
+    config.maxScheduleGroupHeadersPerPage = 3;
     ASSERT_TRUE(pool.Reset(config, 0, 9));
-    harken::Plan03GroupSliceInput input{};
+    harken::ScheduleGroupSliceInput input{};
     input.decision = {1, 1};
-    ASSERT_EQ(harken::Plan03GroupReserveStatus::Committed, pool.ReservePlan03GroupSlice(input, arms));
+    ASSERT_EQ(harken::ScheduleGroupReserveStatus::Committed, pool.ReserveScheduleGroupSlice(input, arms));
     input.decision = {2, 1};
-    ASSERT_EQ(harken::Plan03GroupReserveStatus::Committed, pool.ReservePlan03GroupSlice(input, arms));
+    ASSERT_EQ(harken::ScheduleGroupReserveStatus::Committed, pool.ReserveScheduleGroupSlice(input, arms));
     input.executeFrame = 100;
     input.sliceIndex = 1;
-    ASSERT_EQ(harken::Plan03GroupReserveStatus::Committed, pool.ReservePlan03GroupSlice(input, arms));
-    std::array<harken::Plan03PageGroupView, 3> groups{};
-    ASSERT_EQ(3u, pool.CaptureLivePlan03Groups(groups.data(), groups.size()));
+    ASSERT_EQ(harken::ScheduleGroupReserveStatus::Committed, pool.ReserveScheduleGroupSlice(input, arms));
+    std::array<harken::SchedulePageGroupView, 3> groups{};
+    ASSERT_EQ(3u, pool.CaptureLiveScheduleGroups(groups.data(), groups.size()));
     const auto primary = groups[0].identity;
     const auto member = groups[1].identity;
     const auto future = groups[2].identity;
@@ -801,17 +801,17 @@ TEST(DecisionGroup, FrontierMembersBorrowOnlyEntryClaimAndKeepExactPageRetiremen
     binding.operation.transport = 9;
     binding.operation.world = 7;
     binding.primary = primary;
-    ASSERT_TRUE(pool.BindPlan03GroupFrontier(primary, binding));
+    ASSERT_TRUE(pool.BindScheduleGroupFrontier(primary, binding));
     binding.role = harken::FrontierGroupRole::EntryMember;
     binding.operation.group = member;
-    ASSERT_TRUE(pool.BindPlan03GroupFrontier(member, binding));
-    EXPECT_FALSE(pool.DetachPlan03GroupFrontier(primary, 0));
+    ASSERT_TRUE(pool.BindScheduleGroupFrontier(member, binding));
+    EXPECT_FALSE(pool.DetachScheduleGroupFrontier(primary, 0));
     binding.role = harken::FrontierGroupRole::Future;
     binding.operation.kind = harken::FrontierOperationKind::Genuine;
     binding.operation.group = future;
     binding.operation.order.executeFrame = 100;
-    ASSERT_TRUE(pool.BindPlan03GroupFrontier(future, binding));
-    ASSERT_EQ(3u, pool.CaptureLivePlan03Groups(groups.data(), groups.size()));
+    ASSERT_TRUE(pool.BindScheduleGroupFrontier(future, binding));
+    ASSERT_EQ(3u, pool.CaptureLiveScheduleGroups(groups.data(), groups.size()));
     EXPECT_EQ(primary, groups[0].identity);
     EXPECT_EQ(member, groups[1].identity);
     EXPECT_EQ(groups[0].lease, groups[1].lease);
@@ -820,8 +820,8 @@ TEST(DecisionGroup, FrontierMembersBorrowOnlyEntryClaimAndKeepExactPageRetiremen
     EXPECT_EQ(harken::FrontierGroupRole::EntryMember, groups[1].frontier->role);
     EXPECT_FALSE(pool.Reset(config, 0, 10));
     pool.Publish(200, nullptr, nullptr, &arms);
-    ASSERT_TRUE(pool.NotePlan03GroupReadRt(primary, 1));
-    ASSERT_TRUE(pool.NotePlan03GroupReadRt(member, 1));
+    ASSERT_TRUE(pool.NoteScheduleGroupReadRt(primary, 1));
+    ASSERT_TRUE(pool.NoteScheduleGroupReadRt(member, 1));
     std::uint32_t applied = 0;
     SliceStep step{groups[0].lease, &applied};
     harken::AudioSliceOperation operation{&step, ValidateSliceStep, nullptr, ApplySliceStep};
@@ -829,10 +829,10 @@ TEST(DecisionGroup, FrontierMembersBorrowOnlyEntryClaimAndKeepExactPageRetiremen
         harken::ApplyAudioSliceWhole(*groups[0].lease, &operation, 1));
     EXPECT_EQ(harken::AudioSliceState::SliceApplied, groups[1].lease->Capture().state);
     EXPECT_EQ(harken::AudioSliceState::Ready, groups[2].lease->Capture().state);
-    EXPECT_FALSE(pool.DetachPlan03GroupFrontier(member, 1));
-    ASSERT_TRUE(pool.DetachPlan03GroupFrontier(member, 2));
-    ASSERT_TRUE(pool.DetachPlan03GroupFrontier(primary, 2));
-    ASSERT_TRUE(pool.ResolvePlan03GroupSliceProducer(primary, &groups[0]));
+    EXPECT_FALSE(pool.DetachScheduleGroupFrontier(member, 1));
+    ASSERT_TRUE(pool.DetachScheduleGroupFrontier(member, 2));
+    ASSERT_TRUE(pool.DetachScheduleGroupFrontier(primary, 2));
+    ASSERT_TRUE(pool.ResolveScheduleGroupSliceProducer(primary, &groups[0]));
     ASSERT_NE(nullptr, groups[0].frontier);
     EXPECT_EQ(harken::FrontierGroupRole::Coordinator, groups[0].frontier->role);
     EXPECT_FALSE(pool.FrontierCoordinatorDetached(primary, binding.entry, 1));
@@ -841,15 +841,15 @@ TEST(DecisionGroup, FrontierMembersBorrowOnlyEntryClaimAndKeepExactPageRetiremen
     pool.Advance();
     EXPECT_EQ(100u, pool.WindowStartFrame());
     EXPECT_FALSE(pool.FrontierCoordinatorDetached(primary, binding.entry, 2));
-    EXPECT_FALSE(pool.ResolvePlan03GroupSliceProducer(member, &groups[1]));
-    ASSERT_TRUE(pool.ResolvePlan03GroupSliceRt(future, &groups[2]));
+    EXPECT_FALSE(pool.ResolveScheduleGroupSliceProducer(member, &groups[1]));
+    ASSERT_TRUE(pool.ResolveScheduleGroupSliceRt(future, &groups[2]));
     EXPECT_EQ(harken::AudioSliceState::Ready, groups[2].lease->Capture().state);
     EXPECT_EQ(harken::FrontierGroupRole::Future, groups[2].frontier->role);
-    ASSERT_TRUE(pool.NotePlan03GroupReadRt(future, 2));
+    ASSERT_TRUE(pool.NoteScheduleGroupReadRt(future, 2));
     ASSERT_EQ(harken::AudioSliceInvalidateDisposition::InvalidatedReady,
         groups[2].lease->Invalidate(harken::AudioSliceInvalidateReason::Cancel));
-    EXPECT_FALSE(pool.DetachPlan03GroupFrontier(future, 2));
-    ASSERT_TRUE(pool.DetachPlan03GroupFrontier(future, 3));
+    EXPECT_FALSE(pool.DetachScheduleGroupFrontier(future, 2));
+    ASSERT_TRUE(pool.DetachScheduleGroupFrontier(future, 3));
     pool.ConsumerFrontier().store(2, std::memory_order_release);
     pool.Advance();
     EXPECT_EQ(200u, pool.WindowStartFrame());
@@ -865,13 +865,13 @@ TEST(DecisionGroup, ImmediateLaneGroupIdentitySurvivesAnchorRebaseAndSharesEntry
     config.initialImmediateLaneOwnerGates = 4;
     config.initialImmediateLaneDecisionGates = 4;
     ASSERT_TRUE(pool.Reset(config, 0, 9));
-    harken::Plan03GroupSliceInput input{};
+    harken::ScheduleGroupSliceInput input{};
     input.executeFrame = 120;
     input.decision = laneHarness.tokens[0];
-    harken::Plan03GroupSliceIdentity primary{};
+    harken::ScheduleGroupSliceIdentity primary{};
     ASSERT_TRUE(pool.ReserveImmediateLaneGroup(17, 100, input, arms, &primary));
     input.decision = laneHarness.tokens[1];
-    harken::Plan03GroupSliceIdentity member{};
+    harken::ScheduleGroupSliceIdentity member{};
     ASSERT_TRUE(pool.ReserveImmediateLaneGroup(17, 100, input, arms, &member));
     const std::array laneGroups{primary, member};
     laneHarness.Bind(pool, laneGroups.data(), 2);
@@ -889,10 +889,10 @@ TEST(DecisionGroup, ImmediateLaneGroupIdentitySurvivesAnchorRebaseAndSharesEntry
     binding.operation.transport = 9;
     binding.operation.world = 7;
     binding.primary = primary;
-    ASSERT_TRUE(pool.BindPlan03GroupFrontier(primary, binding));
+    ASSERT_TRUE(pool.BindScheduleGroupFrontier(primary, binding));
     binding.role = harken::FrontierGroupRole::EntryMember;
     binding.operation.group = member;
-    ASSERT_TRUE(pool.BindPlan03GroupFrontier(member, binding));
+    ASSERT_TRUE(pool.BindScheduleGroupFrontier(member, binding));
 
     harken::ImmediateLaneFrontierClaim privateClaim{};
     EXPECT_FALSE(pool.ClaimImmediateLaneFrontier(primary, &privateClaim));
@@ -900,19 +900,19 @@ TEST(DecisionGroup, ImmediateLaneGroupIdentitySurvivesAnchorRebaseAndSharesEntry
     EXPECT_FALSE(pool.ClaimPrivateImmediateLaneFrontier(primary, &privateClaim));
     ASSERT_TRUE(pool.ReleaseImmediateLaneFrontier(&privateClaim));
 
-    std::array<harken::Plan03PageGroupView, 2> live{};
-    ASSERT_EQ(2u, pool.CaptureLivePlan03Groups(live.data(), live.size()));
+    std::array<harken::SchedulePageGroupView, 2> live{};
+    ASSERT_EQ(2u, pool.CaptureLiveScheduleGroups(live.data(), live.size()));
     EXPECT_EQ(primary, live[0].identity);
     EXPECT_EQ(member, live[1].identity);
 
     laneHarness.Publish(pool, arms, laneGroups.data(), 2);
     EXPECT_FALSE(pool.ClaimPrivateImmediateLaneFrontier(primary, &privateClaim));
-    std::array<harken::Plan03PageGroupView, 2> due{};
+    std::array<harken::SchedulePageGroupView, 2> due{};
     EXPECT_EQ(0u, pool.CaptureImmediateLaneGroupsRt(1, due.data(), due.size()));
     ASSERT_EQ(2u, pool.CaptureImmediateLaneGroupsRt(4, due.data(), due.size()));
-    harken::Plan03PageGroupView primaryView{}, memberView{};
-    ASSERT_TRUE(pool.ResolvePlan03GroupSliceRt(primary, &primaryView));
-    ASSERT_TRUE(pool.ResolvePlan03GroupSliceRt(member, &memberView));
+    harken::SchedulePageGroupView primaryView{}, memberView{};
+    ASSERT_TRUE(pool.ResolveScheduleGroupSliceRt(primary, &primaryView));
+    ASSERT_TRUE(pool.ResolveScheduleGroupSliceRt(member, &memberView));
     EXPECT_EQ(primary, primaryView.identity);
     EXPECT_EQ(member, memberView.identity);
     EXPECT_EQ(primaryView.lease, memberView.lease);
@@ -940,14 +940,14 @@ TEST(DecisionGroup, ImmediateLaneFutureMemberBlocksAppliedEntryDetachUntilRetire
     config.initialImmediateLaneOwnerGates = 4;
     config.initialImmediateLaneDecisionGates = 4;
     ASSERT_TRUE(pool.Reset(config, 0, 9));
-    harken::Plan03GroupSliceInput input{};
+    harken::ScheduleGroupSliceInput input{};
     input.executeFrame = 120;
     input.decision = laneHarness.tokens[0];
-    harken::Plan03GroupSliceIdentity primary{};
+    harken::ScheduleGroupSliceIdentity primary{};
     ASSERT_TRUE(pool.ReserveImmediateLaneGroup(17, 100, input, arms,
         &primary));
     input.decision = laneHarness.tokens[1];
-    harken::Plan03GroupSliceIdentity member{};
+    harken::ScheduleGroupSliceIdentity member{};
     ASSERT_TRUE(pool.ReserveImmediateLaneGroup(17, 100, input, arms,
         &member));
     const std::array laneGroups{primary, member};
@@ -966,19 +966,19 @@ TEST(DecisionGroup, ImmediateLaneFutureMemberBlocksAppliedEntryDetachUntilRetire
     binding.operation.transport = 9;
     binding.operation.world = 7;
     binding.primary = primary;
-    ASSERT_TRUE(pool.BindPlan03GroupFrontier(primary, binding));
+    ASSERT_TRUE(pool.BindScheduleGroupFrontier(primary, binding));
     binding.role = harken::FrontierGroupRole::EntryMember;
     binding.operation.group = member;
-    ASSERT_TRUE(pool.BindPlan03GroupFrontier(member, binding));
+    ASSERT_TRUE(pool.BindScheduleGroupFrontier(member, binding));
     laneHarness.Publish(pool, arms, laneGroups.data(), 2);
     ASSERT_TRUE(pool.AcquireImmediateLaneFutureDependent(member));
 
-    harken::Plan03PageGroupView primaryView{}, memberView{};
-    ASSERT_TRUE(pool.ResolvePlan03GroupSliceRt(primary, &primaryView));
-    ASSERT_TRUE(pool.ResolvePlan03GroupSliceRt(member, &memberView));
+    harken::SchedulePageGroupView primaryView{}, memberView{};
+    ASSERT_TRUE(pool.ResolveScheduleGroupSliceRt(primary, &primaryView));
+    ASSERT_TRUE(pool.ResolveScheduleGroupSliceRt(member, &memberView));
     ASSERT_EQ(primaryView.lease, memberView.lease);
-    ASSERT_TRUE(pool.NotePlan03GroupReadRt(primary, 1));
-    ASSERT_TRUE(pool.NotePlan03GroupReadRt(member, 1));
+    ASSERT_TRUE(pool.NoteScheduleGroupReadRt(primary, 1));
+    ASSERT_TRUE(pool.NoteScheduleGroupReadRt(member, 1));
     std::uint32_t applied = 0;
     SliceStep step{primaryView.lease, &applied};
     harken::AudioSliceOperation operation{
@@ -987,12 +987,12 @@ TEST(DecisionGroup, ImmediateLaneFutureMemberBlocksAppliedEntryDetachUntilRetire
         harken::ApplyAudioSliceWhole(*primaryView.lease, &operation, 1));
     EXPECT_EQ(harken::AudioSliceState::SliceApplied,
         memberView.lease->Capture().state);
-    EXPECT_FALSE(pool.DetachPlan03GroupFrontier(member, 2));
-    EXPECT_FALSE(pool.DetachPlan03GroupFrontier(primary, 2));
+    EXPECT_FALSE(pool.DetachScheduleGroupFrontier(member, 2));
+    EXPECT_FALSE(pool.DetachScheduleGroupFrontier(primary, 2));
     ASSERT_TRUE(pool.ReleaseImmediateLaneFutureDependent(member));
-    ASSERT_TRUE(pool.DetachPlan03GroupFrontier(member, 2));
-    ASSERT_TRUE(pool.DetachPlan03GroupFrontier(primary, 2));
-    ASSERT_TRUE(pool.ResolvePlan03GroupSliceProducer(primary, &primaryView));
+    ASSERT_TRUE(pool.DetachScheduleGroupFrontier(member, 2));
+    ASSERT_TRUE(pool.DetachScheduleGroupFrontier(primary, 2));
+    ASSERT_TRUE(pool.ResolveScheduleGroupSliceProducer(primary, &primaryView));
     ASSERT_NE(nullptr, primaryView.frontier);
     EXPECT_EQ(harken::FrontierGroupRole::Coordinator, primaryView.frontier->role);
     EXPECT_FALSE(pool.FrontierCoordinatorDetached(primary, binding.entry, 1));
@@ -1012,13 +1012,13 @@ TEST(DecisionGroup, ImmediateLaneFrontierCancellationRetainsScopeReasonAndClaimO
     config.initialImmediateLaneOwnerGates = 4;
     config.initialImmediateLaneDecisionGates = 4;
     ASSERT_TRUE(pool.Reset(config, 0, 9));
-    harken::Plan03GroupSliceInput input{};
+    harken::ScheduleGroupSliceInput input{};
     input.executeFrame = 120;
     input.decision = laneHarness.tokens[0];
-    harken::Plan03GroupSliceIdentity first{};
+    harken::ScheduleGroupSliceIdentity first{};
     ASSERT_TRUE(pool.ReserveImmediateLaneGroup(17, 100, input, arms, &first));
     input.decision = laneHarness.tokens[1];
-    harken::Plan03GroupSliceIdentity second{};
+    harken::ScheduleGroupSliceIdentity second{};
     ASSERT_TRUE(pool.ReserveImmediateLaneGroup(17, 100, input, arms, &second));
     const std::array laneGroups{first, second};
     laneHarness.Bind(pool, laneGroups.data(), 2);
@@ -1035,13 +1035,13 @@ TEST(DecisionGroup, ImmediateLaneFrontierCancellationRetainsScopeReasonAndClaimO
     binding.operation.transport = 9;
     binding.operation.world = 7;
     binding.operation.group = first;
-    ASSERT_TRUE(pool.BindPlan03GroupFrontier(first, binding));
+    ASSERT_TRUE(pool.BindScheduleGroupFrontier(first, binding));
     binding.operation.group = second;
-    ASSERT_TRUE(pool.BindPlan03GroupFrontier(second, binding));
+    ASSERT_TRUE(pool.BindScheduleGroupFrontier(second, binding));
     laneHarness.Publish(pool, arms, laneGroups.data(), 2);
-    harken::Plan03PageGroupView firstView{}, secondView{};
-    ASSERT_TRUE(pool.ResolvePlan03GroupSliceRt(first, &firstView));
-    ASSERT_TRUE(pool.ResolvePlan03GroupSliceRt(second, &secondView));
+    harken::SchedulePageGroupView firstView{}, secondView{};
+    ASSERT_TRUE(pool.ResolveScheduleGroupSliceRt(first, &firstView));
+    ASSERT_TRUE(pool.ResolveScheduleGroupSliceRt(second, &secondView));
     ASSERT_NE(firstView.lease, secondView.lease);
 
     ASSERT_TRUE(pool.InvalidateFrontierOwnerOperations(
@@ -1075,8 +1075,8 @@ TEST(DecisionGroup, ImmediateLaneFrontierCancellationRetainsScopeReasonAndClaimO
     EXPECT_EQ(harken::AudioSliceReasonWorldReplacement,
               secondView.lease->Capture().pendingReasonBits);
     EXPECT_FALSE(pool.ClaimImmediateLaneFrontier(second, &claim));
-    ASSERT_TRUE(pool.DetachPlan03GroupFrontier(first, 0));
-    ASSERT_TRUE(pool.DetachPlan03GroupFrontier(second, 0));
+    ASSERT_TRUE(pool.DetachScheduleGroupFrontier(first, 0));
+    ASSERT_TRUE(pool.DetachScheduleGroupFrontier(second, 0));
     ASSERT_TRUE(laneHarness.lane.Cancel(laneHarness.handle));
     ASSERT_TRUE(laneHarness.lane.Retire(laneHarness.handle));
     ASSERT_TRUE(pool.CancelImmediateLaneGroups(17, 0));
@@ -1089,8 +1089,8 @@ struct PrivateLaneTransferHarness {
     harken::DecisionTable decisions{3, 2};
     std::array<harken::DecisionToken, 3> decisionsByGroup{};
     std::array<harken::TimelineArmToken, 2> members{};
-    std::array<harken::Plan03GroupSliceInput, 3> inputs{};
-    std::array<harken::Plan03GroupSliceIdentity, 3> raw{};
+    std::array<harken::ScheduleGroupSliceInput, 3> inputs{};
+    std::array<harken::ScheduleGroupSliceIdentity, 3> raw{};
     std::array<harken::PreparedPrivateImmediateLaneGroup, 3> originals{};
     std::array<harken::PrivateImmediateLaneGroupTransferProof, 3> proofs{};
 
@@ -1152,13 +1152,13 @@ TEST(DecisionGroup, PrivateLaneTransferProofHoldsActualRowsReleaseReproveAndCons
         EXPECT_FALSE(state.pool.CancelPrivateImmediateLaneGroup(17, state.raw[index]));
         EXPECT_FALSE(state.pool.CancelPrivateImmediateLaneGroup(&state.originals[index], &state.raw[index]));
         EXPECT_EQ(identities[index], state.raw[index]);
-        harken::Plan03GroupReaderPin reader;
-        EXPECT_FALSE(state.pool.AcquirePlan03GroupReader(state.raw[index], &reader));
+        harken::ScheduleGroupReaderPin reader;
+        EXPECT_FALSE(state.pool.AcquireScheduleGroupReader(state.raw[index], &reader));
         EXPECT_FALSE(reader.Valid());
-        EXPECT_FALSE(state.pool.NotePlan03GroupReadRt(state.raw[index], 1));
-        EXPECT_FALSE(state.pool.PrivatePlan03GroupBindable(state.raw[index]));
+        EXPECT_FALSE(state.pool.NoteScheduleGroupReadRt(state.raw[index], 1));
+        EXPECT_FALSE(state.pool.PrivateScheduleGroupBindable(state.raw[index]));
         EXPECT_FALSE(state.pool.PrivateImmediateLaneGroupRetirementReady(state.raw[index], 0));
-        EXPECT_FALSE(state.pool.DetachPlan03GroupFrontier(state.raw[index], 0));
+        EXPECT_FALSE(state.pool.DetachScheduleGroupFrontier(state.raw[index], 0));
         EXPECT_FALSE(state.pool.AcquireImmediateLaneFutureDependent(state.raw[index]));
         EXPECT_FALSE(state.pool.ReleaseImmediateLaneFutureDependent(state.raw[index]));
         EXPECT_FALSE(state.pool.BindImmediateLaneGroupOwner(state.raw[index], lane,
@@ -1177,7 +1177,7 @@ TEST(DecisionGroup, PrivateLaneTransferProofHoldsActualRowsReleaseReproveAndCons
         binding.operation.world = 7;
         binding.primary = state.raw[index];
         ASSERT_TRUE(binding.Valid());
-        EXPECT_FALSE(state.pool.BindPlan03GroupFrontier(state.raw[index], binding));
+        EXPECT_FALSE(state.pool.BindScheduleGroupFrontier(state.raw[index], binding));
     }
     EXPECT_FALSE(state.pool.CancelImmediateLaneGroups(17, 0));
     EXPECT_FALSE(state.pool.RebaseImmediateLaneGroups(17, 400));
@@ -1185,14 +1185,14 @@ TEST(DecisionGroup, PrivateLaneTransferProofHoldsActualRowsReleaseReproveAndCons
     EXPECT_FALSE(state.pool.ResetForEpoch(0, 10));
     auto config = MakePoolConfig();
     EXPECT_FALSE(state.pool.Reset(config, 0, 10));
-    std::array<harken::Plan03ImmediateLaneGroupDescriptor, 3> actual{};
+    std::array<harken::ScheduleImmediateLaneGroupDescriptor, 3> actual{};
     ASSERT_EQ(3u, state.pool.CaptureImmediateLaneCohortGroups(17, actual.data(), actual.size()));
     for (std::uint32_t index = 0; index < actual.size(); ++index) {
         EXPECT_EQ(identities[index], actual[index].identity);
         EXPECT_EQ(UINT64_MAX, actual[index].dueQuantum);
         EXPECT_EQ(UINT32_MAX, actual[index].laneSlot);
-        harken::Plan03PageGroupView view{};
-        ASSERT_TRUE(state.pool.ResolvePlan03GroupSliceProducer(identities[index], &view));
+        harken::SchedulePageGroupView view{};
+        ASSERT_TRUE(state.pool.ResolveScheduleGroupSliceProducer(identities[index], &view));
         EXPECT_EQ(harken::AudioSliceState::PrivateTransferReserved, view.lease->Capture().state);
         EXPECT_EQ(state.inputs[index].memberCount, view.memberCount);
         EXPECT_EQ(state.inputs[index].sourceControlCount, view.sourceControlCount);
@@ -1215,10 +1215,10 @@ TEST(DecisionGroup, PrivateLaneTransferProofHoldsActualRowsReleaseReproveAndCons
         EXPECT_FALSE(state.originals[index].Valid());
         EXPECT_FALSE(state.Prove(index));
         EXPECT_FALSE(state.pool.PrivateImmediateLaneGroupTransferHeld(consumed));
-        EXPECT_TRUE(state.pool.PrivatePlan03GroupBindable(consumed));
-        harken::Plan03PageGroupView view{};
-        ASSERT_TRUE(state.pool.ResolvePlan03GroupSliceProducer(consumed, &view));
-        EXPECT_FALSE(state.pool.ResolvePlan03GroupSliceRt(consumed, &view));
+        EXPECT_TRUE(state.pool.PrivateScheduleGroupBindable(consumed));
+        harken::SchedulePageGroupView view{};
+        ASSERT_TRUE(state.pool.ResolveScheduleGroupSliceProducer(consumed, &view));
+        EXPECT_FALSE(state.pool.ResolveScheduleGroupSliceRt(consumed, &view));
         ASSERT_TRUE(state.pool.CancelPrivateImmediateLaneGroup(17, consumed));
         state.raw[index] = {};
     }
@@ -1268,7 +1268,7 @@ TEST(DecisionGroup, PrivateLaneTransferProofRejectsForeignFactoryScopesAndDuplic
         EXPECT_FALSE(state.originals[1].Held());
         refused.Release();
     }
-    harken::Plan03GroupSliceIdentity unchanged{};
+    harken::ScheduleGroupSliceIdentity unchanged{};
     auto newInput = state.inputs[0];
     ++newInput.sliceIndex;
     EXPECT_FALSE(state.pool.ReserveImmediateLaneGroup(17, 100, newInput, state.arms,
@@ -1301,7 +1301,7 @@ TEST(DecisionGroup, PrivateLaneTransferProofRejectsForeignFactoryScopesAndDuplic
 TEST(DecisionGroup, PrivateLaneTransferProofLaterOwnedCancelRefusalReleasesPrefixAndRetainsNeighbor) {
     PrivateLaneTransferHarness state;
     ASSERT_NO_FATAL_FAILURE(state.Prepare(4));
-    harken::Plan03GroupSliceIdentity neighbor{};
+    harken::ScheduleGroupSliceIdentity neighbor{};
     harken::PreparedPrivateImmediateLaneGroup neighborOriginal;
     ASSERT_TRUE(state.pool.ReserveImmediateLaneGroup(18, 100, state.inputs[0], state.arms,
         &neighbor, &neighborOriginal));
@@ -1309,8 +1309,8 @@ TEST(DecisionGroup, PrivateLaneTransferProofLaterOwnedCancelRefusalReleasesPrefi
     ASSERT_TRUE(state.pool.CancelPrivateImmediateLaneGroup(&state.originals[1], &state.raw[1]));
     EXPECT_FALSE(state.originals[1].Valid());
     EXPECT_FALSE(state.raw[1].Valid());
-    harken::Plan03PageGroupView view{};
-    EXPECT_FALSE(state.pool.ResolvePlan03GroupSliceProducer(cancelled, &view));
+    harken::SchedulePageGroupView view{};
+    EXPECT_FALSE(state.pool.ResolveScheduleGroupSliceProducer(cancelled, &view));
     ASSERT_TRUE(state.Prove(0));
     EXPECT_TRUE(state.originals[0].Held());
     EXPECT_FALSE(state.Prove(1));
@@ -1322,7 +1322,7 @@ TEST(DecisionGroup, PrivateLaneTransferProofLaterOwnedCancelRefusalReleasesPrefi
     ASSERT_TRUE(state.pool.CancelPrivateImmediateLaneGroup(&state.originals[0], &state.raw[0]));
     ASSERT_TRUE(state.pool.CancelPrivateImmediateLaneGroup(&state.originals[2], &state.raw[2]));
     EXPECT_EQ(1u, state.pool.CaptureImmediateLaneCohortGroups(18, nullptr, 0));
-    ASSERT_TRUE(state.pool.ResolvePlan03GroupSliceProducer(neighbor, &view));
+    ASSERT_TRUE(state.pool.ResolveScheduleGroupSliceProducer(neighbor, &view));
     EXPECT_TRUE(neighborOriginal.Valid());
     ASSERT_TRUE(state.pool.CancelPrivateImmediateLaneGroup(&neighborOriginal, &neighbor));
     ASSERT_NO_FATAL_FAILURE(state.ReclaimOtherParticipants());
@@ -1378,8 +1378,8 @@ TEST(DecisionGroup, PrivateLaneTransferProofOriginalDestructionReleasesHoldWitho
     }
     EXPECT_FALSE(state.proofs[0].Valid());
     EXPECT_FALSE(state.pool.PrivateImmediateLaneGroupTransferHeld(state.raw[0]));
-    harken::Plan03PageGroupView actual{};
-    ASSERT_TRUE(state.pool.ResolvePlan03GroupSliceProducer(state.raw[0], &actual));
+    harken::SchedulePageGroupView actual{};
+    ASSERT_TRUE(state.pool.ResolveScheduleGroupSliceProducer(state.raw[0], &actual));
     EXPECT_EQ(harken::AudioSliceState::Ready, actual.lease->Capture().state);
     ASSERT_TRUE(state.pool.CancelPrivateImmediateLaneGroup(17, state.raw[0]));
     state.raw[0] = {};
@@ -1397,7 +1397,7 @@ TEST(DecisionGroup, PrivateLaneTransferProofRawCancellationAndReuseCannotRecreat
     EXPECT_FALSE(state.Prove(0));
     EXPECT_FALSE(state.pool.CancelPrivateImmediateLaneGroup(&state.originals[0], &state.raw[0]));
     EXPECT_EQ(stale, state.raw[0]);
-    harken::Plan03GroupSliceIdentity reused{};
+    harken::ScheduleGroupSliceIdentity reused{};
     harken::PreparedPrivateImmediateLaneGroup reusedOriginal;
     ASSERT_TRUE(state.pool.ReserveImmediateLaneGroup(17, 100, state.inputs[0], state.arms,
         &reused, &reusedOriginal));
@@ -1423,13 +1423,13 @@ TEST(DecisionGroup, PrivateLaneTransferProofRawCancellationAndReuseCannotRecreat
 TEST(DecisionGroup, PrivateLaneTransferProofEarlierBorrowCannotMutateHeldRealLease) {
     PrivateLaneTransferHarness state;
     ASSERT_NO_FATAL_FAILURE(state.Prepare());
-    harken::Plan03PageGroupView before{};
-    ASSERT_TRUE(state.pool.ResolvePlan03GroupSliceProducer(state.raw[0], &before));
+    harken::SchedulePageGroupView before{};
+    ASSERT_TRUE(state.pool.ResolveScheduleGroupSliceProducer(state.raw[0], &before));
     auto* borrowed = before.lease;
     ASSERT_NE(nullptr, borrowed);
     ASSERT_TRUE(state.Prove(0));
-    harken::Plan03PageGroupView after{};
-    ASSERT_TRUE(state.pool.ResolvePlan03GroupSliceProducer(state.raw[0], &after));
+    harken::SchedulePageGroupView after{};
+    ASSERT_TRUE(state.pool.ResolveScheduleGroupSliceProducer(state.raw[0], &after));
     ASSERT_EQ(borrowed, after.lease);
     const auto held = borrowed->Capture();
     EXPECT_EQ(harken::AudioSliceState::PrivateTransferReserved, held.state);
@@ -1482,17 +1482,17 @@ TEST(DecisionGroup, PrivateLaneTransferProofConsumeLeavesRealPrivateGroupForNorm
     config.initialImmediateLaneOwnerGates = 4;
     config.initialImmediateLaneDecisionGates = 4;
     ASSERT_TRUE(pool.Reset(config, 0, 9));
-    harken::Plan03GroupSliceInput input{};
+    harken::ScheduleGroupSliceInput input{};
     input.executeFrame = 120;
     input.decision = laneHarness.tokens[0];
-    harken::Plan03GroupSliceIdentity raw{};
+    harken::ScheduleGroupSliceIdentity raw{};
     harken::PreparedPrivateImmediateLaneGroup original;
     ASSERT_TRUE(pool.ReserveImmediateLaneGroup(17, 100, input, arms, &raw, &original));
     harken::PrivateImmediateLaneGroupTransferProof proof;
     ASSERT_TRUE(pool.ProvePrivateImmediateLaneGroupTransfer(original, 17, 100, input, arms, &proof));
     const auto consumed = harken::ScheduledTransactionPool::ConsumePrivateImmediateLaneGroupTransfer(std::move(proof));
     EXPECT_EQ(raw, consumed);
-    ASSERT_TRUE(pool.PrivatePlan03GroupBindable(consumed));
+    ASSERT_TRUE(pool.PrivateScheduleGroupBindable(consumed));
     ASSERT_NO_FATAL_FAILURE(laneHarness.Bind(pool, &consumed, 1));
     harken::FrontierGroupBinding binding{};
     binding.role = harken::FrontierGroupRole::Coordinator;
@@ -1507,19 +1507,19 @@ TEST(DecisionGroup, PrivateLaneTransferProofConsumeLeavesRealPrivateGroupForNorm
     binding.operation.transport = 9;
     binding.operation.world = 7;
     binding.primary = consumed;
-    ASSERT_TRUE(pool.BindPlan03GroupFrontier(consumed, binding));
+    ASSERT_TRUE(pool.BindScheduleGroupFrontier(consumed, binding));
     ASSERT_NO_FATAL_FAILURE(laneHarness.Publish(pool, arms, &consumed, 1));
-    harken::Plan03PageGroupView view{};
-    ASSERT_TRUE(pool.ResolvePlan03GroupSliceRt(consumed, &view));
+    harken::SchedulePageGroupView view{};
+    ASSERT_TRUE(pool.ResolveScheduleGroupSliceRt(consumed, &view));
     EXPECT_EQ(consumed, view.identity);
-    std::array<harken::Plan03PageGroupView, 1> due{};
+    std::array<harken::SchedulePageGroupView, 1> due{};
     EXPECT_EQ(1u, pool.CaptureImmediateLaneGroupsRt(4, due.data(), due.size()));
     EXPECT_FALSE(pool.ProvePrivateImmediateLaneGroupTransfer(original, 17, 100, input, arms, &proof));
     EXPECT_EQ(harken::AudioSliceInvalidateDisposition::InvalidatedReady,
         view.lease->Invalidate(harken::AudioSliceInvalidateReason::Cancel));
     ASSERT_TRUE(laneHarness.lane.Cancel(laneHarness.handle));
     ASSERT_TRUE(laneHarness.lane.Retire(laneHarness.handle, 2));
-    ASSERT_TRUE(pool.DetachPlan03GroupFrontier(consumed, 2));
+    ASSERT_TRUE(pool.DetachScheduleGroupFrontier(consumed, 2));
     ASSERT_TRUE(pool.CancelImmediateLaneGroups(17, 2));
     ASSERT_TRUE(laneHarness.decisions.Cancel(laneHarness.tokens[0]));
     ASSERT_TRUE(laneHarness.decisions.ReclaimCancelled(laneHarness.tokens[0]));
@@ -1556,8 +1556,8 @@ TEST(DecisionGroup, PrivateLaneTransferProofOriginalMemberIndexSurvivesRealCance
         EXPECT_FALSE(state.Prove(1));
         state.proofs[1].Release();
         EXPECT_TRUE(state.originals[1].Valid());
-        harken::Plan03PageGroupView view{};
-        ASSERT_TRUE(state.pool.ResolvePlan03GroupSliceProducer(state.raw[1], &view));
+        harken::SchedulePageGroupView view{};
+        ASSERT_TRUE(state.pool.ResolveScheduleGroupSliceProducer(state.raw[1], &view));
         EXPECT_EQ(harken::AudioSliceState::Ready, view.lease->Capture().state);
         ASSERT_TRUE(state.arms.CancelPrepared(changed));
         harken::TimelineArmToken restored{};
@@ -1608,7 +1608,7 @@ TEST(DecisionGroup, PrivateLaneTransferProofCurrentRealRenderMustMatchFactoryOri
     EXPECT_TRUE(state.originals[1].Valid());
     auto staleFactoryInput = state.inputs[1];
     ++staleFactoryInput.sliceIndex;
-    harken::Plan03GroupSliceIdentity refusedRaw{};
+    harken::ScheduleGroupSliceIdentity refusedRaw{};
     harken::PreparedPrivateImmediateLaneGroup refusedOriginal;
     EXPECT_FALSE(state.pool.ReserveImmediateLaneGroup(17, 100, staleFactoryInput,
         state.arms, &refusedRaw, &refusedOriginal));
@@ -1651,17 +1651,17 @@ TEST(DecisionGroup, PrivateLaneTransferProofFactoryMemberGeometryAllowsReordered
         harken::ParentAudioGroupRef{decision}, 7, &members[0]));
     ASSERT_TRUE(arms.PreparePendingImmediateGrouped(2, 1, 7, {},
         harken::ParentAudioGroupRef{decision}, 3, &members[1]));
-    harken::Plan03GroupSliceInput input{};
+    harken::ScheduleGroupSliceInput input{};
     input.executeFrame = 120;
     input.decision = decision;
     input.members = members.data();
     input.memberCount = 2;
     input.sourceControlCount = 2;
-    harken::Plan03GroupSliceIdentity raw{};
+    harken::ScheduleGroupSliceIdentity raw{};
     harken::PreparedPrivateImmediateLaneGroup original;
     ASSERT_TRUE(pool.ReserveImmediateLaneGroup(17, 100, input, arms, &raw, &original));
-    harken::Plan03PageGroupView view{};
-    ASSERT_TRUE(pool.ResolvePlan03GroupSliceProducer(raw, &view));
+    harken::SchedulePageGroupView view{};
+    ASSERT_TRUE(pool.ResolveScheduleGroupSliceProducer(raw, &view));
     EXPECT_EQ(members[1].slot, view.members[0].slot);
     EXPECT_EQ(members[0].slot, view.members[1].slot);
     harken::PrivateImmediateLaneGroupTransferProof proof;
@@ -1687,8 +1687,8 @@ TEST(DecisionGroup, PrivateLaneTransferProofRealReaderRefusalRetainsAcquiredPref
     PrivateLaneTransferHarness state;
     ASSERT_NO_FATAL_FAILURE(state.Prepare());
     ASSERT_TRUE(state.Prove(0));
-    harken::Plan03GroupReaderPin reader;
-    ASSERT_TRUE(state.pool.AcquirePlan03GroupReader(state.raw[1], &reader));
+    harken::ScheduleGroupReaderPin reader;
+    ASSERT_TRUE(state.pool.AcquireScheduleGroupReader(state.raw[1], &reader));
     EXPECT_FALSE(state.Prove(1));
     EXPECT_TRUE(state.originals[0].Held());
     EXPECT_TRUE(state.proofs[0].Valid());
@@ -1751,9 +1751,9 @@ TEST(DecisionGroup, PrivateImmediateLaneExactCancelRetainsReaderAndRetriesRemain
     for (std::uint32_t index = 0; index < members.size(); ++index)
         ASSERT_TRUE(arms.PreparePendingImmediateGrouped(index + 1, 1, 7, {},
             harken::ParentAudioGroupRef{tokens[index + 1]}, 0, &members[index]));
-    std::array<harken::Plan03GroupSliceIdentity, 3> held{};
+    std::array<harken::ScheduleGroupSliceIdentity, 3> held{};
     for (std::uint32_t index = 0; index < held.size(); ++index) {
-        harken::Plan03GroupSliceInput input{};
+        harken::ScheduleGroupSliceInput input{};
         input.executeFrame = 120;
         input.decision = tokens[index];
         input.members = index == 0 ? nullptr : &members[index - 1];
@@ -1766,8 +1766,8 @@ TEST(DecisionGroup, PrivateImmediateLaneExactCancelRetainsReaderAndRetriesRemain
     EXPECT_FALSE(pool.CancelPrivateImmediateLaneGroup(17, foreign));
     EXPECT_FALSE(pool.CancelPrivateImmediateLaneGroup(18, held[0]));
     ASSERT_EQ(3u, pool.CaptureImmediateLaneCohortGroups(17, nullptr, 0));
-    harken::Plan03GroupReaderPin reader;
-    ASSERT_TRUE(pool.AcquirePlan03GroupReader(held[2], &reader));
+    harken::ScheduleGroupReaderPin reader;
+    ASSERT_TRUE(pool.AcquireScheduleGroupReader(held[2], &reader));
     ASSERT_TRUE(pool.CancelPrivateImmediateLaneGroup(17, held[0]));
     held[0] = {};
     EXPECT_FALSE(pool.CancelPrivateImmediateLaneGroup(17, held[2]));
@@ -1775,22 +1775,22 @@ TEST(DecisionGroup, PrivateImmediateLaneExactCancelRetainsReaderAndRetriesRemain
     ASSERT_TRUE(pool.CancelPrivateImmediateLaneGroup(17, held[1]));
     held[1] = {};
     EXPECT_EQ(1u, pool.CaptureImmediateLaneCohortGroups(17, nullptr, 0));
-    harken::Plan03PageGroupView remaining{};
-    ASSERT_TRUE(pool.ResolvePlan03GroupSliceProducer(held[2], &remaining));
+    harken::SchedulePageGroupView remaining{};
+    ASSERT_TRUE(pool.ResolveScheduleGroupSliceProducer(held[2], &remaining));
     EXPECT_EQ(held[2], remaining.identity);
     ASSERT_TRUE(reader.Release(0));
     ASSERT_TRUE(pool.CancelPrivateImmediateLaneGroup(17, held[2]));
     held[2] = {};
     EXPECT_EQ(0u, pool.CaptureImmediateLaneCohortGroups(17, nullptr, 0));
-    harken::Plan03GroupSliceInput retry{};
+    harken::ScheduleGroupSliceInput retry{};
     retry.executeFrame = 120;
     retry.decision = tokens[0];
-    harken::Plan03GroupSliceIdentity reused{};
+    harken::ScheduleGroupSliceIdentity reused{};
     ASSERT_TRUE(pool.ReserveImmediateLaneGroup(17, 100, retry, arms, &reused));
     ASSERT_EQ(first.committedRow, reused.committedRow);
     EXPECT_NE(first.rowClaimGeneration, reused.rowClaimGeneration);
     EXPECT_FALSE(pool.CancelPrivateImmediateLaneGroup(17, first));
-    ASSERT_TRUE(pool.ResolvePlan03GroupSliceProducer(reused, &remaining));
+    ASSERT_TRUE(pool.ResolveScheduleGroupSliceProducer(reused, &remaining));
     ASSERT_TRUE(pool.CancelPrivateImmediateLaneGroup(17, reused));
     for (const auto& member : members) ASSERT_TRUE(arms.CancelPrepared(member));
     for (const auto& token : tokens) {
@@ -1812,10 +1812,10 @@ TEST(DecisionGroup, ImmediateLaneGroupReaderFencePreventsEarlyReuse) {
     config.initialImmediateLaneOwnerGates = 4;
     config.initialImmediateLaneDecisionGates = 4;
     ASSERT_TRUE(pool.Reset(config, 0, 9));
-    harken::Plan03GroupSliceInput input{};
+    harken::ScheduleGroupSliceInput input{};
     input.executeFrame = 120;
     input.decision = laneHarness.tokens[0];
-    harken::Plan03GroupSliceIdentity first{};
+    harken::ScheduleGroupSliceIdentity first{};
     ASSERT_TRUE(pool.ReserveImmediateLaneGroup(17, 100, input, arms, &first));
     laneHarness.Bind(pool, &first, 1);
     harken::FrontierGroupBinding binding{};
@@ -1830,19 +1830,19 @@ TEST(DecisionGroup, ImmediateLaneGroupReaderFencePreventsEarlyReuse) {
     binding.operation.group = first;
     binding.operation.transport = 9;
     binding.operation.world = 7;
-    ASSERT_TRUE(pool.BindPlan03GroupFrontier(first, binding));
-    harken::Plan03GroupReaderPin reader;
-    ASSERT_TRUE(pool.AcquirePlan03GroupReader(first, &reader));
+    ASSERT_TRUE(pool.BindScheduleGroupFrontier(first, binding));
+    harken::ScheduleGroupReaderPin reader;
+    ASSERT_TRUE(pool.AcquireScheduleGroupReader(first, &reader));
     laneHarness.Publish(pool, arms, &first, 1);
-    ASSERT_TRUE(pool.NotePlan03GroupReadRt(first, 1));
-    harken::Plan03PageGroupView view{};
-    ASSERT_TRUE(pool.ResolvePlan03GroupSliceRt(first, &view));
+    ASSERT_TRUE(pool.NoteScheduleGroupReadRt(first, 1));
+    harken::SchedulePageGroupView view{};
+    ASSERT_TRUE(pool.ResolveScheduleGroupSliceRt(first, &view));
     ASSERT_NE(nullptr, view.lease);
     EXPECT_EQ(harken::AudioSliceInvalidateDisposition::InvalidatedReady,
               view.lease->Invalidate(harken::AudioSliceInvalidateReason::Cancel));
     ASSERT_TRUE(laneHarness.lane.Cancel(laneHarness.handle));
     ASSERT_TRUE(laneHarness.lane.Retire(laneHarness.handle, 2));
-    ASSERT_TRUE(pool.DetachPlan03GroupFrontier(first, 2));
+    ASSERT_TRUE(pool.DetachScheduleGroupFrontier(first, 2));
     EXPECT_FALSE(pool.CancelImmediateLaneGroups(17, 2));
     EXPECT_FALSE(reader.Release(1));
     EXPECT_FALSE(pool.Reset(config, 0, 10));
@@ -1850,14 +1850,14 @@ TEST(DecisionGroup, ImmediateLaneGroupReaderFencePreventsEarlyReuse) {
     ASSERT_TRUE(reader.Release(2));
     EXPECT_FALSE(pool.CancelImmediateLaneGroups(17, 1));
     ASSERT_TRUE(pool.CancelImmediateLaneGroups(17, 2));
-    EXPECT_FALSE(pool.ResolvePlan03GroupSliceProducer(first, &view));
-    harken::Plan03GroupSliceIdentity second{};
+    EXPECT_FALSE(pool.ResolveScheduleGroupSliceProducer(first, &view));
+    harken::ScheduleGroupSliceIdentity second{};
     ASSERT_TRUE(pool.ReserveImmediateLaneGroup(18, 100, input, arms, &second));
     EXPECT_NE(first.rowClaimGeneration, second.rowClaimGeneration);
-    EXPECT_FALSE(pool.ResolvePlan03GroupSliceProducer(first, &view));
+    EXPECT_FALSE(pool.ResolveScheduleGroupSliceProducer(first, &view));
     ASSERT_TRUE(pool.CancelImmediateLaneGroups(18, 0));
     ASSERT_TRUE(pool.ResetForEpoch(0, 10));
-    EXPECT_FALSE(pool.ResolvePlan03GroupSliceProducer(second, &view));
+    EXPECT_FALSE(pool.ResolveScheduleGroupSliceProducer(second, &view));
 }
 
 TEST(DecisionGroup, ImmediateLaneGroupRejectsDuplicateMemberIndexWithoutUsingRow) {
@@ -1879,12 +1879,12 @@ TEST(DecisionGroup, ImmediateLaneGroupRejectsDuplicateMemberIndexWithoutUsingRow
                                     parent, 0, &tokens[1]));
     ASSERT_TRUE(arms.ReserveGrouped(3, 1, 120, 200, 29, target,
                                     parent, 1, &tokens[2]));
-    harken::Plan03GroupSliceInput input{};
+    harken::ScheduleGroupSliceInput input{};
     input.executeFrame = 120;
     input.decision = parent.decision;
     input.members = tokens.data();
     input.memberCount = 2;
-    harken::Plan03GroupSliceIdentity identity{};
+    harken::ScheduleGroupSliceIdentity identity{};
     EXPECT_FALSE(pool.ReserveImmediateLaneGroup(17, 100, input, arms, &identity));
     EXPECT_FALSE(identity.Valid());
     tokens[1] = tokens[2];
@@ -1911,12 +1911,12 @@ TEST(DecisionGroup, ImmediateLaneBackingSurvivesCompetitionRetryAndOwnerRelease)
     for (std::uint16_t index = 0; index < members.size(); ++index)
         ASSERT_TRUE(arms.ReserveGrouped(index + 1u, 1, 120, 200, 29, target,
             parent, index, &members[index]));
-    harken::Plan03GroupSliceInput input{};
+    harken::ScheduleGroupSliceInput input{};
     input.executeFrame = 120;
     input.decision = parent.decision;
     input.members = members.data();
     input.memberCount = 1;
-    harken::Plan03GroupSliceIdentity old{}, competitor{};
+    harken::ScheduleGroupSliceIdentity old{}, competitor{};
     ASSERT_TRUE(pool.ReserveImmediateLaneGroup(17, 100, input, arms, &old));
     const auto oldMembers = pool.ImmediateLaneMemberStorageBytes();
     harken::ScheduledTransactionPool::ImmediateLaneBackingPreparation backing;
@@ -1938,7 +1938,7 @@ TEST(DecisionGroup, ImmediateLaneBackingSurvivesCompetitionRetryAndOwnerRelease)
     pool.SetImmediateLaneRowCommitPageLimitForTests(0);
     pool.SetImmediateLaneMemberAllocationLimitForTests(0);
     input.memberCount = 2;
-    std::array<harken::Plan03GroupSliceIdentity, 3> issued{};
+    std::array<harken::ScheduleGroupSliceIdentity, 3> issued{};
     {
         harken::ScheduledTransactionPool::ImmediateLaneBackingUse use(pool, &backing);
         for (unsigned index = 0; index < issued.size(); ++index)
@@ -1951,8 +1951,8 @@ TEST(DecisionGroup, ImmediateLaneBackingSurvivesCompetitionRetryAndOwnerRelease)
     EXPECT_EQ(memberBytes, pool.ImmediateLaneMemberStorageBytes());
     backing = {};
     for (unsigned index = 0; index < issued.size(); ++index) {
-        harken::Plan03PageGroupView view{};
-        ASSERT_TRUE(pool.ResolvePlan03GroupSliceProducer(issued[index], &view));
+        harken::SchedulePageGroupView view{};
+        ASSERT_TRUE(pool.ResolveScheduleGroupSliceProducer(issued[index], &view));
         ASSERT_EQ(2u, view.memberCount);
         EXPECT_EQ(members[1].generation, view.members[1].generation);
         ASSERT_TRUE(pool.CancelImmediateLaneGroups(23 + index, 0));
@@ -1974,7 +1974,7 @@ TEST(DecisionGroup, FrontierReceiptUsesRealLeaseAndCompletedBlockBeforeReconcili
     harken::FrontierActivationReceipt receipt{};
     EXPECT_EQ(harken::FrontierReceiptRead::InFlight, activation->Read(h.descriptor.entry, 100, &receipt));
     ASSERT_TRUE(activation->TryBeginAudio(h.descriptor.entry));
-    ASSERT_TRUE(h.pool.NotePlan03GroupReadRt(h.group.identity, 1));
+    ASSERT_TRUE(h.pool.NoteScheduleGroupReadRt(h.group.identity, 1));
     std::uint32_t applied = 0;
     harken::FrontierDecisionApplyProof proof;
     ASSERT_TRUE(h.decisions.ValidateFrontierDecisionApply(h.token, 1, &proof));
@@ -2095,7 +2095,7 @@ TEST(DecisionGroup, FrontierCancellationDuringStagingLeavesTheAudioWriterAndPin)
     auto* activation = h.decisions.ResolveFrontierActivation(h.token);
     ASSERT_NE(nullptr, activation);
     ASSERT_TRUE(activation->TryBeginAudio(h.descriptor.entry));
-    ASSERT_TRUE(h.pool.NotePlan03GroupReadRt(h.group.identity, 1));
+    ASSERT_TRUE(h.pool.NoteScheduleGroupReadRt(h.group.identity, 1));
     EXPECT_EQ(harken::FrontierCancelDisposition::DeferredToAudio,
         activation->Cancel(h.descriptor.entry, harken::AudioSliceInvalidateReason::Cancel));
     harken::FrontierActivationReceipt receipt{};
@@ -2163,16 +2163,16 @@ struct PrivatePendingArmRetirementHarness {
     void Prepare(harken::TimelineArmTable::OriginalArmRowOwner* origin = nullptr,
         std::size_t originMember = 0, std::uint64_t armDeadline = 100) {
         auto config = MakePoolConfig();
-        config.maxPlan03GroupHeadersPerPage = 2;
+        config.maxScheduleGroupHeadersPerPage = 2;
         ASSERT_TRUE(pool.Reset(config, 0, 9));
         harken::DecisionToken coordinator{}, member{};
         ASSERT_TRUE(decisions.Reserve(MakeRequest(1), &coordinator));
         ASSERT_TRUE(decisions.Reserve(MakeRequest(2), &member));
-        harken::Plan03GroupSliceInput input{};
+        harken::ScheduleGroupSliceInput input{};
         input.decision = coordinator;
         input.executeFrame = 100;
-        ASSERT_EQ(harken::Plan03GroupReserveStatus::Committed,
-                  pool.ReservePlan03GroupSlice(input, arms));
+        ASSERT_EQ(harken::ScheduleGroupReserveStatus::Committed,
+                  pool.ReserveScheduleGroupSlice(input, arms));
         harken::TimelineSemanticTarget target{};
         target.programSemanticFingerprint = 7;
         target.subjectId = harkentest::ObjectId(11);
@@ -2196,10 +2196,10 @@ struct PrivatePendingArmRetirementHarness {
         input.decision = member;
         input.members = tokens.data();
         input.memberCount = static_cast<std::uint16_t>(tokens.size());
-        ASSERT_EQ(harken::Plan03GroupReserveStatus::Committed,
-                  pool.ReservePlan03GroupSlice(input, arms));
-        std::array<harken::Plan03PageGroupView, 2> groups{};
-        ASSERT_EQ(2u, pool.CaptureLivePlan03Groups(groups.data(), groups.size()));
+        ASSERT_EQ(harken::ScheduleGroupReserveStatus::Committed,
+                  pool.ReserveScheduleGroupSlice(input, arms));
+        std::array<harken::SchedulePageGroupView, 2> groups{};
+        ASSERT_EQ(2u, pool.CaptureLiveScheduleGroups(groups.data(), groups.size()));
         const auto primary = groups[0].identity;
         const auto memberGroup = groups[1].identity;
         harken::FrontierGroupBinding binding{};
@@ -2214,15 +2214,15 @@ struct PrivatePendingArmRetirementHarness {
         binding.operation.transport = 9;
         binding.operation.world = 7;
         binding.primary = primary;
-        ASSERT_TRUE(pool.BindPlan03GroupFrontier(primary, binding));
+        ASSERT_TRUE(pool.BindScheduleGroupFrontier(primary, binding));
         binding.role = harken::FrontierGroupRole::EntryMember;
         binding.operation.group = memberGroup;
-        ASSERT_TRUE(pool.BindPlan03GroupFrontier(memberGroup, binding));
-        ASSERT_TRUE(pool.ResolvePlan03GroupSliceProducer(memberGroup, &groups[1]));
+        ASSERT_TRUE(pool.BindScheduleGroupFrontier(memberGroup, binding));
+        ASSERT_TRUE(pool.ResolveScheduleGroupSliceProducer(memberGroup, &groups[1]));
         ASSERT_NE(nullptr, groups[1].frontier);
         ASSERT_NE(nullptr, groups[1].lease);
         lease = groups[1].lease;
-        ASSERT_TRUE(pool.ResolvePlan03GroupSliceProducer(primary, &groups[0]));
+        ASSERT_TRUE(pool.ResolveScheduleGroupSliceProducer(primary, &groups[0]));
         ASSERT_EQ(groups[0].lease, lease);
         for (std::uint16_t index = 0; index < tokens.size(); ++index) {
             ASSERT_TRUE(arms.PinFrontierReader(tokens[index], &pins[index]));
@@ -2420,25 +2420,25 @@ void CheckUnpublishedFrontierRetirement(UnpublishedRetirementArmEnd armEnd) {
         ASSERT_TRUE(arms.SetFreeGenerationForTests(0, UINT32_MAX));
     harken::DecisionTable decisions(2, 2);
     auto config = MakePoolConfig();
-    config.maxPlan03GroupHeadersPerPage =
+    config.maxScheduleGroupHeadersPerPage =
         armEnd == UnpublishedRetirementArmEnd::UnrelatedGroup ? 3 : 2;
     ASSERT_TRUE(pool.Reset(config, 0, 9));
     harken::DecisionToken coordinatorDecision{}, memberDecision{};
     ASSERT_TRUE(decisions.Reserve(MakeRequest(1), &coordinatorDecision));
     ASSERT_TRUE(decisions.Reserve(MakeRequest(2), &memberDecision));
-    harken::Plan03GroupSliceInput input{};
+    harken::ScheduleGroupSliceInput input{};
     input.decision = coordinatorDecision;
-    harken::CommittedPlan03GroupSlice committedPrimary;
+    harken::CommittedScheduleGroupSlice committedPrimary;
     if (armEnd == UnpublishedRetirementArmEnd::RollbackPrimary ||
         armEnd == UnpublishedRetirementArmEnd::Stage3Primary) {
-        harken::PreparedPlan03GroupSlice prepared;
-        ASSERT_EQ(harken::Plan03GroupReserveStatus::Committed,
-                  pool.PreparePlan03GroupSlice(input, arms, &prepared));
-        ASSERT_TRUE(pool.CommitPreparedPlan03GroupSlice(
+        harken::PreparedScheduleGroupSlice prepared;
+        ASSERT_EQ(harken::ScheduleGroupReserveStatus::Committed,
+                  pool.PrepareScheduleGroupSlice(input, arms, &prepared));
+        ASSERT_TRUE(pool.CommitPreparedScheduleGroupSlice(
             &prepared, &committedPrimary, false));
     } else {
-        ASSERT_EQ(harken::Plan03GroupReserveStatus::Committed,
-                  pool.ReservePlan03GroupSlice(input, arms));
+        ASSERT_EQ(harken::ScheduleGroupReserveStatus::Committed,
+                  pool.ReserveScheduleGroupSlice(input, arms));
     }
     harken::TimelineSemanticTarget target{};
     target.programSemanticFingerprint = 7;
@@ -2449,19 +2449,19 @@ void CheckUnpublishedFrontierRetirement(UnpublishedRetirementArmEnd armEnd) {
     input.decision = memberDecision;
     input.members = &arm;
     input.memberCount = 1;
-    harken::CommittedPlan03GroupSlice committedMember;
+    harken::CommittedScheduleGroupSlice committedMember;
     if (armEnd == UnpublishedRetirementArmEnd::RollbackMember) {
-        harken::PreparedPlan03GroupSlice prepared;
-        ASSERT_EQ(harken::Plan03GroupReserveStatus::Committed,
-                  pool.PreparePlan03GroupSlice(input, arms, &prepared));
-        ASSERT_TRUE(pool.CommitPreparedPlan03GroupSlice(
+        harken::PreparedScheduleGroupSlice prepared;
+        ASSERT_EQ(harken::ScheduleGroupReserveStatus::Committed,
+                  pool.PrepareScheduleGroupSlice(input, arms, &prepared));
+        ASSERT_TRUE(pool.CommitPreparedScheduleGroupSlice(
             &prepared, &committedMember, false));
     } else {
-        ASSERT_EQ(harken::Plan03GroupReserveStatus::Committed,
-                  pool.ReservePlan03GroupSlice(input, arms));
+        ASSERT_EQ(harken::ScheduleGroupReserveStatus::Committed,
+                  pool.ReserveScheduleGroupSlice(input, arms));
     }
-    std::array<harken::Plan03PageGroupView, 2> groups{};
-    ASSERT_EQ(2u, pool.CaptureLivePlan03Groups(groups.data(), groups.size()));
+    std::array<harken::SchedulePageGroupView, 2> groups{};
+    ASSERT_EQ(2u, pool.CaptureLiveScheduleGroups(groups.data(), groups.size()));
     const auto primary = groups[0].identity;
     const auto member = groups[1].identity;
     harken::FrontierGroupBinding binding{};
@@ -2476,11 +2476,11 @@ void CheckUnpublishedFrontierRetirement(UnpublishedRetirementArmEnd armEnd) {
     binding.operation.transport = 9;
     binding.operation.world = 7;
     binding.primary = primary;
-    ASSERT_TRUE(pool.BindPlan03GroupFrontier(primary, binding));
+    ASSERT_TRUE(pool.BindScheduleGroupFrontier(primary, binding));
     binding.role = harken::FrontierGroupRole::EntryMember;
     binding.operation.group = member;
-    ASSERT_TRUE(pool.BindPlan03GroupFrontier(member, binding));
-    ASSERT_TRUE(pool.ResolvePlan03GroupSliceProducer(member, &groups[1]));
+    ASSERT_TRUE(pool.BindScheduleGroupFrontier(member, binding));
+    ASSERT_TRUE(pool.ResolveScheduleGroupSliceProducer(member, &groups[1]));
     ASSERT_NE(nullptr, groups[1].frontier);
     ASSERT_NE(nullptr, groups[1].lease);
     harken::TimelineArmReaderPin armReader;
@@ -2512,11 +2512,11 @@ void CheckUnpublishedFrontierRetirement(UnpublishedRetirementArmEnd armEnd) {
     payload.armGroup = {1, 1};
     ASSERT_TRUE(decisions.Commit(coordinatorDecision, payload));
     ASSERT_TRUE(decisions.PublishFrontierActivation(coordinatorDecision));
-    harken::Plan03GroupReaderPin externalReader;
-    ASSERT_TRUE(pool.AcquirePlan03GroupReader(member, &externalReader));
-    harken::Plan03GroupReaderPin primaryExternalReader;
+    harken::ScheduleGroupReaderPin externalReader;
+    ASSERT_TRUE(pool.AcquireScheduleGroupReader(member, &externalReader));
+    harken::ScheduleGroupReaderPin primaryExternalReader;
     if (armEnd == UnpublishedRetirementArmEnd::Stage3Primary)
-        ASSERT_TRUE(pool.AcquirePlan03GroupReader(primary, &primaryExternalReader));
+        ASSERT_TRUE(pool.AcquireScheduleGroupReader(primary, &primaryExternalReader));
     auto* activation = decisions.ResolveFrontierActivation(coordinatorDecision);
     ASSERT_NE(nullptr, activation);
     ASSERT_EQ(harken::FrontierCancelDisposition::CancelledBeforeAudio,
@@ -2524,17 +2524,17 @@ void CheckUnpublishedFrontierRetirement(UnpublishedRetirementArmEnd armEnd) {
     harken::FrontierActivationReceipt receipt{};
     ASSERT_EQ(harken::FrontierReceiptRead::Ready,
               activation->Read(binding.entry, 0, &receipt));
-    harken::Plan03UnpublishedRetirementToken retirement{};
-    harken::Plan03ExactGroupSnapshot memberBefore{}, primaryBefore{};
-    ASSERT_TRUE(pool.CaptureExactPlan03Group(member, &memberBefore));
-    ASSERT_TRUE(pool.CaptureExactPlan03Group(primary, &primaryBefore));
-    EXPECT_EQ(harken::Plan03UnpublishedRetirementResult::NotEligible,
+    harken::ScheduleUnpublishedRetirementToken retirement{};
+    harken::ScheduleExactGroupSnapshot memberBefore{}, primaryBefore{};
+    ASSERT_TRUE(pool.CaptureExactScheduleGroup(member, &memberBefore));
+    ASSERT_TRUE(pool.CaptureExactScheduleGroup(primary, &primaryBefore));
+    EXPECT_EQ(harken::ScheduleUnpublishedRetirementResult::NotEligible,
         pool.BeginUnpublishedFrontierRetirement(
             member, primary, binding.entry, receipt, &retirement));
     EXPECT_FALSE(retirement.Valid());
-    harken::Plan03ExactGroupSnapshot memberAfter{}, primaryAfter{};
-    ASSERT_TRUE(pool.CaptureExactPlan03Group(member, &memberAfter));
-    ASSERT_TRUE(pool.CaptureExactPlan03Group(primary, &primaryAfter));
+    harken::ScheduleExactGroupSnapshot memberAfter{}, primaryAfter{};
+    ASSERT_TRUE(pool.CaptureExactScheduleGroup(member, &memberAfter));
+    ASSERT_TRUE(pool.CaptureExactScheduleGroup(primary, &primaryAfter));
     EXPECT_EQ(memberBefore.readerPins, memberAfter.readerPins);
     EXPECT_EQ(primaryBefore.readerPins, primaryAfter.readerPins);
     EXPECT_EQ(primaryBefore.frontierDependents, primaryAfter.frontierDependents);
@@ -2546,12 +2546,12 @@ void CheckUnpublishedFrontierRetirement(UnpublishedRetirementArmEnd armEnd) {
         arm, wrongBinding, *groups[1].lease));
     EXPECT_FALSE(arms.WitnessUnpublishedFrontierRetirement(
         arm, *groups[1].frontier, wrongLease));
-    EXPECT_EQ(harken::Plan03UnpublishedRetirementResult::Pending,
+    EXPECT_EQ(harken::ScheduleUnpublishedRetirementResult::Pending,
         pool.BeginUnpublishedFrontierRetirement(
             member, primary, binding.entry, receipt, &retirement));
     ASSERT_TRUE(retirement.Valid());
-    ASSERT_TRUE(pool.CaptureExactPlan03Group(member, &memberAfter));
-    ASSERT_TRUE(pool.CaptureExactPlan03Group(primary, &primaryAfter));
+    ASSERT_TRUE(pool.CaptureExactScheduleGroup(member, &memberAfter));
+    ASSERT_TRUE(pool.CaptureExactScheduleGroup(primary, &primaryAfter));
     EXPECT_EQ(1u, memberAfter.readerPins);
     EXPECT_EQ(armEnd == UnpublishedRetirementArmEnd::Stage3Primary ? 3u : 2u,
               primaryAfter.readerPins);
@@ -2560,34 +2560,34 @@ void CheckUnpublishedFrontierRetirement(UnpublishedRetirementArmEnd armEnd) {
     pool.Publish(200, nullptr, nullptr, &arms);
     EXPECT_EQ(0u, pool.PublishCutoffFrame());
     EXPECT_EQ(0u, pool.Advance());
-    EXPECT_EQ(harken::Plan03UnpublishedRetirementResult::Pending,
+    EXPECT_EQ(harken::ScheduleUnpublishedRetirementResult::Pending,
               pool.FinishUnpublishedFrontierRetirement(retirement));
     EXPECT_FALSE(decisions.FrontierActivationBindingsDetached(binding.entry, pool, 0));
-    EXPECT_EQ(harken::Plan03UnpublishedRetirementResult::Ready,
+    EXPECT_EQ(harken::ScheduleUnpublishedRetirementResult::Ready,
         pool.BeginUnpublishedFrontierRetirement(
             member, primary, binding.entry, receipt, &retirement));
-    ASSERT_TRUE(pool.CaptureExactPlan03Group(primary, &primaryAfter));
+    ASSERT_TRUE(pool.CaptureExactScheduleGroup(primary, &primaryAfter));
     EXPECT_EQ(2u, primaryAfter.unpublishedRetirementStage);
     EXPECT_EQ(harken::FrontierGroupRole::Coordinator, primaryAfter.frontier.role);
     EXPECT_EQ(armEnd == UnpublishedRetirementArmEnd::Stage3Primary ? 2u : 1u,
               primaryAfter.readerPins);
     EXPECT_EQ(armEnd != UnpublishedRetirementArmEnd::Stage3Primary,
               decisions.FrontierActivationBindingsDetached(binding.entry, pool, 0));
-    EXPECT_EQ(harken::Plan03UnpublishedRetirementResult::Pending,
+    EXPECT_EQ(harken::ScheduleUnpublishedRetirementResult::Pending,
               pool.FinishUnpublishedFrontierRetirement(retirement));
     ASSERT_TRUE(externalReader.Release(0));
-    EXPECT_EQ(harken::Plan03UnpublishedRetirementResult::Pending,
+    EXPECT_EQ(harken::ScheduleUnpublishedRetirementResult::Pending,
               pool.FinishUnpublishedFrontierRetirement(retirement));
-    EXPECT_TRUE(pool.ResolvePlan03GroupSliceProducer(member, &groups[1]));
-    EXPECT_TRUE(pool.ResolvePlan03GroupSliceProducer(primary, &groups[0]));
+    EXPECT_TRUE(pool.ResolveScheduleGroupSliceProducer(member, &groups[1]));
+    EXPECT_TRUE(pool.ResolveScheduleGroupSliceProducer(primary, &groups[0]));
     harken::FrontierActivationReceipt reconciled{};
     ASSERT_TRUE(decisions.ReconcileFrontierActivation(
         coordinatorDecision, binding.entry, 0, &reconciled));
     EXPECT_EQ(armEnd != UnpublishedRetirementArmEnd::Stage3Primary,
               decisions.FrontierActivationBindingsDetached(binding.entry, pool, 0));
-    EXPECT_EQ(harken::Plan03UnpublishedRetirementResult::Pending,
+    EXPECT_EQ(harken::ScheduleUnpublishedRetirementResult::Pending,
               pool.FinishUnpublishedFrontierRetirement(retirement));
-    ASSERT_TRUE(pool.CaptureExactPlan03Group(member, &memberAfter));
+    ASSERT_TRUE(pool.CaptureExactScheduleGroup(member, &memberAfter));
     EXPECT_EQ(1u, memberAfter.pagePublicationHolds);
     EXPECT_EQ(0u, memberAfter.readerPins);
     if (armEnd == UnpublishedRetirementArmEnd::RollbackMember ||
@@ -2595,73 +2595,73 @@ void CheckUnpublishedFrontierRetirement(UnpublishedRetirementArmEnd armEnd) {
         auto* committed = armEnd == UnpublishedRetirementArmEnd::RollbackMember
             ? &committedMember : &committedPrimary;
         ASSERT_TRUE(committed->Valid());
-        const bool rolledBack = pool.RollbackCommittedPlan03GroupSlice(committed);
+        const bool rolledBack = pool.RollbackCommittedScheduleGroupSlice(committed);
         EXPECT_FALSE(rolledBack);
         EXPECT_TRUE(committed->Valid());
-        EXPECT_TRUE(pool.ResolvePlan03GroupSliceProducer(member, &groups[1]));
-        EXPECT_TRUE(pool.ResolvePlan03GroupSliceProducer(primary, &groups[0]));
+        EXPECT_TRUE(pool.ResolveScheduleGroupSliceProducer(member, &groups[1]));
+        EXPECT_TRUE(pool.ResolveScheduleGroupSliceProducer(primary, &groups[0]));
         ASSERT_EQ(1u, groups[1].memberCount);
         EXPECT_EQ(arm.slot, groups[1].members[0].slot);
         EXPECT_EQ(arm.generation, groups[1].members[0].generation);
         EXPECT_TRUE(armReader.Valid());
-        ASSERT_TRUE(pool.CaptureExactPlan03Group(primary, &primaryAfter));
+        ASSERT_TRUE(pool.CaptureExactScheduleGroup(primary, &primaryAfter));
         EXPECT_EQ(1u, primaryAfter.pagePublicationHolds);
         if (rolledBack) return;
-        EXPECT_EQ(harken::Plan03UnpublishedRetirementResult::Pending,
+        EXPECT_EQ(harken::ScheduleUnpublishedRetirementResult::Pending,
                   pool.FinishUnpublishedFrontierRetirement(retirement));
     }
     if (armEnd == UnpublishedRetirementArmEnd::ReplaceMember) {
-        harken::Plan03GroupSliceInput replacement = input;
+        harken::ScheduleGroupSliceInput replacement = input;
         replacement.members = nullptr;
         replacement.memberCount = 0;
         replacement.sourceControlCount = 0;
-        harken::PreparedPlan03GroupSliceReplacement prepared;
-        EXPECT_EQ(harken::Plan03GroupReserveStatus::PageFrozen,
-            pool.PreparePlan03GroupSliceReplacement(
+        harken::PreparedScheduleGroupSliceReplacement prepared;
+        EXPECT_EQ(harken::ScheduleGroupReserveStatus::PageFrozen,
+            pool.PrepareScheduleGroupSliceReplacement(
                 member, replacement, arms, &prepared));
         EXPECT_FALSE(prepared.Valid());
-        ASSERT_TRUE(pool.ResolvePlan03GroupSliceProducer(member, &groups[1]));
+        ASSERT_TRUE(pool.ResolveScheduleGroupSliceProducer(member, &groups[1]));
         ASSERT_EQ(1u, groups[1].memberCount);
         EXPECT_EQ(arm.slot, groups[1].members[0].slot);
         EXPECT_EQ(arm.generation, groups[1].members[0].generation);
         EXPECT_TRUE(armReader.Valid());
-        ASSERT_TRUE(pool.CaptureExactPlan03Group(primary, &primaryAfter));
+        ASSERT_TRUE(pool.CaptureExactScheduleGroup(primary, &primaryAfter));
         EXPECT_EQ(1u, primaryAfter.pagePublicationHolds);
-        EXPECT_EQ(harken::Plan03UnpublishedRetirementResult::Pending,
+        EXPECT_EQ(harken::ScheduleUnpublishedRetirementResult::Pending,
                   pool.FinishUnpublishedFrontierRetirement(retirement));
     }
     if (armEnd == UnpublishedRetirementArmEnd::UnrelatedGroup) {
-        harken::Plan03GroupSliceInput unrelated{};
+        harken::ScheduleGroupSliceInput unrelated{};
         unrelated.decision = {77, 1};
-        harken::PreparedPlan03GroupSlice prepared;
-        harken::CommittedPlan03GroupSlice committed;
-        ASSERT_EQ(harken::Plan03GroupReserveStatus::Committed,
-                  pool.PreparePlan03GroupSlice(unrelated, arms, &prepared));
-        ASSERT_TRUE(pool.CommitPreparedPlan03GroupSlice(
+        harken::PreparedScheduleGroupSlice prepared;
+        harken::CommittedScheduleGroupSlice committed;
+        ASSERT_EQ(harken::ScheduleGroupReserveStatus::Committed,
+                  pool.PrepareScheduleGroupSlice(unrelated, arms, &prepared));
+        ASSERT_TRUE(pool.CommitPreparedScheduleGroupSlice(
             &prepared, &committed, false));
-        std::array<harken::Plan03PageGroupView, 3> currentGroups{};
-        ASSERT_EQ(3u, pool.CaptureLivePlan03Groups(
+        std::array<harken::SchedulePageGroupView, 3> currentGroups{};
+        ASSERT_EQ(3u, pool.CaptureLiveScheduleGroups(
             currentGroups.data(), currentGroups.size()));
-        harken::Plan03GroupSliceIdentity unrelatedIdentity{};
+        harken::ScheduleGroupSliceIdentity unrelatedIdentity{};
         for (const auto& group : currentGroups)
             if (group.identity.decision.slot == unrelated.decision.slot)
                 unrelatedIdentity = group.identity;
         ASSERT_TRUE(unrelatedIdentity.Exact());
-        harken::Plan03GroupSliceInput replacement = unrelated;
+        harken::ScheduleGroupSliceInput replacement = unrelated;
         replacement.decision = {78, 1};
-        harken::PreparedPlan03GroupSliceReplacement preparedReplacement;
-        ASSERT_EQ(harken::Plan03GroupReserveStatus::Committed,
-            pool.PreparePlan03GroupSliceReplacement(
+        harken::PreparedScheduleGroupSliceReplacement preparedReplacement;
+        ASSERT_EQ(harken::ScheduleGroupReserveStatus::Committed,
+            pool.PrepareScheduleGroupSliceReplacement(
                 unrelatedIdentity, replacement, arms, &preparedReplacement));
-        ASSERT_TRUE(pool.CommitPreparedPlan03GroupSliceReplacement(
+        ASSERT_TRUE(pool.CommitPreparedScheduleGroupSliceReplacement(
             &preparedReplacement));
-        ASSERT_TRUE(pool.RollbackCommittedPlan03GroupSlice(&committed));
-        ASSERT_TRUE(pool.CaptureExactPlan03Group(primary, &primaryAfter));
+        ASSERT_TRUE(pool.RollbackCommittedScheduleGroupSlice(&committed));
+        ASSERT_TRUE(pool.CaptureExactScheduleGroup(primary, &primaryAfter));
         EXPECT_EQ(1u, primaryAfter.pagePublicationHolds);
     }
     ASSERT_TRUE(arms.Tombstone(arm, 0));
     EXPECT_FALSE(arms.Reclaim(arm, 1));
-    EXPECT_EQ(harken::Plan03UnpublishedRetirementResult::Pending,
+    EXPECT_EQ(harken::ScheduleUnpublishedRetirementResult::Pending,
               pool.FinishUnpublishedFrontierRetirement(retirement));
     EXPECT_TRUE(armReader.Release(0));
     if (armEnd == UnpublishedRetirementArmEnd::Quarantined) {
@@ -2672,41 +2672,41 @@ void CheckUnpublishedFrontierRetirement(UnpublishedRetirementArmEnd armEnd) {
         ASSERT_TRUE(arms.Reclaim(arm, 1));
     }
     if (armEnd == UnpublishedRetirementArmEnd::Stage3Primary) {
-        EXPECT_EQ(harken::Plan03UnpublishedRetirementResult::Pending,
+        EXPECT_EQ(harken::ScheduleUnpublishedRetirementResult::Pending,
                   pool.FinishUnpublishedFrontierRetirement(retirement));
-        EXPECT_FALSE(pool.ResolvePlan03GroupSliceProducer(member, &groups[1]));
-        ASSERT_TRUE(pool.CaptureExactPlan03Group(primary, &primaryAfter));
+        EXPECT_FALSE(pool.ResolveScheduleGroupSliceProducer(member, &groups[1]));
+        ASSERT_TRUE(pool.CaptureExactScheduleGroup(primary, &primaryAfter));
         EXPECT_EQ(3u, primaryAfter.unpublishedRetirementStage);
         EXPECT_EQ(1u, primaryAfter.pagePublicationHolds);
         ASSERT_TRUE(primaryExternalReader.Release(0));
         EXPECT_TRUE(decisions.FrontierActivationBindingsDetached(binding.entry, pool, 0));
-        EXPECT_FALSE(pool.RollbackCommittedPlan03GroupSlice(&committedPrimary));
+        EXPECT_FALSE(pool.RollbackCommittedScheduleGroupSlice(&committedPrimary));
         EXPECT_TRUE(committedPrimary.Valid());
-        harken::Plan03GroupSliceInput reusedGroup{};
+        harken::ScheduleGroupSliceInput reusedGroup{};
         reusedGroup.decision = {77, 1};
-        harken::PreparedPlan03GroupSlice prepared;
-        harken::CommittedPlan03GroupSlice committed;
-        ASSERT_EQ(harken::Plan03GroupReserveStatus::Committed,
-                  pool.PreparePlan03GroupSlice(reusedGroup, arms, &prepared));
-        ASSERT_TRUE(pool.CommitPreparedPlan03GroupSlice(
+        harken::PreparedScheduleGroupSlice prepared;
+        harken::CommittedScheduleGroupSlice committed;
+        ASSERT_EQ(harken::ScheduleGroupReserveStatus::Committed,
+                  pool.PrepareScheduleGroupSlice(reusedGroup, arms, &prepared));
+        ASSERT_TRUE(pool.CommitPreparedScheduleGroupSlice(
             &prepared, &committed, false));
-        std::array<harken::Plan03PageGroupView, 2> currentGroups{};
-        ASSERT_EQ(2u, pool.CaptureLivePlan03Groups(
+        std::array<harken::SchedulePageGroupView, 2> currentGroups{};
+        ASSERT_EQ(2u, pool.CaptureLiveScheduleGroups(
             currentGroups.data(), currentGroups.size()));
         const auto newGroup = currentGroups[0].identity.committedRow == member.committedRow
             ? currentGroups[0].identity : currentGroups[1].identity;
         EXPECT_EQ(member.committedRow, newGroup.committedRow);
         EXPECT_NE(member.rowClaimGeneration, newGroup.rowClaimGeneration);
-        harken::Plan03GroupSliceInput replacement = reusedGroup;
+        harken::ScheduleGroupSliceInput replacement = reusedGroup;
         replacement.decision = {78, 1};
-        harken::PreparedPlan03GroupSliceReplacement preparedReplacement;
-        ASSERT_EQ(harken::Plan03GroupReserveStatus::Committed,
-            pool.PreparePlan03GroupSliceReplacement(
+        harken::PreparedScheduleGroupSliceReplacement preparedReplacement;
+        ASSERT_EQ(harken::ScheduleGroupReserveStatus::Committed,
+            pool.PrepareScheduleGroupSliceReplacement(
                 newGroup, replacement, arms, &preparedReplacement));
-        ASSERT_TRUE(pool.CommitPreparedPlan03GroupSliceReplacement(
+        ASSERT_TRUE(pool.CommitPreparedScheduleGroupSliceReplacement(
             &preparedReplacement));
-        EXPECT_TRUE(pool.RollbackCommittedPlan03GroupSlice(&committed));
-        EXPECT_EQ(harken::Plan03UnpublishedRetirementResult::Ready,
+        EXPECT_TRUE(pool.RollbackCommittedScheduleGroupSlice(&committed));
+        EXPECT_EQ(harken::ScheduleUnpublishedRetirementResult::Ready,
                   pool.FinishUnpublishedFrontierRetirement(retirement));
         return;
     }
@@ -2715,9 +2715,9 @@ void CheckUnpublishedFrontierRetirement(UnpublishedRetirementArmEnd armEnd) {
         std::destroy_at(&arms);
         std::construct_at(&arms, 1);
         ASSERT_NE(oldIncarnation, arms.Incarnation());
-        EXPECT_EQ(harken::Plan03UnpublishedRetirementResult::Stale,
+        EXPECT_EQ(harken::ScheduleUnpublishedRetirementResult::Stale,
                   pool.FinishUnpublishedFrontierRetirement(retirement));
-        ASSERT_TRUE(pool.CaptureExactPlan03Group(member, &memberAfter));
+        ASSERT_TRUE(pool.CaptureExactScheduleGroup(member, &memberAfter));
         EXPECT_EQ(1u, memberAfter.pagePublicationHolds);
         return;
     }
@@ -2737,7 +2737,7 @@ void CheckUnpublishedFrontierRetirement(UnpublishedRetirementArmEnd armEnd) {
         EXPECT_EQ(1u, nextRow->renderSlot);
         EXPECT_EQ(2u, nextRow->renderGeneration);
     }
-    EXPECT_EQ(harken::Plan03UnpublishedRetirementResult::Ready,
+    EXPECT_EQ(harken::ScheduleUnpublishedRetirementResult::Ready,
               pool.FinishUnpublishedFrontierRetirement(retirement));
     if (armEnd == UnpublishedRetirementArmEnd::Reused) {
         const auto* nextRow = arms.RowAt(nextArm.slot);
@@ -2751,9 +2751,9 @@ void CheckUnpublishedFrontierRetirement(UnpublishedRetirementArmEnd armEnd) {
         EXPECT_EQ(2u, nextRow->renderGeneration);
         EXPECT_TRUE(arms.AcknowledgeApplied(nextArm));
     }
-    EXPECT_FALSE(pool.ResolvePlan03GroupSliceProducer(member, &groups[1]));
-    EXPECT_FALSE(pool.ResolvePlan03GroupSliceProducer(primary, &groups[0]));
-    EXPECT_EQ(harken::Plan03UnpublishedRetirementResult::Stale,
+    EXPECT_FALSE(pool.ResolveScheduleGroupSliceProducer(member, &groups[1]));
+    EXPECT_FALSE(pool.ResolveScheduleGroupSliceProducer(primary, &groups[0]));
+    EXPECT_EQ(harken::ScheduleUnpublishedRetirementResult::Stale,
               pool.FinishUnpublishedFrontierRetirement(retirement));
     pool.Publish(200, nullptr, nullptr, &arms);
     EXPECT_GE(pool.PublishCutoffFrame(), 100u);
@@ -2802,7 +2802,7 @@ TEST(DecisionGroup, FrontierClaimDefersEveryDecisionMutationUntilItsNoFailApply)
     auto* activation = h.decisions.ResolveFrontierActivation(h.token);
     ASSERT_NE(nullptr, activation);
     ASSERT_TRUE(activation->TryBeginAudio(h.descriptor.entry));
-    ASSERT_TRUE(h.pool.NotePlan03GroupReadRt(h.group.identity, 1));
+    ASSERT_TRUE(h.pool.NoteScheduleGroupReadRt(h.group.identity, 1));
     harken::FrontierDecisionApplyProof proof;
     ASSERT_TRUE(h.decisions.ValidateFrontierDecisionApply(h.token, 1, &proof));
     ASSERT_TRUE(h.group.lease->TryClaim());
@@ -3096,8 +3096,8 @@ TEST(DecisionGroup, HardCapacityProfilesFailClosedBeforeAllocation) {
     EXPECT_FALSE(harken::ArmGroupTable(1, harken::kMaxArmsPerGroupHard + 1u).Valid());
 
     auto config = MakePoolConfig();
-    config.maxPlan03GroupHeadersPerPage =
-        harken::kMaxPlan03GroupHeadersPerPageHard + 1;
+    config.maxScheduleGroupHeadersPerPage =
+        harken::kMaxScheduleGroupHeadersPerPageHard + 1;
     harken::ScheduledTransactionPool pool;
     EXPECT_FALSE(pool.Reset(config, 0, 3));
     EXPECT_FALSE(pool.Valid());
@@ -3587,17 +3587,17 @@ TEST(DecisionGroup, InvalidatedUnstartedMemberIsExcludedUnlessSliceClaimed) {
 
     harken::ScheduledTransactionPool pool;
     ASSERT_TRUE(pool.Reset(MakePoolConfig(), 0, 3));
-    harken::Plan03GroupSliceInput input{};
+    harken::ScheduleGroupSliceInput input{};
     input.executeFrame = 0;
     input.decision = decision;
     input.members = &arm;
     input.memberCount = 1;
-    ASSERT_EQ(harken::Plan03GroupReserveStatus::Committed,
-              pool.ReservePlan03GroupSlice(input, arms));
+    ASSERT_EQ(harken::ScheduleGroupReserveStatus::Committed,
+              pool.ReserveScheduleGroupSlice(input, arms));
     pool.Publish(100, nullptr, nullptr, &arms);
 
     harken::VoiceTimelineSink sink(voices, arms);
-    ASSERT_TRUE(sink.AttachPlan03ScratchAuthority(decisions, pool));
+    ASSERT_TRUE(sink.AttachScheduleScratchAuthority(decisions, pool));
     const auto required = voices.TimelineScratchBytes(1);
     ASSERT_GT(required, 0u);
     ASSERT_LE(required, UINT32_MAX);
@@ -3610,7 +3610,7 @@ TEST(DecisionGroup, InvalidatedUnstartedMemberIsExcludedUnlessSliceClaimed) {
     EXPECT_TRUE(sink.AdmitQuantum(0));
 
     EXPECT_TRUE(sink.AdmitQuantum(1));
-    const harken::Plan03ScratchDecisionState unclaimed{decision, false};
+    const harken::ScratchDecisionState unclaimed{decision, false};
     std::vector<std::uint32_t> controlTargets(voices.Capacity());
     const auto renderSlot = static_cast<std::uint32_t>(render);
     const auto renderGeneration = static_cast<std::uint32_t>(render >> 32);
@@ -3626,8 +3626,8 @@ TEST(DecisionGroup, InvalidatedUnstartedMemberIsExcludedUnlessSliceClaimed) {
         1, &decisions, &unclaimed, 1, controlTargets.data(),
         static_cast<std::uint32_t>(controlTargets.size())));
 
-    harken::Plan03PageGroupView view{};
-    ASSERT_EQ(1u, pool.CapturePlan03PageGroupsRt(0, &view, 1));
+    harken::SchedulePageGroupView view{};
+    ASSERT_EQ(1u, pool.CaptureSchedulePageGroupsRt(0, &view, 1));
     ASSERT_NE(nullptr, view.lease);
     ASSERT_TRUE(view.lease->TryClaim());
     EXPECT_FALSE(sink.AdmitQuantum(0));
@@ -3650,23 +3650,23 @@ TEST(DecisionGroup, FrozenPagePublishesExactDeduplicatedGroupSummary) {
         7, 11, 0, 100, 19, target, parent, 1, &second));
 
     const harken::TimelineArmToken reverseMembers[] = {second, first};
-    harken::Plan03GroupSliceInput input{};
+    harken::ScheduleGroupSliceInput input{};
     input.executeFrame = 0;
     input.decision = parent.decision;
     input.sliceIndex = 0;
     input.members = reverseMembers;
     input.memberCount = 2;
-    ASSERT_EQ(harken::Plan03GroupReserveStatus::Committed,
-              pool.ReservePlan03GroupSlice(input, arms));
+    ASSERT_EQ(harken::ScheduleGroupReserveStatus::Committed,
+              pool.ReserveScheduleGroupSlice(input, arms));
 
-    harken::Plan03PageGroupView unavailable{};
+    harken::SchedulePageGroupView unavailable{};
     unavailable.identity.absoluteQuantum = 99;
-    EXPECT_EQ(0u, pool.CapturePlan03PageGroupsRt(0, &unavailable, 1));
+    EXPECT_EQ(0u, pool.CaptureSchedulePageGroupsRt(0, &unavailable, 1));
     EXPECT_EQ(99u, unavailable.identity.absoluteQuantum);
 
     pool.Publish(100, nullptr, nullptr, &arms);
-    harken::Plan03PageGroupView view{};
-    ASSERT_EQ(1u, pool.CapturePlan03PageGroupsRt(0, &view, 1));
+    harken::SchedulePageGroupView view{};
+    ASSERT_EQ(1u, pool.CaptureSchedulePageGroupsRt(0, &view, 1));
     EXPECT_EQ(0u, view.identity.absoluteQuantum);
     EXPECT_EQ(1u, view.identity.pageGeneration);
     EXPECT_EQ(13u, view.identity.decision.slot);
@@ -3684,16 +3684,16 @@ TEST(DecisionGroup, MemberlessQueueSliceRetainsIdentityAndLease) {
     harken::ScheduledTransactionPool pool;
     ASSERT_TRUE(pool.Reset(MakePoolConfig(), 0, 3));
     harken::TimelineArmTable arms(1);
-    harken::Plan03GroupSliceInput input{};
+    harken::ScheduleGroupSliceInput input{};
     input.executeFrame = 0;
     input.decision = {13, 17};
 
-    ASSERT_EQ(harken::Plan03GroupReserveStatus::Committed,
-              pool.ReservePlan03GroupSlice(input, arms));
+    ASSERT_EQ(harken::ScheduleGroupReserveStatus::Committed,
+              pool.ReserveScheduleGroupSlice(input, arms));
     pool.Publish(100, nullptr, nullptr, &arms);
 
-    harken::Plan03PageGroupView view{};
-    ASSERT_EQ(1u, pool.CapturePlan03PageGroupsRt(0, &view, 1));
+    harken::SchedulePageGroupView view{};
+    ASSERT_EQ(1u, pool.CaptureSchedulePageGroupsRt(0, &view, 1));
     EXPECT_EQ(13u, view.identity.decision.slot);
     EXPECT_EQ(17u, view.identity.decision.generation);
     EXPECT_EQ(0u, view.memberCount);
@@ -3707,20 +3707,20 @@ TEST(DecisionGroup, MemberlessReaderPinSurvivesConsumerAdvanceUntilCompletedBloc
     harken::ScheduledTransactionPool pool;
     ASSERT_TRUE(pool.Reset(MakePoolConfig(), 0, 3));
     harken::TimelineArmTable arms(1);
-    harken::Plan03GroupSliceInput input{};
+    harken::ScheduleGroupSliceInput input{};
     input.decision = {13, 17};
-    ASSERT_EQ(harken::Plan03GroupReserveStatus::Committed,
-        pool.ReservePlan03GroupSlice(input, arms));
-    harken::Plan03PageGroupView view{};
-    ASSERT_EQ(1u, pool.CaptureLivePlan03Groups(&view, 1));
+    ASSERT_EQ(harken::ScheduleGroupReserveStatus::Committed,
+        pool.ReserveScheduleGroupSlice(input, arms));
+    harken::SchedulePageGroupView view{};
+    ASSERT_EQ(1u, pool.CaptureLiveScheduleGroups(&view, 1));
     ASSERT_TRUE(view.identity.Exact());
     EXPECT_EQ(3u, view.identity.transportEpoch);
-    harken::Plan03GroupReaderPin pin;
-    ASSERT_TRUE(pool.AcquirePlan03GroupReader(view.identity, &pin));
-    const auto storageBytes = pool.Plan03GroupReaderStorageBytes();
+    harken::ScheduleGroupReaderPin pin;
+    ASSERT_TRUE(pool.AcquireScheduleGroupReader(view.identity, &pin));
+    const auto storageBytes = pool.ScheduleGroupReaderStorageBytes();
     EXPECT_GT(storageBytes, 0u);
     pool.Publish(100, nullptr, nullptr, &arms);
-    ASSERT_TRUE(pool.NotePlan03GroupReadRt(view.identity, 7));
+    ASSERT_TRUE(pool.NoteScheduleGroupReadRt(view.identity, 7));
     pool.ConsumerFrontier().store(1, std::memory_order_release);
     EXPECT_FALSE(pin.Release(8));
     ASSERT_TRUE(view.lease->TryClaim());
@@ -3732,8 +3732,8 @@ TEST(DecisionGroup, MemberlessReaderPinSurvivesConsumerAdvanceUntilCompletedBloc
     pool.DropPreparedOccupancy();
     pool.Advance();
     EXPECT_EQ(0u, pool.WindowStartFrame());
-    harken::Plan03PageGroupView retained{};
-    ASSERT_TRUE(pool.ResolvePlan03GroupSliceRt(view.identity, &retained));
+    harken::SchedulePageGroupView retained{};
+    ASSERT_TRUE(pool.ResolveScheduleGroupSliceRt(view.identity, &retained));
     EXPECT_EQ(view.lease, retained.lease);
     EXPECT_EQ(harken::AudioSliceState::SliceApplied, retained.lease->Capture().state);
     ASSERT_TRUE(pin.Release(8));
@@ -3741,60 +3741,60 @@ TEST(DecisionGroup, MemberlessReaderPinSurvivesConsumerAdvanceUntilCompletedBloc
     EXPECT_TRUE(pin.Release(8));
     pool.Advance();
     EXPECT_EQ(100u, pool.WindowStartFrame());
-    EXPECT_FALSE(pool.ResolvePlan03GroupSliceProducer(view.identity, &retained));
-    EXPECT_FALSE(pool.NotePlan03GroupReadRt(view.identity, 8));
-    EXPECT_EQ(storageBytes, pool.Plan03GroupReaderStorageBytes());
+    EXPECT_FALSE(pool.ResolveScheduleGroupSliceProducer(view.identity, &retained));
+    EXPECT_FALSE(pool.NoteScheduleGroupReadRt(view.identity, 8));
+    EXPECT_EQ(storageBytes, pool.ScheduleGroupReaderStorageBytes());
 }
 
 TEST(DecisionGroup, ReaderPinRejectsRollbackAndReplacementWithoutLosingExactRow) {
     harken::ScheduledTransactionPool pool;
     ASSERT_TRUE(pool.Reset(MakePoolConfig(), 0, 3));
     harken::TimelineArmTable arms(1);
-    harken::Plan03GroupSliceInput input{};
+    harken::ScheduleGroupSliceInput input{};
     input.decision = {13, 17};
-    harken::PreparedPlan03GroupSlice prepared;
-    harken::CommittedPlan03GroupSlice committed;
-    ASSERT_EQ(harken::Plan03GroupReserveStatus::Committed,
-        pool.PreparePlan03GroupSlice(input, arms, &prepared));
-    ASSERT_TRUE(pool.CommitPreparedPlan03GroupSlice(&prepared, &committed));
-    harken::Plan03PageGroupView original{};
-    ASSERT_EQ(1u, pool.CaptureLivePlan03Groups(&original, 1));
-    harken::Plan03GroupReaderPin pin;
-    ASSERT_TRUE(pool.AcquirePlan03GroupReader(original.identity, &pin));
-    EXPECT_FALSE(pool.RollbackCommittedPlan03GroupSlice(&committed));
+    harken::PreparedScheduleGroupSlice prepared;
+    harken::CommittedScheduleGroupSlice committed;
+    ASSERT_EQ(harken::ScheduleGroupReserveStatus::Committed,
+        pool.PrepareScheduleGroupSlice(input, arms, &prepared));
+    ASSERT_TRUE(pool.CommitPreparedScheduleGroupSlice(&prepared, &committed));
+    harken::SchedulePageGroupView original{};
+    ASSERT_EQ(1u, pool.CaptureLiveScheduleGroups(&original, 1));
+    harken::ScheduleGroupReaderPin pin;
+    ASSERT_TRUE(pool.AcquireScheduleGroupReader(original.identity, &pin));
+    EXPECT_FALSE(pool.RollbackCommittedScheduleGroupSlice(&committed));
     EXPECT_TRUE(committed.Valid());
-    harken::PreparedPlan03GroupSliceReplacement replacement;
-    EXPECT_NE(harken::Plan03GroupReserveStatus::Committed,
-        pool.PreparePlan03GroupSliceReplacement(original.identity, input, arms, &replacement));
+    harken::PreparedScheduleGroupSliceReplacement replacement;
+    EXPECT_NE(harken::ScheduleGroupReserveStatus::Committed,
+        pool.PrepareScheduleGroupSliceReplacement(original.identity, input, arms, &replacement));
     EXPECT_FALSE(replacement.Valid());
     auto moved = std::move(pin);
     EXPECT_FALSE(pin.Valid());
     ASSERT_TRUE(moved.Release(0));
-    ASSERT_TRUE(pool.RollbackCommittedPlan03GroupSlice(&committed));
-    ASSERT_EQ(harken::Plan03GroupReserveStatus::Committed,
-        pool.ReservePlan03GroupSlice(input, arms));
-    harken::Plan03PageGroupView current{};
-    ASSERT_EQ(1u, pool.CaptureLivePlan03Groups(&current, 1));
+    ASSERT_TRUE(pool.RollbackCommittedScheduleGroupSlice(&committed));
+    ASSERT_EQ(harken::ScheduleGroupReserveStatus::Committed,
+        pool.ReserveScheduleGroupSlice(input, arms));
+    harken::SchedulePageGroupView current{};
+    ASSERT_EQ(1u, pool.CaptureLiveScheduleGroups(&current, 1));
     EXPECT_EQ(original.identity.committedRow, current.identity.committedRow);
     EXPECT_NE(original.identity.rowClaimGeneration, current.identity.rowClaimGeneration);
-    EXPECT_FALSE(pool.ResolvePlan03GroupSliceProducer(original.identity, &current));
-    EXPECT_FALSE(pool.AcquirePlan03GroupReader(original.identity, &pin));
+    EXPECT_FALSE(pool.ResolveScheduleGroupSliceProducer(original.identity, &current));
+    EXPECT_FALSE(pool.AcquireScheduleGroupReader(original.identity, &pin));
 }
 
 TEST(DecisionGroup, ReusedGroupRowDoesNotInheritPriorAudioReadSequence) {
     harken::ScheduledTransactionPool pool;
     ASSERT_TRUE(pool.Reset(MakePoolConfig(), 0, 3));
     harken::TimelineArmTable arms(1);
-    harken::Plan03GroupSliceInput input{};
+    harken::ScheduleGroupSliceInput input{};
     input.decision = {13, 17};
-    ASSERT_EQ(harken::Plan03GroupReserveStatus::Committed,
-              pool.ReservePlan03GroupSlice(input, arms));
-    harken::Plan03PageGroupView oldGroup{};
-    ASSERT_EQ(1u, pool.CaptureLivePlan03Groups(&oldGroup, 1));
-    harken::Plan03GroupReaderPin pin;
-    ASSERT_TRUE(pool.AcquirePlan03GroupReader(oldGroup.identity, &pin));
+    ASSERT_EQ(harken::ScheduleGroupReserveStatus::Committed,
+              pool.ReserveScheduleGroupSlice(input, arms));
+    harken::SchedulePageGroupView oldGroup{};
+    ASSERT_EQ(1u, pool.CaptureLiveScheduleGroups(&oldGroup, 1));
+    harken::ScheduleGroupReaderPin pin;
+    ASSERT_TRUE(pool.AcquireScheduleGroupReader(oldGroup.identity, &pin));
     pool.Publish(100, nullptr, nullptr, &arms);
-    ASSERT_TRUE(pool.NotePlan03GroupReadRt(oldGroup.identity, 5));
+    ASSERT_TRUE(pool.NoteScheduleGroupReadRt(oldGroup.identity, 5));
     ASSERT_TRUE(oldGroup.lease->TryClaim());
     ASSERT_TRUE(oldGroup.lease->MarkApplied());
     ASSERT_TRUE(pin.Release(6));
@@ -3804,10 +3804,10 @@ TEST(DecisionGroup, ReusedGroupRowDoesNotInheritPriorAudioReadSequence) {
 
     input.executeFrame = 400;
     input.decision = {19, 23};
-    ASSERT_EQ(harken::Plan03GroupReserveStatus::Committed,
-              pool.ReservePlan03GroupSlice(input, arms));
-    std::array<harken::Plan03PageGroupView, 4> groups{};
-    const auto count = pool.CaptureLivePlan03Groups(groups.data(), groups.size());
+    ASSERT_EQ(harken::ScheduleGroupReserveStatus::Committed,
+              pool.ReserveScheduleGroupSlice(input, arms));
+    std::array<harken::SchedulePageGroupView, 4> groups{};
+    const auto count = pool.CaptureLiveScheduleGroups(groups.data(), groups.size());
     ASSERT_EQ(1u, count);
     const auto& reused = groups[0];
     EXPECT_EQ(oldGroup.identity.committedRow, reused.identity.committedRow);
@@ -3826,17 +3826,17 @@ TEST(DecisionGroup, ReusedGroupRowDoesNotInheritPriorAudioReadSequence) {
     binding.operation.transport = 3;
     binding.operation.world = 7;
     binding.primary = reused.identity;
-    EXPECT_TRUE(pool.BindPlan03GroupFrontier(reused.identity, binding));
+    EXPECT_TRUE(pool.BindScheduleGroupFrontier(reused.identity, binding));
 }
 
 TEST(DecisionGroup,
      PreparedSliceOwnsFinalRowAndCopiesMembersBeforeCommit) {
     static_assert(!std::is_copy_constructible_v<
-                  harken::PreparedPlan03GroupSlice>);
+                  harken::PreparedScheduleGroupSlice>);
     static_assert(!std::is_copy_assignable_v<
-                  harken::PreparedPlan03GroupSlice>);
+                  harken::PreparedScheduleGroupSlice>);
     static_assert(std::is_move_constructible_v<
-                  harken::PreparedPlan03GroupSlice>);
+                  harken::PreparedScheduleGroupSlice>);
 
     harken::ScheduledTransactionPool pool;
     ASSERT_TRUE(pool.Reset(MakePoolConfig(), 0, 3));
@@ -3850,28 +3850,28 @@ TEST(DecisionGroup,
         3, 5, 0, 100, 19, target, {decision}, 0, &member));
     const harken::TimelineArmToken expectedMember = member;
 
-    harken::Plan03GroupSliceInput input{};
+    harken::ScheduleGroupSliceInput input{};
     input.executeFrame = 0;
     input.decision = decision;
     input.members = &member;
     input.memberCount = 1;
-    harken::PreparedPlan03GroupSlice prepared{};
-    ASSERT_EQ(harken::Plan03GroupReserveStatus::Committed,
-              pool.PreparePlan03GroupSlice(input, arms, &prepared));
+    harken::PreparedScheduleGroupSlice prepared{};
+    ASSERT_EQ(harken::ScheduleGroupReserveStatus::Committed,
+              pool.PrepareScheduleGroupSlice(input, arms, &prepared));
     ASSERT_TRUE(prepared.Valid());
 
-    const harken::Plan03GroupSliceIdentity identity{0, 1, decision, 0};
-    harken::Plan03PageGroupView hidden{};
-    EXPECT_FALSE(pool.ResolvePlan03GroupSliceProducer(identity, &hidden));
+    const harken::ScheduleGroupSliceIdentity identity{0, 1, decision, 0};
+    harken::SchedulePageGroupView hidden{};
+    EXPECT_FALSE(pool.ResolveScheduleGroupSliceProducer(identity, &hidden));
     EXPECT_FALSE(pool.CanResetForEpoch(0, 5));
     member = {};
 
-    ASSERT_TRUE(pool.CommitPreparedPlan03GroupSlice(&prepared));
+    ASSERT_TRUE(pool.CommitPreparedScheduleGroupSlice(&prepared));
     EXPECT_FALSE(prepared.Valid());
-    EXPECT_FALSE(pool.CommitPreparedPlan03GroupSlice(&prepared));
-    EXPECT_FALSE(pool.CancelPreparedPlan03GroupSlice(&prepared));
-    harken::Plan03PageGroupView committed{};
-    ASSERT_TRUE(pool.ResolvePlan03GroupSliceProducer(identity, &committed));
+    EXPECT_FALSE(pool.CommitPreparedScheduleGroupSlice(&prepared));
+    EXPECT_FALSE(pool.CancelPreparedScheduleGroupSlice(&prepared));
+    harken::SchedulePageGroupView committed{};
+    ASSERT_TRUE(pool.ResolveScheduleGroupSliceProducer(identity, &committed));
     ASSERT_EQ(1u, committed.memberCount);
     ASSERT_NE(nullptr, committed.members);
     EXPECT_EQ(expectedMember.slot, committed.members[0].slot);
@@ -3883,69 +3883,69 @@ TEST(DecisionGroup,
     harken::ScheduledTransactionPool pool;
     ASSERT_TRUE(pool.Reset(MakePoolConfig(), 0, 3));
     harken::TimelineArmTable firstArms(1);
-    harken::Plan03GroupSliceInput first{};
+    harken::ScheduleGroupSliceInput first{};
     first.executeFrame = 0;
     first.decision = {13, 17};
-    harken::PreparedPlan03GroupSlice prepared{};
-    ASSERT_EQ(harken::Plan03GroupReserveStatus::Committed,
-              pool.PreparePlan03GroupSlice(
+    harken::PreparedScheduleGroupSlice prepared{};
+    ASSERT_EQ(harken::ScheduleGroupReserveStatus::Committed,
+              pool.PrepareScheduleGroupSlice(
                   first, firstArms, &prepared));
 
-    harken::Plan03GroupSliceInput refused = first;
+    harken::ScheduleGroupSliceInput refused = first;
     refused.decision = {19, 23};
-    EXPECT_EQ(harken::Plan03GroupReserveStatus::PageGroupCapacity,
-              pool.PreflightPlan03GroupSlices(0, 1));
-    EXPECT_EQ(harken::Plan03GroupReserveStatus::PageGroupCapacity,
-              pool.ReservePlan03GroupSlice(refused, firstArms));
+    EXPECT_EQ(harken::ScheduleGroupReserveStatus::PageGroupCapacity,
+              pool.PreflightScheduleGroupSlices(0, 1));
+    EXPECT_EQ(harken::ScheduleGroupReserveStatus::PageGroupCapacity,
+              pool.ReserveScheduleGroupSlice(refused, firstArms));
     EXPECT_EQ(0u, pool.WindowStartQuantum());
     EXPECT_EQ(0u, pool.Advance());
     EXPECT_EQ(0u, pool.WindowStartQuantum());
 
-    harken::PreparedPlan03GroupSlice moved(std::move(prepared));
+    harken::PreparedScheduleGroupSlice moved(std::move(prepared));
     EXPECT_FALSE(prepared.Valid());
     ASSERT_TRUE(moved.Valid());
-    ASSERT_TRUE(pool.CancelPreparedPlan03GroupSlice(&moved));
+    ASSERT_TRUE(pool.CancelPreparedScheduleGroupSlice(&moved));
     EXPECT_FALSE(moved.Valid());
-    EXPECT_FALSE(pool.CancelPreparedPlan03GroupSlice(&moved));
+    EXPECT_FALSE(pool.CancelPreparedScheduleGroupSlice(&moved));
     EXPECT_TRUE(pool.CanResetForEpoch(0, 5));
 
     harken::TimelineArmTable secondArms(1);
-    EXPECT_EQ(harken::Plan03GroupReserveStatus::Committed,
-              pool.ReservePlan03GroupSlice(refused, secondArms));
+    EXPECT_EQ(harken::ScheduleGroupReserveStatus::Committed,
+              pool.ReserveScheduleGroupSlice(refused, secondArms));
 }
 
 TEST(DecisionGroup,
      PreparedSlicesCommitOutOfOrderWithoutReacquiringCapacity) {
     auto config = MakePoolConfig();
-    config.maxPlan03GroupHeadersPerPage = 2;
+    config.maxScheduleGroupHeadersPerPage = 2;
     harken::ScheduledTransactionPool pool;
     ASSERT_TRUE(pool.Reset(config, 0, 3));
     harken::TimelineArmTable arms(1);
 
-    harken::Plan03GroupSliceInput first{};
+    harken::ScheduleGroupSliceInput first{};
     first.executeFrame = 0;
     first.decision = {13, 17};
-    harken::Plan03GroupSliceInput second = first;
+    harken::ScheduleGroupSliceInput second = first;
     second.decision = {19, 23};
     second.sliceIndex = 1;
-    harken::PreparedPlan03GroupSlice firstPrepared{};
-    harken::PreparedPlan03GroupSlice secondPrepared{};
-    ASSERT_EQ(harken::Plan03GroupReserveStatus::Committed,
-              pool.PreparePlan03GroupSlice(
+    harken::PreparedScheduleGroupSlice firstPrepared{};
+    harken::PreparedScheduleGroupSlice secondPrepared{};
+    ASSERT_EQ(harken::ScheduleGroupReserveStatus::Committed,
+              pool.PrepareScheduleGroupSlice(
                   first, arms, &firstPrepared));
-    ASSERT_EQ(harken::Plan03GroupReserveStatus::Committed,
-              pool.PreparePlan03GroupSlice(
+    ASSERT_EQ(harken::ScheduleGroupReserveStatus::Committed,
+              pool.PrepareScheduleGroupSlice(
                   second, arms, &secondPrepared));
-    EXPECT_EQ(harken::Plan03GroupReserveStatus::PageGroupCapacity,
-              pool.PreflightPlan03GroupSlices(0, 1));
+    EXPECT_EQ(harken::ScheduleGroupReserveStatus::PageGroupCapacity,
+              pool.PreflightScheduleGroupSlices(0, 1));
 
-    ASSERT_TRUE(pool.CommitPreparedPlan03GroupSlice(&secondPrepared));
-    harken::Plan03PageGroupView secondView{};
-    ASSERT_TRUE(pool.ResolvePlan03GroupSliceProducer(
+    ASSERT_TRUE(pool.CommitPreparedScheduleGroupSlice(&secondPrepared));
+    harken::SchedulePageGroupView secondView{};
+    ASSERT_TRUE(pool.ResolveScheduleGroupSliceProducer(
         {0, 1, second.decision, second.sliceIndex}, &secondView));
-    ASSERT_TRUE(pool.CommitPreparedPlan03GroupSlice(&firstPrepared));
-    harken::Plan03PageGroupView firstView{};
-    EXPECT_TRUE(pool.ResolvePlan03GroupSliceProducer(
+    ASSERT_TRUE(pool.CommitPreparedScheduleGroupSlice(&firstPrepared));
+    harken::SchedulePageGroupView firstView{};
+    EXPECT_TRUE(pool.ResolveScheduleGroupSliceProducer(
         {0, 1, first.decision, first.sliceIndex}, &firstView));
 }
 
@@ -3953,20 +3953,20 @@ TEST(DecisionGroup, EmptyGroupPublicationHoldSurvivesPromotionAndReleasesOnlyExa
     harken::ScheduledTransactionPool pool;
     ASSERT_TRUE(pool.Reset(MakePoolConfig(), 0, 3));
     harken::TimelineArmTable arms(1);
-    harken::Plan03GroupSliceInput input{};
+    harken::ScheduleGroupSliceInput input{};
     input.decision = {13, 17};
-    harken::PreparedPlan03GroupSlice first, second;
-    harken::CommittedPlan03GroupSlice firstCommitted, secondCommitted;
-    ASSERT_EQ(harken::Plan03GroupReserveStatus::Committed,
-        pool.PreparePlan03GroupSlice(input, arms, &first));
+    harken::PreparedScheduleGroupSlice first, second;
+    harken::CommittedScheduleGroupSlice firstCommitted, secondCommitted;
+    ASSERT_EQ(harken::ScheduleGroupReserveStatus::Committed,
+        pool.PrepareScheduleGroupSlice(input, arms, &first));
     input.executeFrame = 100;
     input.decision = {19, 23};
-    ASSERT_EQ(harken::Plan03GroupReserveStatus::Committed,
-        pool.PreparePlan03GroupSlice(input, arms, &second));
+    ASSERT_EQ(harken::ScheduleGroupReserveStatus::Committed,
+        pool.PrepareScheduleGroupSlice(input, arms, &second));
     pool.Publish(200, nullptr, nullptr, &arms);
     EXPECT_EQ(0u, pool.PublishCutoffFrame());
-    ASSERT_TRUE(pool.CommitPreparedPlan03GroupSlice(&first, &firstCommitted, true));
-    ASSERT_TRUE(pool.CommitPreparedPlan03GroupSlice(&second, &secondCommitted, true));
+    ASSERT_TRUE(pool.CommitPreparedScheduleGroupSlice(&first, &firstCommitted, true));
+    ASSERT_TRUE(pool.CommitPreparedScheduleGroupSlice(&second, &secondCommitted, true));
     pool.Publish(200, nullptr, nullptr, &arms);
     EXPECT_EQ(harken::kUnpublishedQuantumStamp, pool.PageStamp(0));
     EXPECT_EQ(harken::kUnpublishedQuantumStamp, pool.PageStamp(1));
@@ -3976,24 +3976,24 @@ TEST(DecisionGroup, EmptyGroupPublicationHoldSurvivesPromotionAndReleasesOnlyExa
     pool.Advance();
     EXPECT_EQ(0u, pool.WindowStartFrame());
     pool.DropPreparedOccupancy();
-    std::array<harken::Plan03PageGroupView, 2> views{};
-    ASSERT_EQ(2u, pool.CaptureLivePlan03Groups(views.data(), views.size()));
-    harken::PreparedPlan03GroupSliceReplacement replacement;
-    EXPECT_NE(harken::Plan03GroupReserveStatus::Committed,
-        pool.PreparePlan03GroupSliceReplacement(views[1].identity, input, arms, &replacement));
-    ASSERT_TRUE(pool.ReleaseCommittedPlan03GroupSliceOwnership(&firstCommitted));
-    EXPECT_FALSE(pool.RollbackCommittedPlan03GroupSlice(&firstCommitted));
+    std::array<harken::SchedulePageGroupView, 2> views{};
+    ASSERT_EQ(2u, pool.CaptureLiveScheduleGroups(views.data(), views.size()));
+    harken::PreparedScheduleGroupSliceReplacement replacement;
+    EXPECT_NE(harken::ScheduleGroupReserveStatus::Committed,
+        pool.PrepareScheduleGroupSliceReplacement(views[1].identity, input, arms, &replacement));
+    ASSERT_TRUE(pool.ReleaseCommittedScheduleGroupSliceOwnership(&firstCommitted));
+    EXPECT_FALSE(pool.RollbackCommittedScheduleGroupSlice(&firstCommitted));
     pool.Publish(200, nullptr, nullptr, &arms);
     EXPECT_EQ(0u, pool.PageStamp(0));
     EXPECT_EQ(harken::kUnpublishedQuantumStamp, pool.PageStamp(1));
     EXPECT_EQ(100u, pool.PublishCutoffFrame());
     auto moved = std::move(secondCommitted);
     EXPECT_FALSE(secondCommitted.Valid());
-    ASSERT_TRUE(pool.RollbackCommittedPlan03GroupSlice(&moved));
+    ASSERT_TRUE(pool.RollbackCommittedScheduleGroupSlice(&moved));
     pool.Publish(200, nullptr, nullptr, &arms);
     EXPECT_EQ(1u, pool.PageStamp(1));
-    EXPECT_EQ(0u, pool.CapturePlan03PageGroupsRt(1, views.data(), views.size()));
-    EXPECT_EQ(1u, pool.CapturePlan03PageGroupsRt(0, views.data(), views.size()));
+    EXPECT_EQ(0u, pool.CaptureSchedulePageGroupsRt(1, views.data(), views.size()));
+    EXPECT_EQ(1u, pool.CaptureSchedulePageGroupsRt(0, views.data(), views.size()));
 }
 
 TEST(DecisionGroup,
@@ -4003,46 +4003,46 @@ TEST(DecisionGroup,
     harken::TimelineArmTable arms(1);
     const harken::DecisionToken original{13, 17};
     const harken::DecisionToken replacementDecision{23, 29};
-    harken::Plan03GroupSliceInput input{};
+    harken::ScheduleGroupSliceInput input{};
     input.executeFrame = 0;
     input.decision = original;
-    ASSERT_EQ(harken::Plan03GroupReserveStatus::Committed,
-              pool.ReservePlan03GroupSlice(input, arms));
+    ASSERT_EQ(harken::ScheduleGroupReserveStatus::Committed,
+              pool.ReserveScheduleGroupSlice(input, arms));
 
-    const harken::Plan03GroupSliceIdentity originalIdentity{
+    const harken::ScheduleGroupSliceIdentity originalIdentity{
         0, 1, original, 0};
-    harken::Plan03PageGroupView originalView{};
-    ASSERT_TRUE(pool.ResolvePlan03GroupSliceProducer(originalIdentity,
+    harken::SchedulePageGroupView originalView{};
+    ASSERT_TRUE(pool.ResolveScheduleGroupSliceProducer(originalIdentity,
                                                      &originalView));
     ASSERT_NE(nullptr, originalView.lease);
     EXPECT_EQ(harken::AudioSliceState::Ready,
               originalView.lease->Capture().state);
 
-    harken::Plan03GroupSliceInput replacement = input;
+    harken::ScheduleGroupSliceInput replacement = input;
     replacement.decision = replacementDecision;
-    harken::PreparedPlan03GroupSliceReplacement prepared{};
-    ASSERT_EQ(harken::Plan03GroupReserveStatus::Committed,
-              pool.PreparePlan03GroupSliceReplacement(
+    harken::PreparedScheduleGroupSliceReplacement prepared{};
+    ASSERT_EQ(harken::ScheduleGroupReserveStatus::Committed,
+              pool.PrepareScheduleGroupSliceReplacement(
                   originalIdentity, replacement, arms, &prepared));
     EXPECT_TRUE(prepared.Valid());
     EXPECT_EQ(harken::AudioSliceState::ReplacementReserved,
               originalView.lease->Capture().state);
-    ASSERT_TRUE(pool.CommitPreparedPlan03GroupSliceReplacement(&prepared));
+    ASSERT_TRUE(pool.CommitPreparedScheduleGroupSliceReplacement(&prepared));
     EXPECT_FALSE(prepared.Valid());
-    EXPECT_FALSE(pool.ResolvePlan03GroupSliceProducer(originalIdentity,
+    EXPECT_FALSE(pool.ResolveScheduleGroupSliceProducer(originalIdentity,
                                                       &originalView));
 
-    const harken::Plan03GroupSliceIdentity replacementIdentity{
+    const harken::ScheduleGroupSliceIdentity replacementIdentity{
         0, 1, replacementDecision, 0};
-    harken::Plan03PageGroupView replacementView{};
-    ASSERT_TRUE(pool.ResolvePlan03GroupSliceProducer(replacementIdentity,
+    harken::SchedulePageGroupView replacementView{};
+    ASSERT_TRUE(pool.ResolveScheduleGroupSliceProducer(replacementIdentity,
                                                      &replacementView));
     ASSERT_NE(nullptr, replacementView.lease);
     EXPECT_EQ(harken::AudioSliceState::Ready,
               replacementView.lease->Capture().state);
     pool.Publish(100, nullptr, nullptr, &arms);
-    harken::Plan03PageGroupView published{};
-    ASSERT_EQ(1u, pool.CapturePlan03PageGroupsRt(0, &published, 1));
+    harken::SchedulePageGroupView published{};
+    ASSERT_EQ(1u, pool.CaptureSchedulePageGroupsRt(0, &published, 1));
     EXPECT_EQ(replacementDecision.slot,
               published.identity.decision.slot);
     EXPECT_EQ(replacementDecision.generation,
@@ -4053,7 +4053,7 @@ TEST(DecisionGroup,
      ProducerResolveRejectsMixedIdentityWithoutTouchingClaimedSibling) {
     harken::ScheduledTransactionPool pool;
     harken::ScheduledTransactionPool::Config config = MakePoolConfig();
-    config.maxPlan03GroupHeadersPerPage = 2;
+    config.maxScheduleGroupHeadersPerPage = 2;
     ASSERT_TRUE(pool.Reset(config, 0, 3));
     harken::TimelineArmTable arms(2);
     harken::TimelineSemanticTarget target{};
@@ -4068,32 +4068,32 @@ TEST(DecisionGroup,
         3, 5, 0, 100, 29, target, firstParent, 0, &firstArm));
     ASSERT_TRUE(arms.ReserveGrouped(
         7, 11, 0, 100, 31, target, secondParent, 0, &secondArm));
-    harken::Plan03GroupSliceInput first{};
+    harken::ScheduleGroupSliceInput first{};
     first.executeFrame = 0;
     first.decision = firstParent.decision;
     first.sliceIndex = 0;
     first.members = &firstArm;
     first.memberCount = 1;
-    harken::Plan03GroupSliceInput second = first;
+    harken::ScheduleGroupSliceInput second = first;
     second.decision = secondParent.decision;
     second.sliceIndex = 1;
     second.members = &secondArm;
-    ASSERT_EQ(harken::Plan03GroupReserveStatus::Committed,
-              pool.ReservePlan03GroupSlice(first, arms));
-    ASSERT_EQ(harken::Plan03GroupReserveStatus::Committed,
-              pool.ReservePlan03GroupSlice(second, arms));
+    ASSERT_EQ(harken::ScheduleGroupReserveStatus::Committed,
+              pool.ReserveScheduleGroupSlice(first, arms));
+    ASSERT_EQ(harken::ScheduleGroupReserveStatus::Committed,
+              pool.ReserveScheduleGroupSlice(second, arms));
 
-    const harken::Plan03GroupSliceIdentity firstIdentity{
+    const harken::ScheduleGroupSliceIdentity firstIdentity{
         0, 1, firstParent.decision, 0};
-    const harken::Plan03GroupSliceIdentity secondIdentity{
+    const harken::ScheduleGroupSliceIdentity secondIdentity{
         0, 1, secondParent.decision, 1};
-    harken::Plan03PageGroupView exact{};
-    ASSERT_TRUE(pool.ResolvePlan03GroupSliceProducer(firstIdentity, &exact));
+    harken::SchedulePageGroupView exact{};
+    ASSERT_TRUE(pool.ResolveScheduleGroupSliceProducer(firstIdentity, &exact));
     ASSERT_NE(nullptr, exact.lease);
     const harken::AudioSliceLeaseSnapshot firstBefore =
         exact.lease->Capture();
-    harken::Plan03PageGroupView sibling{};
-    ASSERT_TRUE(pool.ResolvePlan03GroupSliceProducer(secondIdentity,
+    harken::SchedulePageGroupView sibling{};
+    ASSERT_TRUE(pool.ResolveScheduleGroupSliceProducer(secondIdentity,
                                                      &sibling));
     ASSERT_NE(nullptr, sibling.lease);
     ASSERT_TRUE(sibling.lease->TryClaim());
@@ -4101,10 +4101,10 @@ TEST(DecisionGroup,
         sibling.lease->Capture();
     ASSERT_EQ(harken::AudioSliceState::SliceClaimed, secondBefore.state);
 
-    harken::Plan03GroupSliceIdentity mixed = firstIdentity;
+    harken::ScheduleGroupSliceIdentity mixed = firstIdentity;
     mixed.sliceIndex = secondIdentity.sliceIndex;
-    harken::Plan03PageGroupView rejected{};
-    EXPECT_FALSE(pool.ResolvePlan03GroupSliceProducer(mixed, &rejected));
+    harken::SchedulePageGroupView rejected{};
+    EXPECT_FALSE(pool.ResolveScheduleGroupSliceProducer(mixed, &rejected));
     EXPECT_EQ(firstBefore.state, exact.lease->Capture().state);
     EXPECT_EQ(firstBefore.pendingReasonBits,
               exact.lease->Capture().pendingReasonBits);
@@ -4129,18 +4129,18 @@ TEST(DecisionGroup, PageSummaryAcceptsSparseGlobalMemberIndices) {
     ASSERT_TRUE(arms.ReserveGrouped(
         7, 11, 0, 100, 19, target, parent, 1, &second));
 
-    harken::Plan03GroupSliceInput input{};
+    harken::ScheduleGroupSliceInput input{};
     input.executeFrame = 0;
     input.decision = parent.decision;
     input.sliceIndex = 0;
     input.members = &second;
     input.memberCount = 1;
-    ASSERT_EQ(harken::Plan03GroupReserveStatus::Committed,
-              pool.ReservePlan03GroupSlice(input, arms));
+    ASSERT_EQ(harken::ScheduleGroupReserveStatus::Committed,
+              pool.ReserveScheduleGroupSlice(input, arms));
 
     pool.Publish(100, nullptr, nullptr, &arms);
-    harken::Plan03PageGroupView view{};
-    ASSERT_EQ(1u, pool.CapturePlan03PageGroupsRt(0, &view, 1));
+    harken::SchedulePageGroupView view{};
+    ASSERT_EQ(1u, pool.CaptureSchedulePageGroupsRt(0, &view, 1));
     ASSERT_EQ(1u, view.memberCount);
     EXPECT_EQ(second.slot, view.members[0].slot);
     EXPECT_EQ(second.generation, view.members[0].generation);
@@ -4157,30 +4157,30 @@ TEST(DecisionGroup, PageGroupCapacityAndIdentityFailuresAreZeroPartial) {
     harken::TimelineArmToken member{};
     ASSERT_TRUE(arms.ReserveGrouped(
         3, 5, 0, 100, 19, target, {{13, 17}}, 0, &member));
-    harken::Plan03GroupSliceInput valid{};
+    harken::ScheduleGroupSliceInput valid{};
     valid.executeFrame = 0;
     valid.decision = {13, 17};
     valid.sliceIndex = 0;
     valid.members = &member;
     valid.memberCount = 1;
-    ASSERT_EQ(harken::Plan03GroupReserveStatus::Committed,
-              pool.ReservePlan03GroupSlice(valid, arms));
+    ASSERT_EQ(harken::ScheduleGroupReserveStatus::Committed,
+              pool.ReserveScheduleGroupSlice(valid, arms));
 
-    EXPECT_EQ(harken::Plan03GroupReserveStatus::DuplicateSlice,
-              pool.ReservePlan03GroupSlice(valid, arms));
+    EXPECT_EQ(harken::ScheduleGroupReserveStatus::DuplicateSlice,
+              pool.ReserveScheduleGroupSlice(valid, arms));
 
     auto second = valid;
     second.sliceIndex = 1;
-    EXPECT_EQ(harken::Plan03GroupReserveStatus::PageGroupCapacity,
-              pool.ReservePlan03GroupSlice(second, arms));
+    EXPECT_EQ(harken::ScheduleGroupReserveStatus::PageGroupCapacity,
+              pool.ReserveScheduleGroupSlice(second, arms));
     auto wrongParent = valid;
     wrongParent.decision = {23, 29};
-    EXPECT_EQ(harken::Plan03GroupReserveStatus::ArmIdentityMismatch,
-              pool.ReservePlan03GroupSlice(wrongParent, arms));
+    EXPECT_EQ(harken::ScheduleGroupReserveStatus::ArmIdentityMismatch,
+              pool.ReserveScheduleGroupSlice(wrongParent, arms));
 
     pool.Publish(100, nullptr, nullptr, &arms);
-    harken::Plan03PageGroupView view{};
-    EXPECT_EQ(1u, pool.CapturePlan03PageGroupsRt(0, &view, 1));
+    harken::SchedulePageGroupView view{};
+    EXPECT_EQ(1u, pool.CaptureSchedulePageGroupsRt(0, &view, 1));
     EXPECT_EQ(0u, view.identity.sliceIndex);
 }
 
@@ -4195,16 +4195,16 @@ TEST(DecisionGroup, PageCannotReclaimReadyOrClaimedSliceAndRejectsStaleView) {
     ASSERT_TRUE(arms.ReserveGrouped(
         3, 5, 0, 100, 19, target, {{13, 17}}, 0, &member));
 
-    harken::Plan03GroupSliceInput input{};
+    harken::ScheduleGroupSliceInput input{};
     input.executeFrame = 0;
     input.decision = {13, 17};
     input.members = &member;
     input.memberCount = 1;
-    ASSERT_EQ(harken::Plan03GroupReserveStatus::Committed,
-              pool.ReservePlan03GroupSlice(input, arms));
+    ASSERT_EQ(harken::ScheduleGroupReserveStatus::Committed,
+              pool.ReserveScheduleGroupSlice(input, arms));
     pool.Publish(100, nullptr, nullptr, &arms);
-    harken::Plan03PageGroupView view{};
-    ASSERT_EQ(1u, pool.CapturePlan03PageGroupsRt(0, &view, 1));
+    harken::SchedulePageGroupView view{};
+    ASSERT_EQ(1u, pool.CaptureSchedulePageGroupsRt(0, &view, 1));
     const auto oldIdentity = view.identity;
 
     EXPECT_EQ(0u, pool.Advance());
@@ -4221,9 +4221,9 @@ TEST(DecisionGroup, PageCannotReclaimReadyOrClaimedSliceAndRejectsStaleView) {
     EXPECT_EQ(0u, pool.Advance());
     EXPECT_EQ(1u, pool.WindowStartQuantum());
 
-    harken::Plan03PageGroupView stale{};
+    harken::SchedulePageGroupView stale{};
     stale.identity.absoluteQuantum = 71;
-    EXPECT_FALSE(pool.ResolvePlan03GroupSliceRt(oldIdentity, &stale));
+    EXPECT_FALSE(pool.ResolveScheduleGroupSliceRt(oldIdentity, &stale));
     EXPECT_EQ(71u, stale.identity.absoluteQuantum);
 }
 
@@ -4496,10 +4496,10 @@ namespace harken::detail {
 
 struct ScheduledTransactionPoolOriginalTestAccess {
     static bool OriginalAssociationIs(const ScheduledTransactionPool& pool,
-        const Plan03GroupSliceIdentity& identity,
+        const ScheduleGroupSliceIdentity& identity,
         const PreparedPrivateImmediateLaneGroup* expected) noexcept {
-        Plan03PageGroupView actual{};
-        if (!pool.ResolvePlan03GroupSliceProducer(identity, &actual)) return false;
+        SchedulePageGroupView actual{};
+        if (!pool.ResolveScheduleGroupSliceProducer(identity, &actual)) return false;
         return pool.immediateLaneGroups_[identity.committedRow].transferOriginal == expected;
     }
 
@@ -4586,9 +4586,9 @@ namespace {
 static_assert(!std::is_copy_constructible_v<harken::OriginalQueueFutureGroupRegistration>);
 static_assert(!std::is_copy_constructible_v<harken::OriginalQueueFutureGroupLifetimePin>);
 static_assert(!std::is_constructible_v<harken::OriginalQueueFutureGroupRegistration,
-                                      harken::Plan03GroupSliceIdentity>);
+                                      harken::ScheduleGroupSliceIdentity>);
 static_assert(!std::is_constructible_v<harken::OriginalQueueFutureGroupLifetimePin,
-                                      harken::Plan03GroupSliceIdentity>);
+                                      harken::ScheduleGroupSliceIdentity>);
 
 bool ConsumeOriginalQueueFuture(PrivateLaneTransferHarness& state, std::uint32_t index,
                         harken::OriginalQueueFutureGroupRegistration* out) {
@@ -4611,7 +4611,7 @@ TEST(DecisionGroup, OriginalQueueFutureRegistrationConsumesActualFactoryAndProte
         EXPECT_TRUE(registrations[index].MatchesOriginalScope(
             17, 100, state.inputs[index], state.arms));
         EXPECT_FALSE(state.pool.PrivateImmediateLaneGroupTransferHeld(identities[index]));
-        EXPECT_TRUE(state.pool.PrivatePlan03GroupBindable(identities[index]));
+        EXPECT_TRUE(state.pool.PrivateScheduleGroupBindable(identities[index]));
         // A lifetime pin cannot make its own real tail-readiness predicate Busy.
         EXPECT_TRUE(state.pool.PrivateImmediateLaneGroupRetirementReady(identities[index], 0));
         EXPECT_FALSE(state.pool.CancelPrivateImmediateLaneGroup(17, identities[index]));
@@ -4619,8 +4619,8 @@ TEST(DecisionGroup, OriginalQueueFutureRegistrationConsumesActualFactoryAndProte
     EXPECT_FALSE(state.pool.CancelImmediateLaneGroups(17, 0));
     EXPECT_EQ(3u, state.pool.CaptureImmediateLaneCohortGroups(17, nullptr, 0));
     for (std::uint32_t index = 0; index < registrations.size(); ++index) {
-        harken::Plan03PageGroupView view{};
-        ASSERT_TRUE(state.pool.ResolvePlan03GroupSliceProducer(identities[index], &view));
+        harken::SchedulePageGroupView view{};
+        ASSERT_TRUE(state.pool.ResolveScheduleGroupSliceProducer(identities[index], &view));
         EXPECT_EQ(identities[index], view.identity);
         EXPECT_EQ(state.inputs[index].memberCount, view.memberCount);
         EXPECT_EQ(state.inputs[index].sourceControlCount, view.sourceControlCount);
@@ -4692,10 +4692,10 @@ TEST(DecisionGroup, OriginalQueueFuturePinPermitsRealOldPublicationApplyAndGreat
     config.initialImmediateLaneOwnerGates = 4;
     config.initialImmediateLaneDecisionGates = 4;
     ASSERT_TRUE(pool.Reset(config, 0, 9));
-    harken::Plan03GroupSliceInput input{};
+    harken::ScheduleGroupSliceInput input{};
     input.executeFrame = 120;
     input.decision = laneHarness.tokens[0];
-    harken::Plan03GroupSliceIdentity raw{};
+    harken::ScheduleGroupSliceIdentity raw{};
     harken::PreparedPrivateImmediateLaneGroup original;
     ASSERT_TRUE(pool.ReserveImmediateLaneGroup(17, 100, input, arms, &raw, &original));
     harken::PrivateImmediateLaneGroupTransferProof proof;
@@ -4718,18 +4718,18 @@ TEST(DecisionGroup, OriginalQueueFuturePinPermitsRealOldPublicationApplyAndGreat
     binding.operation.transport = 9;
     binding.operation.world = 7;
     binding.primary = raw;
-    ASSERT_TRUE(pool.BindPlan03GroupFrontier(raw, binding));
-    harken::Plan03GroupReaderPin reader;
-    ASSERT_TRUE(pool.AcquirePlan03GroupReader(raw, &reader));
+    ASSERT_TRUE(pool.BindScheduleGroupFrontier(raw, binding));
+    harken::ScheduleGroupReaderPin reader;
+    ASSERT_TRUE(pool.AcquireScheduleGroupReader(raw, &reader));
     ASSERT_NO_FATAL_FAILURE(laneHarness.Publish(pool, arms, &raw, 1));
-    harken::Plan03PageGroupView view{};
-    ASSERT_TRUE(pool.ResolvePlan03GroupSliceRt(raw, &view));
-    std::array<harken::Plan03PageGroupView, 1> due{};
+    harken::SchedulePageGroupView view{};
+    ASSERT_TRUE(pool.ResolveScheduleGroupSliceRt(raw, &view));
+    std::array<harken::SchedulePageGroupView, 1> due{};
     ASSERT_EQ(1u, pool.CaptureImmediateLaneGroupsRt(4, due.data(), due.size()));
     EXPECT_EQ(raw, due[0].identity);
     harken::ImmediateLaneFrontierClaim frontierClaim{};
     ASSERT_TRUE(pool.ClaimImmediateLaneFrontier(raw, &frontierClaim));
-    ASSERT_TRUE(pool.NotePlan03GroupReadRt(raw, 1));
+    ASSERT_TRUE(pool.NoteScheduleGroupReadRt(raw, 1));
     std::uint32_t applied = 0;
     SliceStep step{view.lease, &applied};
     harken::AudioSliceOperation operation{&step, ValidateSliceStep, nullptr, ApplySliceStep};
@@ -4742,8 +4742,8 @@ TEST(DecisionGroup, OriginalQueueFuturePinPermitsRealOldPublicationApplyAndGreat
     ASSERT_TRUE(pool.ReleaseImmediateLaneFrontier(&frontierClaim));
     ASSERT_TRUE(laneHarness.lane.Cancel(laneHarness.handle));
     ASSERT_TRUE(laneHarness.lane.Retire(laneHarness.handle, 2));
-    EXPECT_FALSE(pool.DetachPlan03GroupFrontier(raw, 1));
-    ASSERT_TRUE(pool.DetachPlan03GroupFrontier(raw, 2));
+    EXPECT_FALSE(pool.DetachScheduleGroupFrontier(raw, 1));
+    ASSERT_TRUE(pool.DetachScheduleGroupFrontier(raw, 2));
     EXPECT_FALSE(reader.Release(1));
     ASSERT_TRUE(reader.Release(2));
     registration.Release();
@@ -4752,7 +4752,7 @@ TEST(DecisionGroup, OriginalQueueFuturePinPermitsRealOldPublicationApplyAndGreat
     lifetime.Release();
     EXPECT_FALSE(pool.CancelImmediateLaneGroups(17, 1));
     ASSERT_TRUE(pool.CancelImmediateLaneGroups(17, 2));
-    EXPECT_FALSE(pool.ResolvePlan03GroupSliceProducer(raw, &view));
+    EXPECT_FALSE(pool.ResolveScheduleGroupSliceProducer(raw, &view));
     ASSERT_TRUE(laneHarness.decisions.Cancel(laneHarness.tokens[0]));
     ASSERT_TRUE(laneHarness.decisions.ReclaimCancelled(laneHarness.tokens[0]));
     EXPECT_EQ(0u, laneHarness.decisions.LiveCount());
@@ -4860,10 +4860,10 @@ TEST(DecisionGroup, OriginalQueueFutureLastNativeGenerationReturnsThenUsesSecond
     config.initialImmediateLaneDecisionGates = 4;
     ASSERT_TRUE(pool.Reset(config, 0, 9));
     ASSERT_TRUE(OriginalGroupAccess::SeedFreeGeneration(pool, 0, UINT32_MAX - 1u));
-    harken::Plan03GroupSliceInput input{};
+    harken::ScheduleGroupSliceInput input{};
     input.executeFrame = 120;
     input.decision = laneHarness.tokens[0];
-    harken::Plan03GroupSliceIdentity first{};
+    harken::ScheduleGroupSliceIdentity first{};
     harken::PreparedPrivateImmediateLaneGroup original;
     ASSERT_TRUE(pool.ReserveImmediateLaneGroup(17, 100, input, arms, &first, &original));
     EXPECT_EQ(0u, first.committedRow);
@@ -4884,7 +4884,7 @@ TEST(DecisionGroup, OriginalQueueFutureLastNativeGenerationReturnsThenUsesSecond
     EXPECT_EQ(0u, OriginalGroupAccess::RowMarker(pool, 0));
     EXPECT_EQ(0u, OriginalGroupAccess::PinCount(pool, 0));
     input.decision = laneHarness.tokens[1];
-    harken::Plan03GroupSliceIdentity second{};
+    harken::ScheduleGroupSliceIdentity second{};
     ASSERT_TRUE(pool.ReserveImmediateLaneGroup(18, 100, input, arms, &second, &original));
     EXPECT_EQ(1u, second.committedRow);
     EXPECT_EQ(1u, second.rowClaimGeneration);
@@ -4895,7 +4895,7 @@ TEST(DecisionGroup, OriginalQueueFutureLastNativeGenerationReturnsThenUsesSecond
     registration.Release();
     ASSERT_TRUE(pool.CancelPrivateImmediateLaneGroup(18, second));
     ASSERT_TRUE(OriginalGroupAccess::SeedFreeGeneration(pool, 1, UINT32_MAX - 1u));
-    harken::Plan03GroupSliceIdentity lastSecond{};
+    harken::ScheduleGroupSliceIdentity lastSecond{};
     ASSERT_TRUE(pool.ReserveImmediateLaneGroup(19, 100, input, arms, &lastSecond, &original));
     EXPECT_EQ(1u, lastSecond.committedRow);
     EXPECT_EQ(UINT32_MAX, lastSecond.rowClaimGeneration);
@@ -4904,7 +4904,7 @@ TEST(DecisionGroup, OriginalQueueFutureLastNativeGenerationReturnsThenUsesSecond
     registration.Release();
     ASSERT_TRUE(pool.CancelPrivateImmediateLaneGroup(19, lastSecond));
     const auto exhaustedMarkerBudget = OriginalGroupAccess::MarkerBudget(pool);
-    harken::Plan03GroupSliceIdentity refused{};
+    harken::ScheduleGroupSliceIdentity refused{};
     EXPECT_FALSE(pool.ReserveImmediateLaneGroup(20, 100, input, arms, &refused, &original));
     EXPECT_FALSE(refused.Valid());
     EXPECT_FALSE(original.Valid());
@@ -4929,10 +4929,10 @@ TEST(DecisionGroup, OriginalQueueFutureLastMarkerConsumesReturnsAndDoesNotPoison
     config.initialImmediateLaneDecisionGates = 4;
     ASSERT_TRUE(pool.Reset(config, 0, 9));
     ASSERT_TRUE(OriginalGroupAccess::SeedLastMarkerPrerequisite(pool));
-    harken::Plan03GroupSliceInput input{};
+    harken::ScheduleGroupSliceInput input{};
     input.executeFrame = 120;
     input.decision = laneHarness.tokens[0];
-    harken::Plan03GroupSliceIdentity last{};
+    harken::ScheduleGroupSliceIdentity last{};
     harken::PreparedPrivateImmediateLaneGroup original;
     ASSERT_TRUE(pool.ReserveImmediateLaneGroup(17, 100, input, arms, &last, &original));
     EXPECT_EQ(UINT64_MAX, OriginalGroupAccess::MarkerBudget(pool));
@@ -4946,7 +4946,7 @@ TEST(DecisionGroup, OriginalQueueFutureLastMarkerConsumesReturnsAndDoesNotPoison
     input.decision = laneHarness.tokens[1];
     const auto generation0 = OriginalGroupAccess::Generation(pool, 0);
     const auto generation1 = OriginalGroupAccess::Generation(pool, 1);
-    harken::Plan03GroupSliceIdentity refused{};
+    harken::ScheduleGroupSliceIdentity refused{};
     EXPECT_FALSE(pool.ReserveImmediateLaneGroup(18, 100, input, arms, &refused, &original));
     EXPECT_FALSE(refused.Valid());
     EXPECT_FALSE(original.Valid());
@@ -4954,7 +4954,7 @@ TEST(DecisionGroup, OriginalQueueFutureLastMarkerConsumesReturnsAndDoesNotPoison
     EXPECT_EQ(generation1, OriginalGroupAccess::Generation(pool, 1));
     EXPECT_EQ(UINT64_MAX, OriginalGroupAccess::MarkerBudget(pool));
     EXPECT_TRUE(lifetime.Valid());
-    harken::Plan03GroupSliceIdentity rawOnly{};
+    harken::ScheduleGroupSliceIdentity rawOnly{};
     ASSERT_TRUE(pool.ReserveImmediateLaneGroup(18, 100, input, arms, &rawOnly));
     EXPECT_EQ(1u, rawOnly.committedRow);
     EXPECT_EQ(0u, OriginalGroupAccess::RowMarker(pool, rawOnly.committedRow));
@@ -5063,8 +5063,8 @@ TEST(DecisionGroup, OriginalQueueFutureUnconsumedPublishedMoveOverwriteAndDestru
     config.initialImmediateLaneOwnerGates = 4;
     config.initialImmediateLaneDecisionGates = 4;
     ASSERT_TRUE(pool.Reset(config, 0, 9));
-    std::array<harken::Plan03GroupSliceInput, 2> inputs{};
-    std::array<harken::Plan03GroupSliceIdentity, 2> raw{};
+    std::array<harken::ScheduleGroupSliceInput, 2> inputs{};
+    std::array<harken::ScheduleGroupSliceIdentity, 2> raw{};
     std::array<harken::PreparedPrivateImmediateLaneGroup, 2> originals{};
     for (std::uint32_t index = 0; index < raw.size(); ++index) {
         inputs[index].executeFrame = 120;
@@ -5094,17 +5094,17 @@ TEST(DecisionGroup, OriginalQueueFutureUnconsumedPublishedMoveOverwriteAndDestru
     binding.operation.transport = 9;
     binding.operation.world = 7;
     binding.primary = raw[0];
-    ASSERT_TRUE(pool.BindPlan03GroupFrontier(raw[0], binding));
+    ASSERT_TRUE(pool.BindScheduleGroupFrontier(raw[0], binding));
     binding.role = harken::FrontierGroupRole::EntryMember;
     binding.operation.group = raw[1];
-    ASSERT_TRUE(pool.BindPlan03GroupFrontier(raw[1], binding));
-    std::array<harken::Plan03GroupReaderPin, 2> readers;
+    ASSERT_TRUE(pool.BindScheduleGroupFrontier(raw[1], binding));
+    std::array<harken::ScheduleGroupReaderPin, 2> readers;
     for (std::uint32_t index = 0; index < raw.size(); ++index)
-        ASSERT_TRUE(pool.AcquirePlan03GroupReader(raw[index], &readers[index]));
+        ASSERT_TRUE(pool.AcquireScheduleGroupReader(raw[index], &readers[index]));
     ASSERT_NO_FATAL_FAILURE(laneHarness.Publish(pool, arms, raw.data(), raw.size()));
-    std::array<harken::Plan03PageGroupView, 2> views{};
+    std::array<harken::SchedulePageGroupView, 2> views{};
     for (std::uint32_t index = 0; index < raw.size(); ++index) {
-        ASSERT_TRUE(pool.ResolvePlan03GroupSliceRt(raw[index], &views[index]));
+        ASSERT_TRUE(pool.ResolveScheduleGroupSliceRt(raw[index], &views[index]));
         EXPECT_FALSE(originals[index].Valid());
         EXPECT_FALSE(originals[index].Held());
         EXPECT_TRUE(Access::OriginalAssociationIs(pool, raw[index], &originals[index]));
@@ -5144,9 +5144,9 @@ TEST(DecisionGroup, OriginalQueueFutureUnconsumedPublishedMoveOverwriteAndDestru
     EXPECT_EQ(markerBudget, Access::MarkerBudget(pool));
     // Original cleanup returned only its association, not the published rows.
     for (std::uint32_t index = 0; index < raw.size(); ++index) {
-        ASSERT_TRUE(pool.ResolvePlan03GroupSliceRt(raw[index], &views[index]));
+        ASSERT_TRUE(pool.ResolveScheduleGroupSliceRt(raw[index], &views[index]));
         EXPECT_EQ(harken::AudioSliceState::Ready, views[index].lease->Capture().state);
-        ASSERT_TRUE(pool.NotePlan03GroupReadRt(raw[index], 1));
+        ASSERT_TRUE(pool.NoteScheduleGroupReadRt(raw[index], 1));
     }
     EXPECT_FALSE(pool.CancelImmediateLaneGroups(17, 2));
     ASSERT_EQ(views[0].lease, views[1].lease);
@@ -5154,10 +5154,10 @@ TEST(DecisionGroup, OriginalQueueFutureUnconsumedPublishedMoveOverwriteAndDestru
               views[0].lease->Invalidate(harken::AudioSliceInvalidateReason::Cancel));
     ASSERT_TRUE(laneHarness.lane.Cancel(laneHarness.handle));
     ASSERT_TRUE(laneHarness.lane.Retire(laneHarness.handle, 2));
-    EXPECT_FALSE(pool.DetachPlan03GroupFrontier(raw[1], 1));
-    ASSERT_TRUE(pool.DetachPlan03GroupFrontier(raw[1], 2));
-    EXPECT_FALSE(pool.DetachPlan03GroupFrontier(raw[0], 1));
-    ASSERT_TRUE(pool.DetachPlan03GroupFrontier(raw[0], 2));
+    EXPECT_FALSE(pool.DetachScheduleGroupFrontier(raw[1], 1));
+    ASSERT_TRUE(pool.DetachScheduleGroupFrontier(raw[1], 2));
+    EXPECT_FALSE(pool.DetachScheduleGroupFrontier(raw[0], 1));
+    ASSERT_TRUE(pool.DetachScheduleGroupFrontier(raw[0], 2));
     for (auto& reader : readers) {
         EXPECT_FALSE(reader.Release(1));
         ASSERT_TRUE(reader.Release(2));
@@ -5181,10 +5181,10 @@ TEST(DecisionGroup, OriginalQueueFutureUnconsumedPublishedMoveOverwriteAndDestru
         auto teardownConfig = config;
         teardownConfig.maxImmediateLaneGroupRows = 1;
         ASSERT_TRUE(teardownPool.Reset(teardownConfig, 0, 9));
-        harken::Plan03GroupSliceInput teardownInput{};
+        harken::ScheduleGroupSliceInput teardownInput{};
         teardownInput.executeFrame = 120;
         teardownInput.decision = teardownLane.tokens[0];
-        harken::Plan03GroupSliceIdentity teardownRaw{};
+        harken::ScheduleGroupSliceIdentity teardownRaw{};
         {
             harken::PreparedPrivateImmediateLaneGroup factoryOwner;
             ASSERT_TRUE(teardownPool.ReserveImmediateLaneGroup(17, 100,
@@ -5195,7 +5195,7 @@ TEST(DecisionGroup, OriginalQueueFutureUnconsumedPublishedMoveOverwriteAndDestru
             teardownBinding.entry.coordinator = teardownRaw.decision;
             teardownBinding.operation.group = teardownRaw;
             teardownBinding.primary = teardownRaw;
-            ASSERT_TRUE(teardownPool.BindPlan03GroupFrontier(teardownRaw, teardownBinding));
+            ASSERT_TRUE(teardownPool.BindScheduleGroupFrontier(teardownRaw, teardownBinding));
             ASSERT_NO_FATAL_FAILURE(teardownLane.Publish(teardownPool, teardownArms, &teardownRaw, 1));
             survivesReceiver = std::move(factoryOwner);
             EXPECT_TRUE(Access::OriginalAssociationIs(teardownPool, teardownRaw, &survivesReceiver));
@@ -5204,15 +5204,15 @@ TEST(DecisionGroup, OriginalQueueFutureUnconsumedPublishedMoveOverwriteAndDestru
         // The old factory object's lifetime is now over. Only the genuine
         // relocated original remains in the Pool's cleanup association.
         EXPECT_TRUE(Access::OriginalAssociationIs(teardownPool, teardownRaw, &survivesReceiver));
-        harken::Plan03PageGroupView teardownView{};
-        ASSERT_TRUE(teardownPool.ResolvePlan03GroupSliceRt(teardownRaw, &teardownView));
-        ASSERT_TRUE(teardownPool.NotePlan03GroupReadRt(teardownRaw, 1));
+        harken::SchedulePageGroupView teardownView{};
+        ASSERT_TRUE(teardownPool.ResolveScheduleGroupSliceRt(teardownRaw, &teardownView));
+        ASSERT_TRUE(teardownPool.NoteScheduleGroupReadRt(teardownRaw, 1));
         EXPECT_EQ(harken::AudioSliceInvalidateDisposition::InvalidatedReady,
                   teardownView.lease->Invalidate(harken::AudioSliceInvalidateReason::Cancel));
         ASSERT_TRUE(teardownLane.lane.Cancel(teardownLane.handle));
         ASSERT_TRUE(teardownLane.lane.Retire(teardownLane.handle, 2));
-        EXPECT_FALSE(teardownPool.DetachPlan03GroupFrontier(teardownRaw, 1));
-        ASSERT_TRUE(teardownPool.DetachPlan03GroupFrontier(teardownRaw, 2));
+        EXPECT_FALSE(teardownPool.DetachScheduleGroupFrontier(teardownRaw, 1));
+        ASSERT_TRUE(teardownPool.DetachScheduleGroupFrontier(teardownRaw, 2));
         EXPECT_TRUE(Access::OriginalAssociationIs(teardownPool, teardownRaw, &survivesReceiver));
         EXPECT_NE(0u, Access::RowMarker(teardownPool, teardownRaw.committedRow));
         EXPECT_EQ(0u, Access::PinCount(teardownPool, teardownRaw.committedRow));
@@ -5242,10 +5242,10 @@ TEST(DecisionGroup, NativeOriginalBaselineRetirementWaitsForOldApplyAndEveryTrue
     config.initialImmediateLaneOwnerGates = 4;
     config.initialImmediateLaneDecisionGates = 4;
     ASSERT_TRUE(pool.Reset(config, 0, 9));
-    harken::Plan03GroupSliceInput input{};
+    harken::ScheduleGroupSliceInput input{};
     input.executeFrame = 120;
     input.decision = laneHarness.tokens[0];
-    harken::Plan03GroupSliceIdentity raw{};
+    harken::ScheduleGroupSliceIdentity raw{};
     harken::PreparedPrivateImmediateLaneGroup original;
     ASSERT_TRUE(pool.ReserveImmediateLaneGroup(17, 100, input, arms, &raw, &original));
     harken::PrivateImmediateLaneGroupTransferProof proof;
@@ -5268,18 +5268,18 @@ TEST(DecisionGroup, NativeOriginalBaselineRetirementWaitsForOldApplyAndEveryTrue
     binding.operation.transport = 9;
     binding.operation.world = 7;
     binding.primary = raw;
-    ASSERT_TRUE(pool.BindPlan03GroupFrontier(raw, binding));
-    harken::Plan03GroupReaderPin reader;
-    ASSERT_TRUE(pool.AcquirePlan03GroupReader(raw, &reader));
+    ASSERT_TRUE(pool.BindScheduleGroupFrontier(raw, binding));
+    harken::ScheduleGroupReaderPin reader;
+    ASSERT_TRUE(pool.AcquireScheduleGroupReader(raw, &reader));
     ASSERT_NO_FATAL_FAILURE(laneHarness.Publish(pool, arms, &raw, 1));
-    harken::Plan03PageGroupView view{};
-    ASSERT_TRUE(pool.ResolvePlan03GroupSliceRt(raw, &view));
-    std::array<harken::Plan03PageGroupView, 1> due{};
+    harken::SchedulePageGroupView view{};
+    ASSERT_TRUE(pool.ResolveScheduleGroupSliceRt(raw, &view));
+    std::array<harken::SchedulePageGroupView, 1> due{};
     ASSERT_EQ(1u, pool.CaptureImmediateLaneGroupsRt(4, due.data(), due.size()));
     EXPECT_EQ(raw, due[0].identity);
     harken::ImmediateLaneFrontierClaim frontierClaim{};
     ASSERT_TRUE(pool.ClaimImmediateLaneFrontier(raw, &frontierClaim));
-    ASSERT_TRUE(pool.NotePlan03GroupReadRt(raw, 1));
+    ASSERT_TRUE(pool.NoteScheduleGroupReadRt(raw, 1));
     std::uint32_t applied = 0;
     SliceStep step{view.lease, &applied};
     harken::AudioSliceOperation operation{&step, ValidateSliceStep, nullptr, ApplySliceStep};
@@ -5292,8 +5292,8 @@ TEST(DecisionGroup, NativeOriginalBaselineRetirementWaitsForOldApplyAndEveryTrue
     ASSERT_TRUE(pool.ReleaseImmediateLaneFrontier(&frontierClaim));
     ASSERT_TRUE(laneHarness.lane.Cancel(laneHarness.handle));
     ASSERT_TRUE(laneHarness.lane.Retire(laneHarness.handle, 2));
-    EXPECT_FALSE(pool.DetachPlan03GroupFrontier(raw, 1));
-    ASSERT_TRUE(pool.DetachPlan03GroupFrontier(raw, 2));
+    EXPECT_FALSE(pool.DetachScheduleGroupFrontier(raw, 1));
+    ASSERT_TRUE(pool.DetachScheduleGroupFrontier(raw, 2));
     EXPECT_FALSE(reader.Release(1));
     ASSERT_TRUE(reader.Release(2));
     EXPECT_FALSE(pool.CancelImmediateLaneGroups(17, 2, &registration, 1));
@@ -5304,7 +5304,7 @@ TEST(DecisionGroup, NativeOriginalBaselineRetirementWaitsForOldApplyAndEveryTrue
     EXPECT_TRUE(registration.Valid());
     ASSERT_TRUE(pool.CancelImmediateLaneGroups(17, 2, &registration, 1));
     EXPECT_FALSE(registration.Valid());
-    EXPECT_FALSE(pool.ResolvePlan03GroupSliceProducer(raw, &view));
+    EXPECT_FALSE(pool.ResolveScheduleGroupSliceProducer(raw, &view));
     ASSERT_TRUE(laneHarness.decisions.Cancel(laneHarness.tokens[0]));
     ASSERT_TRUE(laneHarness.decisions.ReclaimCancelled(laneHarness.tokens[0]));
     EXPECT_EQ(0u, laneHarness.decisions.LiveCount());
@@ -5359,8 +5359,8 @@ TEST(DecisionGroup, NativeOriginalMemberBlocksPrimaryRetirementUntilItsTrueLoanO
                 ASSERT_TRUE(pool.Reset(config, 0, 9));
                 const std::uint32_t primaryIndex = primaryFirst ? 0u : 1u;
                 const std::uint32_t memberIndex = 1u - primaryIndex;
-                std::array<harken::Plan03GroupSliceInput, 2> inputs{};
-                std::array<harken::Plan03GroupSliceIdentity, 2> raw{};
+                std::array<harken::ScheduleGroupSliceInput, 2> inputs{};
+                std::array<harken::ScheduleGroupSliceIdentity, 2> raw{};
                 std::array<harken::PreparedPrivateImmediateLaneGroup, 2> originals;
                 std::array<harken::OriginalQueueFutureGroupRegistration, 2> registrations;
                 for (std::uint32_t index = 0; index < raw.size(); ++index) {
@@ -5395,14 +5395,14 @@ TEST(DecisionGroup, NativeOriginalMemberBlocksPrimaryRetirementUntilItsTrueLoanO
                 binding.operation.transport = 9;
                 binding.operation.world = 7;
                 binding.primary = raw[primaryIndex];
-                ASSERT_TRUE(pool.BindPlan03GroupFrontier(raw[primaryIndex], binding));
+                ASSERT_TRUE(pool.BindScheduleGroupFrontier(raw[primaryIndex], binding));
                 binding.role = harken::FrontierGroupRole::EntryMember;
                 binding.operation.group = raw[memberIndex];
                 binding.operation.order.executeFrame = inputs[memberIndex].executeFrame + 300;
-                ASSERT_TRUE(pool.BindPlan03GroupFrontier(raw[memberIndex], binding));
-                std::array<harken::Plan03GroupReaderPin, 2> readers;
+                ASSERT_TRUE(pool.BindScheduleGroupFrontier(raw[memberIndex], binding));
+                std::array<harken::ScheduleGroupReaderPin, 2> readers;
                 for (std::uint32_t index = 0; index < raw.size(); ++index) {
-                    ASSERT_TRUE(pool.AcquirePlan03GroupReader(raw[index], &readers[index]));
+                    ASSERT_TRUE(pool.AcquireScheduleGroupReader(raw[index], &readers[index]));
                     ASSERT_TRUE(laneHarness.lane.DeclareGroup(laneHarness.handle,
                         {raw[index], inputs[index].executeFrame - 100}));
                 }
@@ -5414,10 +5414,10 @@ TEST(DecisionGroup, NativeOriginalMemberBlocksPrimaryRetirementUntilItsTrueLoanO
                 ASSERT_TRUE(laneHarness.lane.PinArms(laneHarness.handle, arms));
                 ASSERT_TRUE(pool.PublishImmediateLaneGroups(17));
                 ASSERT_TRUE(laneHarness.lane.Publish(laneHarness.handle));
-                std::array<harken::Plan03PageGroupView, 2> views{};
+                std::array<harken::SchedulePageGroupView, 2> views{};
                 for (std::uint32_t index = 0; index < raw.size(); ++index) {
-                    ASSERT_TRUE(pool.ResolvePlan03GroupSliceRt(raw[index], &views[index]));
-                    ASSERT_TRUE(pool.NotePlan03GroupReadRt(raw[index], 1));
+                    ASSERT_TRUE(pool.ResolveScheduleGroupSliceRt(raw[index], &views[index]));
+                    ASSERT_TRUE(pool.NoteScheduleGroupReadRt(raw[index], 1));
                 }
                 EXPECT_EQ(!crossBucket, views[primaryIndex].lease == views[memberIndex].lease);
                 ASSERT_EQ(harken::AudioSliceInvalidateDisposition::InvalidatedReady,
@@ -5426,15 +5426,15 @@ TEST(DecisionGroup, NativeOriginalMemberBlocksPrimaryRetirementUntilItsTrueLoanO
                     views[memberIndex].lease->Invalidate(harken::AudioSliceInvalidateReason::Cancel));
                 ASSERT_TRUE(laneHarness.lane.Cancel(laneHarness.handle));
                 ASSERT_TRUE(laneHarness.lane.Retire(laneHarness.handle, 2));
-                ASSERT_TRUE(pool.DetachPlan03GroupFrontier(raw[memberIndex], 2));
-                ASSERT_TRUE(pool.DetachPlan03GroupFrontier(raw[primaryIndex], 2));
+                ASSERT_TRUE(pool.DetachScheduleGroupFrontier(raw[memberIndex], 2));
+                ASSERT_TRUE(pool.DetachScheduleGroupFrontier(raw[primaryIndex], 2));
                 ASSERT_TRUE(readers[primaryIndex].Release(2));
                 if (lifetimeBlocker) ASSERT_TRUE(readers[memberIndex].Release(2));
                 // A blocked member still needs its original primary's live backing.
                 EXPECT_FALSE(pool.CancelImmediateLaneGroups(17, 2, registrations.data(), registrations.size()));
                 for (std::uint32_t index = 0; index < raw.size(); ++index) {
                     ASSERT_TRUE(registrations[index].Valid());
-                    ASSERT_TRUE(pool.ResolvePlan03GroupSliceProducer(raw[index], &views[index]));
+                    ASSERT_TRUE(pool.ResolveScheduleGroupSliceProducer(raw[index], &views[index]));
                     EXPECT_EQ(raw[index], views[index].identity);
                     EXPECT_EQ(harken::AudioSliceState::SliceInvalidated, views[index].lease->Capture().state);
                 }
@@ -5450,7 +5450,7 @@ TEST(DecisionGroup, NativeOriginalMemberBlocksPrimaryRetirementUntilItsTrueLoanO
                 ASSERT_TRUE(pool.CancelImmediateLaneGroups(17, 2, registrations.data(), registrations.size()));
                 for (std::uint32_t index = 0; index < raw.size(); ++index) {
                     EXPECT_FALSE(registrations[index].Valid());
-                    EXPECT_FALSE(pool.ResolvePlan03GroupSliceProducer(raw[index], &views[index]));
+                    EXPECT_FALSE(pool.ResolveScheduleGroupSliceProducer(raw[index], &views[index]));
                     ASSERT_TRUE(laneHarness.decisions.Cancel(laneHarness.tokens[index]));
                     ASSERT_TRUE(laneHarness.decisions.ReclaimCancelled(laneHarness.tokens[index]));
                 }
@@ -5597,15 +5597,15 @@ TEST(DecisionGroup, OriginalDecisionReserveLoansAllowTrueAudioProgressAndRetire)
     harken::ArmGroupToken group{};
     ASSERT_TRUE(groups.Reserve(token, nullptr, 0, &group));
     ASSERT_TRUE(pool.Reset(MakePoolConfig(), 0, request.transport));
-    harken::Plan03GroupSliceInput input{};
+    harken::ScheduleGroupSliceInput input{};
     input.decision = token;
-    ASSERT_EQ(harken::Plan03GroupReserveStatus::Committed, pool.ReservePlan03GroupSlice(input, arms));
-    harken::Plan03PageGroupView nativeGroup{};
-    ASSERT_EQ(1u, pool.CaptureLivePlan03Groups(&nativeGroup, 1));
+    ASSERT_EQ(harken::ScheduleGroupReserveStatus::Committed, pool.ReserveScheduleGroupSlice(input, arms));
+    harken::SchedulePageGroupView nativeGroup{};
+    ASSERT_EQ(1u, pool.CaptureLiveScheduleGroups(&nativeGroup, 1));
     ASSERT_EQ(token.slot, nativeGroup.identity.decision.slot);
     ASSERT_EQ(token.generation, nativeGroup.identity.decision.generation);
     harken::DecisionCommitPayload payload{};
-    // The real native group above backs the existing Plan03 marker carrier.
+    // The real native group above backs the existing Schedule marker carrier.
     payload.pages = {1, 1};
     payload.armGroup = group;
     ASSERT_TRUE(table.Commit(token, payload));
@@ -6032,10 +6032,10 @@ TEST(DecisionGroup, OriginalQueueForeignLoanAllowsGenuinePlacementProofReanchorA
     config.initialImmediateLaneOwnerGates = 4;
     config.initialImmediateLaneDecisionGates = 4;
     ASSERT_TRUE(pool.Reset(config, 0, 9));
-    harken::Plan03GroupSliceInput input{};
+    harken::ScheduleGroupSliceInput input{};
     input.executeFrame = 120;
     input.decision = laneHarness.tokens[0];
-    harken::Plan03GroupSliceIdentity raw{};
+    harken::ScheduleGroupSliceIdentity raw{};
     harken::PreparedPrivateImmediateLaneGroup original;
     ASSERT_TRUE(pool.ReserveImmediateLaneGroup(17, 100, input, arms, &raw, &original));
     harken::PrivateImmediateLaneGroupTransferProof proof;
@@ -6068,23 +6068,23 @@ TEST(DecisionGroup, OriginalQueueForeignLoanAllowsGenuinePlacementProofReanchorA
     binding.operation.transport = 9;
     binding.operation.world = 7;
     binding.primary = raw;
-    ASSERT_TRUE(pool.BindPlan03GroupFrontier(raw, binding));
-    harken::Plan03GroupReaderPin reader;
-    ASSERT_TRUE(pool.AcquirePlan03GroupReader(raw, &reader));
+    ASSERT_TRUE(pool.BindScheduleGroupFrontier(raw, binding));
+    harken::ScheduleGroupReaderPin reader;
+    ASSERT_TRUE(pool.AcquireScheduleGroupReader(raw, &reader));
     ASSERT_TRUE(laneHarness.lane.PinGroups(laneHarness.handle, pool, laneHarness.decisions, 2));
     ASSERT_TRUE(laneHarness.lane.PinArms(laneHarness.handle, arms));
     EXPECT_FALSE(laneHarness.lane.Publish(laneHarness.handle));
     placement.Release();
     ASSERT_TRUE(pool.PublishImmediateLaneGroups(17));
     ASSERT_TRUE(laneHarness.lane.Publish(laneHarness.handle));
-    harken::Plan03PageGroupView view{};
-    ASSERT_TRUE(pool.ResolvePlan03GroupSliceRt(raw, &view));
-    std::array<harken::Plan03PageGroupView, 1> due{};
+    harken::SchedulePageGroupView view{};
+    ASSERT_TRUE(pool.ResolveScheduleGroupSliceRt(raw, &view));
+    std::array<harken::SchedulePageGroupView, 1> due{};
     ASSERT_EQ(1u, pool.CaptureImmediateLaneGroupsRt(5, due.data(), due.size()));
     EXPECT_EQ(raw, due[0].identity);
     harken::ImmediateLaneFrontierClaim frontierClaim{};
     ASSERT_TRUE(pool.ClaimImmediateLaneFrontier(raw, &frontierClaim));
-    ASSERT_TRUE(pool.NotePlan03GroupReadRt(raw, 1));
+    ASSERT_TRUE(pool.NoteScheduleGroupReadRt(raw, 1));
     std::uint32_t applied = 0;
     SliceStep step{view.lease, &applied};
     harken::AudioSliceOperation operation{&step, ValidateSliceStep, nullptr, ApplySliceStep};
@@ -6097,8 +6097,8 @@ TEST(DecisionGroup, OriginalQueueForeignLoanAllowsGenuinePlacementProofReanchorA
     ASSERT_TRUE(pool.ReleaseImmediateLaneFrontier(&frontierClaim));
     ASSERT_TRUE(laneHarness.lane.Cancel(laneHarness.handle));
     ASSERT_TRUE(laneHarness.lane.Retire(laneHarness.handle, 2));
-    EXPECT_FALSE(pool.DetachPlan03GroupFrontier(raw, 1));
-    ASSERT_TRUE(pool.DetachPlan03GroupFrontier(raw, 2));
+    EXPECT_FALSE(pool.DetachScheduleGroupFrontier(raw, 1));
+    ASSERT_TRUE(pool.DetachScheduleGroupFrontier(raw, 2));
     EXPECT_FALSE(reader.Release(1));
     ASSERT_TRUE(reader.Release(2));
     registration.Release();
@@ -6107,7 +6107,7 @@ TEST(DecisionGroup, OriginalQueueForeignLoanAllowsGenuinePlacementProofReanchorA
     lifetime.Release();
     EXPECT_FALSE(pool.CancelImmediateLaneGroups(17, 1));
     ASSERT_TRUE(pool.CancelImmediateLaneGroups(17, 2));
-    EXPECT_FALSE(pool.ResolvePlan03GroupSliceProducer(raw, &view));
+    EXPECT_FALSE(pool.ResolveScheduleGroupSliceProducer(raw, &view));
     ASSERT_TRUE(laneHarness.decisions.Cancel(laneHarness.tokens[0]));
     ASSERT_TRUE(laneHarness.decisions.ReclaimCancelled(laneHarness.tokens[0]));
     EXPECT_EQ(0u, laneHarness.decisions.LiveCount());
@@ -6128,8 +6128,8 @@ struct GenuineOriginalGroupClockHarness {
     harken::ImmediateActionLane lane;
     harken::ImmediateLaneHandle handle{};
     std::array<harken::DecisionToken, 6> tokens{};
-    std::array<harken::Plan03GroupSliceInput, 6> inputs{};
-    std::array<harken::Plan03GroupSliceIdentity, 6> raw{};
+    std::array<harken::ScheduleGroupSliceInput, 6> inputs{};
+    std::array<harken::ScheduleGroupSliceIdentity, 6> raw{};
     std::array<harken::OriginalQueueFutureGroupRegistration, 6> registrations{};
     std::array<harken::FrontierGroupBinding, 4> bindings{};
     harken::PrivateImmediateLanePlacementProof placement;
@@ -6192,7 +6192,7 @@ struct GenuineOriginalGroupClockHarness {
             binding.operation.transport = 9;
             binding.operation.world = 7;
             binding.primary = raw[primary];
-            ASSERT_TRUE(pool.BindPlan03GroupFrontier(raw[i], binding));
+            ASSERT_TRUE(pool.BindScheduleGroupFrontier(raw[i], binding));
         }
         if (pinGroups) ASSERT_NO_FATAL_FAILURE(Pin());
     }
@@ -6208,8 +6208,8 @@ struct GenuineOriginalGroupClockHarness {
     }
 
     harken::AudioSliceLease* Lease(std::uint32_t index) {
-        harken::Plan03PageGroupView actual{};
-        EXPECT_TRUE(pool.ResolvePlan03GroupSliceProducer(raw[index], &actual));
+        harken::SchedulePageGroupView actual{};
+        EXPECT_TRUE(pool.ResolveScheduleGroupSliceProducer(raw[index], &actual));
         return actual.lease;
     }
 
@@ -6218,7 +6218,7 @@ struct GenuineOriginalGroupClockHarness {
         ASSERT_TRUE(lane.Cancel(handle));
         ASSERT_TRUE(lane.Retire(handle, completed));
         for (std::uint32_t i = count; i != 0; --i)
-            ASSERT_TRUE(pool.DetachPlan03GroupFrontier(raw[i - 1], completed));
+            ASSERT_TRUE(pool.DetachScheduleGroupFrontier(raw[i - 1], completed));
         ASSERT_TRUE(pool.CancelImmediateLaneGroups(17, completed,
             registrations.data(), registrations.size()));
         for (std::uint32_t i = 0; i < count; ++i) {
@@ -6234,7 +6234,7 @@ struct GenuineOriginalGroupClockHarness {
 TEST(DecisionGroup, OriginalGroupClockSharedActualLeaseReturnReproveAndAllPrivateGates) {
     static_assert(!std::is_copy_constructible_v<OriginalGroupClockProof>);
     static_assert(!std::is_copy_assignable_v<OriginalGroupClockProof>);
-    static_assert(!std::is_constructible_v<OriginalGroupClockProof, harken::Plan03GroupSliceIdentity>);
+    static_assert(!std::is_constructible_v<OriginalGroupClockProof, harken::ScheduleGroupSliceIdentity>);
     GenuineOriginalGroupClockHarness state;
     ASSERT_NO_FATAL_FAILURE(state.Prepare(true));
     auto* const primaryLease = state.Lease(0);
@@ -6255,17 +6255,17 @@ TEST(DecisionGroup, OriginalGroupClockSharedActualLeaseReturnReproveAndAllPrivat
     ASSERT_TRUE(proof.CaptureAnchorFrame(&captured));
     EXPECT_EQ(400u, captured);
     for (std::uint32_t i = 0; i < state.count; ++i) {
-        EXPECT_FALSE(state.pool.PrivatePlan03GroupBindable(state.raw[i]));
+        EXPECT_FALSE(state.pool.PrivateScheduleGroupBindable(state.raw[i]));
         EXPECT_FALSE(state.pool.PrivateImmediateLaneFrontierRollbackReady(state.raw[i]));
         EXPECT_FALSE(state.pool.PrivateImmediateLaneGroupRetirementReady(state.raw[i], 0));
-        EXPECT_FALSE(state.pool.BindPlan03GroupFrontier(state.raw[i], state.bindings[i]));
-        EXPECT_FALSE(state.pool.DetachPlan03GroupFrontier(state.raw[i], 0));
+        EXPECT_FALSE(state.pool.BindScheduleGroupFrontier(state.raw[i], state.bindings[i]));
+        EXPECT_FALSE(state.pool.DetachScheduleGroupFrontier(state.raw[i], 0));
         EXPECT_FALSE(state.pool.BindImmediateLaneGroupOwner(state.raw[i], state.lane,
             17, state.handle.slot, state.handle.generation));
         EXPECT_FALSE(state.pool.CancelPrivateImmediateLaneGroup(17, state.raw[i],
             &state.registrations[i]));
-        harken::Plan03GroupReaderPin reader;
-        EXPECT_FALSE(state.pool.AcquirePlan03GroupReader(state.raw[i], &reader));
+        harken::ScheduleGroupReaderPin reader;
+        EXPECT_FALSE(state.pool.AcquireScheduleGroupReader(state.raw[i], &reader));
         harken::ImmediateLaneFrontierClaim claim{};
         EXPECT_FALSE(state.pool.ClaimPrivateImmediateLaneFrontier(state.raw[i], &claim));
         EXPECT_FALSE(claim.Valid());
@@ -6303,8 +6303,8 @@ TEST(DecisionGroup, OriginalGroupClockDistinctActualLeasesPreserveForeignLoanOld
     EXPECT_NE(state.Lease(1), state.Lease(3));
     harken::OriginalQueueFutureGroupLifetimePin foreign;
     ASSERT_TRUE(state.registrations[3].BorrowLifetime(&foreign));
-    harken::Plan03GroupReaderPin actualReader;
-    ASSERT_TRUE(state.pool.AcquirePlan03GroupReader(state.raw[3], &actualReader));
+    harken::ScheduleGroupReaderPin actualReader;
+    ASSERT_TRUE(state.pool.AcquireScheduleGroupReader(state.raw[3], &actualReader));
     OriginalGroupClockProof proof;
     ASSERT_TRUE(state.Prove(&proof));
     for (std::uint32_t i = 0; i < state.count; ++i)
@@ -6320,7 +6320,7 @@ TEST(DecisionGroup, OriginalGroupClockDistinctActualLeasesPreserveForeignLoanOld
         harken::ImmediateLaneFrontierClaim claim{};
         ASSERT_TRUE(state.pool.ClaimImmediateLaneFrontier(state.raw[primary], &claim));
         for (const auto i : {primary, primary + 1})
-            ASSERT_TRUE(state.pool.NotePlan03GroupReadRt(state.raw[i], 1));
+            ASSERT_TRUE(state.pool.NoteScheduleGroupReadRt(state.raw[i], 1));
         std::uint32_t applied = 0;
         SliceStep step{state.Lease(primary), &applied};
         harken::AudioSliceOperation operation{&step, ValidateSliceStep, nullptr, ApplySliceStep};
@@ -6333,11 +6333,11 @@ TEST(DecisionGroup, OriginalGroupClockDistinctActualLeasesPreserveForeignLoanOld
     ASSERT_TRUE(state.lane.Cancel(state.handle));
     EXPECT_FALSE(state.lane.Retire(state.handle, 1));
     ASSERT_TRUE(state.lane.Retire(state.handle, 2));
-    EXPECT_FALSE(state.pool.DetachPlan03GroupFrontier(state.raw[3], 1));
-    ASSERT_TRUE(state.pool.DetachPlan03GroupFrontier(state.raw[3], 2));
-    ASSERT_TRUE(state.pool.DetachPlan03GroupFrontier(state.raw[2], 2));
-    ASSERT_TRUE(state.pool.DetachPlan03GroupFrontier(state.raw[1], 2));
-    ASSERT_TRUE(state.pool.DetachPlan03GroupFrontier(state.raw[0], 2));
+    EXPECT_FALSE(state.pool.DetachScheduleGroupFrontier(state.raw[3], 1));
+    ASSERT_TRUE(state.pool.DetachScheduleGroupFrontier(state.raw[3], 2));
+    ASSERT_TRUE(state.pool.DetachScheduleGroupFrontier(state.raw[2], 2));
+    ASSERT_TRUE(state.pool.DetachScheduleGroupFrontier(state.raw[1], 2));
+    ASSERT_TRUE(state.pool.DetachScheduleGroupFrontier(state.raw[0], 2));
     EXPECT_FALSE(actualReader.Release(1));
     ASSERT_TRUE(actualReader.Release(2));
     EXPECT_FALSE(state.pool.CancelImmediateLaneGroups(17, 2,
@@ -6452,10 +6452,10 @@ TEST(DecisionGroup, OriginalGroupClockMoveOverwriteAndDestructorReturnExactNativ
         moved = std::move(secondProof);
         EXPECT_FALSE(secondProof.Valid());
         EXPECT_EQ(harken::AudioSliceState::Ready, first.Lease(0)->Capture().state);
-        EXPECT_TRUE(first.pool.PrivatePlan03GroupBindable(first.raw[0]));
+        EXPECT_TRUE(first.pool.PrivateScheduleGroupBindable(first.raw[0]));
         EXPECT_TRUE(second.pool.IsPrivateOriginalQueueGroupClockProofFor(moved,
             second.registrations[1], second.registrations[3]));
-        EXPECT_FALSE(second.pool.DetachPlan03GroupFrontier(second.raw[2], 0));
+        EXPECT_FALSE(second.pool.DetachScheduleGroupFrontier(second.raw[2], 0));
         EXPECT_FALSE(second.pool.PublishImmediateLaneGroups(17));
         EXPECT_FALSE(second.lane.Cancel(second.handle));
     }
@@ -6487,7 +6487,7 @@ TEST(DecisionGroup, OriginalGroupClockHeldDoesNotBlockActualOldApplyOrOwnerStopA
     binding.primary = state.raw[3];
     binding.operation.group = state.raw[3];
     binding.operation.order.executeFrame = 320;
-    ASSERT_TRUE(state.pool.BindPlan03GroupFrontier(state.raw[3], binding));
+    ASSERT_TRUE(state.pool.BindScheduleGroupFrontier(state.raw[3], binding));
     ASSERT_TRUE(oldLane.PinGroups(oldHandle, state.pool, state.decisions, 1));
     ASSERT_TRUE(oldLane.PinArms(oldHandle, state.arms));
     ASSERT_TRUE(state.pool.PublishImmediateLaneGroups(19));
@@ -6499,7 +6499,7 @@ TEST(DecisionGroup, OriginalGroupClockHeldDoesNotBlockActualOldApplyOrOwnerStopA
     ASSERT_TRUE(oldLane.Claim(oldHandle, bucket));
     harken::ImmediateLaneFrontierClaim claim{};
     ASSERT_TRUE(state.pool.ClaimImmediateLaneFrontier(state.raw[3], &claim));
-    ASSERT_TRUE(state.pool.NotePlan03GroupReadRt(state.raw[3], 1));
+    ASSERT_TRUE(state.pool.NoteScheduleGroupReadRt(state.raw[3], 1));
     std::uint32_t applied = 0;
     SliceStep step{state.Lease(3), &applied};
     harken::AudioSliceOperation operation{&step, ValidateSliceStep, nullptr, ApplySliceStep};
@@ -6515,8 +6515,8 @@ TEST(DecisionGroup, OriginalGroupClockHeldDoesNotBlockActualOldApplyOrOwnerStopA
     ASSERT_TRUE(oldLane.Cancel(oldHandle));
     EXPECT_FALSE(oldLane.Retire(oldHandle, 1));
     ASSERT_TRUE(oldLane.Retire(oldHandle, 2));
-    EXPECT_FALSE(state.pool.DetachPlan03GroupFrontier(state.raw[3], 1));
-    ASSERT_TRUE(state.pool.DetachPlan03GroupFrontier(state.raw[3], 2));
+    EXPECT_FALSE(state.pool.DetachScheduleGroupFrontier(state.raw[3], 1));
+    ASSERT_TRUE(state.pool.DetachScheduleGroupFrontier(state.raw[3], 2));
     ASSERT_TRUE(state.pool.CancelImmediateLaneGroups(19, 2,
         state.registrations.data(), state.registrations.size()));
     ASSERT_TRUE(state.decisions.Cancel(state.tokens[3]));
@@ -6589,12 +6589,12 @@ TEST(DecisionGroup, SelectedFutureDomainSeparatesARealSameNumericOrdinaryCohort)
     binding.operation.group = state.raw[4];
     binding.operation.order.executeFrame = 520;
     binding.primary = state.raw[4];
-    ASSERT_TRUE(state.pool.BindPlan03GroupFrontier(state.raw[4], binding));
+    ASSERT_TRUE(state.pool.BindScheduleGroupFrontier(state.raw[4], binding));
     ASSERT_TRUE(ordinaryLane.PinGroups(ordinaryHandle, state.pool, state.decisions, 1));
     ASSERT_TRUE(ordinaryLane.PinArms(ordinaryHandle, state.arms));
     ASSERT_TRUE(ordinaryLane.Cancel(ordinaryHandle));
     ASSERT_TRUE(ordinaryLane.Retire(ordinaryHandle, 0));
-    ASSERT_TRUE(state.pool.DetachPlan03GroupFrontier(state.raw[4], 0));
+    ASSERT_TRUE(state.pool.DetachScheduleGroupFrontier(state.raw[4], 0));
     EXPECT_FALSE(state.pool.IsOriginalQueueFutureGroupFamily(state.registrations[4],
         state.registrations[5]));
     ASSERT_TRUE(state.pool.CancelImmediateLaneGroups(domain.RootObservation(), 0,
@@ -6643,7 +6643,7 @@ TEST(DecisionGroup, SelectedFutureDomainOwnCalendarCapacityAndForeignAttemptTail
         binding.operation.group = state.raw[index];
         binding.operation.order.executeFrame = 520;
         binding.primary = state.raw[4];
-        ASSERT_TRUE(state.pool.BindPlan03GroupFrontier(state.raw[index], binding));
+        ASSERT_TRUE(state.pool.BindScheduleGroupFrontier(state.raw[index], binding));
     }
     std::array<harken::ImmediateLaneGroupRef, 2> ordinary{};
     EXPECT_EQ(0u, state.pool.CaptureImmediateLaneCohortGroups(
@@ -6652,11 +6652,11 @@ TEST(DecisionGroup, SelectedFutureDomainOwnCalendarCapacityAndForeignAttemptTail
     ASSERT_TRUE(newLane.PinGroups(handle, state.pool, state.decisions, 2));
     ASSERT_TRUE(newLane.PinArms(handle, state.arms));
     ASSERT_TRUE(domain.PublishGroups());
-    harken::Plan03PageGroupView hidden{};
-    EXPECT_FALSE(state.pool.ResolvePlan03GroupSliceRt(state.raw[4], &hidden));
+    harken::SchedulePageGroupView hidden{};
+    EXPECT_FALSE(state.pool.ResolveScheduleGroupSliceRt(state.raw[4], &hidden));
     ASSERT_TRUE(newLane.Cancel(handle));
-    harken::Plan03PageGroupView ownPrimary{};
-    ASSERT_TRUE(state.pool.ResolvePlan03GroupSliceProducer(state.raw[4], &ownPrimary));
+    harken::SchedulePageGroupView ownPrimary{};
+    ASSERT_TRUE(state.pool.ResolveScheduleGroupSliceProducer(state.raw[4], &ownPrimary));
     ASSERT_NE(nullptr, ownPrimary.lease);
     ASSERT_EQ(harken::AudioSliceInvalidateDisposition::InvalidatedReady,
         ownPrimary.lease->Invalidate(harken::AudioSliceInvalidateReason::Cancel));
@@ -6667,8 +6667,8 @@ TEST(DecisionGroup, SelectedFutureDomainOwnCalendarCapacityAndForeignAttemptTail
     foreign.Return();
     ASSERT_TRUE(newLane.Retire(handle, 0, &baseline));
     EXPECT_FALSE(domain.Return());
-    ASSERT_TRUE(state.pool.DetachPlan03GroupFrontier(state.raw[5], 0));
-    ASSERT_TRUE(state.pool.DetachPlan03GroupFrontier(state.raw[4], 0));
+    ASSERT_TRUE(state.pool.DetachScheduleGroupFrontier(state.raw[5], 0));
+    ASSERT_TRUE(state.pool.DetachScheduleGroupFrontier(state.raw[4], 0));
     ASSERT_TRUE(domain.CancelGroups(0, state.registrations.data(), state.registrations.size()));
     ASSERT_TRUE(domain.Return());
     ASSERT_NO_FATAL_FAILURE(DisposeSelectedTestDecision(state, 4));
@@ -6720,7 +6720,7 @@ struct NativeGroupOriginFixture {
     harken::TimelineArmToken arm{};
     harken::ScheduledTransactionPool::Config Config() {
         auto config = MakePoolConfig();
-        config.maxPlan03GroupHeadersPerPage = 3;
+        config.maxScheduleGroupHeadersPerPage = 3;
         config.maxImmediateLaneGroupRows = 2;
         config.initialImmediateLaneOwnerGates = 4;
         config.initialImmediateLaneDecisionGates = 4;
@@ -6731,8 +6731,8 @@ struct NativeGroupOriginFixture {
         ASSERT_TRUE(decisions.Reserve(MakeRequest(), &decision));
         ASSERT_TRUE(arms.PreparePendingImmediateGrouped(10, 1, 7, {}, {decision}, 0, &arm));
     }
-    harken::Plan03GroupSliceInput Input(std::uint32_t slice = 0) {
-        harken::Plan03GroupSliceInput input{};
+    harken::ScheduleGroupSliceInput Input(std::uint32_t slice = 0) {
+        harken::ScheduleGroupSliceInput input{};
         input.executeFrame = 200;
         input.decision = decision;
         input.sliceIndex = slice;
@@ -6741,9 +6741,9 @@ struct NativeGroupOriginFixture {
         return input;
     }
     void Prepare(harken::ScheduledTransactionPool& target, std::uint32_t slice,
-        harken::PreparedPlan03GroupSlice& prepared, harken::Plan03GroupSliceIdentity& identity) {
-        ASSERT_EQ(harken::Plan03GroupReserveStatus::Committed,
-            target.PreparePlan03GroupSlice(Input(slice), arms, &prepared));
+        harken::PreparedScheduleGroupSlice& prepared, harken::ScheduleGroupSliceIdentity& identity) {
+        ASSERT_EQ(harken::ScheduleGroupReserveStatus::Committed,
+            target.PrepareScheduleGroupSlice(Input(slice), arms, &prepared));
         identity = MemberOriginAccess::ObservePreparedOrigin(target, decision, slice);
         ASSERT_TRUE(identity.Exact());
     }
@@ -6762,15 +6762,15 @@ TEST(DecisionGroup, AcceptedPageMemberBackingSurvivesAllocationRefusalAndRollbac
     ASSERT_TRUE(f.pool.ReserveUnplacedBatchCredit({0, 0, 0, 0, 2}, &credit));
     const std::array groups{f.Input(0), f.Input(1)};
     PageMemberAllocationFault fault;
-    harken::PreparedPlan03GroupSlice refused;
-    EXPECT_EQ(harken::Plan03GroupReserveStatus::MemberCapacity,
-        f.pool.PreparePlan03GroupSlice(f.Input(2), f.arms, &refused));
+    harken::PreparedScheduleGroupSlice refused;
+    EXPECT_EQ(harken::ScheduleGroupReserveStatus::MemberCapacity,
+        f.pool.PrepareScheduleGroupSlice(f.Input(2), f.arms, &refused));
     EXPECT_FALSE(refused.Valid());
     for (const bool commit : {false, true}) {
         PageMemberAllocationFault retryFault;
         harken::ScheduledTransactionPool::PrivateMaterializationTransaction lease;
         harken::ReserveRefusal refusal{};
-        harken::Plan03GroupReserveStatus status{};
+        harken::ScheduleGroupReserveStatus status{};
         ASSERT_TRUE(f.pool.TryMaterializeUnplacedBatch(&credit, nullptr, 0,
             groups.data(), groups.size(), f.arms, 0, &lease, &refusal, &status));
         EXPECT_EQ(2u, MemberOriginAccess::Count(f.arms, f.arm));
@@ -6794,21 +6794,21 @@ TEST(DecisionGroup, IndependentGroupCannotBorrowAnActiveCreditMemberBacking) {
     empty.members = nullptr;
     empty.memberCount = 0;
     harken::ReserveRefusal refusal{};
-    harken::Plan03GroupReserveStatus status{};
+    harken::ScheduleGroupReserveStatus status{};
     {
         harken::ScheduledTransactionPool::PrivateMaterializationTransaction lease;
         ASSERT_TRUE(f.pool.TryMaterializeUnplacedBatch(&credit, nullptr, 0,
             &empty, 1, f.arms, 0, &lease, &refusal, &status));
-        harken::PreparedPlan03GroupSlice independent;
+        harken::PreparedScheduleGroupSlice independent;
         {
             PageMemberAllocationFault fault;
-            EXPECT_EQ(harken::Plan03GroupReserveStatus::MemberCapacity,
-                f.pool.PreparePlan03GroupSlice(f.Input(1), f.arms, &independent));
+            EXPECT_EQ(harken::ScheduleGroupReserveStatus::MemberCapacity,
+                f.pool.PrepareScheduleGroupSlice(f.Input(1), f.arms, &independent));
         }
         {
             PageMemberAllocationFault fault;
-            EXPECT_EQ(harken::Plan03GroupReserveStatus::MemberCapacity,
-                f.pool.ReservePlan03GroupSlice(f.Input(1), f.arms));
+            EXPECT_EQ(harken::ScheduleGroupReserveStatus::MemberCapacity,
+                f.pool.ReserveScheduleGroupSlice(f.Input(1), f.arms));
         }
         EXPECT_FALSE(independent.Valid());
         EXPECT_EQ(0u, MemberOriginAccess::Count(f.arms, f.arm));
@@ -6831,11 +6831,11 @@ TEST(DecisionGroup, IndependentGroupCannotBorrowAnActiveCreditMemberBacking) {
 TEST(DecisionGroup, PageMemberReplacementGrowthPreparesBeforeChangingOriginals) {
     NativeGroupOriginFixture f;
     ASSERT_NO_FATAL_FAILURE(f.Init());
-    harken::PreparedPlan03GroupSlice prepared;
-    harken::Plan03GroupSliceIdentity identity{};
+    harken::PreparedScheduleGroupSlice prepared;
+    harken::ScheduleGroupSliceIdentity identity{};
     ASSERT_NO_FATAL_FAILURE(f.Prepare(f.pool, 0, prepared, identity));
-    harken::CommittedPlan03GroupSlice committed;
-    ASSERT_TRUE(f.pool.CommitPreparedPlan03GroupSlice(&prepared, &committed));
+    harken::CommittedScheduleGroupSlice committed;
+    ASSERT_TRUE(f.pool.CommitPreparedScheduleGroupSlice(&prepared, &committed));
     const auto* original = MemberOriginAccess::Member(f.pool, identity);
     identity = MemberOriginAccess::Group(original);
     const auto serial = MemberOriginAccess::Serial(original);
@@ -6845,23 +6845,23 @@ TEST(DecisionGroup, PageMemberReplacementGrowthPreparesBeforeChangingOriginals) 
     auto input = f.Input();
     input.members = members.data();
     input.memberCount = static_cast<std::uint16_t>(members.size());
-    harken::PreparedPlan03GroupSliceReplacement replacement;
+    harken::PreparedScheduleGroupSliceReplacement replacement;
     {
         PageMemberAllocationFault fault;
-        EXPECT_EQ(harken::Plan03GroupReserveStatus::MemberCapacity,
-            f.pool.PreparePlan03GroupSliceReplacement(identity, input, f.arms, &replacement));
+        EXPECT_EQ(harken::ScheduleGroupReserveStatus::MemberCapacity,
+            f.pool.PrepareScheduleGroupSliceReplacement(identity, input, f.arms, &replacement));
         EXPECT_FALSE(replacement.Valid());
         EXPECT_EQ(serial, MemberOriginAccess::Serial(original));
         EXPECT_EQ(0u, MemberOriginAccess::Count(f.arms, second));
     }
-    ASSERT_EQ(harken::Plan03GroupReserveStatus::Committed,
-        f.pool.PreparePlan03GroupSliceReplacement(identity, input, f.arms, &replacement));
-    harken::PreparedPlan03GroupSliceReplacement competing;
-    EXPECT_EQ(harken::Plan03GroupReserveStatus::PageFrozen,
-        f.pool.PreparePlan03GroupSliceReplacement(identity, input, f.arms, &competing));
+    ASSERT_EQ(harken::ScheduleGroupReserveStatus::Committed,
+        f.pool.PrepareScheduleGroupSliceReplacement(identity, input, f.arms, &replacement));
+    harken::PreparedScheduleGroupSliceReplacement competing;
+    EXPECT_EQ(harken::ScheduleGroupReserveStatus::PageFrozen,
+        f.pool.PrepareScheduleGroupSliceReplacement(identity, input, f.arms, &competing));
     {
         PageMemberAllocationFault fault;
-        ASSERT_TRUE(f.pool.CommitPreparedPlan03GroupSliceReplacement(&replacement));
+        ASSERT_TRUE(f.pool.CommitPreparedScheduleGroupSliceReplacement(&replacement));
     }
     EXPECT_EQ(1u, MemberOriginAccess::Count(f.arms, f.arm));
     EXPECT_EQ(1u, MemberOriginAccess::Count(f.arms, second));
@@ -6869,7 +6869,7 @@ TEST(DecisionGroup, PageMemberReplacementGrowthPreparesBeforeChangingOriginals) 
     EXPECT_NE(serial, MemberOriginAccess::Serial(current));
     EXPECT_TRUE(MemberOriginAccess::Covers(f.arms, f.arm, std::array{current}));
     EXPECT_TRUE(MemberOriginAccess::Covers(f.arms, second, std::array{current + 1}));
-    ASSERT_TRUE(f.pool.RollbackCommittedPlan03GroupSlice(&committed));
+    ASSERT_TRUE(f.pool.RollbackCommittedScheduleGroupSlice(&committed));
     EXPECT_EQ(0u, MemberOriginAccess::Count(f.arms, f.arm));
     EXPECT_EQ(0u, MemberOriginAccess::Count(f.arms, second));
 }
@@ -6879,8 +6879,8 @@ TEST(DecisionGroup, NativeMemberOriginsCoverActualPageImmediateAndForeignPoolTog
     ASSERT_NO_FATAL_FAILURE(f.Init());
     harken::ScheduledTransactionPool other;
     ASSERT_TRUE(other.Reset(f.Config(), 0, 9));
-    harken::PreparedPlan03GroupSlice first, foreign;
-    harken::Plan03GroupSliceIdentity firstId{}, foreignId{}, immediateId{};
+    harken::PreparedScheduleGroupSlice first, foreign;
+    harken::ScheduleGroupSliceIdentity firstId{}, foreignId{}, immediateId{};
     ASSERT_NO_FATAL_FAILURE(f.Prepare(f.pool, 0, first, firstId));
     ASSERT_NO_FATAL_FAILURE(f.Prepare(other, 1, foreign, foreignId));
     ASSERT_TRUE(f.pool.ReserveImmediateLaneGroup(17, 100, f.Input(2), f.arms, &immediateId));
@@ -6893,37 +6893,37 @@ TEST(DecisionGroup, NativeMemberOriginsCoverActualPageImmediateAndForeignPoolTog
     EXPECT_TRUE(MemberOriginAccess::Covers(f.arms, f.arm, std::array{a, b, c}));
     harken::TimelineArmTable foreignReceiver(2);
     EXPECT_FALSE(MemberOriginAccess::Covers(foreignReceiver, f.arm, std::array{a, b, c}));
-    ASSERT_TRUE(other.CancelPreparedPlan03GroupSlice(&foreign));
+    ASSERT_TRUE(other.CancelPreparedScheduleGroupSlice(&foreign));
     EXPECT_EQ(2u, MemberOriginAccess::Count(f.arms, f.arm));
     EXPECT_FALSE(MemberOriginAccess::Covers(f.arms, f.arm, std::array{a, b}));
-    harken::Plan03GroupReaderPin reader;
-    ASSERT_TRUE(f.pool.AcquirePlan03GroupReader(immediateId, &reader));
+    harken::ScheduleGroupReaderPin reader;
+    ASSERT_TRUE(f.pool.AcquireScheduleGroupReader(immediateId, &reader));
     EXPECT_FALSE(f.pool.CancelPrivateImmediateLaneGroup(17, immediateId));
     EXPECT_EQ(2u, MemberOriginAccess::Count(f.arms, f.arm));
     ASSERT_TRUE(reader.Release(0));
     ASSERT_TRUE(f.pool.CancelPrivateImmediateLaneGroup(17, immediateId));
     EXPECT_TRUE(MemberOriginAccess::Covers(f.arms, f.arm, std::array{a}));
-    ASSERT_TRUE(f.pool.CancelPreparedPlan03GroupSlice(&first));
+    ASSERT_TRUE(f.pool.CancelPreparedScheduleGroupSlice(&first));
     EXPECT_EQ(0u, MemberOriginAccess::Count(f.arms, f.arm));
 }
 
 TEST(DecisionGroup, NativeMemberCommitKeepsOriginalSerialAndOwnershipReleaseKeepsRealObligation) {
     NativeGroupOriginFixture f;
     ASSERT_NO_FATAL_FAILURE(f.Init());
-    harken::PreparedPlan03GroupSlice prepared;
-    harken::Plan03GroupSliceIdentity identity{};
+    harken::PreparedScheduleGroupSlice prepared;
+    harken::ScheduleGroupSliceIdentity identity{};
     ASSERT_NO_FATAL_FAILURE(f.Prepare(f.pool, 0, prepared, identity));
     const auto* original = MemberOriginAccess::Member(f.pool, identity);
     const auto serial = MemberOriginAccess::Serial(original);
-    harken::CommittedPlan03GroupSlice committed;
-    ASSERT_TRUE(f.pool.CommitPreparedPlan03GroupSlice(&prepared, &committed));
+    harken::CommittedScheduleGroupSlice committed;
+    ASSERT_TRUE(f.pool.CommitPreparedScheduleGroupSlice(&prepared, &committed));
     EXPECT_EQ(serial, MemberOriginAccess::Serial(original));
     identity = MemberOriginAccess::Group(original);
-    harken::Plan03ExactGroupSnapshot actual{};
-    ASSERT_TRUE(f.pool.CaptureExactPlan03Group(identity, &actual));
+    harken::ScheduleExactGroupSnapshot actual{};
+    ASSERT_TRUE(f.pool.CaptureExactScheduleGroup(identity, &actual));
     EXPECT_EQ(identity, actual.identity);
     EXPECT_EQ(1u, MemberOriginAccess::Count(f.arms, f.arm));
-    ASSERT_TRUE(f.pool.ReleaseCommittedPlan03GroupSliceOwnership(&committed));
+    ASSERT_TRUE(f.pool.ReleaseCommittedScheduleGroupSliceOwnership(&committed));
     EXPECT_TRUE(MemberOriginAccess::Covers(f.arms, f.arm, std::array{original}));
     f.pool.DropPreparedOccupancy();
     EXPECT_EQ(0u, MemberOriginAccess::Count(f.arms, f.arm));
@@ -6933,8 +6933,8 @@ TEST(DecisionGroup, NativeMemberCommitKeepsOriginalSerialAndOwnershipReleaseKeep
 TEST(DecisionGroup, NativeOldMemberReturnAfterStrictArmReclaimNeverDecrementsReusedGeneration) {
     NativeGroupOriginFixture f;
     ASSERT_NO_FATAL_FAILURE(f.Init());
-    harken::PreparedPlan03GroupSlice oldGroup, newGroup;
-    harken::Plan03GroupSliceIdentity oldId{}, newId{};
+    harken::PreparedScheduleGroupSlice oldGroup, newGroup;
+    harken::ScheduleGroupSliceIdentity oldId{}, newId{};
     ASSERT_NO_FATAL_FAILURE(f.Prepare(f.pool, 0, oldGroup, oldId));
     const auto oldArm = f.arm;
     ASSERT_TRUE(f.arms.CommitPrepared(oldArm));
@@ -6951,36 +6951,36 @@ TEST(DecisionGroup, NativeOldMemberReturnAfterStrictArmReclaimNeverDecrementsReu
     ASSERT_NO_FATAL_FAILURE(f.Prepare(f.pool, 1, newGroup, newId));
     const auto* current = MemberOriginAccess::Member(f.pool, newId);
     ASSERT_EQ(1u, MemberOriginAccess::Count(f.arms, f.arm));
-    ASSERT_TRUE(f.pool.CancelPreparedPlan03GroupSlice(&oldGroup));
+    ASSERT_TRUE(f.pool.CancelPreparedScheduleGroupSlice(&oldGroup));
     EXPECT_EQ(1u, MemberOriginAccess::Count(f.arms, f.arm));
     EXPECT_TRUE(MemberOriginAccess::Covers(f.arms, f.arm, std::array{current}));
-    ASSERT_TRUE(f.pool.CancelPreparedPlan03GroupSlice(&newGroup));
+    ASSERT_TRUE(f.pool.CancelPreparedScheduleGroupSlice(&newGroup));
     EXPECT_EQ(0u, MemberOriginAccess::Count(f.arms, f.arm));
 }
 
 TEST(DecisionGroup, NativeMemberReplacementFailurePreservesOldOriginAndSuccessfulSwapReturnsIt) {
     NativeGroupOriginFixture f;
     ASSERT_NO_FATAL_FAILURE(f.Init());
-    harken::PreparedPlan03GroupSlice prepared;
-    harken::Plan03GroupSliceIdentity identity{};
+    harken::PreparedScheduleGroupSlice prepared;
+    harken::ScheduleGroupSliceIdentity identity{};
     ASSERT_NO_FATAL_FAILURE(f.Prepare(f.pool, 0, prepared, identity));
-    harken::CommittedPlan03GroupSlice committed;
-    ASSERT_TRUE(f.pool.CommitPreparedPlan03GroupSlice(&prepared, &committed));
+    harken::CommittedScheduleGroupSlice committed;
+    ASSERT_TRUE(f.pool.CommitPreparedScheduleGroupSlice(&prepared, &committed));
     const auto* original = MemberOriginAccess::Member(f.pool, identity);
     identity = MemberOriginAccess::Group(original);
-    harken::Plan03ExactGroupSnapshot actual{};
-    ASSERT_TRUE(f.pool.CaptureExactPlan03Group(identity, &actual));
+    harken::ScheduleExactGroupSnapshot actual{};
+    ASSERT_TRUE(f.pool.CaptureExactScheduleGroup(identity, &actual));
     const auto serial = MemberOriginAccess::Serial(original);
     auto replacement = f.Input();
     harken::TimelineArmToken wrongRender = f.arm;
     ++wrongRender.renderGeneration;
     replacement.members = &wrongRender;
-    harken::PreparedPlan03GroupSliceReplacement refused;
-    const auto status = f.pool.PreparePlan03GroupSliceReplacement(identity, replacement, f.arms, &refused);
-    if (status == harken::Plan03GroupReserveStatus::Committed) {
-        EXPECT_FALSE(f.pool.CommitPreparedPlan03GroupSliceReplacement(&refused));
-        ASSERT_TRUE(f.pool.CancelPreparedPlan03GroupSliceReplacement(&refused));
-    } else EXPECT_EQ(harken::Plan03GroupReserveStatus::ArmIdentityMismatch, status);
+    harken::PreparedScheduleGroupSliceReplacement refused;
+    const auto status = f.pool.PrepareScheduleGroupSliceReplacement(identity, replacement, f.arms, &refused);
+    if (status == harken::ScheduleGroupReserveStatus::Committed) {
+        EXPECT_FALSE(f.pool.CommitPreparedScheduleGroupSliceReplacement(&refused));
+        ASSERT_TRUE(f.pool.CancelPreparedScheduleGroupSliceReplacement(&refused));
+    } else EXPECT_EQ(harken::ScheduleGroupReserveStatus::ArmIdentityMismatch, status);
     EXPECT_EQ(serial, MemberOriginAccess::Serial(original));
     EXPECT_TRUE(MemberOriginAccess::Covers(f.arms, f.arm, std::array{original}));
     harken::DecisionToken successorDecision{};
@@ -6990,10 +6990,10 @@ TEST(DecisionGroup, NativeMemberReplacementFailurePreservesOldOriginAndSuccessfu
     ASSERT_TRUE(f.arms.PreparePendingImmediateGrouped(11, 1, 7, {}, {successorDecision}, 1, &successor));
     replacement.decision = successorDecision;
     replacement.members = &successor;
-    harken::PreparedPlan03GroupSliceReplacement accepted;
-    ASSERT_EQ(harken::Plan03GroupReserveStatus::Committed,
-        f.pool.PreparePlan03GroupSliceReplacement(identity, replacement, f.arms, &accepted));
-    ASSERT_TRUE(f.pool.CommitPreparedPlan03GroupSliceReplacement(&accepted));
+    harken::PreparedScheduleGroupSliceReplacement accepted;
+    ASSERT_EQ(harken::ScheduleGroupReserveStatus::Committed,
+        f.pool.PrepareScheduleGroupSliceReplacement(identity, replacement, f.arms, &accepted));
+    ASSERT_TRUE(f.pool.CommitPreparedScheduleGroupSliceReplacement(&accepted));
     EXPECT_EQ(0u, MemberOriginAccess::Count(f.arms, f.arm));
     EXPECT_EQ(1u, MemberOriginAccess::Count(f.arms, successor));
     EXPECT_NE(serial, MemberOriginAccess::Serial(original));
@@ -7003,26 +7003,26 @@ TEST(DecisionGroup, NativeMemberReplacementFailurePreservesOldOriginAndSuccessfu
 
     // Reusing replacement scratch for another row must preserve the first origin.
     const auto successorOrigin = MemberOriginAccess::Group(original);
-    harken::PreparedPlan03GroupSlice otherPrepared;
-    harken::Plan03GroupSliceIdentity otherIdentity{};
+    harken::PreparedScheduleGroupSlice otherPrepared;
+    harken::ScheduleGroupSliceIdentity otherIdentity{};
     ASSERT_NO_FATAL_FAILURE(f.Prepare(f.pool, 1, otherPrepared, otherIdentity));
-    harken::CommittedPlan03GroupSlice otherCommitted;
-    ASSERT_TRUE(f.pool.CommitPreparedPlan03GroupSlice(&otherPrepared, &otherCommitted));
+    harken::CommittedScheduleGroupSlice otherCommitted;
+    ASSERT_TRUE(f.pool.CommitPreparedScheduleGroupSlice(&otherPrepared, &otherCommitted));
     const auto* otherOriginal = MemberOriginAccess::Member(f.pool, otherIdentity);
     otherIdentity = MemberOriginAccess::Group(otherOriginal);
-    harken::PreparedPlan03GroupSliceReplacement otherReplacement;
-    ASSERT_EQ(harken::Plan03GroupReserveStatus::Committed,
-        f.pool.PreparePlan03GroupSliceReplacement(otherIdentity, f.Input(1), f.arms, &otherReplacement));
-    ASSERT_TRUE(f.pool.CommitPreparedPlan03GroupSliceReplacement(&otherReplacement));
+    harken::PreparedScheduleGroupSliceReplacement otherReplacement;
+    ASSERT_EQ(harken::ScheduleGroupReserveStatus::Committed,
+        f.pool.PrepareScheduleGroupSliceReplacement(otherIdentity, f.Input(1), f.arms, &otherReplacement));
+    ASSERT_TRUE(f.pool.CommitPreparedScheduleGroupSliceReplacement(&otherReplacement));
     EXPECT_EQ(successorOrigin, MemberOriginAccess::Group(original));
     EXPECT_EQ(f.decision.slot, MemberOriginAccess::Group(otherOriginal).decision.slot);
     EXPECT_EQ(1u, MemberOriginAccess::Group(otherOriginal).sliceIndex);
     EXPECT_TRUE(MemberOriginAccess::Covers(f.arms, successor, std::array{original}));
     EXPECT_TRUE(MemberOriginAccess::Covers(f.arms, f.arm, std::array{otherOriginal}));
-    ASSERT_TRUE(f.pool.RollbackCommittedPlan03GroupSlice(&otherCommitted));
+    ASSERT_TRUE(f.pool.RollbackCommittedScheduleGroupSlice(&otherCommitted));
     EXPECT_EQ(0u, MemberOriginAccess::Count(f.arms, f.arm));
     EXPECT_TRUE(MemberOriginAccess::Covers(f.arms, successor, std::array{original}));
-    ASSERT_TRUE(f.pool.RollbackCommittedPlan03GroupSlice(&committed));
+    ASSERT_TRUE(f.pool.RollbackCommittedScheduleGroupSlice(&committed));
     EXPECT_EQ(0u, MemberOriginAccess::Count(f.arms, successor));
 }
 
@@ -7032,20 +7032,20 @@ TEST(DecisionGroup, NativeMemberFactoryAcceptsActuallyHeldCommitProofAndRefusesE
     harken::TimelineArmTable::PreparedCommitProof armProof;
     const harken::TimelineArmTable::PreparedCommitInput expected{f.arm, 0, 0, 7, {}, {f.decision}, 0, true};
     ASSERT_TRUE(f.arms.ProvePreparedCommit(expected, &armProof));
-    harken::PreparedPlan03GroupSlice prepared;
-    harken::Plan03GroupSliceIdentity identity{};
+    harken::PreparedScheduleGroupSlice prepared;
+    harken::ScheduleGroupSliceIdentity identity{};
     ASSERT_NO_FATAL_FAILURE(f.Prepare(f.pool, 0, prepared, identity));
     EXPECT_TRUE(armProof.Valid());
     const auto* original = MemberOriginAccess::Member(f.pool, identity);
     const auto serial = MemberOriginAccess::Serial(original);
     MemberOriginAccess::ExhaustSerial(f.arms);
-    harken::PreparedPlan03GroupSlice refused;
-    EXPECT_EQ(harken::Plan03GroupReserveStatus::ArmIdentityMismatch,
-        f.pool.PreparePlan03GroupSlice(f.Input(1), f.arms, &refused));
+    harken::PreparedScheduleGroupSlice refused;
+    EXPECT_EQ(harken::ScheduleGroupReserveStatus::ArmIdentityMismatch,
+        f.pool.PrepareScheduleGroupSlice(f.Input(1), f.arms, &refused));
     EXPECT_FALSE(refused.Valid());
     EXPECT_EQ(serial, MemberOriginAccess::Serial(original));
     EXPECT_TRUE(MemberOriginAccess::Covers(f.arms, f.arm, std::array{original}));
-    ASSERT_TRUE(f.pool.CancelPreparedPlan03GroupSlice(&prepared));
+    ASSERT_TRUE(f.pool.CancelPreparedScheduleGroupSlice(&prepared));
     EXPECT_EQ(0u, MemberOriginAccess::Count(f.arms, f.arm));
     armProof.Release();
 }
@@ -7061,12 +7061,12 @@ TEST(DecisionGroup, NativeMemberQuiescentReceiverTeardownSupportsBothRealDestruc
         ASSERT_TRUE(pool->Reset(MakePoolConfig(), 0, 9));
         harken::TimelineArmToken arm{};
         ASSERT_TRUE(arms->PreparePendingImmediateGrouped(10, 1, 7, {}, {decision}, 0, &arm));
-        harken::Plan03GroupSliceInput input{};
+        harken::ScheduleGroupSliceInput input{};
         input.executeFrame = 200;
         input.decision = decision;
         input.members = &arm;
         input.memberCount = 1;
-        ASSERT_EQ(harken::Plan03GroupReserveStatus::Committed, pool->ReservePlan03GroupSlice(input, *arms));
+        ASSERT_EQ(harken::ScheduleGroupReserveStatus::Committed, pool->ReserveScheduleGroupSlice(input, *arms));
         ASSERT_TRUE(MemberOriginAccess::ReceiverAttached(*pool));
         ASSERT_EQ(1u, MemberOriginAccess::Count(*arms, arm));
         if (tableFirst) {
@@ -7084,7 +7084,7 @@ TEST(DecisionGroup, NativeMemberQuiescentReceiverTeardownSupportsBothRealDestruc
 TEST(DecisionGroup, NativeDetachedMemberEpisodeReturnsWithoutTouchingRealReconstructedReceiver) {
     harken::ScheduledTransactionPool pool;
     auto config = MakePoolConfig();
-    config.maxPlan03GroupHeadersPerPage = 3;
+    config.maxScheduleGroupHeadersPerPage = 3;
     ASSERT_TRUE(pool.Reset(config, 0, 9));
     alignas(harken::TimelineArmTable) std::byte backing[sizeof(harken::TimelineArmTable)];
     auto destroy = [](harken::TimelineArmTable* table) { std::destroy_at(table); };
@@ -7095,15 +7095,15 @@ TEST(DecisionGroup, NativeDetachedMemberEpisodeReturnsWithoutTouchingRealReconst
     ASSERT_TRUE(decisions.Reserve(MakeRequest(), &decision));
     harken::TimelineArmToken oldArm{}, newArm{};
     ASSERT_TRUE(arms->PreparePendingImmediateGrouped(10, 1, 7, {}, {decision}, 0, &oldArm));
-    harken::Plan03GroupSliceInput input{};
+    harken::ScheduleGroupSliceInput input{};
     input.executeFrame = 200;
     input.decision = decision;
     input.members = &oldArm;
     input.memberCount = 1;
-    harken::PreparedPlan03GroupSlice oldGroup, newGroup;
-    harken::Plan03GroupSliceIdentity oldId{}, newId{};
-    ASSERT_EQ(harken::Plan03GroupReserveStatus::Committed,
-        pool.PreparePlan03GroupSlice(input, *arms, &oldGroup));
+    harken::PreparedScheduleGroupSlice oldGroup, newGroup;
+    harken::ScheduleGroupSliceIdentity oldId{}, newId{};
+    ASSERT_EQ(harken::ScheduleGroupReserveStatus::Committed,
+        pool.PrepareScheduleGroupSlice(input, *arms, &oldGroup));
     oldId = MemberOriginAccess::ObservePreparedOrigin(pool, decision, 0);
     ASSERT_TRUE(oldId.Exact());
     const auto oldIncarnation = arms->Incarnation();
@@ -7114,35 +7114,35 @@ TEST(DecisionGroup, NativeDetachedMemberEpisodeReturnsWithoutTouchingRealReconst
     ASSERT_TRUE(arms->PreparePendingImmediateGrouped(11, 1, 7, {}, {decision}, 0, &newArm));
     input.members = &newArm;
     input.sliceIndex = 1;
-    ASSERT_EQ(harken::Plan03GroupReserveStatus::Committed,
-        pool.PreparePlan03GroupSlice(input, *arms, &newGroup));
+    ASSERT_EQ(harken::ScheduleGroupReserveStatus::Committed,
+        pool.PrepareScheduleGroupSlice(input, *arms, &newGroup));
     newId = MemberOriginAccess::ObservePreparedOrigin(pool, decision, 1);
     ASSERT_TRUE(newId.Exact());
     const auto* current = MemberOriginAccess::Member(pool, newId);
     const auto* obsolete = MemberOriginAccess::Member(pool, oldId);
     EXPECT_FALSE(MemberOriginAccess::Covers(*arms, newArm, std::array{obsolete}));
-    ASSERT_TRUE(pool.CancelPreparedPlan03GroupSlice(&oldGroup));
+    ASSERT_TRUE(pool.CancelPreparedScheduleGroupSlice(&oldGroup));
     EXPECT_EQ(1u, MemberOriginAccess::Count(*arms, newArm));
     EXPECT_TRUE(MemberOriginAccess::Covers(*arms, newArm, std::array{current}));
-    ASSERT_TRUE(pool.CancelPreparedPlan03GroupSlice(&newGroup));
+    ASSERT_TRUE(pool.CancelPreparedScheduleGroupSlice(&newGroup));
     EXPECT_EQ(0u, MemberOriginAccess::Count(*arms, newArm));
 }
 
 TEST(DecisionGroup, JointCancellationRefusesUnissuedReconstructedReceiverWithoutTouchingItsStorage) {
     NativeGroupOriginFixture f;
     ASSERT_NO_FATAL_FAILURE(f.Init());
-    harken::PreparedPlan03GroupSlice prepared;
-    harken::Plan03GroupSliceIdentity oldId{};
+    harken::PreparedScheduleGroupSlice prepared;
+    harken::ScheduleGroupSliceIdentity oldId{};
     ASSERT_NO_FATAL_FAILURE(f.Prepare(f.pool, 0, prepared, oldId));
-    harken::CommittedPlan03GroupSlice committed;
-    ASSERT_TRUE(f.pool.CommitPreparedPlan03GroupSlice(&prepared, &committed));
+    harken::CommittedScheduleGroupSlice committed;
+    ASSERT_TRUE(f.pool.CommitPreparedScheduleGroupSlice(&prepared, &committed));
     const auto oldIncarnation = f.arms.Incarnation();
     std::destroy_at(&f.arms);
     std::construct_at(&f.arms, 2);
     ASSERT_NE(oldIncarnation, f.arms.Incarnation());
     ASSERT_EQ(0u, f.arms.ConstructedRowCount());
 
-    std::array<harken::CommittedPlan03GroupSlice*, 1> originals{&committed};
+    std::array<harken::CommittedScheduleGroupSlice*, 1> originals{&committed};
     std::array<harken::UnpublishedGroupCancellationHold, 1> groups;
     std::array<harken::UnpublishedArmCancellationHold, 1> arms;
     harken::UnpublishedGroupArmCancellationProof proof;
@@ -7157,15 +7157,15 @@ TEST(DecisionGroup, JointCancellationRefusesUnissuedReconstructedReceiverWithout
     EXPECT_EQ(0u, f.arms.ScopeCommittedBytes());
 
     ASSERT_TRUE(f.arms.PreparePendingImmediateGrouped(11, 1, 7, {}, {f.decision}, 0, &f.arm));
-    harken::PreparedPlan03GroupSlice fresh;
-    harken::Plan03GroupSliceIdentity freshId{};
+    harken::PreparedScheduleGroupSlice fresh;
+    harken::ScheduleGroupSliceIdentity freshId{};
     ASSERT_NO_FATAL_FAILURE(f.Prepare(f.pool, 1, fresh, freshId));
     const auto* current = MemberOriginAccess::Member(f.pool, freshId);
     ASSERT_EQ(1u, MemberOriginAccess::Count(f.arms, f.arm));
-    ASSERT_TRUE(f.pool.RollbackCommittedPlan03GroupSlice(&committed));
+    ASSERT_TRUE(f.pool.RollbackCommittedScheduleGroupSlice(&committed));
     EXPECT_EQ(1u, MemberOriginAccess::Count(f.arms, f.arm));
     EXPECT_TRUE(MemberOriginAccess::Covers(f.arms, f.arm, std::array{current}));
-    ASSERT_TRUE(f.pool.CancelPreparedPlan03GroupSlice(&fresh));
+    ASSERT_TRUE(f.pool.CancelPreparedScheduleGroupSlice(&fresh));
     EXPECT_EQ(0u, MemberOriginAccess::Count(f.arms, f.arm));
 }
 
@@ -7180,10 +7180,10 @@ TEST(DecisionGroup, UnpublishedStorageRetentionRefusesActualGroupAndDecisionRead
     harken::DecisionTable decisions(1, 1);
     harken::DecisionToken decision{};
     ASSERT_TRUE(decisions.Reserve(MakeRequest(1), &decision));
-    harken::Plan03GroupSliceInput input{};
+    harken::ScheduleGroupSliceInput input{};
     input.executeFrame = 120;
     input.decision = decision;
-    harken::Plan03GroupSliceIdentity group{};
+    harken::ScheduleGroupSliceIdentity group{};
     ASSERT_TRUE(pool.ReserveImmediateLaneGroup(17, 100, input, arms, &group));
     harken::ImmediateActionLane lane;
     ASSERT_TRUE(lane.Reset({1, 1, 1, 100, false, 1}));
@@ -7211,7 +7211,7 @@ TEST(DecisionGroup, UnpublishedStorageRetentionRefusesActualGroupAndDecisionRead
     binding.operation.transport = 9;
     binding.operation.world = 7;
     binding.primary = group;
-    ASSERT_TRUE(pool.BindPlan03GroupFrontier(group, binding));
+    ASSERT_TRUE(pool.BindScheduleGroupFrontier(group, binding));
     ASSERT_TRUE(lane.PinGroups(handle, pool, decisions, 1));
     ASSERT_TRUE(lane.PinArms(handle, arms));
     ASSERT_TRUE(lane.Cancel(handle));
@@ -7223,7 +7223,7 @@ TEST(DecisionGroup, UnpublishedStorageRetentionRefusesActualGroupAndDecisionRead
     EXPECT_TRUE(foreign.Valid());
     foreign.Return();
     ASSERT_TRUE(lane.Retire(handle, 0, &original));
-    ASSERT_TRUE(pool.DetachPlan03GroupFrontier(group, 0));
+    ASSERT_TRUE(pool.DetachScheduleGroupFrontier(group, 0));
     ASSERT_TRUE(pool.CancelImmediateLaneGroups(17, 0));
     ASSERT_TRUE(decisions.ReclaimCancelled(decision));
     EXPECT_EQ(0u, decisions.LiveCount());
@@ -7249,15 +7249,15 @@ TEST(DecisionGroup, TransitionSliceDependencyKeepsActualApplicationThroughRetire
         ASSERT_TRUE(decisions.Reserve(request, &token));
         harken::DecisionFuturePin lifetime;
         ASSERT_TRUE(decisions.AcquireFuturePin(token, &lifetime));
-        harken::Plan03GroupSliceInput input{};
+        harken::ScheduleGroupSliceInput input{};
         input.executeFrame = 100;
         input.decision = token;
-        ASSERT_EQ(harken::Plan03GroupReserveStatus::Committed, pool.ReservePlan03GroupSlice(input, arms));
-        harken::Plan03PageGroupView group{};
-        ASSERT_EQ(1u, pool.CaptureLivePlan03Groups(&group, 1));
+        ASSERT_EQ(harken::ScheduleGroupReserveStatus::Committed, pool.ReserveScheduleGroupSlice(input, arms));
+        harken::SchedulePageGroupView group{};
+        ASSERT_EQ(1u, pool.CaptureLiveScheduleGroups(&group, 1));
         const auto identity = group.identity;
-        harken::Plan03GroupReaderPin reader;
-        ASSERT_TRUE(pool.AcquirePlan03GroupReader(identity, &reader));
+        harken::ScheduleGroupReaderPin reader;
+        ASSERT_TRUE(pool.AcquireScheduleGroupReader(identity, &reader));
         harken::FrontierGroupBinding binding{};
         binding.role = harken::FrontierGroupRole::Future;
         binding.entry = {token, 1, {10, 1, 0, 0, 10, 1, 0, 1}};
@@ -7271,8 +7271,8 @@ TEST(DecisionGroup, TransitionSliceDependencyKeepsActualApplicationThroughRetire
         const harken::FrontierOwnerIdentity child{11, 1, 10, 1, 10, 1, 1, 1};
         harken::FrontierSliceDependency dependency;
         EXPECT_FALSE(decisions.CaptureFrontierSliceDependency(lifetime, reader, pool, child, &dependency));
-        ASSERT_TRUE(pool.BindPlan03GroupFrontier(identity, binding));
-        ASSERT_TRUE(pool.ResolvePlan03GroupSliceProducer(identity, &group));
+        ASSERT_TRUE(pool.BindScheduleGroupFrontier(identity, binding));
+        ASSERT_TRUE(pool.ResolveScheduleGroupSliceProducer(identity, &group));
         ASSERT_TRUE(decisions.BindFrontierDecision(token, *group.frontier, pool));
         ASSERT_TRUE(transitions.BindFrontier(transition, *group.frontier, pool));
         ASSERT_TRUE(decisions.CaptureFrontierSliceDependency(lifetime, reader, pool, child, &dependency));
@@ -7293,7 +7293,7 @@ TEST(DecisionGroup, TransitionSliceDependencyKeepsActualApplicationThroughRetire
         payload.armGroup = {1, 1};
         ASSERT_TRUE(decisions.Commit(token, payload));
         pool.Publish(200, nullptr, nullptr, &arms);
-        ASSERT_TRUE(pool.NotePlan03GroupReadRt(identity, 2));
+        ASSERT_TRUE(pool.NoteScheduleGroupReadRt(identity, 2));
         if (apply) {
             harken::FrontierDecisionApplyProof proof;
             harken::TransitionInstancePool::FrontierProof transitionProof;
@@ -7314,8 +7314,8 @@ TEST(DecisionGroup, TransitionSliceDependencyKeepsActualApplicationThroughRetire
             EXPECT_EQ(Status::Rejected, decisions.ReadFrontierSliceDependency(dependency));
             ASSERT_TRUE(transitions.InvalidateReady(transition));
         }
-        EXPECT_FALSE(pool.DetachPlan03GroupFrontier(identity, 2));
-        ASSERT_TRUE(pool.DetachPlan03GroupFrontier(identity, 3));
+        EXPECT_FALSE(pool.DetachScheduleGroupFrontier(identity, 2));
+        ASSERT_TRUE(pool.DetachScheduleGroupFrontier(identity, 3));
         ASSERT_TRUE(decisions.ReleaseFrontierDecisionBinding(token));
         ASSERT_TRUE(transitions.ReleaseFrontierBinding(transition));
         ASSERT_TRUE(reader.Release(3));

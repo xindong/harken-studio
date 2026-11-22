@@ -4,7 +4,7 @@
 
 #include <QVariantList>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 

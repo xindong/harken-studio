@@ -11,7 +11,7 @@
 #include <memory>
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 
 class ParameterBinding;
 struct ContextTopic;

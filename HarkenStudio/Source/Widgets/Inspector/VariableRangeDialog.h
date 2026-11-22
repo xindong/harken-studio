@@ -6,7 +6,7 @@
 
 class QWidget;
 
-namespace VNX {
+namespace harken::studio {
 
 std::optional<QString> chooseVariableRangePolicy(QWidget* parent, const QJsonObject& change);
 

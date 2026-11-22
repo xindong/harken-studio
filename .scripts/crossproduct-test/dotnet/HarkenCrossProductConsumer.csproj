@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <LangVersion>9.0</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <DefineConstants>$(DefineConstants);HARKEN_NATIVE_DEVELOPMENT</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="$(HarkenPackageRoot)/Runtime/Generated/**/*.cs" />
+    <Compile Include="$(HarkenPackageRoot)/Runtime/API/**/*.cs" />
+    <Compile Include="$(HarkenPackageRoot)/Runtime/Unity/UnityCoordinates.cs" />
+    <Compile Include="AsyncSourceChecks.cs" />
+    <Compile Include="Program.cs" />
+  </ItemGroup>
+</Project>

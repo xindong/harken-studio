@@ -4,7 +4,7 @@
 #include <cstring>
 #include <string>
 
-namespace VNX {
+namespace harken::studio {
 namespace Monitor {
 
 MonitorCaptureControlHost::MonitorCaptureControlHost(MonitorAdapter* adapter)
@@ -63,8 +63,7 @@ MonitorCaptureControlState MonitorCaptureControlHost::openLayout()
 
         desc.requestedPermissionMask =
             kMonitorPermObserveState | kMonitorPermObserveEvents
-            | kMonitorPermObserveMeasurements | kMonitorPermCaptureControl
-            | kMonitorPermRecord;
+            | kMonitorPermObserveMeasurements | kMonitorPermCaptureControl;
         const MonitorOpenResult opened = adapter_->open(&desc);
         if (opened.result != kOk || opened.handle == 0)
         {
@@ -162,4 +161,4 @@ void MonitorCaptureControlHost::leaveLayout()
 }
 
 } // namespace Monitor
-} // namespace VNX
+} // namespace harken::studio

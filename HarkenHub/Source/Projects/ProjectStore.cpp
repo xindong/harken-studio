@@ -8,7 +8,7 @@
 #include <QSqlQuery>
 #include <QVariant>
 
-namespace VNH {
+namespace harken::hub {
 
 namespace {
 
@@ -49,9 +49,7 @@ bool ProjectStore::open(const QString& databasePath)
     const bool created = query.exec(QStringLiteral(
         "CREATE TABLE IF NOT EXISTS projects ("
         "canonicalPath TEXT PRIMARY KEY,"
-        "projectId TEXT,"
         "displayName TEXT,"
-        "detectedSchema INTEGER,"
         "preferredStudioBuildId TEXT,"
         "lastKnownGoodStudioBuildId TEXT,"
         "lastOpenedAt TEXT,"
@@ -97,13 +95,11 @@ bool ProjectStore::addProject(const ProjectRecord& record)
     QSqlDatabase db = QSqlDatabase::database(connectionName_);
     QSqlQuery query(db);
     query.prepare(QStringLiteral(
-        "INSERT INTO projects (canonicalPath, projectId, displayName, detectedSchema,"
+        "INSERT INTO projects (canonicalPath, displayName,"
         " preferredStudioBuildId, lastKnownGoodStudioBuildId, lastOpenedAt, lastPreflightAt)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?, ?)"));
+        " VALUES (?, ?, ?, ?, ?, ?)"));
     query.addBindValue(record.canonicalPath);
-    query.addBindValue(record.projectId);
     query.addBindValue(record.displayName);
-    query.addBindValue(record.detectedSchema);
     query.addBindValue(record.preferredStudioBuildId);
     query.addBindValue(record.lastKnownGoodStudioBuildId);
     query.addBindValue(record.lastOpenedAt);
@@ -166,32 +162,8 @@ bool ProjectStore::setPreferredBuild(const QString& canonicalPath, const QString
     return query.numRowsAffected() > 0;
 }
 
-bool ProjectStore::setLastKnownGood(const QString& canonicalPath,
-                                    const QString& buildId, const QString& at)
-{
-    if (!isOpen()) {
-        lastError_ = QStringLiteral("Store is not open");
-        return false;
-    }
-    QSqlDatabase db = QSqlDatabase::database(connectionName_);
-    QSqlQuery query(db);
-    query.prepare(QStringLiteral(
-        "UPDATE projects SET lastKnownGoodStudioBuildId = ?, lastOpenedAt = ?"
-        " WHERE canonicalPath = ?"));
-    query.addBindValue(buildId);
-    query.addBindValue(at);
-    query.addBindValue(canonicalPath);
-    if (!query.exec()) {
-        lastError_ = query.lastError().text();
-        return false;
-    }
-    return query.numRowsAffected() > 0;
-}
-
 bool ProjectStore::recordSuccessfulOpen(const QString& canonicalPath,
-                                        const QString& projectId,
                                         const QString& displayName,
-                                        int detectedSchema,
                                         const QString& buildId,
                                         const QString& at)
 {
@@ -202,33 +174,11 @@ bool ProjectStore::recordSuccessfulOpen(const QString& canonicalPath,
     QSqlDatabase db = QSqlDatabase::database(connectionName_);
     QSqlQuery query(db);
     query.prepare(QStringLiteral(
-        "UPDATE projects SET projectId = ?, displayName = ?, detectedSchema = ?,"
+        "UPDATE projects SET displayName = ?,"
         " lastKnownGoodStudioBuildId = ?, lastOpenedAt = ?"
         " WHERE canonicalPath = ?"));
-    query.addBindValue(projectId);
     query.addBindValue(displayName);
-    query.addBindValue(detectedSchema);
     query.addBindValue(buildId);
-    query.addBindValue(at);
-    query.addBindValue(canonicalPath);
-    if (!query.exec()) {
-        lastError_ = query.lastError().text();
-        return false;
-    }
-    return query.numRowsAffected() > 0;
-}
-
-bool ProjectStore::setLastOpened(const QString& canonicalPath,
-                                 const QString& at)
-{
-    if (!isOpen()) {
-        lastError_ = QStringLiteral("Store is not open");
-        return false;
-    }
-    QSqlDatabase db = QSqlDatabase::database(connectionName_);
-    QSqlQuery query(db);
-    query.prepare(QStringLiteral(
-        "UPDATE projects SET lastOpenedAt = ? WHERE canonicalPath = ?"));
     query.addBindValue(at);
     query.addBindValue(canonicalPath);
     if (!query.exec()) {
@@ -267,7 +217,7 @@ std::vector<ProjectRecord> ProjectStore::listProjects() const
     QSqlDatabase db = QSqlDatabase::database(connectionName_);
     QSqlQuery query(db);
     if (!query.exec(QStringLiteral(
-            "SELECT canonicalPath, projectId, displayName, detectedSchema,"
+            "SELECT canonicalPath, displayName,"
             " preferredStudioBuildId, lastKnownGoodStudioBuildId, lastOpenedAt,"
             " lastPreflightAt FROM projects ORDER BY displayName COLLATE NOCASE"))) {
         lastError_ = query.lastError().text();
@@ -277,13 +227,11 @@ std::vector<ProjectRecord> ProjectStore::listProjects() const
     while (query.next()) {
         ProjectRecord record;
         record.canonicalPath = query.value(0).toString();
-        record.projectId = query.value(1).toString();
-        record.displayName = query.value(2).toString();
-        record.detectedSchema = query.value(3).toInt();
-        record.preferredStudioBuildId = query.value(4).toString();
-        record.lastKnownGoodStudioBuildId = query.value(5).toString();
-        record.lastOpenedAt = query.value(6).toString();
-        record.lastPreflightAt = query.value(7).toString();
+        record.displayName = query.value(1).toString();
+        record.preferredStudioBuildId = query.value(2).toString();
+        record.lastKnownGoodStudioBuildId = query.value(3).toString();
+        record.lastOpenedAt = query.value(4).toString();
+        record.lastPreflightAt = query.value(5).toString();
         records.push_back(std::move(record));
     }
     return records;

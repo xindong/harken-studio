@@ -10,7 +10,7 @@
 #include <QStringList>
 #include <QUrl>
 
-namespace VNH {
+namespace harken::hub {
 
 class HubSelfUpdate : public QObject
 {
@@ -39,7 +39,7 @@ public:
                            const QDateTime& now);
     bool approve(QString* error, const QDateTime& now);
     bool approveViaBridge(const QString& restartMode, QString* error,
-                          const QDateTime& now);
+                          const QDateTime& now, const UpdateStateRecord* reviewedState = nullptr);
     bool checkNow();
 
     static bool selfUpdateEnabled();
@@ -59,7 +59,7 @@ public:
     static bool reconcileLandingStateAtStartup(const QDateTime& now);
 
 signals:
-    void stateChanged(const VNH::UpdateStateRecord& record);
+    void stateChanged(const harken::hub::UpdateStateRecord& record);
 
 private:
     bool persist(UpdateStateRecord& record, const QDateTime& now,

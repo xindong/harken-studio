@@ -2,13 +2,14 @@
 
 #include "Core/ThemeSnapshot.h"
 
+#include <QAbstractButton>
 #include <QPointF>
 #include <QRectF>
 #include <QString>
 
 class QPainter;
 
-namespace VNX {
+namespace harken::studio {
 
 struct AxisCrosshair
 {
@@ -16,6 +17,20 @@ struct AxisCrosshair
     QPointF position;
     QString label;
 };
+
+class AxisIndicatorButton final : public QAbstractButton
+{
+public:
+    AxisIndicatorButton(const QString& iconId, QWidget* parent);
+
+protected:
+    void paintEvent(QPaintEvent*) override;
+    void resizeEvent(QResizeEvent* event) override;
+    bool hitButton(const QPoint& position) const override;
+};
+
+void drawAxisReadout(QPainter& painter, const CurveStyle& style,
+                     const QRectF& bounds, const QString& label);
 
 void drawAxisCrosshairLines(QPainter& painter, const CurveStyle& style,
                            const QRectF& bounds, const QPointF& position,

@@ -13,13 +13,13 @@
 #include "Projects/ProjectVersionSelection.h"
 #include "Projects/ProjectStore.h"
 #include "Settings/HubSettings.h"
-#include "Templates/ProjectTemplateCatalog.h"
 #include "Transactions/InstallIndex.h"
 #include "Versions/StudioLaunchTarget.h"
 
 #include <QDateTime>
 #include <QDesktopServices>
 #include <QColor>
+#include <QApplication>
 #include <QComboBox>
 #include <QDir>
 #include <QFileDialog>
@@ -37,10 +37,7 @@
 #include <QPixmap>
 #include <QPushButton>
 #include <QPointer>
-#include <QJsonArray>
-#include <QJsonObject>
 #include <QSet>
-#include <QSpacerItem>
 #include <QStackedWidget>
 #include <QStandardPaths>
 #include <QStyle>
@@ -49,8 +46,6 @@
 #include <QTimer>
 #include <QThreadPool>
 #include <QToolButton>
-#include <QTreeWidget>
-#include <QTreeWidgetItem>
 #include <QUrl>
 #include <QVariantAnimation>
 #include <QVBoxLayout>
@@ -59,7 +54,7 @@
 #include <algorithm>
 #include <unordered_map>
 
-namespace VNH {
+namespace harken::hub {
 
 namespace {
 
@@ -69,9 +64,6 @@ constexpr int kColumnVersion = 2;
 constexpr int kColumnMenu = 3;
 constexpr int kPathRole = Qt::UserRole + 1;
 constexpr int kBuildIdRole = Qt::UserRole + 2;
-constexpr int kTemplatePathRole = Qt::UserRole;
-constexpr int kTemplateIdRole = Qt::UserRole + 1;
-constexpr int kTemplateDescriptionRole = Qt::UserRole + 2;
 
 QPixmap paintVersionMenuCheck(const QColor& color, qreal devicePixelRatio)
 {
@@ -159,25 +151,25 @@ public:
         painter->save();
 
         if (option.state & QStyle::State_Selected)
-            painter->fillRect(option.rect, QColor(0x2A, 0x31, 0x40));
+            painter->fillRect(option.rect, option.palette.color(QPalette::Button));
         else if (option.state & QStyle::State_MouseOver)
-            painter->fillRect(option.rect, QColor(0x22, 0x28, 0x36));
+            painter->fillRect(option.rect, option.palette.color(QPalette::Midlight));
 
-        painter->setPen(QColor(0x1A, 0x20, 0x30));
+        painter->setPen(option.palette.color(QPalette::Shadow));
         painter->drawLine(option.rect.bottomLeft(), option.rect.bottomRight());
 
         const QRect content = option.rect.adjusted(10, 9, -8, -9);
         QFont nameFont = option.font;
         nameFont.setWeight(QFont::DemiBold);
         painter->setFont(nameFont);
-        painter->setPen(QColor(0xE0, 0xE0, 0xE0));
+        painter->setPen(option.palette.color(QPalette::Text));
         painter->drawText(content, Qt::AlignLeft | Qt::AlignTop,
                           index.data(Qt::DisplayRole).toString());
 
         QFont pathFont = option.font;
         pathFont.setPixelSize(pathFont.pixelSize() - 1);
         painter->setFont(pathFont);
-        painter->setPen(QColor(0x88, 0x88, 0x88));
+        painter->setPen(option.palette.color(QPalette::PlaceholderText));
         const QString path = index.data(kPathRole).toString();
         painter->drawText(content, Qt::AlignLeft | Qt::AlignBottom,
                           QFontMetrics(pathFont).elidedText(path, Qt::ElideMiddle,
@@ -280,17 +272,6 @@ bool isValidProjectName(const QString& name)
     return true;
 }
 
-void addBusNode(QTreeWidgetItem* parent, const QJsonObject& node)
-{
-    auto* item = new QTreeWidgetItem(parent);
-    item->setText(0, node.value(QStringLiteral("name")).toString());
-    const QJsonArray children = node.value(QStringLiteral("children")).toArray();
-    for (const QJsonValue& child : children) {
-        if (child.isObject())
-            addBusNode(item, child.toObject());
-    }
-}
-
 }
 
 ProjectsPage::ProjectsPage(ProjectStore* store, QWidget* parent)
@@ -327,12 +308,6 @@ ProjectsPage::ProjectsPage(ProjectStore* store, QWidget* parent)
     projectLaunchGuidanceAnimation_ = new QVariantAnimation(this);
     projectLaunchGuidanceAnimation_->setDuration(1000);
     projectLaunchGuidanceAnimation_->setLoopCount(3);
-    projectLaunchGuidanceAnimation_->setKeyValueAt(
-        0.0, QColor(QStringLiteral("#00F0FF")));
-    projectLaunchGuidanceAnimation_->setKeyValueAt(
-        0.5, QColor(QStringLiteral("#007D8A")));
-    projectLaunchGuidanceAnimation_->setKeyValueAt(
-        1.0, QColor(QStringLiteral("#00F0FF")));
     projectLaunchGuidanceAnimation_->setEasingCurve(QEasingCurve::InOutSine);
     connect(projectLaunchGuidanceAnimation_, &QVariantAnimation::valueChanged,
             this, [this](const QVariant& value) {
@@ -418,6 +393,10 @@ void ProjectsPage::showProjectLaunchGuidance(const QString& buildId)
     clearProjectLaunchGuidance();
     projectLaunchGuidanceBuildId_ = buildId;
     pendingCreateBuildId_ = buildId;
+    const QColor accent = palette().color(QPalette::Highlight);
+    projectLaunchGuidanceAnimation_->setKeyValueAt(0.0, accent);
+    projectLaunchGuidanceAnimation_->setKeyValueAt(0.5, accent.darker(120));
+    projectLaunchGuidanceAnimation_->setKeyValueAt(1.0, accent);
     projectLaunchGuidanceAnimation_->start();
 }
 
@@ -425,7 +404,7 @@ void ProjectsPage::applyProjectLaunchGuidanceColor(const QColor& color)
 {
     const QString style = QStringLiteral(
         "QPushButton { background-color: %1; border: 1px solid %1; "
-        "color: #000000; font-weight: 600; }")
+        "color: palette(highlighted-text); font-weight: 600; }")
                               .arg(color.name());
     auto updateButton = [&style](QPushButton* button, bool highlighted) {
         if (!button || !highlighted)
@@ -541,64 +520,7 @@ QWidget* ProjectsPage::createNewProjectPage()
     locationRow->addWidget(browseButton);
     form->addWidget(locationRowWidget);
 
-    auto* templateRowWidget = new QWidget(panel);
-    templateRowWidget->setFixedHeight(30);
-    auto* templateRow = new QHBoxLayout(templateRowWidget);
-    templateRow->setContentsMargins(0, 0, 0, 0);
-    templateRow->setSpacing(8);
-    auto* templateLabel = new QLabel(
-        QCoreApplication::translate("HarkenHub", "Template"),
-        templateRowWidget);
-    templateLabel->setFixedWidth(110);
-    templateLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-    templateRow->addWidget(templateLabel);
-    projectTemplateCombo_ = new QComboBox(templateRowWidget);
-    projectTemplateCombo_->setObjectName(QStringLiteral("newProjectTemplate"));
-    templateRow->addWidget(projectTemplateCombo_, 1);
-    auto* addTemplateButton = new QPushButton(
-        QCoreApplication::translate("HarkenHub", "Add Template"),
-        templateRowWidget);
-    addTemplateButton->setObjectName(QStringLiteral("newProjectAddTemplate"));
-    addTemplateButton->setFixedHeight(30);
-    addTemplateButton->setMinimumWidth(110);
-    templateRow->addWidget(addTemplateButton);
-    form->addWidget(templateRowWidget);
-    templateRowWidget->hide();
-
-    templateDescription_ = new QLabel(panel);
-    templateDescription_->setObjectName(QStringLiteral("templateDescription"));
-    templateDescription_->setWordWrap(true);
-    templateDescription_->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-    templateDescription_->setMinimumHeight(48);
-    templateDescription_->setContentsMargins(10, 6, 10, 6);
-    templateDescription_->setStyleSheet(QStringLiteral(
-        "QLabel#templateDescription { background-color: #141A24; "
-        "border: 1px solid #394457; color: #AAB3C2; }"));
-    templateDescription_->hide();
-    form->addWidget(templateDescription_);
-
-    templatePreview_ = new QWidget(panel);
-    auto* previewLayout = new QHBoxLayout(templatePreview_);
-    previewLayout->setContentsMargins(0, 4, 0, 0);
-    previewLayout->setSpacing(8);
-    auto makePreviewTree = [this, previewLayout](const QString& title) {
-        auto* tree = new QTreeWidget(templatePreview_);
-        tree->setObjectName(QStringLiteral("templatePreviewTree"));
-        tree->setColumnCount(1);
-        tree->setHeaderLabel(title);
-        tree->header()->setSectionResizeMode(QHeaderView::Stretch);
-        tree->setMinimumHeight(180);
-        previewLayout->addWidget(tree, 1);
-        return tree;
-    };
-    templateBusTree_ = makePreviewTree(QCoreApplication::translate("HarkenHub", "Bus"));
-    templateAttenuationTree_ =
-        makePreviewTree(QCoreApplication::translate("HarkenHub", "Attenuation"));
-    templatePreview_->hide();
-    form->addWidget(templatePreview_, 1);
-    newProjectSpacer_ = new QSpacerItem(
-        0, 0, QSizePolicy::Minimum, QSizePolicy::Expanding);
-    form->addItem(newProjectSpacer_);
+    form->addStretch(1);
 
     auto* actions = new QHBoxLayout();
     actions->addStretch();
@@ -635,17 +557,8 @@ QWidget* ProjectsPage::createNewProjectPage()
                     createTarget_ =
                         createVersions_[static_cast<size_t>(index)];
                 }
-                loadProjectTemplates();
                 updateNewProjectCreateEnabled();
             });
-    connect(projectTemplateCombo_,
-            QOverload<int>::of(&QComboBox::currentIndexChanged), this,
-            [this]() {
-                validateSelectedTemplate();
-                updateNewProjectCreateEnabled();
-            });
-    connect(addTemplateButton, &QPushButton::clicked, this,
-            &ProjectsPage::onAddTemplateClicked);
     updateNewProjectCreateEnabled();
     return page;
 }
@@ -690,166 +603,6 @@ void ProjectsPage::loadProjectVersions(const QString& preferredBuildId)
     projectVersionCombo_->blockSignals(false);
 }
 
-void ProjectsPage::loadProjectTemplates(const QString& preferredPath)
-{
-    projectTemplateCombo_->blockSignals(true);
-    projectTemplateCombo_->clear();
-    projectTemplateCombo_->addItem(QCoreApplication::translate(
-        "HarkenHub",
-        "Create a clean empty project without using any template"));
-    projectTemplateCombo_->setItemData(0, QString(), kTemplatePathRole);
-    projectTemplateCombo_->setItemData(0, QString(), kTemplateIdRole);
-    projectTemplateCombo_->setItemData(
-        0,
-        QCoreApplication::translate(
-            "HarkenHub",
-            "Create a clean empty project without using any template."),
-        kTemplateDescriptionRole);
-
-    const QString program = QDir(createTarget_.installPath).filePath(
-        studioBinaryRelativePath());
-    const auto entries = ProjectTemplateCatalog::listAvailable(
-        QFileInfo(program).absolutePath());
-    int selectedIndex = 0;
-    for (const ProjectTemplateEntry& entry : entries) {
-        QString description = entry.description;
-        if (description == QStringLiteral(
-                               "Create a project that can handle an mmorpg "
-                               "genre")) {
-            description = QCoreApplication::translate(
-                "HarkenHub",
-                "Create a project that can handle an mmorpg genre");
-        }
-        projectTemplateCombo_->addItem(entry.displayName);
-        const int index = projectTemplateCombo_->count() - 1;
-        projectTemplateCombo_->setItemData(index, entry.filePath,
-                                           kTemplatePathRole);
-        projectTemplateCombo_->setItemData(index, entry.id, kTemplateIdRole);
-        projectTemplateCombo_->setItemData(index, description,
-                                           kTemplateDescriptionRole);
-        projectTemplateCombo_->setItemData(
-            index, QDir::toNativeSeparators(entry.filePath), Qt::ToolTipRole);
-        if (!preferredPath.isEmpty() &&
-            QFileInfo(entry.filePath).absoluteFilePath() ==
-                QFileInfo(preferredPath).absoluteFilePath())
-            selectedIndex = index;
-    }
-    projectTemplateCombo_->setCurrentIndex(selectedIndex);
-    projectTemplateCombo_->blockSignals(false);
-    validateSelectedTemplate();
-}
-
-void ProjectsPage::showEmptyTemplate()
-{
-    templateBusTree_->clear();
-    templateAttenuationTree_->clear();
-    templateDescription_->clear();
-    templateDescription_->hide();
-    templatePreview_->hide();
-    newProjectSpacer_->changeSize(
-        0, 0, QSizePolicy::Minimum, QSizePolicy::Expanding);
-    templatePreview_->parentWidget()->layout()->invalidate();
-}
-
-void ProjectsPage::showTemplatePreview(const QJsonObject& content,
-                                       const QString& description)
-{
-    templateBusTree_->clear();
-    templateAttenuationTree_->clear();
-    templateDescription_->setText(description);
-    templateDescription_->show();
-    const QJsonObject bus = content.value(QStringLiteral("bus")).toObject();
-    if (!bus.isEmpty()) {
-        auto* root = new QTreeWidgetItem(templateBusTree_);
-        root->setText(0, bus.value(QStringLiteral("name")).toString());
-        const QJsonArray children =
-            bus.value(QStringLiteral("children")).toArray();
-        for (const QJsonValue& child : children) {
-            if (child.isObject())
-                addBusNode(root, child.toObject());
-        }
-    }
-
-    const QJsonArray attenuations =
-        content.value(QStringLiteral("attenuation")).toArray();
-    for (const QJsonValue& value : attenuations) {
-        const QJsonObject attenuation = value.toObject();
-        auto* item = new QTreeWidgetItem(templateAttenuationTree_);
-        item->setText(0, attenuation.value(QStringLiteral("name")).toString());
-        auto* maximum = new QTreeWidgetItem(item);
-        maximum->setText(
-            0, QStringLiteral("max: %1")
-                   .arg(attenuation.value(QStringLiteral("max")).toDouble()));
-    }
-    templateBusTree_->expandAll();
-    templateAttenuationTree_->expandAll();
-    newProjectSpacer_->changeSize(
-        0, 0, QSizePolicy::Minimum, QSizePolicy::Fixed);
-    templatePreview_->show();
-    templatePreview_->parentWidget()->layout()->invalidate();
-}
-
-void ProjectsPage::validateSelectedTemplate()
-{
-    const int index = projectTemplateCombo_->currentIndex();
-    const QString path =
-        projectTemplateCombo_->itemData(index, kTemplatePathRole).toString();
-    if (path.isEmpty()) {
-        showEmptyTemplate();
-        return;
-    }
-
-    TemplateValidationResult validation;
-    const auto entry = ProjectTemplateCatalog::loadFile(
-        path, path.startsWith(ProjectTemplateCatalog::userTemplateDir()),
-        &validation);
-    if (!entry) {
-        MessageDialog::warning(
-            this, QCoreApplication::translate("HarkenHub", "Invalid Template"),
-            QCoreApplication::translate(
-                "HarkenHub",
-                "The selected template failed its validation and health check."
-                "\n\n%1")
-                .arg(validation.toUserText()));
-        projectTemplateCombo_->blockSignals(true);
-        projectTemplateCombo_->setCurrentIndex(0);
-        projectTemplateCombo_->blockSignals(false);
-        showEmptyTemplate();
-        return;
-    }
-    showTemplatePreview(
-        entry->content,
-        projectTemplateCombo_->itemData(index, kTemplateDescriptionRole)
-            .toString());
-}
-
-void ProjectsPage::onAddTemplateClicked()
-{
-    const QString source = QFileDialog::getOpenFileName(
-        this, QCoreApplication::translate("HarkenHub", "Add Template"),
-        QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation),
-        QCoreApplication::translate(
-            "HarkenHub", "Template JSON (*.json);;All Files (*)"));
-    if (source.isEmpty())
-        return;
-
-    TemplateValidationResult validation;
-    const auto imported =
-        ProjectTemplateCatalog::importFromFile(source, &validation);
-    if (!imported) {
-        MessageDialog::warning(
-            this,
-            QCoreApplication::translate("HarkenHub", "Template Not Added"),
-            QCoreApplication::translate(
-                "HarkenHub",
-                "The template failed its validation and health check, so it "
-                "was not added.\n\n%1")
-                .arg(validation.toUserText()));
-        return;
-    }
-    loadProjectTemplates(imported->filePath);
-}
-
 void ProjectsPage::updateNewProjectCreateEnabled()
 {
     if (!createProjectButton_)
@@ -885,7 +638,6 @@ void ProjectsPage::onNewProjectClicked()
 
     pendingCreateBuildId_.clear();
     projectNameEdit_->clear();
-    loadProjectTemplates();
     updateNewProjectCreateEnabled();
     viewStack_->setCurrentWidget(newProjectView_);
     projectNameEdit_->setFocus();
@@ -930,53 +682,21 @@ void ProjectsPage::onCreateProjectClicked()
         return;
     }
 
-    const int templateIndex = projectTemplateCombo_->currentIndex();
-    const QString templatePath = projectTemplateCombo_
-                                     ->itemData(templateIndex,
-                                                kTemplatePathRole)
-                                     .toString();
-    if (!templatePath.isEmpty()) {
-        TemplateValidationResult validation;
-        if (!ProjectTemplateCatalog::loadFile(
-                templatePath,
-                templatePath.startsWith(
-                    ProjectTemplateCatalog::userTemplateDir()),
-                &validation)) {
-            MessageDialog::warning(
-                this,
-                QCoreApplication::translate("HarkenHub", "Invalid Template"),
-                QCoreApplication::translate(
-                    "HarkenHub",
-                    "The selected template failed its validation and health "
-                    "check.\n\n%1")
-                    .arg(validation.toUserText()));
-            projectTemplateCombo_->setCurrentIndex(0);
-            return;
-        }
-    }
-
     ProjectCreateRequest request;
     request.version = createTarget_;
     request.name = name;
     request.location = location;
-    request.templateId = projectTemplateCombo_
-                             ->itemData(templateIndex, kTemplateIdRole)
-                             .toString();
-    request.templatePath = templatePath;
 
     QString versionName =
         QCoreApplication::translate("HarkenHub", "HarkenStudio %1").arg(createTarget_.semanticVersion);
     if (createTarget_.isLocalBuild())
         versionName += QCoreApplication::translate("HarkenHub", " (Standalone)");
-    const QString templateName = projectTemplateCombo_->currentText();
     MessageDialog confirm(
         QMessageBox::Question, QCoreApplication::translate("HarkenHub", "Confirm New Project"),
-        QCoreApplication::translate("HarkenHub", "Confirm the HarkenStudio version and template before "
-                       "creating the project."),
+        QCoreApplication::translate("HarkenHub", "Confirm the HarkenStudio version before creating the project."),
         QMessageBox::Cancel, this);
     confirm.setInformativeText(
-        QCoreApplication::translate("HarkenHub", "HarkenStudio: %1\nTemplate: %2")
-            .arg(versionName, templateName));
+        QCoreApplication::translate("HarkenHub", "HarkenStudio: %1").arg(versionName));
     QPushButton* create = confirm.addButton(
         QCoreApplication::translate("HarkenHub", "Create Project"), QMessageBox::AcceptRole);
     confirm.setDefaultButton(create);
@@ -1106,7 +826,8 @@ void ProjectsPage::renderProjects()
         if (!projectMetadata_.contains(record.canonicalPath) && record.preferredStudioBuildId.isEmpty())
             selection = {};
 
-        auto* projectItem = new SortableTableItem(record.displayName);
+        auto* projectItem = new SortableTableItem(probe.ok ? probe.displayName
+            : QFileInfo(record.canonicalPath).completeBaseName());
         projectItem->setData(kPathRole, record.canonicalPath);
         projectItem->setToolTip(
             QDir::toNativeSeparators(record.canonicalPath));
@@ -1167,7 +888,6 @@ void ProjectsPage::refreshVersions()
     if (viewStack_->currentWidget() != newProjectView_)
         return;
     loadProjectVersions(createTarget_.buildId);
-    loadProjectTemplates();
     updateNewProjectCreateEnabled();
 }
 
@@ -1214,16 +934,16 @@ void ProjectsPage::addProjectFromPath(const QString& path)
         return;
     }
     if (store_->contains(probe.canonicalPath)) {
+        projectMetadata_.remove(probe.canonicalPath);
+        refresh();
         MessageDialog::information(this, QCoreApplication::translate("HarkenHub", "Add Project"),
                                  QCoreApplication::translate("HarkenHub", "This project is already in the list."));
         return;
     }
 
     ProjectRecord record;
-    record.projectId = probe.projectId;
     record.canonicalPath = probe.canonicalPath;
     record.displayName = probe.displayName;
-    record.detectedSchema = probe.schemaVersion;
     if (!store_->addProject(record)) {
         MessageDialog::warning(
             this, QCoreApplication::translate("HarkenHub", "Add Project"),
@@ -1304,10 +1024,10 @@ void ProjectsPage::showRowMenu(int row, const QPoint& globalPos)
     menu.setAttribute(Qt::WA_TranslucentBackground);
     auto applyMenuPalette = [](QMenu* target) {
         QPalette palette = target->palette();
-        const QColor window(0x1D, 0x23, 0x30);
-        const QColor text(0xE0, 0xE0, 0xE0);
-        const QColor highlight(0x00, 0xF0, 0xFF);
-        const QColor highlightedText(0x00, 0x00, 0x00);
+        const QColor window = QApplication::palette().color(QPalette::Window);
+        const QColor text = QApplication::palette().color(QPalette::WindowText);
+        const QColor highlight = QApplication::palette().color(QPalette::Highlight);
+        const QColor highlightedText = QApplication::palette().color(QPalette::HighlightedText);
         for (const auto group : {QPalette::Active, QPalette::Inactive}) {
             palette.setColor(group, QPalette::Window, window);
             palette.setColor(group, QPalette::WindowText, text);

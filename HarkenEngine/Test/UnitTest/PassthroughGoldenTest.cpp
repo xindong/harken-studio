@@ -6,6 +6,7 @@
 // Tolerances: identity
 // comparisons are exact (tolerance 0) — an empty slot performs no
 // arithmetic and this mono-to-mono cascade is the unity-gain identity path.
+#include <harken/HarkenDevelopment.h>
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/TestUtil.h"
 
@@ -105,22 +106,3 @@ TEST(PassthroughGolden, SeamProcessRunsOverEveryProducedFrame) {
 }
 
 } // namespace
-
-#if defined(HARKEN_MONITOR_HUB_ABSENT)
-TEST(MonitorHubAbsent, TypedEventAndStateRequestsCannotClaimUnavailableProducers) {
-    harkentest::EngineSession engine(harkentest::MakeNullConfig());
-    ASSERT_EQ(VN_OK, engine.InitResult());
-    for (const auto stream : {VN_MONITOR_STREAM_EVENT, VN_MONITOR_STREAM_STATE}) {
-        VnMonitorSessionDescV2 desc{};
-        desc.structSize = sizeof(desc);
-        desc.requestedExecutionFactVersion = 1;
-        desc.requestedStreamKindMask = stream;
-        desc.requestedPermissionMask = stream == VN_MONITOR_STREAM_EVENT ?
-            VN_MONITOR_PERM_OBSERVE_EVENTS : VN_MONITOR_PERM_OBSERVE_STATE;
-        VnMonitorSessionHandle handle = 91;
-        EXPECT_EQ(VN_MONITOR_UNSUPPORTED,
-            Vn_MonitorOpenSession(reinterpret_cast<const VnMonitorSessionDesc*>(&desc), &handle));
-        EXPECT_EQ(91u, handle);
-    }
-}
-#endif

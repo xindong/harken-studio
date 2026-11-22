@@ -5,7 +5,7 @@
 
 #include <utility>
 
-namespace VNX {
+namespace harken::studio {
 
 QList<ColorPalette> createStudioDefaultPalettes()
 {

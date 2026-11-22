@@ -4,9 +4,9 @@
 
 #include <vector>
 
-using VNX::TimeSeriesChartModel;
-using VNX::TimeSeriesSample;
-using VNX::buildTimeSeriesEnvelope;
+using harken::studio::TimeSeriesChartModel;
+using harken::studio::TimeSeriesSample;
+using harken::studio::buildTimeSeriesEnvelope;
 
 TEST(TimeSeriesChartModel, EnvelopeKeepsSpikeInItsLogicalColumn)
 {

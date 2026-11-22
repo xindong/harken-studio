@@ -8,7 +8,7 @@
 #include <QString>
 #include <QUrl>
 
-namespace VNX {
+namespace harken::studio {
 
 class ILLMProvider : public QObject
 {
@@ -57,11 +57,11 @@ public:
 
 signals:
     void delta(const QString& requestId, const QString& text);
-    void completed(const VNX::ILLMProvider::Response& response);
+    void completed(const harken::studio::ILLMProvider::Response& response);
     void failed(const QString& requestId, const QString& code, const QString& message);
 };
 
 }
 
-Q_DECLARE_METATYPE(VNX::ILLMProvider::Request)
-Q_DECLARE_METATYPE(VNX::ILLMProvider::Response)
+Q_DECLARE_METATYPE(harken::studio::ILLMProvider::Request)
+Q_DECLARE_METATYPE(harken::studio::ILLMProvider::Response)

@@ -159,6 +159,39 @@
 </context>
 <context>
     <name>HubReleaseNotes</name>
+    <message><source>Support Unity Integration Packages identified by package.json without the retired integration manifest; check package files without pre-validating Unity target runtimes.</source><translation>支持通过 package.json 识别、不再携带旧集成清单的 Unity 集成包；检查集成包文件，不再预检 Unity 各目标平台的运行库。</translation></message>
+    <message>
+        <source>Manage projects, Studio versions, Unity integrations, settings and updates from the command line without opening the Hub window.</source>
+        <translation>无需打开 Hub 窗口，即可通过命令行管理工程、Studio 版本、Unity 集成、设置和更新。</translation>
+    </message>
+    <message>
+        <source>Open the offline CLI user guide and AI command reference from a separate group in Settings, in English or Simplified Chinese.</source>
+        <translation>在设置菜单的独立分组中打开离线 CLI 用户指南和 AI 命令参考，支持英文和简体中文。</translation>
+    </message>
+    <message>
+        <source>Use the new Hub icon consistently across light and dark themes, windows, the taskbar, tray, shortcuts, installer and update helper.</source>
+        <translation>明暗主题、窗口、任务栏、托盘、快捷方式、安装器和更新助手统一使用新版 Hub 图标。</translation>
+    </message>
+    <message>
+        <source>Explain files in both current and older Unity API folders in Integration Package change previews.</source>
+        <translation>在集成包变更预览中，为新旧 Unity API 目录内的文件提供用途说明。</translation>
+    </message>
+    <message>
+        <source>Choose Follow System, Light or Dark in Settings and apply the theme immediately.</source>
+        <translation>在设置菜单中选择跟随系统、浅色或深色主题，切换后立即生效。</translation>
+    </message>
+    <message>
+        <source>Show the current project filename after a renamed project is added again.</source>
+        <translation>工程改名后重新加入 Hub，列表会显示当前文件名。</translation>
+    </message>
+    <message>
+        <source>Preserve independent settings when the Hub window and command-line tools save preferences at the same time.</source>
+        <translation>Hub 窗口与命令行同时保存设置时，保留双方各自修改的选项。</translation>
+    </message>
+    <message>
+        <source>Review complete CLI repair and removal file lists, reject changed installation approvals, and recover interrupted Studio update attempts.</source>
+        <translation>CLI 修复和卸载前展示完整文件清单，安装内容变化后要求重新确认，并可恢复中断的 Studio 更新流程。</translation>
+    </message>
     <message>
         <source>Close applications using Harken Hub files before continuing Windows setup, without prompting to restart the computer.</source>
         <translation>Windows 安装程序会先处理占用 Harken Hub 文件的应用程序，再继续安装，不再询问是否重启电脑。</translation>
@@ -211,7 +244,7 @@
     <message><source>Install and manage the Unity Integration Package through Hub to try and test Harken integration in your Unity projects.</source><translation>通过 Hub 安装和管理 Unity 集成包，在 Unity 项目中体验并测试 Harken 集成。</translation></message>
 </context>
 <context>
-    <name>VNH::ConsentDialog</name>
+    <name>harken::hub::ConsentDialog</name>
     <message>
         <source>License Agreement</source>
         <translation>许可协议</translation>
@@ -261,7 +294,7 @@
     </message>
 </context>
 <context>
-    <name>VNH::HubWindow</name>
+    <name>harken::hub::HubWindow</name>
     <message>
         <location filename="../Source/UI/HubWindow.cpp" line="99"/>
         <location filename="../Source/UI/HubWindow.cpp" line="158"/>
@@ -490,9 +523,18 @@ Continue?</source>
         <source>Engine Integrations</source>
         <translation>引擎集成</translation>
     </message>
+    <message><source>Theme</source><translation>主题</translation></message>
+    <message><source>Follow System</source><translation>跟随系统</translation></message>
+    <message><source>Light</source><translation>浅色</translation></message>
+    <message><source>Dark</source><translation>深色</translation></message>
+    <message><source>The theme setting could not be saved.</source><translation>无法保存主题设置。</translation></message>
+    <message><source>CLI Guide</source><translation>CLI 使用指南</translation></message>
+    <message><source>The CLI guide could not be opened.
+%1</source><translation>无法打开 CLI 使用指南。
+%1</translation></message>
 </context>
 <context>
-    <name>VNH::LogConsoleDialog</name>
+    <name>harken::hub::LogConsoleDialog</name>
     <message>
         <location filename="../Source/UI/LogConsoleDialog.cpp" line="211"/>
         <source>Harken Hub Activity Log (%1)</source>
@@ -510,7 +552,7 @@ Continue?</source>
     </message>
 </context>
 <context>
-    <name>VNH::ReleaseNotesDialog</name>
+    <name>harken::hub::ReleaseNotesDialog</name>
     <message>
         <location filename="../Source/UI/ReleaseNotesDialog.cpp" line="22"/>
         <source>Added</source>
@@ -553,7 +595,7 @@ Continue?</source>
     </message>
 </context>
 <context>
-    <name>VNH::UpdateNotifier</name>
+    <name>harken::hub::UpdateNotifier</name>
     <message><source>HarkenStudio update could not be installed</source><translation>HarkenStudio 更新安装失败</translation></message>
     <message><source>Open Harken Hub to retry the installation.</source><translation>打开 Harken Hub 重试安装。</translation></message>
     <message>
@@ -672,14 +714,11 @@ Continue?</source>
     <message><source>Harken Unity Integration Package could not be located.</source><translation>未找到 Harken Unity 集成包。</translation></message>
     <message><source>The selected folder is not a valid com.harken.core Integration Package source: %1</source><translation>所选文件夹不是有效的 com.harken.core 集成包来源：%1</translation></message>
     <message><source>Choose HarkenIntegration, HarkenIntegration/Unity/Harken, or a complete external Unity package root, or clear the Integration Package source field to use automatic discovery.</source><translation>请选择 HarkenIntegration、HarkenIntegration/Unity/Harken 或完整的外部 Unity 包根目录，也可清空集成包来源以启用自动查找。</translation></message>
-    <message><source>No valid com.harken.core package was found beside Harken Studio, in a repository parent, or at HARKEN_UNITY_INTEGRATION_PATH (legacy: HARKEN_UNITY_SDK_PATH).</source><translation>在 Harken Studio 所在目录、仓库上级目录以及 HARKEN_UNITY_INTEGRATION_PATH（兼容 HARKEN_UNITY_SDK_PATH）指定的位置均未找到有效的 com.harken.core 包。</translation></message>
+    <message><source>No Integration Package source was selected, and HARKEN_UNITY_INTEGRATION_PATH does not point to a valid com.harken.core package.</source><translation>未选择集成包来源，且 HARKEN_UNITY_INTEGRATION_PATH 未指向有效的 com.harken.core 包。</translation></message>
     <message><source>Use the Integration Package source field to choose or drop HarkenIntegration, Unity/Harken, or a complete external Unity package root.</source><translation>请在集成包来源栏选择或拖入 HarkenIntegration、Unity/Harken 或完整的外部 Unity 包根目录。</translation></message>
-    <message><source>Choose a complete HarkenIntegration/Unity/Harken package, or repair the selected Integration Package source before integrating.</source><translation>请选择完整的 HarkenIntegration/Unity/Harken 包，或修复所选集成包来源后再进行集成。</translation></message>
-    <message><source>Choose or drop HarkenIntegration, HarkenIntegration/Unity/Harken, or a complete external Unity package. If this is the Integration Package bundled with Harken Studio, repair or reinstall the editor package first. Do not copy unknown runtime files from an existing Unity project.</source><translation>请选择或拖入 HarkenIntegration、HarkenIntegration/Unity/Harken 或完整的外部 Unity 包。如果使用的是 Harken Studio 附带的集成包，请先修复或重新安装编辑器包。不要从已有 Unity 工程复制来源不明的运行库。</translation></message>
     <message><source>A selected Integration Package source file could not be read.</source><translation>无法读取所选集成包来源中的文件。</translation></message>
     <message><source>Check file locks and permissions, then retry. The existing Integration Package was not changed.</source><translation>请检查文件占用和权限后重试。已有集成包未被修改。</translation></message>
     <message><source>Check the selected Integration Package folder permissions and contents, then retry.</source><translation>请检查所选集成包文件夹的权限和内容后重试。</translation></message>
-    <message><source>Close any process holding this file and check the Integration Package folder permissions, then run Check only again.</source><translation>请关闭占用该文件的进程，检查集成包文件夹权限，然后重新执行检查。</translation></message>
     <message><source>Could not create an Integration Package staging directory.</source><translation>无法创建集成包暂存目录。</translation></message>
     <message><source>Could not detach the installed Harken Integration Package.</source><translation>无法移出已安装的 Harken 集成包。</translation></message>
     <message><source>Failed to stage the Unity Integration Package update.</source><translation>无法暂存 Unity 集成包更新。</translation></message>
@@ -689,18 +728,11 @@ Continue?</source>
     <message><source>No installed Unity Integration Package exists to verify.</source><translation>没有可供验证的已安装 Unity 集成包。</translation></message>
     <message><source>Repair or reselect the Integration Package source, check the storage device, then retry. The existing Unity Integration Package was not changed.</source><translation>请修复或重新选择集成包来源，检查存储设备后重试。已有 Unity 集成包未被修改。</translation></message>
     <message><source>Review this file list, then explicitly approve the update or cancel without changing the Integration Package.</source><translation>请查看文件列表，再确认更新；取消操作不会修改集成包。</translation></message>
-    <message><source>The selected Integration Package installation manifest could not be read.</source><translation>无法读取所选集成包的安装清单。</translation></message>
-    <message><source>The selected Integration Package installation manifest is missing or invalid.</source><translation>所选集成包的安装清单缺失或无效。</translation></message>
-    <message><source>The selected Unity Integration Package source is incomplete. The Unity project was not changed.</source><translation>所选 Unity 集成包来源不完整。Unity 工程未被修改。</translation></message>
     <message><source>The staged Unity Integration Package failed checksum verification.</source><translation>暂存的 Unity 集成包未通过校验。</translation></message>
-    <message><source>These runtime files must come from the selected Integration Package source, not from the Unity project. Integration stopped before copying anything because the Harken integration cannot verify an Integration Package assembled from incomplete source files.</source><translation>运行库文件必须来自所选集成包来源，不能从 Unity 工程补取。Harken 无法验证由不完整来源拼装的集成包，因此已在复制任何文件之前停止集成。</translation></message>
     <message><source>Verification will run after the Integration Package update is approved.</source><translation>确认集成包更新后将执行验证。</translation></message>
     <message><source>%1 exists but cannot be opened, so the runtime files declared by the Harken Integration Package cannot be enumerated.</source><translation>%1 存在但无法打开，因此无法列出 Harken 集成包声明的运行库文件。</translation></message>
     <message><source>%1 installed Integration Package file(s) could not be read, so the comparison is incomplete.</source><translation>无法读取 %1 个已安装的集成包文件，因此比较未完成。</translation></message>
-    <message><source>Other missing Harken Integration Package content: %1</source><translation>其他缺失的 Harken 集成包内容：%1</translation></message>
-    <message><source>Required Harken Integration Package content is missing from the selected source: %1</source><translation>所选来源缺少必要的 Harken 集成包内容：%1</translation></message>
     <message><source>The Harken integration cannot distinguish managed Integration Package files from project-specific files inside %1.</source><translation>Harken 无法区分 %1 中由集成包管理的文件和工程自有文件。</translation></message>
-    <message><source>The selected Integration Package source is missing the verified game runtime for: %1. The Unity project was not changed.</source><translation>所选集成包来源缺少以下平台的已验证游戏运行库：%1。Unity 工程未被修改。</translation></message>
     <message><source>These files exist inside %1 but cannot be opened, so the Harken integration cannot tell whether they still match the Integration Package source. Nothing was compared or changed.</source><translation>这些文件在 %1 中存在但无法打开，因此 Harken 无法判断其是否仍与集成包来源一致。尚未比较或修改任何文件。</translation></message>
 
     <message><source>Integration</source><translation>集成</translation></message>
@@ -1262,14 +1294,6 @@ Error code: %1</source>
 错误码：%1</translation>
     </message>
     <message>
-        <source>Studio capabilities has an invalid protocol version.</source>
-        <translation>版本能力信息中的协议版本无效。</translation>
-    </message>
-    <message>
-        <source>Studio capabilities has invalid legacy schema information.</source>
-        <translation>旧版的数据格式能力信息无效。</translation>
-    </message>
-    <message>
         <source>Installation metadata is missing: %1</source>
         <translation>安装信息文件缺失：%1</translation>
     </message>
@@ -1308,14 +1332,6 @@ Error code: %1</source>
     <message>
         <source> (Legacy)</source>
         <translation>（旧版）</translation>
-    </message>
-    <message>
-        <source>Projects open in this Studio version. Hub upgrade previews are unavailable.</source>
-        <translation>工程由此版本 Studio 打开。此版本不提供 Hub 内的工程升级预检。</translation>
-    </message>
-    <message>
-        <source>This Studio uses a newer protocol than Hub supports. Hub can request project opening but cannot report its result or preview upgrades.</source>
-        <translation>此 Studio 使用了当前 Hub 尚不支持的新版协议。Hub 可以请求打开工程，但无法报告打开结果或提供升级预检。</translation>
     </message>
     <message>
         <source>The installation record is no longer available.</source>
@@ -1432,27 +1448,6 @@ Error code: %1</source>
         <translation>选择工程位置</translation>
     </message>
     <message>
-        <location filename="../Source/UI/ProjectsPage.cpp" line="469"/>
-        <source>Template</source>
-        <translation>模板</translation>
-    </message>
-    <message>
-        <location filename="../Source/UI/ProjectsPage.cpp" line="478"/>
-        <location filename="../Source/UI/ProjectsPage.cpp" line="746"/>
-        <source>Add Template</source>
-        <translation>添加模板</translation>
-    </message>
-    <message>
-        <location filename="../Source/UI/ProjectsPage.cpp" line="512"/>
-        <source>Bus</source>
-        <translation>总线</translation>
-    </message>
-    <message>
-        <location filename="../Source/UI/ProjectsPage.cpp" line="514"/>
-        <source>Attenuation</source>
-        <translation>衰减</translation>
-    </message>
-    <message>
         <location filename="../Source/UI/ProjectsPage.cpp" line="524"/>
         <location filename="../Source/UI/ProjectsPage.cpp" line="895"/>
         <source>Create Project</source>
@@ -1490,11 +1485,6 @@ Error code: %1</source>
         <translation type="vanished">创建不使用模板的工程</translation>
     </message>
     <message>
-        <location filename="../Source/UI/ProjectsPage.cpp" line="636"/>
-        <source>Create a project that can handle an mmorpg genre</source>
-        <translation>创建适用于 MMORPG 类型的工程</translation>
-    </message>
-    <message>
         <location filename="../Source/UI/ProjectsPage.cpp" line="788"/>
         <source>The project location could not be saved. It will not be restored after restarting Harken Hub.</source>
         <translation>无法保存工程位置。重启 Harken Hub 后不会恢复此位置。</translation>
@@ -1524,66 +1514,9 @@ Error code: %1</source>
         <translation type="vanished">所选模板已不可用。</translation>
     </message>
     <message>
-        <location filename="../Source/UI/ProjectsPage.cpp" line="614"/>
-        <source>Create a clean empty project without using any template</source>
-        <translation>创建一个干净的空工程，不使用任何模板</translation>
-    </message>
-    <message>
-        <location filename="../Source/UI/ProjectsPage.cpp" line="621"/>
-        <source>Create a clean empty project without using any template.</source>
-        <translation>创建一个干净的空工程，不使用任何模板。</translation>
-    </message>
-    <message>
-        <location filename="../Source/UI/ProjectsPage.cpp" line="725"/>
-        <location filename="../Source/UI/ProjectsPage.cpp" line="861"/>
-        <source>Invalid Template</source>
-        <translation>无效模板</translation>
-    </message>
-    <message>
-        <location filename="../Source/UI/ProjectsPage.cpp" line="726"/>
-        <location filename="../Source/UI/ProjectsPage.cpp" line="862"/>
-        <source>The selected template failed its validation and health check.
-
-%1</source>
-        <translation>所选模板未通过合法性与健康性检查。
-
-%1</translation>
-    </message>
-    <message>
-        <location filename="../Source/UI/ProjectsPage.cpp" line="748"/>
-        <source>Template JSON (*.json);;All Files (*)</source>
-        <translation>模板 JSON (*.json);;所有文件 (*)</translation>
-    </message>
-    <message>
-        <location filename="../Source/UI/ProjectsPage.cpp" line="759"/>
-        <source>Template Not Added</source>
-        <translation>模板未添加</translation>
-    </message>
-    <message>
-        <location filename="../Source/UI/ProjectsPage.cpp" line="760"/>
-        <source>The template failed its validation and health check, so it was not added.
-
-%1</source>
-        <translation>模板未通过合法性与健康性检查，因此未添加。
-
-%1</translation>
-    </message>
-    <message>
         <location filename="../Source/UI/ProjectsPage.cpp" line="887"/>
         <source>Confirm New Project</source>
         <translation>确认新建工程</translation>
-    </message>
-    <message>
-        <location filename="../Source/UI/ProjectsPage.cpp" line="888"/>
-        <source>Confirm the HarkenStudio version and template before creating the project.</source>
-        <translation>创建工程前，请确认 HarkenStudio 版本和模板。</translation>
-    </message>
-    <message>
-        <location filename="../Source/UI/ProjectsPage.cpp" line="892"/>
-        <source>HarkenStudio: %1
-Template: %2</source>
-        <translation>HarkenStudio：%1
-模板：%2</translation>
     </message>
     <message>
         <location filename="../Source/UI/ProjectsPage.cpp" line="940"/>
@@ -2207,16 +2140,6 @@ Diagnostic log: %2</source>
 诊断日志：%2</translation>
     </message>
     <message>
-        <location filename="../Source/UI/VersionsPage.cpp" line="1374"/>
-        <source>Install finished · self-test OK</source>
-        <translation>安装完成 · 自检通过</translation>
-    </message>
-    <message>
-        <location filename="../Source/UI/VersionsPage.cpp" line="1375"/>
-        <source>Install finished · self-test issue</source>
-        <translation>安装完成 · 自检发现问题</translation>
-    </message>
-    <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="447"/>
         <location filename="../Source/UI/VersionsPage.cpp" line="1395"/>
         <source>Open Folder</source>
@@ -2226,199 +2149,6 @@ Diagnostic log: %2</source>
         <location filename="../Source/UI/VersionsPage.cpp" line="1416"/>
         <source>Set as Launch Harken Default</source>
         <translation>设为 Launch Harken 默认版本</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="68"/>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="164"/>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="200"/>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="230"/>
-        <source>must be an object</source>
-        <translation>必须是对象</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="76"/>
-        <source>must be the Bus project item type</source>
-        <translation>必须是总线工程项类型</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="82"/>
-        <source>missing or non-string</source>
-        <translation>缺失或不是字符串</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="87"/>
-        <source>invalid name</source>
-        <translation>名称无效</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="90"/>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="180"/>
-        <source>duplicate name: %1</source>
-        <translation>名称重复：%1</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="101"/>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="156"/>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="223"/>
-        <source>must be an array</source>
-        <translation>必须是数组</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="116"/>
-        <source>must be an array of [x,y] pairs</source>
-        <translation>必须是由 [x,y] 点组成的数组</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="121"/>
-        <source>must have at least 2 points</source>
-        <translation>必须至少包含 2 个点</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="129"/>
-        <source>must be a [x,y] array</source>
-        <translation>必须是 [x,y] 数组</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="137"/>
-        <source>must be exactly two numbers</source>
-        <translation>必须恰好包含两个数字</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="143"/>
-        <source>x must be between 0 and %1</source>
-        <translation>x 必须介于 0 和 %1 之间</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="146"/>
-        <source>x values must be monotonically increasing</source>
-        <translation>x 值必须单调递增</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="172"/>
-        <source>must be the Attenuation project item type</source>
-        <translation>必须是衰减工程项类型</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="177"/>
-        <source>missing or invalid name</source>
-        <translation>名称缺失或无效</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="188"/>
-        <source>must be a number</source>
-        <translation>必须是数字</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="194"/>
-        <source>must be greater than 0</source>
-        <translation>必须大于 0</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="207"/>
-        <source>missing or empty curve type</source>
-        <translation>曲线类型缺失或为空</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="237"/>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="267"/>
-        <source>must be an integer</source>
-        <translation>必须是整数</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="242"/>
-        <source>unexpected project item type</source>
-        <translation>工程项类型不符合要求</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="246"/>
-        <source>must be a content project item type</source>
-        <translation>必须是内容工程项类型</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="256"/>
-        <source>The top-level JSON must be an object.</source>
-        <translation>顶层 JSON 必须是对象。</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="259"/>
-        <source>not a JSON object</source>
-        <translation>不是 JSON 对象</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="273"/>
-        <source>unsupported template format version: %1</source>
-        <translation>不支持的模板格式版本：%1</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="278"/>
-        <source>missing or empty string</source>
-        <translation>字符串缺失或为空</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="282"/>
-        <source>missing string</source>
-        <translation>字符串缺失</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="305"/>
-        <source>unsupported template section</source>
-        <translation>不支持的模板区段</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="311"/>
-        <source>missing object</source>
-        <translation>对象缺失</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="316"/>
-        <source>must be &apos;Master Bus&apos;</source>
-        <translation>必须是“Master Bus”</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="324"/>
-        <source>The template is valid.</source>
-        <translation>模板有效。</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="325"/>
-        <source>Found %1 issue(s) in %2:</source>
-        <translation>在 %2 中发现 %1 个问题：</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="336"/>
-        <source>The template could not be read.</source>
-        <translation>无法读取模板。</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="343"/>
-        <source>The template file size is invalid.</source>
-        <translation>模板文件大小无效。</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="345"/>
-        <source>The file must be between 1 byte and 10 MB.</source>
-        <translation>文件大小必须介于 1 字节和 10 MB 之间。</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="362"/>
-        <source>The template contains invalid JSON.</source>
-        <translation>模板包含无效的 JSON。</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="365"/>
-        <source>%1 at offset %2</source>
-        <translation>%1，位置偏移 %2</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="498"/>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="517"/>
-        <source>The template could not be added.</source>
-        <translation>无法添加模板。</translation>
-    </message>
-    <message>
-        <location filename="../Source/Templates/ProjectTemplateCatalog.cpp" line="501"/>
-        <source>The template directory could not be created.</source>
-        <translation>无法创建模板目录。</translation>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="134"/>
@@ -2586,14 +2316,6 @@ PACKAGE STATUS</source>
     <message>
         <source>Integration Package check failed. Review the check log for details.</source>
         <translation>集成包检查失败，请查看检查日志了解详情。</translation>
-    </message>
-    <message>
-        <source>All Harken-managed files match Integration Package %1; %2 Unity metadata file(s) and %3 optional target runtime file(s) are retained as expected.</source>
-        <translation>所有 Harken 管理的文件均与集成包 %1 一致；已正常保留 %2 个 Unity 元数据文件和 %3 个可选目标运行时文件。</translation>
-    </message>
-    <message>
-        <source>All Harken-managed files match Integration Package %1; %2 project-specific file(s) need review, while %3 Unity metadata and %4 optional runtime file(s) are retained normally.</source>
-        <translation>所有 Harken 管理的文件均与集成包 %1 一致；有 %2 个工程自定义文件需要检查，另有 %3 个 Unity 元数据文件和 %4 个可选运行时文件已正常保留。</translation>
     </message>
     <message>
         <source>The project-specific files are outside Harken Integration Package ownership, so the check cannot determine whether they are still needed.</source>
@@ -2800,10 +2522,6 @@ Close Unity before continuing. Any paths hard-coded in your project must be upda
     <message>
         <source>A valid Integration Package ownership record is required for migration.</source>
         <translation>迁移需要有效的集成包文件归属记录。</translation>
-    </message>
-    <message>
-        <source>The installed Integration Package identity or integration manifest is invalid.</source>
-        <translation>已安装集成包的身份信息或集成清单无效。</translation>
     </message>
     <message>
         <source>The installed Integration Package has local package dependencies. Resolve them before migration.</source>
@@ -3020,22 +2738,6 @@ Close Unity before continuing. Any paths hard-coded in your project must be upda
         <translation>集成包源目录与安装目录必须独立，不能相同或相互包含。</translation>
     </message>
     <message>
-        <source>This Integration Package version does not support a custom installation location.</source>
-        <translation>该版本集成包不支持自定义安装位置。</translation>
-    </message>
-    <message>
-        <source>Choose a newer Integration Package or install to Packages/com.harken.core or Assets/HarkenSDK.</source>
-        <translation>请选择较新版本的集成包，或安装到 Packages/com.harken.core 或 Assets/HarkenSDK。</translation>
-    </message>
-    <message>
-        <source>The Integration Package manifest contains an unsafe file path.</source>
-        <translation>集成包清单中包含不安全的文件路径。</translation>
-    </message>
-    <message>
-        <source>The Integration Package manifest contains an unsafe runtime path.</source>
-        <translation>集成包清单中包含不安全的 Runtime 路径。</translation>
-    </message>
-    <message>
         <source>The installed Integration Package could not be compared because its ownership record is missing, invalid or unreadable.</source>
         <translation>已安装集成包的文件归属记录缺失、无效或无法读取，无法比较其内容。</translation>
     </message>
@@ -3110,10 +2812,6 @@ Close Unity before continuing. Any paths hard-coded in your project must be upda
     <message>
         <source>An Integration Package is referenced by Unity Package Manager: %1. Resolve this dependency before using Hub installation.</source>
         <translation>Unity Package Manager 已引用集成包：%1。请先处理该依赖，再通过 Hub 安装。</translation>
-    </message>
-    <message>
-        <source>Integration Package files without an identifiable installation root: %1</source>
-        <translation>发现无法确定安装根目录的集成包文件：%1</translation>
     </message>
     <message>
         <source>Resolve Integration Package dependencies before removal; Unity could load the referenced Integration Package after the embedded copy is removed:</source>
@@ -3810,22 +3508,11 @@ PACKAGE VERSION</source>
         <source>The installed Integration Package could not be compared because its ownership record is unreadable.</source>
         <translation>无法比较已安装的集成包，因为其所有权记录无法读取。</translation>
     </message>
-    <message>
-        <source>Validated Integration Package %1: %2 file(s); the %3 runtime required for this editor is present.</source>
-        <translation>已验证集成包 %1：共 %2 个文件；此编辑器所需的 %3 Runtime 已存在。</translation>
-    </message>
-    <message>
-        <source> Target runtimes not included: %1. Available platforms can still be integrated.</source>
-        <translation>未包含以下目标 Runtime：%1。仍可集成已有的平台。</translation>
-    </message>
-    <message>
-        <source> Runtimes that require another editor operating system are not included: %1.</source>
-        <translation>未包含需要其他编辑器操作系统的 Runtime：%1。</translation>
-    </message>
-    <message>
-        <source>Native runtimes available in this Integration Package source: %1</source>
-        <translation>此集成包源中可用的原生 Runtime：%1</translation>
-    </message>
+    <message><source>Hub checks package files. Unity compilation, playback and target-platform support must be tested in Unity.</source><translation>Hub 检查的是集成包文件。Unity 编译、播放和目标平台支持情况需在 Unity 中测试。</translation></message>
+    <message><source>Validated Integration Package %1: %2 file(s).</source><translation>已验证集成包 %1：共 %2 个文件。</translation></message>
+        <message><source>The selected Unity Integration Package source is empty. The Unity project was not changed.</source><translation>所选 Unity 集成包来源为空。Unity 工程未被修改。</translation></message>
+        <message><source>Choose or drop a complete Unity/Harken package, then run Check only again.</source><translation>请选择或拖入完整的 Unity/Harken 集成包，然后重新执行检查。</translation></message>
+        <message><source>The installed Integration Package identity is invalid.</source><translation>已安装集成包的身份信息无效。</translation></message>
     <message>
         <source>Check found Integration Package differences: %1.</source>
         <translation>检查发现集成包差异：%1。</translation>
@@ -3845,36 +3532,6 @@ PACKAGE VERSION</source>
     <message>
         <source>The existing Integration Package differs from selected Integration Package source %1: %2.</source>
         <translation>现有集成包与所选集成包源 %1 存在差异：%2。</translation>
-    </message>
-    <message>
-        <source>Target runtimes deferred to another operating system: %1</source>
-        <translation>需在其他操作系统上处理的目标 Runtime：%1</translation>
-    </message>
-    <message>
-        <source>The %1 files in the selected Integration Package source are complete, but the listed target platforms have no verified runtime in this source. Each target is independent, so their absence does not prevent %1 integration.</source>
-        <translation>所选集成包源中的 %1 文件完整，但列出的目标平台在此源中没有经过验证的 Runtime。每个目标相互独立，因此缺少这些 Runtime 不会阻止 %1 集成。</translation>
-    </message>
-    <message>
-        <source>Those targets cannot be completed on %1 under the Harken integration policy, so their missing runtimes do not block this integration.</source>
-        <translation>根据 Harken 集成策略，这些目标无法在 %1 上完成，因此缺少对应 Runtime 不会阻止本次集成。</translation>
-    </message>
-    <message>
-        <source>You may continue integrating and use the available platforms. Before building for a missing target, select a complete Integration Package source that includes its verified runtime, then run Check only again. Do not copy unknown runtime files from another Unity project.</source>
-        <translation>你可以继续集成并使用已有平台。构建缺失目标前，请选择包含对应已验证 Runtime 的完整集成包源，然后再次执行“仅检查”。不要从其他 Unity 工程复制未知 Runtime 文件。</translation>
-    </message>
-    <message>
-        <source>Before building targets that require another operating system, open the Unity project with Harken Studio there and run Check and integrate again. Apple targets must be completed on macOS.</source>
-        <translation>构建需要其他操作系统的目标前，请在对应系统上使用 Harken Studio 打开 Unity 工程，并再次执行“检查并集成”。Apple 目标必须在 macOS 上完成。</translation>
-    </message>
-    <message>
-        <source>Missing component: %1 game runtime
-Expected inside the selected Integration Package source: %2
-Purpose: %3
-What this means: This Integration Package source cannot safely prepare the Unity project for %4 builds until a verified runtime is restored.</source>
-        <translation>缺少组件：%1 游戏 Runtime
-应位于所选集成包源中：%2
-用途：%3
-这意味着：在恢复经过验证的 Runtime 前，此集成包源无法安全地为 %4 构建准备 Unity 工程。</translation>
     </message>
     <message>
         <source>Unity includes this runtime in Windows games and uses it for Windows Editor play mode.</source>
@@ -3927,10 +3584,6 @@ What this means: This Integration Package source cannot safely prepare the Unity
     <message>
         <source>Review the file list before confirming the Integration Package change.</source>
         <translation>请核对文件列表，再确认更换集成包。</translation>
-    </message>
-    <message>
-        <source>%1 missing Integration Package file(s) will be added; %2 existing Integration Package file(s) need updating; %3 obsolete Harken-managed file(s) will be removed; %4 project-specific file(s) will be kept unchanged; %5 Unity-generated metadata file(s) and %6 optional target runtime file(s) will be kept automatically</source>
-        <translation>将新增 %1 个缺失的集成包文件；更新 %2 个现有集成包文件；移除 %3 个已废弃的 Harken 管理文件；保留 %4 个工程专属文件不变；自动保留 %5 个 Unity 生成的元数据文件和 %6 个可选目标运行时文件</translation>
     </message>
     <message>
         <source>Files to add</source>
@@ -4007,10 +3660,6 @@ What this means: This Integration Package source cannot safely prepare the Unity
         <translation>软件包标识与兼容性</translation>
     </message>
     <message>
-        <source>Integration safety rules</source>
-        <translation>集成安全规则</translation>
-    </message>
-    <message>
         <source>Unity C# assembly settings</source>
         <translation>Unity C# 程序集设置</translation>
     </message>
@@ -4047,10 +3696,6 @@ What this means: This Integration Package source cannot safely prepare the Unity
         <translation>向 Unity Package Manager 描述 Harken 软件包名称、版本、Unity 兼容性和可选示例。</translation>
     </message>
     <message>
-        <source>Defines which Integration Package files are mandatory and which Unity target runtimes should be available on each editor operating system.</source>
-        <translation>定义必要的集成包文件，以及各编辑器操作系统应提供的 Unity 目标 Runtime。</translation>
-    </message>
-    <message>
         <source>Tells Unity how to compile the Harken C# runtime and host-adapter assemblies and which dependencies they need.</source>
         <translation>指示 Unity 如何编译 Harken C# Runtime 和宿主适配程序集，以及它们需要的依赖项。</translation>
     </message>
@@ -4085,10 +3730,6 @@ What this means: This Integration Package source cannot safely prepare the Unity
     <message>
         <source>Unity will recognize and load the selected Harken Integration Package version with its current package settings.</source>
         <translation>Unity 将使用当前软件包设置识别并加载所选 Harken 集成包版本。</translation>
-    </message>
-    <message>
-        <source>Future checks can detect an incomplete or damaged Harken Integration Package before changing project files.</source>
-        <translation>后续检查可在修改工程文件前发现不完整或损坏的 Harken 集成包。</translation>
     </message>
     <message>
         <source>Unity scripts can compile against the Harken API using the settings required by this Integration Package version.</source>
@@ -4415,10 +4056,6 @@ To integrate again later, select or drop this Integration Package source: %2</so
     <message>
         <source>Project file cannot be read</source>
         <translation>无法读取工程文件</translation>
-    </message>
-    <message>
-        <source>The project file identity has changed; it may have been replaced by a different project</source>
-        <translation>工程文件标识已更改，可能已被其他工程替换</translation>
     </message>
     <message>
         <source>Choose a Harken Studio version first.</source>
@@ -4780,21 +4417,6 @@ The previous version association was kept. You can retry, select another version
         <translation>有多个安装符合此工程的推荐版本，请选择具体的 Studio 安装。</translation>
     </message>
     <message>
-        <location filename="../Source/Localization/ProjectOpenTranslations.cpp" line="33"/>
-        <source>Studio capabilities build identity does not match the package.</source>
-        <translation>Studio 能力报告中的构建身份与安装包不一致。</translation>
-    </message>
-    <message>
-        <location filename="../Source/Localization/ProjectOpenTranslations.cpp" line="34"/>
-        <source>Studio capabilities must use the three-field version 2 report.</source>
-        <translation>Studio 能力报告必须使用仅含三个字段的版本 2 协议。</translation>
-    </message>
-    <message>
-        <location filename="../Source/Localization/ProjectOpenTranslations.cpp" line="35"/>
-        <source>Studio capabilities version does not match the package.</source>
-        <translation>Studio 能力报告中的软件版本与安装包不一致。</translation>
-    </message>
-    <message>
         <location filename="../Source/Localization/ProjectOpenTranslations.cpp" line="44"/>
         <source>The project file cannot be read.</source>
         <translation>无法读取工程文件。</translation>
@@ -4893,7 +4515,7 @@ Uninstall Integration Package: %3</source><translation>更换集成包：%1
         <message><source>Installation record invalid</source><translation>集成包安装记录无效或无法读取</translation></message>
         <message><source>Restore this installation's ownership record from its own backup, then check again. Do not copy a record from another Integration Package or project. Without the record, Hub cannot distinguish Integration Package files from project-specific files; use the original installation tool if no backup exists.</source><translation>请从本次安装对应的备份恢复安装记录，再重新检查，不能借用其他集成包或工程的记录。缺少记录时，Hub 无法区分集成包文件与工程自定义文件；没有备份时，请使用原有安装工具处理。</translation></message>
         <message><source>Integration Package metadata needs repair</source><translation>集成包描述文件需要修复</translation></message>
-        <message><source>The installation record is available, but package.json or harken-integration.json is missing or invalid.</source><translation>安装记录有效，但 package.json 或 harken-integration.json 缺失或无效。</translation></message>
+        <message><source>The installation record is available, but package.json is missing or invalid.</source><translation>安装记录有效，但 package.json 缺失或无效。</translation></message>
         <message><source>Use Change Integration Package with a complete Integration Package source to repair the managed files. Move and uninstall require readable package metadata, so repair it first. Existing safety checks still run before applying any change.</source><translation>可点击“更换集成包”，选择完整的集成包来源修复文件。迁移和卸载需要有效的包描述文件，请先修复。实际修改前仍须通过安全检查。</translation></message>
         <message><source>Installed; move and uninstall restricted by dependencies</source><translation>已安装；包依赖限制了迁移和卸载</translation></message>
         <message><source>The Integration Package is installed. Change Integration Package remains available. Before moving or uninstalling, resolve the Integration Package dependencies in Unity Package Manager and package manifests so Unity cannot load another referenced copy or lose a package reference.</source><translation>集成包已安装，可继续更换或更新。如需迁移或卸载，请先处理 Unity Package Manager 和包清单中的集成包依赖，避免 Unity 加载另一份副本或丢失包引用。</translation></message>
@@ -5045,14 +4667,6 @@ Integration Package installation location:
     <message><source>Resume Integration Package Removal...</source><translation>继续卸载集成包...</translation></message>
     <message><source>The safety backup was created, but removal stopped before changing project files. Backup: %1</source><translation>已创建安全备份，但卸载在修改工程文件前停止。备份：%1</translation></message>
     <message><source>Some files required for this Integration Package operation cannot be changed.</source><translation>此次集成包操作需要修改的部分文件无法修改。</translation></message>
-    <message>
-        <source>Restore Current Version...</source>
-        <translation>还原当前版本…</translation>
-    </message>
-    <message>
-        <source>Restore Current Version</source>
-        <translation>还原当前版本</translation>
-    </message>
     <message>
         <source>Recover Restoration...</source>
         <translation>恢复未完成的还原…</translation>
@@ -5371,5 +4985,89 @@ Close Unity and complete any required P4 checkout before continuing.</source>
         <source>Conflicting unowned files require separate approval before restoration.</source>
         <translation>非受管文件存在重名冲突，还原前需要单独确认。</translation>
     </message>
+    <message><source>Cannot remove %1. Close Unity and any program using it, then retry.</source><translation>无法删除 %1。请关闭 Unity 及占用它的程序后重试。</translation></message>
+    <message><source>Backup verification failed for %1</source><translation>备份校验失败：%1</translation></message>
+    <message><source>No report was written because the Unity project was not valid.</source><translation>Unity 工程无效，未写入报告。</translation></message>
+    <message><source>The integration report could not be written.</source><translation>无法写入集成报告。</translation></message>
+    <message><source>Wrote machine-readable and human-readable Integration Package reports.</source><translation>已写入机器可读与人工可读的集成包报告。</translation></message>
+    <message><source>No Harken Integration Package is installed; version %1 will be installed at %2.</source><translation>尚未安装 Harken 集成包；将在 %2 安装版本 %1。</translation></message>
+    <message><source>Version %1 is already installed at %2; installing again replaces the whole directory with the selected package.</source><translation>%2 已安装版本 %1；再次安装会用所选集成包整体替换该目录。</translation></message>
+    <message><source>Installed version %1 at %2 will be replaced by version %3.</source><translation>%2 中已安装的版本 %1 将被替换为版本 %3。</translation></message>
+    <message><source>The whole installation directory is replaced. Files you changed or added inside it are not kept; use version control to keep local changes.</source><translation>整个安装目录会被替换，目录内修改或新增的文件不会保留；请用版本控制保存本地修改。</translation></message>
+    <message><source>Check only: the Unity project was not changed.</source><translation>仅检查：未修改 Unity 工程。</translation></message>
+    <message><source>The installed Integration Package could not be backed up. The Unity project was not changed.</source><translation>无法备份已安装的集成包，未修改 Unity 工程。</translation></message>
+    <message><source>The Integration Package could not be installed.</source><translation>无法安装集成包。</translation></message>
+    <message><source>Retry the installation, or restore the previous version.</source><translation>请重试安装，或恢复之前的版本。</translation></message>
+    <message><source>Close Unity and any program using the installation directory, then retry.</source><translation>请关闭 Unity 及占用安装目录的程序后重试。</translation></message>
+    <message><source>Installed Integration Package %1 at %2: %3 file(s).</source><translation>已在 %2 安装集成包 %1：%3 个文件。</translation></message>
+    <message><source>Check only: nothing was installed to verify.</source><translation>仅检查：没有需要校验的安装内容。</translation></message>
+    <message><source>Installed Integration Package files do not match the selected package.</source><translation>已安装的集成包文件与所选集成包不一致。</translation></message>
+    <message><source>Verified %1 installed Integration Package file(s).</source><translation>已校验 %1 个已安装的集成包文件。</translation></message>
+    <message><source>The installation succeeded, but the backup of the previous version could not be removed.</source><translation>安装成功，但无法删除之前版本的备份。</translation></message>
+    <message><source>The Unity project cannot be changed safely.</source><translation>无法安全地修改该 Unity 工程。</translation></message>
+    <message><source>The selected location does not contain the installed Integration Package.</source><translation>所选位置不是已安装的集成包。</translation></message>
+    <message><source>The installed Integration Package cannot be removed safely.</source><translation>无法安全地移除已安装的集成包。</translation></message>
+    <message><source>Integration Package %1 is installed at %2 and will be removed.</source><translation>%2 已安装集成包 %1，将被移除。</translation></message>
+    <message><source>Everything inside the installation directory is removed. Files outside it, including Integration settings in their default locations, are kept.</source><translation>安装目录内的所有内容都会删除。目录外的文件（包括位于默认位置的集成设置）会保留。</translation></message>
+    <message><source>The Integration Package could not be removed completely.</source><translation>集成包未能完全移除。</translation></message>
+    <message><source>Close Unity and any program using the installation directory, then retry, or restore the previous version.</source><translation>请关闭 Unity 及占用安装目录的程序后重试，或恢复之前的版本。</translation></message>
+    <message><source>Removed Integration Package %1 from %2.</source><translation>已从 %2 移除集成包 %1。</translation></message>
+    <message><source>The removal succeeded, but the backup of the removed version could not be deleted.</source><translation>移除成功，但无法删除被移除版本的备份。</translation></message>
+    <message><source>No previous Integration Package version is available for this project.</source><translation>该工程没有可恢复的之前版本。</translation></message>
+    <message><source>The previous installation location is not safe to use.</source><translation>之前的安装位置无法安全使用。</translation></message>
+    <message><source>Version %1 can be restored at %2.</source><translation>可在 %2 恢复版本 %1。</translation></message>
+    <message><source>The previous Integration Package version could not be restored.</source><translation>无法恢复之前的集成包版本。</translation></message>
+    <message><source>Restored Integration Package %1 at %2.</source><translation>已在 %2 恢复集成包 %1。</translation></message>
+    <message><source>The previous version was restored, but its backup could not be deleted.</source><translation>之前的版本已恢复，但无法删除其备份。</translation></message>
+    <message><source>Integration Package %1 is installed at %2.</source><translation>%2 已安装集成包 %1。</translation></message>
+    <message><source>No Integration Package is installed. Use Install Integration Package and select a complete Integration Package source. Uninstalling requires an existing installation.</source><translation>尚未安装集成包。请使用“安装集成包”并选择完整的集成包来源。卸载需要已有安装。</translation></message>
+    <message><source>Installation location is not empty</source><translation>安装位置不为空</translation></message>
+    <message><source>Choose an empty location or the folder of an existing Harken Integration Package. Hub replaces the whole installation directory, so it cannot install into a folder that contains other files.</source><translation>请选择空位置或已有 Harken 集成包的文件夹。Hub 会整体替换安装目录，因此不能安装到包含其他文件的文件夹。</translation></message>
+    <message><source>Installed; uninstall restricted by dependencies</source><translation>已安装；卸载受依赖限制</translation></message>
+    <message><source>The Integration Package is installed and can still be changed. Before uninstalling, resolve the Integration Package dependencies in Unity Package Manager and package manifests so Unity cannot load another referenced copy.</source><translation>集成包已安装，仍可更换。卸载前，请在 Unity Package Manager 和包清单中解决对集成包的依赖，避免 Unity 加载另一份被引用的副本。</translation></message>
+    <message><source>Integration Package change unfinished</source><translation>集成包变更未完成</translation></message>
+    <message><source>The last Integration Package change did not finish. Use Restore Previous Version to put back the version that was installed before, or install again.</source><translation>上一次集成包变更没有完成。可使用“恢复之前的版本”放回原先安装的版本，或重新安装。</translation></message>
+    <message><source>Remove Harken Integration Package</source><translation>移除 Harken 集成包</translation></message>
+    <message><source>Restore previous Integration Package</source><translation>恢复之前的集成包</translation></message>
+    <message><source>Restore Previous Version...</source><translation>恢复之前的版本...</translation></message>
+    <message><source>Restore Previous Version</source><translation>恢复之前的版本</translation></message>
+    <message><source>Change Integration Package: %1
+Uninstall Integration Package: %2</source><translation>更换集成包：%1
+卸载集成包：%2</translation></message>
+    <message><source>Review the restoration before continuing.</source><translation>继续前请检查恢复内容。</translation></message>
+    <message><source>The Integration Package directory will be replaced by the version that was installed before the unfinished change.
+
+Version: %1
+Location: %2
+
+Close Unity before continuing.</source><translation>集成包目录将被替换为未完成变更之前安装的版本。
+
+版本：%1
+位置：%2
+
+继续前请关闭 Unity。</translation></message>
+    <message><source>The previous Integration Package version was restored.</source><translation>已恢复之前的集成包版本。</translation></message>
+    <message><source>The previous Integration Package version could not be restored. Select the first failed step for details.</source><translation>无法恢复之前的集成包版本。请选择第一个失败的步骤查看详情。</translation></message>
+    <message><source>The installed Integration Package was found. No files were changed.</source><translation>已找到已安装的集成包，未修改任何文件。</translation></message>
+    <message><source>The installed Integration Package could not be identified. Review the results; no files were changed.</source><translation>无法识别已安装的集成包。请查看结果；未修改任何文件。</translation></message>
+    <message><source>Reviewing the installed Unity Integration Package...</source><translation>正在检查已安装的 Unity 集成包...</translation></message>
+    <message><source>Removing the Unity Integration Package...</source><translation>正在移除 Unity 集成包...</translation></message>
+    <message><source>The Integration Package directory and everything inside it will be removed:
+%1
+
+Integration settings outside this directory and the project relationship are kept. Close Unity before continuing.</source><translation>将移除集成包目录及其中的所有内容：
+%1
+
+此目录之外的集成设置和工程关联会保留。继续前请关闭 Unity。</translation></message>
+    <message><source>The Unity Integration Package was removed. Review is recommended for the highlighted steps.</source><translation>Unity 集成包已移除。建议检查标出的步骤。</translation></message>
+    <message><source>The Unity Integration Package was removed.</source><translation>Unity 集成包已移除。</translation></message>
+    <message><source>Unity Integration Package removal did not finish. Use Restore Previous Version to put the removed version back.</source><translation>Unity 集成包移除未完成。可使用“恢复之前的版本”放回被移除的版本。</translation></message>
+    <message><source>Check completed. The selected version is already installed; installing again replaces the installation directory.</source><translation>检查完成。所选版本已安装；再次安装会替换安装目录。</translation></message>
+    <message><source>Check completed. The installed version will be replaced; no Integration Package files were changed.</source><translation>检查完成。已安装的版本将被替换；尚未修改任何集成包文件。</translation></message>
+    <message><source>Integration Package installation failed. Retry, or use Restore Previous Version to put the previous version back.</source><translation>集成包安装失败。请重试，或使用“恢复之前的版本”放回之前的版本。</translation></message>
+    <message><source>Confirm the HarkenStudio version before creating the project.</source><translation>创建工程前，请确认 HarkenStudio 版本。</translation></message>
+    <message><source>HarkenStudio: %1</source><translation>HarkenStudio：%1</translation></message>
+    <message><source>Projects open in this Studio version. Creating projects from Hub is unavailable.</source><translation>可以用此 Studio 版本打开工程，但无法从 Hub 新建工程。</translation></message>
+    <message><source>Studio did not list its project templates.</source><translation>Studio 未能列出其工程模板。</translation></message>
 </context>
 </TS>

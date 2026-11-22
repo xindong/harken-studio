@@ -150,6 +150,20 @@ TEST(CascadeProtocol, CompactBusPlanesPreserveDirectSendAndFormalImageRouting) {
     }
 }
 
+TEST(CascadeProtocol, ResidentDecoderRefusalEndsAsIntegrityAbort) {
+    struct RefusingDecoder final : harken::MediaDecoder {
+        bool Read(std::uint64_t, std::uint32_t, std::uint32_t, PCMView&) noexcept override {
+            return false;
+        }
+        void Retire() noexcept override {}
+    } decoder;
+    const std::vector<float> samples(kBlock, 1.0f);
+    CascadeHarness harness(samples);
+    harness.ctx.mediaDecoder = &decoder;
+    EXPECT_EQ(0u, harness.RenderBlock().framesProduced);
+    EXPECT_EQ(harken::SourceTerminalKind::IntegrityAbort, harness.ctx.stagedSourceTerminal);
+}
+
 TEST(CascadeProtocol, PlainLinearPcmPreservesSamplesAndStateThroughReconfiguration) {
     const auto source = harkentest::MakeSine(8192, 997.0, 48000.0, 0.73f);
     const auto right = harkentest::MakeSine(8192, 313.0, 48000.0, 0.41f);

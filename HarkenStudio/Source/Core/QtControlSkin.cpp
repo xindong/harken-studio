@@ -33,16 +33,23 @@
 namespace {
 
 int popupTextMargin(const QStyleOptionMenuItem& item, const QWidget* widget,
-                    const VNX::ThemeMetrics& metrics)
+                    const harken::studio::ThemeMetrics& metrics)
 {
     QVariant mode;
     for (auto* owner = widget; owner && !mode.isValid(); owner = owner->parentWidget())
         mode = owner->property("popupIconColumn");
     const bool reserved = mode.isValid()
-        ? mode.toInt() == static_cast<int>(VNX::PopupIconColumn::Reserved)
+        ? mode.toInt() == static_cast<int>(harken::studio::PopupIconColumn::Reserved)
         : qobject_cast<const QMenu*>(widget) != nullptr;
     return reserved || item.menuHasCheckableItems
         ? qMax(metrics.popup.iconColumnWidth, item.maxIconWidth) : metrics.control.textPaddingX;
+}
+
+int popupCheckColumnWidth(const QStyleOptionMenuItem& item, const QWidget* widget,
+                          const harken::studio::ThemeMetrics& metrics)
+{
+    return qobject_cast<const QMenu*>(widget) && item.menuHasCheckableItems && item.maxIconWidth > 0
+        ? metrics.popup.iconColumnWidth : 0;
 }
 
 class PopupItemDelegate final : public QStyledItemDelegate
@@ -54,7 +61,7 @@ public:
                const QModelIndex& index) const override
     {
         const QVariant alignment = index.data(Qt::TextAlignmentRole);
-        VNX::QtControlSkin::current().paintPopupItem(*painter, menuOption(option, index), combo_,
+        harken::studio::QtControlSkin::current().paintPopupItem(*painter, menuOption(option, index), combo_,
             alignment.isValid() ? Qt::Alignment(alignment.toInt()) : Qt::AlignLeft);
     }
 
@@ -63,7 +70,7 @@ public:
         const auto menu = menuOption(option, index);
         const QSize contents = menu.fontMetrics.size(Qt::TextSingleLine | Qt::TextShowMnemonic,
                                                      menu.text);
-        return VNX::QtControlSkin::current().popupItemSize(menu, contents, combo_);
+        return harken::studio::QtControlSkin::current().popupItemSize(menu, contents, combo_);
     }
 
 private:
@@ -142,7 +149,7 @@ QColor contrastTextColor(const QColor& background)
     return QColor::fromRgbF(foreground, foreground, foreground);
 }
 
-QString styleSheetImagePath(const VNX::ThemeImageResource& resource)
+QString styleSheetImagePath(const harken::studio::ThemeImageResource& resource)
 {
     static QTemporaryDir directory(
         QDir::tempPath() + QStringLiteral("/harken-theme-icons-XXXXXX"));
@@ -170,7 +177,7 @@ QString styleSheetImagePath(const VNX::ThemeImageResource& resource)
 
 }
 
-namespace VNX {
+namespace harken::studio {
 
 QtControlSkin::QtControlSkin(ThemeSnapshotPtr snapshot,
                              ThemeAssetResolver* assetResolver)
@@ -225,7 +232,8 @@ QSize QtControlSkin::popupItemSize(const QStyleOptionMenuItem& item,
         ? qMax(margin, metrics().iconExtent + metrics().spacingXSmall) : margin;
     const int contentWidth = qobject_cast<const QMenu*>(widget)
         ? qMax(metrics().popup.minimumWidth, contentsSize.width() + spacing) : contentsSize.width() + spacing;
-    return QSize(contentWidth + margin + trailingMargin, popupRowHeight(item.fontMetrics));
+    return QSize(contentWidth + margin + popupCheckColumnWidth(item, widget, metrics()) + trailingMargin,
+                 popupRowHeight(item.fontMetrics));
 }
 
 void QtControlSkin::paintPopupItem(QPainter& painter, const QStyleOptionMenuItem& item,
@@ -244,9 +252,10 @@ void QtControlSkin::paintPopupItem(QPainter& painter, const QStyleOptionMenuItem
     painter.setPen(textColor);
 
     const int margin = popupTextMargin(item, widget, metrics());
+    const int checkColumnWidth = popupCheckColumnWidth(item, widget, metrics());
     const int trailingMargin = item.menuItemType == QStyleOptionMenuItem::SubMenu
         ? qMax(margin, metrics().iconExtent + metrics().spacingXSmall) : margin;
-    QRect textRect = item.rect.adjusted(margin, 0, -trailingMargin, 0);
+    QRect textRect = item.rect.adjusted(margin + checkColumnWidth, 0, -trailingMargin, 0);
     const QStringView text(item.text);
     const qsizetype tab = text.indexOf(QLatin1Char('\t'));
     const int textFlags = Qt::AlignVCenter | Qt::TextSingleLine | Qt::TextHideMnemonic;
@@ -267,7 +276,7 @@ void QtControlSkin::paintPopupItem(QPainter& painter, const QStyleOptionMenuItem
 
     if (margin >= metrics().popup.iconColumnWidth && !item.icon.isNull()) {
         const int extent = qMin(metrics().iconExtent, item.rect.height());
-        const QRect iconRect(item.rect.left(), item.rect.top(), margin, item.rect.height());
+        const QRect iconRect(item.rect.left() + checkColumnWidth, item.rect.top(), margin, item.rect.height());
         const auto state = item.checked ? QIcon::On : QIcon::Off;
         QPixmap glyph = item.icon.pixmap(QSize(extent, extent),
             painter.device()->devicePixelRatioF(), QIcon::Normal, state);
@@ -280,12 +289,14 @@ void QtControlSkin::paintPopupItem(QPainter& painter, const QStyleOptionMenuItem
                 QStyle::alignedRect(Qt::LeftToRight, Qt::AlignCenter,
                                     glyph.deviceIndependentSize().toSize(), iconRect)), glyph);
         }
-    } else if (margin >= metrics().popup.iconColumnWidth
-               && item.checkType != QStyleOptionMenuItem::NotCheckable && item.checked) {
+    }
+    if (margin >= metrics().popup.iconColumnWidth && (checkColumnWidth > 0 || item.icon.isNull())
+        && item.checkType != QStyleOptionMenuItem::NotCheckable && item.checked) {
         QStyleOptionMenuItem check = item;
         check.rect = QStyle::visualRect(item.direction, item.rect,
             QStyle::alignedRect(Qt::LeftToRight, Qt::AlignCenter, QSize(metrics().control.smallIconExtent, metrics().control.smallIconExtent),
-                                QRect(item.rect.topLeft(), QSize(margin, item.rect.height()))));
+                                QRect(item.rect.topLeft(), QSize(checkColumnWidth > 0 ? checkColumnWidth : margin,
+                                                               item.rect.height()))));
         check.state |= QStyle::State_On;
         check.palette.setColor(QPalette::Text, textColor);
         check.palette.setColor(QPalette::HighlightedText, textColor);
@@ -311,6 +322,12 @@ int QtControlSkin::fieldHeight() const
     return std::max({metrics().layout.fieldHeight,
                      metrics().control.smallIconExtent + metrics().borderWidth * 2,
                      QFontMetrics(font).height() + metrics().borderWidth * 2});
+}
+
+int QtControlSkin::toolBarControlHeight() const
+{
+    const auto& layout = metrics().layout;
+    return std::max({layout.fieldHeight + layout.controlGap, fieldHeight(), metrics().iconExtent});
 }
 
 QMargins QtControlSkin::fieldTextMargins() const
@@ -482,6 +499,7 @@ QString QtControlSkin::applicationStyleSheet() const
     replace(QStringLiteral("@bgSecondary@"), color(colors().bgSecondary));
     replace(QStringLiteral("@bgTertiary@"), color(colors().bgTertiary));
     replace(QStringLiteral("@bgHover@"), color(colors().bgHover));
+    replace(QStringLiteral("@hoverOverlay@"), color(colors().hoverOverlay));
     replace(QStringLiteral("@bgSelected@"), color(colors().bgSelected));
     replace(QStringLiteral("@bgDropTarget@"), color(colors().bgDropTarget));
     replace(QStringLiteral("@panelBackground@"), color(colors().panelBackground));
@@ -493,8 +511,6 @@ QString QtControlSkin::applicationStyleSheet() const
     replace(QStringLiteral("@textTitle@"), color(colors().textTitle));
     replace(QStringLiteral("@textDisabled@"), color(colors().textDisabled));
     replace(QStringLiteral("@sliderTrack@"), color(colors().sliderTrack));
-    replace(QStringLiteral("@hoverOverlay@"),
-            rgba(colors().textPrimary, qRound(255 * 0.08)));
     replace(QStringLiteral("@success@"), color(colors().success));
     replace(QStringLiteral("@successHover@"), hover(colors().success));
     replace(QStringLiteral("@successSoft@"), soft(colors().success));
@@ -515,7 +531,6 @@ QString QtControlSkin::applicationStyleSheet() const
     replace(QStringLiteral("@alternateBase@"), color(palette.alternateBase));
     replace(QStringLiteral("@button@"), color(palette.button));
     replace(QStringLiteral("@brightText@"), color(palette.brightText));
-    replace(QStringLiteral("@disabledHighlight@"), color(palette.disabledHighlight));
     replace(QStringLiteral("@nodeContentLabel@"), color(snapshot_->domains.nodeGraphNode.contentLabel));
     replace(QStringLiteral("@nodeContentValue@"), color(snapshot_->domains.nodeGraphNode.contentValue));
     replace(QStringLiteral("@logDebug@"), color(snapshot_->domains.log.debug));
@@ -539,8 +554,6 @@ QString QtControlSkin::applicationStyleSheet() const
     replace(QStringLiteral("@startupProgressHeight@"), QString::number(metrics().startup.progressHeight));
     replace(QStringLiteral("@scrollbarMinimumLength@"), QString::number(metrics().control.scrollbarMinimumLength));
     replace(QStringLiteral("@splitterExtent@"), QString::number(metrics().control.splitterExtent));
-    replace(QStringLiteral("@windowButtonWidth@"), QString::number(metrics().chrome.windowButtonWidth));
-    replace(QStringLiteral("@titleBarHeight@"), QString::number(metrics().chrome.titleBarHeight));
     replace(QStringLiteral("@compactSliderHeight@"), QString::number(metrics().parameter.compactSliderHeight));
     replace(QStringLiteral("@compactSliderHandleWidth@"), QString::number(metrics().parameter.compactSliderHandleWidth));
     replace(QStringLiteral("@buttonMinimumWidth@"), QString::number(metrics().control.buttonMinimumWidth));
@@ -551,6 +564,7 @@ QString QtControlSkin::applicationStyleSheet() const
     replace(QStringLiteral("@radiusLarge@"), QString::number(metrics().radiusLarge));
     replace(QStringLiteral("@popupPaddingY@"), QString::number(metrics().popup.rowPadding));
     replace(QStringLiteral("@fieldHeight@"), QString::number(fieldHeight()));
+    replace(QStringLiteral("@toolBarControlHeight@"), QString::number(toolBarControlHeight()));
     const auto& layout = metrics().layout;
     replace(QStringLiteral("@panelPadding@"), QString::number(layout.panelPadding));
     replace(QStringLiteral("@sectionGap@"), QString::number(layout.sectionGap));
@@ -565,7 +579,7 @@ QString QtControlSkin::applicationStyleSheet() const
     replace(QStringLiteral("@fieldTextPaddingX@"), QString::number(fieldMargins.left()));
     replace(QStringLiteral("@fieldTextPaddingY@"), QString::number(fieldMargins.top()));
     replace(QStringLiteral("@lineEditPaddingX@"),
-            QString::number(std::max(0, fieldMargins.left() - VNX::QtControlSkin::LineEditTextMargin)));
+            QString::number(std::max(0, fieldMargins.left() - harken::studio::QtControlSkin::LineEditTextMargin)));
     replace(QStringLiteral("@tableCellPaddingX@"), QString::number(metrics().table.cellPaddingX));
     replace(QStringLiteral("@tableCellPaddingY@"), QString::number(metrics().table.cellPaddingY));
     const auto& parameterMetrics = metrics().parameter;
@@ -607,7 +621,7 @@ QString QtControlSkin::collapsibleHeaderStyle(const QColor& indicator, bool cust
 
     const QString titleColor = colors().textTitle.name(QColor::HexArgb);
     const QString font = FontManager::instance().styleSheet(snapshot_, FontRole::Body, FontEmphasis::Strong);
-    QString bg, border, hoverBg;
+    QString bg, border;
     int verticalBorder = 0;
     if (level <= 0)
     {
@@ -621,7 +635,6 @@ QString QtControlSkin::collapsibleHeaderStyle(const QColor& indicator, bool cust
             border += QStringLiteral(" border-top: %1px solid %2;").arg(metrics().borderWidth).arg(borderPrimary());
             verticalBorder += metrics().borderWidth;
         }
-        hoverBg  = bgTertiary();
     }
     else if (level == 1)
     {
@@ -631,14 +644,12 @@ QString QtControlSkin::collapsibleHeaderStyle(const QColor& indicator, bool cust
         verticalBorder = metrics().borderWidth;
         if (custom)
             border += QString(" border-left: %1px solid %2;").arg(metrics().accentBorderWidth).arg(indicatorColor);
-        hoverBg  = bgTertiary();
     }
     else
     {
         bg       = custom ? rgba(indicator, 16) : QStringLiteral("transparent");
         border   = custom ? QString("border: none; border-left: %1px solid %2;").arg(metrics().accentBorderWidth).arg(indicatorColor)
                           : QStringLiteral("border: none;");
-        hoverBg  = QStringLiteral("transparent");
     }
     const QString pad = QString("padding: 0px %1px 0px 0px;").arg(metrics().layout.panelPadding);
     const int contentHeight = metrics().layout.sectionHeaderHeight - verticalBorder;
@@ -659,11 +670,10 @@ QString QtControlSkin::collapsibleHeaderStyle(const QColor& indicator, bool cust
             max-height: %5px;
         }
         QToolButton:hover {
-            background-color: %6;
-            color: %7;
+            background-overlay: %6;
         }
         QToolButton:disabled {
-            color: %8;
+            color: %7;
         }
     )")
         .arg(bg)
@@ -671,8 +681,7 @@ QString QtControlSkin::collapsibleHeaderStyle(const QColor& indicator, bool cust
         .arg(font + pad)
         .arg(titleColor)
         .arg(contentHeight)
-        .arg(hoverBg)
-        .arg(titleColor)
+        .arg(colors().hoverOverlay.name(QColor::HexArgb))
         .arg(textDisabled());
 }
 

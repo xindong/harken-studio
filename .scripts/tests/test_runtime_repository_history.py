@@ -79,18 +79,6 @@ class RepositoryHistoryVerifierTests(unittest.TestCase):
                 "functions", old, current
             )
 
-    def test_managed_project_identity_is_root_relative(self):
-        root = Path("C:/fixture/old").resolve()
-        self.assertEqual(
-            self.verifier.expected_managed_project(root),
-            (
-                root
-                / "HarkenTest"
-                / "Binding"
-                / "AbiFidelity.csproj"
-            ).resolve(),
-        )
-
     def test_cache_record_rejects_wrong_source_root(self):
         with tempfile.TemporaryDirectory() as temporary:
             build = Path(temporary)
@@ -114,7 +102,7 @@ class RepositoryHistoryVerifierTests(unittest.TestCase):
         command = self.verifier.runtime_configure_command(
             REPO_ROOT, REPO_ROOT / ".temp" / "history-build"
         )
-        self.assertIn("-DHARKEN_BUILD_CORE=ON", command)
+        self.assertIn("-DHARKEN_BUILD_ENGINE=ON", command)
         self.assertIn("-DHARKEN_BUILD_EDITOR=OFF", command)
         self.assertIn("-DHARKEN_BUILD_HUB=OFF", command)
         self.assertIn("-DHARKEN_BUILD_TOOLS=OFF", command)

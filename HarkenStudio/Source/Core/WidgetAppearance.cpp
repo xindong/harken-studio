@@ -17,7 +17,7 @@
 #include <tuple>
 #include <utility>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 enum Edge { Left, Top, Right, Bottom };
@@ -38,7 +38,12 @@ struct VisualPatch
         const auto color = [](QColor& target, const QColor& source) {
             if (source.isValid()) target = source;
         };
-        color(result.background, values.background);
+        if (values.background.isValid()) {
+            result.background = values.background;
+            result.backgroundOverlay = values.backgroundOverlay;
+        } else {
+            color(result.backgroundOverlay, values.backgroundOverlay);
+        }
         color(result.foreground, values.foreground);
         color(result.alternateBackground, values.alternateBackground);
         color(result.selectionBackground, values.selectionBackground);
@@ -214,6 +219,7 @@ bool parseDeclaration(VisualPatch& patch, const QString& property, const QString
     auto& result = patch.values;
     if (property == QLatin1String("background") || property == QLatin1String("background-color"))
         result.background = parseColor(value);
+    else if (property == QLatin1String("background-overlay")) result.backgroundOverlay = parseColor(value);
     else if (property == QLatin1String("color")) result.foreground = parseColor(value);
     else if (property == QLatin1String("alternate-background-color")) result.alternateBackground = parseColor(value);
     else if (property == QLatin1String("selection-background-color")) result.selectionBackground = parseColor(value);
@@ -688,7 +694,11 @@ QStyle::State widgetState(const QWidget* widget)
 {
     QStyle::State result;
     if (widget->isEnabled()) result |= QStyle::State_Enabled;
-    if (widget->hasFocus()) result |= QStyle::State_HasFocus;
+    if (widget->hasFocus()) {
+        result |= QStyle::State_HasFocus;
+        if (widget->window()->testAttribute(Qt::WA_KeyboardFocusChange))
+            result |= QStyle::State_KeyboardFocusChange;
+    }
     if (widget->underMouse()) result |= QStyle::State_MouseOver;
     if (const auto* button = qobject_cast<const QAbstractButton*>(widget)) {
         if (button->isDown()) result |= QStyle::State_Sunken;
@@ -707,6 +717,8 @@ bool stateValue(const StatePredicate& predicate, const QWidget* widget,
     else if (name == QLatin1String("hover")) value = state.testFlag(QStyle::State_Enabled)
         && state.testFlag(QStyle::State_MouseOver);
     else if (name == QLatin1String("focus")) value = state.testFlag(QStyle::State_HasFocus);
+    else if (name == QLatin1String("focus-visible"))
+        value = state.testFlags(QStyle::State_HasFocus | QStyle::State_KeyboardFocusChange);
     else if (name == QLatin1String("pressed")) value = state.testFlag(QStyle::State_Sunken);
     else if (name == QLatin1String("checked") || name == QLatin1String("on")) value = state.testFlag(QStyle::State_On);
     else if (name == QLatin1String("indeterminate")) value = state.testFlag(QStyle::State_NoChange);
@@ -935,7 +947,10 @@ bool WidgetAppearance::updateStyleSheet(QString styleSheet)
                 const bool customTab = type == QLatin1String("QTabBar") && rule.part == QLatin1String("tab");
                 const bool customCombo = type == QLatin1String("QComboBox")
                     && (rule.part == QLatin1String("drop-down") || rule.part == QLatin1String("down-arrow"));
-                if (!customTab && !customCombo) {
+                const bool itemIndicator = rule.part == QLatin1String("indicator")
+                    && (type == QLatin1String("QTreeView") || type == QLatin1String("QListView")
+                        || type == QLatin1String("QTableView") || type == QLatin1String("QAbstractItemView"));
+                if (!customTab && !customCombo && !itemIndicator) {
                     nativeSelectors.append(selector.trimmed());
                     if (type != QLatin1String("QComboBox") || !rule.part.isEmpty())
                         nativeBoxSelectors.append(selector.trimmed());

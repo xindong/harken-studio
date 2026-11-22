@@ -10,7 +10,7 @@
 #include <QSqlQuery>
 #include <QVariant>
 
-namespace VNH {
+namespace harken::hub {
 namespace {
 QString hubTranslate(const QString& source)
 {

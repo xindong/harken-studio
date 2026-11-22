@@ -31,7 +31,7 @@
 #include <functional>
 #include <unordered_set>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 

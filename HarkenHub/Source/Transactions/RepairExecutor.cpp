@@ -22,7 +22,7 @@
 #include <QHash>
 #include <QLockFile>
 
-namespace VNH {
+namespace harken::hub {
 
 namespace {
 
@@ -64,9 +64,7 @@ bool expectedHashesFor(const QString& packagePath,
                        QHash<QString, QString>* hashes, QString* error)
 {
     *hashes = packageResult.fileSha256ByPath;
-    for (const QString& metadataName :
-         {QStringLiteral("package-manifest.json"),
-          QStringLiteral("capabilities.json")}) {
+    for (const QString& metadataName : packageResult.metadataEntries) {
         QByteArray bytes;
         if (!PackageReader::readEntry(packagePath, metadataName, &bytes, error))
             return false;
@@ -81,14 +79,49 @@ bool expectedHashesFor(const QString& packagePath,
 
 }
 
-RepairOutcome RepairExecutor::run(const QString& buildId, const QDateTime& now,
-                                  const QString& transactionId)
+RepairSource RepairExecutor::verifySource(const QString& buildId, const QDateTime& now)
 {
-    return run(buildId, now, [](const QString& path) { return runningExecutablesUnder(path); }, transactionId);
+    RepairSource source;
+    if (!ManifestVerifier::isSafeFileToken(buildId)) {
+        source.error = QStringLiteral("Invalid build id");
+        return source;
+    }
+    source.packagePath = InstallPackageCache::packagePath(buildId);
+    if (!QFileInfo(source.packagePath).isFile() || !QFileInfo(InstallPackageCache::manifestPath(buildId)).isFile()) {
+        source.error = QStringLiteral("Verified repair package is unavailable");
+        source.failureCode = QStringLiteral("RepairSourceMissing");
+        return source;
+    }
+    const auto envelope = readAll(InstallPackageCache::manifestPath(buildId));
+    const auto manifest = ManifestVerifier::verify(envelope, TrustAnchors::manifestPublicKey(), now, true);
+    if (!manifest.ok || manifest.manifest.product != kProduct || manifest.manifest.buildId != buildId) {
+        source.error = manifest.ok ? QStringLiteral("Repair manifest identity mismatch") : manifest.error;
+        return source;
+    }
+    source.manifestHash = QString::fromLatin1(QCryptographicHash::hash(envelope, QCryptographicHash::Sha256).toHex());
+    const auto& release = manifest.manifest;
+    const auto package = PackageVerifier::verify(source.packagePath,
+        {buildId, release.version, release.sha256Hex, release.packageSize});
+    if (!package.ok || package.channel != release.channel) {
+        source.error = package.ok ? QStringLiteral("Repair package channel mismatch") : package.error;
+        return source;
+    }
+    source.ok = expectedHashesFor(source.packagePath, package, &source.files, &source.error);
+    if (source.ok && PackageReader::fileSha256Hex(source.packagePath).compare(release.sha256Hex, Qt::CaseInsensitive) != 0) {
+        source.ok = false;
+        source.error = QStringLiteral("The repair package changed during verification");
+    }
+    return source;
 }
 
 RepairOutcome RepairExecutor::run(const QString& buildId, const QDateTime& now,
-                                  const ProcessProbe& probe, const QString& requestedTransactionId)
+                                  const QString& transactionId, const QString& reviewedSnapshot, const QString& reviewedManifestHash)
+{
+    return run(buildId, now, [](const QString& path) { return runningExecutablesUnder(path); }, transactionId, reviewedSnapshot, reviewedManifestHash);
+}
+
+RepairOutcome RepairExecutor::run(const QString& buildId, const QDateTime& now,
+                                  const ProcessProbe& probe, const QString& requestedTransactionId, const QString& reviewedSnapshot, const QString& reviewedManifestHash)
 {
     RepairOutcome outcome;
     outcome.buildId = buildId;
@@ -140,12 +173,15 @@ RepairOutcome RepairExecutor::run(const QString& buildId, const QDateTime& now,
                     QStringLiteral("Install path is outside the versions root"),
                     now);
 
+    if (!reviewedSnapshot.isEmpty() && IntegrityChecker::snapshot(record->installPath).hash != reviewedSnapshot)
+        return fail(transactionId, buildId, QStringLiteral("ReviewChanged"),
+                    QStringLiteral("Installed files changed; review the operation again"), now);
+
     TransactionJournal::append(transactionId, kProduct, buildId,
                                QStringLiteral("Repairing"), QString(), now);
 
     const IntegrityReport current = IntegrityChecker::check(
-        record->installPath, record->packageManifestHash,
-        record->capabilitiesHash);
+        record->installPath, record->packageManifestHash);
     if (current.ok) {
         QString identityError;
         if (VersionScanner::inspect(*record, nullptr, &identityError) != InstallationIssue::None)
@@ -186,40 +222,12 @@ RepairOutcome RepairExecutor::run(const QString& buildId, const QDateTime& now,
     InstallIndex::setHealthState(buildId, QStringLiteral("NeedsRepair"),
                                  &healthError);
 
-    const QString packagePath = InstallPackageCache::packagePath(buildId);
-    const QString manifestPath = InstallPackageCache::manifestPath(buildId);
-    if (!QFileInfo(packagePath).isFile() || !QFileInfo(manifestPath).isFile())
-        return fail(transactionId, buildId,
-                    QStringLiteral("RepairSourceMissing"),
-                    QStringLiteral("Verified repair package is unavailable"),
-                    now);
-
-    const ManifestVerifyResult manifestResult = ManifestVerifier::verify(
-        readAll(manifestPath), TrustAnchors::manifestPublicKey(), now, true);
-    if (!manifestResult.ok || manifestResult.manifest.product != kProduct ||
-        manifestResult.manifest.buildId != buildId)
-        return fail(transactionId, buildId,
-                    QStringLiteral("RepairSourceRejected"),
-                    manifestResult.ok
-                        ? QStringLiteral("Repair manifest identity mismatch")
-                        : manifestResult.error,
-                    now);
-
-    ExpectedPackage expected;
-    expected.buildId = buildId;
-    expected.semanticVersion = manifestResult.manifest.version;
-    expected.sha256Hex = manifestResult.manifest.sha256Hex;
-    expected.sizeBytes = manifestResult.manifest.packageSize;
-    const PackageVerifyResult packageResult =
-        PackageVerifier::verify(packagePath, expected);
-    if (!packageResult.ok ||
-        packageResult.channel != manifestResult.manifest.channel)
-        return fail(transactionId, buildId,
-                    QStringLiteral("RepairSourceRejected"),
-                    packageResult.ok
-                        ? QStringLiteral("Repair package channel mismatch")
-                        : packageResult.error,
-                    now);
+    const auto source = verifySource(buildId, now);
+    if (!source.ok)
+        return fail(transactionId, buildId, source.failureCode, source.error, now);
+    if (!reviewedManifestHash.isEmpty() && source.manifestHash != reviewedManifestHash)
+        return fail(transactionId, buildId, QStringLiteral("ReviewChanged"),
+                    QStringLiteral("The repair source changed; review the operation again"), now);
 
     const QString replacement = studioVersionsRoot() +
                                 QStringLiteral("/.repair-") + transactionId;
@@ -227,11 +235,8 @@ RepairOutcome RepairExecutor::run(const QString& buildId, const QDateTime& now,
                              QStringLiteral("/.repair-old-") + transactionId;
     QDir(replacement).removeRecursively();
     QDir(previous).removeRecursively();
-    QHash<QString, QString> hashes;
     QString extractError;
-    if (!expectedHashesFor(packagePath, packageResult, &hashes, &extractError) ||
-        !PackageReader::extractAllVerified(packagePath, replacement, hashes,
-                                           &extractError)) {
+    if (!PackageReader::extractAllVerified(source.packagePath, replacement, source.files, &extractError)) {
         QDir(replacement).removeRecursively();
         return fail(transactionId, buildId, QStringLiteral("RepairExtractFailed"),
                     extractError, now);
@@ -251,6 +256,11 @@ RepairOutcome RepairExecutor::run(const QString& buildId, const QDateTime& now,
         return runningFailure(startedDuringRepair);
     }
 
+    if (!reviewedSnapshot.isEmpty() && IntegrityChecker::snapshot(record->installPath).hash != reviewedSnapshot) {
+        QDir(replacement).removeRecursively();
+        return fail(transactionId, buildId, QStringLiteral("ReviewChanged"),
+                    QStringLiteral("Installed files changed; review the operation again"), now);
+    }
     const bool hadPrevious = QFileInfo::exists(record->installPath);
     if (hadPrevious && !QDir().rename(record->installPath, previous)) {
         QDir(replacement).removeRecursively();
@@ -280,7 +290,7 @@ RepairOutcome RepairExecutor::run(const QString& buildId, const QDateTime& now,
 
     QString validationError;
     const auto repaired = IntegrityChecker::check(
-        record->installPath, record->packageManifestHash, record->capabilitiesHash);
+        record->installPath, record->packageManifestHash);
     const bool valid = repaired.ok
         && VersionScanner::inspect(*record, nullptr, &validationError) == InstallationIssue::None;
     if (!valid)

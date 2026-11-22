@@ -3,7 +3,7 @@
 #include "FilterSemantics.h"
 #include "PlayablePropertyAuthoringV1.h"
 
-namespace VNX {
+namespace harken::studio {
 namespace FilterAuthoring {
 
 bool isField(const QString& field);

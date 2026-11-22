@@ -16,7 +16,7 @@
 #include "../../Core/AppSettings.h"
 #include "../../Core/LogService.h"
 
-namespace VNX {
+namespace harken::studio {
 
 class LogTextEdit : public QPlainTextEdit
 {
@@ -116,11 +116,11 @@ private:
     static LogPanel* instance_;
 };
 
-#define XDLOG_TRACE(cat, msg) VNX::LogPanel::log(VNX::LogEntry::Trace, cat, msg)
-#define XDLOG_DEBUG(cat, msg) VNX::LogPanel::log(VNX::LogEntry::Debug, cat, msg)
-#define XDLOG_INFO(cat, msg) VNX::LogPanel::logInfo(cat, msg)
-#define XDLOG_WARNING(cat, msg) VNX::LogPanel::logWarning(cat, msg)
-#define XDLOG_ERROR(cat, msg) VNX::LogPanel::logError(cat, msg)
-#define XDLOG_CRITICAL(cat, msg) VNX::LogPanel::log(VNX::LogEntry::Critical, cat, msg)
+#define XDLOG_TRACE(cat, msg) harken::studio::LogPanel::log(harken::studio::LogEntry::Trace, cat, msg)
+#define XDLOG_DEBUG(cat, msg) harken::studio::LogPanel::log(harken::studio::LogEntry::Debug, cat, msg)
+#define XDLOG_INFO(cat, msg) harken::studio::LogPanel::logInfo(cat, msg)
+#define XDLOG_WARNING(cat, msg) harken::studio::LogPanel::logWarning(cat, msg)
+#define XDLOG_ERROR(cat, msg) harken::studio::LogPanel::logError(cat, msg)
+#define XDLOG_CRITICAL(cat, msg) harken::studio::LogPanel::log(harken::studio::LogEntry::Critical, cat, msg)
 
 }

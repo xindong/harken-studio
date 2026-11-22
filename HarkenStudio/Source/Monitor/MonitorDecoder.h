@@ -7,7 +7,7 @@
 #include <functional>
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 namespace Monitor {
 
 struct MonitorDecodedRecord
@@ -48,4 +48,4 @@ bool decodeEventDetail(const MonitorDecodedRecord& record, MonitorEventDetail* o
                         MonitorEventDetailV2* identity = nullptr);
 
 } // namespace Monitor
-} // namespace VNX
+} // namespace harken::studio

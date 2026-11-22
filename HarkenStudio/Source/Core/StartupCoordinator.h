@@ -10,7 +10,7 @@
 
 class QApplication;
 
-namespace VNX {
+namespace harken::studio {
 
 class MainWindow;
 class StartupLoadingWindow;

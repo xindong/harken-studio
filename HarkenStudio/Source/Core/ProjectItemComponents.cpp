@@ -12,10 +12,11 @@
 #include "Components/VBus.h"
 #include "Components/VAttenuation.h"
 #include "Components/VEffect.h"
+#include "Components/VConversion.h"
 #include "Components/VTrack.h"
 #include "Components/VSegment.h"
 
-namespace VNX {
+namespace harken::studio {
 
 void ProjectItem::attachDefaultComponents()
 {
@@ -85,6 +86,10 @@ void ProjectItem::attachDefaultComponents()
 
     case T::Effect:
         compOrCreate<VEffect>();
+        break;
+
+    case T::Conversion:
+        compOrCreate<VConversion>();
         break;
 
     default:

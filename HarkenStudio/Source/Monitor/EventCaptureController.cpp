@@ -8,10 +8,10 @@
 #include <algorithm>
 #include <tuple>
 
-namespace VNX::Monitor {
+namespace harken::studio::Monitor {
 namespace {
-using HarkenEditor::Bridge::RemoteConnectionState;
-using HarkenEditor::Bridge::RemoteEventCaptureState;
+using harken::studio::bridge::RemoteConnectionState;
+using harken::studio::bridge::RemoteEventCaptureState;
 
 bool before(const CapturedEvent& a, const CapturedEvent& b)
 {
@@ -29,7 +29,7 @@ QString playableDescription(const CapturedEvent& event, quint32 soundFinishKind)
 {
     const auto& fact = event.execution;
     if (fact.subjectNamespace != kMonitorSubjectPlayable ||
-        !monitorFactHas(fact, kMonitorFactFieldContentObject) || harkenstudio::IsNull(event.objectId())) return {};
+        !monitorFactHas(fact, kMonitorFactFieldContentObject) || harken::studio::types::IsNull(event.objectId())) return {};
     switch (fact.contentKind) {
     case kMonitorContentSound:
     case kMonitorContentContainer:
@@ -144,12 +144,12 @@ bool CapturedEvent::isDesignerEvent() const
     }
 }
 
-harkenstudio::ObjectId CapturedEvent::objectId() const
+harken::studio::types::ObjectId CapturedEvent::objectId() const
 {
     if (isExecution() && execution.factKind == kMonitorFactStepExecuted &&
         monitorFactHas(execution, kMonitorFactFieldActivityStep)) return activity.stepTargetId;
     if (!isExecution() || monitorFactHas(execution, kMonitorFactFieldContentObject)) return header.stableId;
-    return monitorFactHas(execution, kMonitorFactFieldTargetObject) ? execution.target.objectId : harkenstudio::ObjectId{};
+    return monitorFactHas(execution, kMonitorFactFieldTargetObject) ? execution.target.objectId : harken::studio::types::ObjectId{};
 }
 
 MonitorFactRequest CapturedEvent::request() const
@@ -159,7 +159,7 @@ MonitorFactRequest CapturedEvent::request() const
     return monitorFactHas(execution, kMonitorFactFieldRequest) ? execution.request : MonitorFactRequest{};
 }
 
-EventCaptureController::EventCaptureController(HarkenEditor::Bridge::RemoteConnection* remote,
+EventCaptureController::EventCaptureController(harken::studio::bridge::RemoteConnection* remote,
                                                QObject* parent)
     : QObject(parent), remote_(remote), pollBuffer_(65536)
 {
@@ -174,11 +174,11 @@ EventCaptureController::EventCaptureController(HarkenEditor::Bridge::RemoteConne
     });
     timer_.start();
     if (remote_) {
-        connect(remote_, &HarkenEditor::Bridge::RemoteConnection::stateChanged,
+        connect(remote_, &harken::studio::bridge::RemoteConnection::stateChanged,
                 this, &EventCaptureController::remoteStateChanged);
-        connect(remote_, &HarkenEditor::Bridge::RemoteConnection::eventCaptureChanged,
+        connect(remote_, &harken::studio::bridge::RemoteConnection::eventCaptureChanged,
                 this, &EventCaptureController::remoteCaptureChanged);
-        connect(remote_, &HarkenEditor::Bridge::RemoteConnection::eventRecordsReceived,
+        connect(remote_, &harken::studio::bridge::RemoteConnection::eventRecordsReceived,
                 this, &EventCaptureController::consume);
     }
     refreshAvailability();
@@ -274,10 +274,10 @@ void EventCaptureController::start()
     desc.requestSymbols = 1;
     desc.consumerQueueBytes = 1048576;
     desc.requestedExecutionFactVersion = 2;
-    const auto opened = HarkenEditor::Bridge::Monitoring::openEventSession(&desc, &localSession_);
+    const auto opened = harken::studio::bridge::Monitoring::openEventSession(&desc, &localSession_);
     MonitorEventSessionStatus status{};
 
-    const auto queried = opened == kOk ? HarkenEditor::Bridge::Monitoring::getEventSessionStatus(localSession_, &status) : opened;
+    const auto queried = opened == kOk ? harken::studio::bridge::Monitoring::getEventSessionStatus(localSession_, &status) : opened;
     if (queried != kOk) {
         fail(tr("Could not start local capture (%1)").arg(queried));
         return;
@@ -316,7 +316,7 @@ void EventCaptureController::stop()
     emit stateChanged();
     if (target_ == EventCaptureTarget::Remote) remote_->stopEventCapture();
     else {
-        const auto result = HarkenEditor::Bridge::Monitoring::sealEventSession(localSession_);
+        const auto result = harken::studio::bridge::Monitoring::sealEventSession(localSession_);
         if (result != kOk) fail(tr("Could not stop local capture (%1)").arg(result));
         else pollLocal();
     }
@@ -324,7 +324,7 @@ void EventCaptureController::stop()
 
 void EventCaptureController::closeLocal()
 {
-    if (localSession_ != 0) HarkenEditor::Bridge::Monitoring::closeSession(localSession_);
+    if (localSession_ != 0) harken::studio::bridge::Monitoring::closeSession(localSession_);
     localSession_ = 0;
 }
 
@@ -350,7 +350,7 @@ void EventCaptureController::pollLocal()
     desc.bufferBytes = pollBuffer_.size();
     MonitorPollResult result{};
 
-    const auto polled = HarkenEditor::Bridge::Monitoring::poll(localSession_, &desc, &result);
+    const auto polled = harken::studio::bridge::Monitoring::poll(localSession_, &desc, &result);
     if (polled != kOk) {
         fail(tr("Local capture read failed (%1)").arg(polled));
         return;
@@ -362,7 +362,7 @@ void EventCaptureController::pollLocal()
     if (localSession_ == 0) return;
     MonitorEventSessionStatus status{};
 
-    const auto queried = HarkenEditor::Bridge::Monitoring::getEventSessionStatus(localSession_, &status);
+    const auto queried = harken::studio::bridge::Monitoring::getEventSessionStatus(localSession_, &status);
     if (queried != kOk) {
         fail(tr("Local capture status failed (%1)").arg(queried));
         return;

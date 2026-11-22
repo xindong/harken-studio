@@ -2,7 +2,7 @@
 
 #include <gtest/gtest.h>
 
-using VNH::TrustAnchors;
+using harken::hub::TrustAnchors;
 
 namespace {
 

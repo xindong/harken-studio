@@ -11,9 +11,9 @@ class QRect;
 class QString;
 class QTreeWidgetItem;
 
-namespace VNX { class InlineRenameEdit; }
+namespace harken::studio { class InlineRenameEdit; }
 
-namespace VNX::TreeRowStyle {
+namespace harken::studio::TreeRowStyle {
 
 constexpr int kBucketRole = Qt::UserRole + 1;
 
@@ -23,9 +23,6 @@ QTreeWidgetItem* makeBucketRow(const QString& folderKey);
 void paintRowAccent(QPainter* p, const QRect& rowRect);
 void paintDropHighlight(QPainter* p, const QRect& rowRect);
 void paintItemContents(QPainter* p, const QStyleOptionViewItem& option);
-
-void paintBucketRow(QPainter* p, const QStyleOptionViewItem& opt,
-                    const QModelIndex& idx, bool expanded);
 
 void paintBranches(QPainter* painter, const QRect& rect, const QModelIndex& index,
                    const QAbstractItemModel* model, int indentation, bool expanded,

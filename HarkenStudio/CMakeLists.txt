@@ -1,7 +1,7 @@
 # Harken Studio — the Qt front end. Everything under this directory is
-# editor-side: it is never linked into harken_core and carries its own
-# third-party closure. Engine contact is isolated in Source/RuntimeBridge and
-# uses the harken_core in-process C API.
+# editor-side and carries its own third-party closure. Engine contact is
+# isolated in Source/RuntimeBridge, which links only the published
+# Harken::EngineDev.
 
 # Editor tree opts into C++ exceptions. Runtime stays exception-disabled
 # (Audio Thread no-throw discipline); Editor is Qt6 GUI and uses try/catch
@@ -13,6 +13,66 @@ if(MSVC)
     add_compile_options(/EHsc /permissive- /FS)
     add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
 endif()
+
+if(NOT TARGET Harken::EngineDev)
+    message(FATAL_ERROR "Harken Studio requires the Harken::EngineDev target")
+endif()
+
+set(HARKEN_SCHEMA_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/Schema")
+foreach(_format_tree Project PackMetadata)
+    set(_format_manifest "${HARKEN_SCHEMA_SOURCE_DIR}/${_format_tree}/manifest.json")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_format_manifest}")
+    file(READ "${_format_manifest}" _format_json)
+    string(JSON _format_count LENGTH "${_format_json}" published)
+    math(EXPR _format_last "${_format_count} - 1")
+    string(JSON _format_version GET "${_format_json}" published ${_format_last})
+    if(NOT _format_version MATCHES "^[1-9][0-9]*$")
+        message(FATAL_ERROR "${_format_manifest}: the last published version must be a positive integer")
+    endif()
+    if(_format_tree STREQUAL "Project")
+        string(JSON _development_version ERROR_VARIABLE _development_error GET "${_format_json}" developmentVersion)
+        if(NOT _development_error)
+            math(EXPR _expected_development_version "${_format_version} + 1")
+            if(NOT _development_version EQUAL _expected_development_version)
+                message(FATAL_ERROR "${_format_manifest}: developmentVersion must follow the last published version")
+            endif()
+            set(_format_version ${_development_version})
+        endif()
+    endif()
+    set(_format_version_${_format_tree} ${_format_version})
+endforeach()
+add_compile_definitions(
+    HARKEN_PROJECT_SCHEMA_VERSION=${_format_version_Project}
+    HARKEN_PACK_METADATA_VERSION=${_format_version_PackMetadata})
+
+set(HARKEN_SCHEMA_TOOL "${CMAKE_CURRENT_SOURCE_DIR}/Source/Tooling/SchemaArchive/schema_archive.py")
+set(HARKEN_SCHEMA_GENERATED_DIR "${CMAKE_CURRENT_SOURCE_DIR}/Source/Tooling/SchemaArchive/generated")
+set(HARKEN_SCHEMA_GENERATED_CORE_DIR "${HARKEN_SCHEMA_GENERATED_DIR}/Core")
+set(HARKEN_SCHEMA_PUBLISHED_DIR "${HARKEN_SCHEMA_GENERATED_DIR}/schema")
+set(HARKEN_SCHEMA_GENERATED_PROJECT_HEADER
+    "${HARKEN_SCHEMA_GENERATED_CORE_DIR}/ProjectSchemaGenerated.h")
+set(HARKEN_SCHEMA_GENERATED_BUILD_HEADER
+    "${HARKEN_SCHEMA_GENERATED_CORE_DIR}/SchemaBuildGenerated.h")
+set(HARKEN_SCHEMA_GENERATED_VALIDATOR_HEADER
+    "${HARKEN_SCHEMA_GENERATED_CORE_DIR}/ProjectSchemaValidator.generated.h")
+set(HARKEN_SCHEMA_GENERATED_VALIDATOR_SOURCE
+    "${HARKEN_SCHEMA_GENERATED_CORE_DIR}/ProjectSchemaValidator.generated.cpp")
+harken_add_python_regen_target(
+    harken_schema_regen
+    "${HARKEN_SCHEMA_TOOL}"
+    "Regenerating the Studio Schema code and published snapshot"
+    --schema-root "${HARKEN_SCHEMA_SOURCE_DIR}"
+    --generate-code "${HARKEN_SCHEMA_GENERATED_CORE_DIR}"
+    --publish "${HARKEN_SCHEMA_PUBLISHED_DIR}")
+
+function(harken_publish_studio_schema target)
+    add_custom_command(TARGET ${target} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E rm -rf "$<TARGET_FILE_DIR:${target}>/schema"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${HARKEN_SCHEMA_PUBLISHED_DIR}"
+            "$<TARGET_FILE_DIR:${target}>/schema"
+        COMMENT "Publishing the Studio Schema snapshot"
+        VERBATIM)
+endfunction()
 
 # Binary output directories are set globally at the top level (bin/ for
 # runtime,  lib/ for archives); the editor exe, the engine DLL, the deployed
@@ -137,7 +197,7 @@ endif()
 
 # ==============================================================================
 # harken_editor_lib — OBJECT library containing all Editor code except Main.cpp
-# Reusable by harken_editor (production) and harken_editor_tests (testing).
+# Reusable by harken_studio (production) and harken_studio_tests (testing).
 # ==============================================================================
 # Source Files — explicit list (no GLOB_RECURSE)
 # When adding new files, add them here and re-run cmake configure.
@@ -191,11 +251,13 @@ set(HARKEN_STUDIO_COMMAND_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/Actions/MixerActions.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/Actions/ProjectActions.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/Actions/ProjectPlatformActions.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/Actions/ConversionActions.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/Actions/FieldGroupActions.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/Actions/BindingActions.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/Actions/EditorActions.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/Actions/AuditionActions.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/Actions/SystemActions.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/Actions/RemoteActions.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/Actions/ContainerActions.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/Actions/SpatialActions.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/Actions/AdvancedActions.cpp
@@ -305,8 +367,9 @@ endif()
 # Runtime bridge -- the only sanctioned editor target that may talk to the
 # engine. Must precede Source/Core: harken_editor_foundation links it; all
 # editor runtime access goes through it.
-include(Source/Tooling/Harkenizer/CompilerClient.cmake)
+add_subdirectory(Source/Tooling)
 add_subdirectory(Source/RuntimeBridge)
+add_subdirectory(Source/Core/Build)
 add_subdirectory(Source/Tooling/Harkenizer/Core)
 include(Source/Tooling/Harkenizer/BuildIdentity.cmake)
 add_subdirectory(Source/Monitor)
@@ -325,9 +388,11 @@ add_subdirectory(Source/Widgets/Meter)
 add_subdirectory(Source/Widgets/TimeSeries)
 add_subdirectory(Source/Widgets/Monitor)
 add_subdirectory(Source/Widgets/SourceEditor)
+add_subdirectory(Source/Widgets/FileViewer)
 add_subdirectory(Source/Widgets/CurveEditor)
 add_subdirectory(Source/Widgets/ExternalEditor)
 add_subdirectory(Source/Widgets/EffectEditor)
+add_subdirectory(Source/Widgets/ConversionEditor)
 # Phase2 WP3: Grid Editor panel (leaf lib, Foundation only).
 add_subdirectory(Source/Widgets/GridEditor)
 add_subdirectory(Source/Widgets/Timeline)
@@ -335,8 +400,8 @@ add_subdirectory(Source/Widgets/Timeline)
 # ProjectTreeWidget); must come AFTER Common + Shared, BEFORE ProjectExplorer /
 # Hierarchy since both link it.
 add_subdirectory(Source/Widgets/ProjectTree)
-# Sources tab lists AssetRegistry and emits sourceEditorRequested(sourceId);
-# it does not link SourceEditor. MainWindow opens the standalone panel.
+# Resources section lists AssetRegistry and emits fileViewerRequested(sourceId);
+# it does not link FileViewer. MainWindow opens the standalone panel.
 add_subdirectory(Source/Widgets/ProjectExplorer)
 # Hierarchy: independent clone of ProjectExplorer (initial mirror, may diverge).
 add_subdirectory(Source/Widgets/Hierarchy)
@@ -366,9 +431,11 @@ target_link_libraries(harken_editor_lib PUBLIC harken_editor_meter)
 target_link_libraries(harken_editor_lib PUBLIC harken_editor_time_series)
 target_link_libraries(harken_editor_lib PUBLIC harken_editor_monitor)
 target_link_libraries(harken_editor_lib PUBLIC harken_editor_source_editor)
+target_link_libraries(harken_editor_lib PUBLIC harken_editor_file_viewer)
 target_link_libraries(harken_editor_lib PUBLIC harken_editor_curve_editor)
 target_link_libraries(harken_editor_lib PUBLIC harken_editor_external_editor)
 target_link_libraries(harken_editor_lib PUBLIC harken_editor_effect_editor)
+target_link_libraries(harken_editor_lib PUBLIC harken_editor_conversion_editor)
 target_link_libraries(harken_editor_lib PUBLIC harken_editor_grid_editor)
 target_link_libraries(harken_editor_lib PUBLIC harken_editor_timeline)
 target_link_libraries(harken_editor_lib PUBLIC harken_editor_explorer)
@@ -449,7 +516,7 @@ if(MSVC)
 endif()
 
 # ==============================================================================
-# harken_editor — Thin executable wrapper (binary name kept as HarkenStudio.exe via OUTPUT_NAME)
+# harken_studio — Thin executable wrapper (binary name kept as HarkenStudio.exe via OUTPUT_NAME)
 # ==============================================================================
 if(WIN32)
     # Windows PE VERSIONINFO — filled from cmake/BuildInfo.cmake so the identity
@@ -458,26 +525,26 @@ if(WIN32)
     # Comments (which carries the full BuildInfo Label + commit + timestamp).
     set_source_files_properties("HarkenStudio.rc" PROPERTIES
         OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Resources/icons/HarkenStudio.ico")
-    add_executable(harken_editor WIN32 Source/Main.cpp "resources.qrc" "HarkenStudio.rc")
+    add_executable(harken_studio WIN32 Source/Main.cpp "resources.qrc" "HarkenStudio.rc")
 else()
     set_source_files_properties("Resources/icons/HarkenStudio.icns"
         PROPERTIES MACOSX_PACKAGE_LOCATION "Resources")
-    add_executable(harken_editor Source/Main.cpp "resources.qrc"
+    add_executable(harken_studio Source/Main.cpp "resources.qrc"
         "Resources/icons/HarkenStudio.icns")
 endif()
 
 harken_attach_version_resource(
-    harken_editor
+    harken_studio
     "Harken Studio"
     "HarkenStudio.exe")
 
-set_target_properties(harken_editor PROPERTIES
+set_target_properties(harken_studio PROPERTIES
     OUTPUT_NAME "HarkenStudio"
     AUTORCC ON
 )
 
 if(APPLE)
-    set_target_properties(harken_editor PROPERTIES
+    set_target_properties(harken_studio PROPERTIES
         MACOSX_BUNDLE TRUE
         MACOSX_BUNDLE_BUNDLE_NAME "HarkenStudio"
         MACOSX_BUNDLE_GUI_IDENTIFIER "com.harkensound.harkenstudio"
@@ -489,18 +556,18 @@ if(APPLE)
 endif()
 
 if(WIN32)
-    set_target_properties(harken_editor PROPERTIES
-        VS_DEBUGGER_WORKING_DIRECTORY "$<TARGET_FILE_DIR:harken_editor>"
+    set_target_properties(harken_studio PROPERTIES
+        VS_DEBUGGER_WORKING_DIRECTORY "$<TARGET_FILE_DIR:harken_studio>"
         VS_DEBUGGER_ENVIRONMENT "QT_QPA_PLATFORM=windows"
     )
 
     file(GENERATE
-        OUTPUT "$<TARGET_FILE_DIR:harken_editor>/qt.conf"
+        OUTPUT "$<TARGET_FILE_DIR:harken_studio>/qt.conf"
         CONTENT "[Paths]\nPlugins = .\n"
     )
 endif()
 
-target_link_libraries(harken_editor PRIVATE harken_editor_lib)
+target_link_libraries(harken_studio PRIVATE harken_editor_lib)
 
 endif()
 
@@ -508,52 +575,33 @@ if(HARKEN_BUILD_STUDIO_CLI)
 add_executable(harken_studio_cli
     Source/Tooling/StudioCli/Main.cpp
     Source/Tooling/StudioCli/SavedProjectBuild.cpp
-    Source/Tooling/StudioCli/SavedProjectBuild.h
-    Source/Tooling/StudioCli/ResourceWorker.cpp
-    Source/Tooling/StudioCli/ResourceWorker.h)
+    Source/Tooling/StudioCli/SavedProjectBuild.h)
 set_target_properties(harken_studio_cli PROPERTIES OUTPUT_NAME "HarkenStudioCLI")
 target_link_libraries(harken_studio_cli PRIVATE harken_studio_core)
 harken_attach_version_resource(harken_studio_cli "Harken Studio CLI" "HarkenStudioCLI.exe")
 if(HARKEN_BUILD_EDITOR)
-    add_dependencies(harken_editor harken_studio_cli)
+    add_dependencies(harken_studio harken_studio_cli)
 endif()
 if(WIN32)
     target_link_libraries(harken_studio_cli PRIVATE ole32 shell32)
 endif()
 
-add_custom_command(TARGET harken_studio_cli POST_BUILD
-    COMMAND ${Python3_EXECUTABLE}
-        "${CMAKE_SOURCE_DIR}/.scripts/schema_archive.py"
-        --schema-root "${HARKEN_SCHEMA_SOURCE_DIR}"
-        --check-generated "${HARKEN_SCHEMA_GENERATED_CORE_DIR}"
-        --publish "$<TARGET_FILE_DIR:harken_studio_cli>/schema"
-)
-endif()
-
-if(NOT Python3_Interpreter_FOUND)
-    message(FATAL_ERROR "Python 3 is required to publish the Studio Schema snapshot")
+harken_publish_studio_schema(harken_studio_cli)
 endif()
 
 if(HARKEN_BUILD_EDITOR)
-add_custom_command(TARGET harken_editor POST_BUILD
-    COMMAND ${Python3_EXECUTABLE}
-        "${CMAKE_SOURCE_DIR}/.scripts/schema_archive.py"
-        --schema-root "${HARKEN_SCHEMA_SOURCE_DIR}"
-        --check-generated "${HARKEN_SCHEMA_GENERATED_CORE_DIR}"
-        --publish "$<TARGET_FILE_DIR:harken_editor>/schema"
-    COMMENT "Publishing the Studio Schema build snapshot"
-)
+harken_publish_studio_schema(harken_studio)
 
 endif()
 
 if(HARKEN_BUILD_EDITOR AND _harken_macos_agl_framework_missing)
-    harken_remove_missing_agl_framework(harken_editor)
+    harken_remove_missing_agl_framework(harken_studio)
     harken_remove_missing_agl_framework(harken_studio_cli)
 endif()
 
 if(WIN32 AND HARKEN_BUILD_EDITOR)
     target_link_libraries(harken_editor_lib PUBLIC user32 advapi32)
-    target_link_libraries(harken_editor PRIVATE opengl32 ole32 shell32)
+    target_link_libraries(harken_studio PRIVATE opengl32 ole32 shell32)
 endif()
 
 # Qt runtime deployment via windeployqt (Windows)
@@ -575,7 +623,7 @@ if(WIN32)
     endif()
 
     if(HARKEN_BUILD_EDITOR)
-    add_custom_command(TARGET harken_editor POST_BUILD
+    add_custom_command(TARGET harken_studio POST_BUILD
         COMMAND ${WINDEPLOYQT_EXE}
             $<$<CONFIG:Debug>:--debug>
             $<$<NOT:$<CONFIG:Debug>>:--release>
@@ -585,14 +633,14 @@ if(WIN32)
             --no-system-dxc-compiler
             --no-opengl-sw
             --no-quick-import
-            $<TARGET_FILE:harken_editor>
+            $<TARGET_FILE:harken_studio>
         # windeployqt only ships the "windows" platform plugin; deploy the
         # offscreen plugin too so headless runs (tests under CI/agents) can
         # request QT_QPA_PLATFORM=offscreen instead of dying on a missing
         # platform.
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "$<TARGET_FILE:Qt6::QOffscreenIntegrationPlugin>"
-            "$<TARGET_FILE_DIR:harken_editor>/platforms/"
+            "$<TARGET_FILE_DIR:harken_studio>/platforms/"
         COMMENT "Deploying Qt runtime via windeployqt"
     )
 
@@ -603,10 +651,10 @@ if(WIN32)
     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Templates")
         file(GLOB HARKEN_BUILTIN_TEMPLATES "${CMAKE_CURRENT_SOURCE_DIR}/Templates/*.json")
         foreach(_tpl IN LISTS HARKEN_BUILTIN_TEMPLATES)
-            add_custom_command(TARGET harken_editor POST_BUILD
+            add_custom_command(TARGET harken_studio POST_BUILD
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     "${_tpl}"
-                    $<TARGET_FILE_DIR:harken_editor>
+                    $<TARGET_FILE_DIR:harken_studio>
                 COMMENT "Copying built-in project template ${_tpl}"
             )
         endforeach()
@@ -618,32 +666,22 @@ if(APPLE AND HARKEN_BUILD_EDITOR)
     if(NOT TARGET Qt6::QOffscreenIntegrationPlugin)
         message(FATAL_ERROR "Qt offscreen platform plugin is required for Studio Schema verification")
     endif()
-    find_program(MACDEPLOYQT_EXE macdeployqt
-        HINTS ${Qt6_DIR}/../../../bin
-        REQUIRED)
-
-    add_custom_command(TARGET harken_editor POST_BUILD
+    add_custom_command(TARGET harken_studio POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory
-            "$<TARGET_BUNDLE_DIR:harken_editor>/Contents/PlugIns/platforms"
+            "$<TARGET_BUNDLE_DIR:harken_studio>/Contents/PlugIns/platforms"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "$<TARGET_FILE:Qt6::QOffscreenIntegrationPlugin>"
-            "$<TARGET_BUNDLE_DIR:harken_editor>/Contents/PlugIns/platforms/"
-        COMMAND ${Python3_EXECUTABLE}
-            "${CMAKE_SOURCE_DIR}/.scripts/release/deploy_macos_bundle.py"
-            --build-dir "${CMAKE_BINARY_DIR}"
-            --bundle "$<TARGET_BUNDLE_DIR:harken_editor>"
-            --tool "${MACDEPLOYQT_EXE}"
-            --configuration "$<CONFIG>"
-        COMMENT "Deploying Qt runtime via macdeployqt"
+            "$<TARGET_BUNDLE_DIR:harken_studio>/Contents/PlugIns/platforms/"
+        COMMENT "Copying the Qt offscreen platform plugin into the bundle"
     )
 
     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Templates")
         file(GLOB HARKEN_BUILTIN_TEMPLATES "${CMAKE_CURRENT_SOURCE_DIR}/Templates/*.json")
         foreach(_tpl IN LISTS HARKEN_BUILTIN_TEMPLATES)
-            add_custom_command(TARGET harken_editor POST_BUILD
+            add_custom_command(TARGET harken_studio POST_BUILD
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     "${_tpl}"
-                    $<TARGET_FILE_DIR:harken_editor>
+                    $<TARGET_FILE_DIR:harken_studio>
                 COMMENT "Copying built-in project template ${_tpl}"
             )
         endforeach()
@@ -705,3 +743,7 @@ foreach(_harken_headless_target harken_studio_core harken_studio_cli)
         harken_verify_headless_dependencies(${_harken_headless_target})
     endif()
 endforeach()
+
+if(HARKEN_BUILD_EDITOR_UNIT_TESTS)
+    add_subdirectory(Test)
+endif()

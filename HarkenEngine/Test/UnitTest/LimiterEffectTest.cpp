@@ -12,6 +12,7 @@
 // attenuation follows a one-pole release toward unity.
 #include "Common/ObjectIdTestSupport.h"
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 
 #include "Common/TestUtil.h"
 #include "harken/core/FloatMode.h"
@@ -20,7 +21,7 @@
 #include "VoicePoolReleaseTestAccess.h"
 #include "AllocationProbe.h"
 #include "harken/render/BuiltinEffects.h"
-#include "harken/render/generated/harken_effect_registry.g.h"
+#include "harken/render/EffectRegistry.h"
 
 #include <algorithm>
 #include <atomic>

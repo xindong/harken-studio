@@ -15,7 +15,7 @@
 
 #include <algorithm>
 
-namespace VNH {
+namespace harken::hub {
 
 namespace {
 
@@ -182,7 +182,7 @@ void LocalBuildRefreshCoordinator::checkForChanges()
                     if (LocalBuildRegistry::updateExisting(failed, &error)) {
                         changed = true;
                     } else {
-                        qWarning().noquote() << "Cannot save local build self-test failure:"
+                        qWarning().noquote() << "Cannot save local build identification failure:"
                                             << failed.executablePath << error;
                         resetPaths.append(failed.executablePath);
                     }

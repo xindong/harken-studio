@@ -23,7 +23,7 @@
 #include <functional>
 #include <cstring>
 
-namespace VNX {
+namespace harken::studio {
 
 
 

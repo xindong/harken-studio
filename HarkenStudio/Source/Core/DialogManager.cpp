@@ -3,7 +3,7 @@
 #include <QThread>
 #include <QCoreApplication>
 
-namespace VNX {
+namespace harken::studio {
 
 DialogManager& DialogManager::instance()
 {

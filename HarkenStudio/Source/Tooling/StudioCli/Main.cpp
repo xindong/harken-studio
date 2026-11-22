@@ -1,6 +1,5 @@
 #include "StudioSession.h"
 #include "SavedProjectBuild.h"
-#include "ResourceWorker.h"
 #include "Shell.h"
 #include "CommandHelp.h"
 #include "Core/IPC/StudioInstanceTransport.h"
@@ -18,7 +17,6 @@
 
 #include <csignal>
 #include <cstdio>
-#include <cstring>
 
 #ifdef Q_OS_WIN
 #include <fcntl.h>
@@ -57,7 +55,7 @@ int output(QJsonObject response, bool json, int errorExit = 1)
     response.insert(QStringLiteral("protocolVersion"), 1);
     print(QJsonDocument(response).toJson(json ? QJsonDocument::Compact : QJsonDocument::Indented));
     if (json) print("\n");
-    if (HarkenStudioCli::succeeded(response)) return 0;
+    if (harken::studio::cli::succeeded(response)) return 0;
     const QString code = response.value(QStringLiteral("code")).toString();
     if (!json) print((code + QStringLiteral(": ") + response.value(QStringLiteral("message")).toString()
                      + QLatin1Char('\n')).toUtf8(), stderr);
@@ -71,14 +69,14 @@ int output(QJsonObject response, bool json, int errorExit = 1)
 
 int describeCommand(const QJsonObject& response, bool json)
 {
-    if (json || !HarkenStudioCli::succeeded(response)) return output(response, json);
-    print(HarkenStudioCli::commandDescriptionText(response.value(QStringLiteral("result")).toObject()).toUtf8());
+    if (json || !harken::studio::cli::succeeded(response)) return output(response, json);
+    print(harken::studio::cli::commandDescriptionText(response.value(QStringLiteral("result")).toObject()).toUtf8());
     return 0;
 }
 
 void printCommandDirectory(const QJsonArray& entries)
 {
-    print(HarkenStudioCli::commandDirectoryText(entries).toUtf8());
+    print(harken::studio::cli::commandDirectoryText(entries).toUtf8());
 }
 
 QString commandHelp(const QString& command)
@@ -217,8 +215,6 @@ bool loadJson(const QCommandLineParser& parser, QJsonDocument* document, QString
 
 int main(int argc, char* argv[])
 {
-    if (argc == 2 && std::strcmp(argv[1], "--resource-worker") == 0)
-        return Harkenizer::runResourceWorker();
 #ifdef Q_OS_WIN
     _setmode(_fileno(stdin), _O_BINARY);
     _setmode(_fileno(stdout), _O_BINARY);
@@ -289,7 +285,7 @@ int main(int argc, char* argv[])
 
     bool wantsJson = app.arguments().contains(QStringLiteral("--json"));
     if (!parser.parse(app.arguments()))
-        return output(HarkenStudioCli::failure(QStringLiteral("USAGE"), parser.errorText()), wantsJson, 2);
+        return output(harken::studio::cli::failure(QStringLiteral("USAGE"), parser.errorText()), wantsJson, 2);
     wantsJson = parser.isSet(QStringLiteral("json"));
     verbose = parser.isSet(QStringLiteral("verbose"));
     if (parser.isSet(QStringLiteral("version"))) {
@@ -299,7 +295,7 @@ int main(int argc, char* argv[])
     }
     const QStringList positional = parser.positionalArguments();
     const auto usage = [&](const QString& message) {
-        return output(HarkenStudioCli::failure(QStringLiteral("USAGE"), message), wantsJson, 2);
+        return output(harken::studio::cli::failure(QStringLiteral("USAGE"), message), wantsJson, 2);
     };
     if (!positional.isEmpty() && positional.front() == QStringLiteral("commands")) {
         const auto arguments = app.arguments();
@@ -331,7 +327,7 @@ int main(int argc, char* argv[])
         if (help.isEmpty()) return usage(QStringLiteral("Unknown command '%1'. Run HarkenStudioCLI --help.").arg(positional.front()));
         if (positional.size() == 2
             && (positional.front() == QStringLiteral("exec") || positional.front() == QStringLiteral("commands"))) {
-            HarkenStudioCli::StudioSession session(parser.value(QStringLiteral("instance")), seconds * 1000,
+            harken::studio::cli::StudioSession session(parser.value(QStringLiteral("instance")), seconds * 1000,
                 [] { return interrupted != 0; });
             return describeCommand(session.describe(positional.at(1)), wantsJson);
         }
@@ -351,7 +347,7 @@ int main(int argc, char* argv[])
             return usage(QStringLiteral("--%1 may only be specified once.").arg(option));
     }
     if (command == QStringLiteral("build") || command == QStringLiteral("list-targets")) {
-        const auto response = HarkenStudioCli::runSavedProjectBuild(parser, [] { return interrupted != 0; });
+        const auto response = harken::studio::cli::runSavedProjectBuild(parser, [] { return interrupted != 0; });
         return output(response, wantsJson, response.value(QStringLiteral("code")) == QStringLiteral("USAGE") ? 2 : 1);
     }
     if (command != QStringLiteral("instances") && command != QStringLiteral("commands") && command != QStringLiteral("init")
@@ -388,9 +384,9 @@ int main(int argc, char* argv[])
         return usage(QStringLiteral("run requires a JSON request array from --input <file|-> or --args <json>."));
 
     if (command == QStringLiteral("instances")) {
-        const auto response = HarkenStudioCli::StudioInstanceClient::discover(1000,
+        const auto response = harken::studio::cli::StudioInstanceClient::discover(1000,
             [] { return interrupted != 0; });
-        if (wantsJson || !HarkenStudioCli::succeeded(response)) return output(response, wantsJson);
+        if (wantsJson || !harken::studio::cli::succeeded(response)) return output(response, wantsJson);
         const auto instances = response.value(QStringLiteral("result")).toObject().value(QStringLiteral("instances")).toArray();
         for (const auto& value : instances) {
             const auto instance = value.toObject();
@@ -404,35 +400,35 @@ int main(int argc, char* argv[])
         print((QStringLiteral("%1 running Studio instances.\n").arg(instances.size())).toUtf8());
         return 0;
     }
-    HarkenStudioCli::StudioSession session(parser.value(QStringLiteral("instance")), seconds * 1000,
+    harken::studio::cli::StudioSession session(parser.value(QStringLiteral("instance")), seconds * 1000,
         [] { return interrupted != 0; });
     if (session.isAttached()) {
         const auto connected = session.execute(QStringLiteral("ping"), {}, seconds * 1000,
             [] { return interrupted != 0; });
-        if (!HarkenStudioCli::succeeded(connected)) return output(connected, wantsJson);
+        if (!harken::studio::cli::succeeded(connected)) return output(connected, wantsJson);
     }
     if (command == QStringLiteral("shell")) {
         if (parser.isSet(QStringLiteral("project"))) {
             const auto opened = session.open(parser.value(QStringLiteral("project")), seconds * 1000,
                 [] { return interrupted != 0; });
-            if (!HarkenStudioCli::succeeded(opened)) return output(opened, wantsJson);
+            if (!harken::studio::cli::succeeded(opened)) return output(opened, wantsJson);
         }
 #ifdef Q_OS_WIN
         const bool shellJson = wantsJson || _isatty(_fileno(stdin)) == 0 || _isatty(_fileno(stdout)) == 0;
 #else
         const bool shellJson = wantsJson || isatty(fileno(stdin)) == 0 || isatty(fileno(stdout)) == 0;
 #endif
-        return HarkenStudioCli::runShell(session, seconds * 1000, shellJson, interrupted,
+        return harken::studio::cli::runShell(session, seconds * 1000, shellJson, interrupted,
             [&](QJsonObject response) {
-                HarkenStudioCli::writeShellResponse(std::move(response), shellJson);
+                harken::studio::cli::writeShellResponse(std::move(response), shellJson);
             });
     }
     if (command == QStringLiteral("commands")) {
         if (positional.size() == 2) return describeCommand(session.describe(positional.at(1)), wantsJson);
-        const auto response = HarkenStudioCli::filterCommandDirectory(session.commands(),
+        const auto response = harken::studio::cli::filterCommandDirectory(session.commands(),
             parser.value(QStringLiteral("search")), parser.value(QStringLiteral("category")),
             parser.isSet(QStringLiteral("read-only")));
-        if (!HarkenStudioCli::succeeded(response)) return output(response, wantsJson);
+        if (!harken::studio::cli::succeeded(response)) return output(response, wantsJson);
         const auto entries = response.value(QStringLiteral("result")).toObject()
             .value(QStringLiteral("commands")).toArray();
         if (wantsJson) return output(response, true);
@@ -455,7 +451,7 @@ int main(int argc, char* argv[])
         for (const auto& value : input.array()) {
             const auto request = value.toObject();
             const auto invalidRequest = [&](const QString& message) {
-                auto response = HarkenStudioCli::failure(QStringLiteral("USAGE"), message);
+                auto response = harken::studio::cli::failure(QStringLiteral("USAGE"), message);
                 response.insert(QStringLiteral("index"), index);
                 response.insert(QStringLiteral("results"), QJsonArray{});
                 return output(response, wantsJson, 2);
@@ -469,7 +465,7 @@ int main(int argc, char* argv[])
                     return invalidRequest(QStringLiteral("Unknown request field '%1'; use cmd and args.").arg(it.key()));
             auto validated = session.validate(request.value(QStringLiteral("cmd")).toString(),
                 request.value(QStringLiteral("args")).toObject());
-            if (!HarkenStudioCli::succeeded(validated)) {
+            if (!harken::studio::cli::succeeded(validated)) {
                 validated.insert(QStringLiteral("command"), request.value(QStringLiteral("cmd")));
                 validated.insert(QStringLiteral("index"), index);
                 validated.insert(QStringLiteral("results"), QJsonArray{});
@@ -479,12 +475,12 @@ int main(int argc, char* argv[])
         }
     } else {
         const auto validated = session.validate(positional.at(1), input.object());
-        if (!HarkenStudioCli::succeeded(validated)) return output(validated, wantsJson);
+        if (!harken::studio::cli::succeeded(validated)) return output(validated, wantsJson);
     }
     if (parser.isSet(QStringLiteral("project"))) {
         const auto opened = session.open(parser.value(QStringLiteral("project")), seconds * 1000,
             [] { return interrupted != 0; });
-        if (!HarkenStudioCli::succeeded(opened)) return output(opened, wantsJson);
+        if (!harken::studio::cli::succeeded(opened)) return output(opened, wantsJson);
     }
     QJsonObject response;
     if (command == QStringLiteral("exec")) {
@@ -499,16 +495,16 @@ int main(int argc, char* argv[])
             result.insert(QStringLiteral("command"), request.value("cmd"));
             result.insert(QStringLiteral("index"), results.size());
             results.append(result);
-            if (!HarkenStudioCli::succeeded(result)) {
+            if (!harken::studio::cli::succeeded(result)) {
                 response = result;
                 break;
             }
         }
         response.insert(QStringLiteral("results"), results);
     }
-    if (HarkenStudioCli::succeeded(response) && parser.isSet(QStringLiteral("save"))) {
+    if (harken::studio::cli::succeeded(response) && parser.isSet(QStringLiteral("save"))) {
         const auto saved = session.save();
-        if (!HarkenStudioCli::succeeded(saved)) {
+        if (!harken::studio::cli::succeeded(saved)) {
             response.insert(QStringLiteral("status"), QStringLiteral("error"));
             response.insert(QStringLiteral("code"), QStringLiteral("SAVE_FAILED"));
             response.insert(QStringLiteral("message"), QStringLiteral("Execution completed, but saving the project failed."));

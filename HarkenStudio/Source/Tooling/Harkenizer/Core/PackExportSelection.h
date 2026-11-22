@@ -8,11 +8,11 @@
 #include <optional>
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 
 struct ActionPackTargeting
 {
-    harkenstudio::ObjectId stableId{};
+    harken::studio::types::ObjectId stableId{};
     bool allPlatforms = true;
     QStringList platformIds;
     std::optional<QString> language = std::nullopt;
@@ -59,7 +59,7 @@ struct PackExportSelection
     QStringList selectedPlatformIds;
     std::vector<ActionPackTargeting> actionTargeting;
 
-    bool includesActionPack(harkenstudio::ObjectId id, const QString& platform,
+    bool includesActionPack(harken::studio::types::ObjectId id, const QString& platform,
                             const QString& language) const;
     bool operator==(const PackExportSelection&) const = default;
 };

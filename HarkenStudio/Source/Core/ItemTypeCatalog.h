@@ -11,7 +11,7 @@
 #include <optional>
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 
 const char* iconLogicalIdForItem(const ProjectItem& item);
 
@@ -24,7 +24,8 @@ enum class Bucket : uint8_t {
     Actions,
     Variables,
     Attenuations,
-    Effects
+    Effects,
+    Conversions
 };
 
 enum class NameNamespace : uint8_t {
@@ -34,7 +35,8 @@ enum class NameNamespace : uint8_t {
     Attenuation,
     Bus,
     Variable,
-    Effect
+    Effect,
+    Conversion
 };
 
 enum class CreateParentPolicy { DefaultForType, SelectedItem, SelectedGuarded };
@@ -87,9 +89,10 @@ inline constexpr char kActionsFolderName[]      = "Actions";
 inline constexpr char kVariablesFolderName[]    = "Variables";
 inline constexpr char kAttenuationsFolderName[] = "Attenuations";
 inline constexpr char kEffectsFolderName[]      = "Effects";
+inline constexpr char kConversionsFolderName[]  = "Conversions";
 
 const TypeFacts* factsOrNull(ProjectItem::Type type);
-const std::array<ProjectItem::Type, 10>& allTypes();
+const std::array<ProjectItem::Type, 11>& allTypes();
 
 QString displayName(ProjectItem::Type type);
 QString canonicalName(ProjectItem::Type type);
@@ -120,7 +123,7 @@ const BucketFacts* bucketFacts(Bucket bucket);
 const BucketFacts* bucketFactsForFolder(const QString& folderName);
 Bucket bucketOf(ProjectItem::Type type);
 QString folderNameOf(Bucket bucket);
-const std::array<Bucket, 6>& allBuckets();
+const std::array<Bucket, 7>& allBuckets();
 QString bucketDisplayName(const QString& folderName);
 std::vector<ProjectItem::Type> allowedTopLevelTypesForBucket(const QString& folderName);
 bool bucketAllowsFolder(const QString& folderName);

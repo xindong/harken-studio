@@ -1,5 +1,9 @@
 #include "Support/ProjectPlatformTestUtils.h"
 #include "FieldGroupProjectAdapter.h"
+#include "ConversionDefaults.h"
+#include "ProjectSerializer.h"
+#include "ReferenceSlotResolution.h"
+#include "TemplateApplyService.h"
 
 #include "Tooling/Harkenizer/Core/CanonicalRuntimeProjectAdapterPrivate.h"
 #include "ProjectTypes.h"
@@ -9,10 +13,10 @@
 #include <map>
 #include <memory>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
-using namespace harkenprojectschema;
+using namespace harken::studio::project_schema;
 using States = std::map<QUuid, DefinitionFieldGroups>;
 
 std::shared_ptr<ProjectItem> item(std::uint64_t id, ProjectItem::Type type)
@@ -49,7 +53,7 @@ TEST(FieldGroupProjectAdapter, FileBindingEnumerationDoesNotCreateRootsOrReorder
     project.layers = {{second, {}}, {first, {}}, {segment, {}}};
     States states{{segment->guid, MakeRootFieldGroups({0, 100})},
                   {first->guid, {}}, {second->guid, {}}};
-    const auto index = HarkenEditor::Bridge::canonicalRuntimeProjectSourceIndex(project);
+    const auto index = harken::studio::bridge::canonicalRuntimeProjectSourceIndex(project);
     ASSERT_TRUE(index->valid);
     EXPECT_EQ(index->parentDefinition.at(first.get()), segment.get());
     EXPECT_EQ(index->parentDefinition.at(second.get()), segment.get());
@@ -124,6 +128,64 @@ TEST(FieldGroupProjectAdapter, RefusesMismatchedBackPointersAndDuplicateGuids)
     sound->parent = layer.get();
     wrong->guid = sound->guid;
     EXPECT_FALSE(projectView(project, states).ok());
+}
+
+TEST(FieldGroupProjectAdapter, TemplateInstancesUseDestinationDefaultsThroughoutTheirOwnershipTree)
+{
+    auto project = HarkenTest::projectWithPlatforms();
+    auto master = item(100, ProjectItem::Type::Bus);
+    auto original = item(101, ProjectItem::Type::Conversion);
+    auto destination = item(102, ProjectItem::Type::Conversion);
+    auto layer = item(1, ProjectItem::Type::Layer);
+    auto sound = item(2, ProjectItem::Type::Sound);
+    for (const auto& value : {master, original, destination, layer, sound}) {
+        value->attachDefaultComponents();
+        value->objectID = project.generateObjectID();
+    }
+    master->name = QStringLiteral("Master Bus");
+    project.busses.push_back({master, {}});
+    const auto platform = project.platforms.front().id;
+    for (const auto& preset : {original, destination}) {
+        preset->comp<VConversion>()->config = ConversionDefaults::newPreset();
+        project.conversionItems.push_back({preset, {}});
+    }
+    project.defaultConversionRefs.insert(platform, original->guid);
+    layer->fieldGroups = MakeRootFieldGroups(toFieldGroupGuid(master->guid));
+    layer->fieldGroups.conversion.shared.localHistory = ConversionFieldGroup{toFieldGroupGuid(original->guid)};
+    own(layer, sound);
+    project.layers.push_back({layer, {}});
+    ProjectSerializer serializer;
+    ASSERT_TRUE(serializer.prepareReferenceWrite(project));
+    ProjectTemplateData data;
+    data.displayName = QStringLiteral("Ownership Tree");
+    data.bus.name = master->name;
+    data.bus.authoring = serializer.projectItemToJson(*master);
+    data.content = {serializer.projectItemToJson(*layer)};
+    ASSERT_FALSE(data.bus.authoring.isEmpty());
+    ASSERT_FALSE(data.content.first().toObject().isEmpty());
+    project.layers.clear();
+    for (const auto& defaultRef : {destination->guid, QUuid{}}) {
+        SCOPED_TRACE(defaultRef.toString().toStdString());
+        project.defaultConversionRefs.clear();
+        if (!defaultRef.isNull()) project.defaultConversionRefs.insert(platform, defaultRef);
+        QString error;
+        ASSERT_TRUE(TemplateApplyService::seedTemplateInto(project, data, &error)) << error.toStdString();
+        ASSERT_EQ(project.layers.size(), 1u);
+        const auto root = project.layers.front().rootItem;
+        ASSERT_NE(root, nullptr);
+        ASSERT_EQ(root->children.size(), 1u);
+        EXPECT_NE(root->guid, layer->guid);
+        const auto effective = std::make_shared<const FieldGroupEffectiveSnapshot>(
+            buildFieldGroupEffectiveSnapshot(project, toFieldGroupGuid(platform)));
+        ASSERT_TRUE(effective->ok());
+        for (const auto* instance : {root.get(), root->children.front().get()}) {
+            const auto resolved = ReferenceSlotResolution::resolveEffectiveConversion(
+                ReferenceSlotResolution::buildResolutionScope(instance, effective));
+            ASSERT_TRUE(resolved.valid) << resolved.error.toStdString();
+            EXPECT_EQ(resolved.target, defaultRef.isNull() ? nullptr : destination.get());
+        }
+        project.layers.clear();
+    }
 }
 
 }

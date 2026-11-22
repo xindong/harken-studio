@@ -6,7 +6,7 @@
 #include <QJsonArray>
 #include <QWidget>
 
-using namespace VNX;
+using namespace harken::studio;
 
 TEST(DesktopWidgetTargetsTest, DuplicateNamesRequireIdentityAndSupportScope)
 {

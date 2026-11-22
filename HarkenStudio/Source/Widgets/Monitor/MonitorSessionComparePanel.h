@@ -7,7 +7,7 @@
 
 class QLabel;
 
-namespace VNX {
+namespace harken::studio {
 
 class MonitorSessionComparePanel : public QWidget
 {
@@ -27,4 +27,4 @@ private:
     QLabel* exportLabel_ = nullptr;
 };
 
-} // namespace VNX
+} // namespace harken::studio

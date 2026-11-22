@@ -4,7 +4,7 @@
 class QTreeWidget;
 class QTreeWidgetItem;
 
-namespace VNX::TreeRowPing {
+namespace harken::studio::TreeRowPing {
 
 void ping(QTreeWidget* tree, QTreeWidgetItem* item);
 

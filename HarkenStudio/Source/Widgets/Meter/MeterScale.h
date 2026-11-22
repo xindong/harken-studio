@@ -5,7 +5,7 @@
 
 class QFontMetrics;
 
-namespace VNX::MeterScale {
+namespace harken::studio::MeterScale {
 
 inline constexpr float kMinDb = -96.0f;
 inline constexpr float kPeakMaxDb = 6.0f;

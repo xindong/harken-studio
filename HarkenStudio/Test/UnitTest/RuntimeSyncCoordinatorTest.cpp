@@ -1,5 +1,5 @@
 #include "RuntimeSyncCoordinator.h"
-#include <harken_playable_properties.g.h>
+#include <harken_playable_properties/PlayableProperties.h>
 
 #include <gtest/gtest.h>
 
@@ -18,7 +18,7 @@ std::unique_ptr<QCoreApplication> ensureApplication()
         return {};
 
     static int argc = 1;
-    static char arg0[] = "harken_editor_tests";
+    static char arg0[] = "harken_studio_tests";
     static char* argv[] = {arg0, nullptr};
     return std::make_unique<QCoreApplication>(argc, argv);
 }
@@ -28,14 +28,14 @@ std::unique_ptr<QCoreApplication> ensureApplication()
 TEST(RuntimeSyncCoordinatorTest, AuthoringRevisionExhaustionDoesNotWrapToZero)
 {
     auto application = ensureApplication();
-    using Coordinator = VNX::RuntimeSyncCoordinator;
+    using Coordinator = harken::studio::RuntimeSyncCoordinator;
     const auto maximum = std::numeric_limits<Coordinator::AuthoringRevision>::max();
     std::vector<Coordinator::AuthoringRevision> submittedRevisions;
     Coordinator coordinator(
-        [&](HarkenEditor::Bridge::CurrentWorldSyncToken token) {
+        [&](harken::studio::bridge::CurrentWorldSyncToken token) {
             submittedRevisions.push_back(token.authoringRevision);
-            HarkenEditor::Bridge::CurrentWorldSyncResult result;
-            result.status = HarkenEditor::Bridge::CurrentWorldSyncStatus::Pending;
+            harken::studio::bridge::CurrentWorldSyncResult result;
+            result.status = harken::studio::bridge::CurrentWorldSyncStatus::Pending;
             result.token = token;
             return result;
         },
@@ -56,13 +56,13 @@ TEST(RuntimeSyncCoordinatorTest,
      RuntimeRestartRejectsCompletionFromTheInvalidatedEpoch)
 {
     auto application = ensureApplication();
-    using Coordinator = VNX::RuntimeSyncCoordinator;
-    std::vector<HarkenEditor::Bridge::CurrentWorldSyncToken> submittedTokens;
+    using Coordinator = harken::studio::RuntimeSyncCoordinator;
+    std::vector<harken::studio::bridge::CurrentWorldSyncToken> submittedTokens;
     Coordinator coordinator(
-        [&](HarkenEditor::Bridge::CurrentWorldSyncToken token) {
+        [&](harken::studio::bridge::CurrentWorldSyncToken token) {
             submittedTokens.push_back(token);
-            HarkenEditor::Bridge::CurrentWorldSyncResult result;
-            result.status = HarkenEditor::Bridge::CurrentWorldSyncStatus::Pending;
+            harken::studio::bridge::CurrentWorldSyncResult result;
+            result.status = harken::studio::bridge::CurrentWorldSyncStatus::Pending;
             result.token = token;
             return result;
         });
@@ -79,8 +79,8 @@ TEST(RuntimeSyncCoordinatorTest,
     ASSERT_EQ(Coordinator::AllocationState::Allocated,
               coordinator.runtimeStarted());
 
-    HarkenEditor::Bridge::CurrentWorldSyncResult oldCompletion;
-    oldCompletion.status = HarkenEditor::Bridge::CurrentWorldSyncStatus::Ok;
+    harken::studio::bridge::CurrentWorldSyncResult oldCompletion;
+    oldCompletion.status = harken::studio::bridge::CurrentWorldSyncStatus::Ok;
     oldCompletion.token = oldToken;
     oldCompletion.worldGeneration = 121;
     coordinator.acceptCurrentWorldSyncResult(oldCompletion);
@@ -93,25 +93,25 @@ TEST(RuntimeSyncCoordinatorTest,
 TEST(RuntimeSyncCoordinatorTest, RemainingIdentityCountersNeverWrapToZero)
 {
     auto application = ensureApplication();
-    using Coordinator = VNX::RuntimeSyncCoordinator;
+    using Coordinator = harken::studio::RuntimeSyncCoordinator;
     const auto maximum = std::numeric_limits<std::uint64_t>::max();
 
     Coordinator projectSessionCoordinator(
-        [](HarkenEditor::Bridge::CurrentWorldSyncToken token) {
-            HarkenEditor::Bridge::CurrentWorldSyncResult result;
-            result.status = HarkenEditor::Bridge::CurrentWorldSyncStatus::Pending;
+        [](harken::studio::bridge::CurrentWorldSyncToken token) {
+            harken::studio::bridge::CurrentWorldSyncResult result;
+            result.status = harken::studio::bridge::CurrentWorldSyncStatus::Pending;
             result.token = token;
             return result;
         }, Coordinator::InitialIdentityForTesting{maximum, 0, 0, 0});
     EXPECT_EQ(Coordinator::AllocationState::IdentityExhausted,
               projectSessionCoordinator.beginProjectSession());
-    EXPECT_EQ(HarkenEditor::Bridge::CurrentWorldSyncStatus::IdentityExhausted,
+    EXPECT_EQ(harken::studio::bridge::CurrentWorldSyncStatus::IdentityExhausted,
               projectSessionCoordinator.barrier(0).failure);
 
     Coordinator runtimeEpochCoordinator(
-        [](HarkenEditor::Bridge::CurrentWorldSyncToken token) {
-            HarkenEditor::Bridge::CurrentWorldSyncResult result;
-            result.status = HarkenEditor::Bridge::CurrentWorldSyncStatus::Pending;
+        [](harken::studio::bridge::CurrentWorldSyncToken token) {
+            harken::studio::bridge::CurrentWorldSyncResult result;
+            result.status = harken::studio::bridge::CurrentWorldSyncStatus::Pending;
             result.token = token;
             return result;
         }, Coordinator::InitialIdentityForTesting{0, 0, maximum, 0});
@@ -120,10 +120,10 @@ TEST(RuntimeSyncCoordinatorTest, RemainingIdentityCountersNeverWrapToZero)
 
     int submissions = 0;
     Coordinator submissionCoordinator(
-        [&submissions](HarkenEditor::Bridge::CurrentWorldSyncToken token) {
+        [&submissions](harken::studio::bridge::CurrentWorldSyncToken token) {
             ++submissions;
-            HarkenEditor::Bridge::CurrentWorldSyncResult result;
-            result.status = HarkenEditor::Bridge::CurrentWorldSyncStatus::Pending;
+            harken::studio::bridge::CurrentWorldSyncResult result;
+            result.status = harken::studio::bridge::CurrentWorldSyncStatus::Pending;
             result.token = token;
             return result;
         }, Coordinator::InitialIdentityForTesting{1, 0, 1, maximum});
@@ -131,21 +131,21 @@ TEST(RuntimeSyncCoordinatorTest, RemainingIdentityCountersNeverWrapToZero)
               submissionCoordinator.markCurrentWorldMutation().state);
     QCoreApplication::processEvents(QEventLoop::AllEvents);
     EXPECT_EQ(0, submissions);
-    EXPECT_EQ(HarkenEditor::Bridge::CurrentWorldSyncStatus::IdentityExhausted,
+    EXPECT_EQ(harken::studio::bridge::CurrentWorldSyncStatus::IdentityExhausted,
               submissionCoordinator.barrier(1).failure);
 }
 
 TEST(RuntimeSyncCoordinatorTest, NewerEditsKeepPlaybackBarrierPendingUntilLatestWorldIsReady)
 {
     auto application = ensureApplication();
-    namespace Bridge = HarkenEditor::Bridge;
-    using Coordinator = VNX::RuntimeSyncCoordinator;
-    std::vector<Bridge::CurrentWorldSyncToken> tokens;
-    Coordinator coordinator([&](Bridge::CurrentWorldSyncToken token) {
+    namespace bridge = harken::studio::bridge;
+    using Coordinator = harken::studio::RuntimeSyncCoordinator;
+    std::vector<bridge::CurrentWorldSyncToken> tokens;
+    Coordinator coordinator([&](bridge::CurrentWorldSyncToken token) {
         tokens.push_back(token);
-        Bridge::CurrentWorldSyncResult result;
+        bridge::CurrentWorldSyncResult result;
         result.token = token;
-        result.status = Bridge::CurrentWorldSyncStatus::Pending;
+        result.status = bridge::CurrentWorldSyncStatus::Pending;
         return result;
     });
     coordinator.beginProjectSession();
@@ -160,9 +160,9 @@ TEST(RuntimeSyncCoordinatorTest, NewerEditsKeepPlaybackBarrierPendingUntilLatest
     QObject::connect(&coordinator, &Coordinator::barrierChanged, [&] {
         observed.push_back(coordinator.barrier(coordinator.currentAuthoringRevision()).state);
     });
-    Bridge::CurrentWorldSyncResult stale;
+    bridge::CurrentWorldSyncResult stale;
     stale.token = tokens.front();
-    stale.status = Bridge::CurrentWorldSyncStatus::Superseded;
+    stale.status = bridge::CurrentWorldSyncStatus::Superseded;
     coordinator.acceptCurrentWorldSyncResult(stale);
     EXPECT_EQ(coordinator.barrier(coordinator.currentAuthoringRevision()).state,
               Coordinator::RevisionBarrierState::Pending);
@@ -170,13 +170,13 @@ TEST(RuntimeSyncCoordinatorTest, NewerEditsKeepPlaybackBarrierPendingUntilLatest
     coordinator.flushPendingMutationNow();
     ASSERT_EQ(tokens.size(), 2u);
     EXPECT_TRUE(coordinator.isCurrentSubmission(tokens.back()));
-    stale.status = Bridge::CurrentWorldSyncStatus::Ok;
+    stale.status = bridge::CurrentWorldSyncStatus::Ok;
     stale.worldGeneration = 51;
     coordinator.acceptCurrentWorldSyncResult(stale);
     EXPECT_FALSE(coordinator.hasInstalledWorld());
-    Bridge::CurrentWorldSyncResult latest;
+    bridge::CurrentWorldSyncResult latest;
     latest.token = tokens.back();
-    latest.status = Bridge::CurrentWorldSyncStatus::Ok;
+    latest.status = bridge::CurrentWorldSyncStatus::Ok;
     latest.worldGeneration = 52;
     coordinator.acceptCurrentWorldSyncResult(latest);
     const auto barrier = coordinator.barrier(coordinator.currentAuthoringRevision());
@@ -188,15 +188,15 @@ TEST(RuntimeSyncCoordinatorTest, NewerEditsKeepPlaybackBarrierPendingUntilLatest
 TEST(RuntimeSyncCoordinatorTest, CoalescedMutationsRetainAllPropertiesAndFullInvalidation)
 {
     auto application = ensureApplication();
-    namespace Bridge = HarkenEditor::Bridge;
-    using Coordinator = VNX::RuntimeSyncCoordinator;
+    namespace bridge = harken::studio::bridge;
+    using Coordinator = harken::studio::RuntimeSyncCoordinator;
     std::vector<Coordinator::MutationSet> mutations;
     Coordinator* current = nullptr;
-    Coordinator coordinator([&](Bridge::CurrentWorldSyncToken token) {
+    Coordinator coordinator([&](bridge::CurrentWorldSyncToken token) {
         mutations.push_back(current->submittedMutations());
-        Bridge::CurrentWorldSyncResult result;
+        bridge::CurrentWorldSyncResult result;
         result.token = token;
-        result.status = Bridge::CurrentWorldSyncStatus::Ok;
+        result.status = bridge::CurrentWorldSyncStatus::Ok;
         result.worldGeneration = token.submissionSerial;
         return result;
     });
@@ -237,14 +237,14 @@ TEST(RuntimeSyncCoordinatorTest, CoalescedMutationsRetainAllPropertiesAndFullInv
 TEST(RuntimeSyncCoordinatorTest, RepeatedFlushDoesNotCreateWorkOrLoseEditsDuringSubmission)
 {
     auto application = ensureApplication();
-    namespace Bridge = HarkenEditor::Bridge;
-    using Coordinator = VNX::RuntimeSyncCoordinator;
-    std::vector<Bridge::CurrentWorldSyncToken> tokens;
-    Coordinator coordinator([&](Bridge::CurrentWorldSyncToken token) {
+    namespace bridge = harken::studio::bridge;
+    using Coordinator = harken::studio::RuntimeSyncCoordinator;
+    std::vector<bridge::CurrentWorldSyncToken> tokens;
+    Coordinator coordinator([&](bridge::CurrentWorldSyncToken token) {
         tokens.push_back(token);
-        Bridge::CurrentWorldSyncResult result;
+        bridge::CurrentWorldSyncResult result;
         result.token = token;
-        result.status = Bridge::CurrentWorldSyncStatus::Pending;
+        result.status = bridge::CurrentWorldSyncStatus::Pending;
         return result;
     });
     coordinator.beginProjectSession();
@@ -256,9 +256,9 @@ TEST(RuntimeSyncCoordinatorTest, RepeatedFlushDoesNotCreateWorkOrLoseEditsDuring
         coordinator.flushPendingMutationNow();
     EXPECT_EQ(coordinator.currentAuthoringRevision(), first.revision);
 
-    Bridge::CurrentWorldSyncResult completion;
+    bridge::CurrentWorldSyncResult completion;
     completion.token = tokens.front();
-    completion.status = Bridge::CurrentWorldSyncStatus::Ok;
+    completion.status = bridge::CurrentWorldSyncStatus::Ok;
     completion.worldGeneration = 1;
     coordinator.acceptCurrentWorldSyncResult(completion);
     QCoreApplication::processEvents(QEventLoop::AllEvents);

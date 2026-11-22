@@ -9,7 +9,7 @@
 #include <QPushButton>
 #include <QVBoxLayout>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 

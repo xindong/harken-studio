@@ -24,7 +24,7 @@ struct SetStorageMember {
                      std::size_t frames = 8) {
         const auto byteCount = std::max(std::size_t{64}, frames * sizeof(float));
         bytes.reset(static_cast<std::uint8_t*>(::operator new[](
-            byteCount, std::align_val_t{harken::kPackBlobAlign})));
+            byteCount, std::align_val_t{HK_PACK_BLOB_ALIGN})));
         std::memset(bytes.get(), 0, byteCount);
         auto* samples = reinterpret_cast<float*>(bytes.get());
         std::fill(samples, samples + frames, value);
@@ -753,7 +753,7 @@ TEST(CanonicalPackSetStorage, LoopViewAndContentIdentityMatchDirectRegistration)
         harken::PCMRegistry registry, direct;
         harken::PackTable packs{};
         SetStorageMember a(21, harkentest::ObjectId(100), 0.25f), b(22, harkentest::ObjectId(100), 0.25f);
-        a.media[0].flags = b.media[0].flags = harken::kPackFlagLoopable;
+        a.media[0].flags = b.media[0].flags = HK_PACK_MEDIA_FLAG_LOOPABLE;
         a.media[0].loopStartFrame = b.media[0].loopStartFrame = loop.startFrame;
         a.media[0].loopEndFrame = b.media[0].loopEndFrame = loop.endFrame;
         harken::PackTable::PreparedSetMutation first;
@@ -818,7 +818,7 @@ TEST(CanonicalPackSetStorage, SinglePackEofLoopLoadsSharesAndReplaces) {
     };
     SetStorageMember a(21, sound, 0.25f), b(22, sound, 0.25f), next(21, sound, 0.5f);
     for (auto* member : {&a, &b, &next}) {
-        member->media[0].flags = harken::kPackFlagLoopable;
+        member->media[0].flags = HK_PACK_MEDIA_FLAG_LOOPABLE;
         member->media[0].loopStartFrame = 2;
         member->media[0].loopEndFrame = 0;
     }
@@ -896,10 +896,10 @@ TEST(CanonicalPackSetStorage, MetadataMismatchPublishesNothing) {
         case 0: b.media[0].sampleRate = 44100; break;
         case 1: b.media[0].frameCount = 4; break;
         case 2: b.media[0].channelCount = 2; b.media[0].frameCount = 4; break;
-        case 3: b.media[0].flags = harken::kPackFlagLoopable; break;
-        case 4: a.media[0].flags = b.media[0].flags = harken::kPackFlagLoopable;
+        case 3: b.media[0].flags = HK_PACK_MEDIA_FLAG_LOOPABLE; break;
+        case 4: a.media[0].flags = b.media[0].flags = HK_PACK_MEDIA_FLAG_LOOPABLE;
                 b.media[0].loopStartFrame = 2; b.media[0].loopEndFrame = a.media[0].loopEndFrame = 6; break;
-        case 5: a.media[0].flags = b.media[0].flags = harken::kPackFlagLoopable;
+        case 5: a.media[0].flags = b.media[0].flags = HK_PACK_MEDIA_FLAG_LOOPABLE;
                 a.media[0].loopEndFrame = 6; b.media[0].loopEndFrame = 7; break;
         }
         harken::PackTable::PreparedSetMutation refused;
@@ -914,7 +914,7 @@ TEST(CanonicalPackSetStorage, LoopOnlyReplacementChangesIdentityAndKeepsOldClosu
     harken::PCMRegistry registry;
     harken::PackTable packs{};
     SetStorageMember a(21, harkentest::ObjectId(100), 0.25f);
-    a.media[0].flags = harken::kPackFlagLoopable;
+    a.media[0].flags = HK_PACK_MEDIA_FLAG_LOOPABLE;
     a.media[0].loopEndFrame = 6;
     harken::PackTable::PreparedSetMutation first;
     ASSERT_EQ(VN_OK, packs.PrepareCanonicalSet({a.Input()}, {}, registry, &first));
@@ -1106,7 +1106,7 @@ TEST(CanonicalPackSetStorage, LegacyEmptyLoopRegistrationIsNotReusedForAuthoredL
     // The predecessor has no authored loop; do not rely on registration
     // discarding loop facts to construct the different content identity.
     for (auto* member : {&current, &shared}) {
-        member->media[0].flags = harken::kPackFlagLoopable;
+        member->media[0].flags = HK_PACK_MEDIA_FLAG_LOOPABLE;
         member->media[0].loopStartFrame = 2;
         member->media[0].loopEndFrame = 6;
     }

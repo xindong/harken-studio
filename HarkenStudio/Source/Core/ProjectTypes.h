@@ -5,6 +5,7 @@
 #include <QString>
 #include <QStringList>
 #include <QList>
+#include <QMap>
 #include <QSet>
 #include <QUuid>
 #include <QVariantMap>
@@ -33,12 +34,12 @@
 #include "ProjectFormatVersion.h"
 #include "Timeline/TimelineTypes.h"
 #include "TransitionSemantics.h"
-#include "harken_playable_properties.g.h"
+#include "harken_playable_properties/PlayableProperties.h"
 #include "PlayablePropertyAuthoringV1.h"
 #include "FieldGroups.h"
 #include "Utils/ObjectId.h"
 
-namespace VNX {
+namespace harken::studio {
 
 
 struct MediaFileRef
@@ -92,10 +93,11 @@ enum class ProjectItemType {
     Action = 7,
     Variable = 8,
     Attenuation = 9,
-    Effect = 10
+    Effect = 10,
+    Conversion = 11
 };
 
-using SendMode = harkenprojectschema::SendMode;
+using SendMode = harken::studio::project_schema::SendMode;
 
 inline QJsonObject sendModeVolumesJson(const std::map<SendMode, float>& volumes)
 {
@@ -532,7 +534,7 @@ struct ProjectItem
     QString sourcePath;
     uint32_t sourceID = 0;
     uint32_t objectID = 0;
-    harkenstudio::ObjectId runtimeId() const { return runtimeObjectId(guid); }
+    harken::studio::types::ObjectId runtimeId() const { return runtimeObjectId(guid); }
 
     QUuid    guid;
     QJsonObject documentHeader;
@@ -829,6 +831,7 @@ struct ProjectData
     std::vector<ProjectFileBinding> actions;
     std::vector<ProjectFileBinding> attenuationItems;
     std::vector<ProjectFileBinding> effectItems;
+    std::vector<ProjectFileBinding> conversionItems;
     std::vector<ProjectFileBinding> busses;
     std::vector<ProjectFileBinding> variables;
     std::vector<ProjectFolderBinding> folders;
@@ -881,6 +884,8 @@ struct ProjectData
     QStringList platformIds() const { return ProjectPlatformSemantics::ids(platforms); }
     int                sampleRate         = 48000;
     AudioChannelConfig channelConfig      = AudioChannelConfig::Stereo_2_0;
+    QMap<ProjectPlatformId, QUuid> defaultConversionRefs;
+    QUuid defaultConversionFor(const ProjectPlatformId& platform) const { return defaultConversionRefs.value(platform); }
 
     QString packBuildOutputDir;
     bool buildExportProjectData = false;
@@ -992,7 +997,7 @@ inline ObjectIdRepairResult ensureUniqueObjectIds(ProjectData& project)
         if (project.root) fn(project.root.get());
         std::vector<ProjectFileBinding>* buckets[] = {
             &project.busses, &project.actions,
-            &project.attenuationItems, &project.effectItems, &project.variables,
+            &project.attenuationItems, &project.effectItems, &project.conversionItems, &project.variables,
             &project.layers };
         for (auto* bucket : buckets)
             for (auto& binding : *bucket) {

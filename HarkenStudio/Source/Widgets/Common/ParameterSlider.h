@@ -2,7 +2,7 @@
 
 #include "ParameterControlHost.h"
 
-namespace VNX {
+namespace harken::studio {
 
 class ParameterSlider : public ParameterControlHost
 {

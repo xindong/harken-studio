@@ -7,7 +7,7 @@
 #include "Tooling/Harkenizer/Core/ProjectBuildSnapshot.h"
 #include "ProjectTypes.h"
 #include "Components/VAction.h"
-#include "RuntimeBridge/PackagingBridge.h"
+#include "Core/Build/PackagingBridge.h"
 #include <harken_studio_build/PackFormat.h>
 
 #include <QCryptographicHash>
@@ -30,7 +30,7 @@
 #include <functional>
 #include <unordered_map>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 QString fileSha256(const QString& path)
@@ -70,14 +70,14 @@ QString uint64String(std::uint64_t value)
 }
 
 std::vector<RuntimeContentAction> actions(const ProjectData& project,
-                                        const std::set<harkenstudio::ObjectId>& included)
+                                        const std::set<harken::studio::types::ObjectId>& included)
 {
     std::vector<RuntimeContentAction> result;
     std::function<void(const ProjectItem*)> visit = [&](const ProjectItem* item) {
         if (item == nullptr)
             return;
         if (item->type == ProjectItem::Type::Action
-            && !harkenstudio::IsNull(item->runtimeId()) && included.count(item->runtimeId()) != 0
+            && !harken::studio::types::IsNull(item->runtimeId()) && included.count(item->runtimeId()) != 0
             && item->comp<VAction>() != nullptr) {
             result.push_back({item->name, item->runtimeId()});
         }
@@ -251,10 +251,10 @@ RuntimeContentBundleResult RuntimeContentBundleBuilder::build(
         publicationPaths.push_back(buildDir.absoluteFilePath(file.filePath()));
         publicationPaths.push_back(buildDir.absoluteFilePath(
             QDir(file.path()).filePath(file.completeBaseName() + QStringLiteral(".json"))));
-        const QDir companionDir(buildDir.filePath(file.path()));
-        for (const auto& waveform : publication.value(QStringLiteral("companion")).toObject()
+        const QDir packMetadataDir(buildDir.filePath(file.path()));
+        for (const auto& waveform : publication.value(QStringLiteral("packMetadata")).toObject()
                  .value(QStringLiteral("waveforms")).toArray()) {
-            const QString path = QDir::cleanPath(companionDir.absoluteFilePath(
+            const QString path = QDir::cleanPath(packMetadataDir.absoluteFilePath(
                 waveform.toObject().value(QStringLiteral("file")).toString()));
             const QString relative = buildDir.relativeFilePath(path);
             if (QDir::isAbsolutePath(relative) || relative.startsWith(QStringLiteral("../"))) {
@@ -314,14 +314,14 @@ RuntimeContentBundleResult RuntimeContentBundleBuilder::build(
             {relativeBundle + QLatin1Char('/') + relativePath,
              QFileInfo(target).size(), digest});
     }
-    std::set<harkenstudio::ObjectId> builtActions;
+    std::set<harken::studio::types::ObjectId> builtActions;
     for (const auto& row : publicationRows) {
-        const auto companion = row.toObject().value(QStringLiteral("companion")).toObject();
-        if (!companion.contains(QStringLiteral("guid"))) continue;
-        harkenstudio::ObjectId actionStableId;
-        if (!parseObjectIdJson(companion.value(QStringLiteral("guid")), &actionStableId)
-            || harkenstudio::IsNull(actionStableId)) {
-            result.error = QStringLiteral("Pack companion contains an invalid Action identity");
+        const auto packMetadata = row.toObject().value(QStringLiteral("packMetadata")).toObject();
+        if (!packMetadata.contains(QStringLiteral("guid"))) continue;
+        harken::studio::types::ObjectId actionStableId;
+        if (!parseObjectIdJson(packMetadata.value(QStringLiteral("guid")), &actionStableId)
+            || harken::studio::types::IsNull(actionStableId)) {
+            result.error = QStringLiteral("Pack metadata contains an invalid Action identity");
             return result;
         }
         builtActions.insert(actionStableId);

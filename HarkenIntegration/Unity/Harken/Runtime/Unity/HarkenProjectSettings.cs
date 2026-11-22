@@ -1,3 +1,6 @@
+#if HARKEN_NATIVE_DEVELOPMENT || (!HARKEN_NATIVE_RELEASE && (UNITY_EDITOR || DEVELOPMENT_BUILD))
+#define HARKEN_ENGINE_DEV
+#endif
 using System;
 using System.IO;
 using System.Runtime.CompilerServices;
@@ -17,15 +20,12 @@ namespace Harken.Unity
         internal const string ObsoleteRelativePackRoot = "Audio/GeneratedPacks";
 
         [SerializeField] private bool enableCommunicationInBuilds = true;
-        // [SerializeField] private string remoteBindAddress = "0.0.0.0";
-        [SerializeField] private string remoteBindAddress = "127.0.0.1";
         [SerializeField, Min(0)] private int remotePort;
         [SerializeField] private bool enableRemoteDiscovery = true;
         [SerializeField, Min(0)] private int remoteDiscoveryPort;
         [SerializeField] private string remoteApplicationName = string.Empty;
         [SerializeField] private uint maxVoices = DefaultMaxVoices;
         [SerializeField] private string language = string.Empty;
-        [SerializeField] private string packPlatformId = string.Empty;
         [SerializeField] private string packPlatform = string.Empty;
         [SerializeField] private string initPack = "Init.bytes";
         [SerializeField] private bool suppressUnityAudio;
@@ -37,7 +37,6 @@ namespace Harken.Unity
         public bool EnableCommunicationInBuilds => enableCommunicationInBuilds;
         public uint MaxVoices => maxVoices;
         public string Language => language ?? string.Empty;
-        public string PlatformId => packPlatformId ?? string.Empty;
         public string PlatformName => packPlatform ?? string.Empty;
         public string InitPack => string.IsNullOrEmpty(initPack) ? "Init.bytes" : initPack;
         public string PackDirectory => packDirectory ?? string.Empty;
@@ -75,15 +74,9 @@ namespace Harken.Unity
         internal void SetInitPack(string value) => initPack = value ?? string.Empty;
         internal void SetPlayerExports(string[] value) => playerExports = value ?? Array.Empty<string>();
 
-        internal void SetPlatform(string id, string name)
+        internal static void ApplyStartupCapacity(ref VnConfig config, HarkenProjectSettings settings = null)
         {
-            packPlatformId = id ?? string.Empty;
-            packPlatform = name ?? string.Empty;
-        }
-
-        internal static void ApplyStartupCapacity(ref VnConfig config)
-        {
-            HarkenProjectSettings settings = ActiveForStartup();
+            settings = settings != null ? settings : ActiveForStartup();
             config.maxVoices = settings.MaxVoices;
             // A single emitter stop can address every render voice atomically.
             if (config.maxVoices > 256u)
@@ -93,14 +86,15 @@ namespace Harken.Unity
             }
         }
 
-        internal static bool TryResolvePackDirectory(out string fullPath, out string error)
+        internal static bool TryResolvePackDirectory(out string fullPath, out string error, HarkenProjectSettings settings = null)
         {
+            settings = settings != null ? settings : ActiveForStartup();
             fullPath = null;
 #if !UNITY_EDITOR
-            return TryResolvePlayerPackDirectory(ActiveForStartup().PackDirectory,
+            return TryResolvePlayerPackDirectory(settings.PackDirectory,
                 Application.streamingAssetsPath, ProjectRoot(), out fullPath, out error);
 #else
-            string raw = ActiveForStartup().PackDirectory.Trim();
+            string raw = settings.PackDirectory.Trim();
             if (string.IsNullOrEmpty(raw) || IsObsoletePackRoot(raw))
             {
                 error = "Select a GeneratedPacks directory in Harken Project Settings.";
@@ -185,13 +179,13 @@ namespace Harken.Unity
             return true;
         }
 
-        internal static bool PlayerIncludesExport(string platformDirectory, out string error)
+        internal static bool PlayerIncludesExport(string platformDirectory, out string error, HarkenProjectSettings settings = null)
         {
             error = null;
             string name = string.IsNullOrEmpty(platformDirectory)
                 ? string.Empty
                 : Path.GetFileName(platformDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
-            string[] exports = ActiveForStartup().PlayerExports;
+            string[] exports = (settings != null ? settings : ActiveForStartup()).PlayerExports;
             if (exports == null || exports.Length == 0)
             {
                 error = "Select which exports are included in the player.";
@@ -249,6 +243,7 @@ namespace Harken.Unity
             catch (IOException) { return false; }
         }
 
+#if HARKEN_ENGINE_DEV
         internal static VnResult StartCommunication(string projectName)
         {
             if (!CommunicationEnabled) return VnResult.VN_CAPABILITY_UNAVAILABLE;
@@ -256,13 +251,12 @@ namespace Harken.Unity
             string name = settings == null || string.IsNullOrEmpty(settings.remoteApplicationName)
                 ? Application.productName : settings.remoteApplicationName;
             return RemoteCommunication.Start(name,
-                // settings != null ? settings.remoteBindAddress : "0.0.0.0",
-                settings != null ? settings.remoteBindAddress : "127.0.0.1",
-                settings != null ? settings.remotePort : 0,
-                settings == null || settings.enableRemoteDiscovery,
-                settings != null ? settings.remoteDiscoveryPort : 0,
-                projectName);
+                port: settings != null ? settings.remotePort : 0,
+                enableDiscovery: settings == null || settings.enableRemoteDiscovery,
+                discoveryPort: settings != null ? settings.remoteDiscoveryPort : 0,
+                projectName: projectName);
         }
+#endif
 
 
         private static bool PathsEqual(string left, string right)

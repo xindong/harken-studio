@@ -13,7 +13,7 @@
 #include <QSystemTrayIcon>
 #include <QTimer>
 
-namespace VNH {
+namespace harken::hub {
 
 UpdateNotifier::UpdateNotifier(QObject* parent)
     : QObject(parent)

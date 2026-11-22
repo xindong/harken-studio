@@ -198,6 +198,53 @@ class SlackNotifyTest(unittest.TestCase):
             )
         self.assertEqual(text, "")
 
+    def test_call_model_returns_only_public_text(self) -> None:
+        response = {
+            "content": [
+                {"type": "thinking", "thinking": "private reasoning"},
+                {"type": "text", "text": "First sentence. "},
+                {"type": "text", "text": "Second sentence."},
+            ],
+            "stop_reason": "end_turn",
+        }
+        with mock.patch.object(
+            MODULE.urllib.request, "urlopen", return_value=io.BytesIO(json.dumps(response).encode())
+        ):
+            text = MODULE.call_model(
+                base_url="https://example.invalid",
+                api_key="test-key",
+                system="sys",
+                user="hi",
+                max_tokens=400,
+                attempts=1,
+            )
+        self.assertEqual(text, "First sentence. Second sentence.")
+
+    def test_call_model_reports_empty_output_without_leaking_response(self) -> None:
+        for stop_reason, error in (
+            ("end_turn", "empty-model-text"),
+            ("max_tokens", "max-tokens-without-text"),
+        ):
+            with self.subTest(stop_reason=stop_reason):
+                response = {
+                    "content": [{"type": "thinking", "thinking": "private reasoning"}],
+                    "stop_reason": stop_reason,
+                }
+                stderr = io.StringIO()
+                with mock.patch.object(
+                    MODULE.urllib.request, "urlopen", return_value=io.BytesIO(json.dumps(response).encode())
+                ), mock.patch("sys.stderr", stderr):
+                    text = MODULE.call_model(
+                        base_url="https://example.invalid",
+                        api_key="test-key",
+                        system="sys",
+                        user="hi",
+                        max_tokens=400,
+                        attempts=1,
+                    )
+                self.assertEqual(text, "")
+                self.assertEqual(stderr.getvalue(), f"model call failed: {error}\n")
+
     def test_collect_event_reads_github_event_path(self) -> None:
         payload = {
             "pull_request": {

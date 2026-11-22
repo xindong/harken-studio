@@ -5,7 +5,7 @@
 #include <complex>
 #include <numbers>
 
-namespace VNX {
+namespace harken::studio {
 namespace FilterSemantics {
 namespace {
 

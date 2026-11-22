@@ -6,7 +6,7 @@
 #include <utility>
 #include <vector>
 
-namespace harkenstudiojson {
+namespace harken::studio::json {
 
 struct JsonValue {
     enum class Kind { Null, Bool, Number, String, Array, Object };
@@ -389,6 +389,6 @@ inline bool ParseJson(const std::string& text, JsonValue* out,
     return true;
 }
 
-} // namespace harkenstudiojson
+} // namespace harken::studio::json
 
 #endif // HARKEN_HOST_JSON_READER_H

@@ -3,6 +3,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QIcon>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QMessageBox>
@@ -53,8 +54,8 @@ int main(int argc, char* argv[])
     }
     if (shell || help || showVersion) {
         QString error;
-        if (!HarkenStudioCli::prepareDesktopShellStdio(&error, shell && !help && !showVersion)) {
-            HarkenStudioCli::writeShellResponse(HarkenStudioCli::failure(QStringLiteral("SHELL_IO_UNAVAILABLE"), error));
+        if (!harken::studio::cli::prepareDesktopShellStdio(&error, shell && !help && !showVersion)) {
+            harken::studio::cli::writeShellResponse(harken::studio::cli::failure(QStringLiteral("SHELL_IO_UNAVAILABLE"), error));
             return 2;
         }
     }
@@ -65,7 +66,7 @@ int main(int argc, char* argv[])
             "  --shell       Accept commands on stdin in this GUI process after the project is ready.\n"
             "  --json        With --shell, use one compact UTF-8 JSON response per line.\n"
             "  --help        Show this help without starting the GUI.\n"
-            "  --version     Show the software version.\n\n"
+            "  --version     Show the software version; with --json, also the build identity.\n\n"
             "Shell input: command {\"argument\":\"value\"}; help; commands [name]; exit.\n"
             "Redirected input/output automatically uses JSON. No extra console window is created.\n"
             "exit closes Studio; save unsaved edits first, or use exit --discard.\n"
@@ -77,10 +78,29 @@ int main(int argc, char* argv[])
             "CMD: start \"\" /wait HarkenStudio.exe --project \"<path>\" --shell\n"
             "Close the GUI to return to the parent shell; Ctrl+C can cancel the parent's wait.\n"
             "To control a Studio that is already running, use HarkenStudioCLI instances and --instance <id>.\n");
-        if (json) {
-            HarkenStudioCli::writeShellResponse({{"status", "ok"},
-                {"result", QJsonObject{{showVersion ? QStringLiteral("version") : QStringLiteral("help"),
-                    showVersion ? version : text}}}});
+        if (json && showVersion) {
+            QCoreApplication app(argc, argv);
+            const auto utf8 = [](std::string_view value) {
+                return QString::fromUtf8(value.data(), static_cast<int>(value.size()));
+            };
+            QString schemaError;
+            const bool schemaArchiveOk = harken::studio::SchemaArchive::instance().verifyBuildSnapshot(&schemaError);
+            QJsonObject result{
+                {QStringLiteral("version"), version},
+                {QStringLiteral("product"), QStringLiteral("HarkenStudio")},
+                {QStringLiteral("buildId"), utf8(Harken::BuildInfo::BuildId)},
+                {QStringLiteral("channel"), utf8(Harken::BuildInfo::BuildChannel)},
+                {QStringLiteral("gitCommit"), utf8(Harken::BuildInfo::GitCommit)},
+                {QStringLiteral("gitDirty"), Harken::BuildInfo::GitDirty},
+                {QStringLiteral("editorSchemaVersion"), harken::studio::ProjectSchema::kProjectSchemaVersion},
+                {QStringLiteral("packSchemaVersion"), HARKEN_PACK_METADATA_VERSION},
+                {QStringLiteral("schemaSnapshotHash"), QString::fromLatin1(harken::studio::SchemaBuild::kSnapshotHash)},
+                {QStringLiteral("schemaArchiveOk"), schemaArchiveOk}};
+            if (!schemaError.isEmpty())
+                result.insert(QStringLiteral("schemaError"), schemaError);
+            harken::studio::cli::writeShellResponse({{"status", "ok"}, {"result", result}});
+        } else if (json) {
+            harken::studio::cli::writeShellResponse({{"status", "ok"}, {"result", QJsonObject{{QStringLiteral("help"), text}}}});
         } else {
             const auto bytes = text.toUtf8();
             std::fwrite(bytes.constData(), 1, static_cast<size_t>(bytes.size()), stdout);
@@ -91,8 +111,7 @@ int main(int argc, char* argv[])
     if (shell) {
         const QSet<QString> valueOptions{
             QStringLiteral("--project"), QStringLiteral("--project-name"),
-            QStringLiteral("--project-location"), QStringLiteral("--project-template-id"),
-            QStringLiteral("--project-template-file")};
+            QStringLiteral("--project-location"), QStringLiteral("--project-template-id")};
         const QSet<QString> flags{
             QStringLiteral("--shell"), QStringLiteral("--json"), QStringLiteral("--last"),
             QStringLiteral("--create-project")};
@@ -143,11 +162,8 @@ int main(int argc, char* argv[])
                 || (createDirectory.isEmpty() && (!supplied.contains(QStringLiteral("--project-name"))
                     || !supplied.contains(QStringLiteral("--project-location"))))))
             argumentError = QStringLiteral("Use --create-project <directory>, or --create-project with both --project-name and --project-location.");
-        if (argumentError.isEmpty() && supplied.contains(QStringLiteral("--project-template-id"))
-            && !supplied.contains(QStringLiteral("--project-template-file")))
-            argumentError = QStringLiteral("--project-template-id requires --project-template-file.");
         if (!argumentError.isEmpty()) {
-            HarkenStudioCli::writeShellResponse(HarkenStudioCli::failure(QStringLiteral("INVALID_ARGUMENTS"), argumentError));
+            harken::studio::cli::writeShellResponse(harken::studio::cli::failure(QStringLiteral("INVALID_ARGUMENTS"), argumentError));
             return 2;
         }
     }
@@ -156,8 +172,8 @@ int main(int argc, char* argv[])
         qputenv("QT_QPA_PLATFORM", "offscreen");
         QTemporaryDir settingsRoot;
         QApplication app(argc, argv);
-        app.setOrganizationName(QStringLiteral("HarkenSchemaCompatibilityProbe"));
-        app.setApplicationName(QStringLiteral("HarkenSchemaCompatibilityProbe"));
+        app.setOrganizationName(QStringLiteral("HarkenStudioSchemaCompatibilityProbe"));
+        app.setApplicationName(QStringLiteral("HarkenStudioSchemaCompatibilityProbe"));
         QSettings::setDefaultFormat(QSettings::IniFormat);
         QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, settingsRoot.path());
         qputenv("HARKEN_HUB_USER_ROOT", settingsRoot.filePath(QStringLiteral("hub")).toUtf8());
@@ -179,7 +195,7 @@ int main(int argc, char* argv[])
                 else request = document.object();
             }
         }
-        QJsonObject report = VNX::runSchemaCompatibilityProbe(request);
+        QJsonObject report = harken::studio::runSchemaCompatibilityProbe(request);
         if (!requestError.isEmpty()) report.insert(QStringLiteral("error"), requestError);
         const QByteArray json = QJsonDocument(report).toJson(QJsonDocument::Compact);
         std::fwrite(json.constData(), 1, static_cast<size_t>(json.size()), stdout);
@@ -188,47 +204,26 @@ int main(int argc, char* argv[])
         return report.value(QStringLiteral("ok")).toBool() ? 0 : 5;
     }
     for (int i = 1; i < argc; ++i) {
-        if (std::strcmp(argv[i], "--self-test") == 0) {
-            QCoreApplication app(argc, argv);
-            QString schemaError;
-            const bool schemaArchiveOk =
-                VNX::SchemaArchive::instance().verifyBuildSnapshot(&schemaError);
-            QJsonObject report;
-            report[QStringLiteral("ok")] = schemaArchiveOk;
-            report[QStringLiteral("product")] = QStringLiteral("HarkenStudio");
-            report[QStringLiteral("version")] = QString::fromUtf8(
-                Harken::BuildInfo::Version.data(),
-                static_cast<int>(Harken::BuildInfo::Version.size()));
-            report[QStringLiteral("buildId")] = QString::fromUtf8(
-                Harken::BuildInfo::BuildId.data(),
-                static_cast<int>(Harken::BuildInfo::BuildId.size()));
-            report[QStringLiteral("gitCommit")] = QString::fromUtf8(
-                Harken::BuildInfo::GitCommit.data(),
-                static_cast<int>(Harken::BuildInfo::GitCommit.size()));
-            report[QStringLiteral("gitDirty")] = Harken::BuildInfo::GitDirty;
-            report[QStringLiteral("channel")] = QString::fromUtf8(
-                Harken::BuildInfo::BuildChannel.data(),
-                static_cast<int>(Harken::BuildInfo::BuildChannel.size()));
-            report[QStringLiteral("buildType")] = QString::fromUtf8(
-                Harken::BuildInfo::BuildType.data(),
-                static_cast<int>(Harken::BuildInfo::BuildType.size()));
-            report[QStringLiteral("capabilitiesVersion")] = 2;
-            report[QStringLiteral("editorSchemaVersion")] =
-                VNX::ProjectSchema::kProjectSchemaVersion;
-            report[QStringLiteral("schemaArchiveOk")] = schemaArchiveOk;
-            report[QStringLiteral("schemaSnapshotHash")] =
-                QString::fromLatin1(VNX::SchemaBuild::kSnapshotHash);
-            report[QStringLiteral("packSchemaVersion")] =
-                HARKEN_PACK_SCHEMA_VERSION;
-            if (!schemaError.isEmpty()) report[QStringLiteral("schemaError")] = schemaError;
-            const QByteArray json =
-                QJsonDocument(report).toJson(QJsonDocument::Compact);
-            std::fwrite(json.constData(), 1,
-                        static_cast<size_t>(json.size()), stdout);
-            std::fputc('\n', stdout);
-            std::fflush(stdout);
-            return schemaArchiveOk ? 0 : 2;
+        if (std::strcmp(argv[i], "--list-templates") != 0)
+            continue;
+        QCoreApplication app(argc, argv);
+        app.setApplicationName(QStringLiteral("HarkenStudio"));
+        app.setOrganizationName(QStringLiteral("HarkenSound"));
+        harken::studio::ProjectTemplateLoader::ensureUserTemplatesSeeded();
+        QJsonArray templates;
+        for (const auto& location : harken::studio::ProjectTemplateLoader::listAvailable()) {
+            if (!harken::studio::ProjectTemplateLoader::load(location.id))
+                continue;
+            templates.append(QJsonObject{{QStringLiteral("id"), location.id},
+                                         {QStringLiteral("displayName"), location.displayName},
+                                         {QStringLiteral("description"), location.description}});
         }
+        const QByteArray json = QJsonDocument(QJsonObject{{QStringLiteral("templates"), templates}})
+                                    .toJson(QJsonDocument::Compact);
+        std::fwrite(json.constData(), 1, static_cast<size_t>(json.size()), stdout);
+        std::fputc('\n', stdout);
+        std::fflush(stdout);
+        return 0;
     }
 
     for (int i = 1; i + 1 < argc; ++i) {
@@ -250,10 +245,10 @@ int main(int argc, char* argv[])
         if (requestId.isEmpty())
             return 4;
         const QString projectPath = arguments.at(projectArgument + 1);
-        const VNX::ProjectUpgradeAnalysis analysis =
-            VNX::ProjectUpgradeManager().analyzeForProjectOpen(projectPath);
+        const harken::studio::ProjectUpgradeAnalysis analysis =
+            harken::studio::ProjectUpgradeManager().analyzeForProjectOpen(projectPath);
         const QByteArray json = QJsonDocument(
-            VNX::projectOpenAnalysisReport(analysis, requestId))
+            harken::studio::projectOpenAnalysisReport(analysis, requestId))
                                     .toJson(QJsonDocument::Compact);
         std::fwrite(json.constData(), 1,
                     static_cast<size_t>(json.size()), stdout);
@@ -271,8 +266,8 @@ int main(int argc, char* argv[])
             if (std::strcmp(argv[j], "--target-schema") == 0)
                 targetSchema = std::atoi(argv[j + 1]);
         }
-        const VNX::PreflightReport report =
-            VNX::ProjectPreflight::run(projectPath, targetSchema);
+        const harken::studio::PreflightReport report =
+            harken::studio::ProjectPreflight::run(projectPath, targetSchema);
         const QByteArray json =
             QJsonDocument(report.toJson()).toJson(QJsonDocument::Indented);
         std::fwrite(json.constData(), 1,
@@ -293,13 +288,13 @@ int main(int argc, char* argv[])
     QSurfaceFormat::setDefaultFormat(glFormat);
 
     QApplication app(argc, argv);
-    app.installEventFilter(VNX::WheelGuard::instance());
+    app.installEventFilter(harken::studio::WheelGuard::instance());
     if (QStyle* fusion = QStyleFactory::create(QStringLiteral("Fusion")))
-        QApplication::setStyle(new VNX::HarkenStyle(fusion));
+        QApplication::setStyle(new harken::studio::HarkenStyle(fusion));
     QApplication::setEffectEnabled(Qt::UI_AnimateTooltip, false);
     QApplication::setEffectEnabled(Qt::UI_FadeTooltip, false);
 
-    VNX::installFramelessChrome();
+    harken::studio::installFramelessChrome();
     app.setApplicationName(QStringLiteral("HarkenStudio"));
     app.setApplicationVersion(QString::fromUtf8(
         Harken::BuildInfo::Version.data(),
@@ -308,15 +303,15 @@ int main(int argc, char* argv[])
     app.setOrganizationDomain(QStringLiteral("harkensound.com"));
     app.setWindowIcon(QIcon(QStringLiteral(":/Resources/icons/HarkenStudio.ico")));
 
-    VNX::ProjectTemplateLoader::ensureUserTemplatesSeeded();
-    VNX::ThemeManager::instance();
-    VNX::ToolTip::initialize();
+    harken::studio::ProjectTemplateLoader::ensureUserTemplatesSeeded();
+    harken::studio::ThemeManager::instance();
+    harken::studio::ToolTip::initialize();
 
-    VNX::StartupLoadingWindow loading;
+    harken::studio::StartupLoadingWindow loading;
     loading.showAfterInitialFrame();
     const auto failStartup = [&loading, shell](const QString& message) {
         if (shell) {
-            HarkenStudioCli::writeShellResponse(HarkenStudioCli::failure(QStringLiteral("STARTUP_FAILED"), message));
+            harken::studio::cli::writeShellResponse(harken::studio::cli::failure(QStringLiteral("STARTUP_FAILED"), message));
             return 3;
         }
         loading.showFailure(message);
@@ -325,8 +320,8 @@ int main(int argc, char* argv[])
     };
 
     const QStringList args = app.arguments();
-    const VNX::StartupArguments startupArguments =
-        VNX::StartupArguments::parse(args);
+    const harken::studio::StartupArguments startupArguments =
+        harken::studio::StartupArguments::parse(args);
     if (startupArguments.createProject
         && (startupArguments.projectName.isEmpty()
             || startupArguments.projectLocation.isEmpty())) {
@@ -356,7 +351,7 @@ int main(int argc, char* argv[])
         }
 
         if (!requestedProject.isEmpty()) {
-            projectFile = VNX::ProjectLocator::locate(requestedProject).projectFilePath;
+            projectFile = harken::studio::ProjectLocator::locate(requestedProject).projectFilePath;
             if (projectFile.isEmpty()) {
                 return failStartup(QObject::tr(
                     "Could not find a unique Harken project at: %1")
@@ -367,7 +362,7 @@ int main(int argc, char* argv[])
             if (shell)
                 return failStartup(QStringLiteral("--shell requires --project <path>, --create-project <directory>, or --last with a recent project."));
             QString error;
-            if (!VNX::HubLauncher::open(VNX::HubPage::Projects, &error, true)) {
+            if (!harken::studio::HubLauncher::open(harken::studio::HubPage::Projects, &error, true)) {
                 return failStartup(error);
             }
             return 0;
@@ -377,8 +372,8 @@ int main(int argc, char* argv[])
     loading.setProjectName(startupArguments.createProject
                                ? startupArguments.projectName
                                : QFileInfo(projectFile).completeBaseName());
-    auto coordinator = std::make_unique<VNX::StartupCoordinator>(
+    auto coordinator = std::make_unique<harken::studio::StartupCoordinator>(
         app, loading, startupArguments, projectFile, &app);
-    QTimer::singleShot(0, coordinator.get(), &VNX::StartupCoordinator::start);
+    QTimer::singleShot(0, coordinator.get(), &harken::studio::StartupCoordinator::start);
     return app.exec();
 }

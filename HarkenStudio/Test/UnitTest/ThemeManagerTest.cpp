@@ -84,12 +84,12 @@ bool writePackage(const QString& themesRoot,
                      R"json({"assets":{}})json");
 }
 
-std::unique_ptr<VNX::ISettingsStorage> memoryStorage()
+std::unique_ptr<harken::studio::ISettingsStorage> memoryStorage()
 {
-    return std::make_unique<VNX::MemorySettingsStorage>();
+    return std::make_unique<harken::studio::MemorySettingsStorage>();
 }
 
-QVariantMap storedValues(const VNX::ISettingsStorage& storage)
+QVariantMap storedValues(const harken::studio::ISettingsStorage& storage)
 {
     QVariantMap values;
     for (const QString& key : storage.allKeys())
@@ -97,7 +97,7 @@ QVariantMap storedValues(const VNX::ISettingsStorage& storage)
     return values;
 }
 
-class WritableSettingsStorage : public VNX::MemorySettingsStorage
+class WritableSettingsStorage : public harken::studio::MemorySettingsStorage
 {
 public:
     bool isWritable() const override { return writable; }
@@ -109,24 +109,24 @@ public:
 TEST(ThemeManager, UserScaleIsDerivedFromTheThemeWithoutAccumulation)
 {
     QTemporaryDir root;
-    VNX::ThemeManager manager(root.path(), memoryStorage());
+    harken::studio::ThemeManager manager(root.path(), memoryStorage());
     manager.setUIScale(100);
     const auto restore = qScopeGuard([&] { manager.setUIScale(100); });
     const auto original = manager.snapshot();
     const auto base = manager.unscaledSnapshot();
     const auto appearance = manager.appearance();
-    const auto& fonts = VNX::FontManager::instance();
+    const auto& fonts = harken::studio::FontManager::instance();
     int publications = 0;
-    QObject::connect(&manager, &VNX::ThemeManager::themeChanged,
+    QObject::connect(&manager, &harken::studio::ThemeManager::themeChanged,
                      &manager, [&] { ++publications; });
     QLineEdit editor(QStringLiteral("unfinished input"));
     editor.show();
     QCoreApplication::processEvents();
     editor.setSelection(2, 5);
-    const qreal minimum = VNX::AppSettings::uiScaleForZoomLevel(VNX::AppSettings::MIN_GLOBAL_ZOOM_LEVEL);
-    const qreal maximum = VNX::AppSettings::uiScaleForZoomLevel(VNX::AppSettings::MAX_GLOBAL_ZOOM_LEVEL);
+    const qreal minimum = harken::studio::AppSettings::uiScaleForZoomLevel(harken::studio::AppSettings::MIN_GLOBAL_ZOOM_LEVEL);
+    const qreal maximum = harken::studio::AppSettings::uiScaleForZoomLevel(harken::studio::AppSettings::MAX_GLOBAL_ZOOM_LEVEL);
     const QList<qreal> percentages{minimum, 125, 150, maximum, 175, 100, minimum, maximum, 100};
-    QMap<qreal, VNX::ThemeSnapshot> snapshots;
+    QMap<qreal, harken::studio::ThemeSnapshot> snapshots;
     for (qreal percent : percentages) {
         manager.setUIScale(percent);
         QCoreApplication::processEvents();
@@ -136,14 +136,14 @@ TEST(ThemeManager, UserScaleIsDerivedFromTheThemeWithoutAccumulation)
         EXPECT_EQ(manager.appearance(), appearance);
         EXPECT_EQ(active->uiScale, scale);
         EXPECT_EQ(active->ui.typography, base->ui.typography);
-        for (const auto role : {VNX::FontRole::Body, VNX::FontRole::Caption,
-                               VNX::FontRole::Title, VNX::FontRole::Mono}) {
+        for (const auto role : {harken::studio::FontRole::Body, harken::studio::FontRole::Caption,
+                               harken::studio::FontRole::Title, harken::studio::FontRole::Mono}) {
             EXPECT_EQ(fonts.getFont(active, role).pointSizeF(),
                       fonts.getFont(base, role).pointSizeF() * scale);
         }
         for (int overrideSize : {6, 24})
-            EXPECT_EQ(fonts.getFont(VNX::FontRole::Body, overrideSize).pointSizeF(), overrideSize * scale);
-        EXPECT_EQ(editor.font().pointSizeF(), fonts.getFont(active, VNX::FontRole::Body).pointSizeF());
+            EXPECT_EQ(fonts.getFont(harken::studio::FontRole::Body, overrideSize).pointSizeF(), overrideSize * scale);
+        EXPECT_EQ(editor.font().pointSizeF(), fonts.getFont(active, harken::studio::FontRole::Body).pointSizeF());
         EXPECT_EQ(editor.selectedText(), QStringLiteral("finis"));
         EXPECT_EQ(active->ui.metrics.controlHeight, qRound(base->ui.metrics.controlHeight * scale));
         auto comparable = *active;
@@ -162,14 +162,14 @@ TEST(ThemeManager, UserScaleIsDerivedFromTheThemeWithoutAccumulation)
 
 TEST(ThemeManager, ScalingPreservesNonSpatialThemeValuesAndAutomaticRecipeBounds)
 {
-    auto base = VNX::createBuiltinDarkTheme();
+    auto base = harken::studio::createBuiltinDarkTheme();
     ASSERT_FALSE(base.ui.recipes.entries.isEmpty());
     auto& recipe = base.ui.recipes.entries.first();
     ASSERT_FALSE(recipe.items.isEmpty());
     recipe.items.first().minimum = -1;
     recipe.items.first().preferred = 17;
     recipe.items.first().maximum = -1;
-    const auto scaled = VNX::scaledThemeSnapshot(base, 1.75);
+    const auto scaled = harken::studio::scaledThemeSnapshot(base, 1.75);
     EXPECT_EQ(scaled.ui.colors, base.ui.colors);
     EXPECT_EQ(scaled.ui.typography, base.ui.typography);
     EXPECT_EQ(scaled.ui.parameterPresenters, base.ui.parameterPresenters);
@@ -188,7 +188,7 @@ TEST(ThemeManager, ScalingPreservesNonSpatialThemeValuesAndAutomaticRecipeBounds
     EXPECT_EQ(scaled.ui.recipes.entries.first().items.first().minimum, -1);
     EXPECT_EQ(scaled.ui.recipes.entries.first().items.first().maximum, -1);
     EXPECT_EQ(scaled.ui.recipes.entries.first().items.first().preferred, qRound(17 * 1.75));
-    EXPECT_EQ(VNX::scaledThemeSnapshot(base, 1.0), base);
+    EXPECT_EQ(harken::studio::scaledThemeSnapshot(base, 1.0), base);
     base.ui.metrics.controlHeight = 5;
     base.ui.metrics.control.smallIconExtent = 5;
     base.ui.metrics.borderWidth = 1;
@@ -198,11 +198,11 @@ TEST(ThemeManager, ScalingPreservesNonSpatialThemeValuesAndAutomaticRecipeBounds
     boundedSlot.preferred = 2;
     boundedSlot.maximum = 3;
     recipe.items.append(boundedSlot);
-    for (int level = VNX::AppSettings::MIN_GLOBAL_ZOOM_LEVEL;
-         level <= VNX::AppSettings::MAX_GLOBAL_ZOOM_LEVEL; ++level) {
+    for (int level = harken::studio::AppSettings::MIN_GLOBAL_ZOOM_LEVEL;
+         level <= harken::studio::AppSettings::MAX_GLOBAL_ZOOM_LEVEL; ++level) {
         SCOPED_TRACE(level);
-        const auto snapshot = VNX::scaledThemeSnapshot(base,
-            VNX::AppSettings::uiScaleForZoomLevel(level) / 100.0);
+        const auto snapshot = harken::studio::scaledThemeSnapshot(base,
+            harken::studio::AppSettings::uiScaleForZoomLevel(level) / 100.0);
         const auto& toggle = snapshot.ui.metrics.toggle;
         EXPECT_GT(toggle.height, toggle.thumbPadding * 2);
         EXPECT_GT(toggle.compactHeight, toggle.compactThumbPadding * 2);
@@ -226,14 +226,14 @@ TEST(ThemeManager, UserScaleSurvivesThemeReloadAndColorPreviewTransactions)
         QStringLiteral("theme.scaled"), QStringLiteral("#ff118899"), QStringLiteral("#ff118899")));
     ASSERT_TRUE(writeFile(QDir(root.path()).filePath(QStringLiteral("scaled/tokens.json")),
         R"json({"fonts":{"body":{"pointSize":13}},"metrics":{"control.height":48}})json"));
-    VNX::ThemeManager manager(root.path(), memoryStorage());
-    const auto restore = qScopeGuard([&] { manager.setUIScale(100); manager.selectTheme(VNX::builtinThemeId()); });
+    harken::studio::ThemeManager manager(root.path(), memoryStorage());
+    const auto restore = qScopeGuard([&] { manager.setUIScale(100); manager.selectTheme(harken::studio::builtinThemeId()); });
     manager.setUIScale(150);
-    for (const auto& id : {QStringLiteral("theme.scaled"), VNX::builtinThemeId(), QStringLiteral("theme.scaled")}) {
+    for (const auto& id : {QStringLiteral("theme.scaled"), harken::studio::builtinThemeId(), QStringLiteral("theme.scaled")}) {
         ASSERT_TRUE(manager.selectTheme(id).ok());
         EXPECT_EQ(manager.snapshot()->uiScale, 1.5);
         EXPECT_EQ(manager.metrics().controlHeight, qRound(manager.unscaledSnapshot()->ui.metrics.controlHeight * 1.5));
-        EXPECT_EQ(VNX::FontManager::instance().getFont(manager.snapshot(), VNX::FontRole::Body).pointSizeF(),
+        EXPECT_EQ(harken::studio::FontManager::instance().getFont(manager.snapshot(), harken::studio::FontRole::Body).pointSizeF(),
                   manager.unscaledSnapshot()->ui.typography.body.pointSize * 1.5);
         const auto before = manager.snapshot();
         ASSERT_TRUE(manager.reloadTheme().ok());
@@ -263,14 +263,14 @@ TEST(ThemeManager, ReloadDoesNotMutatePreviouslyPublishedSnapshot)
                              QStringLiteral("theme.mutable"),
                              QStringLiteral("#ff111111"),
                              QStringLiteral("#ff222222")));
-    VNX::ThemeManager manager(root.path(), memoryStorage());
+    harken::studio::ThemeManager manager(root.path(), memoryStorage());
     ASSERT_TRUE(manager.selectTheme(QStringLiteral("theme.mutable")).ok());
     const auto oldSnapshot = manager.snapshot();
     int fonts = 0;
     int structures = 0;
-    QObject::connect(&VNX::FontManager::instance(), &VNX::FontManager::fontChanged,
+    QObject::connect(&harken::studio::FontManager::instance(), &harken::studio::FontManager::fontChanged,
                      &manager, [&] { ++fonts; });
-    QObject::connect(&manager, &VNX::ThemeManager::themeChanged,
+    QObject::connect(&manager, &harken::studio::ThemeManager::themeChanged,
                      &manager, [&] { ++structures; });
     ASSERT_TRUE(writePackage(root.path(), QStringLiteral("mutable"),
                              QStringLiteral("theme.mutable"),
@@ -296,24 +296,24 @@ TEST(ThemeManager, ReloadDoesNotMutatePreviouslyPublishedSnapshot)
 
 TEST(ThemeManager, TypographyInheritsSharedFamilyWeightAndBodySize)
 {
-    auto theme = VNX::createBuiltinDarkTheme();
+    auto theme = harken::studio::createBuiltinDarkTheme();
     theme.ui.typography.body = {QStringLiteral("Arial"), 13, 450};
     theme.ui.typography.title.weight = 650;
-    const auto snapshot = std::make_shared<const VNX::ThemeSnapshot>(theme);
-    const auto& fonts = VNX::FontManager::instance();
-    const auto body = fonts.getFont(snapshot, VNX::FontRole::Body);
-    for (const auto role : {VNX::FontRole::Body, VNX::FontRole::Caption, VNX::FontRole::Title}) {
+    const auto snapshot = std::make_shared<const harken::studio::ThemeSnapshot>(theme);
+    const auto& fonts = harken::studio::FontManager::instance();
+    const auto body = fonts.getFont(snapshot, harken::studio::FontRole::Body);
+    for (const auto role : {harken::studio::FontRole::Body, harken::studio::FontRole::Caption, harken::studio::FontRole::Title}) {
         const auto font = fonts.getFont(snapshot, role);
         EXPECT_EQ(font.family(), body.family());
         EXPECT_EQ(font.stretch(), QFont::Unstretched);
         EXPECT_EQ(font.letterSpacing(), 0);
         EXPECT_EQ(font.wordSpacing(), 0);
-        EXPECT_EQ(fonts.getFont(snapshot, role, VNX::FontEmphasis::Strong).weight(),
+        EXPECT_EQ(fonts.getFont(snapshot, role, harken::studio::FontEmphasis::Strong).weight(),
                   theme.ui.typography.title.weight);
     }
-    EXPECT_EQ(fonts.getFont(snapshot, VNX::FontRole::Caption).weight(), body.weight());
-    EXPECT_EQ(fonts.getFont(snapshot, VNX::FontRole::Mono).weight(), body.weight());
-    EXPECT_EQ(fonts.getFont(snapshot, VNX::FontRole::Mono).pointSizeF(), body.pointSizeF());
+    EXPECT_EQ(fonts.getFont(snapshot, harken::studio::FontRole::Caption).weight(), body.weight());
+    EXPECT_EQ(fonts.getFont(snapshot, harken::studio::FontRole::Mono).weight(), body.weight());
+    EXPECT_EQ(fonts.getFont(snapshot, harken::studio::FontRole::Mono).pointSizeF(), body.pointSizeF());
 }
 
 TEST(ThemeManager, ExistingWidgetsFollowThemeFontsAndKeepExplicitSizes)
@@ -324,7 +324,7 @@ TEST(ThemeManager, ExistingWidgetsFollowThemeFontsAndKeepExplicitSizes)
         QStringLiteral("theme.typography"), QStringLiteral("#ff118899"), QStringLiteral("#ff118899")));
     ASSERT_TRUE(writeFile(QDir(root.path()).filePath(QStringLiteral("typography/tokens.json")),
         R"json({"fonts":{"body":{"family":"Arial","pointSize":13}}})json"));
-    VNX::ThemeManager manager(root.path(), memoryStorage());
+    harken::studio::ThemeManager manager(root.path(), memoryStorage());
     QWidget panel;
     panel.setAttribute(Qt::WA_DontShowOnScreen);
     QWidget section(&panel);
@@ -343,12 +343,12 @@ TEST(ThemeManager, ExistingWidgetsFollowThemeFontsAndKeepExplicitSizes)
     explicitSize.setPointSize(17);
     customized.setFont(explicitSize);
     panel.show();
-    for (const auto& id : {VNX::builtinThemeId(), QStringLiteral("theme.typography"),
-                          VNX::builtinThemeId(), QStringLiteral("theme.typography"),
-                          VNX::builtinThemeId()}) {
+    for (const auto& id : {harken::studio::builtinThemeId(), QStringLiteral("theme.typography"),
+                          harken::studio::builtinThemeId(), QStringLiteral("theme.typography"),
+                          harken::studio::builtinThemeId()}) {
         ASSERT_TRUE(manager.selectTheme(id).ok());
         QCoreApplication::processEvents();
-        const auto expected = VNX::FontManager::instance().getFont(manager.snapshot(), VNX::FontRole::Body);
+        const auto expected = harken::studio::FontManager::instance().getFont(manager.snapshot(), harken::studio::FontRole::Body);
         QMenu newMenu(&panel);
         auto widgets = inheritedWidgets;
         widgets.append(&newMenu);
@@ -366,15 +366,15 @@ TEST(ThemeManager, ExistingWidgetsFollowThemeFontsAndKeepExplicitSizes)
 
 TEST(ThemeManager, StyleSheetsAndPaintedTextResolveTheSameTypography)
 {
-    auto theme = VNX::createBuiltinDarkTheme();
+    auto theme = harken::studio::createBuiltinDarkTheme();
     theme.ui.typography.body.family = QStringLiteral("Arial");
     theme.ui.typography.body.pointSize = 13;
     theme.ui.typography.caption.pointSize = 11;
-    const auto snapshot = std::make_shared<const VNX::ThemeSnapshot>(theme);
-    const auto& fonts = VNX::FontManager::instance();
-    for (const auto role : {VNX::FontRole::Body, VNX::FontRole::Caption,
-                            VNX::FontRole::Title, VNX::FontRole::Mono}) {
-        for (const auto emphasis : {VNX::FontEmphasis::Normal, VNX::FontEmphasis::Strong}) {
+    const auto snapshot = std::make_shared<const harken::studio::ThemeSnapshot>(theme);
+    const auto& fonts = harken::studio::FontManager::instance();
+    for (const auto role : {harken::studio::FontRole::Body, harken::studio::FontRole::Caption,
+                            harken::studio::FontRole::Title, harken::studio::FontRole::Mono}) {
+        for (const auto emphasis : {harken::studio::FontEmphasis::Normal, harken::studio::FontEmphasis::Strong}) {
             QLabel label(QStringLiteral("Text 0123456789"));
             label.setStyleSheet(fonts.styleSheet(snapshot, role, emphasis));
             label.ensurePolished();
@@ -391,10 +391,10 @@ TEST(ThemeManager, RejectsPublicationFromAnotherThread)
 {
     QTemporaryDir root;
     ASSERT_TRUE(root.isValid());
-    VNX::ThemeManager manager(root.path(), memoryStorage());
+    harken::studio::ThemeManager manager(root.path(), memoryStorage());
     ASSERT_TRUE(manager.reloadTheme().ok());
     const auto before = manager.snapshot();
-    VNX::ThemeManagerOperationResult result;
+    harken::studio::ThemeManagerOperationResult result;
 
     std::thread worker([&]() { result = manager.reloadTheme(); });
     worker.join();
@@ -411,16 +411,16 @@ TEST(ThemeManager, PreviewCancellationKeepsCommittedStateWithoutReloadingFiles)
     ASSERT_TRUE(writePackage(root.path(), QStringLiteral("preview"), packageId,
                              QStringLiteral("#ff112233"),
                              QStringLiteral("#ff334455")));
-    auto storage = std::make_unique<VNX::MemorySettingsStorage>();
+    auto storage = std::make_unique<harken::studio::MemorySettingsStorage>();
     auto* stored = storage.get();
-    VNX::ThemeManager manager(root.path(), std::move(storage));
+    harken::studio::ThemeManager manager(root.path(), std::move(storage));
     ASSERT_TRUE(manager.selectTheme(packageId).ok());
     const auto committed = manager.appearance();
     const auto original = manager.snapshot();
     const auto settings = storedValues(*stored);
 
     auto draft = committed;
-    draft.themeId = VNX::builtinThemeId();
+    draft.themeId = harken::studio::builtinThemeId();
     draft.paletteId = QStringLiteral("dark");
     const QColor accent(QStringLiteral("#ffbc1234"));
     const QColor text(QStringLiteral("#ffc2d3e4"));
@@ -462,9 +462,9 @@ TEST(ThemeManager, ContinuousPreviewRetainsBaseWithoutAccumulatingOverrides)
     ASSERT_TRUE(writePackage(root.path(), QStringLiteral("preview"), packageId,
                              QStringLiteral("#ff112233"),
                              QStringLiteral("#ff334455")));
-    auto storage = std::make_unique<VNX::MemorySettingsStorage>();
+    auto storage = std::make_unique<harken::studio::MemorySettingsStorage>();
     auto* stored = storage.get();
-    VNX::ThemeManager manager(root.path(), std::move(storage));
+    harken::studio::ThemeManager manager(root.path(), std::move(storage));
     ASSERT_TRUE(manager.selectTheme(packageId).ok());
     const auto committed = manager.appearance();
     const auto original = manager.snapshot();
@@ -500,7 +500,7 @@ TEST(ThemeManager, ContinuousPreviewRetainsBaseWithoutAccumulatingOverrides)
     EXPECT_EQ(manager.snapshot()->domains.curve.colors.attenuationVolume,
               QColor(QStringLiteral("#ff778899")));
 
-    draft.themeId = VNX::builtinThemeId();
+    draft.themeId = harken::studio::builtinThemeId();
     draft.paletteId = QStringLiteral("dark");
     ASSERT_TRUE(manager.previewAppearance(draft).ok());
     ASSERT_TRUE(writePackage(root.path(), QStringLiteral("preview"), packageId,
@@ -523,7 +523,7 @@ TEST(ThemeManager, CommitAndReloadStartNewPreviewSessions)
     ASSERT_TRUE(writePackage(root.path(), QStringLiteral("preview"), packageId,
                              QStringLiteral("#ff112233"),
                              QStringLiteral("#ff334455")));
-    VNX::ThemeManager manager(root.path(), memoryStorage());
+    harken::studio::ThemeManager manager(root.path(), memoryStorage());
     ASSERT_TRUE(manager.selectTheme(packageId).ok());
     auto draft = manager.appearance();
     const QColor text(QStringLiteral("#ffabcdef"));
@@ -580,7 +580,7 @@ TEST(ThemeManager, MigratesLegacyColorsToTheirOwningThemesAndRetiresAmber)
         const QString oldKey = global ? QStringLiteral("PaletteColors") : QStringLiteral("Colors");
         const QString prefix = global ? QStringLiteral("theme:") : QString();
         {
-            VNX::QSettingsStorage storage(storagePath);
+            harken::studio::QSettingsStorage storage(storagePath);
             storage.setValue(QStringLiteral("Appearance/ThemeId"), oldAmber);
             storage.setValue(QStringLiteral("Appearance/PaletteId"), QStringLiteral("harken.palette.amber"));
             storage.setValue(QStringLiteral("Appearance/") + oldKey, QVariantMap{
@@ -592,8 +592,8 @@ TEST(ThemeManager, MigratesLegacyColorsToTheirOwningThemesAndRetiresAmber)
             storage.sync();
         }
         {
-            VNX::ThemeManager manager(root.path(), std::make_unique<VNX::QSettingsStorage>(storagePath));
-            EXPECT_EQ(manager.currentThemeId(), VNX::builtinThemeId());
+            harken::studio::ThemeManager manager(root.path(), std::make_unique<harken::studio::QSettingsStorage>(storagePath));
+            EXPECT_EQ(manager.currentThemeId(), harken::studio::builtinThemeId());
             EXPECT_EQ(manager.currentPaletteId(), dark);
             EXPECT_EQ(manager.snapshot()->ui.colors.accent, builtinOverride);
             EXPECT_EQ(manager.appearance().colors.size(), 2);
@@ -604,17 +604,17 @@ TEST(ThemeManager, MigratesLegacyColorsToTheirOwningThemesAndRetiresAmber)
             reset.colors[packageId].remove(dark);
             ASSERT_TRUE(manager.applyAppearance(reset).ok());
             EXPECT_EQ(manager.snapshot()->ui.colors.accent, QColor(QStringLiteral("#ff112233")));
-            ASSERT_TRUE(manager.selectTheme(VNX::builtinThemeId()).ok());
+            ASSERT_TRUE(manager.selectTheme(harken::studio::builtinThemeId()).ok());
             EXPECT_EQ(manager.snapshot()->ui.colors.accent, builtinOverride);
             auto light = manager.appearance();
             light.paletteId = QStringLiteral("light");
             ASSERT_TRUE(manager.applyAppearance(light).ok());
         }
-        VNX::ThemeManager restored(root.path(), std::make_unique<VNX::QSettingsStorage>(storagePath));
-        EXPECT_EQ(restored.currentThemeId(), VNX::builtinThemeId());
+        harken::studio::ThemeManager restored(root.path(), std::make_unique<harken::studio::QSettingsStorage>(storagePath));
+        EXPECT_EQ(restored.currentThemeId(), harken::studio::builtinThemeId());
         EXPECT_EQ(restored.currentPaletteId(), QStringLiteral("light"));
-        EXPECT_EQ(restored.snapshot()->colorScheme, VNX::ThemeColorScheme::Light);
-        VNX::QSettingsStorage stored(storagePath);
+        EXPECT_EQ(restored.snapshot()->colorScheme, harken::studio::ThemeColorScheme::Light);
+        harken::studio::QSettingsStorage stored(storagePath);
         EXPECT_TRUE(stored.contains(QStringLiteral("Appearance/ThemePaletteColors")));
         EXPECT_FALSE(stored.contains(QStringLiteral("Appearance/PaletteColors")));
         EXPECT_FALSE(stored.contains(QStringLiteral("Appearance/Colors")));
@@ -634,13 +634,13 @@ TEST(ThemeManager, MissingThemePreservesPrivateColorsUntilPackageReturns)
                              QStringLiteral("#ff334455")));
     const QColor packageOverride(QStringLiteral("#ff345678"));
     const QColor builtinOverride(QStringLiteral("#ff876543"));
-    QMap<QString, VNX::ColorPaletteCustomizations> expected;
+    QMap<QString, harken::studio::ColorPaletteCustomizations> expected;
     expected[packageId][QStringLiteral("dark")].insert(QStringLiteral("accent.primary"), packageOverride);
-    expected[VNX::builtinThemeId()][QStringLiteral("dark")].insert(
+    expected[harken::studio::builtinThemeId()][QStringLiteral("dark")].insert(
         QStringLiteral("accent.primary"), builtinOverride);
     {
-        VNX::ThemeManager manager(root.path(),
-            std::make_unique<VNX::QSettingsStorage>(storagePath));
+        harken::studio::ThemeManager manager(root.path(),
+            std::make_unique<harken::studio::QSettingsStorage>(storagePath));
         auto draft = manager.appearance();
         draft.themeId = packageId;
         draft.colors = expected;
@@ -648,15 +648,15 @@ TEST(ThemeManager, MissingThemePreservesPrivateColorsUntilPackageReturns)
     }
     ASSERT_TRUE(QFile::remove(manifestPath));
     {
-        VNX::ThemeManager manager(root.path(),
-            std::make_unique<VNX::QSettingsStorage>(storagePath));
-        EXPECT_EQ(manager.currentThemeId(), VNX::builtinThemeId());
+        harken::studio::ThemeManager manager(root.path(),
+            std::make_unique<harken::studio::QSettingsStorage>(storagePath));
+        EXPECT_EQ(manager.currentThemeId(), harken::studio::builtinThemeId());
         EXPECT_EQ(manager.snapshot()->ui.colors.accent, builtinOverride);
         EXPECT_EQ(manager.appearance().colors, expected);
         ASSERT_TRUE(manager.applyAppearance(manager.appearance()).ok());
     }
-    VNX::ThemeManager restored(root.path(),
-        std::make_unique<VNX::QSettingsStorage>(storagePath));
+    harken::studio::ThemeManager restored(root.path(),
+        std::make_unique<harken::studio::QSettingsStorage>(storagePath));
     EXPECT_EQ(restored.appearance().colors, expected);
     EXPECT_EQ(restored.snapshot()->ui.colors.accent, builtinOverride);
     ASSERT_TRUE(writePackage(root.path(), QStringLiteral("returning"), packageId,
@@ -673,7 +673,7 @@ TEST(ThemeManager, FailedStoredCustomizationPreservesOtherThemeAndPaletteEdits)
     QTemporaryDir root;
     ASSERT_TRUE(root.isValid());
     const QString packageId = QStringLiteral("theme.updated");
-    const QString builtinId = VNX::builtinThemeId();
+    const QString builtinId = harken::studio::builtinThemeId();
     const QString dark = QStringLiteral("dark");
     const QString light = QStringLiteral("light");
     const QString key = QStringLiteral("accent.primary");
@@ -684,12 +684,12 @@ TEST(ThemeManager, FailedStoredCustomizationPreservesOtherThemeAndPaletteEdits)
     const QColor retiredColor("#c08040");
     const QColor inactiveColor("#3579bd");
     const QColor builtinColor("#4286ca");
-    QMap<QString, VNX::ColorPaletteCustomizations> expected;
+    QMap<QString, harken::studio::ColorPaletteCustomizations> expected;
     expected[packageId][dark].insert(removedKey, retiredColor);
     expected[packageId][light].insert(key, inactiveColor);
     expected[builtinId][dark].insert(key, builtinColor);
     {
-        VNX::QSettingsStorage storage(storagePath);
+        harken::studio::QSettingsStorage storage(storagePath);
         storage.setValue(QStringLiteral("Appearance/ThemeId"), packageId);
         storage.setValue(QStringLiteral("Appearance/PaletteId"), dark);
         storage.setValue(QStringLiteral("Appearance/ThemePaletteColors"), QVariantMap{
@@ -701,7 +701,7 @@ TEST(ThemeManager, FailedStoredCustomizationPreservesOtherThemeAndPaletteEdits)
         storage.sync();
     }
     {
-        VNX::ThemeManager manager(root.path(), std::make_unique<VNX::QSettingsStorage>(storagePath));
+        harken::studio::ThemeManager manager(root.path(), std::make_unique<harken::studio::QSettingsStorage>(storagePath));
         EXPECT_EQ(manager.currentThemeId(), builtinId);
         EXPECT_EQ(manager.snapshot()->ui.colors.accent, builtinColor);
         EXPECT_EQ(manager.appearance().colors, expected);
@@ -712,7 +712,7 @@ TEST(ThemeManager, FailedStoredCustomizationPreservesOtherThemeAndPaletteEdits)
         expected[builtinId][dark].insert(textKey, textColor);
         ASSERT_TRUE(manager.applyAppearance(edited).ok());
     }
-    VNX::ThemeManager restored(root.path(), std::make_unique<VNX::QSettingsStorage>(storagePath));
+    harken::studio::ThemeManager restored(root.path(), std::make_unique<harken::studio::QSettingsStorage>(storagePath));
     EXPECT_EQ(restored.appearance().colors, expected);
     EXPECT_EQ(restored.snapshot()->ui.colors.accent, builtinColor);
 }
@@ -721,7 +721,7 @@ TEST(ThemeManager, RetiredAndMalformedStoredColorsDoNotBlockValidEditsAcrossThem
 {
     const QString packageId = QStringLiteral("theme.custom");
     const QString missingId = QStringLiteral("theme.missing");
-    const QString builtinId = VNX::builtinThemeId();
+    const QString builtinId = harken::studio::builtinThemeId();
     const QString dark = QStringLiteral("dark");
     const QString light = QStringLiteral("light");
     const QString key = QStringLiteral("accent.primary");
@@ -761,7 +761,7 @@ TEST(ThemeManager, RetiredAndMalformedStoredColorsDoNotBlockValidEditsAcrossThem
                                    {QStringLiteral("private.invalid"), QString()}}}
         };
         QVariantMap storedColors;
-        QMap<QString, VNX::ColorPaletteCustomizations> expected;
+        QMap<QString, harken::studio::ColorPaletteCustomizations> expected;
         expected[packageId][dark].insert(key, packageColor);
         expected[builtinId][dark].insert(key, builtinColor);
         expected[builtinId][dark].insert(secondaryKey, mutedColor);
@@ -808,14 +808,14 @@ TEST(ThemeManager, RetiredAndMalformedStoredColorsDoNotBlockValidEditsAcrossThem
             expected[builtinId][light].insert(tickKey, secondaryColor);
         }
         {
-            VNX::QSettingsStorage storage(storagePath);
+            harken::studio::QSettingsStorage storage(storagePath);
             storage.setValue(QStringLiteral("Appearance/ThemeId"), packageId);
             storage.setValue(QStringLiteral("Appearance/PaletteId"), dark);
             storage.setValue(QStringLiteral("Appearance/") + format, storedColors);
             storage.sync();
         }
         {
-            VNX::ThemeManager manager(root.path(), std::make_unique<VNX::QSettingsStorage>(storagePath));
+            harken::studio::ThemeManager manager(root.path(), std::make_unique<harken::studio::QSettingsStorage>(storagePath));
             EXPECT_EQ(manager.currentThemeId(), packageId);
             EXPECT_EQ(manager.snapshot()->ui.colors.accent, packageColor);
             EXPECT_EQ(manager.appearance().colors, expected);
@@ -833,7 +833,7 @@ TEST(ThemeManager, RetiredAndMalformedStoredColorsDoNotBlockValidEditsAcrossThem
             EXPECT_EQ(manager.snapshot()->ui.colors.textSecondary, mutedColor);
             EXPECT_EQ(manager.snapshot()->ui.colors.borderTick, mutedColor);
         }
-        VNX::ThemeManager restored(root.path(), std::make_unique<VNX::QSettingsStorage>(storagePath));
+        harken::studio::ThemeManager restored(root.path(), std::make_unique<harken::studio::QSettingsStorage>(storagePath));
         EXPECT_EQ(restored.appearance().colors, expected);
         EXPECT_EQ(restored.currentThemeId(), builtinId);
         EXPECT_EQ(restored.snapshot()->ui.colors.accent, builtinColor);
@@ -882,7 +882,7 @@ TEST(ThemeManager, LegacyColorsFollowOwningThemeDefaultWhenInstalledOrRestoredLa
         }
         const QString storagePath = root.filePath(QStringLiteral("settings.ini"));
         {
-            VNX::QSettingsStorage storage(storagePath);
+            harken::studio::QSettingsStorage storage(storagePath);
             storage.setValue(QStringLiteral("Appearance/ThemeId"), packageId);
             storage.setValue(QStringLiteral("Appearance/PaletteId"), QStringLiteral("theme:") + packageId);
             storage.setValue(QStringLiteral("Appearance/PaletteColors"), QVariantMap{
@@ -892,13 +892,13 @@ TEST(ThemeManager, LegacyColorsFollowOwningThemeDefaultWhenInstalledOrRestoredLa
             storage.sync();
         }
         {
-            VNX::ThemeManager manager(root.path(), std::make_unique<VNX::QSettingsStorage>(storagePath));
+            harken::studio::ThemeManager manager(root.path(), std::make_unique<harken::studio::QSettingsStorage>(storagePath));
             if (initiallyInstalled)
             {
                 EXPECT_EQ(manager.currentThemeId(), packageId);
                 EXPECT_EQ(manager.currentPaletteId(), paper);
                 EXPECT_EQ(manager.snapshot()->ui.colors.accent, editedColor);
-                ASSERT_TRUE(manager.selectTheme(VNX::builtinThemeId()).ok());
+                ASSERT_TRUE(manager.selectTheme(harken::studio::builtinThemeId()).ok());
             }
             auto appearance = manager.appearance();
             appearance.paletteId = QStringLiteral("light");
@@ -908,13 +908,13 @@ TEST(ThemeManager, LegacyColorsFollowOwningThemeDefaultWhenInstalledOrRestoredLa
         {
             ASSERT_TRUE(install());
         }
-        VNX::ThemeManager restored(root.path(), std::make_unique<VNX::QSettingsStorage>(storagePath));
+        harken::studio::ThemeManager restored(root.path(), std::make_unique<harken::studio::QSettingsStorage>(storagePath));
         ASSERT_TRUE(restored.selectTheme(packageId).ok());
         EXPECT_EQ(restored.currentPaletteId(), paper);
         EXPECT_EQ(restored.snapshot()->ui.colors.accent, editedColor);
         EXPECT_EQ(restored.appearance().colors.value(packageId).value(paper).value(key), editedColor);
         EXPECT_EQ(restored.appearance().colors.value(packageId).size(), 1);
-        VNX::ThemeManager restarted(root.path(), std::make_unique<VNX::QSettingsStorage>(storagePath));
+        harken::studio::ThemeManager restarted(root.path(), std::make_unique<harken::studio::QSettingsStorage>(storagePath));
         EXPECT_EQ(restarted.appearance(), restored.appearance());
         EXPECT_EQ(restarted.snapshot()->ui.colors.accent, editedColor);
     }
@@ -925,19 +925,19 @@ TEST(ThemeManager, ThemePalettesKeepIndependentEditsAcrossPreviewResetAndRestart
     QTemporaryDir root;
     ASSERT_TRUE(root.isValid());
     const QString storagePath = QDir(root.path()).filePath(QStringLiteral("settings.ini"));
-    const QString themeId = VNX::builtinThemeId();
+    const QString themeId = harken::studio::builtinThemeId();
     const QString defaultId = QStringLiteral("dark");
     const QString alternateId = QStringLiteral("light");
     const QColor defaultOverride(QStringLiteral("#80123456"));
     const QColor alternateOverride(QStringLiteral("#90765432"));
     const QString key = QStringLiteral("accent.primary");
-    QMap<QString, VNX::ColorPaletteCustomizations> overrides;
+    QMap<QString, harken::studio::ColorPaletteCustomizations> overrides;
     overrides[themeId][defaultId].insert(key, defaultOverride);
     overrides[themeId][alternateId].insert(key, alternateOverride);
     {
-        auto storage = std::make_unique<VNX::QSettingsStorage>(storagePath);
+        auto storage = std::make_unique<harken::studio::QSettingsStorage>(storagePath);
         auto* stored = storage.get();
-        VNX::ThemeManager manager(root.path(), std::move(storage));
+        harken::studio::ThemeManager manager(root.path(), std::move(storage));
         ASSERT_EQ(manager.availableThemes().size(), 1);
         QSet<QString> paletteIds;
         for (const auto& palette : manager.availablePalettes()) {
@@ -972,7 +972,7 @@ TEST(ThemeManager, ThemePalettesKeepIndependentEditsAcrossPreviewResetAndRestart
         ASSERT_TRUE(manager.applyAppearance(preview).ok());
     }
     {
-        VNX::ThemeManager manager(root.path(), std::make_unique<VNX::QSettingsStorage>(storagePath));
+        harken::studio::ThemeManager manager(root.path(), std::make_unique<harken::studio::QSettingsStorage>(storagePath));
         EXPECT_EQ(manager.currentThemeId(), themeId);
         EXPECT_EQ(manager.currentPaletteId(), alternateId);
         EXPECT_EQ(manager.snapshot()->ui.colors.accent, alternateOverride);
@@ -984,11 +984,11 @@ TEST(ThemeManager, ThemePalettesKeepIndependentEditsAcrossPreviewResetAndRestart
         ASSERT_TRUE(manager.applyAppearance(reset).ok());
         for (const auto& role : manager.colorRoles()) {
             SCOPED_TRACE(role.key.toStdString());
-            EXPECT_EQ(VNX::readThemeColor(*manager.snapshot(), role.bindings.first().target), base.palette->colors.value(role.key));
+            EXPECT_EQ(harken::studio::readThemeColor(*manager.snapshot(), role.bindings.first().target), base.palette->colors.value(role.key));
         }
         EXPECT_EQ(manager.appearance().colors.value(themeId).value(defaultId), overrides.value(themeId).value(defaultId));
     }
-    VNX::ThemeManager restored(root.path(), std::make_unique<VNX::QSettingsStorage>(storagePath));
+    harken::studio::ThemeManager restored(root.path(), std::make_unique<harken::studio::QSettingsStorage>(storagePath));
     EXPECT_EQ(restored.currentThemeId(), themeId);
     EXPECT_EQ(restored.currentPaletteId(), alternateId);
     EXPECT_FALSE(restored.appearance().colors.value(themeId).contains(alternateId));
@@ -1005,14 +1005,14 @@ TEST(ThemeManager, InvalidCustomizationsDoNotChangePublishedOrPersistedState)
 {
     QTemporaryDir root;
     ASSERT_TRUE(root.isValid());
-    auto storage = std::make_unique<VNX::MemorySettingsStorage>();
+    auto storage = std::make_unique<harken::studio::MemorySettingsStorage>();
     auto* stored = storage.get();
-    VNX::ThemeManager manager(root.path(), std::move(storage));
+    harken::studio::ThemeManager manager(root.path(), std::move(storage));
     const auto committed = manager.appearance();
     const auto original = manager.snapshot();
     const auto settings = storedValues(*stored);
 
-    QList<VNX::ThemeAppearance> invalid;
+    QList<harken::studio::ThemeAppearance> invalid;
     auto unknown = committed;
     unknown.colors[unknown.themeId][unknown.paletteId].insert(
         QStringLiteral("unknown.color"), QColor(QStringLiteral("#123456")));
@@ -1048,7 +1048,7 @@ TEST(ThemeManager, UnwritableCommitPreservesPreviewAndCommittedSettings)
     ASSERT_TRUE(root.isValid());
     auto storage = std::make_unique<WritableSettingsStorage>();
     auto* stored = storage.get();
-    VNX::ThemeManager manager(root.path(), std::move(storage));
+    harken::studio::ThemeManager manager(root.path(), std::move(storage));
     const auto committed = manager.appearance();
     const auto original = manager.snapshot();
     auto draft = committed;
@@ -1063,7 +1063,7 @@ TEST(ThemeManager, UnwritableCommitPreservesPreviewAndCommittedSettings)
 
     ASSERT_FALSE(result.ok());
     EXPECT_EQ(result.diagnostics.first().code,
-              VNX::ThemePackageErrorCode::PersistenceUnavailable);
+              harken::studio::ThemePackageErrorCode::PersistenceUnavailable);
     EXPECT_EQ(manager.snapshot(), preview);
     EXPECT_EQ(manager.appearance(), committed);
     EXPECT_EQ(storedValues(*stored), settings);
@@ -1075,14 +1075,14 @@ TEST(ThemeManager, RejectsAppearanceChangesFromAnotherThread)
 {
     QTemporaryDir root;
     ASSERT_TRUE(root.isValid());
-    VNX::ThemeManager manager(root.path(), memoryStorage());
+    harken::studio::ThemeManager manager(root.path(), memoryStorage());
     const auto committed = manager.appearance();
     const auto original = manager.snapshot();
     auto draft = committed;
     draft.colors[draft.themeId][draft.paletteId].insert(
         QStringLiteral("accent.primary"), QColor(QStringLiteral("#ff123456")));
-    VNX::ThemeManagerOperationResult preview;
-    VNX::ThemeManagerOperationResult applied;
+    harken::studio::ThemeManagerOperationResult preview;
+    harken::studio::ThemeManagerOperationResult applied;
     std::thread worker([&]() {
         preview = manager.previewAppearance(draft);
         applied = manager.applyAppearance(draft);
@@ -1099,18 +1099,18 @@ TEST(ThemeManager, ThemeColorEditsAndPaletteSwitchesPreserveStructureAndFonts)
 {
     QTemporaryDir root;
     ASSERT_TRUE(root.isValid());
-    VNX::ThemeManager manager(root.path(), memoryStorage());
+    harken::studio::ThemeManager manager(root.path(), memoryStorage());
     const auto original = manager.snapshot();
     const auto roles = manager.colorRoles();
     const QColor probe(QStringLiteral("#cc123456"));
     int appearances = 0;
     int structures = 0;
     int fonts = 0;
-    QObject::connect(&manager, &VNX::ThemeManager::appearanceChanged, &manager,
+    QObject::connect(&manager, &harken::studio::ThemeManager::appearanceChanged, &manager,
                      [&] { ++appearances; });
-    QObject::connect(&manager, &VNX::ThemeManager::themeChanged, &manager,
+    QObject::connect(&manager, &harken::studio::ThemeManager::themeChanged, &manager,
                      [&] { ++structures; });
-    QObject::connect(&VNX::FontManager::instance(), &VNX::FontManager::fontChanged,
+    QObject::connect(&harken::studio::FontManager::instance(), &harken::studio::FontManager::fontChanged,
                      &manager, [&] { ++fonts; });
     for (const auto& role : roles)
     {
@@ -1129,7 +1129,7 @@ TEST(ThemeManager, ThemeColorEditsAndPaletteSwitchesPreserveStructureAndFonts)
     alternate.paletteId = QStringLiteral("light");
     ASSERT_TRUE(manager.previewAppearance(alternate).ok());
     ASSERT_TRUE(manager.applyAppearance(alternate).ok());
-    EXPECT_EQ(manager.snapshot()->colorScheme, VNX::ThemeColorScheme::Light);
+    EXPECT_EQ(manager.snapshot()->colorScheme, harken::studio::ThemeColorScheme::Light);
     EXPECT_EQ(structures, 0);
     EXPECT_EQ(fonts, 0);
     EXPECT_EQ(appearances, roles.size() * 2 + 2);
@@ -1142,7 +1142,7 @@ TEST(ThemeManager, PaletteAlphaScalesEveryBoundColorWithoutChangingRgb)
 {
     QTemporaryDir root;
     ASSERT_TRUE(root.isValid());
-    VNX::ThemeManager manager(root.path(), memoryStorage());
+    harken::studio::ThemeManager manager(root.path(), memoryStorage());
     const auto committed = manager.appearance();
     for (const auto& palette : manager.availablePalettes()) {
         auto preview = committed;
@@ -1158,8 +1158,8 @@ TEST(ThemeManager, PaletteAlphaScalesEveryBoundColorWithoutChangingRgb)
             for (const auto& role : manager.colorRoles()) {
                 for (const auto& binding : role.bindings) {
                     SCOPED_TRACE(binding.target.toStdString());
-                    const auto before = VNX::readThemeColor(*opaque, binding.target);
-                    const auto after = VNX::readThemeColor(*manager.snapshot(), binding.target);
+                    const auto before = harken::studio::readThemeColor(*opaque, binding.target);
+                    const auto after = harken::studio::readThemeColor(*manager.snapshot(), binding.target);
                     EXPECT_EQ(after.rgb(), before.rgb());
                     EXPECT_NEAR(after.alphaF(), before.alphaF() * alpha / 255.0, 1.0 / 65535.0);
                 }
@@ -1178,7 +1178,7 @@ TEST(WidgetAppearance, CascadesStructuralSelectorsAndInvalidatesDescendants)
     QWidget container(&root);
     QToolButton button(&container);
     button.setObjectName(QStringLiteral("action"));
-    VNX::WidgetAppearance appearance;
+    harken::studio::WidgetAppearance appearance;
     appearance.updateStyleSheet(QStringLiteral(R"qss(
         QWidget { color: #111111; background: #222222; }
         #surface[active="true"] QToolButton { color: #333333; }
@@ -1227,12 +1227,12 @@ TEST(WidgetAppearance, CachedResolutionMatchesFreshResolutionAcrossWidgetLifecyc
         QToolButton[autoRaise="true"] { border: 4px solid #abcdef; margin: 4px; }
         #action { background: #334455; }
     )qss");
-    VNX::WidgetAppearance cached;
+    harken::studio::WidgetAppearance cached;
     cached.updateStyleSheet(source);
     const auto compare = [&](const char* stage) {
         SCOPED_TRACE(stage);
         const auto actual = cached.visual(&*button, QStyle::State_Enabled);
-        VNX::WidgetAppearance fresh;
+        harken::studio::WidgetAppearance fresh;
         fresh.updateStyleSheet(source);
         const auto expected = fresh.visual(&*button, QStyle::State_Enabled);
         EXPECT_EQ(actual.foreground, expected.foreground);
@@ -1311,12 +1311,12 @@ TEST(WidgetAppearance, CachedSelectorsFollowPreviouslyUnmatchedInputsAndAncestor
         QWidget[windowTitle="Native scope"] QToolButton { color: #778899; }
         QWidget[armed="true"][mode="active"] QToolButton { selection-color: #abcdef; }
     )qss");
-    VNX::WidgetAppearance cached;
+    harken::studio::WidgetAppearance cached;
     cached.updateStyleSheet(source);
     const auto check = [&](const char* stage, const QColor& expected) {
         SCOPED_TRACE(stage);
         const auto actual = cached.visual(&button, QStyle::State_Enabled);
-        VNX::WidgetAppearance fresh;
+        harken::studio::WidgetAppearance fresh;
         fresh.updateStyleSheet(source);
         const auto uncached = fresh.visual(&button, QStyle::State_Enabled);
         EXPECT_EQ(actual.foreground, uncached.foreground);
@@ -1374,13 +1374,13 @@ TEST(WidgetAppearance, ReplacedGlobalAndManagedSelectorsTrackTheirNewInputs)
     QString source = QStringLiteral("QToolButton { color: #112233; background: #223344; }");
     QString localSource = QStringLiteral(
         "QWidget[scopeMode=\"active\"] QToolButton { color: #445566; }");
-    VNX::WidgetAppearance cached;
+    harken::studio::WidgetAppearance cached;
     cached.updateStyleSheet(source);
     cached.updateWidgetStyle(&root, localSource);
     const auto check = [&](const char* stage, const QColor& expected) {
         SCOPED_TRACE(stage);
         const auto actual = cached.visual(&button, QStyle::State_Enabled);
-        VNX::WidgetAppearance fresh;
+        harken::studio::WidgetAppearance fresh;
         fresh.updateStyleSheet(source);
         fresh.updateWidgetStyle(&root, localSource);
         const auto uncached = fresh.visual(&button, QStyle::State_Enabled);
@@ -1417,7 +1417,7 @@ TEST(WidgetAppearance, ReplacedGlobalAndManagedSelectorsTrackTheirNewInputs)
 TEST(WidgetAppearance, ResolvesSubcontrolStatesWithoutLeakingWidgetPaint)
 {
     QWidget widget;
-    VNX::WidgetAppearance appearance;
+    harken::studio::WidgetAppearance appearance;
     appearance.updateStyleSheet(QStringLiteral(R"qss(
         QWidget { background: #111111; color: #222222; }
         QWidget::handle { width: 12px; height: 20px; margin: 1px 2px 3px 4px; }
@@ -1453,7 +1453,7 @@ TEST(WidgetAppearance, ColorChangesKeepNativeLayoutAndUpdateCachedRules)
 {
     QWidget widget;
     widget.setObjectName(QStringLiteral("panel"));
-    VNX::WidgetAppearance appearance;
+    harken::studio::WidgetAppearance appearance;
     QString source = QStringLiteral(R"qss(
         #panel {
             background: #112233;
@@ -1512,7 +1512,7 @@ TEST(WidgetAppearance, LocalScopesOverrideGlobalRulesWithoutLosingUndeclaredColo
     root.setStyleSheet(QStringLiteral("#action { color: #112233; background: #223344; font-family: 'Arial'; }"));
     container.setStyleSheet(QStringLiteral("QToolButton { color: #334455; font-weight: normal; }"));
     button.setStyleSheet(QStringLiteral("padding: 3px;"));
-    VNX::WidgetAppearance appearance;
+    harken::studio::WidgetAppearance appearance;
     appearance.updateStyleSheet(QStringLiteral(
         "#action { color: #445566; border: 2px solid #556677; }"
         "QHeaderView::section, QToolButton { font-size: 13px; font-weight: bold; padding: 1px;"
@@ -1560,7 +1560,7 @@ TEST(WidgetAppearance, ManagedLocalColorsUpdateWithoutChangingNativeLayout)
 {
     QWidget root;
     QToolButton button(&root);
-    VNX::WidgetAppearance appearance;
+    harken::studio::WidgetAppearance appearance;
     appearance.updateStyleSheet(QStringLiteral("QToolButton { color: #112233; background: #223344; }"));
     EXPECT_EQ(appearance.visual(&button, QStyle::State_Enabled).foreground,
               QColor(QStringLiteral("#112233")));

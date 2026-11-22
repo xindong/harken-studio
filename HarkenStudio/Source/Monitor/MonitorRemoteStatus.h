@@ -7,7 +7,7 @@
 #include <cstdint>
 #include <string>
 
-namespace VNX {
+namespace harken::studio {
 namespace Monitor {
 
 enum class MonitorRemoteFace
@@ -41,7 +41,7 @@ struct MonitorRemoteStatusState
     uint32_t dropCount = 0;
     uint64_t leaseGeneration = 0;
     MonitorCaptureControlState captureControl {};
-    MonitorRemotePermissionRow permissions[7] {};
+    MonitorRemotePermissionRow permissions[6] {};
 };
 
 struct MonitorRemoteStatusInput
@@ -74,4 +74,4 @@ std::string permissionDeniedReason(uint32_t mask);
 std::string recordDeniedReason(const MonitorRemoteStatusState& state);
 
 } // namespace Monitor
-} // namespace VNX
+} // namespace harken::studio

@@ -14,6 +14,7 @@
 #include "Widgets/Common/DialogFormLayout.h"
 #include "Widgets/Common/ListFooter.h"
 #include "Widgets/Common/TableWidget.h"
+#include "Widgets/Selector/ObjectRefWidget.h"
 #include <QDialogButtonBox>
 #include <QListWidget>
 #include <QHBoxLayout>
@@ -29,7 +30,7 @@
 
 #include <algorithm>
 
-namespace VNX {
+namespace harken::studio {
 
 ProjectConfigPage::ProjectConfigPage(QWidget* parent)
     : SettingsPage(parent)
@@ -69,6 +70,23 @@ ProjectConfigPage::ProjectConfigPage(QWidget* parent)
     platformBusyLabel_->setWordWrap(true);
     QtControlSkin::setSemanticProperty(platformBusyLabel_, "textRole", QStringLiteral("secondary"));
     static_cast<QVBoxLayout*>(platformsGroup->layout())->addWidget(platformBusyLabel_);
+    defaultConversion_ = new ObjectRefWidget(platformEditor_);
+    defaultConversion_->setObjectName(QStringLiteral("projectDefaultConversion"));
+    defaultConversion_->setFilterType(ProjectItem::Type::Conversion);
+    defaultConversion_->setSelectorTitle(tr("Select Default Conversion"));
+    defaultConversion_->setRequired(false);
+    defaultConversion_->setClearSupport(true);
+    defaultConversion_->setEditGuard([this] { return hasCurrentProject(); });
+    platformEditor_->addField(tr("Default conversion:"), defaultConversion_);
+    connect(defaultConversion_, &ObjectRefWidget::objectChanged, this, [this](uint32_t id) {
+        auto& manager = ProjectManager::instance();
+        const auto* item = manager.findItemByObjectID(id);
+        const auto platform = platformEditor_->platform().id;
+        if (hasCurrentProject() && ProjectPlatformSemantics::find(platforms_, platform)
+            && (id == 0 || (item && item->type == ProjectItem::Type::Conversion)))
+            manager.setDefaultConversion(platform, item ? item->guid : QUuid{});
+        syncDefaultConversion();
+    });
     body->addWidget(platformsGroup);
 
     auto* languagesGroup = makeSection(tr("Language Configuration"));
@@ -135,6 +153,8 @@ ProjectConfigPage::ProjectConfigPage(QWidget* parent)
     connect(&manager, &ProjectManager::projectClosed, this, &ProjectConfigPage::load);
     connect(&manager, &ProjectManager::targetPlatformsChanged, this, [this] { syncPlatforms(); });
     connect(&manager, &ProjectManager::projectLanguagesChanged, this, [this] { syncLanguages(); });
+    connect(&manager, &ProjectManager::defaultConversionChanged,
+            this, &ProjectConfigPage::syncDefaultConversion);
     connect(&ProjectPlatformActivity::instance(), &ProjectPlatformActivity::busyChanged,
             this, &ProjectConfigPage::updatePlatformAvailability);
 }
@@ -163,6 +183,7 @@ void ProjectConfigPage::load()
     selectedLanguage_.clear();
     syncPlatforms(true, 0);
     syncLanguages(true, 0);
+    syncDefaultConversion();
     setEnabled(hasCurrentProject());
 }
 
@@ -185,6 +206,20 @@ void ProjectConfigPage::syncPlatforms(bool finishEditing, int selectedIndex)
     const auto project = projectLease_.lock();
     platforms_ = hasCurrentProject() ? project->platforms : QVector<ProjectPlatform>{};
     refreshPlatforms(selectedIndex);
+}
+
+void ProjectConfigPage::syncDefaultConversion()
+{
+    defaultConversion_->cancelPendingSelection();
+    const auto project = projectLease_.lock();
+    const auto guid = hasCurrentProject()
+        ? project->defaultConversionFor(platformEditor_->platform().id) : QUuid{};
+    const auto* item = ProjectManager::instance().findItemByGuid(guid);
+    const QSignalBlocker blocker(defaultConversion_);
+    if (!guid.isNull() && !item)
+        defaultConversion_->setUnresolvedReference(guid.toString(QUuid::WithoutBraces));
+    else
+        defaultConversion_->setCurrentObjectID(item ? item->objectID : 0);
 }
 
 void ProjectConfigPage::refreshPlatforms(int selectedIndex)
@@ -233,6 +268,7 @@ void ProjectConfigPage::selectPlatform(int index)
             if (platform.id != id) otherNames.append(platform.name);
         platformEditor_->setPlatform(*selected, otherNames);
     }
+    syncDefaultConversion();
     updatePlatformAvailability();
 }
 
@@ -269,9 +305,6 @@ void ProjectConfigPage::commitPlatform(const ProjectPlatform& before)
     } else if (next.basePlatform != before.basePlatform) {
         command = QStringLiteral("set_project_platform_base");
         args.insert(QStringLiteral("base_platform"), ProjectPlatformSemantics::basePlatformName(next.basePlatform));
-    } else if (next.profile.toJson() != before.profile.toJson()) {
-        command = QStringLiteral("set_project_platform_profile");
-        args.insert(QStringLiteral("profile"), next.profile.toJson());
     }
     if (command.isEmpty()) return;
     ActionResult result;
@@ -303,8 +336,7 @@ void ProjectConfigPage::addPlatform()
         QScopedValueRollback guard(committing_, true);
         result = ActionManager::instance().execute(QStringLiteral("create_project_platform"),
             {{QStringLiteral("name"), definition.name},
-             {QStringLiteral("base_platform"), ProjectPlatformSemantics::basePlatformName(definition.basePlatform)},
-             {QStringLiteral("profile"), definition.profile.toJson()}}, ActionSource::GUI);
+             {QStringLiteral("base_platform"), ProjectPlatformSemantics::basePlatformName(definition.basePlatform)}}, ActionSource::GUI);
     }
     syncPlatforms(true, project->platforms.size() - 1);
     if (!result.success) showError(result.errorMessage);

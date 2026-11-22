@@ -6,7 +6,7 @@
 #include <QFileInfo>
 #include <QProcess>
 
-namespace VNH {
+namespace harken::hub {
 
 namespace {
 
@@ -29,9 +29,8 @@ QStringList StudioLauncher::argumentsForCreate(const StudioCreateSpec& spec)
         QStringLiteral("--project-name"), spec.projectName,
         QStringLiteral("--project-location"), spec.projectLocation,
     };
-    if (!spec.templatePath.isEmpty()) {
-        arguments << QStringLiteral("--project-template-id") << spec.templateId
-                  << QStringLiteral("--project-template-file") << spec.templatePath;
+    if (!spec.templateId.isEmpty()) {
+        arguments << QStringLiteral("--project-template-id") << spec.templateId;
     }
     return arguments;
 }

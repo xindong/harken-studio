@@ -6,7 +6,7 @@
 #include <QSettings>
 #include <QWidget>
 
-namespace VNX {
+namespace harken::studio {
 
 inline constexpr QSize kDefaultStudioWindowSize{1800, 1100};
 

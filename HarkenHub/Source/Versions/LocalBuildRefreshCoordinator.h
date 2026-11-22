@@ -6,7 +6,7 @@
 
 class QTimer;
 
-namespace VNH {
+namespace harken::hub {
 
 class LocalBuildRefreshCoordinator : public QObject
 {

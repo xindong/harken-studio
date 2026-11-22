@@ -11,7 +11,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 
 class ProjectManager;
 struct ActionResult;
@@ -35,15 +35,15 @@ public:
     static const VAttenuation* find(const ProjectData* project, const QString& name);
     static VAttenuation* findByGuid(ProjectData* project, const QUuid& guid);
     static const VAttenuation* findByGuid(const ProjectData* project, const QUuid& guid);
-    static ProjectItem* findItemByStableId(ProjectData* project, harkenstudio::ObjectId stableId);
-    static const ProjectItem* findItemByStableId(const ProjectData* project, harkenstudio::ObjectId stableId);
-    static VAttenuation* findByStableId(ProjectData* project, harkenstudio::ObjectId stableId);
-    static const VAttenuation* findByStableId(const ProjectData* project, harkenstudio::ObjectId stableId);
+    static ProjectItem* findItemByStableId(ProjectData* project, harken::studio::types::ObjectId stableId);
+    static const ProjectItem* findItemByStableId(const ProjectData* project, harken::studio::types::ObjectId stableId);
+    static VAttenuation* findByStableId(ProjectData* project, harken::studio::types::ObjectId stableId);
+    static const VAttenuation* findByStableId(const ProjectData* project, harken::studio::types::ObjectId stableId);
     static VAttenuation* find(ProjectData* project, const QUuid& guid, const QString& name);
     static const VAttenuation* find(const ProjectData* project, const QUuid& guid, const QString& name);
     static bool exists(const ProjectData* project, const QString& name);
     static std::vector<const VAttenuation*> all(const ProjectData& project);
-    static harkenstudio::ObjectId runtimeId(const ProjectData& project, const VAttenuation& attenuation);
+    static harken::studio::types::ObjectId runtimeId(const ProjectData& project, const VAttenuation& attenuation);
     static bool syncToRuntime(const ProjectData& project, const VAttenuation& attenuation);
     static bool syncToRuntime(const ProjectData& project, const AttenuationSnapshot& attenuation);
 

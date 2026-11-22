@@ -13,7 +13,7 @@
 class QComboBox;
 class QLabel;
 
-namespace VNX {
+namespace harken::studio {
 
 class MonitorPlayablesPanel : public QWidget
 {
@@ -57,4 +57,4 @@ private:
     QString kindFilterValue_;
 };
 
-} // namespace VNX
+} // namespace harken::studio

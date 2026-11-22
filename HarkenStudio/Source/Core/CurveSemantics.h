@@ -5,15 +5,15 @@
 #include <array>
 #include <cstdint>
 
-namespace VNX {
+namespace harken::studio {
 
 // The system-wide unified curve form (blueprint D1): a point list plus one
 // bezier handle pair per segment. Attenuation dimensions, binding mapping
 // curves, and grid edge fades all carry this one shape; a two-point curve is
 // the natural single-segment degenerate, never a second form.
 
-// Runtime curves carry at most 8 control points (harkenstudiobuild::kMaxCurvePoints,
-// HarkenEngine/Source/Runtime/param/include/harken_studio_build/Curve.h); authoring
+// Runtime curves carry at most 8 control points (harken::studio::build::kMaxCurvePoints,
+// HarkenStudio/Source/Tooling/PackBuild/include/harken_studio_build/Curve.h); authoring
 // write paths refuse to grow a curve past this so export never has to trim.
 inline constexpr int kCurveMaxPoints = 8;
 
@@ -57,18 +57,18 @@ enum class CurveAxisScale : uint8_t
 
 enum class CurvePreset : uint8_t
 {
-    Log3,
-    Convex,
-    SCurve,
+    CubicEaseOut,
+    QuadraticEaseOut,
+    BezierSCurve,
     Linear,
-    InverseSCurve,
-    Concave,
-    Exp3,
+    InverseBezierSCurve,
+    QuadraticEaseIn,
+    CubicEaseIn,
 };
 
 inline constexpr std::array<CurvePreset, 7> kCurvePresets{
-    CurvePreset::SCurve, CurvePreset::Log3, CurvePreset::Convex, CurvePreset::Linear,
-    CurvePreset::Concave, CurvePreset::Exp3, CurvePreset::InverseSCurve,
+    CurvePreset::BezierSCurve, CurvePreset::CubicEaseOut, CurvePreset::QuadraticEaseOut, CurvePreset::Linear,
+    CurvePreset::QuadraticEaseIn, CurvePreset::CubicEaseIn, CurvePreset::InverseBezierSCurve,
 };
 
 CurveHandlePairDef curvePresetHandles(CurvePreset preset,

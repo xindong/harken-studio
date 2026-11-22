@@ -17,7 +17,7 @@
 #include "../../Core/AppSettings.h"
 #include "../../Core/AI/AIStepEvent.h"
 
-namespace VNX {
+namespace harken::studio {
 
 class AIAssistantService;
 

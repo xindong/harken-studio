@@ -4,7 +4,7 @@
 
 class QToolButton;
 
-namespace VNX {
+namespace harken::studio {
 
 struct ProjectItem;
 
@@ -23,6 +23,9 @@ signals:
     void playClicked();
     void stopClicked();
     void resetClicked();
+
+protected:
+    void paintEvent(QPaintEvent*) override;
 
 private:
     void applyTheme();

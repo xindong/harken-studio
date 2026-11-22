@@ -52,6 +52,8 @@
 #include "Core/LogService.h"
 #include "UndoCommands.h"
 #include "Components/VAttenuation.h"
+#include "Components/VConversion.h"
+#include "ConversionDefaults.h"
 #include "Components/VAudio.h"
 #include "Components/VMixNode.h"
 #include "Components/VSpatial.h"
@@ -100,7 +102,7 @@
 #include <unordered_map>
 #include <utility>
 
-namespace VNX {
+namespace harken::studio {
 
 ProjectItem* findItemByObjectIDInProject(ProjectData* project, uint32_t objectID);
 std::vector<ProjectItem*> findItemsByObjectIDInProject(
@@ -407,6 +409,7 @@ QJsonObject writeS3PayloadByType(const ProjectItem& top, ProjectSerializer& seri
 {
     switch (top.type) {
     case ProjectItem::Type::Attenuation: return serializer.attenuationPackToJson(top);
+    case ProjectItem::Type::Conversion: return serializer.conversionPackToJson(top);
     case ProjectItem::Type::Effect:      return serializer.effectPackToJson(top);
     case ProjectItem::Type::Variable:    return serializer.variablePackToJson(top);
     default:
@@ -681,6 +684,23 @@ void ensureDefaultMasterBus(ProjectData& project)
 }
 
 namespace {
+
+void createDefaultConversion(ProjectData& project)
+{
+    auto item = std::make_shared<ProjectItem>(ConversionDefaults::lowQualityName(), ProjectItem::Type::Conversion);
+    item->attachDefaultComponents();
+    item->objectID = project.generateObjectID();
+    item->guid = QUuid::createUuid();
+    item->comp<VConversion>()->config = ConversionDefaults::lowQuality();
+    for (const auto& platform : project.platforms)
+        if (ConversionDefaults::usesLowQuality(platform.basePlatform))
+            project.defaultConversionRefs.insert(platform.id, item->guid);
+    ProjectFileBinding binding;
+    binding.parentFolder = QStringLiteral("Conversions");
+    binding.rootItem = item;
+    project.getBucketForType(ProjectItem::Type::Conversion)->push_back(std::move(binding));
+    project.setObjectFileLocation(item.get(), nullptr, {});
+}
 
 QString layerPackFileName(const ProjectItem& layer)
 {
@@ -1036,6 +1056,7 @@ QString ProjectManager::suggestUniqueName(ProjectItem::Type type,
     if (ns == NameNamespace::None) return baseName;
     const bool bucketUnique = ns == NameNamespace::Action || ns == NameNamespace::Variable;
     const auto sensitivity = ns == NameNamespace::Attenuation || ns == NameNamespace::Effect
+        || ns == NameNamespace::Conversion
         ? Qt::CaseInsensitive : Qt::CaseSensitive;
     const auto siblingConflict = [&](const QString& candidate) {
         const auto conflicts = [&](const ProjectItem* item) {
@@ -1280,6 +1301,31 @@ QStringList ProjectManager::getTargetPlatforms() const
     return m_currentProject->platformIds();
 }
 
+bool ProjectManager::setDefaultConversion(const ProjectPlatformId& platform, const QUuid& guid)
+{
+    if (!m_currentProject || !ProjectPlatformSemantics::find(m_currentProject->platforms, platform)) return false;
+    if (!guid.isNull()) {
+        const auto* item = findItemByGuid(guid);
+        if (!item || item->type != ProjectItem::Type::Conversion) return false;
+    }
+    const auto before = m_currentProject->defaultConversionFor(platform);
+    if (before == guid) return true;
+    const std::weak_ptr<ProjectData> lease = m_currentProject;
+    const auto apply = [this, lease, platform](const QUuid& value) {
+        const auto project = lease.lock();
+        if (!project || project != m_currentProject) return;
+        if (value.isNull()) project->defaultConversionRefs.remove(platform);
+        else project->defaultConversionRefs.insert(platform, value);
+        emit defaultConversionChanged(platform, value);
+    };
+    apply(guid);
+    UndoRedoManager::instance().push(new RuntimeActionCommand(
+        tr("Set Default Conversion"), [apply, before] { apply(before); },
+        [apply, guid] { apply(guid); }, 0, nullptr,
+        [this, lease] { return lease.lock() == m_currentProject; }));
+    return true;
+}
+
 void ProjectManager::setProjectPlatformsInternal(const QVector<ProjectPlatform>& value)
 {
     if (!m_currentProject) return;
@@ -1450,6 +1496,7 @@ bool validateProjectTemplate(const ProjectConfig& config, QString* error)
     ProjectData candidate;
     candidate.platforms = config.platforms;
     ensureDefaultMasterBus(candidate);
+    createDefaultConversion(candidate);
     return TemplateApplyService::seedTemplateInto(candidate, config.templateData, error);
 }
 
@@ -1560,12 +1607,12 @@ bool ProjectManager::createMainProjectFile(const ProjectConfig& config, const QS
     project.sampleRate        = config.sampleRate;
     project.channelConfig     = config.channelConfig;
 
-    m_projectIndex = std::make_unique<VNX::ProjectIndex>();
+    m_projectIndex = std::make_unique<harken::studio::ProjectIndex>();
     if (!m_projectIndex->loadFromCache(projectRoot)) {
         qDebug() << "[ProjectManager] ProjectIndex cache miss/stale -- rebuilding from disk";
     }
     const auto scanResult = m_projectIndex->scanProjectRoot(projectRoot);
-    if (scanResult != VNX::ProjectIndex::ScanResult::Ok) {
+    if (scanResult != harken::studio::ProjectIndex::ScanResult::Ok) {
         qWarning() << "[ProjectManager] ProjectIndex scan returned non-Ok:" << static_cast<int>(scanResult);
     }
     m_projectIndex->saveToCache(projectRoot);
@@ -1587,6 +1634,7 @@ bool ProjectManager::createMainProjectFile(const ProjectConfig& config, const QS
     }
 
     ProjectLoaderInternal::loadLayersPacksImpl(projectRoot, project, m_serializer, nullptr);
+    createDefaultConversion(project);
 
     if (!config.templateId.isEmpty() && !config.templateData.isEmpty()) {
         QString tmplErr;
@@ -1619,6 +1667,10 @@ bool ProjectManager::createMainProjectFile(const ProjectConfig& config, const QS
     if (project.projectId.isEmpty())
         project.projectId = QUuid::createUuid().toString(QUuid::WithoutBraces);
     if (!m_serializer.prepareReferenceWrite(project))
+        return false;
+    const auto* conversionSpec = findS3Spec(QStringLiteral("Conversions"));
+    if (!conversionSpec || !saveS3HierarchyBucket(projectRoot, project.projectId, project,
+            *conversionSpec, *project.getBucketForType(ProjectItem::Type::Conversion), m_serializer))
         return false;
     return m_serializer.saveProject(project.projectPath, project);
 }
@@ -1783,6 +1835,7 @@ PreparedProject ProjectManager::prepareProject(const ProjectConfig& config,
     project.sampleRate = config.sampleRate;
     project.channelConfig = config.channelConfig;
     ensureDefaultMasterBus(project);
+    createDefaultConversion(project);
 
     if (!config.templateId.isEmpty() && !config.templateData.isEmpty()) {
         QString templateError;
@@ -2503,7 +2556,6 @@ bool ProjectManager::closeProject()
             emit errorOccurred(discardError);
             return false;
         }
-        AssetRegistry::instance().discardUncommittedCaches();
         m_closing = true;
         m_runtimePrepared = false;
         m_itemSaveState.reset();
@@ -2602,6 +2654,7 @@ bool initializeRootFieldGroups(ProjectData& project, ProjectItem& item)
     if (!master || master->type != ProjectItem::Type::Bus || master->guid.isNull())
         return false;
     item.fieldGroups = MakeRootFieldGroups(toFieldGroupGuid(master->guid));
+    ConversionDefaults::applyRootDefaults(project, item.fieldGroups.conversion);
     return true;
 }
 
@@ -2863,6 +2916,8 @@ ProjectItem* ProjectManager::createItemImpl(ProjectItem* parent, const QString& 
 
     auto newItem = std::make_shared<ProjectItem>(createName, type);
     newItem->attachDefaultComponents();
+    if (auto* conversion = newItem->comp<VConversion>())
+        conversion->config = ConversionDefaults::newPreset();
     if (auto* variable = newItem->comp<VVariable>())
         VariableSemantics::initializeNewVariable(*variable, variableKind);
     if (auto* selection = newItem->comp<VSelection>())
@@ -3143,7 +3198,7 @@ void ProjectManager::applyRenameSideEffects(ProjectItem* item,
                     collectClaimants(binding->rootItem.get());
             auto nameStillResolvesFor = [&](VActionStep::Type stepType) {
                 for (ProjectItem::Type ct : residualClaimants)
-                    if (VNX::EditorUtils::canActionStepReferenceObject(stepType, ct))
+                    if (harken::studio::EditorUtils::canActionStepReferenceObject(stepType, ct))
                         return true;
                 return false;
             };
@@ -3153,7 +3208,7 @@ void ProjectManager::applyRenameSideEffects(ProjectItem* item,
                     bool changed = false;
                     for (auto& action : ec->steps) {
                         const auto* stepCatalog =
-                            VNX::EditorUtils::actionStepCatalogEntry(action.type);
+                            harken::studio::EditorUtils::actionStepCatalogEntry(action.type);
                         if (stepCatalog && stepCatalog->supportsQuantize
                             && ItemTypeCatalog::isContentObject(item->type)
                             && action.quantize.referenceObjectID == item->objectID
@@ -3161,7 +3216,7 @@ void ProjectManager::applyRenameSideEffects(ProjectItem* item,
                             action.quantize.referenceName = toName;
                             changed = true;
                         }
-                        if (!VNX::EditorUtils::canActionStepReferenceObject(
+                        if (!harken::studio::EditorUtils::canActionStepReferenceObject(
                                 action.type, item->type, item->objectID,
                                 pi->objectID))
                             continue;
@@ -3810,10 +3865,10 @@ ProjectItem* ProjectManager::createActionTargeting(ProjectItem* target,
         }
     }
 
-    if (!VNX::EditorUtils::canActionStepReferenceObject(
+    if (!harken::studio::EditorUtils::canActionStepReferenceObject(
             actionType, target->type, target->objectID)) {
         VActionStep::Type defaultType = VActionStep::Type::Play;
-        if (!VNX::EditorUtils::defaultActionStepTypeForTarget(target->type, defaultType)) {
+        if (!harken::studio::EditorUtils::defaultActionStepTypeForTarget(target->type, defaultType)) {
             emit errorOccurred("Selected object cannot be targeted by a new Action.");
             return nullptr;
         }
@@ -3856,7 +3911,7 @@ bool ProjectManager::canCreateActionsTargeting(const QList<ProjectItem*>& target
             return false;
         if (!ItemTypeCatalog::isUserFacingType(target->type))
             return false;
-        if (!VNX::EditorUtils::canActionStepReferenceObject(
+        if (!harken::studio::EditorUtils::canActionStepReferenceObject(
                 actionType, target->type, target->objectID)) {
             return false;
         }
@@ -4094,9 +4149,9 @@ std::vector<ProjectItem*> ProjectManager::findItemsByObjectID(
     return findItemsByObjectIDInProject(m_currentProject.get(), objectIDs);
 }
 
-ProjectItem* ProjectManager::findItemByRuntimeStableId(harkenstudio::ObjectId runtimeStableId) const
+ProjectItem* ProjectManager::findItemByRuntimeStableId(harken::studio::types::ObjectId runtimeStableId) const
 {
-    if (!m_currentProject || harkenstudio::IsNull(runtimeStableId)) return nullptr;
+    if (!m_currentProject || harken::studio::types::IsNull(runtimeStableId)) return nullptr;
     ProjectItem* found = nullptr;
     bool ambiguous = false;
     std::function<void(ProjectItem*)> walk = [&](ProjectItem* item) {
@@ -4765,7 +4820,8 @@ std::optional<DefinitionFieldGroups> ProjectManager::captureRootFieldGroups(
     if (!capture(authored.output, result.output, FieldGroupId::Output)
         || !capture(authored.send, result.send, FieldGroupId::Send)
         || !capture(authored.spatialRating, result.spatialRating, FieldGroupId::SpatialRating)
-        || !capture(authored.effects, result.effects, FieldGroupId::Effect))
+        || !capture(authored.effects, result.effects, FieldGroupId::Effect)
+        || !capture(authored.conversion, result.conversion, FieldGroupId::Conversion))
         return fail(QStringLiteral("Cannot preserve the current field group values"));
     return result;
 }
@@ -4953,17 +5009,17 @@ namespace {
 std::vector<DeletedSubtreeRefLog::FieldGroupRef> fieldGroupReferenceRemovals(
     ProjectData& project, ProjectItem* deletedRoot)
 {
-    std::set<harkenprojectschema::AuthoringGuid> deleted;
+    std::set<harken::studio::project_schema::AuthoringGuid> deleted;
     std::function<void(ProjectItem*)> collect = [&](ProjectItem* item) {
         if (!item) return;
         deleted.insert(toFieldGroupGuid(item->guid));
         for (const auto& child : item->children) collect(child.get());
     };
     collect(deletedRoot);
-    const auto source = HarkenEditor::Bridge::canonicalRuntimeProjectSourceIndex(project);
+    const auto source = harken::studio::bridge::canonicalRuntimeProjectSourceIndex(project);
     const auto* fallback = deletedRoot->parent && deletedRoot->parent->type == ProjectItem::Type::Bus
         ? deletedRoot->parent : (project.busses.empty() ? nullptr : project.busses.front().rootItem.get());
-    const auto fallbackGuid = fallback ? toFieldGroupGuid(fallback->guid) : harkenprojectschema::AuthoringGuid{};
+    const auto fallbackGuid = fallback ? toFieldGroupGuid(fallback->guid) : harken::studio::project_schema::AuthoringGuid{};
     std::vector<DeletedSubtreeRefLog::FieldGroupRef> result;
     const auto editActive = [](auto& group, bool root, const auto& edit) {
         bool sharedActive = root || group.shared.mode == FieldGroupMode::Local;
@@ -4994,6 +5050,13 @@ std::vector<DeletedSubtreeRefLog::FieldGroupRef> fieldGroupReferenceRemovals(
                 state.localHistory->spatialAttenuationRef = {};
         };
         clearSpatialReference(after.spatialRating.shared);
+        const auto clearConversionReference = [&](auto& state) {
+            if (state.localHistory && deleted.contains(state.localHistory->settingsRef))
+                state.localHistory->settingsRef = {};
+        };
+        clearConversionReference(after.conversion.shared);
+        for (auto& [platform, state] : after.conversion.platforms)
+            clearConversionReference(state);
         for (auto& [platform, state] : after.spatialRating.platforms)
             clearSpatialReference(state);
         VisitAuthoredEffectChains(after, [&](EffectChainLedger& ledger, FieldGroupScope) {
@@ -5233,9 +5296,15 @@ void applyFolderComponentReferences(ProjectItem& item, const QJsonObject& state)
 
 QJsonObject folderProjectReferences()
 {
+    const auto* project = ProjectManager::instance().currentProject();
+    QJsonObject defaults;
+    if (project)
+        for (auto it = project->defaultConversionRefs.cbegin(); it != project->defaultConversionRefs.cend(); ++it)
+            defaults.insert(ProjectPlatformSemantics::idString(it.key()), it.value().toString(QUuid::WithoutBraces));
     QJsonArray targeting;
     for (const auto& target : ProjectManager::instance().getActionPackTargeting()) targeting.append(target.toJson());
-    return {{QStringLiteral("actionPackTargeting"), targeting}};
+    return {{QStringLiteral("actionPackTargeting"), targeting},
+            {QStringLiteral("audio"), QJsonObject{{QStringLiteral("defaultConversions"), defaults}}}};
 }
 
 void applyFolderProjectReferences(const QJsonObject& state)
@@ -5244,6 +5313,21 @@ void applyFolderProjectReferences(const QJsonObject& state)
     for (const auto& target : state.value(QStringLiteral("actionPackTargeting")).toArray())
         targeting.push_back(ActionPackTargeting::fromJson(target.toObject()));
     ProjectManager::instance().setActionPackTargetingInternal(std::move(targeting));
+    if (auto* project = ProjectManager::instance().currentProject()) {
+        const auto defaults = state.value(QStringLiteral("audio")).toObject()
+            .value(QStringLiteral("defaultConversions")).toObject();
+        QMap<ProjectPlatformId, QUuid> restored;
+        for (auto it = defaults.begin(); it != defaults.end(); ++it) {
+            const QUuid guid(it.value().toString());
+            if (const auto platform = ProjectPlatformSemantics::parseId(it.key()); platform && !guid.isNull())
+                restored.insert(*platform, guid);
+        }
+        const auto previous = project->defaultConversionRefs;
+        project->defaultConversionRefs = restored;
+        for (const auto& platform : project->platforms)
+            if (previous.value(platform.id) != restored.value(platform.id))
+                emit ProjectManager::instance().defaultConversionChanged(platform.id, restored.value(platform.id));
+    }
 }
 
 }
@@ -5270,7 +5354,7 @@ DeletedSubtreeRefLog ProjectManager::cleanupReferencesToDeletedSubtree(ProjectIt
     }
 
     log.fieldGroups = fieldGroupReferenceRemovals(*project, deletedRoot);
-    const auto groupSource = HarkenEditor::Bridge::canonicalRuntimeProjectSourceIndex(*project);
+    const auto groupSource = harken::studio::bridge::canonicalRuntimeProjectSourceIndex(*project);
     for (const auto& change : log.fieldGroups) {
         auto* item = groupSource->byQtGuid.at(change.definition);
         item->fieldGroups = change.after;
@@ -5442,7 +5526,7 @@ void ProjectManager::restoreReferencesFromLog(const DeletedSubtreeRefLog& log,
     }
 
     std::vector<FieldGroupDefinitionSnapshot> groups;
-    const auto groupSource = HarkenEditor::Bridge::canonicalRuntimeProjectSourceIndex(*project);
+    const auto groupSource = harken::studio::bridge::canonicalRuntimeProjectSourceIndex(*project);
     bool matching = true;
     for (const auto& ref : log.fieldGroups) {
         const auto item = groupSource->byQtGuid.find(ref.definition);
@@ -5548,7 +5632,7 @@ ProjectFileBinding* ProjectManager::findRootBinding(ProjectData* project, const 
     // inferring ownership from the root type.
     std::vector<ProjectFileBinding>* buckets[] = {
         &project->layers, &project->actions, &project->attenuationItems,
-        &project->busses, &project->variables, &project->effectItems };
+        &project->busses, &project->variables, &project->effectItems, &project->conversionItems };
     for (auto* bucket : buckets) {
         for (auto& binding : *bucket) {
             if (binding.rootItem.get() == item) return &binding;
@@ -5562,7 +5646,7 @@ bool ProjectManager::detachRootBinding(ProjectData* project, const ProjectItem* 
     if (!project || !item || !out) return false;
     std::vector<ProjectFileBinding>* buckets[] = {
         &project->layers, &project->actions, &project->attenuationItems,
-        &project->busses, &project->variables, &project->effectItems };
+        &project->busses, &project->variables, &project->effectItems, &project->conversionItems };
     for (auto* bucket : buckets) {
         for (size_t i = 0; i < bucket->size(); ++i) {
             if ((*bucket)[i].rootItem.get() == item) {
@@ -5813,7 +5897,7 @@ bool ProjectManager::restoreFieldGroupsInternal(
     const QObject* originator)
 {
     if (!item || !m_currentProject) return false;
-    const auto source = HarkenEditor::Bridge::canonicalRuntimeProjectSourceIndex(*m_currentProject);
+    const auto source = harken::studio::bridge::canonicalRuntimeProjectSourceIndex(*m_currentProject);
     const auto found = source->byQtGuid.find(item->guid);
     if (found == source->byQtGuid.end() || found->second != item) return false;
     const auto prepared = prepareFieldGroupRestore(*m_currentProject, item->guid,
@@ -6052,7 +6136,7 @@ void ProjectManager::pushItemSendsLive(
     ProjectItem* item, const FieldGroupEffectiveSnapshot& snapshot)
 {
     if (!item || item->type != ProjectItem::Type::Sound) return;
-    std::vector<std::pair<harkenstudio::ObjectId, float>> runtimeSends;
+    std::vector<std::pair<harken::studio::types::ObjectId, float>> runtimeSends;
     for (const Send& s : aggregateVoiceSendsForItem(item, snapshot)) {
         if (s.mode != SendMode::Mix) continue;
         if (!findVBus(s.targetBusID)) continue;
@@ -6250,14 +6334,14 @@ ProjectItem* ProjectManager::findBusItem(uint32_t objectID) const
     return walk(master);
 }
 
-harkenstudio::ObjectId ProjectManager::busRuntimeHandle(const ProjectItem* item) const
+harken::studio::types::ObjectId ProjectManager::busRuntimeHandle(const ProjectItem* item) const
 {
     if (!item)
         return {};
     return item->runtimeId();
 }
 
-harkenstudio::ObjectId ProjectManager::busRuntimeHandleForId(uint32_t objectID) const
+harken::studio::types::ObjectId ProjectManager::busRuntimeHandleForId(uint32_t objectID) const
 {
     return busRuntimeHandle(findBusItem(objectID));
 }
@@ -6496,7 +6580,7 @@ bool ProjectManager::validateStructuralPlacement(ProjectItem::Type type,
     return true;
 }
 
-void ProjectManager::materializeRuntime(ProjectItem* item, harkenstudio::ObjectId parentRuntimeId)
+void ProjectManager::materializeRuntime(ProjectItem* item, harken::studio::types::ObjectId parentRuntimeId)
 {
     if (!item) return;
     using T = ProjectItem::Type;
@@ -6515,7 +6599,7 @@ void ProjectManager::materializeRuntime(ProjectItem* item, harkenstudio::ObjectI
     resyncItemToRuntime(item);
 }
 
-void ProjectManager::materializeBusSubtree(ProjectItem* item, harkenstudio::ObjectId parentRuntimeId)
+void ProjectManager::materializeBusSubtree(ProjectItem* item, harken::studio::types::ObjectId parentRuntimeId)
 {
     Q_UNUSED(item);
     Q_UNUSED(parentRuntimeId);
@@ -6533,7 +6617,7 @@ void ProjectManager::dematerializeRuntime(ProjectItem* item)
     unregisterItemFromRuntime(item);
 }
 
-bool ProjectManager::reparentRuntime(ProjectItem* item, harkenstudio::ObjectId newParentRuntimeId)
+bool ProjectManager::reparentRuntime(ProjectItem* item, harken::studio::types::ObjectId newParentRuntimeId)
 {
     if (!item) return false;
     using T = ProjectItem::Type;
@@ -6555,7 +6639,7 @@ void ProjectManager::applyBusRuntimeState(ProjectItem* item)
 
 void ProjectManager::syncBusTreeToRuntime(
     ProjectData* project,
-    std::shared_ptr<const harkenbuscompiler::CompiledBusResultV1> compiledBus)
+    std::shared_ptr<const harken::studio::bus_compiler::CompiledBusResultV1> compiledBus)
 {
     Q_UNUSED(project);
     Q_UNUSED(compiledBus);
@@ -6723,7 +6807,7 @@ bool ProjectManager::setBusMuteInternal(uint32_t busID, bool mute, const QObject
 {
     ProjectItem* item = findBusItem(busID);
     if (!item || !item->comp<VBus>()) return false;
-    const harkenstudio::ObjectId busId = busRuntimeHandle(item);
+    const harken::studio::types::ObjectId busId = busRuntimeHandle(item);
     m_auditionOverlay.setMuted(busId, mute);
     (void)AudioEngine::instance().applyInstalledBusMuteOverlay(busId, mute, 0);
     emit busChanged(busID, QStringLiteral("mute"), originator);
@@ -6734,7 +6818,7 @@ bool ProjectManager::setBusSoloInternal(uint32_t busID, bool solo, const QObject
 {
     ProjectItem* item = findBusItem(busID);
     if (!item || !item->comp<VBus>()) return false;
-    const harkenstudio::ObjectId busId = busRuntimeHandle(item);
+    const harken::studio::types::ObjectId busId = busRuntimeHandle(item);
     m_auditionOverlay.setSoloed(busId, solo);
     (void)AudioEngine::instance().applyInstalledBusSoloOverlay(busId, solo, 0);
     emit busChanged(busID, QStringLiteral("solo"), originator);

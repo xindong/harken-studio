@@ -6,11 +6,13 @@
 #include <QWidget>
 
 class QScrollArea;
+class QSplitter;
 
-namespace VNX {
+namespace harken::studio {
 
 class BindingFieldEditor;
 class CurveEditorWidget;
+class SourceFilePropertiesView;
 class SourceRangeEditor;
 class FilterEditorWidget;
 
@@ -61,7 +63,9 @@ private:
     QScrollArea* curvesScroll_ = nullptr;
     BindingFieldEditor* bindings_ = nullptr;
     CurveEditorWidget* curve_ = nullptr;
+    QSplitter* sourceView_ = nullptr;
     SourceRangeEditor* source_ = nullptr;
+    SourceFilePropertiesView* sourceProperties_ = nullptr;
     FilterEditorWidget* filter_ = nullptr;
 };
 

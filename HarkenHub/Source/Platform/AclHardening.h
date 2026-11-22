@@ -2,7 +2,7 @@
 
 #include <QString>
 
-namespace VNH {
+namespace harken::hub {
 
 inline QString handoffAclSddl()
 {

@@ -3,7 +3,7 @@
 
 #include <algorithm>
 
-namespace VNX {
+namespace harken::studio {
 
 void EditorShellRegistry::registerEditorType(const QString& editorType, EditorTypeInfo info)
 {

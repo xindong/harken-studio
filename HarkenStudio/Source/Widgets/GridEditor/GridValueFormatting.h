@@ -5,7 +5,7 @@
 #include <array>
 #include <charconv>
 
-namespace VNX {
+namespace harken::studio {
 
 inline QString formatGridValue(float value)
 {

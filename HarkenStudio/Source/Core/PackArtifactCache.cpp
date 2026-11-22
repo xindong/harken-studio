@@ -3,6 +3,8 @@
 #include "AssetPipeline/PathUtils.h"
 #include "ProjectTypes.h"
 
+#include <harken_pack/PackFile.h>
+
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -11,7 +13,7 @@
 
 #include <algorithm>
 
-namespace VNX {
+namespace harken::studio {
 
 PackArtifactCache& PackArtifactCache::instance()
 {
@@ -28,7 +30,7 @@ void PackArtifactCache::openProject(const ProjectData& project)
     QFile file(cache.filePath(QStringLiteral("pack/builds.json")));
     if (file.open(QIODevice::ReadOnly)) {
         const auto root = QJsonDocument::fromJson(file.readAll()).object();
-        if (root.value(QStringLiteral("version")).toInt() == 2) {
+        if (root.value(QStringLiteral("version")).toInt() == kPackBuildStateVersion) {
             const auto platforms = project.platformIds();
             const auto targets = root.value(QStringLiteral("targets")).toObject();
             for (auto target = targets.begin(); target != targets.end(); ++target) {
@@ -51,7 +53,7 @@ void PackArtifactCache::openProject(const ProjectData& project)
                     artifact.outputPath = output.absoluteFilePath();
                     artifact.bytes = output.size();
                     artifact.modified = output.lastModified();
-                    artifact.version = HARKEN_PACK_SCHEMA_VERSION;
+                    artifact.version = HK_PACK_FORMAT_VERSION;
                     artifacts_.append(std::move(artifact));
                 }
             }

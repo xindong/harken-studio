@@ -4,7 +4,7 @@
 #include <QSet>
 #include <QUuid>
 
-namespace VNX {
+namespace harken::studio {
 
 class PhysicalFolderReferenceEdits
 {

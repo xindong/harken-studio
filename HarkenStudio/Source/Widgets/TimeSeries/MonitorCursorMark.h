@@ -6,7 +6,7 @@
 #include <QString>
 #include <QWidget>
 
-namespace VNX {
+namespace harken::studio {
 
 class MonitorCursorMark : public QWidget
 {
@@ -31,4 +31,4 @@ private:
     MonitorCursorSnapshot snapshot_{};
 };
 
-} // namespace VNX
+} // namespace harken::studio

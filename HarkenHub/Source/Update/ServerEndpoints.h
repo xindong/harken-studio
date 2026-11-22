@@ -4,7 +4,7 @@
 #include <QUrl>
 #include <QList>
 
-namespace VNH {
+namespace harken::hub {
 
 class ServerEndpoints
 {
@@ -12,14 +12,10 @@ public:
     static QUrl defaultBaseUrl();
     static QUrl resolvedBaseUrl();
     static QString hostChannel();
-    static QUrl latestUrl(const QUrl& baseUrl, const QString& product,
-                          const QString& channel);
+    static QUrl latestUrl(const QUrl& baseUrl, const QString& product);
     static QUrl githubLatestUrl(const QString& product);
     static QList<QUrl> manifestUrls(const QUrl& fallbackBaseUrl,
-                                    const QString& product,
-                                    const QString& channel);
-    static QUrl versionsUrl(const QUrl& baseUrl, const QString& product,
-                            const QString& channel);
+                                    const QString& product);
     static bool isReleaseObjectPath(const QString& objectPath,
                                     const QString& product,
                                     const QString& channel,

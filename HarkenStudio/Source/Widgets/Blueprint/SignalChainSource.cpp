@@ -7,6 +7,7 @@
 #include "Core/Components/VBus.h"
 #include "Core/Components/VMixNode.h"
 #include "Core/ItemTypeCatalog.h"
+#include "Core/NumericFormat.h"
 #include "Core/PlayablePropertyAuthoringV1.h"
 #include "Core/ProjectManager.h"
 #include "Core/ProjectTypes.h"
@@ -26,7 +27,7 @@
 #include <utility>
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 
 struct SignalChainSource::ViewCache {
     SignalChainView view;
@@ -275,10 +276,9 @@ bool busInChain(const SignalChainView& view, uint32_t busID)
 
 QString incomingLevelText(float linearLevel)
 {
-    if (linearLevel <= 0.0f) return QStringLiteral("-inf dB");
-    const float db = 20.0f * std::log10(linearLevel);
-    if (db <= -96.0f) return QStringLiteral("-inf dB");
-    return QString::number(db, 'f', 1) + QStringLiteral(" dB");
+    const float db = VMixNode::linearToDb(linearLevel);
+    const QString level = db <= -96.0f ? kNegativeInfinityText : formatDecimal(db, 1);
+    return level + QStringLiteral(" dB");
 }
 
 std::vector<BlueprintNodeDesc>
@@ -751,7 +751,7 @@ SignalChainSource::doConnect(uint32_t fromId, uint32_t toId,
             const auto* fromMix = fromBus->comp<VMixNode>();
             const bool dupSend = fromMix && std::any_of(
                 fromMix->sends.begin(), fromMix->sends.end(),
-                [&](const VNX::Send& s) { return s.targetBusID == toId && s.mode == SendMode::Mix; });
+                [&](const harken::studio::Send& s) { return s.targetBusID == toId && s.mode == SendMode::Mix; });
             if (dupSend) {
                 r.error = QStringLiteral("duplicate");
                 r.effectiveType = QStringLiteral("send");
@@ -952,7 +952,7 @@ bool SignalChainSource::doDisconnect(uint32_t fromId, uint32_t toId,
             const auto* fromMix = fromBus->comp<VMixNode>();
             const bool hasSend = fromMix && std::any_of(
                 fromMix->sends.begin(), fromMix->sends.end(),
-                [&](const VNX::Send& s) { return s.targetBusID == toId && s.mode == mode; });
+                [&](const harken::studio::Send& s) { return s.targetBusID == toId && s.mode == mode; });
             if (hasSend) {
                 undoMgr.beginMacro(QStringLiteral("Blueprint Disconnect (Send)"));
                 undoMgr.push(new BlueprintSendDisconnectCommand(fromId, toId, nullptr, mode));

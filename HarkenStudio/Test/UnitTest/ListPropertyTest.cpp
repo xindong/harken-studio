@@ -26,17 +26,17 @@ void ensureApp()
 {
     if (qApp) return;
     static int argc = 1;
-    static char arg0[] = "harken_editor_tests";
+    static char arg0[] = "harken_studio_tests";
     static char* argv[] = {arg0, nullptr};
     static QApplication app(argc, argv);
 }
 
-class ListHarnessComp : public VNX::ReflectedComponent<ListHarnessComp>
+class ListHarnessComp : public harken::studio::ReflectedComponent<ListHarnessComp>
 {
 public:
-    VNX::ComponentType getType() const override { return VNX::ComponentType::MixNode; }
+    harken::studio::ComponentType getType() const override { return harken::studio::ComponentType::MixNode; }
 
-    static const VNX::PropertySchema& schema();
+    static const harken::studio::PropertySchema& schema();
 
     QVariantList entries;
 };
@@ -46,21 +46,21 @@ public:
 #  pragma clang diagnostic ignored "-Wmissing-designated-field-initializers"
 #  pragma clang diagnostic ignored "-Wmissing-field-initializers"
 #endif
-const VNX::PropertySchema& ListHarnessComp::schema()
+const harken::studio::PropertySchema& ListHarnessComp::schema()
 {
-    static const VNX::PropertySchema s = {
-        { .field="entries", .type=VNX::PropType::List, .label="Entries", .section=VNX::PropertySection::Output,
+    static const harken::studio::PropertySchema s = {
+        { .field="entries", .type=harken::studio::PropType::List, .label="Entries", .section=harken::studio::PropertySection::Output,
           .def=QVariant(QVariantList{}),
           .elementSchema={
-              { .field="target", .jsonKey="targetBusId", .type=VNX::PropType::ObjectRef,
+              { .field="target", .jsonKey="targetBusId", .type=harken::studio::PropType::ObjectRef,
                 .def=QVariant(0u) },
-              { .field="level", .type=VNX::PropType::Float, .unit=" dB",
+              { .field="level", .type=harken::studio::PropType::Float, .unit=" dB",
                 .min=-96.0, .max=12.0, .def=QVariant(-6.0), .decimals=1 },
           },
-          .get=[](const VNX::IComponent* c) {
+          .get=[](const harken::studio::IComponent* c) {
               return QVariant(static_cast<const ListHarnessComp*>(c)->entries);
           },
-          .set=[](VNX::IComponent* c, const QVariant& v) {
+          .set=[](harken::studio::IComponent* c, const QVariant& v) {
               static_cast<ListHarnessComp*>(c)->entries = v.toList();
               return true;
           } },
@@ -77,20 +77,20 @@ QVariantMap makeEntry(uint target, double level)
                        {QStringLiteral("level"), level}};
 }
 
-VNX::IFieldDrawer* listDrawer()
+harken::studio::IFieldDrawer* listDrawer()
 {
     ensureApp();
-    VNX::registerBuiltinInspectorCustomizations();
-    return VNX::InspectorCustomizationRegistry::instance().fieldDrawer(VNX::PropType::List);
+    harken::studio::registerBuiltinInspectorCustomizations();
+    return harken::studio::InspectorCustomizationRegistry::instance().fieldDrawer(harken::studio::PropType::List);
 }
 
-VNX::PropertyDescriptor enumListDescriptor()
+harken::studio::PropertyDescriptor enumListDescriptor()
 {
     auto descriptor = ListHarnessComp::schema()[0];
-    VNX::PropertyDescriptor choice;
+    harken::studio::PropertyDescriptor choice;
     choice.field = QStringLiteral("choice");
     choice.label = QStringLiteral("Choice");
-    choice.type = VNX::PropType::Enum;
+    choice.type = harken::studio::PropType::Enum;
     choice.def = 0;
     choice.options = {{"First", 0}, {"Second", 1}, {"Third", 2}};
     descriptor.elementSchema = {choice, descriptor.elementSchema.front()};
@@ -129,19 +129,19 @@ TEST(ListProperty, CancelledEditorsCannotWriteToReboundRows)
     QVariant captured;
     drawer->connectChanged(widget.get(), [&](const QVariant& value) { captured = value; });
     drawer->bind(widget.get(), QVariantList{makeEntry(7u, -6.0)}, nullptr);
-    auto* oldSlider = widget->findChild<VNX::ParameterSlider*>();
-    auto* oldReference = widget->findChild<VNX::ObjectRefWidget*>();
+    auto* oldSlider = widget->findChild<harken::studio::ParameterSlider*>();
+    auto* oldReference = widget->findChild<harken::studio::ObjectRefWidget*>();
     ASSERT_NE(oldSlider, nullptr);
     ASSERT_NE(oldReference, nullptr);
 
-    VNX::ListFieldDrawer::cancelWidgetEdits(widget.get());
+    harken::studio::ListFieldDrawer::cancelWidgetEdits(widget.get());
     drawer->bind(widget.get(), QVariantList{makeEntry(9u, -3.0)}, nullptr);
     oldSlider->simulateValueChange(-13.0);
     emit oldReference->objectChanged(8u);
     EXPECT_FALSE(captured.isValid());
 
     QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
-    auto* currentSlider = widget->findChild<VNX::ParameterSlider*>();
+    auto* currentSlider = widget->findChild<harken::studio::ParameterSlider*>();
     ASSERT_NE(currentSlider, nullptr);
     currentSlider->simulateValueChange(-10.0);
     ASSERT_TRUE(captured.isValid());
@@ -163,7 +163,7 @@ TEST(ListProperty, CommitCanSynchronouslyRebindTheRowsWithoutRetiredCallbacks)
         captured = value;
         drawer->bind(widget.get(), QVariantList{makeEntry(9u, -2.0)}, nullptr);
     });
-    auto* slider = widget->findChild<VNX::ParameterSlider*>();
+    auto* slider = widget->findChild<harken::studio::ParameterSlider*>();
     ASSERT_NE(slider, nullptr);
     slider->binding()->beginEdit();
     slider->binding()->previewEdit(-4.0);
@@ -173,7 +173,7 @@ TEST(ListProperty, CommitCanSynchronouslyRebindTheRowsWithoutRetiredCallbacks)
     slider->simulateValueChange(-3.0);
     EXPECT_EQ(changes, 1);
     QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
-    auto* replacement = widget->findChild<VNX::ParameterSlider*>();
+    auto* replacement = widget->findChild<harken::studio::ParameterSlider*>();
     ASSERT_NE(replacement, nullptr);
     EXPECT_DOUBLE_EQ(replacement->value(), -2.0);
 }
@@ -188,7 +188,7 @@ TEST(ListProperty, EnumOptionsFollowExternalRowConstraintsOnUnchangedBinding)
         [&restricted](uint32_t, const QVariantMap& row, uint32_t target) {
             return !restricted || target != 7u || row.value(QStringLiteral("choice")).toInt() == 2;
         };
-    VNX::ProjectItem owner(QStringLiteral("Owner"), VNX::ProjectItem::Type::Bus);
+    harken::studio::ProjectItem owner(QStringLiteral("Owner"), harken::studio::ProjectItem::Type::Bus);
     owner.objectID = 42;
     std::unique_ptr<QWidget> widget(drawer->build(descriptor, nullptr));
     const QVariantList rows{choiceEntry(7u, 2)};
@@ -215,7 +215,7 @@ TEST(ListProperty, EnumOptionsFollowExternalRowConstraintsOnUnchangedBinding)
     EXPECT_FALSE(optionEnabled(combo, 0));
     EXPECT_EQ(changes, 0);
 
-    auto* reference = widget->findChild<VNX::ObjectRefWidget*>();
+    auto* reference = widget->findChild<harken::studio::ObjectRefWidget*>();
     ASSERT_NE(reference, nullptr);
     emit reference->objectChanged(9u);
     EXPECT_EQ(changes, 1);
@@ -330,7 +330,7 @@ TEST(ListProperty, RowTransformsAreSharedByOptionValidationAndCommit)
     });
     drawer->bind(widget.get(), QVariantList{choiceEntry(7u, 0), choiceEntry(9u, 1)}, nullptr);
     const auto combos = widget->findChildren<QComboBox*>();
-    const auto references = widget->findChildren<VNX::ObjectRefWidget*>();
+    const auto references = widget->findChildren<harken::studio::ObjectRefWidget*>();
     ASSERT_EQ(combos.size(), 2);
     ASSERT_EQ(references.size(), 2);
     EXPECT_FALSE(optionEnabled(combos[0], 1));
@@ -381,14 +381,14 @@ TEST(ListProperty, ReadOnlyNumberedTablesDoNotExposeRowMutation)
 {
     auto* drawer = listDrawer();
     ASSERT_NE(drawer, nullptr);
-    auto descriptor = VNX::withInspectorRowOrder(enumListDescriptor());
+    auto descriptor = harken::studio::withInspectorRowOrder(enumListDescriptor());
     descriptor.flags.readOnly = true;
-    descriptor.listPresentation = VNX::ListPresentation::Display;
+    descriptor.listPresentation = harken::studio::ListPresentation::Display;
     std::unique_ptr<QWidget> widget(drawer->build(descriptor, nullptr));
     int changes = 0;
     drawer->connectChanged(widget.get(), [&](const QVariant&) { ++changes; });
     drawer->bind(widget.get(), QVariantList{choiceEntry(7u, 0), choiceEntry(9u, 1)}, nullptr);
-    auto* table = widget->findChild<VNX::TableWidget*>();
+    auto* table = widget->findChild<harken::studio::TableWidget*>();
     ASSERT_NE(table, nullptr);
     const auto numbers = widget->findChildren<QLabel*>(QStringLiteral("tableRowNumber"));
     ASSERT_EQ(numbers.size(), 2);

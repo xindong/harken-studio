@@ -13,7 +13,7 @@
 
 #include <algorithm>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 
@@ -43,7 +43,7 @@ void emitChanged(ProjectItem* item, const QString& propName)
     emit ProjectManager::instance().itemPropertyChanged(item, propName);
 }
 
-harkenprojectschema::AuthoringGuid authoringGuid(const QUuid& guid)
+harken::studio::project_schema::AuthoringGuid authoringGuid(const QUuid& guid)
 {
     const auto bytes = guid.toRfc4122();
     return {qFromBigEndian<quint64>(bytes.constData()),
@@ -57,7 +57,7 @@ FieldGroupEditResult prepareRouteEdit(ProjectItem& item, uint32_t targetBusId)
     request.group = FieldGroupId::Output;
     request.scopes.shared = true;
     request.expectedBefore = item.fieldGroups;
-    harkenprojectschema::AuthoringGuid target{};
+    harken::studio::project_schema::AuthoringGuid target{};
     if (targetBusId != 0) {
         const auto* bus = ProjectManager::instance().findBusItem(targetBusId);
         if (!bus) {
@@ -136,8 +136,8 @@ bool restoreSendState(const std::optional<BusSendState>& state)
 BlueprintConnectCommand::BlueprintConnectCommand(uint32_t fromItemId,
                                                  uint32_t toId,
                                                  Effective effectiveType,
-                                                 VNX::UndoCommand* parent)
-    : VNX::UndoCommand(QObject::tr("Blueprint Connect"), parent)
+                                                 harken::studio::UndoCommand* parent)
+    : harken::studio::UndoCommand(QObject::tr("Blueprint Connect"), parent)
     , fromItemId_(fromItemId)
     , toId_(toId)
     , effective_(effectiveType)
@@ -218,8 +218,8 @@ QString BlueprintConnectCommand::error() const
 BlueprintDisconnectCommand::BlueprintDisconnectCommand(uint32_t fromItemId,
                                                        uint32_t toId,
                                                        Kind kind,
-                                                       VNX::UndoCommand* parent)
-    : VNX::UndoCommand(QObject::tr("Blueprint Disconnect"), parent)
+                                                       harken::studio::UndoCommand* parent)
+    : harken::studio::UndoCommand(QObject::tr("Blueprint Disconnect"), parent)
     , fromItemId_(fromItemId)
     , toId_(toId)
     , kind_(kind)
@@ -300,8 +300,8 @@ QString BlueprintDisconnectCommand::error() const
 BlueprintOverrideToggleCommand::BlueprintOverrideToggleCommand(uint32_t itemId,
                                                                bool newOverride,
                                                                uint32_t autoRouteToBusId,
-                                                               VNX::UndoCommand* parent)
-    : VNX::UndoCommand(QObject::tr("Blueprint Override Toggle"), parent)
+                                                               harken::studio::UndoCommand* parent)
+    : harken::studio::UndoCommand(QObject::tr("Blueprint Override Toggle"), parent)
     , itemId_(itemId)
     , newOverride_(newOverride)
     , autoRouteToBusId_(autoRouteToBusId)
@@ -355,8 +355,8 @@ void BlueprintOverrideToggleCommand::undo()
 
 BlueprintSendConnectCommand::BlueprintSendConnectCommand(uint32_t fromBusId,
                                                          uint32_t targetBusId,
-                                                         VNX::UndoCommand* parent)
-    : VNX::UndoCommand(QObject::tr("Blueprint Send Connect"), parent)
+                                                         harken::studio::UndoCommand* parent)
+    : harken::studio::UndoCommand(QObject::tr("Blueprint Send Connect"), parent)
     , fromBusId_(fromBusId)
     , targetBusId_(targetBusId)
 {
@@ -403,9 +403,9 @@ void BlueprintSendConnectCommand::undo()
 
 BlueprintSendDisconnectCommand::BlueprintSendDisconnectCommand(uint32_t fromBusId,
                                                                uint32_t targetBusId,
-                                                               VNX::UndoCommand* parent,
+                                                               harken::studio::UndoCommand* parent,
                                                                SendMode mode)
-    : VNX::UndoCommand(QObject::tr("Blueprint Send Disconnect"), parent)
+    : harken::studio::UndoCommand(QObject::tr("Blueprint Send Disconnect"), parent)
     , fromBusId_(fromBusId)
     , targetBusId_(targetBusId)
     , mode_(mode)

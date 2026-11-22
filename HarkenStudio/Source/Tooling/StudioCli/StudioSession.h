@@ -6,9 +6,9 @@
 #include <functional>
 #include <memory>
 
-namespace VNX { class IPCServer; }
+namespace harken::studio { class IPCServer; }
 
-namespace HarkenStudioCli {
+namespace harken::studio::cli {
 
 class StudioInstanceClient;
 
@@ -19,7 +19,7 @@ class StudioSession {
 public:
     explicit StudioSession(const QString& instanceId = {}, int timeoutMs = 300000,
                            std::function<bool()> canceled = {});
-    explicit StudioSession(VNX::IPCServer& dispatcher, int timeoutMs = 300000,
+    explicit StudioSession(harken::studio::IPCServer& dispatcher, int timeoutMs = 300000,
                            std::function<bool()> canceled = {});
     ~StudioSession();
     bool isAttached() const { return !state_; }
@@ -45,7 +45,7 @@ private:
     struct State;
     std::unique_ptr<State> state_;
     std::unique_ptr<StudioInstanceClient> instance_;
-    QPointer<VNX::IPCServer> desktopDispatcher_;
+    QPointer<harken::studio::IPCServer> desktopDispatcher_;
     int timeoutMs_;
     std::function<bool()> canceled_;
 };

@@ -36,7 +36,7 @@ TEST(AclHardeningTest, AppliesProtectedHandoffDacl)
     ASSERT_TRUE(dir.isValid());
 
     QString error;
-    ASSERT_TRUE(VNH::applyHandoffAcl(dir.path(), &error))
+    ASSERT_TRUE(harken::hub::applyHandoffAcl(dir.path(), &error))
         << error.toStdString();
 
     const std::wstring nativePath =
@@ -100,7 +100,7 @@ TEST(AclHardeningTest, RejectsMissingDirectory)
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     QString error;
-    EXPECT_FALSE(VNH::applyHandoffAcl(
+    EXPECT_FALSE(harken::hub::applyHandoffAcl(
         dir.filePath(QStringLiteral("missing")), &error));
     EXPECT_FALSE(error.isEmpty());
 }
@@ -110,14 +110,14 @@ TEST(AclHardeningTest, ResultRecipientCanReadAndAcknowledgeWithoutAdministratorR
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     QString error;
-    ASSERT_TRUE(VNH::applyHandoffAcl(dir.path(), &error));
+    ASSERT_TRUE(harken::hub::applyHandoffAcl(dir.path(), &error));
     const auto path = dir.filePath("result");
     QFile file(path);
     ASSERT_TRUE(file.open(QIODevice::WriteOnly));
     file.write("completed");
     file.close();
-    ASSERT_FALSE(VNH::fileOwnerId(path).isEmpty());
-    ASSERT_TRUE(VNH::grantFileReadAndDelete(path, VNH::currentUserId(), &error))
+    ASSERT_FALSE(harken::hub::fileOwnerId(path).isEmpty());
+    ASSERT_TRUE(harken::hub::grantFileReadAndDelete(path, harken::hub::currentUserId(), &error))
         << error.toStdString();
     PSECURITY_DESCRIPTOR descriptor = nullptr;
     const auto nativePath = QDir::toNativeSeparators(path).toStdWString();
@@ -164,7 +164,7 @@ TEST(AclHardeningTest, AppliesStickyWorldWritableMode)
     ASSERT_TRUE(dir.isValid());
 
     QString error;
-    ASSERT_TRUE(VNH::applyHandoffAcl(dir.path(), &error))
+    ASSERT_TRUE(harken::hub::applyHandoffAcl(dir.path(), &error))
         << error.toStdString();
 
     struct stat info = {};
@@ -178,7 +178,7 @@ TEST(AclHardeningTest, DeniesSubdirectoryCreationForEveryone)
     ASSERT_TRUE(dir.isValid());
 
     QString error;
-    ASSERT_TRUE(VNH::applyHandoffAcl(dir.path(), &error))
+    ASSERT_TRUE(harken::hub::applyHandoffAcl(dir.path(), &error))
         << error.toStdString();
 
     acl_t acl = acl_get_file(QFile::encodeName(dir.path()).constData(),
@@ -213,7 +213,7 @@ TEST(AclHardeningTest, RejectsMissingDirectory)
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     QString error;
-    EXPECT_FALSE(VNH::applyHandoffAcl(
+    EXPECT_FALSE(harken::hub::applyHandoffAcl(
         dir.filePath(QStringLiteral("missing")), &error));
     EXPECT_FALSE(error.isEmpty());
 }
@@ -222,7 +222,7 @@ TEST(AclHardeningTest, RejectsMissingDirectory)
 
 TEST(AclHardeningTest, SddlDeniesSubdirectoriesForUsers)
 {
-    const QString sddl = VNH::handoffAclSddl();
+    const QString sddl = harken::hub::handoffAclSddl();
     EXPECT_TRUE(sddl.startsWith(QStringLiteral("D:P")));
     EXPECT_TRUE(sddl.contains(QStringLiteral("(A;;0x1200ab;;;BU)")));
     EXPECT_TRUE(sddl.contains(QStringLiteral("(A;OIIO;FA;;;CO)")));

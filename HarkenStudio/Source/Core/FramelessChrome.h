@@ -5,7 +5,7 @@
 
 class QWidget;
 
-namespace VNX {
+namespace harken::studio {
 
 using FramelessChromeInstaller = std::function<void(QWidget* window, const QString& title)>;
 

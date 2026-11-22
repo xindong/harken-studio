@@ -32,7 +32,7 @@
 #include <unistd.h>
 #endif
 
-namespace HarkenStudioCli {
+namespace harken::studio::cli {
 namespace {
 
 enum class InputState { Line, End, Interrupted, Error };
@@ -460,7 +460,7 @@ void writeShellResponse(QJsonObject response, bool json)
 #endif
 }
 
-DesktopShellResult runDesktopShell(VNX::IPCServer& dispatcher, bool json,
+DesktopShellResult runDesktopShell(harken::studio::IPCServer& dispatcher, bool json,
     const std::function<QJsonObject(ShellExitRequest)>& requestClose)
 {
     desktopInterrupted = 0;
@@ -556,7 +556,7 @@ int runShell(StudioSession& session, int timeoutMs, bool json,
         inputReady.notify_one();
         finish(0);
     });
-    const auto dirty = [&] { return !session.isRemote() && VNX::ProjectManager::instance().hasUnsavedChanges(); };
+    const auto dirty = [&] { return !session.isRemote() && harken::studio::ProjectManager::instance().hasUnsavedChanges(); };
     const auto unsaved = [] {
         return failure(QStringLiteral("UNSAVED_CHANGES"),
             QStringLiteral("Save with save_project before exiting, or use exit --discard."));

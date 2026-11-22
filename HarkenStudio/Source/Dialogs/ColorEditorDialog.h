@@ -5,10 +5,11 @@
 #include <QColor>
 #include <array>
 
+class QLineEdit;
 class QSpinBox;
 class QTimer;
 
-namespace VNX {
+namespace harken::studio {
 
 class ColorPicker;
 class ParameterBinding;
@@ -19,6 +20,7 @@ class ColorEditorDialog : public BaseDialog
 
 public:
     explicit ColorEditorDialog(const QColor& color, QWidget* parent = nullptr);
+    static QString hexText(const QColor& color);
     QColor currentColor() const { return color_; }
     void setCurrentColor(const QColor& color);
 
@@ -44,6 +46,7 @@ private:
     ColorPicker* picker_ = nullptr;
     std::array<QSpinBox*, 6> channels_{};
     ParameterBinding* alpha_ = nullptr;
+    QLineEdit* hexEdit_ = nullptr;
     QTimer* screenPickTimer_ = nullptr;
     QColor screenPickOriginal_;
     std::array<qreal, 3> screenPickHsv_{};

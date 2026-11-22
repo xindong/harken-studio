@@ -7,6 +7,7 @@
 #include "AuthoringPolicy.h"
 #include "AttenuationStore.h"
 #include "BusPlacementRules.h"
+#include "ConversionDefaults.h"
 #include "ItemTypeCatalog.h"
 #include "ProjectSerializer.h"
 #include "SoundSourceSemantics.h"
@@ -32,14 +33,14 @@
 #include <utility>
 
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 
 struct TemplateIdentityMap
 {
     QHash<uint32_t, uint32_t> objects;
-    QHash<harkenstudio::ObjectId, harkenstudio::ObjectId> stableIds;
+    QHash<harken::studio::types::ObjectId, harken::studio::types::ObjectId> stableIds;
     QHash<QUuid, QUuid> guids;
 };
 
@@ -48,7 +49,7 @@ void remintTree(ProjectData& project, ProjectItem* item, ProjectItem* parent,
 {
     if (!item) return;
     const uint32_t oldObjectId = item->objectID;
-    const harkenstudio::ObjectId oldStableId = item->runtimeId();
+    const harken::studio::types::ObjectId oldStableId = item->runtimeId();
     const QUuid oldGuid = item->guid;
     item->objectID = project.generateObjectID();
     item->guid = QUuid::createUuid();
@@ -60,7 +61,7 @@ void remintTree(ProjectData& project, ProjectItem* item, ProjectItem* parent,
         item->parentRef.guid = parent->guid;
     }
     if (oldObjectId != 0) identities.objects.insert(oldObjectId, item->objectID);
-    if (!harkenstudio::IsNull(oldStableId)) identities.stableIds.insert(oldStableId, item->runtimeId());
+    if (!harken::studio::types::IsNull(oldStableId)) identities.stableIds.insert(oldStableId, item->runtimeId());
     if (!oldGuid.isNull()) identities.guids.insert(oldGuid, item->guid);
     for (auto& child : item->children)
         remintTree(project, child.get(), item, identities);
@@ -74,7 +75,7 @@ void remapAttenuationReference(PlayablePropertyOccurrenceV1& properties,
     if (!properties.presence.Has(propertyId))
         return;
     const auto* value = properties.value(propertyId);
-    const auto* reference = value ? std::get_if<harkenstudio::ObjectId>(value) : nullptr;
+    const auto* reference = value ? std::get_if<harken::studio::types::ObjectId>(value) : nullptr;
     if (reference)
         properties.setValue(propertyId, identities.stableIds.value(*reference, *reference));
 }
@@ -108,7 +109,7 @@ void remapTree(ProjectItem* item, const TemplateIdentityMap& identities)
         }
         mix->bindings.replace(std::move(bindings));
     }
-    const auto remapGuid = [&](harkenprojectschema::AuthoringGuid& guid) {
+    const auto remapGuid = [&](harken::studio::project_schema::AuthoringGuid& guid) {
         const auto original = fromFieldGroupGuid(guid);
         guid = toFieldGroupGuid(identities.guids.value(original, original));
     };
@@ -324,9 +325,31 @@ bool TemplateApplyService::seedTemplateInto(
 
 bool TemplateApplyService::seedTemplateInto(
     ProjectData& project,
-    const ProjectTemplateData& templateData,
+    const ProjectTemplateData& sourceTemplateData,
     QString* error)
 {
+    auto templateData = sourceTemplateData;
+    const auto initializeConversion = [](auto&& self, QJsonObject item) -> QJsonObject {
+        if (item.value(QStringLiteral("fieldGroups")).isObject()) {
+            auto groups = item.value(QStringLiteral("fieldGroups")).toObject();
+            auto shared = groups.value(QStringLiteral("shared")).toObject();
+            if (!shared.contains(QStringLiteral("conversion"))) {
+                shared.insert(QStringLiteral("conversion"), QJsonObject{{QStringLiteral("inherit"), true}});
+                groups.insert(QStringLiteral("shared"), shared);
+                item.insert(QStringLiteral("fieldGroups"), groups);
+            }
+        }
+        if (item.value(QStringLiteral("children")).isArray()) {
+            QJsonArray children;
+            for (const auto& child : item.value(QStringLiteral("children")).toArray())
+                children.append(child.isObject() ? QJsonValue(self(self, child.toObject())) : child);
+            item.insert(QStringLiteral("children"), children);
+        }
+        return item;
+    };
+    for (qsizetype index = 0; index < templateData.content.size(); ++index)
+        if (templateData.content[index].isObject())
+            templateData.content[index] = initializeConversion(initializeConversion, templateData.content[index].toObject());
     auto setErr = [error](const QString& msg) -> bool {
         if (error) *error = msg;
         return false;
@@ -542,11 +565,11 @@ bool TemplateApplyService::seedTemplateInto(
         masterAuthoring.value(QStringLiteral("guid")).toString());
     const uint32_t sourceMasterObjectId =
         serializer.transientObjectIdForGuid(sourceMasterGuid);
-    const harkenstudio::ObjectId sourceMasterStableId =
+    const harken::studio::types::ObjectId sourceMasterStableId =
         serializer.transientRuntimeStableIdForGuid(sourceMasterGuid);
     if (sourceMasterObjectId != 0)
         identities.objects.insert(sourceMasterObjectId, master->objectID);
-    if (!harkenstudio::IsNull(sourceMasterStableId))
+    if (!harken::studio::types::IsNull(sourceMasterStableId))
         identities.stableIds.insert(sourceMasterStableId, master->runtimeId());
     if (!sourceMasterGuid.isNull())
         identities.guids.insert(sourceMasterGuid, master->guid);
@@ -561,6 +584,8 @@ bool TemplateApplyService::seedTemplateInto(
     for (auto& value : pending) {
         remapTree(value.item.get(), identities);
         remintSubentityStableIds(project, value.item.get());
+        if (PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(value.item->type))
+            ConversionDefaults::applyRootDefaults(project, value.item->fieldGroups.conversion);
         ProjectFileBinding binding;
         binding.parentFolder = value.folder;
         binding.rootItem = std::move(value.item);

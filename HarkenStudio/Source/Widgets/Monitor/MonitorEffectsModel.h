@@ -6,7 +6,7 @@
 #include <QString>
 #include <QVector>
 
-namespace VNX {
+namespace harken::studio {
 
 class MonitorEffectsModel : public QAbstractTableModel
 {
@@ -44,4 +44,4 @@ private:
     QVector<Monitor::EffectMonitorRow> rows_;
 };
 
-} // namespace VNX
+} // namespace harken::studio

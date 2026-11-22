@@ -1,6 +1,7 @@
 // Log ring: wait-free producer records, drop-oldest overwrite, exact
 // drop accounting at drain time, and the engine-level drain contract
 // (records are consumed and counted even when no sink is configured).
+#include <harken/HarkenDevelopment.h>
 #include "Common/TestUtil.h"
 
 #include "harken/core/LogRing.h"

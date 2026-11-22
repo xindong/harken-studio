@@ -10,7 +10,7 @@
 #include <QTimer>
 #include <QUrl>
 
-namespace VNH {
+namespace harken::hub {
 
 class UpdateCoordinator : public QObject
 {
@@ -36,8 +36,11 @@ public:
     void stop();
     bool checkNow(bool manual = true);
     void setAutomaticDownloadEnabled(bool enabled);
+#ifdef HARKEN_HUB_TEST_OVERRIDES
     bool isDownloading() const;
+#endif
     UpdateStateRecord currentState() const;
+    static void reconcileElevation(const QDateTime& now);
 
     void handleCheckResult(const UpdateCheckResult& result,
                            const QDateTime& now);
@@ -45,7 +48,7 @@ public:
                           std::shared_ptr<DownloadLease> lease = {});
 
 signals:
-    void stateChanged(const VNH::UpdateStateRecord& record);
+    void stateChanged(const harken::hub::UpdateStateRecord& record);
 
 private:
     bool persist(UpdateStateRecord& record, const QDateTime& now,

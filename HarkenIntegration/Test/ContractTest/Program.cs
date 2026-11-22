@@ -14,7 +14,7 @@ namespace Harken.Test
     //      including a Unity left/right pan-sign regression.
     //   3. Zero-GC hot path — drives Play / SetValue / SetVoice* / PostAction
     //      (by id) / Update and asserts the managed-allocation delta is zero;
-    //      needs the native HarkenCore library. If it is not loadable the gate
+    //      needs the native Harken Engine library. If it is not loadable the gate
     //      is reported SKIPPED (never silently green), per the honesty rule.
     //
     // Exit code: 0 when the ABI and coordinate gates pass and the zero-GC gate
@@ -23,7 +23,7 @@ namespace Harken.Test
     {
         private static int Main(string[] args)
         {
-            if (args.Length == 1 && (args[0] == "--attenuation-only" || args[0] == "--attenuation-old-native"))
+            if (args.Length == 1 && args[0] == "--attenuation-only")
             {
                 if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("HARKEN_NATIVE_DIR")))
                 {
@@ -31,36 +31,12 @@ namespace Harken.Test
                     return 2;
                 }
                 InstallNativeResolver(true);
-                return RunAbiFidelity() && RunAttenuationAbi(args[0] == "--attenuation-old-native") ? 0 : 1;
-            }
-            if (args.Length == 1 && args[0] == "--stream-sources-only")
-            {
-                InstallNativeResolver(true);
-                return RunAbiFidelity() && StreamSourceContract.Run() ? 0 : 1;
-            }
-            if (args.Length == 1 && args[0] == "--variables-only")
-            {
-                InstallNativeResolver(true);
-                if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("HARKEN_VARIABLE_INIT")))
-                {
-                    Console.Error.WriteLine("--variables-only requires HARKEN_VARIABLE_INIT.");
-                    return 2;
-                }
-                return RunAbiFidelity() && VariableApiContract.Run() ? 0 : 1;
-            }
-            if (args.Length == 1 && args[0] == "--state-only-unavailable")
-            {
-                InstallNativeResolver(true);
-                VnConfig config = HarkenEngine.DefaultConfig();
-                bool refused = HarkenEngine.Init(config) == VnResult.VN_CAPABILITY_UNAVAILABLE &&
-                    Emitter.CreateStateOnly(out Emitter emitter) == VnResult.VN_CAPABILITY_UNAVAILABLE && !emitter.IsValid;
-                Console.WriteLine("Old native StateOnly compatibility: " + (refused ? "PASS" : "FAIL"));
-                return refused ? 0 : 1;
+                return RunAbiFidelity() && RunAttenuationAbi() ? 0 : 1;
             }
             bool requireNative = false;
-            string currentWorldPath = null;
-            string packRoot = null;
-            string companionRoot = null;
+            string exportRoot = null;
+            string archiveRoot = null;
+            string residentBudgetRoot = null;
             for (int i = 0; i < args.Length; i++)
             {
                 string arg = args[i];
@@ -69,28 +45,30 @@ namespace Harken.Test
                     requireNative = true;
                     continue;
                 }
-                if (arg == "--current-world" && i + 1 < args.Length)
+                if (arg == "--archive-root" && i + 1 < args.Length)
                 {
-                    currentWorldPath = args[++i];
+                    archiveRoot = args[++i];
                     continue;
                 }
-                if (arg == "--pack-root" && i + 1 < args.Length)
+                if (arg == "--resident-budget-root" && i + 1 < args.Length)
                 {
-                    packRoot = args[++i];
+                    residentBudgetRoot = args[++i];
                     continue;
                 }
-                if (arg == "--companion-root" && i + 1 < args.Length)
+                if (arg == "--export-root" && i + 1 < args.Length)
                 {
-                    companionRoot = args[++i];
+                    exportRoot = args[++i];
                     continue;
                 }
                 Console.Error.WriteLine("Unknown argument: " + arg);
-                Console.Error.WriteLine("Usage: dotnet run --project HarkenIntegration/Test/ContractTest -- [--require-native] [--current-world path] [--pack-root path] [--companion-root path]");
+                Console.Error.WriteLine("Usage: dotnet run --project HarkenIntegration/Test/ContractTest -- [--require-native] [--export-root path | --archive-root path | --resident-budget-root path]");
                 return 2;
             }
 
             InstallNativeResolver(requireNative);
-            if (companionRoot != null) return RepositoryPublicationContract.Run(companionRoot) ? 0 : 1;
+            if (residentBudgetRoot != null) return ExportedPackContract.RunResidentBudget(residentBudgetRoot) ? 0 : 1;
+            if (archiveRoot != null) return ArchivePublicationContract.Run(archiveRoot) ? 0 : 1;
+            if (exportRoot != null) return ExportedPackContract.Run(exportRoot) ? 0 : 1;
 
             Console.WriteLine("== Harken C# binding gates ==");
             Console.WriteLine("Native mode : " + (requireNative ? "REQUIRED" : "OPTIONAL"));
@@ -99,13 +77,9 @@ namespace Harken.Test
             bool coordinatesOk = RunCoordinateConversions();
             bool bootstrapOk = RunPackBootstrapContract();
             int namePost = RunNamePostAndProvider();
-            int nativeBootstrap = RunNativePackBootstrap(packRoot);
-            int zeroGc = RunZeroGc(currentWorldPath);   // 0 PASS, 1 FAIL, 2 SKIP
+            int zeroGc = RunZeroGc();   // 0 PASS, 1 FAIL, 2 SKIP
             int remoteNative = RemoteCommunicationContract.RunNative();
-            bool repositoryNativeOk = !requireNative || RepositoryPublicationContract.Run();
-            bool companionNativeOk = !requireNative || CompanionDirectoryContract.Run();
-            companionNativeOk &= !requireNative || CompanionSourceContract.Run();
-            companionNativeOk &= !requireNative || StreamSourceContract.Run();
+            bool metadataVersionOk = PackMetadataVersionContract.Run();
 
             Console.WriteLine();
             Console.WriteLine("ABI fidelity : " + (abiOk ? "PASS" : "FAIL"));
@@ -113,16 +87,12 @@ namespace Harken.Test
             Console.WriteLine("Pack bootstrap: " + (bootstrapOk ? "PASS" : "FAIL"));
             Console.WriteLine("Name post     : " +
                 (namePost == 0 ? "PASS" : namePost == 2 ? "SKIP" : "FAIL"));
-            Console.WriteLine("Pack native   : " +
-                (nativeBootstrap == 0 ? "PASS" :
-                 nativeBootstrap == 2 ? "SKIP" :
-                 nativeBootstrap == 3 ? "NOT REQUESTED" : "FAIL"));
+            Console.WriteLine("Metadata version: " + (metadataVersionOk ? "PASS" : "FAIL"));
             Console.WriteLine("Zero-GC hot  : " + (zeroGc == 0 ? "PASS" : zeroGc == 2 ? "SKIP" : "FAIL"));
             Console.WriteLine("Remote native: " + (remoteNative == 0 ? "PASS" : remoteNative == 2 ? "SKIP" : "FAIL"));
             if (requireNative)
             {
-                Console.WriteLine("Repository publications: " + (repositoryNativeOk ? "PASS" : "FAIL"));
-                bool nativeOk = companionNativeOk && repositoryNativeOk && namePost == 0 && zeroGc == 0 && remoteNative == 0;
+                bool nativeOk = namePost == 0 && zeroGc == 0 && remoteNative == 0;
                 Console.WriteLine("Required native validation: " + (nativeOk ? "PASS" : "FAIL"));
                 if (namePost == 2 || zeroGc == 2 || remoteNative == 2)
                 {
@@ -130,9 +100,7 @@ namespace Harken.Test
                 }
             }
 
-            bool ok = companionNativeOk && repositoryNativeOk && variableApiOk && abiOk && coordinatesOk && bootstrapOk &&
-                (nativeBootstrap == 0 || nativeBootstrap == 3 ||
-                 (!requireNative && nativeBootstrap == 2)) &&
+            bool ok = metadataVersionOk && variableApiOk && abiOk && coordinatesOk && bootstrapOk &&
                 (namePost == 0 || (!requireNative && namePost == 2)) &&
                 (zeroGc == 0 || (!requireNative && zeroGc == 2)) &&
                 (remoteNative == 0 || (!requireNative && remoteNative == 2));
@@ -166,7 +134,7 @@ namespace Harken.Test
             return false;
         }
 
-        private static unsafe bool RunAttenuationAbi(bool oldNative)
+        private static unsafe bool RunAttenuationAbi()
         {
             VnConfig config = HarkenEngine.DefaultConfig();
             config.deviceMode = (uint)VnDeviceMode.VN_DEVICE_NULL;
@@ -192,32 +160,28 @@ namespace Harken.Test
                 ok &= AttenuationResult("Replace prefix612", HarkenNative.Vn_ReplaceAttenuation(existing, in desc), VnResult.VN_OK);
 
                 desc.structSize = (uint)Marshal.SizeOf<VnAttenuationDesc>();
-                VnResult expected = oldNative ? VnResult.VN_INVALID_ARG : VnResult.VN_OK;
                 ok &= AttenuationResult("Register current HPF off size=" + desc.structSize,
-                    HarkenNative.Vn_RegisterAttenuation(unused, in desc), expected);
+                    HarkenNative.Vn_RegisterAttenuation(unused, in desc), VnResult.VN_OK);
                 ok &= AttenuationResult("Replace current HPF off",
-                    HarkenNative.Vn_ReplaceAttenuation(existing, in desc), expected);
+                    HarkenNative.Vn_ReplaceAttenuation(existing, in desc), VnResult.VN_OK);
                 desc.highpassCurve.enabled = 1;
                 desc.highpassCurve.pointCount = 1;
                 desc.highpassCurve.pointsRaw[1] = BitConverter.SingleToUInt32Bits(1000);
                 ok &= AttenuationResult("Replace current HPF 1000Hz",
-                    HarkenNative.Vn_ReplaceAttenuation(existing, in desc), expected);
+                    HarkenNative.Vn_ReplaceAttenuation(existing, in desc), VnResult.VN_OK);
                 ok &= AttenuationResult("Register current HPF 1000Hz",
-                    HarkenNative.Vn_RegisterAttenuation(new VnObjectId(0, 0xe30004), in desc), expected);
-                if (!oldNative)
-                {
-                    desc.highpassCurve.pointsRaw[1] = 0;
-                    ok &= AttenuationResult("Replace current HPF 0Hz",
-                        HarkenNative.Vn_ReplaceAttenuation(existing, in desc), VnResult.VN_OK);
-                    desc.highpassCurve.pointsRaw[1] = BitConverter.SingleToUInt32Bits(-1);
-                    ok &= AttenuationResult("Replace negative HPF",
-                        HarkenNative.Vn_ReplaceAttenuation(existing, in desc), VnResult.VN_INVALID_ARG);
-                    desc.highpassCurve.pointsRaw[1] = 0;
-                    desc.highpassCurve.enabled = 2;
-                    ok &= AttenuationResult("Replace invalid HPF enabled",
-                        HarkenNative.Vn_ReplaceAttenuation(existing, in desc), VnResult.VN_INVALID_ARG);
-                }
-                Console.WriteLine("[Attenuation ABI] " + (oldNative ? "old native rejects current descriptor: " : "current native: ") + (ok ? "PASS" : "FAIL"));
+                    HarkenNative.Vn_RegisterAttenuation(new VnObjectId(0, 0xe30004), in desc), VnResult.VN_OK);
+                desc.highpassCurve.pointsRaw[1] = 0;
+                ok &= AttenuationResult("Replace current HPF 0Hz",
+                    HarkenNative.Vn_ReplaceAttenuation(existing, in desc), VnResult.VN_OK);
+                desc.highpassCurve.pointsRaw[1] = BitConverter.SingleToUInt32Bits(-1);
+                ok &= AttenuationResult("Replace negative HPF",
+                    HarkenNative.Vn_ReplaceAttenuation(existing, in desc), VnResult.VN_INVALID_ARG);
+                desc.highpassCurve.pointsRaw[1] = 0;
+                desc.highpassCurve.enabled = 2;
+                ok &= AttenuationResult("Replace invalid HPF enabled",
+                    HarkenNative.Vn_ReplaceAttenuation(existing, in desc), VnResult.VN_INVALID_ARG);
+                Console.WriteLine("[Attenuation ABI] current native: " + (ok ? "PASS" : "FAIL"));
                 return ok;
             }
             finally { HarkenEngine.Term(); }
@@ -264,7 +228,7 @@ namespace Harken.Test
             }
             catch (DllNotFoundException)
             {
-                Console.WriteLine("[NamePost] SKIP: native 'HarkenCore' library not found.");
+                Console.WriteLine("[NamePost] SKIP: native '" + HarkenNative.LibraryName + "' library not found.");
                 return 2;
             }
             catch (BadImageFormatException)
@@ -327,31 +291,23 @@ namespace Harken.Test
                     ok = false;
                 }
 
+#pragma warning disable CS0618
                 result = PackByteProvider.LoadPack(
                     22, FailProvider, null, out Pack pack);
-                if (result != VnResult.VN_PACK_PROVIDER_FAILED || pack.IsValid ||
-                    !PackByteProvider.LastProvideLeftSpanZero ||
-                    PackByteProvider.OutstandingPinCount != 0)
+                if (result != VnResult.VN_PACK_PROVIDER_FAILED || pack.IsValid)
                 {
-                    Console.WriteLine(
-                        "[NamePost] FAIL: failing provider returned " + result +
-                        " spanZero=" + PackByteProvider.LastProvideLeftSpanZero +
-                        " pins=" + PackByteProvider.OutstandingPinCount + ".");
+                    Console.WriteLine("[NamePost] FAIL: failing provider returned " + result + ".");
                     ok = false;
                 }
 
                 result = PackByteProvider.LoadPack(
                     22, GarbageProvider, null, out pack);
+#pragma warning restore CS0618
                 if ((result != VnResult.VN_BAD_PACK &&
                      result != VnResult.VN_PACK_INCOMPATIBLE) ||
-                    pack.IsValid ||
-                    PackByteProvider.LastReleaseCalls < 1 ||
-                    PackByteProvider.OutstandingPinCount != 0)
+                    pack.IsValid)
                 {
-                    Console.WriteLine(
-                        "[NamePost] FAIL: garbage provider returned " + result +
-                        " releases=" + PackByteProvider.LastReleaseCalls +
-                        " pins=" + PackByteProvider.OutstandingPinCount + ".");
+                    Console.WriteLine("[NamePost] FAIL: garbage provider returned " + result + ".");
                     ok = false;
                 }
 
@@ -373,14 +329,6 @@ namespace Harken.Test
         {
             payload = null;
             return VnResult.VN_PACK_PROVIDER_FAILED;
-        }
-
-        static VnResult ValidProvider(
-            ulong packStableId, string relativeLocatorUtf8, uint variantKey,
-            ulong expectedContentHash, out byte[] payload, object state)
-        {
-            payload = (byte[])state;
-            return VnResult.VN_OK;
         }
 
         static VnResult GarbageProvider(
@@ -430,6 +378,37 @@ namespace Harken.Test
             if (ok)
             {
                 Console.WriteLine("[Coordinates] Unity mapping matches the Harken spatial contract.");
+            }
+            return ok;
+        }
+
+        private static VnVec3 Cross(VnVec3 a, VnVec3 b)
+        {
+            return new VnVec3
+            {
+                x = a.y * b.z - a.z * b.y,
+                y = a.z * b.x - a.x * b.z,
+                z = a.x * b.y - a.y * b.x
+            };
+        }
+
+        private static float Dot(VnVec3 a, VnVec3 b)
+        {
+            return a.x * b.x + a.y * b.y + a.z * b.z;
+        }
+
+        private static bool CheckVector(string name, VnVec3 actual, float x, float y, float z)
+        {
+            const float epsilon = 0.000001f;
+            bool ok =
+                Math.Abs(actual.x - x) <= epsilon &&
+                Math.Abs(actual.y - y) <= epsilon &&
+                Math.Abs(actual.z - z) <= epsilon;
+            if (!ok)
+            {
+                Console.WriteLine(
+                    "[Coordinates] " + name + " FAIL: expected (" + x + ", " + y + ", " + z +
+                    "), got (" + actual.x + ", " + actual.y + ", " + actual.z + ").");
             }
             return ok;
         }
@@ -500,114 +479,7 @@ namespace Harken.Test
             return ok;
         }
 
-        private static int RunNativePackBootstrap(string packRoot)
-        {
-            if (string.IsNullOrEmpty(packRoot))
-            {
-                return 3;
-            }
-            string fullRoot = Path.GetFullPath(packRoot);
-            string initPath = Path.Combine(fullRoot, "Init.pack");
-            if (!File.Exists(initPath) ||
-                !File.Exists(Path.Combine(fullRoot, "Content.pack")))
-            {
-                Console.WriteLine(
-                    "[PackNative] FAIL: shared fixture is incomplete at " +
-                    fullRoot + ".");
-                return 1;
-            }
-
-            bool initialized = false;
-            try
-            {
-                VnResult result = Packs.InspectInitPack(initPath, out InitPackInspection inspection);
-                if (result != VnResult.VN_OK) return 1;
-                VnConfig config = HarkenEngine.DefaultConfig();
-                config.deviceMode = (uint)VnDeviceMode.VN_DEVICE_NULL;
-                config.maxPacks = 1;
-                config.maxActions = 64;
-                config.maxResidentDefinitionBytes = 32UL << 20;
-                if (PackBootstrap.ApplyRecommendations(ref config, inspection, 1) != VnResult.VN_OK ||
-                    HarkenEngine.Init(config) != VnResult.VN_OK) return 1;
-                initialized = true;
-                var members = new[] {
-                    new CanonicalPackMember(inspection.PackStableId, 2, provider: ValidProvider,
-                        providerState: File.ReadAllBytes(initPath)),
-                    new CanonicalPackMember(22, 3, provider: ValidProvider,
-                        providerState: File.ReadAllBytes(Path.Combine(fullRoot, "Content.pack")))
-                };
-                int provides = PackByteProvider.LastProvideCalls;
-                int releases = PackByteProvider.LastReleaseCalls;
-                result = Packs.ActivateCanonicalPackSet(members, 1, out var report, out var rows);
-                bool ok = result == VnResult.VN_OK && inspection.CatalogEntries == 0 &&
-                    rows.Length == 2 && Array.TrueForAll(rows, row => row.handle != 0) &&
-                    PackByteProvider.LastProvideCalls - provides == 2 &&
-                    PackByteProvider.LastReleaseCalls - releases == 2 && PackByteProvider.OutstandingPinCount == 0;
-                if (!ok) return 1;
-                result = Actions.Post(new VnObjectId(0x3da91a64b9474560UL, 0xAC710100UL),
-                    Emitter.None, out ActionFiring firing);
-                ok &= result == VnResult.VN_OK && firing.IsValid;
-                // The shared native fixture now contains 1025 Actions, even
-                // with the legacy maxActions hint set to 64 above.
-                ok &= Actions.Post(new VnObjectId(0x3da91a64b9474560UL, 0xAC710500UL),
-                    Emitter.None, out ActionFiring lastFiring) == VnResult.VN_OK && lastFiring.IsValid;
-                ok &= Actions.Post(new VnObjectId(0x3da91a64b9474560UL, 0xAC710501UL),
-                    Emitter.None, out _) == VnResult.VN_UNKNOWN_ID;
-                ok &= Packs.UnloadCanonicalPackSet(new Pack(report.initHandle),
-                    report.resultSetRevision, report.resultSetRevision + 1) == VnResult.VN_OK;
-                Console.WriteLine(ok ? "[PackNative] shared Init/content fixture PASS."
-                    : "[PackNative] shared Init/content fixture FAIL.");
-                return ok ? 0 : 1;
-            }
-            catch (DllNotFoundException)
-            {
-                Console.WriteLine("[PackNative] SKIP: native 'HarkenCore' library not found.");
-                return 2;
-            }
-            catch (BadImageFormatException)
-            {
-                Console.WriteLine("[PackNative] SKIP: native library architecture mismatch.");
-                return 2;
-            }
-            finally
-            {
-                if (initialized) HarkenEngine.Term();
-            }
-        }
-
-        private static VnVec3 Cross(VnVec3 a, VnVec3 b)
-        {
-            return new VnVec3
-            {
-                x = a.y * b.z - a.z * b.y,
-                y = a.z * b.x - a.x * b.z,
-                z = a.x * b.y - a.y * b.x
-            };
-        }
-
-        private static float Dot(VnVec3 a, VnVec3 b)
-        {
-            return a.x * b.x + a.y * b.y + a.z * b.z;
-        }
-
-        private static bool CheckVector(string name, VnVec3 actual, float x, float y, float z)
-        {
-            const float epsilon = 0.000001f;
-            bool ok =
-                Math.Abs(actual.x - x) <= epsilon &&
-                Math.Abs(actual.y - y) <= epsilon &&
-                Math.Abs(actual.z - z) <= epsilon;
-            if (!ok)
-            {
-                Console.WriteLine(
-                    "[Coordinates] " + name + " FAIL: expected (" + x + ", " + y + ", " + z +
-                    "), got (" + actual.x + ", " + actual.y + ", " + actual.z + ").");
-            }
-            return ok;
-        }
-
-        // ---- Gate 3: zero-GC hot path (needs the native library) ------------
-        private static int RunZeroGc(string currentWorldPath)
+        private static int RunZeroGc()
         {
             VnObjectId actionId = new VnObjectId(0x3da91a64b9474560UL, 0xAC7101);
             VnObjectId varId = new VnObjectId(0x3da91a64b9474560UL, 0x5A1);
@@ -625,21 +497,21 @@ namespace Harken.Test
             }
             catch (DllNotFoundException)
             {
-                Console.WriteLine("[GC] SKIP: native 'HarkenCore' library not found. Build HARKEN_BUILD_SHARED");
-                Console.WriteLine("      and set HARKEN_NATIVE_DIR to the directory holding HarkenCore.dll,");
+                Console.WriteLine("[GC] SKIP: native '" + HarkenNative.LibraryName + "' library not found. Build HARKEN_BUILD_SHARED");
+                Console.WriteLine("      and set HARKEN_NATIVE_DIR to the directory holding the Harken Engine library,");
                 Console.WriteLine("      or place it next to the runner. ABI gate above is independent of this.");
                 return 2;
             }
             catch (BadImageFormatException)
             {
-                Console.WriteLine("[GC] SKIP: native 'HarkenCore' library architecture mismatch (need x64).");
+                Console.WriteLine("[GC] SKIP: native '" + HarkenNative.LibraryName + "' library architecture mismatch (need x64).");
                 return 2;
             }
 
             try
             {
                 if (!CheckRuntimeFaultDiagnostics()) return 1;
-                if (!CheckCurrentWorldContract(currentWorldPath))
+                if (!CheckCurrentWorldContract())
                 {
                     return 1;
                 }
@@ -723,10 +595,12 @@ namespace Harken.Test
             return passed;
         }
 
-        private static bool CheckCurrentWorldContract(string artifactPath)
+        private static bool CheckCurrentWorldContract()
         {
+#pragma warning disable CS0618
             VnResult result = CurrentWorld.Load(
                 null, out CurrentWorldLoadReport report);
+#pragma warning restore CS0618
             if (result != VnResult.VN_INVALID_ARG ||
                 report.Status !=
                     VnCurrentWorldLoadStatus.VN_CURRENT_WORLD_LOAD_INVALID_ARGUMENT ||
@@ -739,30 +613,6 @@ namespace Harken.Test
                 return false;
             }
             Console.WriteLine("[CurrentWorld] null path report contract PASS.");
-            if (string.IsNullOrEmpty(artifactPath))
-            {
-                return true;
-            }
-
-            result = CurrentWorld.Load(
-                artifactPath, out report);
-            const ulong actionDefinitions = 1UL << 9;
-            if (result != VnResult.VN_OK ||
-                report.Status != VnCurrentWorldLoadStatus.VN_CURRENT_WORLD_LOAD_OK ||
-                report.Result != VnResult.VN_OK ||
-                report.ResultGeneration == 0 ||
-                report.RuntimeSemanticFingerprint == 0 ||
-                (report.CapabilityMask & actionDefinitions) == 0)
-            {
-                Console.WriteLine(
-                    "[CurrentWorld] FAIL: Action artifact returned " + result +
-                    " with status " + report.Status +
-                    ", report result " + report.Result +
-                    ", generation " + report.ResultGeneration +
-                    ", capability mask 0x" + report.CapabilityMask.ToString("X") + ".");
-                return false;
-            }
-            Console.WriteLine("[CurrentWorld] Studio-authored Action artifact load PASS.");
             return true;
         }
 
@@ -830,7 +680,7 @@ namespace Harken.Test
         }
 
         // Harness-only helper (not part of the shipped binding): points the
-        // DllImport at the dev build's HarkenCore so `dotnet run` can find it.
+        // DllImport at the dev build's Harken Engine library so `dotnet run` can find it.
         // The binding itself uses the compile-time-baked name and never does
         // runtime resolution.
         private static void InstallNativeResolver(bool requireNative)
@@ -849,7 +699,7 @@ namespace Harken.Test
                     {
                         continue;
                     }
-                    foreach (string file in new[] { "HarkenCore.dll", "libHarkenCore.so", "libHarkenCore.dylib" })
+                    foreach (string file in new[] { name + ".dll", "lib" + name + ".so", "lib" + name + ".dylib" })
                     {
                         string candidate = Path.Combine(dir, file);
                         if (File.Exists(candidate) && NativeLibrary.TryLoad(candidate, out IntPtr h))
@@ -861,7 +711,7 @@ namespace Harken.Test
                 if (explicitDirIsRequired)
                 {
                     throw new DllNotFoundException(
-                        "No loadable HarkenCore library found in required HARKEN_NATIVE_DIR: " + explicitDir);
+                        "No loadable " + name + " library found in required HARKEN_NATIVE_DIR: " + explicitDir);
                 }
                 return IntPtr.Zero; // fall back to the default OS search
             });

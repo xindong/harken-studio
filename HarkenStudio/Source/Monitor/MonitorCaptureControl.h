@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 namespace Monitor {
 
 enum class MonitorLeaseProjection
@@ -55,4 +55,4 @@ MonitorMeasurementIntent hidePanelMeasurement(
 std::string captureControlStatusText(const MonitorCaptureControlState& state);
 
 } // namespace Monitor
-} // namespace VNX
+} // namespace harken::studio

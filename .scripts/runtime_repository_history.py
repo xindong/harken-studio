@@ -4,7 +4,6 @@ import argparse
 import hashlib
 import importlib.util
 import json
-import os
 import platform
 import re
 import shutil
@@ -166,15 +165,8 @@ def verify_header_prefixes(
     current_root: Path,
     abi_module: Any,
 ) -> dict[str, Any]:
-    relative = Path(
-        "HarkenEngine/Source/Runtime/api/include/harken/Harken.h"
-    )
-    old = abi_module.parse_header_contract(
-        (old_root / relative).read_text(encoding="utf-8")
-    )
-    current = abi_module.parse_header_contract(
-        (current_root / relative).read_text(encoding="utf-8")
-    )
+    old = abi_module.parse_header_contract(public_header_text(old_root))
+    current = abi_module.parse_header_contract(public_header_text(current_root))
     old_functions = index_functions("old", old["functions"])
     current_functions = index_functions(
         "current", current["functions"]
@@ -218,7 +210,7 @@ def verify_wire_layouts(
     wire_module: Any,
 ) -> dict[str, Any]:
     relative = Path(
-        "HarkenEngine/Source/Tooling/Remote/wire/"
+        "HarkenEngine/Tool/HostControl/wire/"
         "harken_wire_table.json"
     )
     old_table = load_json(old_root / relative)
@@ -344,6 +336,7 @@ def cache_record(
         "CMAKE_HOME_DIRECTORY",
         "HARKEN_RUNTIME_ONLY",
         "HARKEN_BUILD_CORE",
+        "HARKEN_BUILD_ENGINE",
         "HARKEN_BUILD_EDITOR",
         "HARKEN_BUILD_HUB",
         "HARKEN_BUILD_TOOLS",
@@ -354,7 +347,6 @@ def cache_record(
         "HARKEN_BUILD_RUNTIME_BENCHMARKS",
         "HARKEN_BUILD_RT_QUALIFICATION",
         "HARKEN_PUBLIC_INCLUDE_DIR",
-        "HARKEN_BINDING_PIN_DIR",
     )
     return {
         **record,
@@ -427,14 +419,14 @@ def single_file(root: Path, pattern: str) -> Path:
     return matches[0]
 
 
-def toolchain_record(build: Path) -> dict[str, Any]:
+def toolchain_record(build: Path, target: str) -> dict[str, Any]:
     compiler_file = single_file(
         build / "CMakeFiles", "*/CMakeCXXCompiler.cmake"
     )
     system_file = single_file(
         build / "CMakeFiles", "*/CMakeSystem.cmake"
     )
-    project_file = build / "harken_core_shared.vcxproj"
+    project_file = single_file(build, f"**/{target}.vcxproj")
     compiler_values = parse_cmake_set_file(compiler_file)
     system_values = parse_cmake_set_file(system_file)
     required_compiler = {
@@ -489,7 +481,50 @@ def toolchain_record(build: Path) -> dict[str, Any]:
     }
 
 
+def declares_engine_editions(root: Path) -> bool:
+    cmake_source = (root / "CMakeLists.txt").read_text(encoding="utf-8")
+    return re.search(r"\boption\s*\(\s*HARKEN_BUILD_ENGINE\b", cmake_source) is not None
+
+
+def verified_library_name(root: Path) -> str:
+    return "HarkenEngineDev.dll" if declares_engine_editions(root) else "HarkenCore.dll"
+
+
+def verified_target(root: Path) -> str:
+    return "harken_engine_dev" if declares_engine_editions(root) else "harken_core_shared"
+
+
+def public_header_text(root: Path) -> str:
+    return "\n".join(
+        header.read_text(encoding="utf-8")
+        for directory in public_include_dirs(root)
+        for header in (directory / "harken/ObjectId.h", directory / "harken/Harken.h",
+                       directory / "harken/HarkenDevelopment.h")
+        if header.is_file()
+    )
+
+
+def public_include_dirs(root: Path) -> list[Path]:
+    if declares_engine_editions(root):
+        return [root / "HarkenEngine/Source/Core/api/include",
+                root / "HarkenEngine/Source/Development/include"]
+    return [root / "HarkenEngine/Source/Runtime/api/include"]
+
+
 def runtime_build_options(root: Path) -> dict[str, str]:
+    if declares_engine_editions(root):
+        return {
+            "HARKEN_BUILD_ENGINE": "ON",
+            "HARKEN_BUILD_ENGINE_DEV": "ON",
+            "HARKEN_BUILD_EDITOR": "OFF",
+            "HARKEN_BUILD_TOOLS": "OFF",
+            "HARKEN_BUILD_HUB": "OFF",
+            "HARKEN_BUILD_RUNTIME_UNIT_TESTS": "OFF",
+            "HARKEN_BUILD_EDITOR_UNIT_TESTS": "OFF",
+            "HARKEN_BUILD_HUB_UNIT_TESTS": "OFF",
+            "HARKEN_BUILD_RUNTIME_BENCHMARKS": "OFF",
+            "HARKEN_BUILD_RT_QUALIFICATION": "OFF",
+        }
     options = {
         "HARKEN_BUILD_SHARED": "ON",
         "HARKEN_BUILD_RUNTIME_UNIT_TESTS": "OFF",
@@ -540,7 +575,7 @@ def rebuild_runtime(
         "--config",
         configuration,
         "--target",
-        "harken_core_shared",
+        verified_target(root),
         "--clean-first",
         "--parallel",
     ]
@@ -561,15 +596,14 @@ def rebuild_runtime(
         ),
         "compile": command_record(build_command, root, compiled),
         "cache": cache,
-        "toolchain": toolchain_record(build),
+        "toolchain": toolchain_record(build, verified_target(root)),
     }
 
 
 def rebuild_client(
     source: Path,
     build: Path,
-    include: Path,
-    binding_pin: Path,
+    include: list[Path],
     executable: Path,
     configuration: str,
 ) -> dict[str, Any]:
@@ -591,8 +625,7 @@ def rebuild_client(
         "Visual Studio 17 2022",
         "-A",
         "x64",
-        "-DHARKEN_PUBLIC_INCLUDE_DIR=%s" % include,
-        "-DHARKEN_BINDING_PIN_DIR=%s" % binding_pin,
+        "-DHARKEN_PUBLIC_INCLUDE_DIR=%s" % ";".join(str(path) for path in include),
     ]
     configure = run(configure_command, cwd=source)
     build_command = [
@@ -613,13 +646,11 @@ def rebuild_client(
             "CMAKE_HOME_DIRECTORY": str(source),
             "CMAKE_GENERATOR": "Visual Studio 17 2022",
             "CMAKE_GENERATOR_PLATFORM": "x64",
-            "HARKEN_PUBLIC_INCLUDE_DIR": str(include),
-            "HARKEN_BINDING_PIN_DIR": str(binding_pin),
+            "HARKEN_PUBLIC_INCLUDE_DIR": [str(path) for path in include],
         },
         {
             "CMAKE_HOME_DIRECTORY",
             "HARKEN_PUBLIC_INCLUDE_DIR",
-            "HARKEN_BINDING_PIN_DIR",
         },
     )
     return {
@@ -631,37 +662,16 @@ def rebuild_client(
     }
 
 
-def expected_managed_project(old_root: Path) -> Path:
-    return (
-        old_root / "HarkenTest/Binding/AbiFidelity.csproj"
-    ).resolve()
-
-
-def managed_output_index(output: Path) -> dict[str, Any]:
-    if not output.is_dir():
-        fail("managed output directory does not exist: %s" % output)
-    files = sorted(path for path in output.iterdir() if path.is_file())
-    if not files:
-        fail("managed output directory is empty: %s" % output)
-    return {
-        path.name: file_record(path)
-        for path in files
-    }
-
-
 def verify_generators(root: Path, *, include_manifest: bool) -> list[str]:
     scripts = [
         Path(
-            "HarkenEngine/Source/Tooling/Binding/gen_binding.py"
-        ),
-        Path(
-            "HarkenEngine/Source/Tooling/Remote/wire/gen_wire.py"
+            "HarkenEngine/Tool/HostControl/wire/gen_wire.py"
         ),
     ]
     if include_manifest:
         scripts.append(
             Path(
-                "HarkenEngine/Source/Tooling/Abi/"
+                "HarkenEngine/Source/Core/api/abi/"
                 "gen_abi_manifest.py"
             )
         )
@@ -686,9 +696,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--configuration", default="Release")
     parser.add_argument("--old-commit", required=True)
     parser.add_argument("--current-commit", required=True)
-    parser.add_argument(
-        "--old-managed-project", type=Path, required=True
-    )
     parser.add_argument("--output", type=Path, required=True)
     return parser.parse_args()
 
@@ -702,16 +709,8 @@ def main() -> int:
     current_build = args.current_build.resolve()
     old_client = args.old_client.resolve()
     current_client = args.current_client.resolve()
-    old_managed_project = args.old_managed_project.resolve()
     if args.configuration != "Release":
         fail("repository-history fixture requires Release configuration")
-    required_managed_project = expected_managed_project(old_root)
-    if old_managed_project != required_managed_project:
-        fail(
-            "old managed project must be %s"
-            % required_managed_project
-        )
-    file_record(old_managed_project)
 
     old_git = git_info(old_root)
     current_git = git_info(current_root)
@@ -734,7 +733,7 @@ def main() -> int:
 
     current_abi_script = (
         current_root
-        / "HarkenEngine/Source/Tooling/Abi/gen_abi_manifest.py"
+        / "HarkenEngine/Source/Core/api/abi/gen_abi_manifest.py"
     )
     abi_module = load_module(
         "history_current_abi", current_abi_script
@@ -742,7 +741,7 @@ def main() -> int:
     wire_module = load_module(
         "history_current_wire",
         current_root
-        / "HarkenEngine/Source/Tooling/Remote/wire/gen_wire.py",
+        / "HarkenEngine/Tool/HostControl/wire/gen_wire.py",
     )
 
     header_result = verify_header_prefixes(
@@ -787,27 +786,23 @@ def main() -> int:
     old_client_build_evidence = rebuild_client(
         client_source,
         old_client_build,
-        old_root / "HarkenEngine/Source/Runtime/api/include",
-        old_root
-        / "HarkenEngine/Source/Tooling/Binding/generated",
+        public_include_dirs(old_root),
         old_client,
         config,
     )
     current_client_build_evidence = rebuild_client(
         client_source,
         current_client_build,
-        current_root / "HarkenEngine/Source/Runtime/api/include",
-        current_root
-        / "HarkenEngine/Source/Tooling/Binding/generated",
+        public_include_dirs(current_root),
         current_client,
         config,
     )
 
     old_dll = (
-        old_build / "bin" / config / "HarkenCore.dll"
+        old_build / "bin" / config / verified_library_name(old_root)
     ).resolve()
     current_dll = (
-        current_build / "bin" / config / "HarkenCore.dll"
+        current_build / "bin" / config / verified_library_name(current_root)
     ).resolve()
     dumpbin = find_dumpbin()
     old_exports, old_export_hash = public_exports(
@@ -819,12 +814,12 @@ def main() -> int:
 
     old_table = load_json(
         old_root
-        / "HarkenEngine/Source/Tooling/Remote/wire/"
+        / "HarkenEngine/Tool/HostControl/wire/"
         "harken_wire_table.json"
     )
     current_table = load_json(
         current_root
-        / "HarkenEngine/Source/Tooling/Remote/wire/"
+        / "HarkenEngine/Tool/HostControl/wire/"
         "harken_wire_table.json"
     )
     expected_old = sorted(
@@ -864,64 +859,6 @@ def main() -> int:
             str(old_dll),
         ]
     )
-
-    # The historical managed client predates the artifact rename. Give only
-    # that ABI fixture the new binary under its original loading contract.
-    managed_native_dir = current_build / "history-managed-native"
-    managed_native_dir.mkdir(parents=True, exist_ok=True)
-    managed_native = managed_native_dir / "HarkenCore.dll"
-    shutil.copyfile(current_dll, managed_native)
-    environment = os.environ.copy()
-    environment["HARKEN_NATIVE_DIR"] = str(managed_native_dir)
-    managed_build_command = [
-        "dotnet",
-        "build",
-        str(old_managed_project),
-        "-c",
-        config,
-        "--nologo",
-        "--no-incremental",
-    ]
-    managed_build = run(
-        managed_build_command,
-        cwd=old_root,
-        env=environment,
-    )
-    managed_output_dir = (
-        old_managed_project.parent
-        / "bin"
-        / config
-        / "net9.0"
-    )
-    managed_assembly = (
-        managed_output_dir / "HarkenAbiFidelity.dll"
-    ).resolve()
-    managed_run_command = [
-        "dotnet",
-        str(managed_assembly),
-        "--require-native",
-    ]
-    managed_run = run(
-        managed_run_command,
-        cwd=old_root,
-        env=environment,
-    )
-    managed = {
-        "result": "PASS",
-        "project": file_record(old_managed_project),
-        "sourceRoot": str(old_root),
-        "relevantEnvironment": {
-            "HARKEN_NATIVE_DIR": str(managed_native_dir),
-        },
-        "historicalFilenameAlias": file_record(managed_native),
-        "build": command_record(
-            managed_build_command, old_root, managed_build
-        ),
-        "run": command_record(
-            managed_run_command, old_root, managed_run
-        ),
-        "outputs": managed_output_index(managed_output_dir),
-    }
 
     report = {
         "kind": "harken-runtime-repository-history-compatibility",
@@ -1001,7 +938,6 @@ def main() -> int:
                 "downlevelResult": "PASS",
                 "stdout": current_to_old.stdout.strip(),
             },
-            "oldManagedSdkToCurrentRuntime": managed,
         },
         "releaseProvenance": {
             "status": "EXTERNAL_BLOCKED",
@@ -1017,15 +953,6 @@ def main() -> int:
                 ).stdout.splitlines()[0],
                 "binary": file_record(
                     Path(shutil.which("cmake") or "").resolve()
-                ),
-            },
-            "dotnet": {
-                "version": run(
-                    ["dotnet", "--version"]
-                ).stdout.strip(),
-                "info": run(["dotnet", "--info"]).stdout,
-                "binary": file_record(
-                    Path(shutil.which("dotnet") or "").resolve()
                 ),
             },
             "dumpbin": file_record(dumpbin),

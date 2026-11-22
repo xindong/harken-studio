@@ -16,7 +16,7 @@
 #include <QSet>
 #include <algorithm>
 
-namespace VNX {
+namespace harken::studio {
 
 ProjectItem* findItemByPathInProject(ProjectData* project, const QString& path);
 ProjectItem* findItemByObjectIDInProject(ProjectData* project, uint32_t objectID);

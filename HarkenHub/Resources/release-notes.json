@@ -1,17 +1,59 @@
 {
   "schemaVersion": 1,
+  "unreleased": [
+    {
+      "category": "improved",
+      "text": "Unity CLI output and version 4 operation reports use package_preflight (formerly sdk_preflight), compare_package (compare_sdk), install_package (install_sdk) and inspect_installed_package (inspect_installed_sdk). Unreal operation steps use migrate_package (migrate_sdk), validate_package (validate_sdk), apply_package (apply_sdk) and remove_package (remove_sdk)."
+    }
+  ],
   "excludedPullRequests": {
     "versionOnly": [],
-    "noHubUserChange": [74, 85, 140, 276],
+    "noHubUserChange": [74, 85, 140, 276, 321],
     "archivedReleases": [18, 20, 30, 31, 34, 49, 56, 59, 61, 63, 70, 76, 80, 82, 98, 100, 102, 105, 109, 113, 117, 121, 133, 136, 141, 143, 144, 147, 148]
   },
   "releases": [
     {
       "version": "0.2.4",
-      "date": "2026-11-06",
-      "pullRequests": [277],
-      "contributors": ["liuxin2-sys"],
+      "date": "2026-11-17",
+      "pullRequests": [277, 284, 320, 322, 326, 328],
+      "contributors": ["liuxin2-sys", "Probus-XD"],
       "changes": [
+        {
+          "category": "improved",
+          "text": "Support Unity Integration Packages identified by package.json without the retired integration manifest; check package files without pre-validating Unity target runtimes."
+        },
+        {
+          "category": "added",
+          "text": "Manage projects, Studio versions, Unity integrations, settings and updates from the command line without opening the Hub window."
+        },
+        {
+          "category": "added",
+          "text": "Open the offline CLI user guide and AI command reference from a separate group in Settings, in English or Simplified Chinese."
+        },
+        {
+          "category": "added",
+          "text": "Choose Follow System, Light or Dark in Settings and apply the theme immediately."
+        },
+        {
+          "category": "improved",
+          "text": "Use the new Hub icon consistently across light and dark themes, windows, the taskbar, tray, shortcuts, installer and update helper."
+        },
+        {
+          "category": "improved",
+          "text": "Explain files in both current and older Unity API folders in Integration Package change previews."
+        },
+        {
+          "category": "improved",
+          "text": "Show the current project filename after a renamed project is added again."
+        },
+        {
+          "category": "improved",
+          "text": "Preserve independent settings when the Hub window and command-line tools save preferences at the same time."
+        },
+        {
+          "category": "improved",
+          "text": "Review complete CLI repair and removal file lists, reject changed installation approvals, and recover interrupted Studio update attempts."
+        },
         {
           "category": "improved",
           "text": "Close applications using Harken Hub files before continuing Windows setup, without prompting to restart the computer."

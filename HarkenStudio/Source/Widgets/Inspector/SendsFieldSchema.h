@@ -6,7 +6,7 @@
 #include "Core/ProjectManager.h"
 #include "Shared/SchemaFieldPick.h"
 
-namespace VNX {
+namespace harken::studio {
 
 inline PropertyDescriptor sendsInspectorDescriptor()
 {

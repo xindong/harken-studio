@@ -3,7 +3,7 @@
 #include <harken_studio/ObjectId.h>
 #include <cstdint>
 
-namespace VNX::Monitor {
+namespace harken::studio::Monitor {
 
 enum class DesignerEventType { None, Action, Step, Playable, Variable, GameObject };
 
@@ -35,7 +35,6 @@ inline constexpr auto kMonitorComparePartiallyComparable = 1;
 inline constexpr auto kMonitorConcurrentPoll = -332;
 inline constexpr auto kMonitorDropDerivedInput = 5;
 inline constexpr auto kMonitorDropHubFanout = 2;
-inline constexpr auto kMonitorDropRecorderQueue = 3;
 inline constexpr auto kMonitorDropRemoteTransport = 4;
 inline constexpr auto kMonitorDropSourceProducer = 1;
 inline constexpr auto kMonitorEntityAction = 3;
@@ -114,7 +113,6 @@ inline constexpr auto kMonitorPermObserveEvents = 2;
 inline constexpr auto kMonitorPermObserveMeasurements = 4;
 inline constexpr auto kMonitorPermObserveState = 1;
 inline constexpr auto kMonitorPermRawAudio = 32;
-inline constexpr auto kMonitorPermRecord = 16;
 inline constexpr auto kMonitorPermSymbols = 64;
 inline constexpr auto kMonitorPlanPending = 0;
 inline constexpr auto kMonitorRecordingStateActive = 1;
@@ -143,7 +141,7 @@ inline constexpr auto kMonitorSessionChunkHeaderBytes = 32u;
 inline constexpr auto kMonitorSessionCommitFooterBytes = 24u;
 inline constexpr auto kMonitorSessionCommitMagic = 0x3031544d434e56ull;
 inline constexpr auto kMonitorSessionFileMagic = 0x30314e4f4d4e56ull;
-inline constexpr auto kMonitorSessionFormatMajor = 1u;
+inline constexpr auto kMonitorSessionFormatMajor = 2u;
 inline constexpr auto kMonitorSessionFormatMinor = 0u;
 inline constexpr auto kMonitorStaleLease = -336;
 inline constexpr auto kMonitorStaleSession = -331;
@@ -358,8 +356,8 @@ struct MonitorFactCause {
 
 struct MonitorFactTarget {
     uint64_t handle{};
-    harkenstudio::ObjectId projectId{};
-    harkenstudio::ObjectId objectId{};
+    harken::studio::types::ObjectId projectId{};
+    harken::studio::types::ObjectId objectId{};
     uint64_t worldGeneration{};
     uint64_t programSemanticFingerprint{};
     uint64_t contentRevision{};
@@ -377,7 +375,7 @@ struct MonitorExecutionFactV1 {
     uint64_t validityLo{};
     uint64_t validityHi{};
     uint64_t timestampNs{};
-    harkenstudio::ObjectId projectId{};
+    harken::studio::types::ObjectId projectId{};
     uint64_t contentRevision{};
     uint32_t factFlags{};
     uint32_t reserved0{};
@@ -433,7 +431,7 @@ struct MonitorFactActivity {
     uint32_t variableScope{};
     uint32_t variableOutcome{};
     uint32_t reserved0{};
-    harkenstudio::ObjectId stepTargetId{};
+    harken::studio::types::ObjectId stepTargetId{};
     uint64_t variableTicket{};
 };
 
@@ -537,7 +535,7 @@ struct MonitorStateUpsert {
     uint32_t structSize{};
     uint32_t entityKind{};
     uint64_t stateCutId{};
-    harkenstudio::ObjectId stableId{};
+    harken::studio::types::ObjectId stableId{};
     uint64_t instanceHandle{};
     uint64_t instanceGeneration{};
     float volumeDb{};
@@ -546,7 +544,7 @@ struct MonitorStateUpsert {
     uint32_t bypass01{};
     uint32_t latencyFrames{};
     uint32_t tailFrames{};
-    harkenstudio::ObjectId routeBusId{};
+    harken::studio::types::ObjectId routeBusId{};
     uint32_t sendCount{};
     uint32_t occupancy{};
     uint32_t highWater{};
@@ -619,7 +617,7 @@ struct MonitorTelemetryCorrelation {
     uint32_t structSize{};
     uint32_t reserved0{};
     uint64_t arrangingInstance{};
-    harkenstudio::ObjectId clipId{};
+    harken::studio::types::ObjectId clipId{};
     uint32_t loopIteration{};
     uint32_t occurrenceOrdinal{};
     uint64_t logicCommitSequence{};
@@ -655,7 +653,7 @@ struct MonitorRecordHeader {
     uint64_t programSemanticFingerprint{};
     uint64_t runtimeLineageFingerprint{};
     uint64_t optionalSymbolFingerprint{};
-    harkenstudio::ObjectId stableId{};
+    harken::studio::types::ObjectId stableId{};
     uint64_t instanceHandle{};
     uint64_t instanceGeneration{};
     uint64_t actionInstanceHandle{};
@@ -738,8 +736,6 @@ struct MonitorCapabilities {
     uint64_t hardConsumerQueueBytes{};
     uint32_t resolvedDerivedWorkItems{};
     uint32_t hardDerivedWorkItems{};
-    uint64_t resolvedRecorderQueueBytes{};
-    uint64_t hardRecorderQueueBytes{};
     uint64_t resolvedRemoteQueueBytes{};
     uint64_t hardRemoteQueueBytes{};
     uint64_t resolvedCaptureByteRate{};
@@ -763,7 +759,7 @@ struct MonitorTapDescriptor {
     uint64_t tapDescriptorGeneration{};
     uint32_t ownerKind{};
     uint32_t selectorMode{};
-    harkenstudio::ObjectId ownerStableId{};
+    harken::studio::types::ObjectId ownerStableId{};
     uint64_t ownerInstanceHandle{};
     uint64_t ownerGeneration{};
     uint32_t slotId{};
@@ -858,7 +854,7 @@ struct MonitorStateTombstone {
     uint32_t structSize{};
     uint32_t entityKind{};
     uint64_t stateCutId{};
-    harkenstudio::ObjectId stableId{};
+    harken::studio::types::ObjectId stableId{};
     uint64_t instanceHandle{};
     uint64_t instanceGeneration{};
     uint32_t reason{};

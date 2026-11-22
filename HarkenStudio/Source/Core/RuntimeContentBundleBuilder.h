@@ -8,7 +8,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 
 struct ProjectData;
 
@@ -22,7 +22,7 @@ struct RuntimeContentPack
 struct RuntimeContentAction
 {
     QString name;
-    harkenstudio::ObjectId stableId = {};
+    harken::studio::types::ObjectId stableId = {};
 };
 
 struct RuntimeContentPublication

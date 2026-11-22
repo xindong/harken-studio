@@ -6,6 +6,7 @@
 #include "../Components/VSelection.h"
 #include "../Components/VTrack.h"
 #include "../ItemTypeCatalog.h"
+#include "../NumericFormat.h"
 #include "../ProjectTypes.h"
 
 #include <QHash>
@@ -17,7 +18,7 @@
 #include <limits>
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 bool checkedDistance(int64_t high, int64_t low, int64_t* out)
@@ -589,7 +590,7 @@ QString formatQueueLoopBadge(const QueuePreviewItem& item)
     if (item.loopKind == LoopPreviewKind::Finite)
         return QObject::tr("×%1").arg(item.loopCount);
     if (item.loopKind == LoopPreviewKind::Infinite)
-        return QStringLiteral("∞");
+        return kPositiveInfinityText;
     return {};
 }
 

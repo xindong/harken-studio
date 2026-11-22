@@ -7,7 +7,7 @@
 
 class QGraphicsOpacityEffect;
 
-namespace VNX {
+namespace harken::studio {
 
 class ToastPresenter final : public QWidget
 {

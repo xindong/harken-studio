@@ -2,7 +2,7 @@
 
 #include "Monitor/MonitorEffectsPanel.h"
 
-namespace VNX {
+namespace harken::studio {
 
 void MonitorEffectsSource::attach(MonitorEffectsPanel* panel, MonitorCursorModel* sharedCursor)
 {
@@ -27,4 +27,4 @@ void MonitorEffectsSource::pushToPanel() const
         panel_->bindSnapshot(snapshot_, stateStreamSubscribed_);
 }
 
-} // namespace VNX
+} // namespace harken::studio

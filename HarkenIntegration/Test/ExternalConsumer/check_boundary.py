@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 from pathlib import Path
 import re
 import shutil
@@ -22,22 +21,15 @@ NEGATIVE = {
     "VnSnapshot": "typeof(VnSnapshot)",
     "VnMonitorRecordHeader": "typeof(VnMonitorRecordHeader)",
     "VnBusTopologyDesc": "typeof(VnBusTopologyDesc)",
-    "VariableCatalogGuard": "VariableCatalogGuard.QueryAndEvaluate()",
-    "VariableCatalogEmitter": "VariableCatalogEmitter.SymbolName(\"x\")",
-    "ActionCatalogEmitter": "typeof(ActionCatalogEmitter)",
     "RemoteCommunication": "RemoteCommunication.Stop()",
-    "CreateBus": "HarkenEngine.CreateBus(default, default)",
-    "ReparentBus": "HarkenEngine.ReparentBus(default, default)",
-    "DestroyBus": "HarkenEngine.DestroyBus(default)",
     "NotificationFnPtr": "HarkenCallbacks.NotificationFnPtr",
-    "OutstandingPinCount": "PackByteProvider.OutstandingPinCount",
     "VN_SNAPSHOT_MAX_VOICES": "VnConstants.VN_SNAPSHOT_MAX_VOICES",
 }
 
 
-def run(command, log, *, expect_success=True, env=None):
+def run(command, log, *, expect_success=True):
     result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8",
-                            errors="replace", env=env)
+                            errors="replace")
     output = result.stdout + result.stderr
     log.write_text(output, encoding="utf-8")
     if expect_success and result.returncode:
@@ -45,12 +37,11 @@ def run(command, log, *, expect_success=True, env=None):
     return result.returncode, output
 
 
-def verify(integration, work, native_dir=None, publication=None):
+def verify(integration, work):
     staged = work / "integration"
     shutil.copytree(integration, staged)
     shutil.copytree(FIXTURE, work / "fixture", ignore=shutil.ignore_patterns("bin", "obj"))
     fixture = work / "fixture"
-    shutil.copy2(ROOT / "HarkenIntegration/Test/ContractTest/RemoteCommunicationContract.cs", fixture)
     # The consumer references only the compiled DLL, never Integration source items.
     run(["dotnet", "build", str(fixture / "Harken.Core.csproj"), "-c", "Release",
          f"-p:HarkenIntegrationRoot={staged}", "--artifacts-path", str(work / "artifacts"),
@@ -59,8 +50,8 @@ def verify(integration, work, native_dir=None, publication=None):
     common = ["dotnet", "build", str(fixture / "Consumer.csproj"), "-c", "Release",
               f"-p:HarkenCoreAssembly={library}", "--artifacts-path", str(work / "artifacts"), "--nologo"]
     positive = work / "positive"
-    run(common + [f"-p:ConsumerSource={fixture / 'Program.cs'}", f"-p:RemoteContractSource={fixture / 'RemoteCommunicationContract.cs'}", "-o", str(positive)], work / "positive.log")
-    policy = ROOT / "HarkenEngine/Source/Tooling/Binding/api_surface.json"
+    run(common + [f"-p:ConsumerSource={fixture / 'Program.cs'}", "-o", str(positive)], work / "positive.log")
+    policy = ROOT / "HarkenIntegration/Unity/Binding/managed_policy.json"
     # Reflection checks every generated symbol's effective public visibility.
     run(["dotnet", str(positive / "Harken.ExternalConsumer.dll"), "--surface", str(policy)],
         work / "surface.log")
@@ -75,15 +66,9 @@ def verify(integration, work, native_dir=None, publication=None):
         if code == 0 or not errors or any(number not in expected_errors or name not in message
                                           for number, message in errors):
             raise RuntimeError(f"{name}: expected only a matching access diagnostic; got\n{output}")
-    if (native_dir is None) != (publication is None):
-        raise ValueError("Native execution requires both --native-dir and --publication")
-    if native_dir:
-        environment = dict(os.environ, HARKEN_NATIVE_DIR=str(native_dir))
-        run(["dotnet", str(positive / "Harken.ExternalConsumer.dll"), "--host", str(publication)],
-            work / "host.log", env=environment)
     report = {"sdk_source": str(integration), "staged_sdk": str(staged),
               "assembly": "Harken.ExternalConsumer", "negative_probes": list(NEGATIVE),
-              "public_surface": "passed", "host_execution": "passed" if native_dir else "not requested"}
+              "public_surface": "passed"}
     (work / "result.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(f"External Integration boundary passed: positive consumer and {len(NEGATIVE)} independent access probes. Evidence: {work}")
 
@@ -92,8 +77,6 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--integration-root", "--sdk-root", dest="integration_root", type=Path, default=ROOT / "HarkenIntegration/Unity/Harken")
     parser.add_argument("--work-dir", type=Path)
-    parser.add_argument("--native-dir", type=Path)
-    parser.add_argument("--publication", type=Path)
     args = parser.parse_args()
     if args.work_dir:
         work = args.work_dir.resolve()
@@ -102,9 +85,7 @@ def main():
         scratch = ROOT / ".temp"
         scratch.mkdir(exist_ok=True)
         work = Path(tempfile.mkdtemp(prefix="integration-boundary-", dir=scratch))
-    verify(args.integration_root.resolve(), work,
-           args.native_dir.resolve() if args.native_dir else None,
-           args.publication.resolve() if args.publication else None)
+    verify(args.integration_root.resolve(), work)
 
 
 if __name__ == "__main__":

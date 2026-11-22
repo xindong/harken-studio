@@ -25,9 +25,6 @@ env:
 
 jobs:
   integration-windows:
-    if: >-
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.head.repo.full_name == github.repository
     name: integration-windows
     runs-on: [self-hosted, windows, harken-win]
     timeout-minutes: 45
@@ -49,49 +46,49 @@ jobs:
       - name: Check Integration source contracts before compilation
         run: |
           python .scripts/check_integration_version.py
-          python .scripts/check_unity_integration_contract.py
-          python .scripts/tests/test_check_unity_integration_contract.py -v
-          python HarkenEngine/Source/Tooling/Binding/gen_binding.py --check
+          python HarkenIntegration/Unity/Binding/check_unity_integration_contract.py
+          python HarkenIntegration/Unity/Binding/test_check_unity_integration_contract.py -v
 
       - name: Setup MSVC environment
         uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
         with:
           arch: x64
 
-      - name: Configure Core libraries and Pack tests (windows-release)
+      - name: Configure Engine libraries (windows-release)
         run: >-
           cmake --fresh --preset windows-release -B build-integration-runtime-clang
-          -DHARKEN_BUILD_CORE=ON
-          -DHARKEN_BUILD_SHARED=ON
-          -DHARKEN_BUILD_TOOLS=ON
-          -DHARKEN_BUILD_RUNTIME_UNIT_TESTS=ON
+          -DHARKEN_BUILD_ENGINE=ON
+          -DHARKEN_BUILD_ENGINE_DEV=ON
 
       # No --parallel: bare --parallel means ninja's own default (cores + 2) and
       # takes precedence over CMAKE_BUILD_PARALLEL_LEVEL, which each runner's
       # .env sets so three concurrent jobs share the machine instead of each
       # claiming all of it.
-      - name: Build Core shared library and Pack tests
-        run: cmake --build build-integration-runtime-clang --config Release --target harken_core_shared harken_pack_schema_tests
+      - name: Build Engine editions
+        run: cmake --build build-integration-runtime-clang --config Release --target harken_engine
 
-      - name: Run Pack native fixture check
-        timeout-minutes: 3
-        run: >-
-          ctest --test-dir build-integration-runtime-clang/HarkenEngine/Test -C Release
-          --no-tests=error --output-on-failure --timeout 120
-          -R '^PackSchema[.]PackFoundationQualification[.]ExplicitMembersDefineResidentWindow$'
+      - name: Install Engine
+        run: cmake --install build-integration-runtime-clang --config Release --prefix .temp/engine-install
+
+      - name: Check generated binding against the installed ABI manifest
+        env:
+          HARKEN_ABI_MANIFEST: ${{ github.workspace }}/.temp/engine-install/share/HarkenEngine/harken_abi_manifest.json
+        run: |
+          python HarkenIntegration/Unity/Binding/gen_binding.py --manifest "$HARKEN_ABI_MANIFEST" --check
+          python HarkenIntegration/Unity/Binding/test_managed_generation_policy.py
 
       - name: Setup .NET
         uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           dotnet-version: 9.0.x
 
-      - name: Run contract gates against native library (Pack bootstrap and zero-GC hot path)
+      - name: Run contract gates against native library (binding, metadata version and zero-GC hot path)
         timeout-minutes: 5
         env:
-          HARKEN_NATIVE_DIR: ${{ github.workspace }}/build-integration-runtime-clang/bin/Release
+          HARKEN_NATIVE_DIR: ${{ github.workspace }}/.temp/engine-install/bin
         run: >-
           dotnet run --project HarkenIntegration/Test/ContractTest --configuration Release --
-          --require-native --pack-root .temp/f3-resident-window
+          --require-native
 
   integration-macos:
     name: integration-macos-${{ matrix.slug }}
@@ -121,45 +118,39 @@ jobs:
         run: python3 .scripts/check_integration_version.py
 
       - name: Check Unity Integration source contract
-        run: python3 .scripts/check_unity_integration_contract.py
+        run: python3 HarkenIntegration/Unity/Binding/check_unity_integration_contract.py
 
       - name: Test Unity Integration source contract
-        run: python3 .scripts/tests/test_check_unity_integration_contract.py -v
-
-      - name: Check generated binding drift
-        run: python3 HarkenEngine/Source/Tooling/Binding/gen_binding.py --check
+        run: python3 HarkenIntegration/Unity/Binding/test_check_unity_integration_contract.py -v
 
       - name: Install macOS build deps
         run: brew install ninja
 
-      - name: Configure Core libraries and Pack tests (macos-release, ${{ matrix.arch }})
+      - name: Configure Engine libraries (macos-release, ${{ matrix.arch }})
         run: >-
           cmake --fresh --preset macos-release -B build-integration-runtime-clang
           -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }}
-          -DHARKEN_BUILD_CORE=ON
-          -DHARKEN_BUILD_SHARED=ON
-          -DHARKEN_BUILD_TOOLS=ON
-          -DHARKEN_BUILD_RUNTIME_UNIT_TESTS=ON
+          -DHARKEN_BUILD_ENGINE=ON
+          -DHARKEN_BUILD_ENGINE_DEV=ON
 
-      - name: Build Core shared library and Pack tests
-        run: cmake --build build-integration-runtime-clang --config Release --target harken_core_shared harken_pack_schema_tests
+      - name: Build Engine editions
+        run: cmake --build build-integration-runtime-clang --config Release --target harken_engine
 
-      - name: Run Pack native fixture check
-        timeout-minutes: 3
-        run: >-
-          ctest --test-dir build-integration-runtime-clang/HarkenEngine/Test -C Release
-          --no-tests=error --output-on-failure --timeout 120
-          -R '^PackSchema[.]PackFoundationQualification[.]ExplicitMembersDefineResidentWindow$'
+      - name: Install Engine
+        run: cmake --install build-integration-runtime-clang --config Release --prefix .temp/engine-install
+
+      - name: Check generated binding against the installed ABI manifest
+        run: python3 HarkenIntegration/Unity/Binding/gen_binding.py --manifest .temp/engine-install/share/HarkenEngine/harken_abi_manifest.json --check
 
       - name: Setup .NET
         uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           dotnet-version: 9.0.x
 
-      - name: Run contract gates against native library (Pack bootstrap and zero-GC hot path)
+      - name: Run contract gates against native library (binding, metadata version and zero-GC hot path)
         timeout-minutes: 5
         env:
-          HARKEN_NATIVE_DIR: ${{ github.workspace }}/build-integration-runtime-clang/bin/Release
+          HARKEN_NATIVE_DIR: ${{ github.workspace }}/.temp/engine-install/lib
         run: >-
           dotnet run --project HarkenIntegration/Test/ContractTest --configuration Release --
-          --require-native --pack-root .temp/f3-resident-window
+          --require-native

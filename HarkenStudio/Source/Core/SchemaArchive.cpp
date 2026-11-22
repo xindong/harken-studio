@@ -14,7 +14,7 @@
 #include <QRegularExpression>
 #include <QSet>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 
@@ -81,7 +81,7 @@ QJsonObject SchemaArchive::buildManifest(QString* error) const
             != ProjectSchema::kProjectSchemaVersion
         || trees.value(QStringLiteral("Pack")).toObject()
                .value(QStringLiteral("currentVersion")).toInt()
-            != HARKEN_PACK_SCHEMA_VERSION
+            != HARKEN_PACK_METADATA_VERSION
         || manifest.value(QStringLiteral("files")).toArray().isEmpty()) {
         snapshotMismatch(error);
         return {};
@@ -97,7 +97,7 @@ bool SchemaArchive::verifyBuildSnapshot(QString* error) const
     const QRegularExpression editorPath(
         QStringLiteral("^Editor/[1-9][0-9]*/ProjectSerializedSchema\\.json$"));
     const QRegularExpression packPath(
-        QStringLiteral("^Pack/[1-9][0-9]*/PackManifestSchema\\.json$"));
+        QStringLiteral("^Pack/[1-9][0-9]*/PackMetadataSchema\\.json$"));
     const QRegularExpression sha256(QStringLiteral("^[0-9a-f]{64}$"));
     QSet<QString> expectedFiles{QStringLiteral("build.json")};
     QSet<QString> expectedDirectories;
@@ -155,7 +155,7 @@ QJsonObject SchemaArchive::packSchema(int version, QString* error) const
         return {};
     }
     return readObject(QDir(rootPath()).filePath(
-        QStringLiteral("Pack/%1/PackManifestSchema.json").arg(version)), error);
+        QStringLiteral("Pack/%1/PackMetadataSchema.json").arg(version)), error);
 }
 
 }

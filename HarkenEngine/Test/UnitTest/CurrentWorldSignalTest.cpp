@@ -1,6 +1,7 @@
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/TestUtil.h"
 #include "Engine.h"
+#include "ProjectGenerationTransaction.h"
 #include "harken/core/CurrentWorldCodec.h"
 #include "harken/core/CurrentWorldArtifact.h"
 #include "harken/core/detail/CurrentWorldValidation.h"

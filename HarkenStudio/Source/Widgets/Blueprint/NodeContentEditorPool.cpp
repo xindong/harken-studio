@@ -6,7 +6,7 @@
 
 #include <algorithm>
 
-namespace VNX {
+namespace harken::studio {
 
 struct NodeContentEditorPool::Entry
 {

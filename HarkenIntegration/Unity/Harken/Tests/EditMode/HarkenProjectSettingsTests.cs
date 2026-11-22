@@ -162,7 +162,6 @@ namespace Harken.Unity.Tests
         {
             var serialized = new SerializedObject(settings);
             serialized.FindProperty("enableCommunicationInBuilds").boolValue = false;
-            serialized.FindProperty("remoteBindAddress").stringValue = "127.0.0.1";
             serialized.FindProperty("enableRemoteDiscovery").boolValue = false;
             serialized.FindProperty("remoteApplicationName").stringValue = "Settings fixture";
             serialized.ApplyModifiedPropertiesWithoutUndo();
@@ -171,34 +170,11 @@ namespace Harken.Unity.Tests
             settings = AssetDatabase.LoadAssetAtPath<HarkenProjectSettings>(settingsPath);
             Assert.That(settings.EnableCommunicationInBuilds, Is.False);
             var reloaded = new SerializedObject(settings);
-            Assert.That(reloaded.FindProperty("remoteBindAddress").stringValue, Is.EqualTo("127.0.0.1"));
             Assert.That(reloaded.FindProperty("enableRemoteDiscovery").boolValue, Is.False);
             Assert.That(reloaded.FindProperty("remoteApplicationName").stringValue, Is.EqualTo("Settings fixture"));
             Assert.That(HarkenProjectSettings.Load(), Is.SameAs(settings));
             Assert.That(HarkenProjectSettings.CommunicationEnabled, Is.True);
             Assert.DoesNotThrow(HarkenProjectSettingsProvider.ValidateSettingsAssets);
-        }
-
-        [Test]
-        public void DisabledBuildPolicyKeepsPreviewCommunicationUntilAudioShutdown()
-        {
-            HarkenEditorServiceTests.RequirePublicationTooling();
-            var serialized = new SerializedObject(settings);
-            serialized.FindProperty("enableCommunicationInBuilds").boolValue = false;
-            serialized.ApplyModifiedPropertiesWithoutUndo();
-            using (var preview = new HarkenEditorPreview())
-            {
-                string root = Path.Combine(Application.streamingAssetsPath, "Audio", "U4Original");
-                Assert.That(preview.Prepare(root, null, Array.Empty<ulong>(), true), Is.EqualTo(VnResult.VN_OK), preview.Diagnostic);
-                Assert.That(preview.LastRemoteResult, Is.EqualTo(VnResult.VN_OK));
-                Assert.That(RemoteCommunication.GetStatus(out VnRemoteStatus status), Is.EqualTo(VnResult.VN_OK));
-                Assert.That(status.state, Is.EqualTo((uint)VnRemoteState.VN_REMOTE_LISTENING));
-                Assert.That(status.tcpPort, Is.GreaterThan(0));
-                Assert.That(preview.Shutdown(), Is.EqualTo(VnResult.VN_OK));
-                Assert.That(RemoteCommunication.GetStatus(out status), Is.EqualTo(VnResult.VN_OK));
-                Assert.That(status.state, Is.EqualTo((uint)VnRemoteState.VN_REMOTE_STOPPED));
-                Assert.That(status.tcpPort, Is.Zero);
-            }
         }
 
         [Test]
@@ -432,37 +408,6 @@ namespace Harken.Unity.Tests
             Assert.That(project.scope, Is.EqualTo(SettingsScope.Project));
             Assert.That(communication.settingsPath, Is.EqualTo("Project/Harken/Communication"));
             Assert.That(communication.scope, Is.EqualTo(SettingsScope.Project));
-        }
-
-        [Test]
-        public void ClearingLegacyPlatformIdPersistsNameSelectionAndUnblocksCompanionDirectory()
-        {
-            string root = Path.Combine(Application.temporaryCachePath, "HarkenPlatform_" + Guid.NewGuid().ToString("N"));
-            string platform = Path.Combine(root, "Windows");
-            Directory.CreateDirectory(platform);
-            File.WriteAllText(Path.Combine(platform, "Init.json"), "{}");
-            var owner = new GameObject("Platform selection");
-            owner.SetActive(false);
-            try
-            {
-                settings.SetPlatform("11111111-1111-1111-1111-111111111111", "Windows");
-                var runtime = owner.AddComponent<HarkenAudioSystem>();
-                MethodInfo apply = typeof(HarkenAudioSystem).GetMethod("ApplyProjectStartupPolicy", BindingFlags.Instance | BindingFlags.NonPublic);
-                MethodInfo resolve = typeof(HarkenAudioSystem).GetMethod("ResolvePlatformRoot", BindingFlags.Instance | BindingFlags.NonPublic);
-                apply.Invoke(runtime, null);
-                Assert.That(resolve.Invoke(runtime, new object[] { platform }), Is.Null);
-                var serialized = new SerializedObject(settings);
-                serialized.FindProperty("packPlatformId").stringValue = string.Empty;
-                Assert.That(serialized.ApplyModifiedProperties(), Is.True);
-                AssetDatabase.SaveAssetIfDirty(settings);
-                AssetDatabase.ImportAsset(settingsPath, ImportAssetOptions.ForceSynchronousImport);
-                settings = AssetDatabase.LoadAssetAtPath<HarkenProjectSettings>(settingsPath);
-                Assert.That(settings.PlatformId, Is.Empty);
-                Assert.That(settings.PlatformName, Is.EqualTo("Windows"));
-                apply.Invoke(runtime, null);
-                Assert.That(resolve.Invoke(runtime, new object[] { platform }), Is.EqualTo(platform));
-            }
-            finally { UnityEngine.Object.DestroyImmediate(owner); Directory.Delete(root, true); }
         }
 
         [Test]

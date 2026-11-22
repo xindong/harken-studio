@@ -13,9 +13,9 @@
 #include <QJsonObject>
 #include <QTemporaryDir>
 
-using VNH::ProjectIntakeConsumer;
-using VNH::ProjectRecord;
-using VNH::ProjectStore;
+using harken::hub::ProjectIntakeConsumer;
+using harken::hub::ProjectRecord;
+using harken::hub::ProjectStore;
 
 namespace {
 
@@ -84,6 +84,20 @@ protected:
 
 }
 
+TEST_F(ProjectIntakeConsumerTest, AbandonedCreationCannotPinAProjectCreatedByADifferentBuild)
+{
+    const auto path = writeProjectFile("Reused");
+    QString error;
+    ASSERT_TRUE(ProjectIntakeConsumer::rememberCreationBuild(path, "local-user-old", "old-build", &error));
+    writeIntakeRecord("reused.json", {{"projectPath", path}, {"buildId", "new-build"},
+        {"openedAt", QDateTime::currentDateTimeUtc().addSecs(1).toString(Qt::ISODateWithMs)}});
+    ProjectIntakeConsumer consumer(&store);
+    ASSERT_TRUE(consumer.consumeAll());
+    ASSERT_EQ(store.listProjects().size(), 1);
+    EXPECT_TRUE(store.listProjects().front().preferredStudioBuildId.isEmpty());
+    EXPECT_TRUE(QDir(dir.filePath("project-creation")).entryList({"*.json"}, QDir::Files).isEmpty());
+}
+
 TEST_F(ProjectIntakeConsumerTest, RegistersUnknownProject)
 {
     const QString projectPath = writeProjectFile(QStringLiteral("Alpha"));
@@ -102,7 +116,6 @@ TEST_F(ProjectIntakeConsumerTest, RegistersUnknownProject)
     ASSERT_EQ(records.size(), 1u);
     EXPECT_EQ(records.front().canonicalPath, projectPath);
     EXPECT_EQ(records.front().displayName, QStringLiteral("Alpha"));
-    EXPECT_EQ(records.front().detectedSchema, 5);
     EXPECT_EQ(records.front().lastKnownGoodStudioBuildId,
               QStringLiteral("run1.aaaa1111"));
     EXPECT_EQ(records.front().lastOpenedAt,
@@ -117,7 +130,6 @@ TEST_F(ProjectIntakeConsumerTest, UpdatesExistingProjectWithoutTouchingPreferred
     ProjectRecord seed;
     seed.canonicalPath = projectPath;
     seed.displayName = QStringLiteral("Old project name");
-    seed.detectedSchema = 1;
     ASSERT_TRUE(store.addProject(seed));
     ASSERT_TRUE(store.setPreferredBuild(projectPath,
                                         QStringLiteral("run1.pinned")));
@@ -139,7 +151,6 @@ TEST_F(ProjectIntakeConsumerTest, UpdatesExistingProjectWithoutTouchingPreferred
     EXPECT_EQ(records.front().lastKnownGoodStudioBuildId,
               QStringLiteral("run2.bbbb2222"));
     EXPECT_EQ(records.front().displayName, QStringLiteral("Beta"));
-    EXPECT_EQ(records.front().detectedSchema, 5);
     EXPECT_EQ(records.front().lastOpenedAt,
               QStringLiteral("2026-07-28T04:00:00.000Z"));
 }
@@ -273,30 +284,30 @@ TEST_F(ProjectIntakeConsumerTest, AmbiguousRuntimeBuildRequiresAnInstallationCho
     ASSERT_TRUE(consumer.consumeAll());
     const auto records = store.listProjects();
     ASSERT_EQ(records.size(), 1u);
-    const auto probe = VNH::ProjectProbe::probe(path);
+    const auto probe = harken::hub::ProjectProbe::probe(path);
     ASSERT_TRUE(probe.ok);
     ASSERT_TRUE(probe.savedStudioVersion.isEmpty());
-    VNH::InstalledVersion managed;
+    harken::hub::InstalledVersion managed;
     managed.buildId = "shared-build";
     managed.executablePath = dir.filePath("managed/HarkenStudio.exe");
     auto local = managed;
     local.buildId = "local-user-path-id";
     local.runtimeBuildId = managed.buildId;
-    local.source = VNH::VersionSource::LocalBuild;
+    local.source = harken::hub::VersionSource::LocalBuild;
     local.executablePath = dir.filePath("local/HarkenStudio.exe");
 
     for (const auto& versions : {std::vector{managed, local}, std::vector{local, managed}}) {
-        const auto selection = VNH::ProjectVersionSelection::resolve(records.front(), probe, versions);
+        const auto selection = harken::hub::ProjectVersionSelection::resolve(records.front(), probe, versions);
         EXPECT_EQ(selection.errorCode, QStringLiteral("VersionSelectionRequired"));
         EXPECT_TRUE(selection.buildId.isEmpty());
-        const auto explicitChoice = VNH::ProjectVersionSelection::resolve(
+        const auto explicitChoice = harken::hub::ProjectVersionSelection::resolve(
             records.front(), probe, versions, local.buildId);
         EXPECT_TRUE(explicitChoice.errorCode.isEmpty());
         EXPECT_EQ(explicitChoice.buildId, local.buildId);
     }
 
     managed.available = false;
-    const auto unique = VNH::ProjectVersionSelection::resolve(records.front(), probe, {managed, local});
+    const auto unique = harken::hub::ProjectVersionSelection::resolve(records.front(), probe, {managed, local});
     EXPECT_TRUE(unique.errorCode.isEmpty());
     EXPECT_EQ(unique.buildId, local.buildId);
     EXPECT_EQ(store.listProjects().front().lastKnownGoodStudioBuildId, managed.buildId);
@@ -310,17 +321,17 @@ TEST_F(ProjectIntakeConsumerTest, RecordedLocalInstallationRemainsSpecificAfterR
     ProjectRecord record;
     record.canonicalPath = path;
     ASSERT_TRUE(store.addProject(record));
-    VNH::InstalledVersion managed;
+    harken::hub::InstalledVersion managed;
     managed.buildId = "shared-build";
     auto local = managed;
     local.buildId = "local-user-path-id";
     local.runtimeBuildId = managed.buildId;
-    local.source = VNH::VersionSource::LocalBuild;
-    ASSERT_TRUE(store.setLastKnownGood(path, local.buildId, "2026-09-08T10:00:00.000Z"));
+    local.source = harken::hub::VersionSource::LocalBuild;
+    ASSERT_TRUE(store.recordSuccessfulOpen(path, "SpecificBuild", local.buildId, "2026-09-08T10:00:00.000Z"));
     const auto records = store.listProjects();
     ASSERT_EQ(records.size(), 1u);
-    const auto selection = VNH::ProjectVersionSelection::resolve(
-        records.front(), VNH::ProjectProbe::probe(path), {managed, local});
+    const auto selection = harken::hub::ProjectVersionSelection::resolve(
+        records.front(), harken::hub::ProjectProbe::probe(path), {managed, local});
     EXPECT_TRUE(selection.errorCode.isEmpty());
     EXPECT_EQ(selection.buildId, local.buildId);
 }

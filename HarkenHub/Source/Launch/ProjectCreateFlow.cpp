@@ -1,12 +1,12 @@
 #include "Launch/ProjectCreateFlow.h"
 #include "Launch/StudioLauncher.h"
 #include "Versions/LocalBuildRegistry.h"
-#include "Versions/StudioCapabilities.h"
+#include "Versions/StudioInterface.h"
 
 #include <QCoreApplication>
 #include <algorithm>
 
-namespace VNH {
+namespace harken::hub {
 
 namespace {
 
@@ -20,8 +20,7 @@ QString hubText(const char* source)
 bool ProjectCreateFlow::create(const ProjectCreateRequest& request, QString* error)
 {
     InstalledVersion selectedVersion = request.version;
-    if (selectedVersion.capabilitiesVersion != 1
-        && selectedVersion.capabilitiesVersion != kStudioCapabilitiesVersion) {
+    if (!StudioInterface::canCreateProjects(selectedVersion.semanticVersion)) {
         *error = hubText("This Studio can open existing projects, but project creation from Hub is unavailable.");
         return false;
     }
@@ -53,7 +52,6 @@ bool ProjectCreateFlow::create(const ProjectCreateRequest& request, QString* err
     spec.projectName = request.name;
     spec.projectLocation = request.location;
     spec.templateId = request.templateId;
-    spec.templatePath = request.templatePath;
     return StudioLauncher::startCreate(spec, error);
 }
 

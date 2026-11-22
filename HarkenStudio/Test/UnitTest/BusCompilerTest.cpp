@@ -9,10 +9,10 @@
 
 namespace {
 
-using namespace harkenbuscompiler;
-using namespace harkenprojectschema;
+using namespace harken::studio::bus_compiler;
+using namespace harken::studio::project_schema;
 
-constexpr harkenstudio::ObjectId kProjectMasterId{0x4d4153544552, 1};
+constexpr harken::studio::types::ObjectId kProjectMasterId{0x4d4153544552, 1};
 
 BusCompilerInputV1 validInput()
 {
@@ -43,7 +43,7 @@ BusCompilerInputV1 validInput()
     const BusSourceLocationV1 childSource{
         childGuid, "Busses/Child.vp", "/volume"};
     input.buses = {
-        {kProjectMasterId, harkenstudio::kMasterBusObjectId, 0.0f, 8, 0, masterSource},
+        {kProjectMasterId, harken::studio::types::kMasterBusObjectId, 0.0f, 8, 0, masterSource},
         {harkentest::StudioObjectId(0x1'0000'0001ull), kProjectMasterId, -3.0f, 2, 0, parentSource},
         {harkentest::StudioObjectId(0x1'0000'0002ull), harkentest::StudioObjectId(0x1'0000'0001ull), -6.0f, 1, 0, childSource},
     };

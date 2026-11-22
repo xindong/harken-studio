@@ -37,7 +37,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 const ThemeMetrics::TimeAxis& timeAxisMetrics()

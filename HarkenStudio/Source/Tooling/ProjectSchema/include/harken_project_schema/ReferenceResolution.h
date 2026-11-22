@@ -13,7 +13,7 @@
 #include <optional>
 #include <vector>
 
-namespace harkenprojectschema {
+namespace harken::studio::project_schema {
 
 // The resolved reference slots of one clip occurrence. Per the immediate-
 // arrangement scope, an occurrence is one clip placement; the subject is the
@@ -72,7 +72,7 @@ public:
 
 private:
     std::map<StableId,
-             std::array<std::optional<harkenstudio::ObjectId>,
+             std::array<std::optional<harken::studio::types::ObjectId>,
                         harkenreferenceslots::kReferenceSlotCount>>
         refValues_;
     std::map<StableId, ContentKind> kinds_;
@@ -90,6 +90,6 @@ ReferenceResolutionResult BuildReferenceResolution(
     const CanonicalProject& project, const NormalizedFacts& facts,
     std::uint32_t depthCeiling);
 
-}  // namespace harkenprojectschema
+}  // namespace harken::studio::project_schema
 
 #endif  // HARKEN_PROJECT_SCHEMA_REFERENCE_RESOLUTION_H

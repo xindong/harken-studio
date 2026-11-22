@@ -1,6 +1,6 @@
 #include "IPCServerInternal.h"
 
-namespace VNX {
+namespace harken::studio {
 
 void IPCServer::registerContainerHandlers()
 {

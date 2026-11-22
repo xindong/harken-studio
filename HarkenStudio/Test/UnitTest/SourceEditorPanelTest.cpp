@@ -1,7 +1,5 @@
 #include "Core/AssetPipeline/WaveformCache.h"
-#include "Core/FontManager.h"
 #include "Core/ThemeManager.h"
-#include "Widgets/Common/WaveformRenderer.h"
 #include "Widgets/SourceEditor/SourceEditorWaveformView.h"
 
 #include <gtest/gtest.h>
@@ -10,7 +8,6 @@
 #include <QByteArray>
 #include <QContextMenuEvent>
 #include <QFile>
-#include <QFontMetrics>
 #include <QMenu>
 #include <QTemporaryDir>
 
@@ -22,7 +19,7 @@ void ensureApp()
 {
     if (qApp) return;
     static int argc = 1;
-    static char arg0[] = "harken_editor_tests";
+    static char arg0[] = "harken_studio_tests";
     static char* argv[] = {arg0, nullptr};
     static QApplication app(argc, argv);
 }
@@ -96,7 +93,7 @@ TEST(SourceEditorPanelTest, WaveformDetailReadsOnlyRequestedFramesAndPreservesCh
         samples.push_back(0.125f);
     }
     writeWavF32(path, samples, 3, 48000);
-    auto detail = VNX::WaveformCache::readRange(path, 7, 9, 3);
+    auto detail = harken::studio::WaveformCache::readRange(path, 7, 9, 3);
     ASSERT_TRUE(detail.isValid());
     EXPECT_EQ(detail.numChannels, 3u);
     EXPECT_EQ(detail.numPeaks, 3u);
@@ -106,36 +103,36 @@ TEST(SourceEditorPanelTest, WaveformDetailReadsOnlyRequestedFramesAndPreservesCh
     EXPECT_FLOAT_EQ(detail.peaks[6], -9.0f / 20);
     EXPECT_FLOAT_EQ(detail.peaks[7], -7.0f / 20);
     EXPECT_FLOAT_EQ(detail.peaks[12], 0.125f);
-    detail = VNX::WaveformCache::readRange(path, 17, 20, 10);
+    detail = harken::studio::WaveformCache::readRange(path, 17, 20, 10);
     ASSERT_TRUE(detail.isValid());
     EXPECT_EQ(detail.numPeaks, 3u);
     EXPECT_EQ(detail.samplesPerPeak, 1u);
     EXPECT_FLOAT_EQ(detail.peaks[4], 19.0f / 20);
     EXPECT_FLOAT_EQ(detail.peaks[5], 19.0f / 20);
-    detail = VNX::WaveformCache::readRange(path, 0, 20, 6);
+    detail = harken::studio::WaveformCache::readRange(path, 0, 20, 6);
     ASSERT_TRUE(detail.isValid());
     EXPECT_LE(detail.numPeaks, 6u);
     EXPECT_FLOAT_EQ(detail.peaks[(detail.numPeaks - 1) * 2 + 1], 19.0f / 20);
-    EXPECT_FALSE(VNX::WaveformCache::readRange(path, 20, 1, 1).isValid());
-    EXPECT_FALSE(VNX::WaveformCache::readRange(path, 0, 0, 1).isValid());
-    EXPECT_FALSE(VNX::WaveformCache::readRange(path, 0, 1, 0).isValid());
+    EXPECT_FALSE(harken::studio::WaveformCache::readRange(path, 20, 1, 1).isValid());
+    EXPECT_FALSE(harken::studio::WaveformCache::readRange(path, 0, 0, 1).isValid());
+    EXPECT_FALSE(harken::studio::WaveformCache::readRange(path, 0, 1, 0).isValid());
 }
 
 TEST(SourceEditorPanelTest, FadePresetMenusFollowTheSameRightSegmentRule)
 {
     ensureApp();
-    VNX::AssetInfo asset;
+    harken::studio::AssetInfo asset;
     asset.sourceID = 5;
     asset.metadata.totalSamples = 1000;
     asset.metadata.sampleRate = 1000;
     asset.metadata.channels = 1;
-    VNX::SoundSourceDef source;
+    harken::studio::SoundSourceDef source;
     source.sourceId = asset.sourceID;
     source.trimStartFrame = 100;
     source.trimEndFrame = 900;
     source.fadeIn.durationFrames = 200;
     source.fadeOut.durationFrames = 300;
-    VNX::SourceEditorWaveformView view(nullptr, VNX::SourceEditorWaveformView::Presentation::TrimEditor);
+    harken::studio::SourceEditorWaveformView view(nullptr, harken::studio::SourceEditorWaveformView::Presentation::TrimEditor);
     view.resize(600, 400);
     view.setAsset(&asset);
     view.setEditable(true);
@@ -143,24 +140,16 @@ TEST(SourceEditorPanelTest, FadePresetMenusFollowTheSameRightSegmentRule)
     view.setViewRange(0.0, 1000.0);
     view.show();
     int commits = 0;
-    VNX::SoundSourceDef committed;
-    view.setCommitHandler([&](const VNX::SoundSourceDef& next) {
+    harken::studio::SoundSourceDef committed;
+    view.setCommitHandler([&](const harken::studio::SoundSourceDef& next) {
         committed = next;
         ++commits;
     });
     const QRect plot = view.waveformRect();
-    const auto theme = VNX::ThemeManager::instance().snapshot();
+    const auto theme = harken::studio::ThemeManager::instance().snapshot();
     const auto& metrics = theme->ui.metrics.timeAxis;
     const QRect viewport = plot.adjusted(0, metrics.handleBandHeight, 0, 0);
-    const QFontMetrics font(VNX::FontManager::instance().getFont(VNX::FontRole::Caption), &view);
-    const QRect wave = VNX::waveformAmplitudeBounds(viewport, viewport.height(), 0, font, metrics.labelPadding);
-    const auto ticks = VNX::buildAmplitudeAxisTicks(viewport, wave.top() + wave.height() / 2,
-        wave.height() / 2, font, theme->domains.curve.metrics.amplitudeGridTargetRowSpacing,
-        VNX::WaveformRenderer::amplitudeScale(theme->domains.waveform, view.amplitudeExponent()));
-    QVector<int> unityRows;
-    for (const auto& tick : ticks)
-        if (tick.major) unityRows.append(tick.y);
-    ASSERT_EQ(unityRows.size(), 2);
+    const qreal inset = theme->domains.curve.metrics.pointSelectedRadius + theme->ui.metrics.spacingXSmall;
     for (const int fadeIndex : {0, 1}) {
         for (const bool rightAnchor : {false, true}) {
             view.setSource(source);
@@ -168,7 +157,7 @@ TEST(SourceEditorPanelTest, FadePresetMenusFollowTheSameRightSegmentRule)
             const int frame = fadeIndex == 0 ? (rightAnchor ? 300 : 100) : (rightAnchor ? 900 : 600);
             const bool upperAnchor = (fadeIndex == 0) == rightAnchor;
             const QPoint position(plot.left() + qRound(frame / 1000.0 * (plot.width() - 1)),
-                                  upperAnchor ? unityRows.front() : unityRows.back());
+                                  qRound(upperAnchor ? viewport.top() + inset : viewport.bottom() - inset));
             QContextMenuEvent event(QContextMenuEvent::Mouse, position, view.mapToGlobal(position));
             QApplication::sendEvent(&view, &event);
             auto* menu = view.findChild<QMenu*>(QStringLiteral("sourceFadeContextMenu"));
@@ -178,7 +167,7 @@ TEST(SourceEditorPanelTest, FadePresetMenusFollowTheSameRightSegmentRule)
             EXPECT_EQ(presets->menuAction()->isEnabled(), !rightAnchor);
             if (!rightAnchor) {
                 for (auto* action : presets->actions()) {
-                    if (action->data().toInt() == static_cast<int>(VNX::CurvePreset::Exp3)) {
+                    if (action->data().toInt() == static_cast<int>(harken::studio::CurvePreset::CubicEaseIn)) {
                         action->trigger();
                         break;
                     }

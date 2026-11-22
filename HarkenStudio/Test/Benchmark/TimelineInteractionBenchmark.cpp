@@ -173,28 +173,28 @@ int main(int argc, char* argv[])
     if (!workspace.isValid()) return 3;
     QSettings::setDefaultFormat(QSettings::IniFormat);
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, workspace.path() + "/settings");
-    QApplication::setStyle(new VNX::HarkenStyle(QStyleFactory::create(QStringLiteral("Fusion"))));
-    VNX::ThemeManager::instance();
-    app.setStyleSheet(VNX::QtControlSkin::current().applicationStyleSheet());
-    auto& manager = VNX::ProjectManager::instance();
-    VNX::registerProjectActions(VNX::ActionManager::instance(), &manager, nullptr);
-    QObject::connect(&manager, &VNX::ProjectManager::errorOccurred, &app,
+    QApplication::setStyle(new harken::studio::HarkenStyle(QStyleFactory::create(QStringLiteral("Fusion"))));
+    harken::studio::ThemeManager::instance();
+    app.setStyleSheet(harken::studio::QtControlSkin::current().applicationStyleSheet());
+    auto& manager = harken::studio::ProjectManager::instance();
+    harken::studio::registerProjectActions(harken::studio::ActionManager::instance(), &manager, nullptr);
+    QObject::connect(&manager, &harken::studio::ProjectManager::errorOccurred, &app,
         [](const QString& error) { QTextStream(stderr) << error << "\n"; });
-    VNX::ProjectConfig config;
+    harken::studio::ProjectConfig config;
     config.name = QStringLiteral("TimelineBenchmark");
     config.location = workspace.path();
     if (!manager.createProject(config)) return 3;
-    auto* segment = manager.createItem(nullptr, QStringLiteral("Timeline"), VNX::ProjectItem::Type::Segment);
+    auto* segment = manager.createItem(nullptr, QStringLiteral("Timeline"), harken::studio::ProjectItem::Type::Segment);
     if (!segment) return 3;
-    std::vector<VNX::ProjectItem*> tracks;
+    std::vector<harken::studio::ProjectItem*> tracks;
     for (int lane = 0; lane < lanes; ++lane) {
-        auto* track = manager.createItem(segment, QStringLiteral("Track %1").arg(lane), VNX::ProjectItem::Type::Track);
+        auto* track = manager.createItem(segment, QStringLiteral("Track %1").arg(lane), harken::studio::ProjectItem::Type::Track);
         if (!track) return 3;
         tracks.push_back(track);
     }
-    VNX::AssetInfo asset;
+    harken::studio::AssetInfo asset;
     if (waveform) {
-        asset.sourceID = VNX::AssetRegistry::instance().allocateStableID();
+        asset.sourceID = harken::studio::AssetRegistry::instance().allocateStableID();
         asset.absolutePath = workspace.path() + "/preview.wav";
         asset.relativePath = QStringLiteral("preview.wav");
         asset.metadata.sampleRate = 48000;
@@ -203,25 +203,25 @@ int main(int argc, char* argv[])
         asset.metadata.totalSamples = 288000;
         asset.metadata.durationSec = 6.0;
         if (!writeWaveform(asset.absolutePath)) return 3;
-        VNX::AssetRegistry::instance().registerAsset(asset, false);
-        if (!VNX::WaveformCache::generate(asset.absolutePath)) return 3;
+        harken::studio::AssetRegistry::instance().registerAsset(asset, false);
+        if (!harken::studio::WaveformCache::generate(asset.absolutePath)) return 3;
     }
-    std::vector<VNX::ProjectItem*> sounds;
+    std::vector<harken::studio::ProjectItem*> sounds;
     for (int i = 0; i < clipCount; ++i) {
         auto* sound = manager.createItem(tracks[i % lanes],
-            QStringLiteral("Texture %1 long title for overlap elision").arg(i), VNX::ProjectItem::Type::Sound);
+            QStringLiteral("Texture %1 long title for overlap elision").arg(i), harken::studio::ProjectItem::Type::Sound);
         if (!sound) return 3;
         if (waveform) {
-            VNX::SoundSourceDef source;
+            harken::studio::SoundSourceDef source;
             source.entryId = QUuid::createUuid();
             source.sourceId = asset.sourceID;
-            auto* component = sound->comp<VNX::VSound>();
+            auto* component = sound->comp<harken::studio::VSound>();
             component->sources.plain.entries = {source};
             component->sources.plain.active = source.entryId;
         }
         sounds.push_back(sound);
     }
-    for (auto* track : tracks) track->comp<VNX::VTrack>()->clips = {};
+    for (auto* track : tracks) track->comp<harken::studio::VTrack>()->clips = {};
     QUuid dragGuid;
     double end = 10.0;
     const int perLane = clipCount / lanes + (clipCount % lanes != 0);
@@ -232,12 +232,12 @@ int main(int argc, char* argv[])
         const double duration = i == 0 ? 0.7 : 1.0;
         if (i >= clipCount - hidden) start = 40.0 + slot * 2.0;
         end = std::max(end, start + duration);
-        VNX::Clip clip;
+        harken::studio::Clip clip;
         clip.clipGuid = QUuid::createUuid();
         clip.targetGuid = sounds[i]->guid;
         clip.start = int64_t(std::llround(start * 1e9));
         clip.duration = int64_t(std::llround(duration * 1e9));
-        auto& ledger = tracks[lane]->comp<VNX::VTrack>()->clips;
+        auto& ledger = tracks[lane]->comp<harken::studio::VTrack>()->clips;
         ledger.mintOccurrenceOrdinal(&clip);
         ledger.items.push_back(clip);
         if (i == 0) dragGuid = clip.clipGuid;
@@ -245,7 +245,7 @@ int main(int argc, char* argv[])
     QJsonArray results;
     bool complete = true;
     {
-        VNX::TimelineEditorPanel panel;
+        harken::studio::TimelineEditorPanel panel;
         panel.bindItem(segment);
         panel.resize(1200, 540);
         panel.setWindowFlags(Qt::Tool | Qt::WindowDoesNotAcceptFocus);
@@ -258,7 +258,7 @@ int main(int argc, char* argv[])
         panel.fitClips();
         panel.setZoomPercent(end * 10.0);
         panel.setEditCursorVisible(false);
-        auto* canvas = panel.findChild<VNX::TimelineCanvas*>();
+        auto* canvas = panel.findChild<harken::studio::TimelineCanvas*>();
         app.measuredCanvas = canvas;
         settle();
         for (bool alt : {false, true}) {
@@ -341,9 +341,9 @@ int main(int argc, char* argv[])
         }
         app.measuredCanvas = nullptr;
     }
-    VNX::UndoRedoManager::instance().clear();
+    harken::studio::UndoRedoManager::instance().clear();
     manager.closeProject();
-    VNX::ActionManager::instance().clearAllForTesting();
+    harken::studio::ActionManager::instance().clearAllForTesting();
     const QJsonObject record{{"benchmark", "timeline-interaction"}, {"schema", 1},
         {"complete", complete}, {"tag", parser.value(QStringLiteral("tag"))},
         {"build_configuration", QStringLiteral(HARKEN_BENCHMARK_CONFIGURATION)},

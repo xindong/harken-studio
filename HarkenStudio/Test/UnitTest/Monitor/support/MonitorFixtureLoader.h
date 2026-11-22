@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 namespace Monitor {
 namespace TestSupport {
 
@@ -18,10 +18,8 @@ struct LoadedFixture
     std::string expected;
 };
 
-LoadedFixture loadRuntimeLegalEvent();
-LoadedFixture loadLifecycleLegalEvent();
 LoadedFixture loadEditorFixture(const std::string& fileName);
 
 } // namespace TestSupport
 } // namespace Monitor
-} // namespace VNX
+} // namespace harken::studio

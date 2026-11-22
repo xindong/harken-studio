@@ -24,7 +24,7 @@
 #include <QSignalBlocker>
 #include <functional>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 constexpr int kMaximumStatusCharacters = 4096;

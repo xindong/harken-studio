@@ -7,7 +7,7 @@
 
 #include <optional>
 
-namespace VNX {
+namespace harken::studio {
 
 class ThemeManager;
 
@@ -50,6 +50,7 @@ protected:
 private:
     enum class GroupControl { None, CheckBox, Chevron };
 
+    QList<int> columnMinimums() const;
     void applyColumnWidths();
     void rebalanceColumnWeight(int column, int newSize);
     void applyTheme();

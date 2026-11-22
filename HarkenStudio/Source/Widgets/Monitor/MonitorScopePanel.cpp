@@ -6,7 +6,7 @@
 #include <QLabel>
 #include <QVBoxLayout>
 
-namespace VNX {
+namespace harken::studio {
 
 MonitorScopePanel::MonitorScopePanel(QWidget* parent)
     : QWidget(parent)
@@ -114,4 +114,4 @@ void MonitorScopePanel::onSharedCursor(const MonitorCursorSnapshot&)
     refreshFace();
 }
 
-} // namespace VNX
+} // namespace harken::studio

@@ -12,11 +12,12 @@
 // detached thread blocked; the expectations below are written so the bounded
 // wait is what fails, and the process is expected to be terminated externally
 // rather than to unwind through engine state a stranded thread still touches.
+#include <harken/HarkenDevelopment.h>
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/StreamBuilder.h"
 #include "Common/TestUtil.h"
 
-#include "harken/media/StreamFormat.h"
+#include "harken/media/PackFormatV2.h"
 #include "harken/media/StreamManager.h"
 
 #include <atomic>

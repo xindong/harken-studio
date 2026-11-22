@@ -42,7 +42,7 @@
 #include <algorithm>
 #include <numeric>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 
@@ -440,11 +440,12 @@ void TableWidget::attachView(QAbstractItemView* view)
     } else if (!navigation_)
         view->setItemDelegate(new TableItemDelegate(view, themeManager_));
     if (auto* header = viewHeader()) {
-        if (!qobject_cast<ProportionalTreeWidget*>(view))
+        if (!qobject_cast<ProportionalTreeWidget*>(view)) {
+            header->setSectionResizeMode(QHeaderView::Interactive);
             new HeaderResizeHighlight(header, themeManager_);
+        }
         header->installEventFilter(this);
         header->setStretchLastSection(false);
-        header->setSectionResizeMode(QHeaderView::Interactive);
         header->setSectionsMovable(options_.columnsMovable);
         header->setDefaultAlignment(Qt::AlignLeft | Qt::AlignVCenter);
         connect(header, &QHeaderView::sectionResized, this, [this](int column, int, int width) {

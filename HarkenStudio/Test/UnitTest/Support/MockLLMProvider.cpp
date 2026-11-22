@@ -2,7 +2,7 @@
 
 #include <QTimer>
 
-namespace VNX {
+namespace harken::studio {
 
 MockLLMProvider::MockLLMProvider(QObject* parent)
     : ILLMProvider(parent)

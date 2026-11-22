@@ -15,7 +15,7 @@
 #include <functional>
 #include <unordered_map>
 
-namespace VNX {
+namespace harken::studio {
 
 class FileSystemWatcher : public QObject
 {
@@ -40,7 +40,7 @@ public:
     void setMediaExtensions(const QStringList& exts) { mediaExtensions_ = exts; }
 
 signals:
-    void mediaSourceChanged(const QString& path, VNX::FileSystemWatcher::ChangeType type);
+    void mediaSourceChanged(const QString& path, harken::studio::FileSystemWatcher::ChangeType type);
     void watchError(const QString& message);
 
 private slots:

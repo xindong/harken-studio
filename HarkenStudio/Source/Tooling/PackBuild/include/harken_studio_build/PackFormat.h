@@ -2,28 +2,19 @@
 #define HARKEN_STUDIO_BUILD_PACK_FORMAT_H
 
 #include "harken_studio_build/PublicValues.h"
+#include <harken_pack/HarkenPack.h>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 
-namespace harkenstudiobuild {
+namespace harken::studio::build {
 
-inline constexpr std::uint32_t kPackFormatVersion = HARKEN_PACK_SCHEMA_VERSION;
-inline constexpr std::uint16_t kPackSampleFormatF32Planar = 0;
-inline constexpr std::uint32_t kPackFlagLoopable = 1u << 0;
-inline constexpr std::uint32_t kPackKnownFlagsMask =
-    kPackFlagLoopable;
-inline constexpr std::uint64_t kFnv1a64OffsetBasis = 14695981039346656037ull;
-inline constexpr std::uint64_t kFnv1a64Prime = 1099511628211ull;
+inline constexpr std::uint64_t kFnv1a64OffsetBasis = HK_PACK_FNV1A64_OFFSET_BASIS;
+inline constexpr std::uint64_t kFnv1a64Prime = HK_PACK_FNV1A64_PRIME;
 
 inline std::uint64_t Fnv1a64(const void* data, std::size_t bytes,
                              std::uint64_t hash = kFnv1a64OffsetBasis) {
-    const unsigned char* p = static_cast<const unsigned char*>(data);
-    for (std::size_t i = 0; i < bytes; ++i) {
-        hash ^= static_cast<std::uint64_t>(p[i]);
-        hash *= kFnv1a64Prime;
-    }
-    return hash;
+    return hkPackFnv1a64(data, bytes, hash);
 }
 
 inline void StoreLE16(std::uint8_t* out, std::uint16_t v) {
@@ -65,17 +56,17 @@ inline std::uint64_t LoadLE64(const std::uint8_t* in) {
     return v;
 }
 
-inline void StoreObjectId(std::uint8_t* out, harkenstudio::ObjectId value) {
+inline void StoreObjectId(std::uint8_t* out, harken::studio::types::ObjectId value) {
     const auto bytes = ObjectIdBytes(value);
     std::memcpy(out, bytes.data(), bytes.size());
 }
 
-inline harkenstudio::ObjectId LoadObjectId(const std::uint8_t* in) {
+inline harken::studio::types::ObjectId LoadObjectId(const std::uint8_t* in) {
     return ObjectIdFromBytes(std::span<const std::uint8_t, 16>(in, 16));
 }
 
 struct PackTocEntry {
-    harkenstudio::ObjectId soundId{};
+    harken::studio::types::ObjectId soundId{};
     std::uint32_t sampleRate = 0;
     std::uint16_t channelCount = 0;
     std::uint16_t sampleFormat = 0;
@@ -88,6 +79,6 @@ struct PackTocEntry {
     std::uint64_t loopEndFrame = 0; // 0 = whole file when loopable
 };
 
-} // namespace harkenstudiobuild
+} // namespace harken::studio::build
 
 #endif // HARKEN_STUDIO_BUILD_PACK_FORMAT_H

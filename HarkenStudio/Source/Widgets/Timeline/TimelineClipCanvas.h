@@ -9,7 +9,7 @@
 
 class QMenu;
 
-namespace VNX {
+namespace harken::studio {
 
 class TimelineEditorPanel;
 

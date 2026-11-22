@@ -12,7 +12,7 @@ class QAction;
 class QTableWidget;
 class QToolButton;
 
-namespace VNX {
+namespace harken::studio {
 
 struct ProjectItem;
 class ObjectRefWidget;

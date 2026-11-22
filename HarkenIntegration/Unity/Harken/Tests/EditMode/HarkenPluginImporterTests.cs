@@ -19,13 +19,13 @@ namespace Harken.Unity.Tests
                 root.Replace("Runtime/Plugins/", "Editor/HarkenPluginImporterSetup.cs")), Is.Not.Null);
         }
 
-        [TestCase("Assets/Audio/SDK/Runtime/Plugins/x86_64/HarkenCore.dll", true)]
+        [TestCase("Assets/Audio/SDK/Runtime/Plugins/x86_64/HarkenEngine.dll", true)]
         [TestCase("Assets/Audio/SDK/Runtime/Plugins", true)]
         [TestCase("Assets/Audio/SDK", true)]
         [TestCase("Assets/Audio", true)]
-        [TestCase("Assets/Audio/SDK-other/Runtime/Plugins/x86_64/HarkenCore.dll", false)]
-        [TestCase("Assets/Audio/Plugins/x86_64/HarkenCore.dll", false)]
-        [TestCase("Assets/Other/HarkenCore.dll", false)]
+        [TestCase("Assets/Audio/SDK-other/Runtime/Plugins/x86_64/HarkenEngine.dll", false)]
+        [TestCase("Assets/Audio/Plugins/x86_64/HarkenEngine.dll", false)]
+        [TestCase("Assets/Other/HarkenEngine.dll", false)]
         public void RecognizesMovesWithoutClaimingNeighbouringPlugins(string path, bool expected)
         {
             Assert.That(HarkenPluginImporterSetup.IsRelevantAsset(path,
@@ -37,7 +37,7 @@ namespace Harken.Unity.Tests
         public void ScriptAndManifestImportCanRecoverAnUnresolvedRoot(string path)
         {
             Assert.That(HarkenPluginImporterSetup.IsRelevantAsset(path, null), Is.True);
-            Assert.That(HarkenPluginImporterSetup.IsRelevantAsset("Assets/Other/HarkenCore.dll", null), Is.False);
+            Assert.That(HarkenPluginImporterSetup.IsRelevantAsset("Assets/Other/HarkenEngine.dll", null), Is.False);
         }
 
         [UnityTest]
@@ -45,7 +45,7 @@ namespace Harken.Unity.Tests
         {
             string root = HarkenPluginImporterSetup.FindPluginRoot();
             Assert.That(root, Is.Not.Null);
-            string path = root + "Android/arm64-v8a/libHarkenCore.so";
+            string path = root + "Android/arm64-v8a/libHarkenEngine.so";
             if (!path.StartsWith("Assets/", System.StringComparison.Ordinal))
                 Assert.Ignore("Package assets cannot be moved using the Assets workflow.");
             if (!(AssetImporter.GetAtPath(path) is PluginImporter))
@@ -53,7 +53,7 @@ namespace Harken.Unity.Tests
             string folder = "Assets/HarkenPluginImporterMoveTest";
             Assert.That(AssetDatabase.IsValidFolder(folder), Is.False);
             AssetDatabase.CreateFolder("Assets", "HarkenPluginImporterMoveTest");
-            string outside = folder + "/libHarkenCore.so";
+            string outside = folder + "/libHarkenEngine.so";
             string guid = AssetDatabase.AssetPathToGUID(path);
             try
             {
@@ -88,14 +88,22 @@ namespace Harken.Unity.Tests
             }
         }
 
-        [TestCase("x86_64/HarkenCore.dll", BuildTarget.StandaloneWindows64, "x86_64", "Windows")]
-        [TestCase("x86_64/libHarkenCore.so", BuildTarget.StandaloneLinux64, "x86_64", "Linux")]
-        [TestCase("macOS/libHarkenCore.dylib", BuildTarget.StandaloneOSX, "AnyCPU", "OSX")]
-        [TestCase("Android/arm64-v8a/libHarkenCore.so", BuildTarget.Android, "ARM64", null)]
-        [TestCase("iOS/libHarkenCore.a", BuildTarget.iOS, "AnyCPU", null)]
+        [TestCase("x86_64/HarkenEngine.dll", BuildTarget.StandaloneWindows64, "x86_64", "Windows", false)]
+        [TestCase("x86_64/HarkenEngineDev.dll", BuildTarget.StandaloneWindows64, "x86_64", "Windows", true)]
+        [TestCase("x86_64/libHarkenEngine.so", BuildTarget.StandaloneLinux64, "x86_64", "Linux", false)]
+        [TestCase("x86_64/libHarkenEngineDev.so", BuildTarget.StandaloneLinux64, "x86_64", "Linux", true)]
+        [TestCase("macOS/libHarkenEngine.dylib", BuildTarget.StandaloneOSX, "AnyCPU", "OSX", false)]
+        [TestCase("macOS/libHarkenEngineDev.dylib", BuildTarget.StandaloneOSX, "AnyCPU", "OSX", true)]
+        [TestCase("Android/arm64-v8a/libHarkenEngine.so", BuildTarget.Android, "ARM64", null, false)]
+        [TestCase("Android/arm64-v8a/libHarkenEngineDev.so", BuildTarget.Android, "ARM64", null, true)]
+        [TestCase("iOS/libHarkenEngine.a", BuildTarget.iOS, "AnyCPU", null, false)]
+        [TestCase("iOS/libHarkenEngineDev.a", BuildTarget.iOS, "AnyCPU", null, true)]
         public void ImportedNativeLibraryHasOnlyItsIntendedPlatformsAndIsStable(
-            string relativePath, BuildTarget target, string cpu, string editorOs)
+            string relativePath, BuildTarget target, string cpu, string editorOs, bool development)
         {
+            if (HarkenNativeLibrarySelection.Current != HarkenNativeLibrary.Automatic)
+                Assert.Ignore("Expectations describe the Automatic native library selection.");
+            bool editorCompatible = editorOs != null && development;
             string root = HarkenPluginImporterSetup.FindPluginRoot();
             Assert.That(root, Is.Not.Null);
             string path = root + relativePath;
@@ -110,12 +118,12 @@ namespace Harken.Unity.Tests
             }
 
             Assert.That(importer.GetCompatibleWithAnyPlatform(), Is.False, path);
-            Assert.That(importer.GetCompatibleWithEditor(), Is.EqualTo(editorOs != null), path);
+            Assert.That(importer.GetCompatibleWithEditor(), Is.EqualTo(editorCompatible), path);
             foreach (BuildTarget platform in new[] { BuildTarget.StandaloneWindows64,
                 BuildTarget.StandaloneLinux64, BuildTarget.StandaloneOSX, BuildTarget.Android, BuildTarget.iOS })
-                Assert.That(importer.GetCompatibleWithPlatform(platform), Is.EqualTo(platform == target), path);
+                Assert.That(importer.GetCompatibleWithPlatform(platform), Is.EqualTo(platform == target && !development), path);
             Assert.That(importer.GetPlatformData(target, "CPU"), Is.EqualTo(cpu), path);
-            if (editorOs != null)
+            if (editorCompatible)
             {
                 Assert.That(importer.GetEditorData("OS"), Is.EqualTo(editorOs), path);
                 Assert.That(importer.GetEditorData("CPU"), Is.EqualTo(cpu), path);

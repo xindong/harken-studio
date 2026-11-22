@@ -11,7 +11,7 @@
 class QLabel;
 class QStackedWidget;
 
-namespace VNX {
+namespace harken::studio {
 
 class CurveEditorWidget : public QWidget
 {
@@ -30,7 +30,7 @@ public:
     QString attenuationName() const { return attenuation_.name; }
     AttenuationDimension dimension() const { return dimension_; }
     QUuid bindingHostGuid() const { return selection_.hostGuid; }
-    harkenstudio::ObjectId bindingStableId() const { return selection_.bindingStableId; }
+    harken::studio::types::ObjectId bindingStableId() const { return selection_.bindingStableId; }
     BindingAddress bindingAddress() const { return selection_.address; }
     const CurveSelection& selection() const { return selection_; }
 

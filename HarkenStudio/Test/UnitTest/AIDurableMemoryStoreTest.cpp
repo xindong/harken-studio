@@ -9,7 +9,7 @@
 #include <atomic>
 #include <future>
 
-using namespace VNX;
+using namespace harken::studio;
 
 namespace {
 

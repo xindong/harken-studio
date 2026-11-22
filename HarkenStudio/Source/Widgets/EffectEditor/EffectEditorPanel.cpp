@@ -27,7 +27,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace VNX {
+namespace harken::studio {
 
 struct EffectEditorPanel::Selection
 {
@@ -165,8 +165,10 @@ EffectEditorPanel::EffectEditorPanel(QWidget* parent, Presentation presentation)
             parameter->setCompactValueColumn(metrics.inspector.valueColumnWidth);
             parameter->setValueColumnStretch(7, 3);
         });
-        fieldsLayout->addWidget(makeInspectorFormRow(fields_, field.field, field.label,
-            parameter, {}, 0).row);
+        const auto formRow = makeInspectorFormRow(fields_, field.field, field.label,
+            parameter, {}, 0);
+        formRow.label->setToolTip(QStringLiteral("%1 (%2)").arg(field.label, field.unit.trimmed()));
+        fieldsLayout->addWidget(formRow.row);
         parameters_[index] = parameter;
         connect(parameter, &ParameterSlider::valueChanged, this,
             [this, index](double value) { commitParameter(index, value); });

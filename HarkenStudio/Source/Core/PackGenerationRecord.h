@@ -10,7 +10,7 @@
 #include <optional>
 #include "ProjectPlatform.h"
 
-namespace VNX {
+namespace harken::studio {
 
 enum class PackGenerationStage {
     Queued,
@@ -109,7 +109,7 @@ signals:
     void exportActivityChanged(bool exporting);
     void preflightActivityChanged(bool active);
     void globalObservationChanged();
-    void observationChanged(const VNX::PackBuildObservation& observation);
+    void observationChanged(const harken::studio::PackBuildObservation& observation);
     void exportCancellationRequested();
 
 private:

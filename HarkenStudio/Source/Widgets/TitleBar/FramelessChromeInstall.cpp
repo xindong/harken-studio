@@ -8,11 +8,11 @@
 #include <QWKWidgets/widgetwindowagent.h>
 #include <QDialog>
 #include <QLayout>
-#include <QPushButton>
+#include <QAbstractButton>
 #include <QString>
 #endif
 
-namespace VNX {
+namespace harken::studio {
 
 #if defined(HARKEN_HAS_QWINDOWKIT) && defined(Q_OS_WIN)
 
@@ -34,7 +34,7 @@ void installFramelessChrome()
         agent->setTitleBar(bar);
         agent->setSystemButton(QWK::WindowAgentBase::Close, bar->closeButton());
 
-        QObject::connect(bar->closeButton(), &QPushButton::clicked, window, [window]() {
+        QObject::connect(bar->closeButton(), &QAbstractButton::clicked, window, [window]() {
             if (auto* dlg = qobject_cast<QDialog*>(window))
                 dlg->reject();
             else

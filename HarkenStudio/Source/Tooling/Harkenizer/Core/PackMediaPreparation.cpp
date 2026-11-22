@@ -21,13 +21,13 @@
 #include <utility>
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 
 struct PackMediaPreparation::Impl
 {
     struct Work
     {
-        harkenstudio::ObjectId soundId;
+        harken::studio::types::ObjectId soundId;
         SoundSourceDef source;
         double scheduleOffsetSec;
         std::promise<Result> result;
@@ -35,11 +35,10 @@ struct PackMediaPreparation::Impl
 
     struct Group
     {
-        uint32_t sourceId;
         std::vector<Work> items;
     };
 
-    using Key = std::pair<harkenstudio::ObjectId, QUuid>;
+    using Key = std::pair<harken::studio::types::ObjectId, QUuid>;
 
     MediaBuildSnapshot snapshot;
     std::shared_ptr<SoundSourceDerivative::MaterializationCache> cache;
@@ -68,10 +67,10 @@ struct PackMediaPreparation::Impl
     uint64_t estimateBytes(const Work& work, const Result& result) const
     {
         const auto& metadata = result.conversion->asset.metadata;
-        const auto& settings = result.conversion->settings;
+        const auto& conversion = result.conversion->conversion;
+        const auto targetSampleRateHz = conversion ? conversion->sampleRate : 0;
         if (metadata.sampleRate == 0 || metadata.channels == 0
-            || !std::isfinite(work.scheduleOffsetSec) || work.scheduleOffsetSec < 0.0
-            || (settings.performResample && settings.targetSampleRate == 0))
+            || !std::isfinite(work.scheduleOffsetSec) || work.scheduleOffsetSec < 0.0)
             return byteLimit + 1;
         const uint64_t start = std::min(result.source.trimStartFrame, metadata.totalSamples);
         const uint64_t end = std::clamp(result.source.trimEndFrame.value_or(metadata.totalSamples),
@@ -79,8 +78,7 @@ struct PackMediaPreparation::Impl
         const long double frameBytes = static_cast<long double>(metadata.channels) * sizeof(float);
         const long double decodedBytes = static_cast<long double>(metadata.totalSamples) * frameBytes;
         const long double trimmedFrames = static_cast<long double>(end - start);
-        const long double outputRate = settings.performResample
-            ? std::max(metadata.sampleRate, settings.targetSampleRate) : metadata.sampleRate;
+        const long double outputRate = std::max(metadata.sampleRate, targetSampleRateHz);
         const long double outputFrames = std::ceil(trimmedFrames * outputRate / metadata.sampleRate)
             + std::ceil(static_cast<long double>(work.scheduleOffsetSec) * outputRate);
         const long double bytes = 3.0L * (decodedBytes + trimmedFrames * frameBytes
@@ -117,8 +115,7 @@ struct PackMediaPreparation::Impl
         budgetChanged.wakeAll();
     }
 
-    Result prepare(const Work& work, const std::optional<MediaConversionRequest>& conversion,
-                   const QString& captureError)
+    Result prepare(const Work& work)
     {
         Result result;
         result.source = work.source;
@@ -126,9 +123,11 @@ struct PackMediaPreparation::Impl
             result.error = QStringLiteral("Export canceled");
             return result;
         }
+        const QUuid soundGuid(harken::studio::objectIdString(work.soundId));
+        const auto conversion = snapshot.inspectRequest(
+            soundGuid, work.source.sourceId, platform, &result.error);
         result.conversion = conversion;
         if (!conversion) {
-            result.error = captureError;
             return result;
         }
         result.source = SoundSourceSemantics::authoredView(work.source, &conversion->asset);
@@ -141,7 +140,7 @@ struct PackMediaPreparation::Impl
         QString derivativeError;
         bool captureFailed = false;
         const auto capture = [&](QString* error) -> std::shared_ptr<const BuildSourceInput> {
-            const auto captured = snapshot.request(work.source.sourceId, platform, error);
+            const auto captured = snapshot.request(soundGuid, work.source.sourceId, platform, error);
             if (!captured) {
                 captureFailed = true;
                 return {};
@@ -151,7 +150,7 @@ struct PackMediaPreparation::Impl
         };
         result.artifact = SoundSourceDerivative::materialize(
             conversion->inputPath(), result.source, work.scheduleOffsetSec,
-            platform, derivativeDir, conversion->settings, &derivativeError,
+            platform, derivativeDir, conversion->conversion, &derivativeError,
             cache.get(), conversion->sourceInput.get(), capture);
         if (captureFailed) {
             result.error = derivativeError;
@@ -163,25 +162,15 @@ struct PackMediaPreparation::Impl
         }
         if (!result.artifact)
             result.error = QStringLiteral("Derivative media failed for Sound %1: %2")
-                .arg(VNX::objectIdString(work.soundId)).arg(derivativeError);
+                .arg(harken::studio::objectIdString(work.soundId)).arg(derivativeError);
         return result;
     }
 
     void run(Group& group)
     {
-        std::optional<MediaConversionRequest> conversion;
-        QString captureError;
-        std::exception_ptr captureException;
-        try {
-            if (!stopped.load(std::memory_order_acquire))
-                conversion = snapshot.inspectRequest(group.sourceId, platform, &captureError);
-        } catch (...) {
-            captureException = std::current_exception();
-        }
         for (auto& work : group.items) {
             try {
-                if (captureException) work.result.set_exception(captureException);
-                else work.result.set_value(prepare(work, conversion, captureError));
+                work.result.set_value(prepare(work));
             } catch (...) {
                 work.result.set_exception(std::current_exception());
             }
@@ -202,12 +191,12 @@ PackMediaPreparation::~PackMediaPreparation()
     stop();
 }
 
-void PackMediaPreparation::add(harkenstudio::ObjectId soundId, const SoundSourceDef& source,
+void PackMediaPreparation::add(harken::studio::types::ObjectId soundId, const SoundSourceDef& source,
                               double scheduleOffsetSec)
 {
     auto [found, inserted] = impl_->groupIndices.emplace(source.sourceId, impl_->groups.size());
     if (inserted)
-        impl_->groups.push_back(std::make_shared<Impl::Group>(Impl::Group{source.sourceId, {}}));
+        impl_->groups.push_back(std::make_shared<Impl::Group>());
     Impl::Work work{soundId, source, scheduleOffsetSec, {}};
     impl_->results[{soundId, source.entryId}].push_back(work.result.get_future());
     impl_->groups[found->second]->items.push_back(std::move(work));
@@ -222,7 +211,7 @@ void PackMediaPreparation::start()
 }
 
 PackMediaPreparation::Result PackMediaPreparation::take(
-    harkenstudio::ObjectId soundId, const QUuid& entryId,
+    harken::studio::types::ObjectId soundId, const QUuid& entryId,
     const std::function<bool()>& cancelCheck)
 {
     const auto canceled = [&] { return cancelCheck && cancelCheck(); };
@@ -237,7 +226,7 @@ PackMediaPreparation::Result PackMediaPreparation::take(
     if (found == impl_->results.end() || found->second.empty()) {
         Result result;
         result.error = QStringLiteral("Media preparation is missing for Sound %1")
-            .arg(VNX::objectIdString(soundId));
+            .arg(harken::studio::objectIdString(soundId));
         return result;
     }
     auto& future = found->second.front();

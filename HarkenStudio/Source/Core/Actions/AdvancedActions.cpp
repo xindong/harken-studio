@@ -12,9 +12,9 @@
 #include <algorithm>
 #include <cmath>
 
-namespace VNX { ProjectItem* findItemByPathInProject(ProjectData* project, const QString& path); }
+namespace harken::studio { ProjectItem* findItemByPathInProject(ProjectData* project, const QString& path); }
 
-namespace VNX {
+namespace harken::studio {
 
 
 static ActionResult engineNotAvailable()
@@ -66,21 +66,21 @@ static bool parseOptionalBool(const QJsonObject& args, const char* name,
     return true;
 }
 
-static QString seekStateName(HarkenEditor::Bridge::ActionSeekState state)
+static QString seekStateName(harken::studio::bridge::ActionSeekState state)
 {
     switch (state) {
-    case HarkenEditor::Bridge::ActionSeekState::Accepted:
+    case harken::studio::bridge::ActionSeekState::Accepted:
         return QStringLiteral("accepted");
-    case HarkenEditor::Bridge::ActionSeekState::Applied:
+    case harken::studio::bridge::ActionSeekState::Applied:
         return QStringLiteral("applied");
-    case HarkenEditor::Bridge::ActionSeekState::Cancelled:
+    case harken::studio::bridge::ActionSeekState::Cancelled:
         return QStringLiteral("cancelled");
     }
     return QStringLiteral("accepted");
 }
 
 static QJsonObject seekInfoJson(
-    uint64_t operationId, const HarkenEditor::Bridge::ActionSeekInfo& info)
+    uint64_t operationId, const harken::studio::bridge::ActionSeekInfo& info)
 {
     return {
         {QStringLiteral("seek_operation_id"), exactUint64Json(operationId)},
@@ -109,19 +109,19 @@ static QJsonObject seekInfoJson(
 }
 
 ActionResult AdvancedActionDetail::fromEngineResult(
-    bool engineInitialized, HarkenEditor::Bridge::EngineResult result,
+    bool engineInitialized, harken::studio::bridge::EngineResult result,
     QJsonObject successData, const QString& operation)
 {
     const int32_t signedResult = static_cast<int32_t>(result);
     successData.insert(QStringLiteral("engine_result"), signedResult);
-    if (result == HarkenEditor::Bridge::kEngineOk)
+    if (result == harken::studio::bridge::kEngineOk)
         return {true, successData};
 
     QString errorCode = QStringLiteral("ENGINE_ERROR");
     QString errorMessage = QStringLiteral("%1 failed (engine result %2)")
                                .arg(operation)
                                .arg(signedResult);
-    if (result == HarkenEditor::Bridge::kEngineNotInit) {
+    if (result == harken::studio::bridge::kEngineNotInit) {
         if (engineInitialized) {
             errorCode = QStringLiteral("NOT_AVAILABLE");
             errorMessage = QStringLiteral("%1 is not available in the current engine path")
@@ -130,25 +130,25 @@ ActionResult AdvancedActionDetail::fromEngineResult(
             errorCode = QStringLiteral("NOT_INIT");
             errorMessage = QStringLiteral("Audio engine not initialized");
         }
-    } else if (result == HarkenEditor::Bridge::kEngineInvalidArg) {
+    } else if (result == harken::studio::bridge::kEngineInvalidArg) {
         errorCode = QStringLiteral("INVALID_PARAM");
-    } else if (result == HarkenEditor::Bridge::kEngineUnknownId) {
+    } else if (result == harken::studio::bridge::kEngineUnknownId) {
         errorCode = QStringLiteral("UNKNOWN_ID");
-    } else if (result == HarkenEditor::Bridge::kEngineStaleHandle) {
+    } else if (result == harken::studio::bridge::kEngineStaleHandle) {
         errorCode = QStringLiteral("STALE_HANDLE");
-    } else if (result == HarkenEditor::Bridge::kEngineNoVoice) {
+    } else if (result == harken::studio::bridge::kEngineNoVoice) {
         errorCode = QStringLiteral("NO_VOICE");
-    } else if (result == HarkenEditor::Bridge::kEngineBackpressure) {
+    } else if (result == harken::studio::bridge::kEngineBackpressure) {
         errorCode = QStringLiteral("BACKPRESSURE");
-    } else if (result == HarkenEditor::Bridge::kEngineInUse) {
+    } else if (result == harken::studio::bridge::kEngineInUse) {
         errorCode = QStringLiteral("IN_USE");
-    } else if (result == HarkenEditor::Bridge::kEngineSendCycle) {
+    } else if (result == harken::studio::bridge::kEngineSendCycle) {
         errorCode = QStringLiteral("SEND_CYCLE");
-    } else if (result == HarkenEditor::Bridge::kEngineCapabilityUnavailable) {
+    } else if (result == harken::studio::bridge::kEngineCapabilityUnavailable) {
         errorCode = QStringLiteral("NOT_AVAILABLE");
-    } else if (result == HarkenEditor::Bridge::kEngineRuntimeRecreateRequired) {
+    } else if (result == harken::studio::bridge::kEngineRuntimeRecreateRequired) {
         errorCode = QStringLiteral("RUNTIME_RECREATE_REQUIRED");
-    } else if (result == HarkenEditor::Bridge::kEngineDeviceError) {
+    } else if (result == harken::studio::bridge::kEngineDeviceError) {
         errorCode = QStringLiteral("DEVICE_ERROR");
     }
     return {false, successData, errorCode, errorMessage};
@@ -244,7 +244,7 @@ void registerAdvancedActions(ActionManager& mgr,
                 return {false, {}, "INVALID_PARAM", "action_handle must be a positive exact uint64 number or decimal string"};
             QString name = args["name"].toString();
             if (!name.isEmpty()) {
-                auto sel = VNX::resolveSelector(name);
+                auto sel = harken::studio::resolveSelector(name);
                 if (!sel.ok) return {false, {}, sel.errorCode, sel.errorMessage};
                 name = sel.name;
             }
@@ -261,7 +261,7 @@ void registerAdvancedActions(ActionManager& mgr,
             const auto result = engine->seekAction(
                 static_cast<quintptr>(actionHandle), name, pos, relative);
             const QString state = result.result
-                    == HarkenEditor::Bridge::kEngineOk
+                    == harken::studio::bridge::kEngineOk
                 ? QStringLiteral("accepted")
                 : QStringLiteral("rejected");
             return AdvancedActionDetail::fromEngineResult(
@@ -290,17 +290,17 @@ void registerAdvancedActions(ActionManager& mgr,
             uint64_t operationId = 0;
             if (!parseExactPositiveUint64(args["seek_operation_id"], operationId))
                 return {false, {}, "INVALID_PARAM", "seek_operation_id must be a positive exact uint64 number or decimal string"};
-            HarkenEditor::Bridge::ActionSeekInfo info;
+            harken::studio::bridge::ActionSeekInfo info;
             const auto queryResult = engine->queryActionSeek(operationId, info);
-            if (queryResult != HarkenEditor::Bridge::kEngineOk) {
+            if (queryResult != harken::studio::bridge::kEngineOk) {
                 return AdvancedActionDetail::fromEngineResult(
                     engine->isInitialized(), queryResult,
                     QJsonObject{{"seek_operation_id", exactUint64Json(operationId)}},
                     QStringLiteral("Query seek action"));
             }
             QJsonObject data = seekInfoJson(operationId, info);
-            if (info.state == HarkenEditor::Bridge::ActionSeekState::Accepted
-                && info.serviceResult != HarkenEditor::Bridge::kEngineOk) {
+            if (info.state == harken::studio::bridge::ActionSeekState::Accepted
+                && info.serviceResult != harken::studio::bridge::kEngineOk) {
                 return AdvancedActionDetail::fromEngineResult(
                     engine->isInitialized(), info.serviceResult, std::move(data),
                     QStringLiteral("Service seek action"));
@@ -344,17 +344,17 @@ void registerAdvancedActions(ActionManager& mgr,
         def.handler = [](const QJsonObject& args) -> ActionResult {
             QString presetName = args["preset_name"].toString();
             {
-                auto sel = VNX::resolveSelector(presetName);
+                auto sel = harken::studio::resolveSelector(presetName);
                 if (!sel.ok) return {false, {}, sel.errorCode, sel.errorMessage};
                 presetName = sel.name;
             }
             if (presetName.isEmpty())
                 return {false, {}, "INVALID_PARAM", "preset_name required"};
-            HarkenEditor::Bridge::ModulatorPresetDesc presetDesc;
-            if (!HarkenEditor::Bridge::findModulatorPreset(presetName, presetDesc))
+            harken::studio::bridge::ModulatorPresetDesc presetDesc;
+            if (!harken::studio::bridge::findModulatorPreset(presetName, presetDesc))
                 return {false, {}, "NOT_FOUND",
                     QString("Modulator preset '%1' not found").arg(presetName)};
-            const HarkenEditor::Bridge::ModulatorPresetDesc* preset = &presetDesc;
+            const harken::studio::bridge::ModulatorPresetDesc* preset = &presetDesc;
             static const char* typeNames[] = { "lfo", "envelope", "time", "step" };
             QJsonObject result;
             result["preset_name"] = presetName;
@@ -420,7 +420,7 @@ void registerAdvancedActions(ActionManager& mgr,
         def.handler = [](const QJsonObject& args) -> ActionResult {
             QString presetName = args["preset_name"].toString();
             {
-                auto sel = VNX::resolveSelector(presetName);
+                auto sel = harken::studio::resolveSelector(presetName);
                 if (!sel.ok) return {false, {}, sel.errorCode, sel.errorMessage};
                 presetName = sel.name;
             }
@@ -434,7 +434,7 @@ void registerAdvancedActions(ActionManager& mgr,
             else if (typeName == "step")     modType = 3;
             if (modType > 3)
                 return {false, {}, "INVALID_PARAM", "type required: lfo, envelope, time, step"};
-            HarkenEditor::Bridge::ModulatorPresetDesc preset;
+            harken::studio::bridge::ModulatorPresetDesc preset;
             preset.name = presetName;
             preset.category = args["category"].toString("User");
             preset.modulatorType = modType;
@@ -479,7 +479,7 @@ void registerAdvancedActions(ActionManager& mgr,
             preset.bindCurveType   = static_cast<uint8_t>(bindingObj["curve_type"].toInt(0));
             preset.bindMappedMin   = static_cast<float>(bindingObj["mapped_min"].toDouble(0.0));
             preset.bindMappedMax   = static_cast<float>(bindingObj["mapped_max"].toDouble(1.0));
-            bool ok = HarkenEditor::Bridge::saveModulatorUserPreset(preset);
+            bool ok = harken::studio::bridge::saveModulatorUserPreset(preset);
             if (!ok)
                 return {false, {}, "PRESET_FULL", "Max user presets reached for this modulator type"};
             static const char* typeNames[] = { "lfo", "envelope", "time", "step" };
@@ -500,7 +500,7 @@ void registerAdvancedActions(ActionManager& mgr,
         def.handler = [](const QJsonObject& args) -> ActionResult {
             QString presetName = args["preset_name"].toString();
             {
-                auto sel = VNX::resolveSelector(presetName);
+                auto sel = harken::studio::resolveSelector(presetName);
                 if (!sel.ok) return {false, {}, sel.errorCode, sel.errorMessage};
                 presetName = sel.name;
             }
@@ -514,7 +514,7 @@ void registerAdvancedActions(ActionManager& mgr,
             else if (typeName == "step")     modType = 3;
             if (modType > 3)
                 return {false, {}, "INVALID_PARAM", "type required: lfo, envelope, time, step"};
-            bool ok = HarkenEditor::Bridge::deleteModulatorUserPreset(modType, presetName);
+            bool ok = harken::studio::bridge::deleteModulatorUserPreset(modType, presetName);
             if (!ok)
                 return {false, {}, "NOT_FOUND", "Preset not found or is a factory preset"};
             static const char* typeNames[] = { "lfo", "envelope", "time", "step" };

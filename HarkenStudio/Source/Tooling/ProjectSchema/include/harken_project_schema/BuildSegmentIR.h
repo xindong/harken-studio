@@ -20,7 +20,7 @@
 
 #include <optional>
 
-namespace harkenprojectschema {
+namespace harken::studio::project_schema {
 
 // Builds the IR only when the model and normalization facts match exactly, and
 // every clip that references a Sound has resource facts. Every Track and Segment
@@ -58,6 +58,6 @@ std::optional<SegmentIR> BuildSegmentIRForStructureOnly(
     const CanonicalProject& project, const NormalizedFacts& facts,
     const ResourceTable& resources);
 
-}  // namespace harkenprojectschema
+}  // namespace harken::studio::project_schema
 
 #endif  // HARKEN_PROJECT_SCHEMA_BUILD_SEGMENT_IR_H

@@ -5,8 +5,9 @@
 #include <QAbstractButton>
 #include <QColor>
 #include <QEasingCurve>
+#include <QPalette>
 
-namespace VNH {
+namespace harken::hub {
 
 ButtonPulseAnimator::ButtonPulseAnimator(QObject* parent)
     : QObject(parent)
@@ -14,9 +15,6 @@ ButtonPulseAnimator::ButtonPulseAnimator(QObject* parent)
     animation_.setDuration(1000);
     animation_.setLoopCount(3);
     animation_.setEasingCurve(QEasingCurve::InOutSine);
-    animation_.setStartValue(QColor(QStringLiteral("#3A7078")));
-    animation_.setKeyValueAt(0.5, QColor(QStringLiteral("#00F0FF")));
-    animation_.setEndValue(QColor(QStringLiteral("#3A7078")));
     connect(&animation_, &QVariantAnimation::valueChanged, this,
             [this](const QVariant& value) {
                 if (!button_)
@@ -26,7 +24,7 @@ ButtonPulseAnimator::ButtonPulseAnimator(QObject* parent)
                                               ? QStringLiteral("#000000")
                                               : QStringLiteral("#E6EBF2");
                 button_->setStyleSheet(QStringLiteral(
-                    "background-color: %1; border: 1px solid #00F0FF; "
+                    "background-color: %1; border: 1px solid palette(highlight); "
                     "color: %2; font-weight: 600;")
                                            .arg(color.name(), textColor));
             });
@@ -54,6 +52,10 @@ void ButtonPulseAnimator::start(QAbstractButton* button)
     if (button_ != button)
         finalStyleSheet_ = button->styleSheet();
     button_ = button;
+    const QColor accent = button->palette().color(QPalette::Highlight);
+    animation_.setStartValue(accent.darker(150));
+    animation_.setKeyValueAt(0.5, accent);
+    animation_.setEndValue(accent.darker(150));
     animation_.start();
 }
 

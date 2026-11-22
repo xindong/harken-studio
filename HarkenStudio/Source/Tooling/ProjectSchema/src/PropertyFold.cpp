@@ -6,7 +6,7 @@
 #include <set>
 #include <vector>
 
-namespace harkenprojectschema {
+namespace harken::studio::project_schema {
 
 PropertyFoldContext::PropertyFoldContext(const CanonicalProject& project) {
     for (const ContentObject& obj : project.objects) {
@@ -151,4 +151,4 @@ FoldedProperties PropertyFoldContext::Fold(StableId subject,
     return result;
 }
 
-}  // namespace harkenprojectschema
+}  // namespace harken::studio::project_schema

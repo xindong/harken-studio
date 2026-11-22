@@ -21,7 +21,7 @@
 #include <memory>
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 
 ImportSoundSourcesCommand::ImportSoundSourcesCommand(
     const QStringList& externalPaths,

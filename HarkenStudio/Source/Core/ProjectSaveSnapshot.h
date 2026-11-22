@@ -18,7 +18,7 @@
 #include <QUuid>
 #include <utility>
 
-namespace VNX {
+namespace harken::studio {
 
 class ProjectSaveSnapshot
 {

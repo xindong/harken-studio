@@ -1,7 +1,7 @@
 #include "MonitorRecordingBrowser.h"
 #include "Monitor/MonitorTypes.h"
 
-namespace VNX {
+namespace harken::studio {
 namespace Monitor {
 namespace {
 
@@ -42,11 +42,10 @@ MonitorRecordingBrowserState projectRecordingBrowser(
         state.reason = "Local recording contract absent";
         return state;
     }
-    if (!input.hasRecordPermission || !canApply(input.captureControl))
+    if (!canApply(input.captureControl))
     {
         state.face = MonitorRecordingFace::ReadOnly;
-        state.reason = input.hasRecordPermission ? "CaptureControl denied"
-                                                 : "Record denied";
+        state.reason = "CaptureControl denied";
         return state;
     }
 
@@ -168,4 +167,4 @@ const char* recordingCommandEntry(MonitorRecordingCommand command)
 }
 
 } // namespace Monitor
-} // namespace VNX
+} // namespace harken::studio

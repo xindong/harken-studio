@@ -5,6 +5,7 @@
 #include "MainWindow.h"
 #include "Dialogs/RemoteConnectPanel.h"
 #include "RuntimeBridge/RemoteConnection.h"
+#include "Core/RemoteSession.h"
 #include "Monitor/EventCaptureController.h"
 #include <QWindow>
 #include <QLocale>
@@ -73,9 +74,10 @@
 #include "Widgets/Inspector/InspectorPanel.h"
 #include "Widgets/Inspector/InspectorCustomizationBootstrap.h"
 #include "Widgets/Inspector/EditorLaunchMap.h"
-#include "Widgets/SourceEditor/SourceEditorPanel.h"
+#include "Widgets/FileViewer/FileViewerPanel.h"
 #include "Widgets/ExternalEditor/ExternalEditorPanel.h"
 #include "Widgets/EffectEditor/EffectEditorPanel.h"
+#include "Widgets/ConversionEditor/ConversionEditorPanel.h"
 #include "Widgets/GridEditor/GridEditorPanel.h"
 #include "Widgets/GridEditor/GridEditorWidget.h"
 #include "Widgets/Timeline/TimelineEditorPanel.h"
@@ -83,20 +85,18 @@
 #include "Widgets/LogPanel/LogPanel.h"
 #include "Widgets/Blueprint/BlueprintCanvasWidget.h"
 #include "Widgets/Blueprint/BlueprintPanel.h"
-#include "Dialogs/NewProjectDialog.h"
 #include "Dialogs/AboutDialog.h"
 #include "Widgets/Assistant/AssistantPanel.h"
 #include "Widgets/Publisher/PublisherPanel.h"
 #include "Widgets/ControlPanel/ControlPanel.h"
 #include "Widgets/PlatformBar/PlatformBar.h"
 #include "Widgets/PlatformBar/PlaybackControls.h"
-#include "Widgets/Common/MenuComboBox.h"
+#include "Widgets/Common/ToolBarComboBox.h"
 #include "Monitor/MonitorAdapter.h"
 #include "Monitor/MonitorCaptureControlHost.h"
 #include "Monitor/MonitorHostContext.h"
 #include "Monitor/MonitorPerformanceLiveHost.h"
 #include "Widgets/Monitor/MonitorPanel.h"
-#include "Widgets/Monitor/MonitorPanelKeys.h"
 #include "Widgets/Monitor/MonitorPerformancePanel.h"
 #include "Widgets/Monitor/MonitorBusesPanel.h"
 #include "Widgets/Monitor/MonitorBusesSource.h"
@@ -108,7 +108,6 @@
 #include "Widgets/Meter/MeterPanel.h"
 #include "Widgets/Monitor/MonitorRecordingPanel.h"
 #include "Widgets/Monitor/MonitorSessionComparePanel.h"
-#include "Widgets/Monitor/MonitorPlaceholderPage.h"
 #include "Widgets/Monitor/MonitorScopePanel.h"
 #include "Widgets/Monitor/MonitorScopeSource.h"
 #include "Widgets/Monitor/MonitorTapSelectPanel.h"
@@ -163,7 +162,6 @@
 #include <QSize>
 #include <QList>
 #include <memory>
-#include <QStandardPaths>
 #include <QScreen>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -188,7 +186,7 @@
 #include <QSet>
 #include "Widgets/TitleBar/FloatingTitleBar.h"
 
-namespace VNX {
+namespace harken::studio {
 
 
 #if defined(HARKEN_HAS_QWINDOWKIT) && defined(Q_OS_WIN)
@@ -214,12 +212,12 @@ void applyFramelessFloatingChrome(ads::CFloatingDockContainer* fw)
     agent->setSystemButton(QWK::WindowAgentBase::Maximize, bar->maxButton());
     agent->setSystemButton(QWK::WindowAgentBase::Close,    bar->closeButton());
 
-    QObject::connect(bar->minButton(), &QPushButton::clicked, fw,
+    QObject::connect(bar->minButton(), &QAbstractButton::clicked, fw,
                      &QWidget::showMinimized, Qt::QueuedConnection);
-    QObject::connect(bar->maxButton(), &QPushButton::clicked, fw, [fw]() {
+    QObject::connect(bar->maxButton(), &QAbstractButton::clicked, fw, [fw]() {
         fw->isMaximized() ? fw->showNormal() : fw->showMaximized();
     }, Qt::QueuedConnection);
-    QObject::connect(bar->closeButton(), &QPushButton::clicked, fw,
+    QObject::connect(bar->closeButton(), &QAbstractButton::clicked, fw,
                      &QWidget::close, Qt::QueuedConnection);
 }
 }
@@ -414,8 +412,8 @@ void MainWindow::initializeStructure(
     if (startupProgress)
         startupProgress(StartupPhase::CreatingWorkspace);
     startupTrace(QStringLiteral("MainWindow: ctor begin"));
-    VNX::initializeEditorSingletons();
-    VNX::registerBuiltinInspectorCustomizations();
+    harken::studio::initializeEditorSingletons();
+    harken::studio::registerBuiltinInspectorCustomizations();
     connect(&PackGenerationRecordStore::instance(), &PackGenerationRecordStore::exportActivityChanged,
             this, [this](bool active) {
         if (!active) return;
@@ -438,7 +436,7 @@ void MainWindow::initializeStructure(
                 if (projectExplorer_ && projectExplorerDock_
                     && AssetRegistry::instance().contains(id)) {
                     revealDock(projectExplorerDock_);
-                    projectExplorer_->pingSource(id);
+                    projectExplorer_->pingResource(id);
                 }
                 break;
             }
@@ -447,11 +445,14 @@ void MainWindow::initializeStructure(
         [this](RefDomain domain, uint32_t id) {
             switch (domain) {
             case RefDomain::ProjectObject:
-                if (auto* item = ProjectManager::instance().findItemByObjectID(id))
+                if (auto* item = ProjectManager::instance().findItemByObjectID(id)) {
                     selectionRouter_->selectItem(item, true);
+                    if (item->type == ProjectItem::Type::Conversion)
+                        openStandaloneEditor(QStringLiteral("ConversionEditor"), item);
+                }
                 break;
             case RefDomain::AudioAsset:
-                openSourceEditor(id);
+                openFileViewer(id);
                 break;
             }
         });
@@ -461,7 +462,7 @@ void MainWindow::initializeStructure(
         inspectorInfo.label = tr("Inspector");
         inspectorInfo.dockObjectPrefix = QStringLiteral("InspectorDock");
         inspectorInfo.create = [this]() { createInspectorPanel(); };
-        inspectorInfo.recreate = [this](const VNX::DockInstanceSpec& s) {
+        inspectorInfo.recreate = [this](const harken::studio::DockInstanceSpec& s) {
             if (findInspectorPanel(s.instanceId)) {
                 applyWorkspacePanelRestoreSpec(s);
                 return;
@@ -476,7 +477,7 @@ void MainWindow::initializeStructure(
         hierarchyInfo.label = tr("Hierarchy");
         hierarchyInfo.dockObjectPrefix = QStringLiteral("HierarchyDock");
         hierarchyInfo.create = [this]() { createHierarchyPanel(); };
-        hierarchyInfo.recreate = [this](const VNX::DockInstanceSpec& s) {
+        hierarchyInfo.recreate = [this](const harken::studio::DockInstanceSpec& s) {
             if (!findHierarchyPanel(s.instanceId))
                 createHierarchyPanelWithId(s.instanceId, true, s.deleteOnClose);
             applyWorkspacePanelRestoreSpec(s);
@@ -499,32 +500,32 @@ void MainWindow::initializeStructure(
     }
     {
         StandaloneEditorTypeInfo info;
-        info.label = tr("Source Viewer");
-        info.dockObjectPrefix = SourceEditorPanel::dockObjectPrefix();
+        info.label = tr("File Viewer");
+        info.dockObjectPrefix = FileViewerPanel::dockObjectPrefix();
         info.createConfigured = [this](int id) -> QWidget* {
-            auto* editor = new SourceEditorPanel(this);
+            auto* editor = new FileViewerPanel(this);
             editor->setPanelId(id);
             editor->setAuditionManager(auditionManager_);
-            connect(editor, &SourceEditorPanel::panelFocused, this, [this](int panelId) {
-                panelRegistry_->setLastFocusedPanelId(SourceEditorPanel::typeId(), panelId);
+            connect(editor, &FileViewerPanel::panelFocused, this, [this](int panelId) {
+                panelRegistry_->setLastFocusedPanelId(FileViewerPanel::typeId(), panelId);
             });
             wireStandaloneEditorPin(editor);
             return editor;
         };
         info.isPinned = [](QWidget* widget) {
-            auto* editor = qobject_cast<SourceEditorPanel*>(widget);
+            auto* editor = qobject_cast<FileViewerPanel*>(widget);
             return editor && editor->isPinned();
         };
         info.setPinned = [](QWidget* widget, bool pinned) {
-            if (auto* editor = qobject_cast<SourceEditorPanel*>(widget))
+            if (auto* editor = qobject_cast<FileViewerPanel*>(widget))
                 editor->setPinned(pinned);
         };
         info.snapshotParams = [](QWidget* widget) -> QVariantMap {
-            auto* editor = qobject_cast<SourceEditorPanel*>(widget);
+            auto* editor = qobject_cast<FileViewerPanel*>(widget);
             return editor ? editor->snapshotState() : QVariantMap{};
         };
         info.restoreParams = [](QWidget* widget, const QVariantMap& params) {
-            auto* editor = qobject_cast<SourceEditorPanel*>(widget);
+            auto* editor = qobject_cast<FileViewerPanel*>(widget);
             if (!editor)
                 return;
             const uint32_t sourceId = params.value(QStringLiteral("sourceId")).toUInt();
@@ -533,7 +534,7 @@ void MainWindow::initializeStructure(
             else
                 editor->clearEditor();
         };
-        registerStandaloneEditorType(SourceEditorPanel::typeId(), std::move(info));
+        registerStandaloneEditorType(FileViewerPanel::typeId(), std::move(info));
     }
     {
         StandaloneEditorTypeInfo info;
@@ -627,6 +628,62 @@ void MainWindow::initializeStructure(
                 editor->restoreState(params);
         };
         registerStandaloneEditorType(QStringLiteral("EffectEditor"), std::move(info));
+    }
+    {
+        StandaloneEditorTypeInfo info;
+        info.label = tr("Conversion Editor");
+        info.openBelowCentralArea = true;
+        info.clearOnUnrelatedSelection = false;
+        info.dockObjectPrefix = QStringLiteral("ConversionEditorDock");
+        info.createConfigured = [this](int id) -> QWidget* {
+            auto* editor = new ConversionEditorPanel(this);
+            editor->setPanelId(id);
+            connect(editor, &ConversionEditorPanel::panelFocused, this, [this](int panelId) {
+                panelRegistry_->setLastFocusedPanelId(QStringLiteral("ConversionEditor"), panelId);
+            });
+            connect(editor, &ConversionEditorPanel::navigateRequested, this, [this](const QUuid& guid) {
+                if (auto* item = ProjectManager::instance().findItemByGuid(guid))
+                    selectionRouter_->selectItem(item, true);
+            });
+            connect(editor, &QWidget::windowTitleChanged, this, [this, editor](const QString& title) {
+                if (auto* dock = dockOfPanel(editor))
+                    dock->setWindowTitle(title);
+            });
+            wireStandaloneEditorPin(editor);
+            return editor;
+        };
+        info.bind = [](QWidget* widget, ProjectItem* item) {
+            if (auto* editor = qobject_cast<ConversionEditorPanel*>(widget))
+                editor->bindItem(item);
+        };
+        info.boundItem = [](QWidget* widget) -> ProjectItem* {
+            auto* editor = qobject_cast<ConversionEditorPanel*>(widget);
+            return editor ? editor->boundItem() : nullptr;
+        };
+        info.accepts = [](const ProjectItem* item) {
+            return item && item->type == ProjectItem::Type::Conversion;
+        };
+        info.isPinned = [](QWidget* widget) {
+            auto* editor = qobject_cast<ConversionEditorPanel*>(widget);
+            return editor && editor->isPinned();
+        };
+        info.setPinned = [](QWidget* widget, bool pinned) {
+            if (auto* editor = qobject_cast<ConversionEditorPanel*>(widget))
+                editor->setPinned(pinned);
+        };
+        info.clear = [](QWidget* widget) {
+            if (auto* editor = qobject_cast<ConversionEditorPanel*>(widget))
+                editor->clearEditor();
+        };
+        info.snapshotParams = [](QWidget* widget) -> QVariantMap {
+            auto* editor = qobject_cast<ConversionEditorPanel*>(widget);
+            return editor ? editor->snapshotState() : QVariantMap{};
+        };
+        info.restoreParams = [](QWidget* widget, const QVariantMap& params) {
+            if (auto* editor = qobject_cast<ConversionEditorPanel*>(widget))
+                editor->restoreState(params);
+        };
+        registerStandaloneEditorType(QStringLiteral("ConversionEditor"), std::move(info));
     }
     {
         StandaloneEditorTypeInfo info;
@@ -772,8 +829,8 @@ void MainWindow::initializeStructure(
     }
     applyDarkPalette();
     
-    remoteConnection_ = new HarkenEditor::Bridge::RemoteConnection(this);
-    eventCaptureController_ = new Monitor::EventCaptureController(remoteConnection_, this);
+    remoteConnection_ = &RemoteSession::instance().connection();
+    eventCaptureController_ = &RemoteSession::instance().capture();
     setupMenuBar();
     setupStatusBar();
     setupMainToolBar();
@@ -843,12 +900,12 @@ void MainWindow::initializeStructure(
         v.blueprintDock      = blueprintDock_;
         busController_->setViews(v);
     }
-    layoutController_->setInstanceSnapshotProvider([this]() -> QList<VNX::DockInstanceSpec> {
+    layoutController_->setInstanceSnapshotProvider([this]() -> QList<harken::studio::DockInstanceSpec> {
         return workspaceWindowManager_
             ? workspaceWindowManager_->instanceSpecs()
-            : QList<VNX::DockInstanceSpec>();
+            : QList<harken::studio::DockInstanceSpec>();
     });
-    layoutController_->setInstanceRestoreFactory([this](const VNX::DockInstanceSpec& spec) {
+    layoutController_->setInstanceRestoreFactory([this](const harken::studio::DockInstanceSpec& spec) {
         return workspaceWindowManager_
             ? workspaceWindowManager_->restoreInstance(spec)
             : panelRegistry_->recreate(spec);
@@ -904,7 +961,7 @@ void MainWindow::initializeFinalState()
     startupTrace(QStringLiteral("MainWindow: ctor ready"));
 
 #ifdef HARKEN_HAS_QWINDOWKIT
-    m_titleBar    = new VNX::TitleBarWidget(this);
+    m_titleBar    = new harken::studio::TitleBarWidget(this);
     connect(m_titleBar, &QObject::destroyed, this, [this]() { m_titleBar = nullptr; });
     m_windowAgent = new QWK::WidgetWindowAgent(this);
     m_windowAgent->setup(this);
@@ -913,12 +970,12 @@ void MainWindow::initializeFinalState()
     m_windowAgent->setSystemButton(QWK::WindowAgentBase::Maximize, m_titleBar->maxButton());
     m_windowAgent->setSystemButton(QWK::WindowAgentBase::Close,    m_titleBar->closeButton());
 
-    connect(m_titleBar->minButton(),   &QPushButton::clicked, this,
+    connect(m_titleBar->minButton(),   &QAbstractButton::clicked, this,
             &QMainWindow::showMinimized, Qt::QueuedConnection);
-    connect(m_titleBar->maxButton(),   &QPushButton::clicked, this, [this]() {
+    connect(m_titleBar->maxButton(),   &QAbstractButton::clicked, this, [this]() {
         isMaximized() ? showNormal() : showMaximized();
     }, Qt::QueuedConnection);
-    connect(m_titleBar->closeButton(), &QPushButton::clicked, this,
+    connect(m_titleBar->closeButton(), &QAbstractButton::clicked, this,
             &QMainWindow::close, Qt::QueuedConnection);
 
     m_titleBar->embedMenuBar(this->menuBar());
@@ -961,8 +1018,9 @@ MainWindow::~MainWindow()
     PackGenerationRecordStore::instance().cancelExport();
     for (const auto& thread : packExportThreads_)
         if (thread) thread->wait();
-    delete eventCaptureController_;
+    RemoteSession::instance().shutdown();
     eventCaptureController_ = nullptr;
+    remoteConnection_ = nullptr;
     closeMonitorSession();
     if (auto* panel = qobject_cast<MonitorPerformancePanel*>(
             monitorPerformanceChartSource_.panel()))
@@ -994,30 +1052,6 @@ void MainWindow::setupAudioEngine()
 {
     startupTrace(QStringLiteral("MainWindow: setupAudioEngine begin"));
     AudioEngine& engine = AudioEngine::instance();
-    const auto refreshEventProject = [this] {
-        eventCaptureController_->setProjectObjects(
-            ProjectObjectIndex::fromProject(ProjectManager::instance().currentProject()));
-    };
-    connect(&ProjectManager::instance(), &ProjectManager::projectOpened, eventCaptureController_, refreshEventProject);
-    connect(&ProjectManager::instance(), &ProjectManager::projectClosed, eventCaptureController_, refreshEventProject);
-    connect(&ProjectManager::instance(), &ProjectManager::itemRenamed, eventCaptureController_, refreshEventProject);
-    connect(&ProjectManager::instance(), &ProjectManager::itemCreated, eventCaptureController_, refreshEventProject);
-    connect(&ProjectManager::instance(), &ProjectManager::itemDeleted, eventCaptureController_,
-            [this](ProjectItem* item) {
-        eventCaptureController_->setProjectObjects(ProjectObjectIndex::fromProject(
-            ProjectManager::instance().currentProject(), item));
-    });
-    connect(&ProjectManager::instance(), &ProjectManager::itemMoved, eventCaptureController_, refreshEventProject);
-    connect(&ProjectManager::instance(), &ProjectManager::itemPropertyChanged, eventCaptureController_, refreshEventProject);
-    connect(&ProjectManager::instance(), &ProjectManager::externalFilesModified, eventCaptureController_, refreshEventProject);
-    connect(&engine, &AudioEngine::initializedChanged, eventCaptureController_, [this](bool initialized) {
-        eventCaptureController_->setLocalRuntimeAvailable(initialized && !AudioEngine::instance().isSimulationMode());
-    });
-    connect(&ProjectManager::instance(), &ProjectManager::projectClosed, eventCaptureController_, [this] {
-        if (eventCaptureController_->target() == Monitor::EventCaptureTarget::Local)
-            eventCaptureController_->stop();
-    });
-    
     connect(&engine, &AudioEngine::errorOccurred, this, &MainWindow::onAudioError, Qt::QueuedConnection);
     connect(&engine, &AudioEngine::logMessage, this, [this](int level, const QString& msg) {
         LogPanel::logEngineMessage(level, msg);
@@ -1025,8 +1059,6 @@ void MainWindow::setupAudioEngine()
     
     startupTrace(QStringLiteral("MainWindow: before AudioEngine::initialize"));
     const bool engineInitialized = engine.initialize();
-    eventCaptureController_->setLocalRuntimeAvailable(engineInitialized && !engine.isSimulationMode());
-    refreshEventProject();
     startupTrace(QStringLiteral("MainWindow: after AudioEngine::initialize"));
 
     if (engineInitialized)
@@ -1353,9 +1385,8 @@ void MainWindow::setupMainToolBar()
     connect(playbackControls_, &PlaybackControls::stopClicked, this, &MainWindow::onStopPressed);
     connect(playbackControls_, &PlaybackControls::resetClicked, this, &MainWindow::onResetPressed);
 
-    auto* layoutSelector = new MenuComboBox(toolbar);
+    auto* layoutSelector = new ToolBarMenuComboBox(toolbar);
     layoutSelector->setObjectName(QStringLiteral("layoutSelector"));
-    layoutSelector->setMinimumContentsLength(12);
     layoutSelector->setAccessibleName(tr("Layout"));
     toolbar->addTrailingWidget(layoutSelector);
     auto* layoutsMenu = layoutSelector->menu();
@@ -1378,7 +1409,7 @@ void MainWindow::setupMainToolBar()
     auto* button = toolbar->addLeadingAction(remoteAction, QStringLiteral("remoteConnectButton"));
 
     const auto refresh = [this, button, remoteAction] {
-        using HarkenEditor::Bridge::RemoteConnectionState;
+        using harken::studio::bridge::RemoteConnectionState;
         const auto state = remoteConnection_->state();
         const bool connected = state == RemoteConnectionState::Connected;
         remoteAction->setChecked(connected);
@@ -1391,7 +1422,7 @@ void MainWindow::setupMainToolBar()
         refresh();
         showRemoteConnect();
     });
-    connect(remoteConnection_, &HarkenEditor::Bridge::RemoteConnection::stateChanged,
+    connect(remoteConnection_, &harken::studio::bridge::RemoteConnection::stateChanged,
             button, refresh);
     connect(&ThemeManager::instance(), &ThemeManager::appearanceChanged, button, refresh);
     refresh();
@@ -1830,7 +1861,7 @@ void MainWindow::registerWorkspaceSingletonFactories()
             if (auto* panel = qobject_cast<MonitorPanel*>(content))
             {
                 panel->setCaptureController(eventCaptureController_);
-                panel->setJumpLocator([this](harkenstudio::ObjectId stableId) {
+                panel->setJumpLocator([this](harken::studio::types::ObjectId stableId) {
                     if (selectionRouter_) selectionRouter_->revealProjectObject(stableId);
                 });
             }
@@ -1941,34 +1972,6 @@ void MainWindow::registerWorkspaceSingletonFactories()
             }
         }
     });
-    workspaceWindowManager_->registerSingletonFactory(QStringLiteral("MonitorStreaming"), {
-        []() -> QWidget* {
-            return new MonitorPlaceholderPage(QStringLiteral("Streaming"), QStringLiteral("G11"));
-        },
-        {},
-        {}
-    });
-    workspaceWindowManager_->registerSingletonFactory(QStringLiteral("MonitorMemory"), {
-        []() -> QWidget* {
-            return new MonitorPlaceholderPage(QStringLiteral("Memory"), QStringLiteral("P6-5"));
-        },
-        {},
-        {}
-    });
-    workspaceWindowManager_->registerSingletonFactory(QStringLiteral("MonitorGameModulate"), {
-        []() -> QWidget* {
-            return new MonitorPlaceholderPage(QStringLiteral("Game Modulate"), QStringLiteral("G6"));
-        },
-        {},
-        {}
-    });
-    workspaceWindowManager_->registerSingletonFactory(QStringLiteral("MonitorEmitters"), {
-        []() -> QWidget* {
-            return new MonitorPlaceholderPage(QStringLiteral("Emitters"), QStringLiteral("G5"));
-        },
-        {},
-        {}
-    });
 }
 
 void MainWindow::ensureWorkspaceSingletonShells()
@@ -2024,6 +2027,7 @@ void MainWindow::refreshMonitorCaptureControlStrip()
         };
         monitorPerformanceLiveAdapter_ =
             std::make_unique<Monitor::MonitorAdapter>(std::move(liveHost));
+        monitorPerformanceLiveAdapter_->recordInto(*monitorAdapter_);
         monitorPerformanceLiveHost_ =
             std::make_unique<Monitor::MonitorPerformanceLiveHost>(
                 monitorPerformanceLiveAdapter_.get());
@@ -2123,15 +2127,12 @@ void MainWindow::refreshMonitorRecordingPanel()
     input.mode = Monitor::MonitorRecordingMode::Local;
     input.captureControl = monitorCaptureControlHost_->lastState();
     input.contractPresent = true;
-    input.hasRecordPermission =
-        (input.captureControl.permissions & VNX::Monitor::kMonitorPermRecord)
-        == VNX::Monitor::kMonitorPermRecord;
     if (monitorAdapter_ && monitorAdapter_->hasOpenSession())
     {
-        VNX::Monitor::MonitorRecordingStatus status {};
+        harken::studio::Monitor::MonitorRecordingStatus status {};
         input.statusQuery =
             monitorAdapter_->getRecordingStatus(monitorAdapter_->sessionHandle(), &status);
-        if (input.statusQuery == VNX::Monitor::kOk)
+        if (input.statusQuery == harken::studio::Monitor::kOk)
             input.status = status;
     }
     panel->applyState(Monitor::projectRecordingBrowser(input));
@@ -2171,7 +2172,7 @@ void MainWindow::handleMonitorRecordingCommand(Monitor::MonitorRecordingCommand 
     if (!monitorAdapter_->hasOpenSession())
         return;
 
-    const VNX::Monitor::MonitorSessionHandle handle = monitorAdapter_->sessionHandle();
+    const harken::studio::Monitor::MonitorSessionHandle handle = monitorAdapter_->sessionHandle();
     const uint64_t epoch = monitorAdapter_->sessionEpoch();
     uint64_t leaseGeneration = monitorAdapter_->acquiredLeaseGeneration();
     if (leaseGeneration == 0)
@@ -2183,8 +2184,8 @@ void MainWindow::handleMonitorRecordingCommand(Monitor::MonitorRecordingCommand 
     {
         if (!Monitor::canApply(capture))
         {
-            VNX::Monitor::MonitorCaptureControlStatus lease {};
-            if (monitorAdapter_->acquireCaptureControl(handle, &lease, epoch) != VNX::Monitor::kOk)
+            harken::studio::Monitor::MonitorCaptureControlStatus lease {};
+            if (monitorAdapter_->acquireCaptureControl(handle, &lease, epoch) != harken::studio::Monitor::kOk)
                 break;
             leaseGeneration = lease.leaseGeneration;
             monitorCaptureControlHost_->openLayout();
@@ -2196,7 +2197,7 @@ void MainWindow::handleMonitorRecordingCommand(Monitor::MonitorRecordingCommand 
                 .filePath(QStringLiteral("session-%1.vnmon")
                               .arg(QDateTime::currentMSecsSinceEpoch()))
                 .toUtf8();
-        VNX::Monitor::MonitorRecordingDesc desc {};
+        harken::studio::Monitor::MonitorRecordingDesc desc {};
         desc.utf8Path = pathUtf8.constData();
         desc.fileByteBudget = 8ull * 1024ull * 1024ull;
         monitorAdapter_->startRecording(handle, leaseGeneration, &desc, epoch);
@@ -2207,7 +2208,7 @@ void MainWindow::handleMonitorRecordingCommand(Monitor::MonitorRecordingCommand 
         break;
     case Monitor::MonitorRecordingCommand::StopCapture:
     {
-        VNX::Monitor::MonitorEffectiveCapturePlan result {};
+        harken::studio::Monitor::MonitorEffectiveCapturePlan result {};
         monitorAdapter_->stopCapture(handle, leaseGeneration, &result, epoch);
         break;
     }
@@ -2402,8 +2403,8 @@ void MainWindow::connectWorkspaceWindowSignals()
                 selectionRouter_, &SelectionRouter::onBlueprintNodeDoubleClicked);
     }
 
-    auditionManager_ = new HarkenEditor::AuditionManager(&AudioEngine::instance(), this);
-    connect(auditionManager_, &HarkenEditor::AuditionManager::auditionStateChanged,
+    auditionManager_ = new harken::studio::AuditionManager(&AudioEngine::instance(), this);
+    connect(auditionManager_, &harken::studio::AuditionManager::auditionStateChanged,
             playbackControls_, [this](uint32_t, int) {
         const bool active = auditionManager_->hasActiveNonRawAudition();
         playbackControls_->setPlaying(active);
@@ -2412,17 +2413,17 @@ void MainWindow::connectWorkspaceWindowSignals()
             setStatusMessage(tr("Stopped"));
         }
     });
-    connect(auditionManager_, &HarkenEditor::AuditionManager::allAuditionsStopped,
+    connect(auditionManager_, &harken::studio::AuditionManager::allAuditionsStopped,
             playbackControls_, [this] { playbackControls_->setPlaying(false); });
-    for (QWidget* widget : panelRegistry_->allPanels(SourceEditorPanel::typeId())) {
-        if (auto* editor = qobject_cast<SourceEditorPanel*>(widget))
+    for (QWidget* widget : panelRegistry_->allPanels(FileViewerPanel::typeId())) {
+        if (auto* editor = qobject_cast<FileViewerPanel*>(widget))
             editor->setAuditionManager(auditionManager_);
     }
-    connect(auditionManager_, &HarkenEditor::AuditionManager::auditionStarted,
+    connect(auditionManager_, &harken::studio::AuditionManager::auditionStarted,
             this, [this](uint32_t, const QString& objectName) {
         setStatusMessage(tr("Playing: %1").arg(objectName));
     });
-    connect(auditionManager_, &HarkenEditor::AuditionManager::auditionStartFailed,
+    connect(auditionManager_, &harken::studio::AuditionManager::auditionStartFailed,
             this, [this](uint32_t, const QString& objectName,
                          int32_t engineResult) {
         const QString message = engineResult == 0
@@ -2440,7 +2441,7 @@ void MainWindow::connectWorkspaceWindowSignals()
                 log->logError(LogCategory::Audio, message);
         }
     });
-    connect(auditionManager_, &HarkenEditor::AuditionManager::auditionStopFailed,
+    connect(auditionManager_, &harken::studio::AuditionManager::auditionStopFailed,
             this, [this](uint32_t, const QString& objectName, int32_t engineResult) {
         const QString message = tr("Could not stop '%1'. Try Stop again.").arg(objectName);
         setStatusMessage(message);
@@ -2448,7 +2449,7 @@ void MainWindow::connectWorkspaceWindowSignals()
             log->logError(LogCategory::Audio,
                 tr("%1 (engine result %2)").arg(message).arg(engineResult));
     });
-    connect(auditionManager_, &HarkenEditor::AuditionManager::auditionSeekFinished,
+    connect(auditionManager_, &harken::studio::AuditionManager::auditionSeekFinished,
             this, [this](uint32_t playingId, quint64 requestId,
                          int32_t engineResult, bool applied) {
         if (!ipcServer_)
@@ -2594,11 +2595,11 @@ int MainWindow::lastFocusedWorkspacePanelId(const QString& typeId) const
     return panelRegistry_ ? panelRegistry_->lastFocusedPanelId(typeId) : PanelInstanceRegistry::kNoFocus;
 }
 
-QList<VNX::DockInstanceSpec> MainWindow::workspaceWindowInstanceSpecs() const
+QList<harken::studio::DockInstanceSpec> MainWindow::workspaceWindowInstanceSpecs() const
 {
     return workspaceWindowManager_
         ? workspaceWindowManager_->instanceSpecs()
-        : QList<VNX::DockInstanceSpec>();
+        : QList<harken::studio::DockInstanceSpec>();
 }
 
 QList<QVariantMap> MainWindow::workspaceWindowSummaries() const
@@ -2863,7 +2864,7 @@ void MainWindow::registerStandaloneEditorType(const QString& type, StandaloneEdi
     pinfo.label = info.label;
     pinfo.dockObjectPrefix = info.dockObjectPrefix;
     pinfo.create = [this, type]() { createStandaloneEditorPanel(type); };
-    pinfo.recreate = [this, type](const VNX::DockInstanceSpec& s) {
+    pinfo.recreate = [this, type](const harken::studio::DockInstanceSpec& s) {
         if (panelRegistry_->findPanel(type, s.instanceId)) {
             applyWorkspacePanelRestoreSpec(s);
             return;
@@ -2938,7 +2939,7 @@ QWidget* MainWindow::createStandaloneEditorPanelWithId(const QString& type, int 
             }
         }
         layoutController_->setPlacementHint(dockObjectName, PreferredOpenArea::RestoreSaved);
-    } else if (type == SourceEditorPanel::typeId()) {
+    } else if (type == FileViewerPanel::typeId()) {
         layoutController_->setPlacementHint(dockObjectName, PreferredOpenArea::Float);
     } else {
         inspectorArea = anyInspectorDockArea();
@@ -3525,12 +3526,14 @@ void MainWindow::wireStandaloneEditorPin(QWidget* editor)
         pushSelectionToStandaloneEditors(currentStandaloneEditorSelection(),
                                          StandaloneEditorPushReason::PinToggled);
     };
-    if (auto* source = qobject_cast<SourceEditorPanel*>(editor))
-        connect(source, &SourceEditorPanel::pinToggled, this, onPinToggled);
+    if (auto* source = qobject_cast<FileViewerPanel*>(editor))
+        connect(source, &FileViewerPanel::pinToggled, this, onPinToggled);
     else if (auto* curve = qobject_cast<ExternalEditorPanel*>(editor))
         connect(curve, &ExternalEditorPanel::pinToggled, this, onPinToggled);
     else if (auto* effect = qobject_cast<EffectEditorPanel*>(editor))
         connect(effect, &EffectEditorPanel::pinToggled, this, onPinToggled);
+    else if (auto* conversion = qobject_cast<ConversionEditorPanel*>(editor))
+        connect(conversion, &ConversionEditorPanel::pinToggled, this, onPinToggled);
     else if (auto* grid = qobject_cast<GridEditorPanel*>(editor))
         connect(grid, &GridEditorPanel::pinToggled, this, onPinToggled);
     else if (auto* timeline = qobject_cast<TimelineEditorPanel*>(editor))
@@ -3842,9 +3845,9 @@ void MainWindow::connectSignals()
             this, [this](ProjectItem* item) {
         selectionRouter_->revealItemSourceInExplorer(item);
     });
-    connect(projectExplorer_, &ProjectExplorer::sourceEditorRequested,
+    connect(projectExplorer_, &ProjectExplorer::fileViewerRequested,
             this, [this](uint32_t sourceId) {
-        openSourceEditor(sourceId);
+        openFileViewer(sourceId);
     });
 
     connect(&ProjectManager::instance(), &ProjectManager::projectClosed,
@@ -3873,7 +3876,7 @@ void MainWindow::connectSignals()
             if (!AudioFormatCatalog::containsExtension(ext))
                 continue;
             uint32_t sourceID =
-                HarkenEditor::Bridge::mediaRegistryFindSourceIdByPath(filePath);
+                harken::studio::bridge::mediaRegistryFindSourceIdByPath(filePath);
             if (sourceID == 0) {
                 const AssetInfo* asset = AssetRegistry::instance().findAssetByPath(filePath);
                 sourceID = asset ? asset->sourceID : 0;
@@ -4360,34 +4363,6 @@ bool MainWindow::createProjectFromConfig(
     return true;
 }
 
-void MainWindow::onNewProject()
-{
-    if (!maybeSave())
-        return;
-
-    VNX::NewProjectDialog dlg(this);
-    if (dlg.exec() != QDialog::Accepted)
-        return;
-
-    const auto dlgResult = dlg.result();
-    const QString projectName = dlgResult.projectName;
-
-    QString dir = QFileDialog::getExistingDirectory(this, tr("Select Project Location"),
-        QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation));
-    if (dir.isEmpty())
-        return;
-
-    saveProjectLayout();
-
-    ProjectConfig config;
-    config.name = projectName;
-    config.location = dir;
-    config.templateId   = dlgResult.templateId;
-    config.templateData = dlgResult.templateData.toJson();
-
-    createProjectFromConfig(config);
-}
-
 void MainWindow::onOpenProject()
 {
     onOpenProjectViaHub();
@@ -4553,10 +4528,11 @@ void MainWindow::recordPackGenerationResult(const QString& packName, uint32_t ob
         LogPanel::logError(LogCategory::Pack,
             tr("Export failed: %1%2 - %3").arg(row.packName, suffix,
                 row.errors.isEmpty() ? tr("(no detail)") : row.errors));
-    } else if (!row.warnings.isEmpty()) {
+    }
+    if (!row.warnings.isEmpty()) {
         LogPanel::logWarning(LogCategory::Pack,
             tr("%1: %2%3 - %4").arg(row.status, row.packName, suffix, row.warnings));
-    } else {
+    } else if (row.success && !row.canceled) {
         LogPanel::logInfo(LogCategory::Pack,
             tr("%1: %2%3").arg(row.status, row.packName, suffix));
     }
@@ -4637,7 +4613,6 @@ void MainWindow::generateProjectPacks(const QStringList& platforms,
         opts.snapshot = snapshot;
         opts.selection = exportSelection;
         opts.includeUnchecked = includeUnchecked;
-        opts.debugStrings = true;
         opts.forceReexport = forceReexport;
         opts.selfCleaning = selfCleaning && packPaths.isEmpty();
         opts.updateSelectedOnly = !packPaths.isEmpty();
@@ -4712,14 +4687,16 @@ void MainWindow::generateProjectPacks(const QStringList& platforms,
                     const auto platformJson = definition.toJson();
                     window->recordPackGenerationResult(tr("All Packs"), 0, result.success,
                         result.outputPath, result.error, result.fileSize, -1, platform,
-                        {}, result.warnings.join(QStringLiteral("\n")),
+                        {}, result.globalWarnings.join(QStringLiteral("\n")),
                         result.canceled ? tr("Canceled") : QString(), {}, &platformJson, {}, result.canceled);
+                } else {
+                    for (const QString& warning : result.globalWarnings)
+                        LogPanel::logWarning(LogCategory::Pack,
+                            tr("%1: %2").arg(definition.name, warning));
                 }
                 if (!result.canceled && !result.success)
                     LogPanel::logError(LogCategory::Pack,
                         result.error.isEmpty() ? tr("Pack export failed") : result.error);
-                for (const QString& warning : result.warnings)
-                    LogPanel::logWarning(LogCategory::Pack, warning);
                 if (result.success)
                     LogPanel::logInfo(LogCategory::Pack,
                         tr("%1: exported %2 pack(s) to %3").arg(definition.name)
@@ -4783,8 +4760,9 @@ void MainWindow::generateProjectPacks(const QStringList& platforms,
             if (canceled) {
                 LogPanel::logWarning(LogCategory::Pack, tr("Pack export canceled"));
             } else if (failedCount > 0) {
-                LogPanel::logError(LogCategory::Pack,
-                    tr("Export finished — %1 error(s)").arg(failedCount));
+                QString message = tr("Export finished — %1 error(s)").arg(failedCount);
+                if (warningCount > 0) message += tr(", %1 warning(s)").arg(warningCount);
+                LogPanel::logError(LogCategory::Pack, message);
             } else {
                 QString message = tr("Export finished — %1 built, %2 up to date")
                     .arg(builtCount).arg(skippedCount);
@@ -4864,16 +4842,16 @@ void MainWindow::onAbout()
     dialog.exec();
 }
 
-SourceEditorPanel* MainWindow::openSourceEditor(uint32_t sourceId)
+FileViewerPanel* MainWindow::openFileViewer(uint32_t sourceId)
 {
     if (sourceId == 0)
         return nullptr;
 
-    SourceEditorPanel* editor = nullptr;
+    FileViewerPanel* editor = nullptr;
     int editorId = 0;
     for (const QPair<int, QWidget*>& instance :
-         panelRegistry_->instances(SourceEditorPanel::typeId())) {
-        auto* candidate = qobject_cast<SourceEditorPanel*>(instance.second);
+         panelRegistry_->instances(FileViewerPanel::typeId())) {
+        auto* candidate = qobject_cast<FileViewerPanel*>(instance.second);
         if (!candidate || candidate->isPinned() || candidate->sourceId() != sourceId)
             continue;
         editor = candidate;
@@ -4882,15 +4860,15 @@ SourceEditorPanel* MainWindow::openSourceEditor(uint32_t sourceId)
     }
 
     if (!editor) {
-        editor = qobject_cast<SourceEditorPanel*>(
-            activeStandaloneEditorPanel(SourceEditorPanel::typeId()));
+        editor = qobject_cast<FileViewerPanel*>(
+            activeStandaloneEditorPanel(FileViewerPanel::typeId()));
         if (editor)
             editorId = editor->panelId();
     }
 
     if (!editor) {
-        editor = qobject_cast<SourceEditorPanel*>(
-            createStandaloneEditorPanel(SourceEditorPanel::typeId()));
+        editor = qobject_cast<FileViewerPanel*>(
+            createStandaloneEditorPanel(FileViewerPanel::typeId()));
         if (editor)
             editorId = editor->panelId();
     }
@@ -4900,7 +4878,7 @@ SourceEditorPanel* MainWindow::openSourceEditor(uint32_t sourceId)
 
     editor->bindSource(sourceId);
     if (editorId > 0)
-        panelRegistry_->setLastFocusedPanelId(SourceEditorPanel::typeId(), editorId);
+        panelRegistry_->setLastFocusedPanelId(FileViewerPanel::typeId(), editorId);
     if (ads::CDockWidget* dock = dockOfPanel(editor))
         revealDock(dock);
     editor->setFocus(Qt::OtherFocusReason);
@@ -4916,7 +4894,7 @@ ExternalEditorPanel* MainWindow::openCurveEditor(const CurveSelection& selection
         if (ProjectItem* host = ProjectManager::instance().findItemByGuid(selection.hostGuid)) {
             resolved.hostGuid = host->guid;
             if (const auto* mix = BindingEditing::ledgerHost(host, selection.address)) {
-                const ParameterBindingDef* binding = !harkenstudio::IsNull(selection.bindingStableId)
+                const ParameterBindingDef* binding = !harken::studio::types::IsNull(selection.bindingStableId)
                     ? mix->bindings.find(selection.bindingStableId)
                     : mix->bindings.findFirst(selection.address);
                 if (binding) {
@@ -5035,15 +5013,15 @@ bool MainWindow::resetCurrentLayout()
 }
 
 
-SourceEditorPanel* MainWindow::focusedSourceEditorPanel() const
+FileViewerPanel* MainWindow::focusedFileViewerPanel() const
 {
-    if (SourceEditorPanel* panel = SourceEditorPanel::panelContaining(QApplication::focusWidget()))
+    if (FileViewerPanel* panel = FileViewerPanel::panelContaining(QApplication::focusWidget()))
         return panel;
     QWidget* focus = QApplication::focusWidget();
     if (!focus || !panelRegistry_)
         return nullptr;
-    for (QWidget* widget : panelRegistry_->allPanels(SourceEditorPanel::typeId())) {
-        auto* panel = qobject_cast<SourceEditorPanel*>(widget);
+    for (QWidget* widget : panelRegistry_->allPanels(FileViewerPanel::typeId())) {
+        auto* panel = qobject_cast<FileViewerPanel*>(widget);
         if (!panel)
             continue;
         if (ads::CDockWidget* dock = dockOfPanel(panel)) {
@@ -5056,7 +5034,7 @@ SourceEditorPanel* MainWindow::focusedSourceEditorPanel() const
 
 void MainWindow::onPlayPressed()
 {
-    if (SourceEditorPanel* editor = focusedSourceEditorPanel()) {
+    if (FileViewerPanel* editor = focusedFileViewerPanel()) {
         const bool wasPlaying = editor->isPreviewPlayheadActive();
         if (editor->handlePlayStopShortcut()) {
             setStatusMessage(wasPlaying
@@ -5138,7 +5116,7 @@ void MainWindow::onPlayRequested()
         }
         else
         {
-            using HarkenEditor::Bridge::PlaybackFailure;
+            using harken::studio::bridge::PlaybackFailure;
             const PlaybackFailure failure =
                 auditionManager_->lastPlayFailure();
             QString message;
@@ -5226,7 +5204,7 @@ void MainWindow::refreshPlaybackResetEnabled()
         && selection
         && selection->mode != SelectionMode::Match
         && selection->mode != SelectionMode::Blend
-        && !harkenstudio::IsNull(item->runtimeId());
+        && !harken::studio::types::IsNull(item->runtimeId());
     playbackControls_->setResetEnabled(enabled);
 }
 

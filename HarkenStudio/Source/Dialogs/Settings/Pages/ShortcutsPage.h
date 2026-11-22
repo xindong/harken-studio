@@ -9,7 +9,7 @@ class QKeySequenceEdit;
 class QLineEdit;
 class QTreeWidgetItem;
 
-namespace VNX {
+namespace harken::studio {
 
 class ProportionalTreeWidget;
 

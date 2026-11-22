@@ -4,7 +4,7 @@
 
 #include <vector>
 
-namespace VNH {
+namespace harken::hub {
 
 struct InstalledVersionRecord
 {
@@ -14,7 +14,6 @@ struct InstalledVersionRecord
     QString installPath;
     QString packageHash;
     QString packageManifestHash;
-    QString capabilitiesHash;
     QString installedAt;
     QString healthState;
 };

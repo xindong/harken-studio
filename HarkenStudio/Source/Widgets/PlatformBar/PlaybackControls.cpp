@@ -1,5 +1,4 @@
 #include "PlaybackControls.h"
-#include "Core/ThemeLayout.h"
 
 #include "Core/ContextInfo.h"
 #include "Core/ItemTypeCatalog.h"
@@ -9,9 +8,11 @@
 
 #include <QHBoxLayout>
 #include <QStyle>
+#include <QStyleOption>
+#include <QStylePainter>
 #include <QToolButton>
 
-namespace VNX {
+namespace harken::studio {
 
 PlaybackControls::PlaybackControls(QWidget* parent)
     : QWidget(parent)
@@ -19,26 +20,24 @@ PlaybackControls::PlaybackControls(QWidget* parent)
     setObjectName(QStringLiteral("playbackControls"));
     auto* layout = new QHBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
-    ThemeLayout::spacing(layout, ThemeLayout::Space::Section);
+    layout->setSpacing(1);
     layout->setSizeConstraint(QLayout::SetFixedSize);
 
-    stopBtn_ = new QToolButton(this);
     playBtn_ = new QToolButton(this);
+    stopBtn_ = new QToolButton(this);
     resetBtn_ = new QToolButton(this);
-    stopBtn_->setObjectName(QStringLiteral("stopBtn"));
     playBtn_->setObjectName(QStringLiteral("playBtn"));
+    stopBtn_->setObjectName(QStringLiteral("stopBtn"));
     resetBtn_->setObjectName(QStringLiteral("resetBtn"));
-    stopBtn_->setAccessibleName(tr("Stop"));
     playBtn_->setAccessibleName(tr("Play"));
+    stopBtn_->setAccessibleName(tr("Stop"));
     resetBtn_->setAccessibleName(tr("Reset container selection"));
     stopBtn_->setToolTip(tr("Stop"));
     resetBtn_->setEnabled(false);
-    for (auto* button : {stopBtn_, playBtn_, resetBtn_}) {
+    for (auto* button : {playBtn_, stopBtn_, resetBtn_}) {
         button->setProperty("flatIconButton", true);
         ThemeManager::instance().bindMetrics(button, [button](const ThemeMetrics& metrics) {
-            button->setFixedSize(metrics.control.largeHeight, metrics.controlHeight);
-        });
-        ThemeManager::instance().bindMetrics(button, [button](const ThemeMetrics& metrics) {
+            button->setFixedWidth(metrics.control.largeHeight);
             button->setIconSize(QSize(metrics.iconExtent, metrics.iconExtent));
         });
         button->setAutoRaise(true);
@@ -66,6 +65,15 @@ PlaybackControls::PlaybackControls(QWidget* parent)
     setPlaying(false);
     applyTheme();
     refreshShortcuts();
+}
+
+void PlaybackControls::paintEvent(QPaintEvent*)
+{
+    QStyleOption option;
+    option.initFrom(this);
+    QStylePainter painter(this);
+    painter.setClipRegion(childrenRegion());
+    painter.drawPrimitive(QStyle::PE_Widget, option);
 }
 
 void PlaybackControls::setAuditionTarget(ProjectItem* item)

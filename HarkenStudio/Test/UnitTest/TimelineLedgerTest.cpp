@@ -2,7 +2,7 @@
 
 #include <gtest/gtest.h>
 
-using namespace VNX;
+using namespace harken::studio;
 
 namespace {
 

@@ -4,7 +4,7 @@
 
 #include <QString>
 
-namespace VNX {
+namespace harken::studio {
 
 struct ProjectItem;
 struct ProjectData;

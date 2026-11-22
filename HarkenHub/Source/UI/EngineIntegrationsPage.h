@@ -30,7 +30,7 @@ class QTimer;
 class QToolButton;
 class QTreeWidget;
 
-namespace VNH {
+namespace harken::hub {
 
 class DialogTextView;
 

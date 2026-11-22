@@ -9,7 +9,7 @@
 #include <QWidget>
 #include <algorithm>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 QJsonObject failure(const QString& code, const QString& message)

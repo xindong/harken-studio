@@ -11,15 +11,17 @@
 #include "Widgets/CurveEditor/CurveEditorWidget.h"
 #include "Widgets/Inspector/BindingFieldEditor.h"
 #include "Widgets/Inspector/FieldGroupInspectorView.h"
+#include "Widgets/SourceEditor/SourceFilePropertiesView.h"
 #include "Widgets/SourceEditor/SourceRangeEditor.h"
 #include "Widgets/FilterEditor/FilterEditorWidget.h"
 
 #include <QChildEvent>
 #include <QFocusEvent>
 #include <QScrollArea>
+#include <QSplitter>
 #include <QVBoxLayout>
 
-namespace VNX {
+namespace harken::studio {
 
 ExternalEditorPanel::ExternalEditorPanel(QWidget* parent)
     : QWidget(parent)
@@ -44,9 +46,15 @@ ExternalEditorPanel::ExternalEditorPanel(QWidget* parent)
     curvesScroll_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     curvesScroll_->setWidget(curves_);
     layout->addWidget(curvesScroll_, 1);
-    source_ = new SourceRangeEditor({}, nullptr, this,
+    sourceView_ = new QSplitter(Qt::Vertical, this);
+    source_ = new SourceRangeEditor({}, nullptr, sourceView_,
         [this](const SoundSourceDef& source) { commitSource(source); });
-    layout->addWidget(source_, 1);
+    sourceView_->addWidget(source_);
+    sourceProperties_ = new SourceFilePropertiesView(sourceView_);
+    sourceView_->addWidget(sourceProperties_);
+    sourceView_->setStretchFactor(0, 1);
+    sourceView_->setStretchFactor(1, 0);
+    layout->addWidget(sourceView_, 1);
     filter_ = new FilterEditorWidget(this);
     layout->addWidget(filter_, 1);
     connect(filter_, &FilterEditorWidget::externalEditorRequested,
@@ -128,8 +136,10 @@ void ExternalEditorPanel::bindSelection(const ExternalEditorSelection& selection
     using Kind = ExternalEditorSelection::Kind;
     if (selection_.kind != Kind::Binding)
         bindings_->bind(nullptr, {});
-    if (selection_.kind != Kind::Source)
+    if (selection_.kind != Kind::Source) {
         source_->setSource({}, nullptr);
+        sourceProperties_->setSource({}, {}, 0);
+    }
     if (selection_.kind != Kind::Filter)
         filter_->bindItem(nullptr);
     bindings_->setVisible(selection_.kind == Kind::Binding);
@@ -137,7 +147,7 @@ void ExternalEditorPanel::bindSelection(const ExternalEditorSelection& selection
     case Kind::Binding: {
         const auto selectedCurve = selection.curve;
         bindings_->bind(boundItem(), selection_.bindingAddress);
-        if (selectedCurve.bindingStableId != harkenstudio::ObjectId{})
+        if (selectedCurve.bindingStableId != harken::studio::types::ObjectId{})
             bindings_->selectBinding(selectedCurve.hostGuid, selectedCurve.bindingStableId);
         showContent(curves_);
         break;
@@ -149,7 +159,7 @@ void ExternalEditorPanel::bindSelection(const ExternalEditorSelection& selection
         break;
     case Kind::Source:
         curve_->clear();
-        showContent(source_);
+        showContent(sourceView_);
         refreshSource();
         break;
     case Kind::Filter:
@@ -169,6 +179,7 @@ void ExternalEditorPanel::clearEditor()
     bindings_->bind(nullptr, {});
     curve_->clear();
     source_->setSource({}, nullptr);
+    sourceProperties_->setSource({}, {}, 0);
     filter_->bindItem(nullptr);
     showContent(nullptr);
 }
@@ -177,7 +188,7 @@ void ExternalEditorPanel::showContent(QWidget* content)
 {
     curves_->setVisible(content == curves_);
     curvesScroll_->setVisible(content == curves_);
-    source_->setVisible(content == source_);
+    sourceView_->setVisible(content == sourceView_);
     filter_->setVisible(content == filter_);
     updateGeometry();
 }
@@ -202,7 +213,9 @@ void ExternalEditorPanel::refreshSource()
     const auto* source = currentSource();
     source_->setSource(source ? *source : SoundSourceDef{},
         source ? AssetRegistry::instance().getAsset(source->sourceId) : nullptr);
-    showContent(source ? source_ : nullptr);
+    sourceProperties_->setSource(selection_.ownerGuid, selection_.sourceEntryId,
+        source ? source->sourceId : 0);
+    showContent(source ? sourceView_ : nullptr);
 }
 
 void ExternalEditorPanel::refreshAttenuationReference()

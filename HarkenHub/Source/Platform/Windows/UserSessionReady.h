@@ -3,7 +3,7 @@
 #include <QString>
 #include <windows.h>
 
-namespace VNH {
+namespace harken::hub {
 
 class UserSessionReady
 {

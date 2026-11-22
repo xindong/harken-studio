@@ -1,28 +1,31 @@
+#include <harken/HarkenDevelopment.h>
 #include "UnitTest/CanonicalPackSetActivate.h"
 #include "AllocationProbe.h"
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/TestUtil.h"
+#include "Common/VorbisFixture.h"
 
 #include "Engine.h"
+#include "ProjectGenerationTransaction.h"
 #include "PackLogicStore.h"
 #include "ProjectGenerationTransaction.h"
 #include "harken/render/BusActivityPlan.h"
 #include "TraceFormat.h"
 #include "TraceRecorder.h"
 #include "MonitorIdentityCodec.h"
-#include "harken/media/generated/harken_pack_effect_schema.g.h"
+#include "harken/media/PackEffectSchema.h"
 #include "MonitorCaptureHubTestHooks.h"
 #include <map>
 #include <set>
 #include "harken/dsp/GainRamp.h"
 #include "harken/param/EffectParamLocator.h"
-#include "harken/core/PackCompanionNames.h"
 #include "harken/core/MediaContentRevision.h"
 #include "harken/core/VariableExecutionFingerprint.h"
-#include "harken/media/generated/harken_pack_effect_schema.g.h"
+#include "harken/media/PackEffectSchema.h"
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdio>
@@ -117,7 +120,7 @@ TEST(CanonicalPackSetActivate, PathInitOnlyActivateRetryUnload) {
 std::vector<std::uint8_t> CanonicalLimiterInit(float ceilingDb, bool bypass = false,
     std::uint64_t contentRevision = 1, bool childBus = false, std::uint32_t effectCount = 8) {
     using namespace harkentest::packfoundation;
-    ImageBuilder builder(harken::kPackKindInit);
+    ImageBuilder builder(HK_PACK_KIND_INIT);
     const auto buses = childBus ? Bus2RuntimeBusFixture() : DefaultRuntimeBusFixture();
     harken::VariableDefinitionV1 variable{};
     variable.variableId = kVariableId;
@@ -132,7 +135,7 @@ std::vector<std::uint8_t> CanonicalLimiterInit(float ceilingDb, bool bypass = fa
     std::vector<std::uint8_t> body;
     if (!harken::EncodeCurrentWorldShippingBody(world, body)) return {};
     harken::PackCanonicalPartitionHeader header{};
-    header.headerBytes = harken::kPackCanonicalPartitionHeaderBytes;
+    header.headerBytes = harken::kPackBytes<HkPackCanonicalPartitionHeader>;
     header.bodyVintage = harken::kCanonicalDefinitionPartitionBodyVintage;
     header.bodyBytes = body.size();
     header.bodyChecksum = harken::Fnv1a64(body.data(), body.size());
@@ -140,30 +143,30 @@ std::vector<std::uint8_t> CanonicalLimiterInit(float ceilingDb, bool bypass = fa
     header.partitionRevision = 1;
     header.ownedDefinitionCount = 1;
     ApplyCanonicalBusTriple(&header, buses.triple);
-    std::vector<std::uint8_t> partition(harken::kPackCanonicalPartitionHeaderBytes + body.size(), 0);
-    harken::SerializePackCanonicalPartitionHeader(header, partition.data());
-    header.headerChecksum = harken::Fnv1a64(partition.data(), harken::kPackCanonicalPartitionHeaderHeaderChecksumOffset);
-    harken::SerializePackCanonicalPartitionHeader(header, partition.data());
-    std::memcpy(partition.data() + harken::kPackCanonicalPartitionHeaderBytes, body.data(), body.size());
-    builder.AddEntry(harken::kPackEntryKindPackRequirementBlock, kInitPackStableId,
+    std::vector<std::uint8_t> partition(harken::kPackBytes<HkPackCanonicalPartitionHeader> + body.size(), 0);
+    harken::SerializePackRow<HkPackCanonicalPartitionHeader>(header, partition.data());
+    header.headerChecksum = harken::Fnv1a64(partition.data(), offsetof(HkPackCanonicalPartitionHeader, headerChecksum));
+    harken::SerializePackRow<HkPackCanonicalPartitionHeader>(header, partition.data());
+    std::memcpy(partition.data() + harken::kPackBytes<HkPackCanonicalPartitionHeader>, body.data(), body.size());
+    builder.AddEntry(HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK, kInitPackStableId,
         RequirementPayload(kInitPackStableId, contentRevision, 1, 1, body.size(), buses.triple));
-    builder.AddEntry(harken::kPackEntryKindCanonicalDefinitionPartition,
+    builder.AddEntry(HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION,
         kInitPackStableId, std::move(partition));
     std::uint64_t execution = 0;
     if (!harken::ComputeVariableExecutionFingerprintV1(variable.variableId, 1, 1, 3,
             variable.rangeMin, variable.rangeMax, variable.defaultValue, nullptr, 0, &execution)) return {};
-    std::vector<std::uint8_t> overlay(harken::kPackVariablePolicyHeaderBytes +
-        harken::kPackVariablePolicyRowBytes + harken::kPackVariableAnchorCountBytes +
-        harken::kPackVariableLabelHeaderBytes, 0);
-    harken::SerializePackVariablePolicyHeader({1}, overlay.data());
-    std::size_t cursor = harken::kPackVariablePolicyHeaderBytes;
-    harken::SerializePackVariablePolicyRow({variable.variableId, 3, execution}, overlay.data() + cursor);
-    cursor += harken::kPackVariablePolicyRowBytes;
-    harken::SerializePackVariableAnchorCount({0}, overlay.data() + cursor);
-    cursor += harken::kPackVariableAnchorCountBytes;
-    harken::SerializePackVariableLabelHeader({
+    std::vector<std::uint8_t> overlay(harken::kPackBytes<HkPackVariablePolicyHeader> +
+        harken::kPackBytes<HkPackVariablePolicyRow> + harken::kPackBytes<HkPackVariableAnchorCount> +
+        harken::kPackBytes<HkPackVariableLabelHeader>, 0);
+    harken::SerializePackRow<HkPackVariablePolicyHeader>(harken::PackVariablePolicyHeader{1}, overlay.data());
+    std::size_t cursor = harken::kPackBytes<HkPackVariablePolicyHeader>;
+    harken::SerializePackRow<HkPackVariablePolicyRow>(harken::PackVariablePolicyRow{variable.variableId, 3, execution}, overlay.data() + cursor);
+    cursor += harken::kPackBytes<HkPackVariablePolicyRow>;
+    harken::SerializePackRow<HkPackVariableAnchorCount>(harken::PackVariableAnchorHeader{0}, overlay.data() + cursor);
+    cursor += harken::kPackBytes<HkPackVariableAnchorCount>;
+    harken::SerializePackRow<HkPackVariableLabelHeader>(harken::PackVariableLabelHeader{
         harken::ComputeVariableLabelMappingFingerprintV1(variable.variableId, {}), 0}, overlay.data() + cursor);
-    builder.AddEntry(harken::kPackEntryKindVariablePolicyOverlay, 0, std::move(overlay));
+    builder.AddEntry(HK_PACK_ENTRY_KIND_VARIABLE_POLICY_OVERLAY, 0, std::move(overlay));
     AppendRuntimeBusFixture(&builder, buses);
     for (std::uint32_t slot = 0; slot < effectCount; ++slot) {
         harken::PackBusEffectEntry effect{};
@@ -178,9 +181,9 @@ std::vector<std::uint8_t> CanonicalLimiterInit(float ceilingDb, bool bypass = fa
         effect.paramBytes = 8;
         effect.params[0] = slot == 7 ? ceilingDb : 0.0f;
         effect.params[1] = 100.0f;
-        std::vector<std::uint8_t> payload(harken::kPackBusEffectBytes);
-        harken::SerializePackBusEffect(effect, payload.data());
-        const auto index = builder.AddEntry(harken::kPackEntryKindBusEffect,
+        std::vector<std::uint8_t> payload(harken::kPackBytes<HkPackBusEffect>);
+        harken::SerializePackRow<HkPackBusEffect>(effect, payload.data());
+        const auto index = builder.AddEntry(HK_PACK_ENTRY_KIND_BUS_EFFECT,
             static_cast<std::uint64_t>(slot), std::move(payload));
         builder.SetRelationOrdinal(index, slot);
     }
@@ -356,7 +359,7 @@ TEST(CanonicalPackSetActivate, FileBudgetRefusalPrecedesWholeFileAllocationAndCa
     }
 }
 
-namespace companionfixture {
+namespace v2activation {
 
 constexpr VnObjectId project{0x0102030405060708, 0x090a0b0c0d0e0f10};
 constexpr VnObjectId action = harkentest::ObjectId(harkentest::packfoundation::kActionBase);
@@ -393,18 +396,18 @@ std::vector<std::uint8_t> Build(bool init, std::uint64_t id, std::uint64_t revis
     auto partition = PartitionPayload(id, revision, init ? 0 : actions,
         std::bit_cast<std::uint32_t>(0.5f), &size, std::max(64u, actions), project, bus.triple,
         actionBase, variableId, stepsPerAction);
-    ImageBuilder image(init ? harken::kPackKindInit : harken::kPackKindCanonicalContent);
-    image.AddEntry(harken::kPackEntryKindPackRequirementBlock, id,
+    ImageBuilder image(init ? HK_PACK_KIND_INIT : HK_PACK_KIND_CANONICAL_CONTENT);
+    image.AddEntry(HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK, id,
         RequirementPayload(id, revision, revision, init ? 0 : actions + 1, size, bus.triple));
-    image.AddEntry(harken::kPackEntryKindCanonicalDefinitionPartition, id, std::move(partition));
-    if (init) image.AddEntry(harken::kPackEntryKindBusDefinitionSnapshot, 1, bus.snapshot);
-    else image.AddEntry(harken::kPackEntryKindPackDependencyEdge, VnObjectId{},
-        DependencyPayload(PackId("Init"), 1, bus.triple), harken::kPackPackDependencyEdgeVintage);
+    image.AddEntry(HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION, id, std::move(partition));
+    if (init) image.AddEntry(HK_PACK_ENTRY_KIND_BUS_DEFINITION_SNAPSHOT, 1, bus.snapshot);
+    else image.AddEntry(HK_PACK_ENTRY_KIND_PACK_DEPENDENCY_EDGE, VnObjectId{},
+        DependencyPayload(PackId("Init"), 1, bus.triple), HK_PACK_PACK_DEPENDENCY_EDGE_VINTAGE);
     return image.Build();
 }
 
 VnCanonicalPackSetMemberV2 Member(std::uint64_t id, bool init, Provider* provider,
-    const VnPackNamesV1* names, VnPackHandle handle = 0,
+    VnPackHandle handle = 0,
     std::uint32_t operation = VN_PACK_MEMBER_CONTENT) {
     VnCanonicalPackSetMemberV2 row{};
     row.structSize = sizeof(row);
@@ -413,7 +416,6 @@ VnCanonicalPackSetMemberV2 Member(std::uint64_t id, bool init, Provider* provide
     row.source.packStableId = id;
     row.source.packKind = init ? VN_CANONICAL_PACK_SET_MEMBER_INIT : VN_CANONICAL_PACK_SET_MEMBER_CONTENT;
     row.source.expectedHandle = handle;
-    row.names = names;
     if (provider != nullptr) {
         row.source.flags = VN_CANONICAL_PACK_SET_MEMBER_PROVIDER;
         row.source.providerUserData = provider;
@@ -445,14 +447,6 @@ VnResult Activate(std::vector<VnCanonicalPackSetMemberV2>& members,
             members[i].source.expectedHandle = results[i].handle;
     }
     return result;
-}
-
-VnResult Resolve(const char* name, VnActionResolved* result) {
-    VnPostActionByNameDesc desc{};
-    desc.structSize = sizeof(desc);
-    desc.utf8Name = name;
-    result->structSize = sizeof(*result);
-    return Vn_ResolveActionByName(&desc, result);
 }
 
 std::vector<std::uint8_t> BuildPreview(bool random, bool multipleSteps = false,
@@ -561,7 +555,7 @@ std::vector<std::uint8_t> BuildPreview(bool random, bool multipleSteps = false,
     EXPECT_EQ(CurrentWorldBodyDecodeResult::Ok, decoded.DecodeWithResult(body.data(), body.size(),
         kCanonicalDefinitionPartitionBodyVintage, CurrentWorldDecodeMode::StrictArtifact));
     PackCanonicalPartitionHeader header{};
-    header.headerBytes = kPackCanonicalPartitionHeaderBytes;
+    header.headerBytes = kPackBytes<HkPackCanonicalPartitionHeader>;
     header.bodyVintage = kCanonicalDefinitionPartitionBodyVintage;
     header.bodyBytes = body.size();
     header.bodyChecksum = Fnv1a64(body.data(), body.size());
@@ -570,24 +564,24 @@ std::vector<std::uint8_t> BuildPreview(bool random, bool multipleSteps = false,
     header.ownedDefinitionCount = world.playablePropertyCount + 1;
     ApplyCanonicalBusTriple(&header, bus.triple);
     std::vector<std::uint8_t> partition(header.headerBytes + body.size());
-    SerializePackCanonicalPartitionHeader(header, partition.data());
-    header.headerChecksum = Fnv1a64(partition.data(), kPackCanonicalPartitionHeaderHeaderChecksumOffset);
-    SerializePackCanonicalPartitionHeader(header, partition.data());
+    SerializePackRow<HkPackCanonicalPartitionHeader>(header, partition.data());
+    header.headerChecksum = Fnv1a64(partition.data(), offsetof(HkPackCanonicalPartitionHeader, headerChecksum));
+    SerializePackRow<HkPackCanonicalPartitionHeader>(header, partition.data());
     std::memcpy(partition.data() + header.headerBytes, body.data(), body.size());
-    ImageBuilder image(kPackKindCanonicalContent);
-    image.AddEntry(kPackEntryKindPackRequirementBlock, id,
+    ImageBuilder image(HK_PACK_KIND_CANONICAL_CONTENT);
+    image.AddEntry(HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK, id,
         RequirementPayload(id, 1, 1, header.ownedDefinitionCount, body.size(), bus.triple));
-    image.AddEntry(kPackEntryKindCanonicalDefinitionPartition, id, std::move(partition));
-    image.AddEntry(kPackEntryKindPackDependencyEdge, VnObjectId{},
-        DependencyPayload(PackId("Init"), 1, bus.triple), kPackPackDependencyEdgeVintage);
+    image.AddEntry(HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION, id, std::move(partition));
+    image.AddEntry(HK_PACK_ENTRY_KIND_PACK_DEPENDENCY_EDGE, VnObjectId{},
+        DependencyPayload(PackId("Init"), 1, bus.triple), HK_PACK_PACK_DEPENDENCY_EDGE_VINTAGE);
     image.AddMedia(soundId, std::move(samples));
     return image.Build();
 }
 
-} // namespace companionfixture
+} // namespace v2activation
 
 TEST(CanonicalPackSetActivate, ProviderMembersShareDecodeBudgetAndPreservePriorPublication) {
-    using namespace companionfixture;
+    using namespace v2activation;
     using namespace harken;
     Provider init{Build(true, PackId("Init"))};
     Provider content{Build(false, PackId("content"))};
@@ -598,7 +592,7 @@ TEST(CanonicalPackSetActivate, ProviderMembersShareDecodeBudgetAndPreservePriorP
         PackFileHeader header;
         ASSERT_TRUE(ReadPackFileHeader(provider->bytes.data(), &header));
         header.fileBytes = provider->bytes.size();
-        SerializePackFileHeader(header, provider->bytes.data());
+        SerializePackRow<HkPackFileHeader>(header, provider->bytes.data());
     }
     PackCanonicalImage first;
     ASSERT_EQ(VN_OK, ParsePackCanonicalImage(init.bytes.data(), init.bytes.size(), &first));
@@ -642,8 +636,8 @@ TEST(CanonicalPackSetActivate, ProviderMembersShareDecodeBudgetAndPreservePriorP
         EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());
         std::array<VnCanonicalPackSetMemberV1, 2> members{
-            Member(PackId("Init"), true, &init, nullptr).source,
-            Member(PackId("content"), false, &content, nullptr).source};
+            Member(PackId("Init"), true, &init).source,
+            Member(PackId("content"), false, &content).source};
         std::array<VnCanonicalPackSetMemberResultV1, 2> rows{};
         for (auto& row : rows) row.structSize = sizeof(row);
         VnCanonicalPackSetActivationReportV1 report{};
@@ -673,167 +667,76 @@ TEST(CanonicalPackSetActivate, ProviderMembersShareDecodeBudgetAndPreservePriorP
     }
 }
 
-TEST(CanonicalPackSetActivate, CompanionInitOwnsVariableAndLabelNames) {
-    using namespace companionfixture;
-    using namespace harken;
-    using namespace harkentest::packfoundation;
-    const auto variableId = harkentest::ObjectId(7);
-    const VariableLabelDefinitionV1 label{8, "", harkentest::ObjectId(9)};
-    const std::int32_t anchor = 8;
-    std::uint64_t execution = 0;
-    ASSERT_TRUE(ComputeVariableExecutionFingerprintV1(variableId, 0, 1, 3,
-        0, 8, 0, &anchor, 1, &execution));
-    auto variable = harkentest::MakeVariableDefinition(variableId, VariableKindV1::Step, 0, 8, 0);
-    ContainerWorldInstallViewV1 world{};
-    world.identity.projectId = project;
-    world.identity.capabilityMask = kWorldCapabilityVariableDefinitions;
-    world.variables = &variable;
-    world.variableCount = 1;
-    world.identity.runtimeSemanticFingerprint = ComputeCurrentWorldFingerprintV4(world);
-    std::vector<std::uint8_t> body;
-    ASSERT_TRUE(EncodeCurrentWorldShippingBody(world, body));
-    const auto initId = PackId("Init");
-    const auto bus = DefaultRuntimeBusFixture();
-    PackCanonicalPartitionHeader header{};
-    header.headerBytes = kPackCanonicalPartitionHeaderBytes;
-    header.bodyVintage = kCanonicalDefinitionPartitionBodyVintage;
-    header.bodyBytes = body.size();
-    header.bodyChecksum = Fnv1a64(body.data(), body.size());
-    header.packStableId = initId;
-    header.partitionRevision = 1;
-    header.ownedDefinitionCount = 1;
-    ApplyCanonicalBusTriple(&header, bus.triple);
-    std::vector<std::uint8_t> partition(header.headerBytes + body.size());
-    SerializePackCanonicalPartitionHeader(header, partition.data());
-    header.headerChecksum = Fnv1a64(partition.data(), kPackCanonicalPartitionHeaderHeaderChecksumOffset);
-    SerializePackCanonicalPartitionHeader(header, partition.data());
-    std::memcpy(partition.data() + header.headerBytes, body.data(), body.size());
-    std::vector<std::uint8_t> overlay(96, 0);
-    StoreLE32(overlay.data(), 1);
-    StoreLE32(overlay.data() + 4, 2);
-    StoreObjectId(overlay.data() + 16, variableId);
-    overlay[32] = 3;
-    StoreLE64(overlay.data() + 40, execution);
-    StoreLE32(overlay.data() + 48, 1);
-    StoreLE32(overlay.data() + 52, 8);
-    StoreLE64(overlay.data() + 56, ComputeVariableLabelMappingFingerprintV1(variableId, std::span(&label, 1)));
-    StoreLE32(overlay.data() + 64, 1);
-    StoreObjectId(overlay.data() + 72, label.labelId);
-    StoreLE32(overlay.data() + 88, 8);
-    ImageBuilder image(kPackKindInit);
-    image.AddEntry(kPackEntryKindPackRequirementBlock, initId,
-        RequirementPayload(initId, 1, 1, 1, body.size(), bus.triple));
-    image.AddEntry(kPackEntryKindCanonicalDefinitionPartition, initId, std::move(partition));
-    image.AddEntry(kPackEntryKindBusDefinitionSnapshot, 1, bus.snapshot);
-    image.AddEntry(kPackEntryKindVariablePolicyOverlay, 0, std::move(overlay));
-    Provider init{image.Build()};
-    VnPackVariableNameV1 variableName{variableId, "State"};
-    VnPackLabelNameV1 labelName{variableId, label.labelId, "Eight"};
-    VnPackNamesV1 names{sizeof(VnPackNamesV1), 0, project, {}, "", "", 1, 1, &variableName, &labelName};
-    EngineSession session(CanonicalActivationConfig());
-    ASSERT_EQ(VN_OK, session.InitResult());
-    std::vector<VnCanonicalPackSetMemberV2> members{Member(initId, true, &init, &names)};
-    VnCanonicalPackSetActivationReportV1 report{};
-    ASSERT_EQ(VN_OK, Activate(members, report));
-    VnPostActionByNameDesc lookup{};
-    lookup.structSize = sizeof(lookup);
-    lookup.utf8Name = "State";
-    VnVariableResolved resolved{};
-    resolved.structSize = sizeof(resolved);
-    ASSERT_EQ(VN_OK, Vn_ResolveVariableByName(&lookup, &resolved));
-    EXPECT_EQ(variableId, resolved.variableId);
-    VnEmitterHandle localEmitter = 0;
-    VnEmitterHandle siblingEmitter = 0;
-    ASSERT_EQ(VN_OK, Vn_CreateEmitter(&localEmitter));
-    ASSERT_EQ(VN_OK, Vn_CreateEmitter(&siblingEmitter));
-    const auto expectNamedValue = [&](VnEmitterHandle emitter, float expected, bool local) {
-        VnVariableQueryDescV1 namedQuery{};
-        namedQuery.structSize = sizeof(namedQuery);
-        namedQuery.variableId = variableId;
-        namedQuery.emitter = emitter;
-        VnVariableQueryResultV1 namedValue{};
-        namedValue.structSize = sizeof(namedValue);
-        ASSERT_EQ(VN_OK, Vn_QueryVariable(&namedQuery, &namedValue));
-        EXPECT_FLOAT_EQ(expected, namedValue.currentValue);
-        EXPECT_EQ(local ? 1u : 0u, namedValue.scope);
-        EXPECT_EQ(local ? 1u : 0u, namedValue.hasEmitterOverride);
-    };
-    ASSERT_EQ(VN_OK, Vn_SetValueByName("State", 3));
-    ASSERT_NO_FATAL_FAILURE(harkentest::AdvanceVariableWrite(session.Engine()));
-    ASSERT_EQ(VN_OK, Vn_SetEmitterValueByName(localEmitter, "State", 5));
-    ASSERT_NO_FATAL_FAILURE(harkentest::AdvanceVariableWrite(session.Engine()));
-    ASSERT_NO_FATAL_FAILURE(expectNamedValue(0, 3, false));
-    ASSERT_NO_FATAL_FAILURE(expectNamedValue(localEmitter, 5, true));
-    ASSERT_NO_FATAL_FAILURE(expectNamedValue(siblingEmitter, 3, false));
-    ASSERT_EQ(VN_OK, Vn_SetValueByLabelName(variableId, "Eight", 0));
-    const auto generation = session.Engine()->variables.CurrentWorldGeneration();
-    members[0].operation = VN_PACK_MEMBER_NAME_ONLY;
-    variableName.utf8Name = "Mode";
-    labelName.utf8Name = "Active";
-    ASSERT_EQ(VN_OK, Activate(members, report, 1));
-    EXPECT_EQ(generation, session.Engine()->variables.CurrentWorldGeneration());
-    ASSERT_NO_FATAL_FAILURE(harkentest::AdvanceVariableWrite(session.Engine()));
-    VnVariableQueryDescV1 query{};
-    query.structSize = sizeof(query);
-    query.variableId = variableId;
-    VnVariableQueryResultV1 value{};
-    value.structSize = sizeof(value);
-    ASSERT_EQ(VN_OK, Vn_QueryVariable(&query, &value));
-    EXPECT_FLOAT_EQ(8.0f, value.currentValue);
-    EXPECT_EQ(VN_NO_VARIABLE, Vn_ResolveVariableByName(&lookup, &resolved));
-    EXPECT_EQ(VN_NO_VARIABLE, Vn_SetValueByName("State", 2));
-    EXPECT_EQ(VN_NO_VARIABLE, Vn_SetEmitterValueByName(localEmitter, "State", 4));
-    ASSERT_NO_FATAL_FAILURE(harkentest::AdvanceVariableWrite(session.Engine()));
-    ASSERT_NO_FATAL_FAILURE(expectNamedValue(0, 8, false));
-    ASSERT_NO_FATAL_FAILURE(expectNamedValue(localEmitter, 8, false));
-    ASSERT_NO_FATAL_FAILURE(expectNamedValue(siblingEmitter, 8, false));
-    lookup.utf8Name = "Mode";
-    EXPECT_EQ(VN_OK, Vn_ResolveVariableByName(&lookup, &resolved));
-    EXPECT_EQ(VN_UNKNOWN_ID, Vn_SetValueByLabelName(variableId, "Eight", 0));
-    EXPECT_EQ(VN_OK, Vn_SetValueByLabelName(variableId, "Active", 0));
-    names.variableCount = 0;
-    names.labelCount = 0;
-    EXPECT_EQ(VN_BAD_PACK, Activate(members, report, 2));
-    EXPECT_EQ(VN_OK, Vn_ResolveVariableByName(&lookup, &resolved));
-    ASSERT_EQ(VN_OK, Vn_SetValueByName("Mode", 2));
-    ASSERT_EQ(VN_OK, Vn_SetEmitterValueByName(localEmitter, "Mode", 4));
-    ASSERT_NO_FATAL_FAILURE(harkentest::AdvanceVariableWrite(session.Engine()));
-    ASSERT_NO_FATAL_FAILURE(expectNamedValue(0, 2, false));
-    ASSERT_NO_FATAL_FAILURE(expectNamedValue(localEmitter, 4, true));
-    ASSERT_NO_FATAL_FAILURE(expectNamedValue(siblingEmitter, 2, false));
-    ASSERT_EQ(VN_OK, Vn_DestroyEmitter(localEmitter));
-    ASSERT_EQ(VN_OK, Vn_DestroyEmitter(siblingEmitter));
-}
-
-TEST(CanonicalPackSetActivate, CompanionInspectionDiscoversProjectWithoutWeakeningActivation) {
-    using namespace companionfixture;
+TEST(CanonicalPackSetActivate, V2ActivationInspectionDiscoversProjectWithoutWeakeningActivation) {
+    using namespace v2activation;
     Provider init{Build(true, PackId("Init"))};
-    VnPackNamesV1 names{sizeof(VnPackNamesV1), 0, {}, {}, "", "", 0, 0, nullptr, nullptr};
     VnPackInspectDescV1 desc{};
     desc.structSize = sizeof(desc);
     desc.pack = {sizeof(VnPackByteSpan), 0, init.bytes.data(), init.bytes.size()};
-    desc.names = &names;
     desc.maxInputBytes = init.bytes.size() + 4096;
     VnPackInspectReportV1 facts{};
     facts.structSize = sizeof(facts);
     ASSERT_EQ(VN_OK, Vn_InspectCanonicalPackV1(&desc, &facts));
     EXPECT_EQ(project, facts.projectId);
     EXPECT_EQ(PackId("Init"), facts.packStableId);
-    EXPECT_EQ(VnObjectId{}, names.projectId);
-    names.projectId = VN_OBJECT_ID(5, 9);
-    EXPECT_EQ(VN_GAMEPLAY_WRONG_PROJECT, Vn_InspectCanonicalPackV1(&desc, &facts));
-    names.projectId = {};
     desc.maxInputBytes = init.bytes.size() - 1;
     EXPECT_EQ(VN_PACK_RESIDENT_CAPACITY, Vn_InspectCanonicalPackV1(&desc, &facts));
+}
+
+TEST(CanonicalPackSetActivate, RemoteCatalogListsActionsOfActivatedPacks) {
+    using namespace v2activation;
     EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
-    std::vector<VnCanonicalPackSetMemberV2> members{Member(PackId("Init"), true, &init, &names)};
+    Provider init{Build(true, PackId("Init"))};
+    Provider content{Build(false, PackId("content"))};
+    std::vector<VnCanonicalPackSetMemberV2> members{
+        Member(PackId("Init"), true, &init), Member(PackId("content"), false, &content)};
     VnCanonicalPackSetActivationReportV1 report{};
-    EXPECT_EQ(VN_INVALID_ARG, Activate(members, report));
+    ASSERT_EQ(VN_OK, Activate(members, report));
+    VnRemoteConfig config{};
+    config.structSize = sizeof(config);
+    config.bindAddress = "127.0.0.1";
+    config.applicationName = "Canonical pack set tests";
+    ASSERT_EQ(VN_OK, Vn_RemoteStart(&config));
+    VnRemoteStatus status{};
+    status.structSize = sizeof(status);
+    ASSERT_EQ(VN_OK, Vn_RemoteGetStatus(&status));
+    VnRemoteClientDesc desc{sizeof(VnRemoteClientDesc), VN_REMOTE_CLIENT_LOCAL_ONLY, "Canonical pack set tests"};
+    VnRemoteClient client = 0;
+    ASSERT_EQ(VN_OK, Vn_RemoteClientCreate(&desc, &client));
+    ASSERT_EQ(VN_OK, Vn_RemoteClientConnect(client, "127.0.0.1", status.tcpPort));
+    std::vector<std::uint8_t> data(65536);
+    VnRemoteClientEvent event{};
+    const auto next = [&](std::uint32_t kind) {
+        const auto limit = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        while (std::chrono::steady_clock::now() < limit) {
+            Vn_Update();
+            event = {};
+            event.structSize = sizeof(event);
+            if (Vn_RemoteClientPoll(client, &event, data.data(), data.size()) == VN_OK &&
+                (event.kind == kind || event.kind == VN_REMOTE_CLIENT_EVENT_FAILED))
+                return event.kind == kind;
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        return false;
+    };
+    ASSERT_TRUE(next(VN_REMOTE_CLIENT_EVENT_CONNECTED));
+    VnRemoteClientRequest request{};
+    request.structSize = sizeof(request);
+    request.kind = VN_REMOTE_CLIENT_REQUEST_CATALOG;
+    std::uint32_t requestId = 0;
+    ASSERT_EQ(VN_OK, Vn_RemoteClientRequest(client, &request, &requestId));
+    ASSERT_TRUE(next(VN_REMOTE_CLIENT_EVENT_CATALOG));
+    ASSERT_EQ(VN_OK, event.result);
+    const auto* rows = reinterpret_cast<const VnRemoteClientCatalogRow*>(data.data());
+    EXPECT_TRUE(std::any_of(rows, rows + event.catalogRows, [](const VnRemoteClientCatalogRow& row) {
+        return row.kind == VN_REMOTE_CATALOG_ACTION && row.id == action;
+    }));
+    EXPECT_EQ(VN_OK, Vn_RemoteClientDestroy(client));
 }
 
 TEST(CanonicalPackSetActivate, MonitorV3MatchesActualOccurrenceAndRetainsOlderConsumers) {
-    using namespace companionfixture;
+    using namespace v2activation;
     using namespace harken::monitor;
     for (bool random : {false, true}) {
         SCOPED_TRACE(random);
@@ -842,17 +745,15 @@ TEST(CanonicalPackSetActivate, MonitorV3MatchesActualOccurrenceAndRetainsOlderCo
         const auto initId = PackId("Init");
         const auto contentId = PackId("action_" + harken::ObjectIdString(action));
         Provider init{Build(true, initId)}, content{BuildPreview(random)};
-        VnPackNamesV1 initNames{sizeof(VnPackNamesV1), 0, project, {}, "", "", 0, 0, nullptr, nullptr};
-        VnPackNamesV1 names{sizeof(VnPackNamesV1), 0, project, action, "Play_A", "", 0, 0, nullptr, nullptr};
         std::vector<VnCanonicalPackSetMemberV2> members{
-            Member(initId, true, &init, &initNames), Member(contentId, false, &content, &names)};
+            Member(initId, true, &init), Member(contentId, false, &content)};
         VnCanonicalPackSetActivationReportV1 activation{};
         ASSERT_EQ(VN_OK, Activate(members, activation));
         VnPackInspectDescV1 inspect{};
         inspect.structSize = sizeof(inspect);
         inspect.pack = {sizeof(VnPackByteSpan), 0, content.bytes.data(), content.bytes.size()};
         inspect.init = {sizeof(VnPackByteSpan), 0, init.bytes.data(), init.bytes.size()};
-        inspect.names = &names;
+        inspect.rootActionId = action;
         inspect.maxInputBytes = content.bytes.size() + init.bytes.size() + 4096;
         std::array<VnPackOccurrenceFactV1, 2> occurrences{};
         inspect.occurrences = occurrences.data(); inspect.occurrenceCapacity = occurrences.size();
@@ -925,10 +826,13 @@ TEST(CanonicalPackSetActivate, MonitorV3MatchesActualOccurrenceAndRetainsOlderCo
                 }
             }
         };
-        VnActionResolved resolved{}; ASSERT_EQ(VN_OK, Resolve("Play_A", &resolved));
         for (unsigned seed = 0; seed != 16; ++seed) {
+            VnPostActionDesc post{};
+            post.structSize = sizeof(post);
+            post.actionId = action;
+            post.callerSeed = seed;
             VnActionFiringHandle firing = 0;
-            ASSERT_EQ(VN_OK, Vn_PostActionResolved(&resolved, 0, seed, &firing));
+            ASSERT_EQ(VN_OK, Vn_PostAction(&post, &firing));
             for (unsigned block = 0; block != 24; ++block) {
                 session.Engine()->nullBackend.Pump(1);
                 ASSERT_EQ(VN_OK, Vn_Update());
@@ -945,10 +849,9 @@ TEST(CanonicalPackSetActivate, MonitorV3MatchesActualOccurrenceAndRetainsOlderCo
     }
 }
 
-TEST(CanonicalPackSetActivate, CompanionInspectionKeepsMediaAndOccurrenceFactsDistinct) {
-    using namespace companionfixture;
+TEST(CanonicalPackSetActivate, V2ActivationInspectionKeepsMediaAndOccurrenceFactsDistinct) {
+    using namespace v2activation;
     auto init = Build(true, PackId("Init"));
-    VnPackNamesV1 names{sizeof(VnPackNamesV1), 0, project, action, "Play_A", "", 0, 0, nullptr, nullptr};
     for (const bool random : {false, true}) {
         SCOPED_TRACE(random ? "Random" : "Sound");
         auto pack = BuildPreview(random);
@@ -956,7 +859,7 @@ TEST(CanonicalPackSetActivate, CompanionInspectionKeepsMediaAndOccurrenceFactsDi
         desc.structSize = sizeof(desc);
         desc.pack = {sizeof(VnPackByteSpan), 0, pack.data(), pack.size()};
         desc.init = {sizeof(VnPackByteSpan), 0, init.data(), init.size()};
-        desc.names = &names;
+        desc.rootActionId = action;
         desc.maxInputBytes = pack.size() + init.size() + 4096;
         VnPackInspectReportV1 report{};
         report.structSize = sizeof(report);
@@ -998,130 +901,9 @@ TEST(CanonicalPackSetActivate, CompanionInspectionKeepsMediaAndOccurrenceFactsDi
         EXPECT_EQ(VN_PACK_PREVIEW_UNSUPPORTED, report.previewKind);
         EXPECT_EQ(0u, report.occurrenceCount);
         EXPECT_EQ(1u, report.mediaCount);
-        names.utf8Language = "English";
-        EXPECT_EQ(VN_BAD_PACK, Vn_InspectCanonicalPackV1(&desc, &report));
-        names.utf8Language = "";
         desc.maxInputBytes = 1;
         EXPECT_EQ(VN_PACK_RESIDENT_CAPACITY, Vn_InspectCanonicalPackV1(&desc, &report));
     }
-}
-
-TEST(CanonicalPackSetActivate, CompanionNamesKeepOwnersAndAcceptedVariableWrites) {
-    using namespace companionfixture;
-    EngineSession session(CanonicalActivationConfig(8, 64, 48000));
-    ASSERT_EQ(VN_OK, session.InitResult());
-    auto* engine = session.Engine();
-    const auto initId = PackId("Init");
-    const auto contentId = PackId("action_" + harken::ObjectIdString(action));
-    Provider init{Build(true, initId)}, content{Build(false, contentId)};
-    VnPackNamesV1 initNames{sizeof(VnPackNamesV1), 0, project, {}, "", "", 0, 0, nullptr, nullptr};
-    VnPackNamesV1 names{sizeof(VnPackNamesV1), 0, project, action, "Play_A", "", 0, 0, nullptr, nullptr};
-    std::vector<VnCanonicalPackSetMemberV2> members{Member(initId, true, &init, &initNames)};
-    VnCanonicalPackSetActivationReportV1 report{};
-    ASSERT_EQ(VN_OK, Activate(members, report));
-    const auto initialWorld = engine->variables.CurrentWorldGeneration();
-    const auto initialActivation = report.activationGeneration;
-    members[0] = Member(initId, true, nullptr, nullptr, report.initHandle, VN_PACK_MEMBER_KEEP);
-    members.push_back(Member(contentId, false, &content, &names));
-    ASSERT_EQ(VN_OK, Activate(members, report, 1));
-    EXPECT_EQ(initialWorld, engine->variables.CurrentWorldGeneration());
-    EXPECT_EQ(initialActivation, report.activationGeneration);
-    EXPECT_EQ(1u, init.reads);
-    VnActionResolved old{};
-    ASSERT_EQ(VN_OK, Resolve("Play_A", &old));
-    EXPECT_EQ(action, old.actionId);
-    const auto token = engine->packComposition.Published()->owners[1].resourceToken;
-    VnVariableWriteV1 write{harkentest::packfoundation::kVariableId, 0.75f, 0};
-    VnVariableBatchDescV1 batch{sizeof(batch), 1, 0, 0, &write};
-    VnVariableTicketV1 ticket{};
-    ASSERT_EQ(VN_OK, Vn_SetValues(&batch, &ticket));
-    VnEmitterHandle emitter = 0;
-    ASSERT_EQ(VN_OK, Vn_CreateEmitter(&emitter));
-    VnVariableTicketV1 emitterTicket{};
-    write.value = 0.25f;
-    ASSERT_EQ(VN_OK, Vn_SetEmitterValues(emitter, &batch, &emitterTicket));
-    names.utf8RootName = "Play_Renamed";
-    members[1].operation = VN_PACK_MEMBER_NAME_ONLY;
-    ASSERT_EQ(VN_OK, Activate(members, report, 2));
-    EXPECT_EQ(initialWorld, engine->variables.CurrentWorldGeneration());
-    EXPECT_EQ(initialActivation, report.activationGeneration);
-    EXPECT_EQ(token, engine->packComposition.Published()->owners[1].resourceToken);
-    EXPECT_EQ(1u, init.reads);
-    EXPECT_EQ(2u, content.reads);
-    VnActionResolved current{};
-    EXPECT_EQ(VN_UNKNOWN_ID, Resolve("Play_A", &current));
-    ASSERT_EQ(VN_OK, Resolve("Play_Renamed", &current));
-    VnActionFiringHandle firing = 0;
-    EXPECT_EQ(VN_STALE_HANDLE, Vn_PostActionResolved(&old, 0, 0, &firing));
-    VnVariableTicketQueryDescV1 query{sizeof(query), 0, ticket};
-    VnVariableTicketQueryResultV1 outcome{};
-    outcome.structSize = sizeof(outcome);
-    ASSERT_EQ(VN_OK, Vn_QueryVariableTicket(&query, &outcome));
-    EXPECT_EQ(VN_VARIABLE_OUTCOME_PENDING, outcome.outcome);
-    ASSERT_NO_FATAL_FAILURE(harkentest::AdvanceVariableWrite(engine));
-    ASSERT_EQ(VN_OK, Vn_QueryVariableTicket(&query, &outcome));
-    EXPECT_EQ(VN_VARIABLE_OUTCOME_APPLIED, outcome.outcome);
-    query.ticket = emitterTicket;
-    ASSERT_EQ(VN_OK, Vn_QueryVariableTicket(&query, &outcome));
-    EXPECT_EQ(VN_VARIABLE_OUTCOME_APPLIED, outcome.outcome);
-    EXPECT_EQ(VN_OK, Vn_PostActionResolved(&current, 0, 0, &firing));
-    VnActionPinnedDesc pin{};
-    pin.structSize = sizeof(pin);
-    pin.actionId = action;
-    pin.utf8ExpectedName = "Play_Renamed";
-    EXPECT_EQ(VN_CAPABILITY_UNAVAILABLE, Vn_PostActionPinned(&pin, &firing));
-    const std::uint8_t invalidCatalog = 0;
-    VnPackByteSpan catalog{sizeof(catalog), 0, &invalidCatalog, 1};
-    EXPECT_EQ(VN_AUTHORITY_CONFLICT, Vn_SetGameplayCatalog(report.initHandle, &catalog));
-    EXPECT_EQ(init.reads, init.releases);
-    EXPECT_EQ(content.reads, content.releases);
-}
-
-TEST(CanonicalPackSetActivate, CompanionRefusalsKeepNamesAndContentAtomic) {
-    using namespace companionfixture;
-    EngineSession session(CanonicalActivationConfig(8, 64, 48000));
-    ASSERT_EQ(VN_OK, session.InitResult());
-    const auto initId = PackId("Init");
-    const auto contentId = PackId("action_" + harken::ObjectIdString(action));
-    Provider init{Build(true, initId)}, content{Build(false, contentId, 1, 2)};
-    VnPackNamesV1 initNames{sizeof(VnPackNamesV1), 0, project, {}, "", "", 0, 0, nullptr, nullptr};
-    VnPackNamesV1 names{sizeof(VnPackNamesV1), 0, project, action, "Play_A", "", 0, 0, nullptr, nullptr};
-    std::vector<VnCanonicalPackSetMemberV2> members{
-        Member(initId, true, &init, &initNames), Member(contentId, false, &content, &names)};
-    VnCanonicalPackSetActivationReportV1 report{};
-    ASSERT_EQ(VN_OK, Activate(members, report));
-    members[0] = Member(initId, true, nullptr, nullptr, report.initHandle, VN_PACK_MEMBER_KEEP);
-    members[1].operation = VN_PACK_MEMBER_NAME_ONLY;
-    const auto original = session.Engine()->packComposition.PublishedHandle();
-    names.rootActionId = harkentest::ObjectId(harkentest::packfoundation::kActionBase + 1);
-    EXPECT_EQ(VN_BAD_PACK, Activate(members, report, 1));
-    names.rootActionId = action;
-    names.utf8Language = "English";
-    EXPECT_EQ(VN_BAD_PACK, Activate(members, report, 1));
-    names.utf8Language = "";
-    names.projectId = harkentest::ObjectId(99);
-    EXPECT_EQ(VN_GAMEPLAY_WRONG_PROJECT, Activate(members, report, 1));
-    names.projectId = project;
-    names.utf8RootName = "Play_Renamed";
-    content.bytes = Build(false, contentId, 2, 2);
-    EXPECT_EQ(VN_PACK_STALE_REVISION, Activate(members, report, 1));
-    EXPECT_EQ(original, session.Engine()->packComposition.PublishedHandle());
-    VnActionResolved resolved{};
-    EXPECT_EQ(VN_OK, Resolve("Play_A", &resolved));
-    EXPECT_EQ(VN_UNKNOWN_ID, Resolve("Play_Renamed", &resolved));
-    members[1].operation = VN_PACK_MEMBER_CONTENT;
-    ASSERT_EQ(VN_OK, Activate(members, report, 1));
-    EXPECT_EQ(VN_OK, Resolve("Play_Renamed", &resolved));
-    const auto revision = report.resultSetRevision;
-    EXPECT_EQ(VN_OK, Activate(members, report, 1));
-    names.utf8RootName = "Play_Stale";
-    EXPECT_EQ(VN_REVISION_CONFLICT, Activate(members, report, 1));
-    names.utf8RootName = "Play_Renamed";
-    EXPECT_EQ(revision, report.resultSetRevision);
-    members.resize(1);
-    ASSERT_EQ(VN_OK, Activate(members, report, revision));
-    EXPECT_EQ(VN_UNKNOWN_ID, Resolve("Play_Renamed", &resolved));
-    EXPECT_EQ(1u, init.reads);
 }
 
 TEST(CanonicalPackSetActivate, CommandQueueRefusalReturnsPreparedTopologyPlan) {
@@ -1565,12 +1347,12 @@ TEST(CanonicalPackSetActivate, LoadPackRefusesInitWithoutKind24Snapshot) {
     EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     using namespace harkentest::packfoundation;
-    ImageBuilder builder(harken::kPackKindInit);
+    ImageBuilder builder(HK_PACK_KIND_INIT);
     std::uint64_t bodyBytes = 0;
     auto partition = PartitionPayload(kInitPackStableId, 1, 0, 0, &bodyBytes);
-    builder.AddEntry(harken::kPackEntryKindPackRequirementBlock, kInitPackStableId,
+    builder.AddEntry(HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK, kInitPackStableId,
                      RequirementPayload(kInitPackStableId, 1, 1, 0, bodyBytes));
-    builder.AddEntry(harken::kPackEntryKindCanonicalDefinitionPartition,
+    builder.AddEntry(HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION,
                      kInitPackStableId, std::move(partition));
     auto bytes = builder.Build();
     VnPackLoadDesc load{};
@@ -1596,8 +1378,8 @@ TEST(CanonicalPackSetActivate, RetiredRequirementVintageIsRejected) {
     ASSERT_EQ(VN_OK, session.InitResult());
     using namespace harkentest::packfoundation;
     auto payload = RequirementPayload(kInitPackStableId, 1, 1, 0, 0);
-    ImageBuilder builder(harken::kPackKindInit);
-    builder.AddEntry(harken::kPackEntryKindPackRequirementBlock, kInitPackStableId,
+    ImageBuilder builder(HK_PACK_KIND_INIT);
+    builder.AddEntry(HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK, kInitPackStableId,
                      std::move(payload), 1u);
     const auto activation = harkentest::ActivateInitBytesV1(
         std::filesystem::path(HARKEN_TEMP_DIR) / "canonical-pack-set-retired-requirement",
@@ -1622,12 +1404,12 @@ TEST(CanonicalPackSetActivate, RetiredRequirementVintageIsRejected) {
 
 TEST(CanonicalPackSetActivate, InspectInitWithoutKind24SnapshotIsBadPack) {
     using namespace harkentest::packfoundation;
-    ImageBuilder builder(harken::kPackKindInit);
+    ImageBuilder builder(HK_PACK_KIND_INIT);
     std::uint64_t bodyBytes = 0;
     auto partition = PartitionPayload(kInitPackStableId, 1, 0, 0, &bodyBytes);
-    builder.AddEntry(harken::kPackEntryKindPackRequirementBlock, kInitPackStableId,
+    builder.AddEntry(HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK, kInitPackStableId,
                      RequirementPayload(kInitPackStableId, 1, 1, 0, bodyBytes));
-    builder.AddEntry(harken::kPackEntryKindCanonicalDefinitionPartition,
+    builder.AddEntry(HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION,
                      kInitPackStableId, std::move(partition));
     auto bytes = builder.Build();
     VnPackLoadDesc load{};
@@ -1652,12 +1434,12 @@ TEST(CanonicalPackSetActivate, ActivateInitWithoutKind24SnapshotIsBadPack) {
     EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     using namespace harkentest::packfoundation;
-    ImageBuilder builder(harken::kPackKindInit);
+    ImageBuilder builder(HK_PACK_KIND_INIT);
     std::uint64_t bodyBytes = 0;
     auto partition = PartitionPayload(kInitPackStableId, 1, 0, 0, &bodyBytes);
-    builder.AddEntry(harken::kPackEntryKindPackRequirementBlock, kInitPackStableId,
+    builder.AddEntry(HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK, kInitPackStableId,
                      RequirementPayload(kInitPackStableId, 1, 1, 0, bodyBytes));
-    builder.AddEntry(harken::kPackEntryKindCanonicalDefinitionPartition,
+    builder.AddEntry(HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION,
                      kInitPackStableId, std::move(partition));
     const auto result = harkentest::ActivateInitBytesV1(
         std::filesystem::path(HARKEN_TEMP_DIR) / "canonical-pack-set-no-kind24",
@@ -2303,7 +2085,7 @@ TEST(CanonicalPackSetActivate, TraceStartActivateWritesCall135) {
     EXPECT_NE(0u, outputHandle);
 }
 
-int ReplayCompanionTrace(const std::filesystem::path& tracePath, std::string& output) {
+int ReplayV2ActivationTrace(const std::filesystem::path& tracePath, std::string& output) {
     std::string command = std::string("\"") + HARKEN_HOST_PATH +
         "\" trace-replay \"" + tracePath.string() + "\" 2>&1";
 #ifdef _WIN32
@@ -2323,36 +2105,31 @@ int ReplayCompanionTrace(const std::filesystem::path& tracePath, std::string& ou
 }
 
 TEST(CanonicalPackSetActivate, DefaultBudgetsLoadBeyondFormerResidentAndIndexLimits) {
-    using namespace companionfixture;
+    using namespace v2activation;
     constexpr std::uint32_t packCount = 8, actionsPerPack = 10000, stepsPerAction = 3;
     EngineSession session(harkentest::MakeNullConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const auto initId = PackId("Init");
     Provider init{Build(true, initId, 1, actionsPerPack, harkentest::packfoundation::kActionBase,
         harkentest::packfoundation::kVariableId, stepsPerAction)};
-    VnPackNamesV1 initNames{sizeof(VnPackNamesV1), 0, project, {}, "", "", 0, 0, nullptr, nullptr};
-    std::vector<VnCanonicalPackSetMemberV2> members{Member(initId, true, &init, &initNames)};
+    std::vector<VnCanonicalPackSetMemberV2> members{Member(initId, true, &init)};
     VnCanonicalPackSetActivationReportV1 report{};
     ASSERT_EQ(VN_OK, Activate(members, report));
-    members[0] = Member(initId, true, nullptr, nullptr, report.initHandle, VN_PACK_MEMBER_KEEP);
+    members[0] = Member(initId, true, nullptr, report.initHandle, VN_PACK_MEMBER_KEEP);
     for (std::uint32_t i = 0; i < packCount; ++i) {
         SCOPED_TRACE(i);
         const auto actionBase = harkentest::packfoundation::kActionBase + i * actionsPerPack;
         const auto root = harkentest::ObjectId(actionBase);
-        const auto id = harken::CompanionActionPackId(initId, root, "");
-        const auto label = "Play_Part_" + std::to_string(i);
+        const auto id = PackId("action_" + harken::ObjectIdString(root));
         Provider source{Build(false, id, 1, actionsPerPack, actionBase,
             harkentest::ObjectId(100 + i), stepsPerAction)};
         ASSERT_FALSE(source.bytes.empty());
-        VnPackNamesV1 names{sizeof(VnPackNamesV1), 0, project, root, label.c_str(), "", 0, 0, nullptr, nullptr};
         const auto at = std::lower_bound(members.begin() + 1, members.end(), id,
             [](const auto& row, auto key) { return row.source.packStableId < key; });
-        const auto inserted = members.insert(at, Member(id, false, &source, &names));
+        const auto inserted = members.insert(at, Member(id, false, &source));
         ASSERT_EQ(VN_OK, Activate(members, report, report.resultSetRevision));
-        *inserted = Member(id, false, nullptr, nullptr, inserted->source.expectedHandle, VN_PACK_MEMBER_KEEP);
-        VnActionResolved resolved{};
-        ASSERT_EQ(VN_OK, Resolve(label.c_str(), &resolved));
-        EXPECT_EQ(root, resolved.actionId);
+        *inserted = Member(id, false, nullptr, inserted->source.expectedHandle, VN_PACK_MEMBER_KEEP);
+        EXPECT_NE(0u, inserted->source.expectedHandle);
     }
     const auto& published = *session.Engine()->packComposition.Published();
     std::uint64_t definitionBytes = 0;
@@ -2378,24 +2155,21 @@ TEST(CanonicalPackSetActivate, DefaultBudgetsLoadBeyondFormerResidentAndIndexLim
 }
 
 TEST(CanonicalPackSetActivate, BothVintagesLoadAndReplay257Members) {
-    using namespace companionfixture;
+    using namespace v2activation;
     constexpr std::uint32_t count = 257;
     const auto directory = std::filesystem::path(HARKEN_TEMP_DIR) / "canonical-257";
     std::filesystem::create_directories(directory);
-    std::vector<std::string> paths(count), labels(count);
-    std::vector<VnPackNamesV1> names(count);
+    std::vector<std::string> paths(count);
     std::vector<VnCanonicalPackSetMemberV2> members;
     const auto initId = PackId("Init");
     for (std::uint32_t i = 0; i < count; ++i) {
         const auto actionBase = harkentest::packfoundation::kActionBase + i;
         const auto root = i == 0 ? VnObjectId{} : harkentest::ObjectId(actionBase);
-        const auto id = i == 0 ? initId : harken::CompanionActionPackId(initId, root, "");
-        labels[i] = i == 0 ? "" : "Play_" + std::to_string(i);
-        names[i] = {sizeof(VnPackNamesV1), 0, project, root, labels[i].c_str(), "", 0, 0, nullptr, nullptr};
+        const auto id = i == 0 ? initId : PackId("action_" + harken::ObjectIdString(root));
         paths[i] = (directory / (std::to_string(i) + ".pack")).string();
         ASSERT_TRUE(harkentest::WriteBytes(paths[i], Build(i == 0, id, 1, 1, actionBase,
             harkentest::ObjectId(1000 + i))));
-        auto member = Member(id, i == 0, nullptr, &names[i]);
+        auto member = Member(id, i == 0, nullptr);
         member.source.utf8Path = paths[i].c_str();
         members.push_back(member);
     }
@@ -2467,13 +2241,13 @@ TEST(CanonicalPackSetActivate, BothVintagesLoadAndReplay257Members) {
             check(desc, Vn_ActivateCanonicalPackSetV2);
         }
         std::string replay;
-        EXPECT_EQ(0, ReplayCompanionTrace(trace, replay)) << replay;
+        EXPECT_EQ(0, ReplayV2ActivationTrace(trace, replay)) << replay;
     }
 }
 
-TEST(CanonicalPackSetActivate, CompanionTraceOwnsInputsAndReplaysRenameReplacementAndRefusals) {
-    using namespace companionfixture;
-    const auto directory = std::filesystem::path(HARKEN_TEMP_DIR) / "companion-trace";
+TEST(CanonicalPackSetActivate, V2ActivationTraceOwnsInputsAndReplaysReplacement) {
+    using namespace v2activation;
+    const auto directory = std::filesystem::path(HARKEN_TEMP_DIR) / "v2-activation-trace";
     const auto tracePath = directory / "session.vtrc";
     const auto contentPath = (directory / "Play_A.bytes").string();
     std::filesystem::create_directories(directory);
@@ -2484,36 +2258,19 @@ TEST(CanonicalPackSetActivate, CompanionTraceOwnsInputsAndReplaysRenameReplaceme
     const auto contentId = PackId("action_" + harken::ObjectIdString(action));
     Provider init{Build(true, initId)};
     ASSERT_TRUE(harkentest::WriteBytes(contentPath, Build(false, contentId)));
-    VnPackNamesV1 initNames{sizeof(VnPackNamesV1), 0, project, {}, "", "", 0, 0, nullptr, nullptr};
-    VnPackNamesV1 names{sizeof(VnPackNamesV1), 0, project, action, "Play_A", "", 0, 0, nullptr, nullptr};
-    auto content = Member(contentId, false, nullptr, &names);
+    auto content = Member(contentId, false, nullptr);
     content.source.utf8Path = contentPath.c_str();
-    std::vector<VnCanonicalPackSetMemberV2> members{Member(initId, true, &init, &initNames), content};
+    std::vector<VnCanonicalPackSetMemberV2> members{Member(initId, true, &init), content};
     VnCanonicalPackSetActivationReportV1 report{};
     ASSERT_EQ(VN_OK, Activate(members, report));
-    members[0] = Member(initId, true, nullptr, nullptr, report.initHandle, VN_PACK_MEMBER_KEEP);
-    VnActionResolved old{};
-    ASSERT_EQ(VN_OK, Resolve("Play_A", &old));
+    members[0] = Member(initId, true, nullptr, report.initHandle, VN_PACK_MEMBER_KEEP);
     VnVariableWriteV1 write{harkentest::packfoundation::kVariableId, 0.75f, 0};
     VnVariableBatchDescV1 batch{sizeof(batch), 1, 0, 0, &write};
     VnVariableTicketV1 ticket{};
     ASSERT_EQ(VN_OK, Vn_SetValues(&batch, &ticket));
-    names.utf8RootName = "Play_Renamed";
-    members[1].operation = VN_PACK_MEMBER_NAME_ONLY;
-    harken::SetPackStagingFaultForTests(harken::PackStagingFault::AfterAllPreparedBeforeCommit);
-    EXPECT_EQ(VN_PACK_RESIDENT_CAPACITY, Activate(members, report, 1));
-    harken::SetPackStagingFaultForTests(harken::PackStagingFault::None);
-    ASSERT_EQ(VN_OK, Activate(members, report, 1));
-    ASSERT_EQ(VN_OK, Activate(members, report, 1));
-    VnActionFiringHandle firing = 0;
-    EXPECT_EQ(VN_STALE_HANDLE, Vn_PostActionResolved(&old, 0, 0, &firing));
     ASSERT_NO_FATAL_FAILURE(harkentest::AdvanceVariableWrite(session.Engine()));
-    names.utf8Language = "English";
-    EXPECT_EQ(VN_BAD_PACK, Activate(members, report, 2));
-    names.utf8Language = "";
     ASSERT_TRUE(harkentest::WriteBytes(contentPath, Build(false, contentId, 2)));
-    members[1].operation = VN_PACK_MEMBER_CONTENT;
-    ASSERT_EQ(VN_OK, Activate(members, report, 2));
+    ASSERT_EQ(VN_OK, Activate(members, report, 1));
     EXPECT_EQ(VN_OK, Vn_UnloadPack(members[1].source.expectedHandle));
     EXPECT_EQ(VN_STALE_HANDLE, Vn_UnloadPack(members[1].source.expectedHandle));
     VnCanonicalPackSetUnloadDescV1 unload{};
@@ -2540,18 +2297,18 @@ TEST(CanonicalPackSetActivate, CompanionTraceOwnsInputsAndReplaysRenameReplaceme
     }
     EXPECT_EQ(3u, resourceCount);
     std::string output;
-    EXPECT_EQ(0, ReplayCompanionTrace(tracePath, output)) << output;
+    EXPECT_EQ(0, ReplayV2ActivationTrace(tracePath, output)) << output;
     ASSERT_NE(0u, firstResource);
     bytes[firstResource + 8] ^= 1;
     const auto corrupt = directory / "corrupt.vtrc";
     ASSERT_TRUE(harkentest::WriteBytes(corrupt, bytes));
     output.clear();
-    EXPECT_NE(0, ReplayCompanionTrace(corrupt, output)) << output;
+    EXPECT_NE(0, ReplayV2ActivationTrace(corrupt, output)) << output;
 }
 
-TEST(CanonicalPackSetActivate, CompanionTraceRechecksBadBytesBeforeUnreadMembers) {
-    using namespace companionfixture;
-    const auto directory = std::filesystem::path(HARKEN_TEMP_DIR) / "companion-trace-bad-bytes";
+TEST(CanonicalPackSetActivate, V2ActivationTraceRechecksBadBytesBeforeUnreadMembers) {
+    using namespace v2activation;
+    const auto directory = std::filesystem::path(HARKEN_TEMP_DIR) / "v2-activation-trace-bad-bytes";
     std::filesystem::create_directories(directory);
     const auto trace = directory / "bad-bytes.vtrc";
     EngineSession session(CanonicalActivationConfig());
@@ -2561,14 +2318,12 @@ TEST(CanonicalPackSetActivate, CompanionTraceRechecksBadBytesBeforeUnreadMembers
     const auto contentId = PackId("action_" + harken::ObjectIdString(action));
     Provider init{Build(true, initId)}, bad{Build(false, contentId)}, unread;
     bad.bytes[0] ^= 1;
-    VnPackNamesV1 initNames{sizeof(VnPackNamesV1), 0, project, {}, "", "", 0, 0, nullptr, nullptr};
-    VnPackNamesV1 names{sizeof(VnPackNamesV1), 0, project, action, "Play_A", "", 0, 0, nullptr, nullptr};
-    std::vector<VnCanonicalPackSetMemberV2> members{Member(initId, true, &init, &initNames)};
+    std::vector<VnCanonicalPackSetMemberV2> members{Member(initId, true, &init)};
     VnCanonicalPackSetActivationReportV1 report{};
     ASSERT_EQ(VN_OK, Activate(members, report));
-    members[0] = Member(initId, true, nullptr, nullptr, report.initHandle, VN_PACK_MEMBER_KEEP);
-    members.push_back(Member(contentId, false, &bad, &names));
-    members.push_back(Member(contentId + 1, false, &unread, &names));
+    members[0] = Member(initId, true, nullptr, report.initHandle, VN_PACK_MEMBER_KEEP);
+    members.push_back(Member(contentId, false, &bad));
+    members.push_back(Member(contentId + 1, false, &unread));
     EXPECT_EQ(VN_BAD_PACK, Activate(members, report, 1));
     EXPECT_EQ(1u, bad.reads);
     EXPECT_EQ(1u, bad.releases);
@@ -2576,7 +2331,7 @@ TEST(CanonicalPackSetActivate, CompanionTraceRechecksBadBytesBeforeUnreadMembers
     EXPECT_EQ(1u, session.Engine()->packComposition.Published()->ledger.setRevision);
     ASSERT_EQ(VN_OK, Vn_TraceStop());
     std::string output;
-    EXPECT_EQ(0, ReplayCompanionTrace(trace, output)) << output;
+    EXPECT_EQ(0, ReplayV2ActivationTrace(trace, output)) << output;
 
     // A different recorded result must be rejected by replaying the captured bad bytes.
     std::ifstream stream(trace, std::ios::binary);
@@ -2599,12 +2354,76 @@ TEST(CanonicalPackSetActivate, CompanionTraceRechecksBadBytesBeforeUnreadMembers
     const auto changed = directory / "changed-result.vtrc";
     ASSERT_TRUE(harkentest::WriteBytes(changed, bytes));
     output.clear();
-    EXPECT_NE(0, ReplayCompanionTrace(changed, output)) << output;
+    EXPECT_NE(0, ReplayV2ActivationTrace(changed, output)) << output;
 }
 
-TEST(CanonicalPackSetActivate, CompanionTraceReplaysEmbeddedMediaAfterSourceLoss) {
-    using namespace companionfixture;
-    const auto directory = std::filesystem::path(HARKEN_TEMP_DIR) / "companion-trace-media";
+TEST(CanonicalPackSetActivate, NamedPostRejectsSupersededSetAndMismatchedContentLease) {
+    using namespace v2activation;
+    EngineSession session(CanonicalActivationConfig(8, 64, 48000));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    const auto initId = PackId("Init");
+    const auto contentId = PackId("action_" + harken::ObjectIdString(action));
+    Provider init{Build(true, initId)}, content{BuildPreview(false)};
+    std::vector<VnCanonicalPackSetMemberV2> members{
+        Member(initId, true, &init), Member(contentId, false, &content)};
+    VnCanonicalPackSetActivationReportV1 report{};
+    ASSERT_EQ(VN_OK, Activate(members, report));
+
+    const uint8_t keys[129] = {'P', 'l', 'a', 'y'};
+    const uint16_t name[] = {'P', 'l', 'a', 'y'};
+    VnResidentDirectoryMemberV1 row{};
+    row.rootActionId = action;
+    row.packStableId = contentId;
+    row.handle = members[1].source.expectedHandle;
+    VnNamedResidentPostV1 post{};
+    post.structSize = sizeof(post);
+    post.rowCount = 1;
+    post.keyCapacity = sizeof(keys);
+    post.nameUnits = 4;
+    post.keys = keys;
+    post.name = name;
+    post.rows = &row;
+    post.initHandle = report.initHandle;
+    post.setRevision = report.resultSetRevision;
+
+    // Retire content, then load the same Action ID in a new set.
+    members.resize(1);
+    ASSERT_EQ(VN_OK, Activate(members, report, report.resultSetRevision));
+    uint64_t firing = 99;
+    EXPECT_EQ(VN_STALE_HANDLE, Vn_PostNamedResidentActionV1(&post, &firing));
+    EXPECT_EQ(0u, firing);
+    members.push_back(Member(contentId, false, &content));
+    ASSERT_EQ(VN_OK, Activate(members, report, report.resultSetRevision));
+    firing = 99;
+    EXPECT_EQ(VN_STALE_HANDLE, Vn_PostNamedResidentActionV1(&post, &firing));
+    EXPECT_EQ(0u, firing);
+    post.initHandle = report.initHandle;
+    post.setRevision = report.resultSetRevision;
+    ASSERT_NE(row.handle, members[1].source.expectedHandle);
+    EXPECT_EQ(VN_STALE_HANDLE, Vn_PostNamedResidentActionV1(&post, &firing));
+    EXPECT_EQ(0u, firing);
+    row.handle = members[1].source.expectedHandle;
+    row.packStableId = initId;
+    EXPECT_EQ(VN_STALE_HANDLE, Vn_PostNamedResidentActionV1(&post, &firing));
+    EXPECT_EQ(0u, firing);
+    row.packStableId = contentId;
+    --post.keyCapacity;
+    EXPECT_EQ(VN_INVALID_ARG, Vn_PostNamedResidentActionV1(&post, &firing));
+    EXPECT_EQ(0u, firing);
+    ++post.keyCapacity;
+    ASSERT_EQ(VN_OK, Vn_PostNamedResidentActionV1(&post, &firing));
+    ASSERT_NE(0u, firing);
+    ASSERT_EQ(VN_OK, Vn_StopActionFiring(firing, 0));
+    for (unsigned i = 0; i < 4; ++i) {
+        session.Engine()->nullBackend.Pump(4);
+        ASSERT_EQ(VN_OK, Vn_Update());
+    }
+    EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
+}
+
+TEST(CanonicalPackSetActivate, V2ActivationTraceReplaysEmbeddedMediaAfterSourceLoss) {
+    using namespace v2activation;
+    const auto directory = std::filesystem::path(HARKEN_TEMP_DIR) / "v2-activation-trace-media";
     std::filesystem::create_directories(directory);
     const auto trace = directory / "media.vtrc";
     EngineSession session(CanonicalActivationConfig(8, 64, 48000));
@@ -2613,16 +2432,15 @@ TEST(CanonicalPackSetActivate, CompanionTraceReplaysEmbeddedMediaAfterSourceLoss
     const auto initId = PackId("Init");
     const auto contentId = PackId("action_" + harken::ObjectIdString(action));
     Provider init{Build(true, initId)}, content{BuildPreview(false)};
-    VnPackNamesV1 initNames{sizeof(VnPackNamesV1), 0, project, {}, "", "", 0, 0, nullptr, nullptr};
-    VnPackNamesV1 names{sizeof(VnPackNamesV1), 0, project, action, "Play_A", "", 0, 0, nullptr, nullptr};
     std::vector<VnCanonicalPackSetMemberV2> members{
-        Member(initId, true, &init, &initNames), Member(contentId, false, &content, &names)};
+        Member(initId, true, &init), Member(contentId, false, &content)};
     VnCanonicalPackSetActivationReportV1 report{};
     ASSERT_EQ(VN_OK, Activate(members, report));
-    VnActionResolved resolved{};
-    ASSERT_EQ(VN_OK, Resolve("Play_A", &resolved));
+    VnPostActionDesc post{};
+    post.structSize = sizeof(post);
+    post.actionId = action;
     VnActionFiringHandle firing = 0;
-    ASSERT_EQ(VN_OK, Vn_PostActionResolved(&resolved, 0, 0, &firing));
+    ASSERT_EQ(VN_OK, Vn_PostAction(&post, &firing));
     for (unsigned i = 0; i < 4; ++i) {
         session.Engine()->nullBackend.Pump(4);
         ASSERT_EQ(VN_OK, Vn_Update());
@@ -2631,19 +2449,18 @@ TEST(CanonicalPackSetActivate, CompanionTraceReplaysEmbeddedMediaAfterSourceLoss
     init.bytes.clear();
     content.bytes.clear();
     std::string output;
-    EXPECT_EQ(0, ReplayCompanionTrace(trace, output)) << output;
+    EXPECT_EQ(0, ReplayV2ActivationTrace(trace, output)) << output;
 }
 
-TEST(CanonicalPackSetActivate, CompanionTraceFailureDoesNotChangeActivationResult) {
-    using namespace companionfixture;
+TEST(CanonicalPackSetActivate, V2ActivationTraceFailureDoesNotChangeActivationResult) {
+    using namespace v2activation;
     EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
-    const auto tracePath = std::filesystem::path(HARKEN_TEMP_DIR) / "companion-trace-failure.vtrc";
+    const auto tracePath = std::filesystem::path(HARKEN_TEMP_DIR) / "v2-activation-trace-failure.vtrc";
     ASSERT_EQ(VN_OK, Vn_TraceStart(tracePath.string().c_str()));
     const auto initId = PackId("Init");
     Provider init{Build(true, initId)};
-    VnPackNamesV1 names{sizeof(VnPackNamesV1), 0, project, {}, "", "", 0, 0, nullptr, nullptr};
-    std::vector<VnCanonicalPackSetMemberV2> members{Member(initId, true, &init, &names)};
+    std::vector<VnCanonicalPackSetMemberV2> members{Member(initId, true, &init)};
     VnCanonicalPackSetActivationReportV1 report{};
     harken::SetTraceRecorderFaultForTests(harken::TraceRecorderFault::Append);
     const auto result = Activate(members, report);
@@ -3535,7 +3352,7 @@ TEST(CanonicalPackSetActivate, ReplaceCanonicalPackSwapsContentBindings) {
                                                           report));
     const VnPackHandle contentHandle = rows[1].handle;
     const auto* publication = session.Engine()->packComposition.Published();
-    companionfixture::Provider oversized;
+    v2activation::Provider oversized;
     oversized.bytes.resize(4u * 1024u * 1024u);
     ASSERT_TRUE(harkentest::WriteBytes(directory / "Content.pack", oversized.bytes));
     VnPackLoadDesc replace{};
@@ -3546,8 +3363,8 @@ TEST(CanonicalPackSetActivate, ReplaceCanonicalPackSwapsContentBindings) {
         if (source == 1) {
             replace.flags = VN_PACK_LOAD_FLAG_PROVIDER;
             replace.providerUserData = &oversized;
-            replace.provide = companionfixture::Provider::Read;
-            replace.release = companionfixture::Provider::Release;
+            replace.provide = v2activation::Provider::Read;
+            replace.release = v2activation::Provider::Release;
         }
         allocation_probe::bytes = 0;
         allocation_probe::enabled = true;
@@ -3814,7 +3631,7 @@ TEST(CanonicalPackSetActivate, KeepContentManifestUnloadsAfterInitReplace) {
 
 namespace packstream {
 
-using namespace companionfixture;
+using namespace v2activation;
 
 constexpr VnObjectId kSound = harkentest::ObjectId(8300);
 constexpr std::uint64_t kFrames = 2 * harken::kPackMediaRangeChunkFrames + 123;
@@ -3835,13 +3652,18 @@ std::vector<float> PlanarSignal(float scale) {
 // Content pack whose action plays one Sound backed by its own stereo media.
 std::vector<std::uint8_t> BuildSoundContent(std::uint64_t id, std::uint64_t revision,
                                             bool streamed, const std::vector<float>& samples,
-                                            std::uint64_t providerId = 0, bool leadingMedia = false) {
+                                            std::uint64_t providerId = 0, bool leadingMedia = false,
+                                            std::uint64_t encodedRevision = 0,
+                                            const std::vector<std::uint8_t>* encoded = nullptr,
+                                            std::size_t leadingFrames = 4096, float leadingSample = 0.125f) {
     using namespace harken;
     using namespace harkentest::packfoundation;
     const auto bus = DefaultRuntimeBusFixture();
-    const float* planes[] = {samples.data(), samples.data() + kFrames};
+    const auto frames = samples.size() / 2;
+    const float* planes[] = {samples.data(), samples.data() + frames};
     std::uint64_t mediaRevision = 0;
-    EXPECT_TRUE(ComputeMediaPcmContentRevisionV1(48000, 2, kFrames, planes, 1, &mediaRevision));
+    EXPECT_TRUE(ComputeMediaPcmContentRevisionV1(48000, 2, frames, planes, 1, &mediaRevision));
+    if (encodedRevision) mediaRevision = encodedRevision;
     PlayablePropertyProgramViewV1 property{};
     property.stableId = kSound;
     property.contentPropertyKind = playableproperties::ContentPropertyKindV1::Sound;
@@ -3884,7 +3706,7 @@ std::vector<std::uint8_t> BuildSoundContent(std::uint64_t id, std::uint64_t revi
     std::vector<std::uint8_t> body;
     EXPECT_TRUE(EncodeCurrentWorldShippingBody(world, body));
     PackCanonicalPartitionHeader header{};
-    header.headerBytes = kPackCanonicalPartitionHeaderBytes;
+    header.headerBytes = kPackBytes<HkPackCanonicalPartitionHeader>;
     header.bodyVintage = kCanonicalDefinitionPartitionBodyVintage;
     header.bodyBytes = body.size();
     header.bodyChecksum = Fnv1a64(body.data(), body.size());
@@ -3893,48 +3715,50 @@ std::vector<std::uint8_t> BuildSoundContent(std::uint64_t id, std::uint64_t revi
     header.ownedDefinitionCount = 2;
     ApplyCanonicalBusTriple(&header, bus.triple);
     std::vector<std::uint8_t> partition(header.headerBytes + body.size());
-    SerializePackCanonicalPartitionHeader(header, partition.data());
-    header.headerChecksum = Fnv1a64(partition.data(), kPackCanonicalPartitionHeaderHeaderChecksumOffset);
-    SerializePackCanonicalPartitionHeader(header, partition.data());
+    SerializePackRow<HkPackCanonicalPartitionHeader>(header, partition.data());
+    header.headerChecksum = Fnv1a64(partition.data(), offsetof(HkPackCanonicalPartitionHeader, headerChecksum));
+    SerializePackRow<HkPackCanonicalPartitionHeader>(header, partition.data());
     std::memcpy(partition.data() + header.headerBytes, body.data(), body.size());
-    ImageBuilder image(kPackKindCanonicalContent);
-    image.AddEntry(kPackEntryKindPackRequirementBlock, id,
+    ImageBuilder image(HK_PACK_KIND_CANONICAL_CONTENT);
+    image.AddEntry(HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK, id,
         RequirementPayload(id, revision, revision, header.ownedDefinitionCount, body.size(), bus.triple));
-    image.AddEntry(kPackEntryKindCanonicalDefinitionPartition, id, std::move(partition));
-    image.AddEntry(kPackEntryKindPackDependencyEdge, VnObjectId{},
-        DependencyPayload(PackId("Init"), 1, bus.triple), kPackPackDependencyEdgeVintage);
+    image.AddEntry(HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION, id, std::move(partition));
+    image.AddEntry(HK_PACK_ENTRY_KIND_PACK_DEPENDENCY_EDGE, VnObjectId{},
+        DependencyPayload(PackId("Init"), 1, bus.triple), HK_PACK_PACK_DEPENDENCY_EDGE_VINTAGE);
     // An unrelated media blob ahead of the Sound's moves its file offset.
-    if (leadingMedia) image.AddMedia(harkentest::ObjectId(8399), std::vector<float>(4096, 0.125f));
+    if (leadingMedia) image.AddMedia(harkentest::ObjectId(8399), std::vector<float>(leadingFrames, leadingSample));
     if (providerId == 0) {
-        image.AddMedia(kSound, samples, {}, 2);
+        if (encoded) image.AddVorbis(kSound, *encoded, frames, 2);
+        else image.AddMedia(kSound, samples, {}, 2);
         return image.Build();
     }
     PackDependencyEdge edge;
     edge.prerequisitePackStableId = providerId;
-    edge.edgeKind = kPackDependencyEdgeKindContent;
+    edge.edgeKind = HK_PACK_DEPENDENCY_EDGE_KIND_CONTENT;
     edge.required01 = 1;
-    std::vector<std::uint8_t> payload(kPackDependencyEdgeBytes, 0);
-    SerializePackDependencyEdge(edge, payload.data());
-    const auto index = image.AddEntry(kPackEntryKindPackDependencyEdge, VnObjectId{},
-                                      std::move(payload), kPackPackDependencyEdgeVintage);
+    std::vector<std::uint8_t> payload(kPackBytes<HkPackDependencyEdge>, 0);
+    SerializePackRow<HkPackDependencyEdge>(edge, payload.data());
+    const auto index = image.AddEntry(HK_PACK_ENTRY_KIND_PACK_DEPENDENCY_EDGE, VnObjectId{},
+                                      std::move(payload), HK_PACK_PACK_DEPENDENCY_EDGE_VINTAGE);
     image.SetRelationOrdinal(index, 1);
     return image.Build();
 }
 
 // Content pack carrying only the stereo media; its Sound is defined by a
 // member that declares a required content edge to this pack.
-std::vector<std::uint8_t> BuildMediaProvider(std::uint64_t id, const std::vector<float>& samples) {
+std::vector<std::uint8_t> BuildMediaProvider(std::uint64_t id, const std::vector<float>& samples,
+                                             VnSoundId sound = kSound) {
     using namespace harkentest::packfoundation;
     const auto bus = DefaultRuntimeBusFixture();
     std::uint64_t size = 0;
     auto partition = PartitionPayload(id, 1, 0, 0, &size, 64, project, bus.triple);
-    ImageBuilder image(harken::kPackKindCanonicalContent);
-    image.AddEntry(harken::kPackEntryKindPackRequirementBlock, id,
+    ImageBuilder image(HK_PACK_KIND_CANONICAL_CONTENT);
+    image.AddEntry(HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK, id,
         RequirementPayload(id, 1, 1, 0, size, bus.triple));
-    image.AddEntry(harken::kPackEntryKindCanonicalDefinitionPartition, id, std::move(partition));
-    image.AddEntry(harken::kPackEntryKindPackDependencyEdge, VnObjectId{},
-        DependencyPayload(PackId("Init"), 1, bus.triple), harken::kPackPackDependencyEdgeVintage);
-    image.AddMedia(kSound, samples, {}, 2);
+    image.AddEntry(HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION, id, std::move(partition));
+    image.AddEntry(HK_PACK_ENTRY_KIND_PACK_DEPENDENCY_EDGE, VnObjectId{},
+        DependencyPayload(PackId("Init"), 1, bus.triple), HK_PACK_PACK_DEPENDENCY_EDGE_VINTAGE);
+    image.AddMedia(sound, samples, {}, 2);
     return image.Build();
 }
 
@@ -3942,8 +3766,6 @@ struct PathSet {
     std::filesystem::path directory;
     std::string init;
     std::string content;
-    VnPackNamesV1 initNames{sizeof(VnPackNamesV1), 0, project, {}, "", "", 0, 0, nullptr, nullptr};
-    VnPackNamesV1 names{sizeof(VnPackNamesV1), 0, project, action, "Play_A", "", 0, 0, nullptr, nullptr};
     std::vector<VnCanonicalPackSetMemberV2> members;
 
     explicit PathSet(const char* name)
@@ -3952,8 +3774,8 @@ struct PathSet {
         init = (directory / "Init.pack").string();
         content = (directory / "Content.pack").string();
         EXPECT_TRUE(harkentest::WriteBytes(init, Build(true, PackId("Init"))));
-        members = {Member(PackId("Init"), true, nullptr, &initNames),
-                   Member(ContentId(), false, nullptr, &names)};
+        members = {Member(PackId("Init"), true, nullptr),
+                   Member(ContentId(), false, nullptr)};
         members[0].source.utf8Path = init.c_str();
         members[1].source.utf8Path = content.c_str();
     }
@@ -4020,6 +3842,182 @@ harkentest::Capture ResidentReference(const char* name, const std::vector<float>
 
 } // namespace packstream
 
+TEST(CanonicalPackSetActivate, ResidentVorbisActionLoadsMixedPackAndRendersAgainstReference) {
+    using namespace packstream;
+    const auto fixture = harken::test::MakeVorbisFixture(2, false, 0, 0, 4096, true, 173);
+    harken::VorbisMedia media;
+    ASSERT_TRUE(harken::ParseResidentVorbis(fixture.media.data(), fixture.media.size(), media));
+    std::vector<float> planar(fixture.reference.size());
+    for (std::size_t frame = 0; frame < media.frames; ++frame) {
+        planar[frame] = fixture.reference[2 * frame];
+        planar[media.frames + frame] = fixture.reference[2 * frame + 1];
+    }
+    const auto blocks = static_cast<std::uint32_t>((media.frames + 255) / 256 + 8);
+    harkentest::Capture reference;
+    for (const bool encoded : {false, true}) {
+        EngineSession session(StreamConfig());
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto& engine = *session.Engine();
+        PathSet set("pack-vorbis-resident");
+        ASSERT_TRUE(harkentest::WriteBytes(set.content, BuildSoundContent(PathSet::ContentId(), 1,
+            false, planar, 0, true, encoded ? media.revision : 0, encoded ? &fixture.media : nullptr)));
+        if (encoded) {
+            VnCanonicalPackSetActivationReportV1 report{};
+            ASSERT_EQ(VN_OK, Activate(set.members, report));
+            const auto decoded = PostAndCapture(&engine, blocks);
+            const auto start = Audible(reference);
+            ASSERT_EQ(start, Audible(decoded));
+            ASSERT_LE(start + media.frames, decoded.left.size());
+            ASSERT_EQ(reference.left.size(), decoded.left.size());
+            for (std::size_t frame = start; frame < start + media.frames; ++frame) {
+                ASSERT_NEAR(reference.left[frame], decoded.left[frame], 2e-5f) << frame;
+                ASSERT_NEAR(reference.right[frame], decoded.right[frame], 2e-5f) << frame;
+            }
+        } else {
+            VnCanonicalPackSetActivationReportV1 report{};
+            ASSERT_EQ(VN_OK, Activate(set.members, report));
+            reference = PostAndCapture(&engine, blocks);
+        }
+    }
+}
+
+TEST(CanonicalPackSetActivate, ExplicitResidentMediaBudgetRejectsProviderSetAtomically) {
+    using namespace packstream;
+    auto config = StreamConfig();
+    config.maxPackResourceBytes = 1;
+    EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+
+    const auto fixture = harken::test::MakeVorbisFixture(2, false, 0, 0, 4096, true, 173);
+    const auto fingerprint = harken::Fnv1a64(fixture.media.data(), fixture.media.size());
+    Provider init{Build(true, PackId("Init"))};
+    Provider content{BuildSoundContent(PathSet::ContentId(), 1, false, fixture.reference,
+        0, true, fingerprint, &fixture.media)};
+    std::vector<VnCanonicalPackSetMemberV2> members{
+        Member(PackId("Init"), true, &init), Member(PathSet::ContentId(), false, &content)};
+    VnCanonicalPackSetActivationReportV1 report{};
+    EXPECT_EQ(VN_PACK_RESIDENT_CAPACITY, Activate(members, report));
+    EXPECT_EQ(0u, session.Engine()->registry.CookieOf(kSound));
+    EXPECT_EQ(nullptr, PackMasterHolder(session.Engine()));
+    EXPECT_EQ(content.reads, content.releases);
+
+    members.pop_back();
+    ASSERT_EQ(VN_OK, Activate(members, report));
+    EXPECT_EQ(1u, report.resultSetRevision);
+    EXPECT_TRUE(PackAdmissionOpenForInit(session.Engine(), report.initHandle));
+}
+
+TEST(CanonicalPackSetActivate, ProviderMixedPcmCopyUsesSharedStagingWhileEncodedPackIsLive) {
+    using namespace packstream;
+    const auto fixture = harken::test::MakeVorbisFixture(2, false, 0, 0, 4096, true, 173);
+    const auto fingerprint = harken::Fnv1a64(fixture.media.data(), fixture.media.size());
+    constexpr std::size_t frames = 512 * 1024;
+    constexpr auto floatBytes = frames * sizeof(float);
+    for (const bool compact : {false, true}) {
+        Provider init{Build(true, PackId("Init"))};
+        Provider content{BuildSoundContent(PathSet::ContentId(), 1, false, fixture.reference,
+            0, true, fingerprint, &fixture.media, frames, compact ? 0.125f : 0.1f)};
+        // This allowance accommodates the compact copy plus parser/codec scratch,
+        // but cannot hold the original Pack and a full Float32 copy together.
+        for (const bool ample : {false, true}) {
+            SCOPED_TRACE(::testing::Message() << "compact=" << compact << ", ample=" << ample);
+            auto config = StreamConfig();
+            config.maxPackDecodeStagingBytes = content.bytes.size() +
+                (ample ? 2 * floatBytes : 3 * floatBytes / 4);
+            EngineSession session(config);
+            ASSERT_EQ(VN_OK, session.InitResult());
+            VnCanonicalPackSetActivationReportV1 report{};
+            std::vector<VnCanonicalPackSetMemberV2> members{
+                Member(PackId("Init"), true, &init), Member(PathSet::ContentId(), false, &content)};
+            init.reads = init.releases = content.reads = content.releases = 0;
+            const auto result = Activate(members, report);
+            EXPECT_EQ(1u, init.reads);
+            EXPECT_EQ(1u, content.reads);
+            EXPECT_EQ(init.reads, init.releases);
+            EXPECT_EQ(content.reads, content.releases);
+            if (!compact && !ample) {
+                EXPECT_EQ(VN_PACK_RESIDENT_CAPACITY, result);
+                EXPECT_EQ(0u, session.Engine()->packs.LoadedCount());
+                EXPECT_EQ(0u, session.Engine()->registry.CookieOf(kSound));
+            } else {
+                ASSERT_EQ(VN_OK, result);
+                EXPECT_EQ(2u, session.Engine()->packs.LoadedCount());
+                EXPECT_NE(0u, session.Engine()->registry.CookieOf(kSound));
+            }
+        }
+    }
+}
+
+TEST(CanonicalPackSetActivate, ProviderMixedPcmCopyRemainsChargedWhenReadingNextMember) {
+    using namespace packstream;
+    constexpr std::size_t frames = 512 * 1024;
+    constexpr auto floatBytes = frames * sizeof(float);
+    const auto fixture = harken::test::MakeVorbisFixture(2, false, 0, 0, 4096, true, 173);
+    Provider init{Build(true, PackId("Init"))};
+    Provider mixed{BuildSoundContent(PathSet::ContentId(), 1, false, fixture.reference,
+        0, true, harken::Fnv1a64(fixture.media.data(), fixture.media.size()), &fixture.media, frames, 0.1f)};
+    const auto nextId = PackId("next-media");
+    Provider next{BuildMediaProvider(nextId, std::vector<float>(frames + frames / 2, 0.25f),
+        harkentest::ObjectId(8401))};
+    // The mixed member fits during preparation, and the next source fits on its
+    // own. Keeping the prepared PCM alive across the two reads exceeds the limit.
+    for (const bool ample : {false, true}) {
+        SCOPED_TRACE(ample);
+        auto config = StreamConfig();
+        config.maxPackDecodeStagingBytes = next.bytes.size() + (ample ? 2 * floatBytes : 3 * floatBytes / 4);
+        EngineSession session(config);
+        ASSERT_EQ(VN_OK, session.InitResult());
+        std::vector<VnCanonicalPackSetMemberV2> members{Member(PackId("Init"), true, &init),
+            Member(PathSet::ContentId(), false, &mixed), Member(nextId, false, &next)};
+        VnCanonicalPackSetActivationReportV1 report{};
+        next.reads = next.releases = 0;
+        const auto result = Activate(members, report);
+        EXPECT_EQ(1u, next.reads);
+        EXPECT_EQ(next.reads, next.releases);
+        EXPECT_EQ(ample ? VN_OK : VN_PACK_RESIDENT_CAPACITY, result);
+        EXPECT_EQ(ample ? 3u : 0u, session.Engine()->packs.LoadedCount());
+    }
+}
+
+TEST(CanonicalPackSetActivate, ProviderVorbisRejectsWrongTrimWithoutReplacingLiveMedia) {
+    using namespace packstream;
+    EngineSession session(StreamConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto* engine = session.Engine();
+    auto fixture = harken::test::MakeVorbisFixture(2, false, 0, 0, 4096, true, 173);
+    auto contentBytes = [&](unsigned revision) {
+        const auto fingerprint = harken::Fnv1a64(fixture.media.data(), fixture.media.size());
+        return BuildSoundContent(PathSet::ContentId(), revision, false, fixture.reference,
+            0, true, fingerprint, &fixture.media);
+    };
+    Provider init{Build(true, PackId("Init"))}, content{contentBytes(1)};
+    std::vector<VnCanonicalPackSetMemberV2> members{
+        Member(PackId("Init"), true, &init), Member(PathSet::ContentId(), false, &content)};
+    VnCanonicalPackSetActivationReportV1 activation{};
+    const auto beforeWide = engine->vorbis.settings.WideRequests();
+    ASSERT_EQ(VN_OK, Activate(members, activation));
+    EXPECT_GT(engine->vorbis.settings.WideRequests(), beforeWide);
+    EXPECT_EQ(init.reads, 1u);
+    EXPECT_EQ(init.releases, 1u);
+    EXPECT_EQ(content.reads, 1u);
+    EXPECT_EQ(content.releases, 1u);
+    const auto previous = engine->registry.CookieOf(kSound);
+    ASSERT_NE(0u, previous);
+    const auto blocks = static_cast<unsigned>((fixture.reference.size() / 2 + 255) / 256 + 8);
+    const auto reference = PostAndCapture(engine, blocks);
+    ASSERT_LT(Audible(reference), reference.left.size());
+
+    ++fixture.media[offsetof(HkPackVorbisHeader, tailFrames)];
+    content.bytes = contentBytes(2);
+    harken::PackCanonicalImage image;
+    EXPECT_EQ(VN_BAD_PACK, harken::ParsePackCanonicalImage(content.bytes.data(), content.bytes.size(), &image));
+    EXPECT_EQ(VN_BAD_PACK, Activate(members, activation, 1));
+    EXPECT_EQ(previous, engine->registry.CookieOf(kSound));
+    const auto after = PostAndCapture(engine, blocks);
+    EXPECT_EQ(reference.left, after.left);
+    EXPECT_EQ(reference.right, after.right);
+}
+
 TEST(CanonicalPackSetActivate, StreamedPackMediaPlaysResidentSamplesWithoutResidentCopy) {
     using namespace packstream;
     const auto samples = PlanarSignal(1.0f);
@@ -4081,10 +4079,11 @@ TEST(CanonicalPackSetActivate, StreamedPackVoiceKeepsOriginalSourceAcrossNewRevi
     ASSERT_EQ(VN_OK, Activate(set.members, report));
 
     harkentest::Capture old;
-    VnActionResolved resolved{};
-    ASSERT_EQ(VN_OK, Resolve("Play_A", &resolved));
+    VnPostActionDesc post{};
+    post.structSize = sizeof(post);
+    post.actionId = action;
     VnActionFiringHandle firing = 0;
-    ASSERT_EQ(VN_OK, Vn_PostActionResolved(&resolved, 0, 0, &firing));
+    ASSERT_EQ(VN_OK, Vn_PostAction(&post, &firing));
     PumpFiring(engine, 4, old);
     // The next revision lives at another path and the original file is
     // deleted; the running voice keeps reading its opened source.
@@ -4257,12 +4256,12 @@ TEST(CanonicalPackSetActivate, ProviderMediaStreamsForAnotherMembersDefinitionAn
 TEST(CanonicalPackSetActivate, LargeInitProjects257VariablesAndUses65thAttenuation) {
     using namespace harken;
     using namespace harkentest::packfoundation;
-    const auto initId = companionfixture::PackId("Init");
+    const auto initId = v2activation::PackId("Init");
     std::vector<VariableDefinitionV1> variables;
     for (unsigned i = 0; i < 257; ++i)
         variables.push_back(harkentest::MakeVariableDefinition(harkentest::ObjectId(10000+i), VariableKindV1::Smooth, 0, 8, 2));
     ContainerWorldInstallViewV1 world{};
-    world.identity.projectId = companionfixture::project;
+    world.identity.projectId = v2activation::project;
     world.variables = variables.data();
     world.variableCount = variables.size();
     world.capacity.maxVariableDefinitions = variables.size();
@@ -4272,7 +4271,7 @@ TEST(CanonicalPackSetActivate, LargeInitProjects257VariablesAndUses65thAttenuati
     ASSERT_TRUE(EncodeCurrentWorldShippingBody(world, body));
     const auto bus = DefaultRuntimeBusFixture();
     PackCanonicalPartitionHeader header{};
-    header.headerBytes = kPackCanonicalPartitionHeaderBytes;
+    header.headerBytes = kPackBytes<HkPackCanonicalPartitionHeader>;
     header.bodyVintage = kCanonicalDefinitionPartitionBodyVintage;
     header.bodyBytes = body.size();
     header.bodyChecksum = Fnv1a64(body.data(), body.size());
@@ -4281,55 +4280,55 @@ TEST(CanonicalPackSetActivate, LargeInitProjects257VariablesAndUses65thAttenuati
     header.ownedDefinitionCount = variables.size();
     ApplyCanonicalBusTriple(&header, bus.triple);
     std::vector<std::uint8_t> partition(header.headerBytes + body.size());
-    SerializePackCanonicalPartitionHeader(header, partition.data());
-    header.headerChecksum = Fnv1a64(partition.data(), kPackCanonicalPartitionHeaderHeaderChecksumOffset);
-    SerializePackCanonicalPartitionHeader(header, partition.data());
+    SerializePackRow<HkPackCanonicalPartitionHeader>(header, partition.data());
+    header.headerChecksum = Fnv1a64(partition.data(), offsetof(HkPackCanonicalPartitionHeader, headerChecksum));
+    SerializePackRow<HkPackCanonicalPartitionHeader>(header, partition.data());
     std::memcpy(partition.data() + header.headerBytes, body.data(), body.size());
-    ImageBuilder builder(kPackKindInit);
-    builder.AddEntry(kPackEntryKindPackRequirementBlock, initId,
+    ImageBuilder builder(HK_PACK_KIND_INIT);
+    builder.AddEntry(HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK, initId,
         RequirementPayload(initId, 1, 1, variables.size(), body.size(), bus.triple));
-    builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, initId, std::move(partition));
-    builder.AddEntry(kPackEntryKindBusDefinitionSnapshot, 1, bus.snapshot);
+    builder.AddEntry(HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION, initId, std::move(partition));
+    builder.AddEntry(HK_PACK_ENTRY_KIND_BUS_DEFINITION_SNAPSHOT, 1, bus.snapshot);
     auto desc = harkentest::MakeAttenuationDesc(1, 10);
     desc.proximityFrequency = 250;
     for (unsigned i = 0; i < 65; ++i) {
-        std::vector<std::uint8_t> payload(kPackAttenuationBytes);
-        SerializePackAttenuation(desc, payload.data());
-        builder.AddEntry(kPackEntryKindAttenuation, harkentest::ObjectId(1000+i), std::move(payload), kPackAttenuationVintage);
+        std::vector<std::uint8_t> payload(kPackBytes<HkPackAttenuation>);
+        SerializePackRow<HkPackAttenuation>(desc, payload.data());
+        builder.AddEntry(HK_PACK_ENTRY_KIND_ATTENUATION, harkentest::ObjectId(1000+i), std::move(payload), HK_PACK_ATTENUATION_VINTAGE);
     }
-    std::vector<std::uint8_t> overlay(kPackVariablePolicyHeaderBytes + variables.size() *
-        (kPackVariablePolicyRowBytes + kPackVariableAnchorCountBytes + kPackVariableLabelHeaderBytes), 0);
-    SerializePackVariablePolicyHeader({static_cast<std::uint32_t>(variables.size())}, overlay.data());
-    std::size_t cursor = kPackVariablePolicyHeaderBytes;
+    std::vector<std::uint8_t> overlay(kPackBytes<HkPackVariablePolicyHeader> + variables.size() *
+        (kPackBytes<HkPackVariablePolicyRow> + kPackBytes<HkPackVariableAnchorCount> + kPackBytes<HkPackVariableLabelHeader>), 0);
+    SerializePackRow<HkPackVariablePolicyHeader>(PackVariablePolicyHeader{static_cast<std::uint32_t>(variables.size())}, overlay.data());
+    std::size_t cursor = kPackBytes<HkPackVariablePolicyHeader>;
     for (const auto& variable : variables) {
         std::uint64_t execution = 0;
         ASSERT_TRUE(ComputeVariableExecutionFingerprintV1(variable.variableId, 1, 1, 3,
             variable.rangeMin, variable.rangeMax, variable.defaultValue, nullptr, 0, &execution));
-        SerializePackVariablePolicyRow({variable.variableId, 3, execution}, overlay.data() + cursor);
-        cursor += kPackVariablePolicyRowBytes;
+        SerializePackRow<HkPackVariablePolicyRow>(PackVariablePolicyRow{variable.variableId, 3, execution}, overlay.data() + cursor);
+        cursor += kPackBytes<HkPackVariablePolicyRow>;
     }
     for (std::size_t i = 0; i < variables.size(); ++i) {
-        SerializePackVariableAnchorCount({0}, overlay.data() + cursor);
-        cursor += kPackVariableAnchorCountBytes;
+        SerializePackRow<HkPackVariableAnchorCount>(PackVariableAnchorHeader{0}, overlay.data() + cursor);
+        cursor += kPackBytes<HkPackVariableAnchorCount>;
     }
     for (const auto& variable : variables) {
-        SerializePackVariableLabelHeader({ComputeVariableLabelMappingFingerprintV1(variable.variableId, {}), 0}, overlay.data() + cursor);
-        cursor += kPackVariableLabelHeaderBytes;
+        SerializePackRow<HkPackVariableLabelHeader>(PackVariableLabelHeader{ComputeVariableLabelMappingFingerprintV1(variable.variableId, {}), 0}, overlay.data() + cursor);
+        cursor += kPackBytes<HkPackVariableLabelHeader>;
     }
-    builder.AddEntry(kPackEntryKindVariablePolicyOverlay, 0, std::move(overlay));
-    companionfixture::Provider provider{builder.Build()};
+    builder.AddEntry(HK_PACK_ENTRY_KIND_VARIABLE_POLICY_OVERLAY, 0, std::move(overlay));
+    v2activation::Provider provider{builder.Build()};
     VnCanonicalPackSetMemberV1 member{};
     member.structSize = sizeof(member);
     member.packStableId = initId;
     member.packKind = VN_CANONICAL_PACK_SET_MEMBER_INIT;
     member.flags = VN_CANONICAL_PACK_SET_MEMBER_PROVIDER;
     member.providerUserData = &provider;
-    member.provide = companionfixture::Provider::Read;
-    member.release = companionfixture::Provider::Release;
+    member.provide = v2activation::Provider::Read;
+    member.release = v2activation::Provider::Release;
     const auto atten = harkentest::ObjectId(1064);
-    companionfixture::Provider content{companionfixture::BuildPreview(false, false, atten, world.capacity)};
+    v2activation::Provider content{v2activation::BuildPreview(false, false, atten, world.capacity)};
     auto contentMember = member;
-    contentMember.packStableId = companionfixture::PackId("action_" + ObjectIdString(companionfixture::action));
+    contentMember.packStableId = v2activation::PackId("action_" + ObjectIdString(v2activation::action));
     contentMember.packKind = VN_CANONICAL_PACK_SET_MEMBER_CONTENT;
     contentMember.providerUserData = &content;
     const std::array members{member, contentMember};
@@ -4369,7 +4368,7 @@ TEST(CanonicalPackSetActivate, LargeInitProjects257VariablesAndUses65thAttenuati
         ASSERT_NE(0u, generation);
         VnPostActionDesc post{};
         post.structSize = sizeof(post);
-        post.actionId = companionfixture::action;
+        post.actionId = v2activation::action;
         ASSERT_EQ(VN_OK, Vn_CreateEmitter(&post.emitter));
         ASSERT_EQ(VN_OK, Vn_SetEmitterPosition(post.emitter, {0, 0, -5.5f}));
         VnActionFiringHandle firing = 0;
@@ -4393,25 +4392,13 @@ TEST(CanonicalPackSetActivate, LargeInitProjects257VariablesAndUses65thAttenuati
         });
         EXPECT_EQ(1u, observed);
     }
-    std::vector<std::string> symbols;
-    symbols.reserve(variables.size());
-    for (std::size_t i = 0; i < variables.size(); ++i) symbols.push_back("Variable_" + std::to_string(i));
-    std::vector<VnPackVariableNameV1> variableNames;
-    for (std::size_t i = 0; i < variables.size(); ++i)
-        variableNames.push_back({variables[i].variableId, symbols[i].c_str()});
-    VnPackNamesV1 names{sizeof(VnPackNamesV1), 0, companionfixture::project, {}, "", "",
-        static_cast<std::uint32_t>(variableNames.size()), 0, variableNames.data(), nullptr};
-    std::uint64_t nameBudget = UINT64_MAX;
-    PackCompanionNames capturedNames;
-    ASSERT_EQ(VN_OK, CapturePackCompanionNames(names, nameBudget, &capturedNames));
-    const auto nameBytes = UINT64_MAX - nameBudget;
     const auto mapRows = 65ull * sizeof(PackAttenuationBindingMapV1::Binding);
-    for (const bool companion : {false, true}) {
+    for (const bool hasMemberOperations : {false, true}) {
         for (const auto allowance : {2ull * mapRows, 4ull * mapRows - 1u, 4ull * mapRows}) {
-            SCOPED_TRACE(testing::Message() << "companion=" << companion << " rows=" << allowance);
+            SCOPED_TRACE(testing::Message() << "hasMemberOperations=" << hasMemberOperations << " rows=" << allowance);
             auto config = CanonicalActivationConfig(2, 256, 48000);
             config.maxPackDecodeStagingBytes = provider.bytes.size() + sizeof(PackAttenuationBindingMapV1)*4 +
-                allowance + (companion ? nameBytes : 0);
+                allowance;
             EngineSession session(config);
             ASSERT_EQ(VN_OK, session.InitResult());
             VnCanonicalPackSetMemberResultV1 row{};
@@ -4421,17 +4408,17 @@ TEST(CanonicalPackSetActivate, LargeInitProjects257VariablesAndUses65thAttenuati
             allocation_probe::count = 0;
             allocation_probe::bytes = 0;
             allocation_probe::enabled = true;
-            if (companion) {
+            if (hasMemberOperations) {
                 std::vector<VnCanonicalPackSetMemberV2> named{
-                    companionfixture::Member(initId, true, &provider, &names)};
-                result = companionfixture::Activate(named, report);
+                    v2activation::Member(initId, true, &provider)};
+                result = v2activation::Activate(named, report);
             } else {
                 result = harkentest::ActivateCanonicalMembersV1(&member, 1, &row, report);
             }
             allocation_probe::enabled = false;
             const auto requestedBytes = allocation_probe::bytes;
             const auto allocationCount = allocation_probe::count;
-            const auto key = std::string(companion ? "v2_" : "v1_") + std::to_string(allowance);
+            const auto key = std::string(hasMemberOperations ? "v2_" : "v1_") + std::to_string(allowance);
             RecordProperty(key + "_requested_bytes", std::to_string(requestedBytes));
             RecordProperty(key + "_allocation_count", std::to_string(allocationCount));
             RecordProperty(key + "_budget", std::to_string(config.maxPackDecodeStagingBytes));
@@ -4448,14 +4435,14 @@ TEST(CanonicalPackSetActivate, LargeInitProjects257VariablesAndUses65thAttenuati
         EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());
         VnCanonicalPackSetActivationReportV1 report{};
-        if (companion) {
+        if (hasMemberOperations) {
             std::vector<VnCanonicalPackSetMemberV2> named{
-                companionfixture::Member(initId, true, &provider, &names)};
-            ASSERT_EQ(VN_OK, companionfixture::Activate(named, report));
+                v2activation::Member(initId, true, &provider)};
+            ASSERT_EQ(VN_OK, v2activation::Activate(named, report));
             std::vector<VnCanonicalPackSetMemberV2> kept{
-                companionfixture::Member(initId, true, nullptr, nullptr,
+                v2activation::Member(initId, true, nullptr,
                     report.initHandle, VN_PACK_MEMBER_KEEP)};
-            ASSERT_EQ(VN_OK, companionfixture::Activate(kept, report, report.resultSetRevision));
+            ASSERT_EQ(VN_OK, v2activation::Activate(kept, report, report.resultSetRevision));
         } else {
             VnCanonicalPackSetMemberResultV1 row{};
             row.structSize = sizeof(row);

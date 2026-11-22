@@ -5,7 +5,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 
@@ -66,7 +66,7 @@ float remapValue(float value, float oldMin, float oldMax,
 bool validTypedBinding(const ParameterBindingDef& binding)
 {
     return binding.typed && !binding.variable.isNull()
-        && !harkenstudio::IsNull(binding.runtimeId())
+        && !harken::studio::types::IsNull(binding.runtimeId())
         && binding.address.slotId != 0
         && binding.curve.size() >= 2
         && binding.curve.size() <= kCurveMaxPoints;
@@ -182,7 +182,7 @@ ParameterBindingDef ParameterBindingDef::fromJson(const QJsonValue& value)
             return binding;
         }
         const double ms = raw.toDouble();
-        if (!std::isfinite(ms) || std::trunc(ms) != ms || ms < 0.0 || ms > harkenstudiobuild::kMaxBindingTransitionMs) {
+        if (!std::isfinite(ms) || std::trunc(ms) != ms || ms < 0.0 || ms > harken::studio::build::kMaxBindingTransitionMs) {
             binding.typed = false;
             binding.opaqueValue = value;
             return binding;
@@ -203,9 +203,9 @@ ParameterBindingDef ParameterBindingDef::fromJson(const QJsonValue& value)
     return binding;
 }
 
-const ParameterBindingDef* BindingLedger::find(harkenstudio::ObjectId runtimeStableId) const
+const ParameterBindingDef* BindingLedger::find(harken::studio::types::ObjectId runtimeStableId) const
 {
-    if (harkenstudio::IsNull(runtimeStableId)) return nullptr;
+    if (harken::studio::types::IsNull(runtimeStableId)) return nullptr;
     const auto it = std::find_if(entries_.begin(), entries_.end(),
         [runtimeStableId](const ParameterBindingDef& binding) {
             return binding.typed && binding.runtimeId() == runtimeStableId;
@@ -213,7 +213,7 @@ const ParameterBindingDef* BindingLedger::find(harkenstudio::ObjectId runtimeSta
     return it == entries_.end() ? nullptr : &*it;
 }
 
-ParameterBindingDef* BindingLedger::find(harkenstudio::ObjectId runtimeStableId)
+ParameterBindingDef* BindingLedger::find(harken::studio::types::ObjectId runtimeStableId)
 {
     return const_cast<ParameterBindingDef*>(
         static_cast<const BindingLedger*>(this)->find(runtimeStableId));
@@ -254,7 +254,7 @@ bool BindingLedger::upsert(ParameterBindingDef binding)
             return false;
     }
     normalizeTypedBinding(binding);
-    if (!harkenstudio::IsNull(binding.runtimeId()))
+    if (!harken::studio::types::IsNull(binding.runtimeId()))
         if (ParameterBindingDef* current = find(binding.runtimeId())) {
             *current = std::move(binding);
             return true;
@@ -263,9 +263,9 @@ bool BindingLedger::upsert(ParameterBindingDef binding)
     return true;
 }
 
-bool BindingLedger::remove(harkenstudio::ObjectId runtimeStableId)
+bool BindingLedger::remove(harken::studio::types::ObjectId runtimeStableId)
 {
-    if (harkenstudio::IsNull(runtimeStableId)) return false;
+    if (harken::studio::types::IsNull(runtimeStableId)) return false;
     const auto it = std::find_if(entries_.begin(), entries_.end(),
         [runtimeStableId](const ParameterBindingDef& binding) {
             return binding.typed && binding.runtimeId() == runtimeStableId;
@@ -285,9 +285,9 @@ bool BindingLedger::removeAll(const BindingAddress& address)
     return entries_.size() != before;
 }
 
-bool BindingLedger::move(harkenstudio::ObjectId runtimeStableId, int toIndex)
+bool BindingLedger::move(harken::studio::types::ObjectId runtimeStableId, int toIndex)
 {
-    if (harkenstudio::IsNull(runtimeStableId) || toIndex < 0
+    if (harken::studio::types::IsNull(runtimeStableId) || toIndex < 0
         || toIndex >= static_cast<int>(entries_.size()))
         return false;
     const auto it = std::find_if(entries_.begin(), entries_.end(),

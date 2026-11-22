@@ -5,7 +5,7 @@
 #include <cstdint>
 #include <memory>
 
-namespace VNX {
+namespace harken::studio {
 namespace Monitor {
 
 bool entityReplayIsIncomplete(
@@ -13,4 +13,4 @@ bool entityReplayIsIncomplete(
     std::uint32_t entityKind);
 
 } // namespace Monitor
-} // namespace VNX
+} // namespace harken::studio

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QWidget>
+#include <QList>
 #include <memory>
 #include <QJsonObject>
 #include <QString>
@@ -12,7 +13,7 @@
 
 #include <optional>
 
-namespace VNX {
+namespace harken::studio {
 
 struct ProjectItem;
 class InspectorPanelPrivate;
@@ -28,6 +29,7 @@ public:
 
     void showItemInspector(ProjectItem* item);
     void showItemInspector(ProjectItem* item, const PlacementContext& placement);
+    void setConversionSelection(const QList<ProjectItem*>& items);
     void selectCurveDimension(AttenuationDimension dimension);
     void requestEditorLaunch(const QString& slot);
     void showEmpty();
@@ -104,6 +106,7 @@ private:
     int panelId_ = 0;
     bool pinned_ = false;
     std::optional<PlacementContext> placementContext_;
+    QList<QUuid> conversionSelection_;
 };
 
 }

@@ -2,7 +2,7 @@
 
 #include <utility>
 
-namespace VNX {
+namespace harken::studio {
 
 PlacementContext::PlacementContext(std::vector<PlacementOccurrence> occurrences)
     : occurrences_(std::move(occurrences))

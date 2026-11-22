@@ -17,8 +17,8 @@
 #include "harken/core/CurrentWorld.h"
 #include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/dsp/GainRamp.h"
+#include <harken/HarkenDevelopment.h>
 #include "harken/render/EffectChain.h"
-#include "harken_preview/PreviewAbi.h"
 
 #include <gtest/gtest.h>
 
@@ -1139,7 +1139,7 @@ TEST(BusAdmissionStart, PairedCommitWritesCurrentWorldInstallWithBoundTail) {
     const std::string path =
         std::string(HARKEN_TEMP_DIR "/") + "plan09_u2_commit_type6.vtrc";
     std::filesystem::remove(path);
-    auto recorder = std::make_unique<harken::TraceRecorder>(*engine);
+    harken::TraceRecorderOwner recorder(new harken::TraceRecorder(*engine));
     ASSERT_EQ(VN_OK, recorder->Start(path.c_str()));
     engine->trace = std::move(recorder);
 

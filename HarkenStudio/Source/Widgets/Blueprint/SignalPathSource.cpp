@@ -20,7 +20,7 @@
 #include <functional>
 #include <set>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 

@@ -4,7 +4,7 @@
 #include <QJsonDocument>
 #include <QJsonValue>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 constexpr int kDefaultMaxBytes = 16384;

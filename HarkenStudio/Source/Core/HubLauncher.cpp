@@ -13,7 +13,7 @@
 #include <windows.h>
 #endif
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 
@@ -55,8 +55,14 @@ QString HubLauncher::resolveExecutablePath(
     appendInstallCandidates(
         candidates, qEnvironmentVariable("HARKEN_HUB_INSTALL_DIR"));
 
-    if (localBuild)
-        appendInstallCandidates(candidates, applicationDirPath);
+    if (localBuild && !applicationDirPath.isEmpty()) {
+        QString buildDirectory = applicationDirPath;
+#ifdef Q_OS_MACOS
+        if (buildDirectory.endsWith(QStringLiteral(".app/Contents/MacOS")))
+            buildDirectory = QDir::cleanPath(buildDirectory + QStringLiteral("/../../.."));
+#endif
+        appendInstallCandidates(candidates, QDir(buildDirectory).filePath(QStringLiteral("Hub")));
+    }
 
 #ifdef Q_OS_WIN
     const QSettings machine(

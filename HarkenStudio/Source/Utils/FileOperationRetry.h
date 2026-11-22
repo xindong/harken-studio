@@ -2,7 +2,7 @@
 
 #include <QThread>
 
-namespace VNX {
+namespace harken::studio {
 
 template<typename Operation>
 bool retryFileOperation(Operation&& operation)

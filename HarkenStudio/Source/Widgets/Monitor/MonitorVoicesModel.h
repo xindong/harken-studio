@@ -14,7 +14,7 @@
 #include <optional>
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 
 enum class MonitorVoicesVolumeState
 {
@@ -90,4 +90,4 @@ MonitorVoicesProjection projectVoiceRows(
     const MonitorCursorSnapshot& cursor,
     bool stateStreamSubscribed);
 
-} // namespace VNX
+} // namespace harken::studio

@@ -3,7 +3,7 @@
 
 #include <cmath>
 
-namespace VNX {
+namespace harken::studio {
 
 inline float smoothTimed(float current, float target, float timeConstantMs, float deltaTimeMs)
 {

@@ -5,7 +5,7 @@
 #include <cstdint>
 #include <memory>
 
-namespace VNX {
+namespace harken::studio {
 namespace Monitor {
 
 enum class WaveformFace
@@ -29,4 +29,4 @@ WaveformBucketProjection projectWaveformFace(
     const std::shared_ptr<const MonitorStoreSnapshot>& snapshot);
 
 } // namespace Monitor
-} // namespace VNX
+} // namespace harken::studio

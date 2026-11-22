@@ -12,7 +12,7 @@
 #include <algorithm>
 #include <functional>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 using Occurrences = std::vector<PlayablePropertyLocatorV1>;

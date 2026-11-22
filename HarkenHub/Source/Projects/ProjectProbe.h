@@ -3,7 +3,7 @@
 #include <QString>
 #include <QStringList>
 
-namespace VNH {
+namespace harken::hub {
 
 struct ProjectProbeResult
 {
@@ -13,10 +13,8 @@ struct ProjectProbeResult
     QStringList candidates;
     QString canonicalPath;
     QString displayName;
-    QString projectId;
     QString savedStudioVersion;
     QString metadataWarning;
-    int schemaVersion = 0;
 };
 
 class ProjectProbe

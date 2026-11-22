@@ -12,17 +12,14 @@
 class QLabel;
 class QColor;
 class QComboBox;
-class QJsonObject;
 class QLineEdit;
 class QPushButton;
-class QSpacerItem;
 class QStackedWidget;
 class QTableWidget;
 class QTimer;
-class QTreeWidget;
 class QVariantAnimation;
 
-namespace VNH {
+namespace harken::hub {
 
 class ProjectStore;
 class TableSorting;
@@ -65,14 +62,8 @@ private:
     void onAddProjectClicked();
     void onNewProjectClicked();
     void onCreateProjectClicked();
-    void onAddTemplateClicked();
     QWidget* createNewProjectPage();
-    void loadProjectTemplates(const QString& preferredPath = QString());
     void loadProjectVersions(const QString& preferredBuildId = QString());
-    void validateSelectedTemplate();
-    void showTemplatePreview(const QJsonObject& content,
-                             const QString& description);
-    void showEmptyTemplate();
     void persistProjectLocation(const QString& path);
     void updateNewProjectCreateEnabled();
     void updateLaunchTarget();
@@ -93,12 +84,6 @@ private:
     QLineEdit* projectNameEdit_ = nullptr;
     QLineEdit* projectLocationEdit_ = nullptr;
     QComboBox* projectVersionCombo_ = nullptr;
-    QComboBox* projectTemplateCombo_ = nullptr;
-    QLabel* templateDescription_ = nullptr;
-    QWidget* templatePreview_ = nullptr;
-    QTreeWidget* templateBusTree_ = nullptr;
-    QTreeWidget* templateAttenuationTree_ = nullptr;
-    QSpacerItem* newProjectSpacer_ = nullptr;
     QPushButton* newProjectButton_ = nullptr;
     QPushButton* createProjectButton_ = nullptr;
     QTimer* projectLocationSaveTimer_ = nullptr;

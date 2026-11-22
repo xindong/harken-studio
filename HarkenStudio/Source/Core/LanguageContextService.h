@@ -8,7 +8,7 @@
 
 #include <memory>
 
-namespace VNX {
+namespace harken::studio {
 
 class LanguageContextService : public QObject
 {

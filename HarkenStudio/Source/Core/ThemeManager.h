@@ -20,7 +20,7 @@
 class QPainter;
 class QRect;
 
-namespace VNX {
+namespace harken::studio {
 
 struct ThemeManagerOperationResult
 {
@@ -137,8 +137,8 @@ public:
                              bool active, bool hover, bool enabled) const;
 
 signals:
-    void themeChanged(VNX::ThemeSnapshotPtr snapshot);
-    void appearanceChanged(VNX::ThemeSnapshotPtr snapshot);
+    void themeChanged(harken::studio::ThemeSnapshotPtr snapshot);
+    void appearanceChanged(harken::studio::ThemeSnapshotPtr snapshot);
 
 private:
     explicit ThemeManager(QObject* parent = nullptr);

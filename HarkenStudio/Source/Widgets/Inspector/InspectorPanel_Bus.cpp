@@ -10,7 +10,7 @@
 #include "Widgets/Inspector/PropertyEditorEngine.h"
 #include "Widgets/Inspector/BusInspectorSchema.h"
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 

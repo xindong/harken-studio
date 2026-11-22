@@ -23,7 +23,7 @@
 #include <QPushButton>
 #include <QDebug>
 
-namespace VNX {
+namespace harken::studio {
 
 WidgetFactory& WidgetFactory::instance()
 {

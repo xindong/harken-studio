@@ -4,7 +4,7 @@
 
 #include <QToolButton>
 
-namespace VNX {
+namespace harken::studio {
 
 class InspectorSlotButton : public QToolButton
 {

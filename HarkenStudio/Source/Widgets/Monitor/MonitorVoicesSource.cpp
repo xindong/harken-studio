@@ -2,7 +2,7 @@
 
 #include "Monitor/MonitorVoicesPanel.h"
 
-namespace VNX {
+namespace harken::studio {
 
 void MonitorVoicesSource::attach(MonitorVoicesPanel* panel, MonitorCursorModel* sharedCursor)
 {
@@ -27,4 +27,4 @@ void MonitorVoicesSource::pushToPanel() const
         panel_->bindSnapshot(snapshot_, stateStreamSubscribed_);
 }
 
-} // namespace VNX
+} // namespace harken::studio

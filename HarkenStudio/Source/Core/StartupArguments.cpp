@@ -3,7 +3,7 @@
 #include <QDir>
 #include <QFileInfo>
 
-namespace VNX {
+namespace harken::studio {
 
 StartupArguments StartupArguments::parse(const QStringList& args)
 {
@@ -22,8 +22,6 @@ StartupArguments StartupArguments::parse(const QStringList& args)
             arguments.projectLocation = value;
         else if (key == QStringLiteral("--project-template-id"))
             arguments.projectTemplateId = value;
-        else if (key == QStringLiteral("--project-template-file"))
-            arguments.projectTemplatePath = value;
     }
 
     if (arguments.createProject && arguments.projectName.isEmpty()

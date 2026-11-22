@@ -1,6 +1,6 @@
 #include "SelectionListWidget.h"
 #include "GridEditorWidget.h"
-#include "SelectionWaveform.h"
+#include "ActiveSourcePreview.h"
 
 #include "Core/ActionManager.h"
 #include "Core/Components/VSelection.h"
@@ -34,7 +34,7 @@
 #include <algorithm>
 #include <limits>
 
-namespace VNX {
+namespace harken::studio {
 
 SelectionListWidget::SelectionListWidget(QWidget* parent)
     : QWidget(parent)
@@ -195,7 +195,7 @@ QWidget* SelectionListWidget::buildHeader()
         {QStringLiteral("Number"), QStringLiteral("#"), 0},
         {QStringLiteral("Child"), tr("Child"), 200, 0, QStringLiteral("selectionChildHeader")},
         {QStringLiteral("Weight"), tr("Weight"), 200, 0, QStringLiteral("selectionChildWeightHeader")},
-        {QStringLiteral("Waveform"), tr("Waveform"), 600}
+        {QStringLiteral("ActiveSource"), tr("Active Source"), 600}
     });
     return box_->header();
 }
@@ -300,16 +300,16 @@ QWidget* SelectionListWidget::buildRow(int index, const SelectionEntry& occurren
     weightCell->setVisible(weightVisible_);
     layout->addWidget(weightCell);
 
-    auto* waveformCell = box_->createCell(row);
-    waveformCell->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-    auto* waveform = new SelectionWaveform(child->guid, waveformCell);
-    connect(waveform, &SelectionWaveform::sourceEditorRequested,
+    auto* activeSourceCell = box_->createCell(row);
+    activeSourceCell->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    auto* activeSource = new ActiveSourcePreview(child->guid, activeSourceCell);
+    connect(activeSource, &ActiveSourcePreview::sourceEditorRequested,
             this, &SelectionListWidget::sourceEditorRequested);
-    waveformCell->addWidget(waveform);
-    layout->addWidget(waveformCell);
+    activeSourceCell->addWidget(activeSource);
+    layout->addWidget(activeSourceCell);
 
     rowWidgets_.push_back(row);
-    box_->registerRow(row, {number, childCell, weightCell, waveformCell});
+    box_->registerRow(row, {number, childCell, weightCell, activeSourceCell});
     return row;
 }
 

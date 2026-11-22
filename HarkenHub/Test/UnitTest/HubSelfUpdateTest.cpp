@@ -34,11 +34,11 @@
 
 #include <thread>
 
-using VNH::HandoffArea;
-using VNH::HubSelfUpdate;
-using VNH::UpdateQueue;
-using VNH::UpdateStateRecord;
-using VNH::UpdateStateStore;
+using harken::hub::HandoffArea;
+using harken::hub::HubSelfUpdate;
+using harken::hub::UpdateQueue;
+using harken::hub::UpdateStateRecord;
+using harken::hub::UpdateStateStore;
 
 namespace {
 
@@ -142,20 +142,20 @@ TEST_F(HubSelfUpdateTest, VerifiesInstallerHashAndSize)
 TEST_F(HubSelfUpdateTest, UpdatePreparationKeepsTheUiResponsiveDuringStateContention)
 {
     qputenv("HARKEN_HUB_BRIDGE_COMMAND", "noop");
-    ASSERT_TRUE(VNH::HubSettings::setAutoDownloadStudio(false));
+    ASSERT_TRUE(harken::hub::HubSettings::setAutoDownloadStudio(false));
     auto record = readyBridgeRecord(QByteArrayLiteral("installer"));
     record.expectedSha256 = QString(64, QLatin1Char('0'));
     ASSERT_TRUE(UpdateStateStore::save(record, kNow));
     QLockFile lock(UpdateStateStore::filePath() + QStringLiteral(".lock"));
     ASSERT_TRUE(lock.tryLock(0));
-    VNH::ProjectStore store;
+    harken::hub::ProjectStore store;
     ASSERT_TRUE(store.open(dir.filePath(QStringLiteral("projects.db"))));
-    VNH::HubWindow window(&store);
+    harken::hub::HubWindow window(&store);
     window.show();
     auto* update = window.findChild<QToolButton*>(QStringLiteral("hubUpdateButton"));
     ASSERT_NE(update, nullptr);
     QTimer::singleShot(0, &window, [&]() {
-        auto* dialog = qobject_cast<VNH::MessageDialog*>(QApplication::activeModalWidget());
+        auto* dialog = qobject_cast<harken::hub::MessageDialog*>(QApplication::activeModalWidget());
         ASSERT_NE(dialog, nullptr);
         for (auto* button : dialog->buttons()) {
             if (dialog->buttonRole(button) == QMessageBox::AcceptRole) {
@@ -174,7 +174,7 @@ TEST_F(HubSelfUpdateTest, UpdatePreparationKeepsTheUiResponsiveDuringStateConten
     });
     QTimer dismissError;
     QObject::connect(&dismissError, &QTimer::timeout, &window, []() {
-        auto* dialog = qobject_cast<VNH::MessageDialog*>(QApplication::activeModalWidget());
+        auto* dialog = qobject_cast<harken::hub::MessageDialog*>(QApplication::activeModalWidget());
         if (dialog && dialog->standardButtons() == QMessageBox::Ok)
             dialog->button(QMessageBox::Ok)->click();
     });
@@ -202,7 +202,7 @@ TEST_F(HubSelfUpdateTest, DisabledAutomationDoesNotDownloadAnAvailablePackage)
     options.automaticUpdateEnabled = false;
     HubSelfUpdate update;
     update.configure(options);
-    VNH::UpdateCheckResult result;
+    harken::hub::UpdateCheckResult result;
     result.ok = true;
     result.manifest.product = QStringLiteral("HarkenHub");
     result.manifest.version = QStringLiteral("0.2.0");
@@ -229,7 +229,7 @@ TEST_F(HubSelfUpdateTest, DisablingAutomationCancelsActiveDownloadWithoutRetry)
     options.serverBaseUrl = server.baseUrl();
     HubSelfUpdate update;
     update.configure(options);
-    VNH::UpdateCheckResult result;
+    harken::hub::UpdateCheckResult result;
     result.ok = true;
     result.manifest.product = QStringLiteral("HarkenHub");
     result.manifest.version = QStringLiteral("0.2.0");
@@ -471,7 +471,7 @@ TEST_F(HubSelfUpdateTest, DownloadOwnershipSurvivesImmediateBridgeHandoff)
     update.configure(options);
     contender.configure(options);
 
-    VNH::UpdateCheckResult result;
+    harken::hub::UpdateCheckResult result;
     result.ok = true;
     result.manifest.product = ready.product;
     result.manifest.version = ready.version;
@@ -486,8 +486,8 @@ TEST_F(HubSelfUpdateTest, DownloadOwnershipSurvivesImmediateBridgeHandoff)
             if (record.state != QStringLiteral("AwaitingRestart"))
                 return;
             ++approvals;
-            EXPECT_FALSE(VNH::DownloadLease::acquire(record.downloadPath));
-            EXPECT_FALSE(VNH::DownloadLease::acquire(record.manifestEnvelopePath));
+            EXPECT_FALSE(harken::hub::DownloadLease::acquire(record.downloadPath));
+            EXPECT_FALSE(harken::hub::DownloadLease::acquire(record.manifestEnvelopePath));
             QString error;
             EXPECT_TRUE(update.approveViaBridge(QStringLiteral("background"), &error, kNow))
                 << error.toStdString();
@@ -514,7 +514,7 @@ TEST_F(HubSelfUpdateTest, DownloadOwnershipSurvivesImmediateBridgeHandoff)
     QFile handedPackage(HandoffArea::packagePath(landed.transactionId));
     ASSERT_TRUE(handedPackage.open(QIODevice::ReadOnly));
     EXPECT_EQ(handedPackage.readAll(), content);
-    EXPECT_TRUE(VNH::DownloadLease::acquire(landed.downloadPath));
+    EXPECT_TRUE(harken::hub::DownloadLease::acquire(landed.downloadPath));
 }
 
 TEST_F(HubSelfUpdateTest, ApproveViaBridgeRollsBackWhenDispatchFails)
@@ -591,6 +591,21 @@ TEST_F(HubSelfUpdateTest, FailedLaunchRollbackOutlivesTheApprovalRequest)
     EXPECT_TRUE(UpdateStateStore::load(ready.product).transactionId.isEmpty());
 }
 #endif
+
+TEST_F(HubSelfUpdateTest, BridgeApprovalRejectsAReleaseDifferentFromTheReviewedState)
+{
+    auto record = readyBridgeRecord("installer");
+    ASSERT_TRUE(UpdateStateStore::save(record, kNow));
+    const auto reviewed = UpdateStateStore::load("HarkenHub");
+    record.buildId = "replacement-build";
+    ASSERT_TRUE(UpdateStateStore::save(record, kNow.addSecs(1)));
+    HubSelfUpdate update;
+    QString error;
+    EXPECT_FALSE(update.approveViaBridge("background", &error, kNow.addSecs(2), &reviewed));
+    EXPECT_TRUE(error.contains("review"));
+    EXPECT_EQ(UpdateStateStore::load("HarkenHub").buildId, "replacement-build");
+    EXPECT_FALSE(UpdateQueue::hasPendingHubUpdate());
+}
 
 TEST_F(HubSelfUpdateTest, ApproveViaBridgeRequiresBridgeAvailability)
 {
@@ -698,7 +713,7 @@ TEST_F(HubSelfUpdateTest, HandleManifestIgnoresCurrentVersion)
     options.downloadDir = dir.filePath(QStringLiteral("hub-updates"));
     update.configure(options);
 
-    VNH::UpdateCheckResult result;
+    harken::hub::UpdateCheckResult result;
     result.ok = true;
     result.manifest.product = QStringLiteral("HarkenHub");
     result.manifest.version = QStringLiteral("0.1.0");
@@ -733,7 +748,7 @@ TEST_F(HubSelfUpdateTest, HandleManifestIgnoresOlderVersion)
     options.downloadDir = dir.filePath(QStringLiteral("hub-updates"));
     update.configure(options);
 
-    VNH::UpdateCheckResult result;
+    harken::hub::UpdateCheckResult result;
     result.ok = true;
     result.manifest.product = QStringLiteral("HarkenHub");
     result.manifest.version = QStringLiteral("0.1.21-dev");
@@ -763,7 +778,7 @@ TEST_F(HubSelfUpdateTest, OlderManifestClearsArmedState)
     options.downloadDir = dir.filePath(QStringLiteral("hub-updates"));
     update.configure(options);
 
-    VNH::UpdateCheckResult result;
+    harken::hub::UpdateCheckResult result;
     result.ok = true;
     result.manifest.product = QStringLiteral("HarkenHub");
     result.manifest.version = QStringLiteral("0.1.21-dev");
@@ -804,7 +819,7 @@ TEST_F(HubSelfUpdateTest, RollbackClearsStateArmedForRetractedBuild)
     options.downloadDir = dir.filePath(QStringLiteral("hub-updates"));
     update.configure(options);
 
-    VNH::UpdateCheckResult result;
+    harken::hub::UpdateCheckResult result;
     result.ok = true;
     result.manifest.product = QStringLiteral("HarkenHub");
     result.manifest.version = QStringLiteral("0.1.21-dev");
@@ -836,7 +851,7 @@ TEST_F(HubSelfUpdateTest, LowerReleaseSequenceCannotReplaceObservedState)
     options.downloadDir = dir.filePath(QStringLiteral("hub-updates"));
     update.configure(options);
 
-    VNH::UpdateCheckResult result;
+    harken::hub::UpdateCheckResult result;
     result.ok = true;
     result.manifest.product = QStringLiteral("HarkenHub");
     result.manifest.version = QStringLiteral("0.1.25-dev");
@@ -870,7 +885,7 @@ TEST_F(HubSelfUpdateTest, UnauthorizedDownloadIsAnonymousFailure)
     options.downloadDir = dir.filePath(QStringLiteral("hub-updates"));
     update.configure(options);
 
-    VNH::UpdateCheckResult result;
+    harken::hub::UpdateCheckResult result;
     result.ok = true;
     result.manifest.product = QStringLiteral("HarkenHub");
     result.manifest.version = QStringLiteral("0.2.0");
@@ -903,7 +918,7 @@ TEST_F(HubSelfUpdateTest, DownloadTargetUsesPlatformInstallerSuffix)
     options.downloadDir = dir.filePath(QStringLiteral("hub-updates"));
     update.configure(options);
 
-    VNH::UpdateCheckResult result;
+    harken::hub::UpdateCheckResult result;
     result.ok = true;
     result.manifest.product = QStringLiteral("HarkenHub");
     result.manifest.version = QStringLiteral("0.2.0");

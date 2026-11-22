@@ -6,7 +6,7 @@
 
 #include <utility>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 QStringList selectedIds(const QVector<ProjectPlatformId>& selected)

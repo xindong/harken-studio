@@ -27,7 +27,7 @@ void ensureApp()
 {
     if (qApp) return;
     static int argc = 1;
-    static char arg0[] = "harken_editor_tests";
+    static char arg0[] = "harken_studio_tests";
     static char* argv[] = {arg0, nullptr};
     static QApplication app(argc, argv);
 }
@@ -37,15 +37,15 @@ void ensureApp()
 TEST(ParameterControlHost, IndependentValueEditorSurvivesBindingDestruction)
 {
     ensureApp();
-    auto host = std::make_unique<VNX::ParameterControlHost>(
-        QStringLiteral("Mode"), VNX::ParameterPresenterContext::InspectorFloat,
-        VNX::ParameterPresenterId::HorizontalSlider);
+    auto host = std::make_unique<harken::studio::ParameterControlHost>(
+        QStringLiteral("Mode"), harken::studio::ParameterPresenterContext::InspectorFloat,
+        harken::studio::ParameterPresenterId::HorizontalSlider);
     auto* binding = host->binding();
     binding->setRange(2, 5);
     binding->setDecimals(2);
-    VNX::ParameterValueEditor editor(binding, &VNX::ThemeManager::instance());
+    harken::studio::ParameterValueEditor editor(binding, &harken::studio::ThemeManager::instance());
     int commits = 0;
-    QObject::connect(binding, &VNX::ParameterBinding::valueCommitted,
+    QObject::connect(binding, &harken::studio::ParameterBinding::valueCommitted,
                      [&commits](double) { ++commits; });
     auto* spin = editor.valueEditor();
     ASSERT_NE(spin, nullptr);
@@ -63,13 +63,13 @@ TEST(ParameterControlHost, ValueEditorsCanConfirmClampedValuesWithoutChangingThe
 {
     ensureApp();
     for (const bool discrete : {false, true}) {
-        VNX::ParameterBinding binding;
+        harken::studio::ParameterBinding binding;
         binding.setRange(0.0, 0.0);
         binding.setDiscreteSelection(discrete);
         binding.setValue(100.0);
-        VNX::ParameterValueEditor editor(&binding, &VNX::ThemeManager::instance());
+        harken::studio::ParameterValueEditor editor(&binding, &harken::studio::ThemeManager::instance());
         int commits = 0;
-        QObject::connect(&binding, &VNX::ParameterBinding::valueCommitted,
+        QObject::connect(&binding, &harken::studio::ParameterBinding::valueCommitted,
             [&](double value) { ++commits; EXPECT_DOUBLE_EQ(value, 0.0); });
         EXPECT_EQ(commits, 0);
         if (discrete) {
@@ -114,15 +114,15 @@ TEST(ParameterControlHost, AppearanceChangesPreserveActiveEditingAndComponentStr
         ASSERT_EQ(file.write(bytes), bytes.size());
     }
 
-    VNX::ThemeManager manager(root.path(), std::make_unique<VNX::MemorySettingsStorage>());
-    VNX::ParameterControlHost parameter(QStringLiteral("Level"),
-        VNX::ParameterPresenterContext::InspectorFloat, nullptr, &manager);
-    VNX::ComponentRecipeHost recipe(VNX::ComponentRecipeHostId::TrackHeader, nullptr, &manager);
+    harken::studio::ThemeManager manager(root.path(), std::make_unique<harken::studio::MemorySettingsStorage>());
+    harken::studio::ParameterControlHost parameter(QStringLiteral("Level"),
+        harken::studio::ParameterPresenterContext::InspectorFloat, nullptr, &manager);
+    harken::studio::ComponentRecipeHost recipe(harken::studio::ComponentRecipeHostId::TrackHeader, nullptr, &manager);
     auto* identity = new QWidget;
-    ASSERT_TRUE(recipe.registerSlot(VNX::ComponentRecipeSlotId::Identity, identity));
+    ASSERT_TRUE(recipe.registerSlot(harken::studio::ComponentRecipeSlotId::Identity, identity));
     auto* controls = new QWidget;
-    ASSERT_TRUE(recipe.registerSlot(VNX::ComponentRecipeSlotId::Controls, controls));
-    QPointer<VNX::ParameterPresenter> presenter(parameter.presenter());
+    ASSERT_TRUE(recipe.registerSlot(harken::studio::ComponentRecipeSlotId::Controls, controls));
+    QPointer<harken::studio::ParameterPresenter> presenter(parameter.presenter());
     QPointer<QLayout> layout(recipe.layout());
     ASSERT_NE(presenter, nullptr);
     ASSERT_NE(layout, nullptr);
@@ -131,7 +131,7 @@ TEST(ParameterControlHost, AppearanceChangesPreserveActiveEditingAndComponentStr
     auto* binding = parameter.binding();
     binding->setValue(0.25);
     int ended = 0;
-    QObject::connect(binding, &VNX::ParameterBinding::editEnded,
+    QObject::connect(binding, &harken::studio::ParameterBinding::editEnded,
                      [&ended] { ++ended; });
     slider->setSliderDown(true);
     binding->previewEdit(0.75);
@@ -147,7 +147,7 @@ TEST(ParameterControlHost, AppearanceChangesPreserveActiveEditingAndComponentStr
     EXPECT_EQ(manager.colors().accent, accent);
     EXPECT_EQ(parameter.presenter(), presenter.data());
     EXPECT_EQ(recipe.layout(), layout.data());
-    EXPECT_EQ(recipe.slotWidget(VNX::ComponentRecipeSlotId::Identity), identity);
+    EXPECT_EQ(recipe.slotWidget(harken::studio::ComponentRecipeSlotId::Identity), identity);
     EXPECT_TRUE(binding->isEditing());
     EXPECT_TRUE(slider->isSliderDown());
     EXPECT_DOUBLE_EQ(binding->value(), 0.75);
@@ -177,10 +177,10 @@ TEST(ParameterControlHost, AppearanceChangesPreserveActiveEditingAndComponentStr
     EXPECT_DOUBLE_EQ(binding->value(), 0.75);
 
     ASSERT_TRUE(manager.selectTheme(QStringLiteral("theme.structural")).ok());
-    EXPECT_EQ(parameter.presenterId(), VNX::ParameterPresenterId::VerticalFader);
-    EXPECT_EQ(recipe.appliedVariant(), VNX::ComponentRecipeVariant::TrackExpanded);
+    EXPECT_EQ(parameter.presenterId(), harken::studio::ParameterPresenterId::VerticalFader);
+    EXPECT_EQ(recipe.appliedVariant(), harken::studio::ComponentRecipeVariant::TrackExpanded);
     EXPECT_EQ(recipe.orderedSlotNames(), QStringList{QStringLiteral("identity")});
-    EXPECT_EQ(recipe.slotWidget(VNX::ComponentRecipeSlotId::Identity), identity);
+    EXPECT_EQ(recipe.slotWidget(harken::studio::ComponentRecipeSlotId::Identity), identity);
     EXPECT_TRUE(presenter.isNull());
     EXPECT_TRUE(layout.isNull());
     EXPECT_DOUBLE_EQ(binding->value(), 0.75);

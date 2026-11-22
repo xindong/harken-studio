@@ -2,7 +2,7 @@
 #include "Common/DirectSoundActionWorld.h"
 #include "AllocationProbe.h"
 #include "harken/core/CpuClock.h"
-#include "harken_preview/PreviewProject.h"
+#include <harken/HarkenDevelopment.h>
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/StreamBuilder.h"
 #include "Engine.h"
@@ -846,6 +846,7 @@ TEST(TimelineVoiceInstall, BorrowedInputValidatesEveryActiveRangeBeforeNativeAcq
         harken::TimelineVoiceInstallInput{&facts}));
 }
 
+#if HARKEN_ENGINE_DEV
 TEST(TimelineVoiceInstall, BorrowedInputCopiesOnlyNativeFactsAndKeepsBindingSnapshotAfterCallerRelease) {
     for (const auto pathCount : {1u, harken::kPlaybackPathRowCapacity}) {
         SCOPED_TRACE(pathCount);
@@ -963,6 +964,7 @@ TEST(TimelineVoiceInstall, BorrowedInputCopiesOnlyNativeFactsAndKeepsBindingSnap
         EXPECT_FALSE(engine.runtimeRecreateRequired);
     }
 }
+#endif
 
 TEST(TimelineVoiceInstall, ThreeHundredSendsStartInOneDefaultQueueBatch) {
     auto config = TimelineInstallConfig(4, kBlock, kRate);
@@ -2433,7 +2435,7 @@ std::vector<harken::TimelineArmToken> PublishedSourceTokens(harken::Engine& engi
     }
     return tokens;
 }
-VnResult PostSourceAction() {
+VnResult PostSourceAction(VnActionFiringHandle* outFiring = nullptr) {
     VnEmitterHandle emitter = 0;
     if (const auto result = Vn_CreateEmitter(&emitter); result != VN_OK) return result;
     VnPostActionDesc desc{};
@@ -2441,7 +2443,7 @@ VnResult PostSourceAction() {
     desc.actionId = kAction;
     desc.emitter = emitter;
     VnActionFiringHandle firing = 0;
-    return Vn_PostAction(&desc, &firing);
+    return Vn_PostAction(&desc, outFiring ? outFiring : &firing);
 }
 void InstallTwoSourceAction(harken::Engine& engine, DirectWorldSoundPlayAction& image,
     std::array<harken::ActionStepProgramViewV1, 2>& steps) {
@@ -2736,10 +2738,15 @@ TEST(TimelineVoiceInstall, OriginalSourceCancelReleaseHeldAcrossBlocksUsesFinalD
     ASSERT_NO_FATAL_FAILURE(RegisterLeaf());
     DirectWorldSoundPlayAction image(engine.registry.Lookup(kSound).contentRevision);
     ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(engine, image.world).status);
-    ASSERT_EQ(VN_OK, PostSourceAction());
+    // Observe the source disposition fence before a start lane takes a reader.
+    engine.deferPendingImmediateEntriesForTest = true;
+    const auto post = PostSourceAction();
+    engine.deferPendingImmediateEntriesForTest = false;
+    ASSERT_EQ(VN_OK, post);
     const auto tokens = PublishedSourceTokens(engine);
     ASSERT_EQ(1u, tokens.size());
     const auto token = tokens[0];
+    ASSERT_EQ(0u, engine.timelineArms.RowAt(token.slot)->frontierReaderPins.load());
     const auto service = std::find_if(engine.playableServices.begin(), engine.playableServices.end(),
         [&](const auto& row) { return row.renderHandle == SourceRegistry::RenderOf(token); });
     ASSERT_NE(engine.playableServices.end(), service);
@@ -2793,6 +2800,28 @@ TEST(TimelineVoiceInstall, OriginalSourceCancelReleaseHeldAcrossBlocksUsesFinalD
     engine.nullBackend.Pump(1);
     ASSERT_GT(engine.mixer.BlocksRendered(), finalSequence);
     EXPECT_TRUE(engine.timelineArms.Reclaim(token, engine.mixer.BlocksRendered()));
+}
+
+TEST(TimelineVoiceInstall, StopBeforeFirstRenderRetiresAutonomousStartReader) {
+    EngineSession session(TimelineInstallConfig(8, kBlock, kRate));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    ASSERT_NO_FATAL_FAILURE(RegisterLeaf());
+    DirectWorldSoundPlayAction image(engine.registry.Lookup(kSound).contentRevision);
+    ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(engine, image.world).status);
+    VnActionFiringHandle firing = 0;
+    ASSERT_EQ(VN_OK, PostSourceAction(&firing));
+    const auto tokens = PublishedSourceTokens(engine);
+    ASSERT_EQ(1u, tokens.size());
+    const auto token = tokens.front();
+    ASSERT_GT(engine.timelineArms.RowAt(token.slot)->frontierReaderPins.load(), 0u);
+    ASSERT_EQ(VN_OK, Vn_StopActionFiring(firing, 0));
+    EXPECT_FLOAT_EQ(0.0f, FreshSourcePeak(engine));
+    harken::TimelineArmObservation observation{};
+    EXPECT_FALSE(engine.timelineArms.Observe(token, &observation));
+    ASSERT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
+    ASSERT_EQ(VN_OK, PostSourceAction());
+    EXPECT_GT(FreshSourcePeak(engine), 0.2f);
 }
 
 TEST(TimelineVoiceInstall, OriginalSourceUnpublishedRollbackPreservesActualReplacementBindingsAndMirror) {
@@ -3084,6 +3113,7 @@ TEST(TimelineVoiceInstall, EmptyInitialSourceClearsAllEightMirrorsAfterDirectVoi
     EXPECT_EQ(0u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
 }
 
+#if HARKEN_ENGINE_DEV
 TEST(TimelineVoiceInstall, LiveEffectChainIsAtomicPreservesStateAndRetiresAcrossWorkers) {
     for (auto workers : {0u, 2u}) {
         SCOPED_TRACE(workers);
@@ -3426,8 +3456,10 @@ TEST(TimelineVoiceInstall, LiveEffectChainEightSlotsUseOneCommandAndPreserveBypa
     ASSERT_EQ(VN_OK, Vn_Update());
     EXPECT_EQ(8u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
 }
+#endif
 
 #if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
+#if HARKEN_ENGINE_DEV
 TEST(TimelineVoiceInstall, LiveEffectChainActiveWorkerQuarantineRetainsScratchUntilActualJoin) {
     struct Gate {
         harken::InsertEffect original{};
@@ -3506,7 +3538,9 @@ TEST(TimelineVoiceInstall, LiveEffectChainActiveWorkerQuarantineRetainsScratchUn
     EXPECT_EQ(0u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
 }
 #endif
+#endif
 
+#if HARKEN_ENGINE_DEV
 TEST(TimelineVoiceInstall, LiveEightLimiterInsertionDoesNotMultiplyTransientDetectorHistory) {
     for (auto block : {32u, 64u, 256u}) {
         SCOPED_TRACE(block);
@@ -3605,3 +3639,4 @@ TEST(TimelineVoiceInstall, LiveEightLimiterInsertionDoesNotMultiplyTransientDete
         EXPECT_EQ(middle.generation, context->fxSlotEffectRef[1].generation);
     }
 }
+#endif

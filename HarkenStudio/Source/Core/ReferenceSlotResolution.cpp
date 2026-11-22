@@ -9,7 +9,7 @@
 
 #include <QSet>
 
-namespace VNX {
+namespace harken::studio {
 namespace ReferenceSlotResolution {
 namespace {
 
@@ -334,7 +334,7 @@ AttenuationSlot resolveEffectiveAttenuation(const ResolutionScope& scope)
         const auto* effective = effectiveDefinition(scope, result);
         if (!effective) return result;
         applySource(scope, effective->spatialRatingSource, result);
-        if (!harkenprojectschema::IsNull(effective->spatialRating.spatialAttenuationRef)) {
+        if (!harken::studio::project_schema::IsNull(effective->spatialRating.spatialAttenuationRef)) {
             result.target = scope.effectiveGroups->objects.at(effective->spatialRating.spatialAttenuationRef);
             result.ref = result.target->runtimeId();
         }
@@ -353,6 +353,20 @@ AttenuationSlot resolveEffectiveAttenuation(const ResolutionScope& scope)
     slot.via = resolved.via;
     slot.ref = spatial->attenuationRef;
     return slot;
+}
+
+SlotResolution resolveEffectiveConversion(const ResolutionScope& scope)
+{
+    SlotResolution result;
+    if (!scope.subject
+        || !PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(scope.subject->type))
+        return result;
+    const auto* effective = effectiveDefinition(scope, result);
+    if (!effective) return result;
+    applySource(scope, effective->conversionSource, result);
+    if (!harken::studio::project_schema::IsNull(effective->conversion.settingsRef))
+        result.target = scope.effectiveGroups->objects.at(effective->conversion.settingsRef);
+    return result;
 }
 
 SendSlot resolveEffectiveSends(const ResolutionScope& scope)

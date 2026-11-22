@@ -28,17 +28,19 @@
 #include "ProjectContract.h"
 #include "FileWatcher.h"
 #include "StartupProgress.h"
+#include "ConversionResolution.h"
 
 
-namespace harkenbuscompiler {
+namespace harken::studio::bus_compiler {
 struct CompiledBusResultV1;
 }
 
-namespace HarkenEditor::Bridge {
+namespace harken::studio::bridge {
 struct CurrentWorldSoundPreparation;
+struct PreparedPreviewMedia;
 }
 
-namespace VNX {
+namespace harken::studio {
 
 class UndoCommand;
 
@@ -119,11 +121,13 @@ public:
     static void syncActionNameForPreview(ProjectItem* actionItem);
     static void syncProjectToRuntime(ProjectData* project);
     static bool prepareRuntimeSounds(const ProjectData& project,
-        HarkenEditor::Bridge::CurrentWorldSoundPreparation& preparation,
+        harken::studio::bridge::CurrentWorldSoundPreparation& preparation,
         QString* error = nullptr);
     static bool prepareRuntimeSounds(const FieldGroupEffectiveSnapshot& snapshot,
-        HarkenEditor::Bridge::CurrentWorldSoundPreparation& preparation,
-        QString* error = nullptr);
+        harken::studio::bridge::CurrentWorldSoundPreparation& preparation,
+        QString* error = nullptr,
+        const QSet<harken::studio::types::ObjectId>* requested = nullptr);
+    QSet<harken::studio::types::ObjectId> prepareRuntimePreview(const ProjectItem& root);
     static void syncProjectToRuntimeAsync(ProjectData* project,
                                           QObject* context,
                                           std::function<void()> finished);
@@ -387,9 +391,9 @@ public:
 
     ProjectItem* getMasterBusItem() const;
 
-    harkenstudio::ObjectId busRuntimeHandle(const ProjectItem* item) const;
+    harken::studio::types::ObjectId busRuntimeHandle(const ProjectItem* item) const;
 
-    harkenstudio::ObjectId busRuntimeHandleForId(uint32_t objectID) const;
+    harken::studio::types::ObjectId busRuntimeHandleForId(uint32_t objectID) const;
 
     ProjectItem* findBusItem(uint32_t busID) const;
 
@@ -398,10 +402,10 @@ public:
     ProjectItem* findItemByObjectID(uint32_t objectID) const;
     std::vector<ProjectItem*> findItemsByObjectID(std::span<const uint32_t> objectIDs) const;
 
-    ProjectItem* findItemByRuntimeStableId(harkenstudio::ObjectId runtimeStableId) const;
+    ProjectItem* findItemByRuntimeStableId(harken::studio::types::ObjectId runtimeStableId) const;
 
-    VNX::VBus*       findVBus(uint32_t busID);
-    const VNX::VBus* findVBus(uint32_t busID) const;
+    harken::studio::VBus*       findVBus(uint32_t busID);
+    const harken::studio::VBus* findVBus(uint32_t busID) const;
 
     std::vector<ProjectItem*> collectBusItems() const;
 
@@ -498,14 +502,14 @@ private:
     // Extension point ④: per-type runtime lifecycle dispatch. The shared
     // create/delete/move flow drives these; buses mirror into the engine
     // BusTree, other types into the runtime object registry.
-    void materializeRuntime(ProjectItem* item, harkenstudio::ObjectId parentRuntimeId);
+    void materializeRuntime(ProjectItem* item, harken::studio::types::ObjectId parentRuntimeId);
     void dematerializeRuntime(ProjectItem* item);
-    bool reparentRuntime(ProjectItem* item, harkenstudio::ObjectId newParentRuntimeId);
-    void materializeBusSubtree(ProjectItem* item, harkenstudio::ObjectId parentRuntimeId);
+    bool reparentRuntime(ProjectItem* item, harken::studio::types::ObjectId newParentRuntimeId);
+    void materializeBusSubtree(ProjectItem* item, harken::studio::types::ObjectId parentRuntimeId);
     void applyBusRuntimeState(ProjectItem* item);
     void syncBusTreeToRuntime(
         ProjectData* project,
-        std::shared_ptr<const harkenbuscompiler::CompiledBusResultV1>
+        std::shared_ptr<const harken::studio::bus_compiler::CompiledBusResultV1>
             compiledBus = {});
 
     bool writeBusPropertySilent(ProjectItem* busItem, const QString& propertyName, const QVariant& value);
@@ -545,6 +549,7 @@ public:
     void setBuildProjectDataExportInternal(bool enabled);
     void setBuildPackMetadataExportInternal(bool enabled);
     void setBuildWaveformSettingsInternal(bool enabled, const QString& directory);
+    bool setDefaultConversion(const ProjectPlatformId& platform, const QUuid& guid);
 
     PackExportSelection packExportSelection() const;
     void setPackExportSelectionInternal(PackExportSelection selection);
@@ -585,7 +590,7 @@ signals:
     void itemPropertyPreviewed(ProjectItem* item, const QString& propertyName,
                               const QObject* originator = nullptr);
     void fieldGroupsPreviewed(ProjectItem* item, const DefinitionFieldGroups& groups);
-    void bindingCurvePreviewed(ProjectItem* item, harkenstudio::ObjectId bindingId,
+    void bindingCurvePreviewed(ProjectItem* item, harken::studio::types::ObjectId bindingId,
                               const QUuid& previewId,
                               const std::optional<ParameterBindingDef>& binding);
     void attenuationCurvePreviewed(const QUuid& guid,
@@ -595,6 +600,8 @@ signals:
                     const QObject* originator = nullptr);
     void packBuildOutputDirChanged(QString newValue);
     void projectPublishSettingsChanged();
+    void defaultConversionChanged(const QUuid& platform, const QUuid& guid);
+    void previewMediaInvalidated(const QUuid& soundGuid);
     void packExportCurrentPlatformChanged(QString newValue);
     void packExportSelectedPlatformsChanged(QStringList newValue);
     void actionPackTargetingChanged();
@@ -610,6 +617,9 @@ private:
     explicit ProjectManager(QObject* parent = nullptr);
     ~ProjectManager() override;
     void initializeRuntimeSync();
+    void bindPreviewMediaContext();
+    void refreshPreviewConversions();
+    void invalidatePreviewMedia(const QVector<ProjectItem*>& sounds);
 
     bool createDirectoryStructure(const QString& projectRoot);
     bool createMainProjectFile(const ProjectConfig& config, const QString& projectRoot);
@@ -641,8 +651,8 @@ private:
     std::unique_ptr<ProjectSerializer> m_clipboardSerializer;
 
     bool isMonoRootBucketRoot(const ProjectItem* item) const;
-    std::unique_ptr<VNX::ProjectIndex> m_projectIndex;
-    std::unique_ptr<VNX::IntegrityScanner> m_integrityScanner;
+    std::unique_ptr<harken::studio::ProjectIndex> m_projectIndex;
+    std::unique_ptr<harken::studio::IntegrityScanner> m_integrityScanner;
     FileWatcher m_fileWatcher;
     AuditionOverlay m_auditionOverlay;
     VariableRehearsal m_variableRehearsal;
@@ -657,14 +667,28 @@ private:
         qint64 modifiedMs = 0;
         SoundSourceDef source;
         double scheduleOffsetSec = 0;
+        std::optional<ResolvedConversion> conversion;
 
         bool operator==(const RuntimeSoundPreparationKey&) const = default;
     };
     struct RuntimeSoundPreparationEntry {
         RuntimeSoundPreparationKey key;
         uint64_t revision = 0;
+        std::shared_ptr<const harken::studio::bridge::PreparedPreviewMedia> media = {};
     };
-    QHash<harkenstudio::ObjectId, RuntimeSoundPreparationEntry> m_runtimeSoundPreparation;
+    QHash<harken::studio::types::ObjectId, RuntimeSoundPreparationEntry> m_runtimeSoundPreparation;
+    struct PreviewConversionState {
+        bool converted = false;
+        ProjectPlatformId platform;
+        QUuid presetGuid;
+        std::optional<ConversionConfig> config;
+        QString error;
+
+        bool operator==(const PreviewConversionState&) const = default;
+    };
+    QHash<harken::studio::types::ObjectId, PreviewConversionState> m_previewConversions;
+    bool m_previewMediaContextBound = false;
+    bool m_refreshingPreviewConversions = false;
 
     std::shared_ptr<ProjectData> m_pendingDestruction;
     void drainPendingDestruction();

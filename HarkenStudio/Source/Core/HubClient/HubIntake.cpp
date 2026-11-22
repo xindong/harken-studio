@@ -11,7 +11,7 @@
 #include <QSaveFile>
 #include <QStandardPaths>
 
-namespace VNX {
+namespace harken::studio {
 
 QString HubIntake::intakeDir()
 {

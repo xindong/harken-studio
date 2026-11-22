@@ -9,7 +9,7 @@ class QEvent;
 class QFocusEvent;
 class QObject;
 
-namespace VNX {
+namespace harken::studio {
 
 class MixingEditorWidget;
 class DiscreteGridWidget;

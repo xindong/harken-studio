@@ -11,10 +11,12 @@
 #include "RuntimeSyncCoordinator.h"
 #include "HarkenMath.h"
 #include "RuntimeBridge/CurrentWorldSyncBridge.h"
+#include "Core/Build/CurrentWorldCompile.h"
 #include "RuntimeBridge/CurrentWorldSyncBridgeInternal.h"
 #include "RuntimeBridge/ProjectSyncBridge.h"
 #include "RuntimeBridge/PreviewBridge.h"
-#include "RuntimeBridge/PackagingBridge.h"
+#include "Core/Build/PackagingBridge.h"
+#include <harken_studio_build/PackImage.h>
 #include "VariableRehearsal.h"
 
 
@@ -24,25 +26,26 @@
 #include <mutex>
 #include <thread>
 #include <QDateTime>
+#include <QFile>
+#include <QFileInfo>
 #include <QDebug>
 #include <QCoreApplication>
 #include <QThread>
 #include <algorithm>
 
-namespace VNX {
+namespace harken::studio {
 
-namespace Bridge = HarkenEditor::Bridge;
 
 struct CurrentWorldCompilation {
     struct Job {
-        Bridge::CurrentWorldSyncToken token;
-        Bridge::CurrentWorldSyncRequestPtr request;
-        std::vector<Bridge::CurrentWorldScalarUpdate> updates;
+        bridge::CurrentWorldSyncToken token;
+        build::CurrentWorldSyncRequestPtr request;
+        std::vector<build::CurrentWorldScalarUpdate> updates;
     };
     struct Result {
-        Bridge::CurrentWorldSyncToken token;
-        Bridge::CurrentWorldSyncRequestPtr request;
-        Bridge::CurrentWorldCompileResult compiled;
+        bridge::CurrentWorldSyncToken token;
+        build::CurrentWorldSyncRequestPtr request;
+        build::CurrentWorldCompileResult compiled;
     };
 
     CurrentWorldCompilation() : worker([this] { run(); }) {}
@@ -75,7 +78,7 @@ struct CurrentWorldCompilation {
         ready.notify_one();
     }
 
-    void acknowledgePublication(Bridge::CurrentWorldSyncToken token) {
+    void acknowledgePublication(bridge::CurrentWorldSyncToken token) {
         {
             std::lock_guard lock(mutex);
             published = token;
@@ -91,7 +94,7 @@ struct CurrentWorldCompilation {
     }
 
     void run() {
-        Bridge::CurrentWorldRequestCache cache;
+        build::CurrentWorldRequestCache cache;
         for (;;) {
             Job job;
             {
@@ -125,9 +128,9 @@ struct CurrentWorldCompilation {
             try {
                 result.request = cache.update(std::move(job.request), job.updates, job.token);
                 if (result.request)
-                    result.compiled = Bridge::compileCurrentWorldRequest(*result.request, true);
+                    result.compiled = build::compileCurrentWorldRequest(*result.request, true);
             } catch (...) {
-                result.compiled.status = Bridge::CurrentWorldSyncStatus::CompileFailed;
+                result.compiled.status = bridge::CurrentWorldSyncStatus::CompileFailed;
             }
             {
                 std::lock_guard lock(mutex);
@@ -142,19 +145,19 @@ struct CurrentWorldCompilation {
     std::condition_variable ready;
     std::optional<Job> pending;
     std::optional<Result> completed;
-    std::optional<Bridge::CurrentWorldSyncToken> published;
+    std::optional<bridge::CurrentWorldSyncToken> published;
     bool stopping = false;
     bool resetRequested = false;
     std::thread worker;
 };
 
 static_assert(static_cast<uint8_t>(AudioEngine::ExecErrorDomain::Unclassified)
-                  == Bridge::kExecErrorDomainUnclassified,
+                  == bridge::kExecErrorDomainUnclassified,
               "EngineNotification::domain Unclassified must match AudioEngine");
 
 namespace {
 
-bool preparedSoundsAreCurrent(const Bridge::CurrentWorldSyncRequestPtr& request)
+bool preparedSoundsAreCurrent(const build::CurrentWorldSyncRequestPtr& request)
 {
     if (!request || !request->soundPreparation) return true;
     const auto& preparation = *request->soundPreparation;
@@ -167,26 +170,28 @@ bool preparedSoundsAreCurrent(const Bridge::CurrentWorldSyncRequestPtr& request)
     }
     for (const auto& sound : preparation.sounds) {
         const auto revision = preparation.contentRevisions.find(sound.binding.soundId);
-        if (sound.samples.empty() && revision != preparation.contentRevisions.end()
-            && Bridge::registeredSoundRevision(sound.binding.soundId) != revision->second)
+        if (sound.samples.empty() && !sound.media && revision != preparation.contentRevisions.end()
+            && bridge::registeredSoundRevision(sound.binding.soundId) != revision->second)
             return false;
     }
     return true;
 }
 
-int runtimeServiceIntervalMs(const Bridge::EngineSession& session)
+int runtimeServiceIntervalMs(const bridge::EngineSession& session)
 {
     constexpr int kMaximumIntervalMs = 5;
     const double blockDurationMs = session.outputLatency() * 1000.0;
     return std::clamp(static_cast<int>(blockDurationMs), 1, kMaximumIntervalMs);
 }
 
-Bridge::EngineResult currentWorldPlaybackGate(
-    const RuntimeSyncCoordinator& coordinator)
+bridge::EngineResult currentWorldPlaybackGate(
+    const RuntimeSyncCoordinator::RevisionBarrierSnapshot& barrier)
 {
-    if (coordinator.hasInstalledWorld())
-        return Bridge::kEngineOk;
-    return Bridge::kEngineNotInit;
+    if (barrier.state == RuntimeSyncCoordinator::RevisionBarrierState::Ready)
+        return bridge::kEngineOk;
+    if (barrier.state == RuntimeSyncCoordinator::RevisionBarrierState::Pending)
+        return bridge::kEngineBackpressure;
+    return bridge::kEngineNotInit;
 }
 
 bool sameBindingProgram(const BindingRuntimeProgram& a, const BindingRuntimeProgram& b)
@@ -224,16 +229,17 @@ AudioEngine::AudioEngine(QObject* parent)
     : QObject(parent)
 {
     instance_ = this;
+    bridge::setMediaServices(bridge::makeBuildMediaServices());
     currentWorldCompilation_ = std::make_unique<CurrentWorldCompilation>();
     runtimeSyncCoordinator_ = std::make_unique<RuntimeSyncCoordinator>(
-        [this](Bridge::CurrentWorldSyncToken token) {
-            while (const auto completion = Bridge::takeCurrentWorldSyncCompletion()) {
+        [this](bridge::CurrentWorldSyncToken token) {
+            while (const auto completion = bridge::takeCurrentWorldSyncCompletion()) {
                 if (completion->ok())
                     currentWorldCompilation_->acknowledgePublication(completion->token);
                 runtimeSyncCoordinator_->acceptCurrentWorldSyncResult(*completion);
             }
-            if (const auto superseded = Bridge::discardPendingCurrentWorld(
-                    Bridge::PendingCurrentWorldDisposition::Superseded)) {
+            if (const auto superseded = bridge::discardPendingCurrentWorld(
+                    bridge::PendingCurrentWorldDisposition::Superseded)) {
                 runtimeSyncCoordinator_->acceptCurrentWorldSyncResult(*superseded);
             }
             auto* project = ProjectManager::instance().currentProject();
@@ -242,7 +248,7 @@ AudioEngine::AudioEngine(QObject* parent)
                 currentWorldPreviewMutations_.clear();
                 currentWorldRequestSession_ = 0;
                 currentWorldRequestEpoch_ = 0;
-                return Bridge::clearCurrentWorld(token);
+                return build::clearCurrentWorld(token);
             }
             bindCurrentWorldPlatformContext();
             QString error;
@@ -264,7 +270,7 @@ AudioEngine::AudioEngine(QObject* parent)
                 }
                 for (const auto& [stableId, propertyId] : properties) {
                     auto* item = ProjectManager::instance().findItemByRuntimeStableId(stableId);
-                    Bridge::CurrentWorldScalarUpdate update;
+                    build::CurrentWorldScalarUpdate update;
                     if (!item || !readCurrentWorldScalarUpdate(
                             *item, scope, propertyId, &update)) {
                         incremental = false;
@@ -276,23 +282,23 @@ AudioEngine::AudioEngine(QObject* parent)
             }
             if (incremental) {
                 currentWorldCompilation_->submit(std::move(job));
-                Bridge::CurrentWorldSyncResult result;
+                bridge::CurrentWorldSyncResult result;
                 result.token = token;
-                result.status = Bridge::CurrentWorldSyncStatus::Pending;
+                result.status = bridge::CurrentWorldSyncStatus::Pending;
                 return result;
             }
             currentWorldRequestSession_ = 0;
             currentWorldRequestEpoch_ = 0;
             currentWorldPreviewMutations_.clear();
-            const auto sourceIndex = Bridge::canonicalRuntimeProjectSourceIndex(*project);
+            const auto sourceIndex = bridge::canonicalRuntimeProjectSourceIndex(*project);
             const auto fieldGroups = buildFieldGroupEffectiveSnapshot(
                 *project, toFieldGroupScope(scope), *sourceIndex);
-            auto sounds = std::make_shared<Bridge::CurrentWorldSoundPreparation>();
+            auto sounds = std::make_shared<bridge::CurrentWorldSoundPreparation>();
             if (!ProjectManager::prepareRuntimeSounds(fieldGroups, *sounds, &error)) {
                 qWarning().noquote()
                     << "[CurrentWorldSync] Sound preparation rejected:" << error;
-                Bridge::CurrentWorldSyncResult result;
-                result.status = Bridge::CurrentWorldSyncStatus::InvalidProject;
+                bridge::CurrentWorldSyncResult result;
+                result.status = bridge::CurrentWorldSyncStatus::InvalidProject;
                 result.token = token;
                 return result;
             }
@@ -308,8 +314,8 @@ AudioEngine::AudioEngine(QObject* parent)
             if (!request) {
                 qWarning().noquote()
                     << "[CurrentWorldSync] authoring rejected:" << error;
-                Bridge::CurrentWorldSyncResult result;
-                result.status = Bridge::CurrentWorldSyncStatus::InvalidProject;
+                bridge::CurrentWorldSyncResult result;
+                result.status = bridge::CurrentWorldSyncStatus::InvalidProject;
                 result.token = token;
                 return result;
             }
@@ -318,9 +324,9 @@ AudioEngine::AudioEngine(QObject* parent)
             currentWorldRequestSession_ = token.projectSessionId;
             currentWorldRequestEpoch_ = token.runtimeEpoch;
             currentWorldCompilation_->submit(std::move(job));
-            Bridge::CurrentWorldSyncResult result;
+            bridge::CurrentWorldSyncResult result;
             result.token = token;
-            result.status = Bridge::CurrentWorldSyncStatus::Pending;
+            result.status = bridge::CurrentWorldSyncStatus::Pending;
             return result;
         });
 
@@ -369,7 +375,7 @@ AudioEngine::~AudioEngine()
 
 bool AudioEngine::initialize(int sampleRate, int bufferSize, int maxVoices)
 {
-    Bridge::EngineSessionConfig config;
+    bridge::EngineSessionConfig config;
     config.sampleRate = sampleRate;
     config.bufferSize = bufferSize;
     config.maxVoices = maxVoices;
@@ -450,7 +456,7 @@ void AudioEngine::bindCurrentWorldPlatformContext()
             });
 }
 
-bool AudioEngine::initialize(const Bridge::EngineSessionConfig& config)
+bool AudioEngine::initialize(const bridge::EngineSessionConfig& config)
 {
     bindCurrentWorldPlatformContext();
     if (initialized_)
@@ -459,7 +465,7 @@ bool AudioEngine::initialize(const Bridge::EngineSessionConfig& config)
         return true;
     }
 
-    session_ = Bridge::EngineSession::create(config);
+    session_ = bridge::EngineSession::create(config);
     if (!session_)
     {
         // Engine unavailable: the editor keeps running in simulation mode
@@ -567,7 +573,7 @@ bool AudioEngine::startOutput()
         return true;
     }
 
-    if (session_->startOutput() != Bridge::kEngineOk)
+    if (session_->startOutput() != bridge::kEngineOk)
     {
         emit errorOccurred(tr("Failed to start audio output"));
         return false;
@@ -630,7 +636,7 @@ void AudioEngine::stopRuntimeSynchronization()
     if (!runtimeSessionActive_)
         return;
 
-    const auto cancelled = Bridge::discardPendingCurrentWorld();
+    const auto cancelled = bridge::discardPendingCurrentWorld();
     if (cancelled)
         runtimeSyncCoordinator_->acceptCurrentWorldSyncResult(*cancelled);
     runtimeSyncCoordinator_->runtimeStopping();
@@ -664,63 +670,63 @@ bool AudioEngine::setMasterVolume(float volume, int fadeMs)
     return true;
 }
 
-harkenstudio::ObjectId AudioEngine::mintRawPcmSoundId()
+harken::studio::types::ObjectId AudioEngine::mintRawPcmSoundId()
 {
-    return session_ ? session_->mintRawPcmSoundId() : harkenstudio::ObjectId{};
+    return session_ ? session_->mintRawPcmSoundId() : harken::studio::types::ObjectId{};
 }
 
-Bridge::EngineSession::RawPcmSliceRegistration AudioEngine::registerRawPcmSlice(
-    harkenstudio::ObjectId soundId, const QString& absolutePath,
+bridge::EngineSession::RawPcmSliceRegistration AudioEngine::registerRawPcmSlice(
+    harken::studio::types::ObjectId soundId, const QString& absolutePath,
     uint64_t startFrame, uint64_t frameCount, bool loops)
 {
     if (!session_) {
-        Bridge::EngineSession::RawPcmSliceRegistration registration;
+        bridge::EngineSession::RawPcmSliceRegistration registration;
         registration.soundId = soundId;
         registration.startFrame = startFrame;
         registration.frameCount = frameCount;
         registration.loops = loops;
-        registration.result = Bridge::kEngineNotInit;
+        registration.result = bridge::kEngineNotInit;
         return registration;
     }
     return session_->registerRawPcmSlice(soundId, absolutePath, startFrame, frameCount, loops);
 }
 
-Bridge::EngineSession::RawPcmSliceRegistration AudioEngine::registerRawPcmSlice(
-    harkenstudio::ObjectId soundId, std::vector<float> interleaved,
+bridge::EngineSession::RawPcmSliceRegistration AudioEngine::registerRawPcmSlice(
+    harken::studio::types::ObjectId soundId, std::vector<float> interleaved,
     int channels, int sampleRate, uint64_t startFrame, uint64_t frameCount, bool loops)
 {
     if (!session_) {
-        Bridge::EngineSession::RawPcmSliceRegistration registration;
+        bridge::EngineSession::RawPcmSliceRegistration registration;
         registration.soundId = soundId;
         registration.startFrame = startFrame;
         registration.frameCount = frameCount;
         registration.loops = loops;
-        registration.result = Bridge::kEngineNotInit;
+        registration.result = bridge::kEngineNotInit;
         return registration;
     }
     return session_->registerRawPcmSlice(soundId, std::move(interleaved), channels,
                                         sampleRate, startFrame, frameCount, loops);
 }
 
-Bridge::EngineSession::RawPcmSliceRegistration AudioEngine::relocateRawPcmSlice(
-    harkenstudio::ObjectId soundId, uint64_t startFrame)
+bridge::EngineSession::RawPcmSliceRegistration AudioEngine::relocateRawPcmSlice(
+    harken::studio::types::ObjectId soundId, uint64_t startFrame)
 {
     if (!session_) {
-        Bridge::EngineSession::RawPcmSliceRegistration registration;
+        bridge::EngineSession::RawPcmSliceRegistration registration;
         registration.soundId = soundId;
         registration.startFrame = startFrame;
-        registration.result = Bridge::kEngineNotInit;
+        registration.result = bridge::kEngineNotInit;
         return registration;
     }
     return session_->relocateRawPcmSlice(soundId, startFrame);
 }
 
-Bridge::EngineResult AudioEngine::unregisterRawPcm(harkenstudio::ObjectId soundId)
+bridge::EngineResult AudioEngine::unregisterRawPcm(harken::studio::types::ObjectId soundId)
 {
-    return session_ ? session_->unregisterRawPcm(soundId) : Bridge::kEngineNotInit;
+    return session_ ? session_->unregisterRawPcm(soundId) : bridge::kEngineNotInit;
 }
 
-uint64_t AudioEngine::playRawPcm(harkenstudio::ObjectId soundId, bool loops)
+uint64_t AudioEngine::playRawPcm(harken::studio::types::ObjectId soundId, bool loops)
 {
     if (!session_)
         return 0;
@@ -749,18 +755,18 @@ AudioEngine::PlaybackStartResult AudioEngine::playByNameInternal(
     PlaybackStartResult result;
     if (!session_)
     {
-        result.engineResult = HarkenEditor::Bridge::kEngineNotInit;
-        result.failure = HarkenEditor::Bridge::PlaybackFailure::RuntimeRefused;
+        result.engineResult = harken::studio::bridge::kEngineNotInit;
+        result.failure = harken::studio::bridge::PlaybackFailure::RuntimeRefused;
         emit playbackStarted(0, name);
         return result;
     }
 
-    const Bridge::EngineResult gate = currentWorldPlaybackGate(
-        runtimeSyncCoordinator());
-    if (gate != Bridge::kEngineOk)
+    const bridge::EngineResult gate = currentWorldPlaybackGate(
+        currentWorldPlaybackBarrier());
+    if (gate != bridge::kEngineOk)
     {
         result.engineResult = gate;
-        result.failure = Bridge::PlaybackFailure::RuntimeRefused;
+        result.failure = bridge::PlaybackFailure::RuntimeRefused;
         emit playbackStarted(0, name);
         return result;
     }
@@ -769,19 +775,19 @@ AudioEngine::PlaybackStartResult AudioEngine::playByNameInternal(
     if (usePreviewContext) {
         emitter = ensurePreviewEmitter(&result.engineResult);
         if (emitter == 0) {
-            result.failure = Bridge::PlaybackFailure::RuntimeRefused;
+            result.failure = bridge::PlaybackFailure::RuntimeRefused;
             emit playbackStarted(0, name);
             return result;
         }
         applyPreviewVariableOverrides();
         if (hasPendingPreviewVariableOverrides()) {
             result.previewVariablesPending = true;
-            result.engineResult = Bridge::kEngineBackpressure;
+            result.engineResult = bridge::kEngineBackpressure;
             emit playbackStarted(0, name);
             return result;
         }
     }
-    const HarkenEditor::Bridge::PlaybackStartResult bridgeResult =
+    const harken::studio::bridge::PlaybackStartResult bridgeResult =
         session_->playByNameDetailed(name, emitter);
     result.playbackHandle = static_cast<quintptr>(bridgeResult.handle);
     result.hasSound = bridgeResult.handle != 0;
@@ -798,26 +804,26 @@ quintptr AudioEngine::playByName(const QString& name)
     return playByNameDetailed(name).playbackHandle;
 }
 
-quintptr AudioEngine::playByName3D(const QString& name, const HarkenEditor::Vec3& position)
+quintptr AudioEngine::playByName3D(const QString& name, const harken::studio::Vec3& position)
 {
     return playByName3DDetailed(name, position).playbackHandle;
 }
 
 AudioEngine::PlaybackStartResult AudioEngine::playByName3DDetailed(
-    const QString& name, const HarkenEditor::Vec3& position)
+    const QString& name, const harken::studio::Vec3& position)
 {
     PlaybackStartResult result;
     if (!session_)
     {
-        result.engineResult = Bridge::kEngineNotInit;
-        result.failure = Bridge::PlaybackFailure::RuntimeRefused;
+        result.engineResult = bridge::kEngineNotInit;
+        result.failure = bridge::PlaybackFailure::RuntimeRefused;
         emit playbackStarted(0, name);
         return result;
     }
-    result.engineResult = currentWorldPlaybackGate(runtimeSyncCoordinator());
-    if (result.engineResult != Bridge::kEngineOk)
+    result.engineResult = currentWorldPlaybackGate(currentWorldPlaybackBarrier());
+    if (result.engineResult != bridge::kEngineOk)
     {
-        result.failure = Bridge::PlaybackFailure::RuntimeRefused;
+        result.failure = bridge::PlaybackFailure::RuntimeRefused;
         emit playbackStarted(0, name);
         return result;
     }
@@ -833,10 +839,10 @@ AudioEngine::PlaybackStartResult AudioEngine::playByName3DDetailed(
     return result;
 }
 
-Bridge::EngineResult AudioEngine::stopPlayback(quintptr playbackHandle, float fadeMs)
+bridge::EngineResult AudioEngine::stopPlayback(quintptr playbackHandle, float fadeMs)
 {
     if (!session_)
-        return Bridge::kEngineNotInit;
+        return bridge::kEngineNotInit;
     return session_->stopPlayback(static_cast<uint64_t>(playbackHandle), fadeMs);
 }
 
@@ -853,7 +859,13 @@ bool AudioEngine::hasInstalledCurrentWorld() const
     return runtimeSyncCoordinator().hasInstalledWorld();
 }
 
-bool AudioEngine::hasActionProgram(harkenstudio::ObjectId actionId) const
+RuntimeSyncCoordinator::RevisionBarrierSnapshot AudioEngine::currentWorldPlaybackBarrier() const noexcept
+{
+    const auto& coordinator = runtimeSyncCoordinator();
+    return coordinator.barrier(coordinator.currentAuthoringRevision());
+}
+
+bool AudioEngine::hasActionProgram(harken::studio::types::ObjectId actionId) const
 {
     return session_ != nullptr && session_->hasActionProgram(actionId);
 }
@@ -880,12 +892,12 @@ void AudioEngine::resetListenerTransformCache()
     if (!initialized_)
         return;
 
-    listenerPosition_ = HarkenEditor::Vec3(0.0f, 0.0f, 0.0f);
-    listenerForward_ = HarkenEditor::Vec3(0.0f, 0.0f, -1.0f);
-    listenerUp_ = HarkenEditor::Vec3(0.0f, 1.0f, 0.0f);
+    listenerPosition_ = harken::studio::Vec3(0.0f, 0.0f, 0.0f);
+    listenerForward_ = harken::studio::Vec3(0.0f, 0.0f, -1.0f);
+    listenerUp_ = harken::studio::Vec3(0.0f, 1.0f, 0.0f);
 }
 
-bool AudioEngine::setPlaybackPosition(quintptr playbackHandle, const HarkenEditor::Vec3& position)
+bool AudioEngine::setPlaybackPosition(quintptr playbackHandle, const harken::studio::Vec3& position)
 {
     if (!playbackHandle || !session_)
         return false;
@@ -894,17 +906,17 @@ bool AudioEngine::setPlaybackPosition(quintptr playbackHandle, const HarkenEdito
                                 position.x, position.y, position.z);
 }
 
-void AudioEngine::setListenerPosition(const HarkenEditor::Vec3& position)
+void AudioEngine::setListenerPosition(const harken::studio::Vec3& position)
 {
     setListenerTransform(position, listenerForward_, listenerUp_);
 }
 
-void AudioEngine::setListenerOrientation(const HarkenEditor::Vec3& forward, const HarkenEditor::Vec3& up)
+void AudioEngine::setListenerOrientation(const harken::studio::Vec3& forward, const harken::studio::Vec3& up)
 {
     setListenerTransform(listenerPosition_, forward.normalized(), up.normalized());
 }
 
-bool AudioEngine::setListenerTransform(const HarkenEditor::Vec3& position, const HarkenEditor::Vec3& forward, const HarkenEditor::Vec3& up)
+bool AudioEngine::setListenerTransform(const harken::studio::Vec3& position, const harken::studio::Vec3& forward, const harken::studio::Vec3& up)
 {
     if (!session_ || !session_->setListenerTransform(position.x, position.y, position.z,
             forward.x, forward.y, forward.z, up.x, up.y, up.z))
@@ -915,20 +927,30 @@ bool AudioEngine::setListenerTransform(const HarkenEditor::Vec3& position, const
     return true;
 }
 
-bool AudioEngine::loadPack(const QString& path, Bridge::EngineResult* result)
+bool AudioEngine::loadPack(const QString& path, bridge::EngineResult* result)
 {
     if (!session_) {
-        if (result) *result = Bridge::kEngineNotInit;
+        if (result) *result = bridge::kEngineNotInit;
         return false;
     }
 
-    return session_->loadPack(path, result);
+    if (result) *result = bridge::kEngineInvalidArg;
+    QFile file(QFileInfo(path).absoluteFilePath());
+    if (!file.open(QIODevice::ReadOnly)) return false;
+    const QByteArray bytes = file.readAll();
+    harken::studio::build::PackCanonicalImage image;
+    if (file.error() != QFileDevice::NoError
+        || harken::studio::build::ParsePackCanonicalImage(
+            reinterpret_cast<const uint8_t*>(bytes.constData()), bytes.size(), &image)
+            != harken::studio::build::kPackOk)
+        return false;
+    return session_->loadCanonicalPack(path, bytes, image.packStableId, image.packKind, result);
 }
 
-bool AudioEngine::unloadPack(const QString& path, Bridge::EngineResult* result)
+bool AudioEngine::unloadPack(const QString& path, bridge::EngineResult* result)
 {
     if (!session_) {
-        if (result) *result = Bridge::kEngineNotInit;
+        if (result) *result = bridge::kEngineNotInit;
         return false;
     }
 
@@ -964,45 +986,45 @@ int AudioEngine::actualSampleRate() const
     return session_->actualSampleRate();
 }
 
-HarkenEditor::Bridge::ActionSeekStartResult AudioEngine::seekAction(
+harken::studio::bridge::ActionSeekStartResult AudioEngine::seekAction(
     quintptr actionHandle, const QString& expectedActionName,
     double positionMs, bool isRelative)
 {
     if (!session_)
-        return {0, Bridge::kEngineNotInit};
+        return {0, bridge::kEngineNotInit};
     return session_->seekAction(
         static_cast<uint64_t>(actionHandle), expectedActionName,
         positionMs, isRelative);
 }
 
-HarkenEditor::Bridge::EngineResult AudioEngine::queryActionSeek(
-    uint64_t operationId, Bridge::ActionSeekInfo& outInfo) const
+harken::studio::bridge::EngineResult AudioEngine::queryActionSeek(
+    uint64_t operationId, bridge::ActionSeekInfo& outInfo) const
 {
     if (!session_)
-        return Bridge::kEngineNotInit;
+        return bridge::kEngineNotInit;
     return session_->queryActionSeek(operationId, outInfo);
 }
 
-HarkenEditor::Bridge::EngineResult AudioEngine::releaseActionSeek(
+harken::studio::bridge::EngineResult AudioEngine::releaseActionSeek(
     uint64_t operationId)
 {
     if (!session_)
-        return Bridge::kEngineNotInit;
+        return bridge::kEngineNotInit;
     return session_->releaseActionSeek(operationId);
 }
 
-HarkenEditor::Bridge::EngineResult AudioEngine::setGameObjectVolume(uint64_t gameObjectId, float volume)
+harken::studio::bridge::EngineResult AudioEngine::setGameObjectVolume(uint64_t gameObjectId, float volume)
 {
     Q_UNUSED(gameObjectId);
     Q_UNUSED(volume);
-    return Bridge::kEngineNotInit;
+    return bridge::kEngineNotInit;
 }
 
-HarkenEditor::Bridge::EngineResult AudioEngine::setGameObjectMute(uint64_t gameObjectId, bool mute)
+harken::studio::bridge::EngineResult AudioEngine::setGameObjectMute(uint64_t gameObjectId, bool mute)
 {
     Q_UNUSED(gameObjectId);
     Q_UNUSED(mute);
-    return Bridge::kEngineNotInit;
+    return bridge::kEngineNotInit;
 }
 
 void AudioEngine::syncRuntimeBindings()
@@ -1020,10 +1042,10 @@ void AudioEngine::syncRuntimeBindings()
     auto* project = ProjectManager::instance().currentProject();
     if (!project) {
         for (const auto& attachment : runtimeBindingAttachments_) {
-            HarkenEditor::Bridge::detachPreviewBinding(attachment.bindingId, attachment.scopeKind, attachment.objectId);
+            harken::studio::bridge::detachPreviewBinding(attachment.bindingId, attachment.scopeKind, attachment.objectId);
         }
-        for (harkenstudio::ObjectId bindingId : runtimeBindingIds_)
-            HarkenEditor::Bridge::removePreviewBinding(bindingId);
+        for (harken::studio::types::ObjectId bindingId : runtimeBindingIds_)
+            harken::studio::bridge::removePreviewBinding(bindingId);
         runtimeBindingAttachments_.clear();
         runtimeBindingIds_.clear();
         runtimeBindingPrograms_.clear();
@@ -1035,7 +1057,7 @@ void AudioEngine::syncRuntimeBindings()
     if (lowering.failed)
         return;
 
-    auto fillDesc = [](const BindingRuntimeProgram& program, harkenstudiobuild::BindingDefinition* desc) {
+    auto fillDesc = [](const BindingRuntimeProgram& program, harken::studio::bridge::PreviewBindingDefinition* desc) {
         *desc = {};
         desc->variableId = program.variableId;
         desc->targetScopeKind = program.targetScopeKind;
@@ -1043,24 +1065,24 @@ void AudioEngine::syncRuntimeBindings()
         desc->transitionMs = program.transitionMs;
         const uint32_t count = std::min(
             static_cast<uint32_t>(program.points.size()),
-            static_cast<uint32_t>(harkenstudio::kCurveMaxPoints));
-        desc->curve.pointCount = count;
+            static_cast<uint32_t>(harken::studio::types::kCurveMaxPoints));
+        desc->pointCount = count;
         for (uint32_t i = 0; i < count; ++i) {
-            desc->curve.points[i].x = program.points[static_cast<int>(i)].x;
-            desc->curve.points[i].y = program.points[static_cast<int>(i)].value;
+            desc->points[i].x = program.points[static_cast<int>(i)].x;
+            desc->points[i].y = program.points[static_cast<int>(i)].value;
         }
         const uint32_t handleCount = count > 0 ? count - 1 : 0;
         for (uint32_t i = 0; i < handleCount
              && i < static_cast<uint32_t>(program.handles.size()); ++i) {
             const CurveHandlePairDef& handle = program.handles[static_cast<int>(i)];
-            desc->curve.handles[i].h1x = handle.h1x;
-            desc->curve.handles[i].h1y = handle.h1y;
-            desc->curve.handles[i].h2x = handle.h2x;
-            desc->curve.handles[i].h2y = handle.h2y;
+            desc->handles[i].h1x = handle.h1x;
+            desc->handles[i].h1y = handle.h1y;
+            desc->handles[i].h2x = handle.h2x;
+            desc->handles[i].h2y = handle.h2y;
         }
     };
 
-    std::vector<harkenstudio::ObjectId> registeredOk;
+    std::vector<harken::studio::types::ObjectId> registeredOk;
     registeredOk.reserve(lowering.programs.size());
     for (const BindingRuntimeProgram& authored : lowering.programs) {
         const auto preview = runtimeBindingPreviews_.constFind(authored.bindingId);
@@ -1071,13 +1093,13 @@ void AudioEngine::syncRuntimeBindings()
             registeredOk.push_back(program.bindingId);
             continue;
         }
-        harkenstudiobuild::BindingDefinition desc{};
+        harken::studio::bridge::PreviewBindingDefinition desc{};
         fillDesc(program, &desc);
-        const auto result = HarkenEditor::Bridge::setPreviewBinding(program.bindingId, desc);
-        if (result == HarkenEditor::Bridge::kEngineOk) {
+        const auto result = harken::studio::bridge::setPreviewBinding(program.bindingId, desc);
+        if (result == harken::studio::bridge::kEngineOk) {
             registeredOk.push_back(program.bindingId);
             runtimeBindingPrograms_[program.bindingId] = program;
-        } else if (result == HarkenEditor::Bridge::kEngineBackpressure) {
+        } else if (result == harken::studio::bridge::kEngineBackpressure) {
             runtimeBindingsPending_ = true;
         }
     }
@@ -1092,11 +1114,11 @@ void AudioEngine::syncRuntimeBindings()
             attachedOk.push_back(attachment);
             continue;
         }
-        const auto result = HarkenEditor::Bridge::attachPreviewBinding(
+        const auto result = harken::studio::bridge::attachPreviewBinding(
             attachment.bindingId, attachment.scopeKind, attachment.objectId);
-        if (result == HarkenEditor::Bridge::kEngineOk || result == HarkenEditor::Bridge::kEngineInUse)
+        if (result == harken::studio::bridge::kEngineOk || result == harken::studio::bridge::kEngineInUse)
             attachedOk.push_back(attachment);
-        else if (result == HarkenEditor::Bridge::kEngineBackpressure)
+        else if (result == harken::studio::bridge::kEngineBackpressure)
             runtimeBindingsPending_ = true;
     }
 
@@ -1115,19 +1137,19 @@ void AudioEngine::syncRuntimeBindings()
             }
         }
         if (keep) continue;
-        HarkenEditor::Bridge::detachPreviewBinding(previousAttachment.bindingId,
+        harken::studio::bridge::detachPreviewBinding(previousAttachment.bindingId,
             previousAttachment.scopeKind, previousAttachment.objectId);
     }
-    for (harkenstudio::ObjectId previousId : runtimeBindingIds_) {
+    for (harken::studio::types::ObjectId previousId : runtimeBindingIds_) {
         bool keep = false;
-        for (harkenstudio::ObjectId nextId : next.ids) {
+        for (harken::studio::types::ObjectId nextId : next.ids) {
             if (nextId == previousId) {
                 keep = true;
                 break;
             }
         }
         if (keep) continue;
-        HarkenEditor::Bridge::removePreviewBinding(previousId);
+        harken::studio::bridge::removePreviewBinding(previousId);
         runtimeBindingPrograms_.remove(previousId);
     }
 
@@ -1139,22 +1161,22 @@ void AudioEngine::onRuntimeServiceTimer()
 {
     if (session_) {
         if (auto compiled = currentWorldCompilation_->takeResult()) {
-            Bridge::CurrentWorldSyncResult result;
+            bridge::CurrentWorldSyncResult result;
             result.token = compiled->token;
             if (!runtimeSyncCoordinator_->isCurrentSubmission(compiled->token)) {
-                result.status = Bridge::CurrentWorldSyncStatus::Superseded;
+                result.status = bridge::CurrentWorldSyncStatus::Superseded;
             } else if (compiled->compiled.requiresFullRefresh
                 || !preparedSoundsAreCurrent(compiled->request)) {
                 currentWorldRequestSession_ = 0;
                 currentWorldRequestEpoch_ = 0;
                 runtimeSyncCoordinator_->markCurrentWorldMutation();
-                result.status = Bridge::CurrentWorldSyncStatus::Superseded;
+                result.status = bridge::CurrentWorldSyncStatus::Superseded;
             } else {
                 if (!compiled->compiled.ok()) {
                     currentWorldRequestSession_ = 0;
                     currentWorldRequestEpoch_ = 0;
                 }
-                result = Bridge::installCompiledCurrentWorld(
+                result = build::installCompiledCurrentWorld(
                     std::move(compiled->request), std::move(compiled->compiled), compiled->token);
             }
             if (result.ok())
@@ -1162,7 +1184,7 @@ void AudioEngine::onRuntimeServiceTimer()
             runtimeSyncCoordinator_->acceptCurrentWorldSyncResult(result);
         }
         session_->update();
-        while (const auto completion = Bridge::takeCurrentWorldSyncCompletion()) {
+        while (const auto completion = bridge::takeCurrentWorldSyncCompletion()) {
             if (completion->ok())
                 currentWorldCompilation_->acknowledgePublication(completion->token);
             runtimeSyncCoordinator_->acceptCurrentWorldSyncResult(*completion);
@@ -1216,20 +1238,10 @@ void AudioEngine::updateRuntimeServiceInterval()
         runtimeServiceTimer_->setInterval(runtimeServiceIntervalMs(*session_));
 }
 
-void AudioEngine::consumeRuntimeNotificationsForTest()
-{
-    consumeRuntimeNotifications();
-}
-
-void AudioEngine::emitLogMessageForTest(int level, const QString& message)
-{
-    emit logMessage(level, message);
-}
-
 void AudioEngine::consumeRuntimeNotifications()
 {
-    std::vector<Bridge::EngineNotification> notifications;
-    Bridge::pollEngineNotifications(notifications);
+    std::vector<bridge::EngineNotification> notifications;
+    bridge::pollEngineNotifications(notifications);
     if (notifications.empty())
         return;
 
@@ -1241,7 +1253,7 @@ void AudioEngine::consumeRuntimeNotifications()
         return QString();
     };
 
-    using Kind = Bridge::EngineNotification::Kind;
+    using Kind = bridge::EngineNotification::Kind;
     for (const auto& n : notifications)
     {
         switch (n.kind)
@@ -1283,11 +1295,11 @@ void AudioEngine::onMonitorTimer()
 
 void AudioEngine::refreshPlaybackPaths()
 {
-    std::vector<Bridge::PlaybackPathObservation> paths;
+    std::vector<bridge::PlaybackPathObservation> paths;
     if (session_ && playing_ && runtimeSyncCoordinator_->barrier(
             runtimeSyncCoordinator_->currentAuthoringRevision()).state
             == RuntimeSyncCoordinator::RevisionBarrierState::Ready)
-        Bridge::capturePlaybackPaths(paths);
+        bridge::capturePlaybackPaths(paths);
     if (paths == playbackPaths_) return;
     playbackPaths_ = std::move(paths);
     emit playbackPathsChanged();
@@ -1364,13 +1376,13 @@ void AudioEngine::clearExecErrors(int domainFilter)
 
 int AudioEngine::getActiveVoiceInfoList(std::vector<VoiceInfoData>& outInfos) const
 {
-    return Bridge::getActiveVoiceInfoList(outInfos);
+    return bridge::getActiveVoiceInfoList(outInfos);
 }
 
 
 bool AudioEngine::getVoiceStateBreakdown(VoiceStateBreakdown& out) const
 {
-    return Bridge::getVoiceStateBreakdown(out);
+    return bridge::getVoiceStateBreakdown(out);
 }
 
 
@@ -1405,55 +1417,55 @@ void AudioEngine::setVoiceDistanceScaleByName(const QString& soundName, float sc
 }
 
 void AudioEngine::setVoiceSendsByName(const QString& soundName,
-                                      const std::vector<std::pair<harkenstudio::ObjectId, float>>& sends)
+                                      const std::vector<std::pair<harken::studio::types::ObjectId, float>>& sends)
 {
     if (!session_) return;
     session_->setVoiceSendsByName(soundName, sends);
 }
 
 
-void AudioEngine::removeRuntimeObject(harkenstudio::ObjectId objectID)
+void AudioEngine::removeRuntimeObject(harken::studio::types::ObjectId objectID)
 {
-    Bridge::removeRuntimeObject(objectID);
+    bridge::removeRuntimeObject(objectID);
 }
 
 void AudioEngine::clearRuntimeObjects()
 {
-    Bridge::clearRuntimeObjects();
+    bridge::clearRuntimeObjects();
 }
 
 uint32_t AudioEngine::getRuntimeObjectCount() const
 {
-    return Bridge::runtimeObjectCount();
+    return bridge::runtimeObjectCount();
 }
 
 void AudioEngine::registerRuntimeMedia(uint32_t mediaID, const std::string& path, uint64_t fileSize)
 {
-    Bridge::mediaRegistryRegister(mediaID, QString::fromStdString(path), fileSize);
+    bridge::mediaRegistryRegister(mediaID, QString::fromStdString(path), fileSize);
 }
 
 bool AudioEngine::prepareMedia(uint32_t mediaID, const std::string& path, uint64_t fileSize)
 {
-    Bridge::mediaRegistryRegister(mediaID, QString::fromStdString(path), fileSize);
+    bridge::mediaRegistryRegister(mediaID, QString::fromStdString(path), fileSize);
     if (!session_) return true;
     return session_->prepareMedia(mediaID, QString::fromStdString(path), fileSize);
 }
 
 bool AudioEngine::swapMedia(uint32_t sourceID, const std::string& newPath, uint64_t fileSize)
 {
-    Bridge::mediaRegistryRegister(sourceID, QString::fromStdString(newPath), fileSize);
+    bridge::mediaRegistryRegister(sourceID, QString::fromStdString(newPath), fileSize);
     if (!session_) return true;
     return session_->swapMedia(sourceID, QString::fromStdString(newPath), fileSize);
 }
 
 void AudioEngine::clearRuntimeMedia()
 {
-    Bridge::mediaRegistryClear();
+    bridge::mediaRegistryClear();
 }
 
 uint32_t AudioEngine::getRuntimeMediaCount() const
 {
-    return Bridge::mediaRegistryCount();
+    return bridge::mediaRegistryCount();
 }
 
 
@@ -1508,18 +1520,18 @@ bool AudioEngine::setCpuBudgetConfig(float escalationPct, float recoveryPct)
     return false;
 }
 
-HarkenEditor::Bridge::EngineResult AudioEngine::setMemoryBudgetLimit(uint32_t category, uint64_t maxBytes)
+harken::studio::bridge::EngineResult AudioEngine::setMemoryBudgetLimit(uint32_t category, uint64_t maxBytes)
 {
     Q_UNUSED(category);
     Q_UNUSED(maxBytes);
-    return Bridge::kEngineNotInit;
+    return bridge::kEngineNotInit;
 }
 
-HarkenEditor::Bridge::EngineResult AudioEngine::setListenerOutputBus(uint32_t listenerId, harkenstudio::ObjectId busId)
+harken::studio::bridge::EngineResult AudioEngine::setListenerOutputBus(uint32_t listenerId, harken::studio::types::ObjectId busId)
 {
     Q_UNUSED(listenerId);
     Q_UNUSED(busId);
-    return Bridge::kEngineNotInit;
+    return bridge::kEngineNotInit;
 }
 
 void AudioEngine::setRuntimeLanguage(const QString& code)

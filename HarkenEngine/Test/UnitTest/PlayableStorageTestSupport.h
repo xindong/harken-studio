@@ -8,7 +8,7 @@
 
 namespace harkentest {
 
-inline harken::Plan03GroupSliceIdentity QueueContinuationSlice(
+inline harken::ScheduleGroupSliceIdentity QueueContinuationSlice(
     const harken::Engine& engine, harken::DecisionToken decision,
     std::uint16_t slice) {
     for (const auto& bank : engine.queueProgramBanks) {

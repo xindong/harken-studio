@@ -13,7 +13,7 @@
 
 #include <utility>
 
-namespace VNX::ProjectPackBuildService {
+namespace harken::studio::ProjectPackBuildService {
 
 Result run(const Request& request)
 {
@@ -145,9 +145,9 @@ Result run(const Request& request)
     }
     if (cacheUsed) options.packBuildState->prune();
     if (!options.packBuildState->flush())
-        result.finalizationResult.warnings.append(QStringLiteral("Could not save Pack build state"));
+        result.finalizationResult.addGlobalWarnings({QStringLiteral("Could not save Pack build state")});
     if (options.snapshot->media.sourceInputs && !options.snapshot->media.sourceInputs->save())
-        result.finalizationResult.warnings.append(QStringLiteral("Could not save source build state"));
+        result.finalizationResult.addGlobalWarnings({QStringLiteral("Could not save source build state")});
     return result;
 }
 

@@ -19,7 +19,7 @@
 
 #include <array>
 
-namespace VNX {
+namespace harken::studio {
 namespace VQLFieldCatalog {
 namespace {
 

@@ -1,4 +1,5 @@
 #include "Legal/ConsentStore.h"
+#include "Legal/LegalDocuments.h"
 #include "Settings/HubSettings.h"
 #include "UI/ConsentDialog.h"
 
@@ -38,15 +39,15 @@ protected:
 TEST_F(ConsentDialogTest, BothLanguagesIncludePrivacyAndRenewOldConsent)
 {
     for (const QString& language : {QStringLiteral("en"), QStringLiteral("zh_CN")}) {
-        ASSERT_TRUE(VNH::HubSettings::setLanguagePreference(language));
+        ASSERT_TRUE(harken::hub::HubSettings::setLanguagePreference(language));
         QTranslator translator;
         if (language == QStringLiteral("zh_CN")) {
             ASSERT_TRUE(translator.load(QString::fromUtf8(HARKEN_HUB_TRANSLATION_FILE)));
             QCoreApplication::installTranslator(&translator);
         }
-        for (const QString& id : {VNH::ConsentDialog::hubDocumentId(),
-                                  VNH::ConsentDialog::studioDocumentId()}) {
-            ASSERT_TRUE(VNH::ConsentStore::recordConsent(
+        for (const QString& id : {harken::hub::ConsentDialog::hubDocumentId(),
+                                  harken::hub::ConsentDialog::studioDocumentId()}) {
+            ASSERT_TRUE(harken::hub::ConsentStore::recordConsent(
                 id, QStringLiteral("2026-09-30-r2"), QStringLiteral("old-text"),
                 QStringLiteral("0.1.0"), QDateTime::currentDateTimeUtc()));
             QStringList shownTexts;
@@ -63,26 +64,22 @@ TEST_F(ConsentDialogTest, BothLanguagesIncludePrivacyAndRenewOldConsent)
                 }
                 dialog->accept();
             });
-            ASSERT_TRUE(VNH::ConsentDialog::requestConsent(nullptr, id));
+            ASSERT_TRUE(harken::hub::ConsentDialog::requestConsent(nullptr, id));
             ASSERT_EQ(shownTexts.size(), 2);
-            const QString suffix = language == QStringLiteral("en")
-                                       ? QStringLiteral(".txt")
-                                       : QStringLiteral(".zh-CN.txt");
-            QFile agreement(QStringLiteral(":/Resources/legal/USER_AGREEMENT") + suffix);
-            QFile privacy(QStringLiteral(":/Resources/legal/PRIVACY_POLICY") + suffix);
-            ASSERT_TRUE(agreement.open(QIODevice::ReadOnly | QIODevice::Text));
-            ASSERT_TRUE(privacy.open(QIODevice::ReadOnly | QIODevice::Text));
-            const QByteArray agreementText = agreement.readAll();
-            const QByteArray privacyText = privacy.readAll();
-            EXPECT_EQ(shownTexts.at(0), QString::fromUtf8(agreementText).replace(QChar::Nbsp, QChar::Space));
-            EXPECT_EQ(shownTexts.at(1), QString::fromUtf8(privacyText).replace(QChar::Nbsp, QChar::Space));
-            const QByteArray content = agreementText + "\n\n" + privacyText;
+            const QStringList documents = harken::hub::LegalDocuments::texts();
+            ASSERT_EQ(documents.size(), 2);
+            EXPECT_EQ(shownTexts.at(0), QString(documents.at(0)).replace(QChar::Nbsp, QChar::Space));
+            EXPECT_EQ(shownTexts.at(1), QString(documents.at(1)).replace(QChar::Nbsp, QChar::Space));
+            const QByteArray content = documents.at(0).toUtf8() + "\n\n" + documents.at(1).toUtf8();
             const QString hash = QString::fromLatin1(QCryptographicHash::hash(
                 content, QCryptographicHash::Sha256).toHex());
-            EXPECT_TRUE(VNH::ConsentStore::hasConsent(
+            EXPECT_EQ(hash, language == QStringLiteral("en")
+                ? QStringLiteral("370b273640c25743bb4a51eecc019bda785385e526a1076520f0f8e42dd8d3f7")
+                : QStringLiteral("e3f7dd8901a56b49d2f5731cbbce61d2081ab87177b30666740e4703b88fe528"));
+            EXPECT_TRUE(harken::hub::ConsentStore::hasConsent(
                 id, QStringLiteral("2026-10-28"), hash));
-            EXPECT_TRUE(VNH::ConsentDialog::requestConsent(nullptr, id));
-            QFile consent(VNH::ConsentStore::filePath());
+            EXPECT_TRUE(harken::hub::ConsentDialog::requestConsent(nullptr, id));
+            QFile consent(harken::hub::ConsentStore::filePath());
             ASSERT_TRUE(consent.open(QIODevice::ReadOnly));
             const QByteArray beforeViewing = consent.readAll();
             consent.close();
@@ -109,7 +106,7 @@ TEST_F(ConsentDialogTest, BothLanguagesIncludePrivacyAndRenewOldConsent)
                 }
                 dialog->accept();
             });
-            VNH::ConsentDialog::showDocuments(nullptr);
+            harken::hub::ConsentDialog::showDocuments(nullptr);
             ASSERT_TRUE(consent.open(QIODevice::ReadOnly));
             EXPECT_EQ(consent.readAll(), beforeViewing);
         }
@@ -118,15 +115,15 @@ TEST_F(ConsentDialogTest, BothLanguagesIncludePrivacyAndRenewOldConsent)
 
 TEST_F(ConsentDialogTest, DeclineDoesNotRecordConsent)
 {
-    ASSERT_TRUE(VNH::HubSettings::setLanguagePreference(QStringLiteral("en")));
+    ASSERT_TRUE(harken::hub::HubSettings::setLanguagePreference(QStringLiteral("en")));
     QTimer::singleShot(0, []() {
         auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
         EXPECT_NE(dialog, nullptr);
         if (dialog) dialog->reject();
     });
-    EXPECT_FALSE(VNH::ConsentDialog::requestConsent(
-        nullptr, VNH::ConsentDialog::hubDocumentId()));
-    EXPECT_FALSE(QFile::exists(VNH::ConsentStore::filePath()));
+    EXPECT_FALSE(harken::hub::ConsentDialog::requestConsent(
+        nullptr, harken::hub::ConsentDialog::hubDocumentId()));
+    EXPECT_FALSE(QFile::exists(harken::hub::ConsentStore::filePath()));
 }
 
 TEST_F(ConsentDialogTest, ViewingDocumentsDoesNotCreateConsent)
@@ -137,8 +134,8 @@ TEST_F(ConsentDialogTest, ViewingDocumentsDoesNotCreateConsent)
         if (dialog)
             dialog->accept();
     });
-    VNH::ConsentDialog::showDocuments(nullptr);
-    EXPECT_FALSE(QFile::exists(VNH::ConsentStore::filePath()));
+    harken::hub::ConsentDialog::showDocuments(nullptr);
+    EXPECT_FALSE(QFile::exists(harken::hub::ConsentStore::filePath()));
 }
 
 TEST_F(ConsentDialogTest, OverrideDocumentKeepsItsConsentHashAndContent)
@@ -163,13 +160,13 @@ TEST_F(ConsentDialogTest, OverrideDocumentKeepsItsConsentHashAndContent)
         dialog->accept();
     };
     QTimer::singleShot(0, inspect);
-    ASSERT_TRUE(VNH::ConsentDialog::requestConsent(nullptr, VNH::ConsentDialog::hubDocumentId()));
+    ASSERT_TRUE(harken::hub::ConsentDialog::requestConsent(nullptr, harken::hub::ConsentDialog::hubDocumentId()));
     const QString hash = QString::fromLatin1(
         QCryptographicHash::hash(content, QCryptographicHash::Sha256).toHex());
-    EXPECT_TRUE(VNH::ConsentStore::hasConsent(
-        VNH::ConsentDialog::hubDocumentId(), VNH::ConsentDialog::documentVersion(), hash));
+    EXPECT_TRUE(harken::hub::ConsentStore::hasConsent(
+        harken::hub::ConsentDialog::hubDocumentId(), harken::hub::ConsentDialog::documentVersion(), hash));
     QTimer::singleShot(0, inspect);
-    VNH::ConsentDialog::showDocuments(nullptr);
+    harken::hub::ConsentDialog::showDocuments(nullptr);
 }
 
 }

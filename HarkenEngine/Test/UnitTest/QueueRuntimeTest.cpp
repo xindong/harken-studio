@@ -2229,6 +2229,7 @@ TEST(QueueRuntime, CancelLaterResetPreparationPreservesAcceptedFutureIntent) {
     EXPECT_EQ(3u, projected.currentChildOrdinal);
 }
 
+#if HARKEN_ENGINE_DEV
 TEST(QueueRuntime, PreparedSignalKeepsMirrorAndResetUntilExactAcceptedOutcome) {
     FutureQueueResetFixture fixture;
     fixture.table.ApplyDue(64);
@@ -2296,7 +2297,9 @@ TEST(QueueRuntime, PreparedSignalKeepsMirrorAndResetUntilExactAcceptedOutcome) {
     EXPECT_TRUE(fixture.table.Release(fixture.queue));
     EXPECT_FALSE(fixture.table.CaptureMonitorReset(fixture.queue, &observation));
 }
+#endif
 
+#if HARKEN_ENGINE_DEV
 TEST(QueueRuntime, DuplicateDueResetAndStaleSelectionCannotReplaceOriginalCause) {
     FutureQueueResetFixture fixture;
     harken::MonitorControlCause original{}, later{};
@@ -2319,6 +2322,7 @@ TEST(QueueRuntime, DuplicateDueResetAndStaleSelectionCannotReplaceOriginalCause)
     EXPECT_EQ(harken::MonitorQueueResetObservation::Stage::Intent, after.stage);
     EXPECT_FALSE(fixture.table.CaptureMonitorReset(stale, &after));
 }
+#endif
 
 TEST(QueueRuntime, CancelPreparedAndNegativeAcceptedSignalPreserveOriginalResetIdentity) {
     FutureQueueResetFixture fixture;
@@ -3874,21 +3878,21 @@ void ExpectRetiredSourceAudioSlice(std::uint32_t memberCount, bool invalidateLas
     poolConfig.maxEventsPerQuantum = 8;
     poolConfig.maxTransactionEvents = 8;
     poolConfig.maxCurrentSlicesPerQuantum = 4;
-    poolConfig.maxPlan03GroupHeadersPerPage = 1;
+    poolConfig.maxScheduleGroupHeadersPerPage = 1;
     poolConfig.maxArmsPerGroup = 2;
     harken::ScheduledTransactionPool pool;
     ASSERT_TRUE(pool.Reset(poolConfig, 0, 3));
-    harken::Plan03GroupSliceInput group{};
+    harken::ScheduleGroupSliceInput group{};
     group.executeFrame = 512;
     group.decision = decision;
     group.members = members;
     group.memberCount = memberCount;
-    ASSERT_EQ(harken::Plan03GroupReserveStatus::Committed,
-              pool.ReservePlan03GroupSlice(group, arms));
+    ASSERT_EQ(harken::ScheduleGroupReserveStatus::Committed,
+              pool.ReserveScheduleGroupSlice(group, arms));
     pool.Publish(768, nullptr, nullptr, &arms);
 
     harken::VoiceTimelineSink sink(voices, arms);
-    ASSERT_TRUE(sink.AttachPlan03ScratchAuthority(decisions, pool));
+    ASSERT_TRUE(sink.AttachScheduleScratchAuthority(decisions, pool));
     ASSERT_TRUE(sink.AttachQueueAuthority(queues, armGroups, occurrences));
     sink.SetArenaAdmission(UINT32_MAX, 256);
     ASSERT_TRUE(sink.AdmitQuantum(2));
@@ -3896,7 +3900,7 @@ void ExpectRetiredSourceAudioSlice(std::uint32_t memberCount, bool invalidateLas
         const auto last = members[memberCount - 1u];
         ASSERT_TRUE(voices.CancelTimelineBinding(last.renderSlot, last.renderGeneration));
     }
-    ASSERT_EQ(!invalidateLast, sink.ApplyPlan03Groups(2));
+    ASSERT_EQ(!invalidateLast, sink.ApplyScheduleGroups(2));
     if (memberCount == 0 || invalidateLast) {
         harken::QueueInstanceSnapshot rejected{};
         ASSERT_TRUE(queues.Capture(queue, &rejected));
@@ -4088,35 +4092,35 @@ TEST(QueueRuntime, ExistingAudioSliceLeaseActivatesWholeQueueGroup) {
     poolConfig.maxEventsPerQuantum = 8;
     poolConfig.maxTransactionEvents = 8;
     poolConfig.maxCurrentSlicesPerQuantum = 4;
-    poolConfig.maxPlan03GroupHeadersPerPage = 1;
+    poolConfig.maxScheduleGroupHeadersPerPage = 1;
     poolConfig.maxArmsPerGroup = 1;
     harken::ScheduledTransactionPool pool;
     ASSERT_TRUE(pool.Reset(poolConfig, 0, 3));
-    harken::Plan03GroupSliceInput group{};
+    harken::ScheduleGroupSliceInput group{};
     group.executeFrame = 300;
     group.decision = decision;
     group.members = &arm;
     group.memberCount = 1;
-    ASSERT_EQ(harken::Plan03GroupReserveStatus::Committed,
-              pool.ReservePlan03GroupSlice(group, arms));
+    ASSERT_EQ(harken::ScheduleGroupReserveStatus::Committed,
+              pool.ReserveScheduleGroupSlice(group, arms));
     pool.Publish(512, nullptr, nullptr, &arms);
 
     harken::VoiceTimelineSink sink(voices, arms);
-    ASSERT_TRUE(sink.AttachPlan03ScratchAuthority(decisions, pool));
+    ASSERT_TRUE(sink.AttachScheduleScratchAuthority(decisions, pool));
     ASSERT_TRUE(sink.AttachQueueAuthority(queues, armGroups, occurrences));
     sink.SetArenaAdmission(UINT32_MAX, 256);
     ASSERT_TRUE(sink.AdmitQuantum(1));
-    EXPECT_FALSE(sink.ApplyPlan03Groups(1));
+    EXPECT_FALSE(sink.ApplyScheduleGroups(1));
     harken::EffectiveQueueState effective{};
     ASSERT_TRUE(queues.ResolveEffective(queue, &effective));
     EXPECT_EQ(1u, effective.version);
-    harken::Plan03PageGroupView page{};
-    ASSERT_EQ(1u, pool.CapturePlan03PageGroupsRt(1, &page, 1));
+    harken::SchedulePageGroupView page{};
+    ASSERT_EQ(1u, pool.CaptureSchedulePageGroupsRt(1, &page, 1));
     EXPECT_EQ(harken::AudioSliceState::Ready,
               page.lease->Capture().state);
 
     ASSERT_TRUE(armGroups.Acknowledge(armGroup, arm, 1));
-    ASSERT_TRUE(sink.ApplyPlan03Groups(1));
+    ASSERT_TRUE(sink.ApplyScheduleGroups(1));
 
     harken::DecisionCommittedSnapshot committed{};
     ASSERT_TRUE(decisions.CaptureCommitted(decision, &committed));
@@ -4220,23 +4224,23 @@ TEST(QueueRuntime, MemberlessAudioSliceActivatesQueueCondition) {
     poolConfig.maxEventsPerQuantum = 8;
     poolConfig.maxTransactionEvents = 8;
     poolConfig.maxCurrentSlicesPerQuantum = 4;
-    poolConfig.maxPlan03GroupHeadersPerPage = 1;
+    poolConfig.maxScheduleGroupHeadersPerPage = 1;
     poolConfig.maxArmsPerGroup = 1;
     harken::ScheduledTransactionPool pool;
     ASSERT_TRUE(pool.Reset(poolConfig, 0, 3));
-    harken::Plan03GroupSliceInput group{};
+    harken::ScheduleGroupSliceInput group{};
     group.executeFrame = 300;
     group.decision = decision;
-    ASSERT_EQ(harken::Plan03GroupReserveStatus::Committed,
-              pool.ReservePlan03GroupSlice(group, arms));
+    ASSERT_EQ(harken::ScheduleGroupReserveStatus::Committed,
+              pool.ReserveScheduleGroupSlice(group, arms));
     pool.Publish(512, nullptr, nullptr, &arms);
 
     harken::VoiceTimelineSink sink(voices, arms);
-    ASSERT_TRUE(sink.AttachPlan03ScratchAuthority(decisions, pool));
+    ASSERT_TRUE(sink.AttachScheduleScratchAuthority(decisions, pool));
     ASSERT_TRUE(sink.AttachQueueAuthority(queues, armGroups, occurrences));
     sink.SetArenaAdmission(UINT32_MAX, 256);
     ASSERT_TRUE(sink.AdmitQuantum(1));
-    ASSERT_TRUE(sink.ApplyPlan03Groups(1));
+    ASSERT_TRUE(sink.ApplyScheduleGroups(1));
 
     harken::EffectiveQueueState effective{};
     ASSERT_TRUE(queues.ResolveEffective(queue, &effective));
@@ -4246,8 +4250,8 @@ TEST(QueueRuntime, MemberlessAudioSliceActivatesQueueCondition) {
     harken::DecisionCommittedSnapshot committed{};
     ASSERT_TRUE(decisions.CaptureCommitted(decision, &committed));
     EXPECT_EQ(harken::AudioGroupState::Admitted, committed.audioState);
-    harken::Plan03PageGroupView page{};
-    ASSERT_EQ(1u, pool.CapturePlan03PageGroupsRt(1, &page, 1));
+    harken::SchedulePageGroupView page{};
+    ASSERT_EQ(1u, pool.CaptureSchedulePageGroupsRt(1, &page, 1));
     EXPECT_EQ(0u, page.memberCount);
     EXPECT_EQ(nullptr, page.members);
     EXPECT_EQ(harken::AudioSliceState::SliceApplied,
@@ -4948,8 +4952,8 @@ struct GenuineUnboundConditionalClockHarness {
     harken::QueueInstanceTable::OriginalConditionalFutureReservation original;
     harken::ConditionalQueueVersionToken version{};
     harken::DecisionToken initialDecision{};
-    std::array<harken::Plan03GroupSliceInput, 3> inputs{};
-    std::array<harken::Plan03GroupSliceIdentity, 3> raw{};
+    std::array<harken::ScheduleGroupSliceInput, 3> inputs{};
+    std::array<harken::ScheduleGroupSliceIdentity, 3> raw{};
     std::array<harken::OriginalQueueFutureGroupRegistration, 3> groups{};
     std::array<std::uint64_t, 3> roots{17, 17, 19};
     bool initializing = false;
@@ -5008,7 +5012,7 @@ struct GenuineUnboundConditionalClockHarness {
         config.maxEventsPerQuantum = 8;
         config.maxTransactionEvents = 8;
         config.maxCurrentSlicesPerQuantum = 4;
-        config.maxPlan03GroupHeadersPerPage = 1;
+        config.maxScheduleGroupHeadersPerPage = 1;
         config.maxArmsPerGroup = 1;
         config.maxImmediateLaneGroupRows = 3;
         config.initialImmediateLaneOwnerGates = 1;
@@ -5446,7 +5450,7 @@ struct GenuineCatalogStageHarness {
     harken::DecisionTable decisions{2, 2};
     harken::ScheduledTransactionPool groups;
     std::array<harken::OriginalQueueFutureGroupRegistration, 2> originals;
-    std::array<harken::Plan03GroupSliceIdentity, 2> identities{};
+    std::array<harken::ScheduleGroupSliceIdentity, 2> identities{};
     harken::DecisionToken decision{};
     harken::QueueInstanceToken queue{};
     harken::PreparedQueueInstanceV1 initialAcquire;
@@ -5480,12 +5484,12 @@ struct GenuineCatalogStageHarness {
         config.maxTransactionSpanFrames = 400; config.maxIngressTransactionsPerQuantum = 4;
         config.maxFrameBatchesPerQuantum = 4; config.maxEventsPerQuantum = 8;
         config.maxTransactionEvents = 8; config.maxCurrentSlicesPerQuantum = 4;
-        config.maxPlan03GroupHeadersPerPage = 1; config.maxArmsPerGroup = 1;
+        config.maxScheduleGroupHeadersPerPage = 1; config.maxArmsPerGroup = 1;
         config.maxImmediateLaneGroupRows = 2;
         config.initialImmediateLaneOwnerGates = 1; config.initialImmediateLaneDecisionGates = 2;
         ASSERT_TRUE(groups.Reset(config, 0, 1));
         for (std::uint32_t i = 0; i < originals.size(); ++i) {
-            harken::Plan03GroupSliceInput input{};
+            harken::ScheduleGroupSliceInput input{};
             input.decision = decision; input.sliceIndex = i; input.executeFrame = 100 + 100 * i;
             harken::PreparedPrivateImmediateLaneGroup original;
             ASSERT_TRUE(groups.ReserveImmediateLaneGroup(17, 100, input, arms, &identities[i], &original));
@@ -5766,8 +5770,8 @@ struct GenuineHiddenSelectedFuture {
     harken::QueueInstanceTable::PreparedCatalogResetScope scope;
     harken::ConditionalQueueVersionToken version{};
     std::array<harken::OriginalQueueFutureGroupRegistration, 4> groups;
-    std::array<harken::Plan03GroupSliceIdentity, 4> identities{};
-    std::array<harken::Plan03GroupSliceInput, 4> inputs{};
+    std::array<harken::ScheduleGroupSliceIdentity, 4> identities{};
+    std::array<harken::ScheduleGroupSliceInput, 4> inputs{};
     harken::DecisionToken initialDecision{};
     harken::LogicCommitCoordinator::PreparedIssue sequence;
     harken::OriginalDecisionLifetimePin currentDecisionOriginal;
@@ -5866,7 +5870,7 @@ struct GenuineHiddenSelectedFuture {
         config.maxEventsPerQuantum = 8;
         config.maxTransactionEvents = 8;
         config.maxCurrentSlicesPerQuantum = 4;
-        config.maxPlan03GroupHeadersPerPage = 1;
+        config.maxScheduleGroupHeadersPerPage = 1;
         config.maxArmsPerGroup = 1;
         config.maxImmediateLaneGroupRows = 4;
         config.initialImmediateLaneOwnerGates = 1;

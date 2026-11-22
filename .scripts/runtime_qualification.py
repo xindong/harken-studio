@@ -30,22 +30,18 @@ ENV_ALLOWLIST = (
     "TEMP",
     "TMP",
 )
-COMMAND_ENV_ALLOWLIST = ("HARKEN_NATIVE_DIR",)
+COMMAND_ENV_ALLOWLIST: tuple[str, ...] = ()
 FIXED_CHILD_ENVIRONMENT = {
     "PYTHONDONTWRITEBYTECODE": "1",
 }
 REQUIRED_SOURCE_CONTRACT_PATHS = (
     "CMakeLists.txt",
-    "HarkenEngine/Source/Tooling/Binding/gen_binding.py",
-    "HarkenEngine/Source/Tooling/Remote/wire/gen_wire.py",
-    "HarkenEngine/Source/Tooling/Effects/gen_effect_registry.py",
-    "HarkenIntegration/Test/ContractTest/AbiFidelity.csproj",
+    "HarkenEngine/Tool/HostControl/wire/gen_wire.py",
 )
 SOURCE_VOLATILE_PREFIXES = (".temp",)
 EXPECTED_TOOL_VERSIONS = {
     "cmake": "cmake version 4.0.4",
     "ctest": "ctest version 4.0.4",
-    "dotnet": "10.0.200",
     "python": "Python 3.13.9",
 }
 REQUIRED_STATIC_ALLOCATION_CATEGORIES = {
@@ -72,9 +68,9 @@ M1_EVIDENCE_POLICY = {
                 "x64",
                 "v143,version=14.42.34433",
                 "-DCMAKE_SYSTEM_VERSION=10.0.26100.0",
-                "-DHARKEN_BUILD_CORE=ON",
+                "-DHARKEN_BUILD_ENGINE=ON",
                 "-DHARKEN_BUILD_TOOLS=ON",
-                "-DHARKEN_BUILD_SHARED=ON",
+                "-DHARKEN_BUILD_ENGINE_DEV=ON",
                 "-DHARKEN_BUILD_EDITOR=OFF",
                 "-DHARKEN_BUILD_EDITOR_UNIT_TESTS=OFF",
                 "-DHARKEN_BUILD_HUB=OFF",
@@ -99,8 +95,10 @@ M1_EVIDENCE_POLICY = {
                     "harken_render_worker_wake_fallback_tests.exe"
                 ),
                 "build/vs/bin/Debug/harken_shared_load_smoke.exe",
-                "build/vs/bin/Debug/HarkenCore.dll",
-                "build/vs/bin/Debug/HarkenCore.pdb",
+                "build/vs/bin/Debug/HarkenEngine.dll",
+                "build/vs/bin/Debug/HarkenEngineDev.dll",
+                "build/vs/bin/Debug/HarkenEngine.pdb",
+                "build/vs/bin/Debug/HarkenEngineDev.pdb",
             ],
         },
         {
@@ -114,7 +112,8 @@ M1_EVIDENCE_POLICY = {
                     "harken_render_worker_wake_fallback_tests.exe"
                 ),
                 "build/vs/bin/Release/harken_shared_load_smoke.exe",
-                "build/vs/bin/Release/HarkenCore.dll",
+                "build/vs/bin/Release/HarkenEngine.dll",
+                "build/vs/bin/Release/HarkenEngineDev.dll",
             ],
         },
         {
@@ -125,7 +124,6 @@ M1_EVIDENCE_POLICY = {
             "required_argv_contains": ["-N", "Debug"],
             "required_stdout_contains": [
                 "harken_shared_load_smoke",
-                "effect_registry_manifest_check",
             ],
         },
         {
@@ -155,52 +153,11 @@ M1_EVIDENCE_POLICY = {
             ],
         },
         {
-            "kind": "generator-binding",
-            "execution_kind": "subprocess",
-            "count": 1,
-            "executable": "python",
-            "required_argv_contains": ["gen_binding.py", "--check"],
-        },
-        {
             "kind": "generator-wire",
             "execution_kind": "subprocess",
             "count": 1,
             "executable": "python",
             "required_argv_contains": ["gen_wire.py", "--check"],
-        },
-        {
-            "kind": "generator-effects",
-            "execution_kind": "subprocess",
-            "count": 1,
-            "executable": "python",
-            "required_argv_contains": [
-                "gen_effect_registry.py",
-                "--check",
-            ],
-        },
-        {
-            "kind": "sdk-contract-managed",
-            "execution_kind": "subprocess",
-            "count": 1,
-            "executable": "dotnet",
-            "required_argv_contains": [
-                "run",
-                "ContractTest",
-                "Release",
-            ],
-        },
-        {
-            "kind": "sdk-contract-native",
-            "execution_kind": "subprocess",
-            "count": 1,
-            "executable": "dotnet",
-            "required_environment": ["HARKEN_NATIVE_DIR"],
-            "required_argv_contains": [
-                "run",
-                "ContractTest",
-                "Release",
-                "--require-native",
-            ],
         },
         {
             "kind": "perf-phase1",
@@ -921,7 +878,6 @@ def prepare(args: argparse.Namespace) -> int:
     qualified_tools = {
         "cmake": tool_version(repo_root, ["cmake", "--version"]),
         "ctest": tool_version(repo_root, ["ctest", "--version"]),
-        "dotnet": tool_version(repo_root, ["dotnet", "--version"]),
         "python": tool_version(
             repo_root,
             [sys.executable, "--version"],
@@ -944,9 +900,9 @@ def prepare(args: argparse.Namespace) -> int:
             "CMAKE_GENERATOR_TOOLSET": "v143,version=14.42.34433",
             "CMAKE_HOME_DIRECTORY": str(source_root).replace("\\", "/"),
             "CMAKE_SYSTEM_VERSION": "10.0.26100.0",
-            "HARKEN_BUILD_CORE": "ON",
+            "HARKEN_BUILD_ENGINE": "ON",
             "HARKEN_BUILD_TOOLS": "ON",
-            "HARKEN_BUILD_SHARED": "ON",
+            "HARKEN_BUILD_ENGINE_DEV": "ON",
             "HARKEN_BUILD_EDITOR": "OFF",
             "HARKEN_BUILD_EDITOR_UNIT_TESTS": "OFF",
             "HARKEN_BUILD_HUB": "OFF",
@@ -1082,30 +1038,6 @@ def command_environment(
         key, item = value.split("=", 1)
         if key not in COMMAND_ENV_ALLOWLIST:
             raise ValueError(f"command environment key is not allowed: {key}")
-        if key == "HARKEN_NATIVE_DIR":
-            native_dir = require_under(Path(item), run_root)
-            expected_native_dir = (
-                run_root / "build" / "vs" / "bin" / "Release"
-            ).resolve()
-            if native_dir != expected_native_dir:
-                raise ValueError(
-                    "HARKEN_NATIVE_DIR must be the qualified Release "
-                    f"directory: {expected_native_dir}"
-                )
-            native_dll = native_dir / "HarkenCore.dll"
-            if not native_dll.is_file():
-                raise FileNotFoundError(
-                    f"native Runtime DLL is missing: {native_dll}"
-                )
-            item = str(native_dir)
-            inputs.append(
-                {
-                    "role": "native-runtime",
-                    "path": str(native_dll.relative_to(run_root)),
-                    "sha256": sha256_file(native_dll),
-                    "size": native_dll.stat().st_size,
-                }
-            )
         overrides[key] = item
     return overrides, inputs
 
@@ -1387,7 +1319,8 @@ def record_external(args: argparse.Namespace) -> int:
             run_root / "build" / "vs" / "bin" / configuration
         ).resolve()
         required_binary_paths = {
-            (config_dir / "HarkenCore.dll").resolve(),
+            (config_dir / "HarkenEngine.dll").resolve(),
+            (config_dir / "HarkenEngineDev.dll").resolve(),
             (config_dir / "harken_runtime_tests.exe").resolve(),
             (
                 config_dir
@@ -1410,7 +1343,7 @@ def record_external(args: argparse.Namespace) -> int:
                 f"{missing_binaries}"
             )
         if configuration == "Debug":
-            required_pdb = (config_dir / "HarkenCore.pdb").resolve()
+            required_pdb = (config_dir / "HarkenEngine.pdb").resolve()
             recorded_pdb_paths = {
                 (run_root / item["path"]).resolve()
                 for item in artifacts
@@ -2148,11 +2081,7 @@ def validate_record_scope(
         "ctest-inventory": "ctest",
         "ctest-debug": "ctest",
         "ctest-release": "ctest",
-        "generator-binding": "python",
         "generator-wire": "python",
-        "generator-effects": "python",
-        "sdk-contract-managed": "dotnet",
-        "sdk-contract-native": "dotnet",
         "perf-compressor-matrix": "python",
         "memory-baseline": "python",
     }
@@ -2223,30 +2152,13 @@ def validate_record_scope(
                 )
 
     generator_paths = {
-        "generator-binding": (
-            source_root
-            / "HarkenEngine"
-            / "Source"
-            / "Tooling"
-            / "Binding"
-            / "gen_binding.py"
-        ),
         "generator-wire": (
             source_root
             / "HarkenEngine"
-            / "Source"
-            / "Tooling"
-            / "Remote"
+            / "Tool"
+            / "HostControl"
             / "wire"
             / "gen_wire.py"
-        ),
-        "generator-effects": (
-            source_root
-            / "HarkenEngine"
-            / "Source"
-            / "Tooling"
-            / "Effects"
-            / "gen_effect_registry.py"
         ),
     }
     for kind, expected in generator_paths.items():
@@ -2262,49 +2174,6 @@ def validate_record_scope(
                         "actual": argv,
                     }
                 )
-
-    integration_project = (
-        source_root
-        / "HarkenIntegration"
-        / "Test"
-        / "ContractTest"
-        / "AbiFidelity.csproj"
-    ).resolve()
-    integration_artifacts = (run_root / "build" / "sdk").resolve()
-    for kind in ("sdk-contract-managed", "sdk-contract-native"):
-        record = by_kind.get(kind)
-        if record:
-            argv = [str(item) for item in record.get("argv", [])]
-            if not has_exact_path(argv, integration_project):
-                violations.append(
-                    {
-                        "kind": kind,
-                        "rule": "qualified_sdk_project",
-                        "expected": str(integration_project),
-                        "actual": argv,
-                    }
-                )
-    native_record = by_kind.get("sdk-contract-native")
-    if native_record:
-        expected_native_dir = (
-            run_root / "build" / "vs" / "bin" / "Release"
-        ).resolve()
-        actual_native_dir = native_record.get(
-            "environment_overrides",
-            {},
-        ).get("HARKEN_NATIVE_DIR")
-        if (
-            not actual_native_dir
-            or Path(actual_native_dir).resolve() != expected_native_dir
-        ):
-            violations.append(
-                {
-                    "kind": "sdk-contract-native",
-                    "rule": "qualified_native_dir",
-                    "expected": str(expected_native_dir),
-                    "actual": actual_native_dir,
-                }
-            )
 
     benchmark_kinds = {
         "perf-phase1": "harken_benchmarks.exe",
@@ -2438,9 +2307,9 @@ def validate_record_scope(
             "-T",
             "v143,version=14.42.34433",
             "-DCMAKE_SYSTEM_VERSION=10.0.26100.0",
-            "-DHARKEN_BUILD_CORE=ON",
+            "-DHARKEN_BUILD_ENGINE=ON",
             "-DHARKEN_BUILD_TOOLS=ON",
-            "-DHARKEN_BUILD_SHARED=ON",
+            "-DHARKEN_BUILD_ENGINE_DEV=ON",
             "-DHARKEN_BUILD_EDITOR=OFF",
             "-DHARKEN_BUILD_EDITOR_UNIT_TESTS=OFF",
             "-DHARKEN_BUILD_HUB=OFF",
@@ -2473,37 +2342,9 @@ def validate_record_scope(
             "--output-junit",
             str((run_root / "tests" / "release.junit.xml").resolve()),
         ],
-        "generator-binding": [
-            str(generator_paths["generator-binding"].resolve()),
-            "--check",
-        ],
         "generator-wire": [
             str(generator_paths["generator-wire"].resolve()),
             "--check",
-        ],
-        "generator-effects": [
-            str(generator_paths["generator-effects"].resolve()),
-            "--check",
-        ],
-        "sdk-contract-managed": [
-            "run",
-            "--project",
-            str(integration_project),
-            "--configuration",
-            "Release",
-            "--artifacts-path",
-            str(integration_artifacts),
-        ],
-        "sdk-contract-native": [
-            "run",
-            "--project",
-            str(integration_project),
-            "--configuration",
-            "Release",
-            "--artifacts-path",
-            str(integration_artifacts),
-            "--",
-            "--require-native",
         ],
         "perf-phase1": ["--filter", "phase1"],
         "perf-compressor-voice-self": [

@@ -8,7 +8,7 @@
 
 #include <filesystem>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 bool preserveDirectorySpelling(const QString& baseDir, const ProjectPlatform& platform)

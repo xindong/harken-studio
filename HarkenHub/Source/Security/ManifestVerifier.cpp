@@ -7,7 +7,7 @@
 
 #include <ed25519.h>
 
-namespace VNH {
+namespace harken::hub {
 
 namespace {
 

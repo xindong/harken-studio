@@ -12,7 +12,7 @@
 
 class QLabel;
 
-namespace VNX {
+namespace harken::studio {
 
 // Empty-state dock. Shared cursor is host glue, not freeze, pin, or
 // trigger search. Contributor window stays nullopt. params stay empty.
@@ -55,4 +55,4 @@ private:
     std::uint64_t boundGeneration_ = 0;
 };
 
-} // namespace VNX
+} // namespace harken::studio

@@ -6,7 +6,7 @@
 #include <QScrollArea>
 #include <QVBoxLayout>
 
-namespace VNX {
+namespace harken::studio {
 
 RehearsalTable::RehearsalTable(QWidget* parent)
     : TableWidget(TableOptions::display(), parent)

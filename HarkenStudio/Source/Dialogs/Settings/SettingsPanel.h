@@ -11,7 +11,7 @@
 class QLabel;
 class QResizeEvent;
 
-namespace VNX {
+namespace harken::studio {
 
 class SearchField;
 

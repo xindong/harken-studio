@@ -3,7 +3,7 @@
 #import <Foundation/Foundation.h>
 #import <ServiceManagement/ServiceManagement.h>
 
-namespace VNH {
+namespace harken::hub {
 
 namespace {
 

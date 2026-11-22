@@ -4,7 +4,7 @@
 #include <cstdint>
 #include <cmath>
 
-namespace VNX {
+namespace harken::studio {
 
 struct LR2Filter
 {

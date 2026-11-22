@@ -16,7 +16,7 @@
 class QCheckBox;
 class QVBoxLayout;
 
-namespace VNX {
+namespace harken::studio {
 
 class TimeSeriesChart;
 class MonitorCaptureControlStrip;
@@ -62,7 +62,6 @@ public:
     void restoreParams(const QVariantMap& params);
 
     MonitorCursorReject lockFromChartX(int logicalX);
-    bool advanceLiveForTest(qint64 executeFrame);
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
@@ -93,4 +92,4 @@ private:
     bool trackingPress_ = false;
 };
 
-} // namespace VNX
+} // namespace harken::studio

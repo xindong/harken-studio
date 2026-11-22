@@ -8,6 +8,7 @@
 #include "Transactions/InstallPackageCache.h"
 #include "Transactions/TransactionJournal.h"
 #include "Versions/VersionScanner.h"
+#include "Versions/IntegrityChecker.h"
 
 #include <QDir>
 #include <QFile>
@@ -17,7 +18,7 @@
 #include <QLockFile>
 #include <QRegularExpression>
 
-namespace VNH {
+namespace harken::hub {
 
 namespace {
 
@@ -72,16 +73,16 @@ UninstallOutcome fail(const QString& transactionId, const QString& buildId,
 }
 
 UninstallOutcome UninstallExecutor::run(const QString& buildId,
-                                        const QDateTime& now)
+                                        const QDateTime& now, const QString& reviewedSnapshot)
 {
     return run(buildId, now, [](const QString& directory) {
         return runningExecutablesUnder(directory);
-    });
+    }, reviewedSnapshot);
 }
 
 UninstallOutcome UninstallExecutor::run(const QString& buildId,
                                         const QDateTime& now,
-                                        const ProcessProbe& probe)
+                                        const ProcessProbe& probe, const QString& reviewedSnapshot)
 {
     UninstallOutcome outcome;
     outcome.buildId = buildId;
@@ -129,6 +130,9 @@ UninstallOutcome UninstallExecutor::run(const QString& buildId,
                     now);
 
     const QString installPath = record->installPath;
+    if (!reviewedSnapshot.isEmpty() && IntegrityChecker::snapshot(installPath).hash != reviewedSnapshot)
+        return fail(transactionId, buildId, QStringLiteral("ReviewChanged"),
+                    QStringLiteral("Installed files changed; review the operation again"), now);
     const QFileInfo installInfo(installPath);
     if (!installInfo.exists() || !installInfo.isDir()) {
         QString indexError;
@@ -171,6 +175,9 @@ UninstallOutcome UninstallExecutor::run(const QString& buildId,
                         .arg(running.first()),
                     now);
 
+    if (!reviewedSnapshot.isEmpty() && IntegrityChecker::snapshot(installPath).hash != reviewedSnapshot)
+        return fail(transactionId, buildId, QStringLiteral("ReviewChanged"),
+                    QStringLiteral("Installed files changed; review the operation again"), now);
     TransactionJournal::append(transactionId, kProduct, buildId,
                                QStringLiteral("Uninstalling"), QString(), now);
 

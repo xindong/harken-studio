@@ -12,7 +12,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace VNX::VariableRangeEditing {
+namespace harken::studio::VariableRangeEditing {
 namespace {
 
 float remapX(float x, float oldMin, float oldMax, float newMin, float newMax)

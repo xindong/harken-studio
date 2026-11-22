@@ -30,6 +30,7 @@
 #include "Components/VSelection.h"
 #include "Components/VSound.h"
 #include "Components/VAttenuation.h"
+#include "Components/VConversion.h"
 #include "Components/VEffect.h"
 
 #include <QFile>
@@ -45,7 +46,7 @@
 #include <functional>
 #include <limits>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 
@@ -157,7 +158,7 @@ bool hasPlayableDefinitionComponentAuthority(ProjectItem::Type type,
                                              const QJsonObject& components)
 {
     if (!PlayablePropertyAuthoringV1::isDefinitionType(type)) return false;
-    for (const auto& field : VNX::PlayablePropertyAuthoringV1::fields()) {
+    for (const auto& field : harken::studio::PlayablePropertyAuthoringV1::fields()) {
         if (PlayablePropertyAuthoringV1::isComponentStored(field.id)) continue;
         const QJsonObject component = components.value(
             QLatin1String(field.component)).toObject();
@@ -248,7 +249,7 @@ bool ProjectSerializer::registerWriteItem(const ProjectItem& item,
                                  item.guid, documentId, item.name};
     referencesByGuid_.insert(item.guid, target);
     referencesByObjectId_.insert(item.objectID, target);
-    if (!harkenstudio::IsNull(item.runtimeId())) {
+    if (!harken::studio::types::IsNull(item.runtimeId())) {
         if (referencesByRuntimeStableId_.contains(item.runtimeId())) {
             lastError_ = QStringLiteral("Project contains a duplicate runtime identity: %1")
                              .arg(objectIdString(item.runtimeId()));
@@ -489,11 +490,11 @@ uint32_t ProjectSerializer::transientObjectIdForGuid(const QUuid& guid) const
     return target == referencesByGuid_.cend() ? 0 : target->objectId;
 }
 
-harkenstudio::ObjectId ProjectSerializer::transientRuntimeStableIdForGuid(
+harken::studio::types::ObjectId ProjectSerializer::transientRuntimeStableIdForGuid(
     const QUuid& guid) const
 {
     const auto target = referencesByGuid_.constFind(guid);
-    return target == referencesByGuid_.cend() ? harkenstudio::ObjectId{} : target->runtimeId();
+    return target == referencesByGuid_.cend() ? harken::studio::types::ObjectId{} : target->runtimeId();
 }
 
 uint32_t ProjectSerializer::transientObjectId(const QUuid& guid) const
@@ -532,9 +533,9 @@ QJsonObject ProjectSerializer::persistentReference(
 }
 
 QJsonObject ProjectSerializer::persistentRuntimeReference(
-    harkenstudio::ObjectId runtimeStableId, ProjectItem::Type expectedType) const
+    harken::studio::types::ObjectId runtimeStableId, ProjectItem::Type expectedType) const
 {
-    if (harkenstudio::IsNull(runtimeStableId)) return {};
+    if (harken::studio::types::IsNull(runtimeStableId)) return {};
     const auto target = referencesByRuntimeStableId_.constFind(runtimeStableId);
     if (target == referencesByRuntimeStableId_.cend()) {
         lastError_ = QStringLiteral("Project contains a reference to a missing object");
@@ -583,7 +584,7 @@ bool ProjectSerializer::transientReference(
 
 bool ProjectSerializer::transientRuntimeReference(
     const QJsonValue& value, ProjectItem::Type expectedType,
-    harkenstudio::ObjectId* runtimeStableId) const
+    harken::studio::types::ObjectId* runtimeStableId) const
 {
     if (!runtimeStableId) return false;
     if (value.isNull()) {
@@ -593,7 +594,7 @@ bool ProjectSerializer::transientRuntimeReference(
     uint32_t objectId = 0;
     if (!transientReference(value, expectedType, &objectId)) return false;
     const auto target = referencesByObjectId_.constFind(objectId);
-    if (target == referencesByObjectId_.cend() || harkenstudio::IsNull(target->runtimeId())) {
+    if (target == referencesByObjectId_.cend() || harken::studio::types::IsNull(target->runtimeId())) {
         lastError_ = QStringLiteral("Project reference target has no runtime identity");
         return false;
     }
@@ -959,7 +960,7 @@ bool ProjectSerializer::rewritePlayableReferenceFields(QJsonObject* properties,
 {
     if (!properties) return false;
     using Role = harkenplayableproperties::PlayablePropertyReferenceRoleV1;
-    for (const auto& field : VNX::PlayablePropertyAuthoringV1::fields()) {
+    for (const auto& field : harken::studio::PlayablePropertyAuthoringV1::fields()) {
         const QLatin1String key(field.jsonKey);
         if (!properties->contains(key)) continue;
         if (field.referenceRole == Role::OutputBus
@@ -971,9 +972,9 @@ bool ProjectSerializer::rewritePlayableReferenceFields(QJsonObject* properties,
             if (encode) {
                 const QJsonValue value = properties->value(key);
                 if (!value.isString()) return false;
-                harkenstudio::ObjectId stableId{};
+                harken::studio::types::ObjectId stableId{};
                 if (!parseObjectIdJson(value, &stableId)) return false;
-                if (harkenstudio::IsNull(stableId)) {
+                if (harken::studio::types::IsNull(stableId)) {
                     (*properties)[key] = QJsonValue::Null;
                     continue;
                 }
@@ -982,7 +983,7 @@ bool ProjectSerializer::rewritePlayableReferenceFields(QJsonObject* properties,
                 if (reference.isEmpty()) return false;
                 (*properties)[key] = reference;
             } else {
-                harkenstudio::ObjectId stableId = {};
+                harken::studio::types::ObjectId stableId = {};
                 if (!transientRuntimeReference(
                         properties->value(key), expectedType, &stableId))
                     return false;
@@ -1227,6 +1228,24 @@ QJsonObject ProjectSerializer::projectDocument(const QString& filePath,
         {"renderSampleRate", project.sampleRate},
         {"channelConfig", static_cast<int>(project.channelConfig)},
     };
+    QJsonObject defaultConversions;
+    for (auto it = project.defaultConversionRefs.cbegin(); it != project.defaultConversionRefs.cend(); ++it) {
+        if (!ProjectPlatformSemantics::find(project.platforms, it.key())) {
+            lastError_ = QStringLiteral("Default Conversion references an unknown platform");
+            return {};
+        }
+        const auto target = referencesByGuid_.constFind(it.value());
+        if (target == referencesByGuid_.cend()) {
+            lastError_ = QStringLiteral("Default Conversion does not exist");
+            return {};
+        }
+        const auto reference = persistentReference(target->objectId, ProjectItem::Type::Conversion);
+        if (reference.isEmpty()) return {};
+        defaultConversions[ProjectPlatformSemantics::idString(it.key())] = reference;
+    }
+    auto audio = root["audio"].toObject();
+    audio["defaultConversions"] = defaultConversions;
+    root["audio"] = audio;
     root["deployPlatforms"] = ProjectPlatformSemantics::platformsToJson(project.platforms);
 
     emit progressChanged(20, tr("Saving project structure..."));
@@ -1578,6 +1597,19 @@ bool ProjectSerializer::loadProject(const QString& filePath, ProjectData& destin
     if (!ProjectPlatformSemantics::platformsFromJson(root["deployPlatforms"], &project.platforms, &lastError_))
         return false;
     const QJsonObject audio = root["audio"].toObject();
+    project.defaultConversionRefs.clear();
+    const auto defaultConversions = audio.value(QStringLiteral("defaultConversions")).toObject();
+    for (auto it = defaultConversions.begin(); it != defaultConversions.end(); ++it) {
+        const auto platform = ProjectPlatformSemantics::parseId(it.key());
+        if (!platform || !ProjectPlatformSemantics::find(project.platforms, *platform)) {
+            lastError_ = QStringLiteral("Default Conversion references an unknown platform");
+            return false;
+        }
+        uint32_t objectId = 0;
+        if (!transientReference(it.value(), ProjectItem::Type::Conversion, &objectId))
+            return false;
+        project.defaultConversionRefs.insert(*platform, QUuid(it.value().toObject().value(QStringLiteral("id")).toString()));
+    }
     if (audio.contains("renderSampleRate")) {
         project.sampleRate = audio["renderSampleRate"].toInt(project.sampleRate);
     }
@@ -1809,6 +1841,10 @@ QJsonObject ProjectSerializer::itemDocument(const ProjectItem& item,
     case ItemTypeCatalog::Bucket::Attenuations:
         content = attenuationPackToJson(item);
         type = QStringLiteral("project.attenuation");
+        break;
+    case ItemTypeCatalog::Bucket::Conversions:
+        content = conversionPackToJson(item);
+        type = QStringLiteral("project.conversion");
         break;
     case ItemTypeCatalog::Bucket::Effects:
         content = effectPackToJson(item);
@@ -2220,6 +2256,47 @@ bool ProjectSerializer::attenuationPackFromJson(const QJsonObject& json, Project
     return true;
 }
 
+QJsonObject ProjectSerializer::conversionPackToJson(const ProjectItem& item) const
+{
+    if (item.type != ProjectItem::Type::Conversion) return {};
+    const auto* conversion = item.comp<VConversion>();
+    if (!conversion) return {};
+    QJsonObject obj;
+    writeS3RootIdentity(obj, item);
+    obj[QStringLiteral("parentRef")] = persistentParentReference(item);
+    if (obj.value(QStringLiteral("parentRef")).toObject().isEmpty()) return {};
+    obj[QStringLiteral("components")] = QJsonObject{
+        {componentTypeName(ComponentType::Conversion), conversion->toJson()}};
+    return obj;
+}
+
+bool ProjectSerializer::conversionPackFromJson(const QJsonObject& json, ProjectItem& item) const
+{
+    if (!ProjectDocument::validateFieldGroupAuthoring(json, &lastError_)
+        || json.value(QStringLiteral("type")).toString() != QStringLiteral("Conversion"))
+        return false;
+    item.type = ProjectItem::Type::Conversion;
+    if (!readS3RootIdentity(json, item, "Conversion") || item.guid.isNull()) return false;
+    if (!referencesByGuid_.contains(item.guid)
+        && !registerReadGuid(item.guid, item.type, item.guid, item.name))
+        return false;
+    const auto registered = referencesByGuid_.constFind(item.guid);
+    if (registered == referencesByGuid_.cend() || registered->type != item.type) return false;
+    item.objectID = registered->objectId;
+    if (!json.value(QStringLiteral("parentRef")).isObject()
+        || !loadParentReference(json.value(QStringLiteral("parentRef")).toObject(), &item.parentRef))
+        return false;
+    item.attachDefaultComponents();
+    const auto components = json.value(QStringLiteral("components")).toObject();
+    const auto value = components.value(componentTypeName(ComponentType::Conversion));
+    if (!value.isObject() || !item.comp<VConversion>()->fromJson(value.toObject())) {
+        lastError_ = QStringLiteral("Invalid Conversion fields");
+        return false;
+    }
+    item.children.clear();
+    return true;
+}
+
 QJsonObject ProjectSerializer::effectPackToJson(const ProjectItem& item) const
 {
     if (item.type != ProjectItem::Type::Effect)
@@ -2363,7 +2440,7 @@ bool ProjectSerializer::variablePackFromJson(const QJsonObject& json, ProjectIte
 QJsonObject ProjectSerializer::busPackToJson(
     const ProjectItem& busItem) const
 {
-    const auto* bc = busItem.comp<VNX::VBus>();
+    const auto* bc = busItem.comp<harken::studio::VBus>();
     if (!bc)
     {
         qWarning() << "[BusPack] Bus ProjectItem missing VBus:"

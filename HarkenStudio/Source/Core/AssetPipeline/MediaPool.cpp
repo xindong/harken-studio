@@ -1,14 +1,12 @@
 
 #include "MediaPool.h"
 #include "AssetRegistry.h"
-#include "AssetConverter.h"
 #include "../ProjectPlatformActivity.h"
 #include "AssetImporter.h"
 #include "SourceFileSystem.h"
 #include "PathUtils.h"
-#include "PlatformProfile.h"
 #include "WaveformCache.h"
-#include "RuntimeBridge/PackagingBridge.h"
+#include "Core/Build/PackagingBridge.h"
 #include "../ProjectManager.h"
 #include "../PlatformContextService.h"
 #include <QFutureWatcher>
@@ -22,7 +20,7 @@
 #include <QtConcurrent>
 #include <utility>
 
-namespace VNX {
+namespace harken::studio {
 
 
 MediaPool& MediaPool::instance()
@@ -47,14 +45,6 @@ void MediaPool::beginSourceFileChange()
     for (auto& future : sourceFileFutures_)
         future.waitForFinished();
     sourceFileFutures_.clear();
-    for (const auto& batch : conversionBatches_) {
-        batch->converter->cancelAllJobs();
-        for (const auto sourceID : batch->sourceIDs)
-            deferredConversions_[batch->platform].insert(sourceID);
-    }
-    for (const auto& batch : conversionBatches_)
-        batch->future.waitForFinished();
-    conversionBatches_.clear();
     asyncRefreshRunning_.store(false);
     const auto replacements = replacementBatches_;
     for (const auto& batch : replacements)
@@ -74,7 +64,6 @@ void MediaPool::endSourceFileChange()
     const auto paths = std::exchange(deferredSourceRefreshPaths_, {});
     const auto waveforms = std::exchange(deferredWaveformIds_, {});
     const auto replacements = std::exchange(deferredReplacements_, {});
-    const auto conversions = std::exchange(deferredConversions_, {});
     const bool refreshStatus = std::exchange(deferredStatusRefresh_, false);
     if (!resume)
         return;
@@ -86,8 +75,6 @@ void MediaPool::endSourceFileChange()
         refreshStatusCacheAsync(deferredStatusPlatform_);
     if (!replacements.isEmpty())
         batchReplaceAsync(replacements);
-    for (auto it = conversions.cbegin(); it != conversions.cend(); ++it)
-        batchConvert(it.value().values(), it.key());
 }
 
 void MediaPool::trackSourceFileTask(const QFuture<void>& future)
@@ -140,7 +127,6 @@ MediaPool::MediaPool(QObject* parent)
         deferredSourceRefreshPaths_.clear();
         deferredWaveformIds_.clear();
         deferredReplacements_.clear();
-        deferredConversions_.clear();
         deferredStatusRefresh_ = false;
         ++sourceFileGeneration_;
         ++sourceRefreshGeneration_;
@@ -197,11 +183,9 @@ MediaInfo MediaPool::getMediaInfo(uint32_t sourceID) const
     info.relativePath   = asset->relativePath;
     info.absolutePath   = asset->absolutePath;
     info.metadata       = asset->metadata;
-    info.settings       = asset->settings;
-    info.platformCaches = asset->platformCaches;
     info.isOrphaned     = asset->isOrphaned;
 
-    const QString runtimePath = HarkenEditor::Bridge::mediaRegistryFindPath(sourceID);
+    const QString runtimePath = harken::studio::bridge::mediaRegistryFindPath(sourceID);
     if (!runtimePath.isEmpty()) {
         info.absolutePath = runtimePath;
     }
@@ -251,7 +235,7 @@ MediaStatus MediaPool::computeStatus(uint32_t sourceID, ProjectPlatformId platfo
     return computeStatusInternal(sourceID, platform);
 }
 
-MediaStatus MediaPool::computeStatusInternal(uint32_t sourceID, ProjectPlatformId platform) const
+MediaStatus MediaPool::computeStatusInternal(uint32_t sourceID, ProjectPlatformId) const
 {
     const AssetInfo* asset = AssetRegistry::instance().getAsset(sourceID);
     if (!asset)
@@ -263,15 +247,7 @@ MediaStatus MediaPool::computeStatusInternal(uint32_t sourceID, ProjectPlatformI
     if (asset->isOrphaned || !isReferencedByAnyObject(sourceID))
         return MediaStatus::Orphaned;
 
-    auto cacheIt = asset->platformCaches.find(platform);
-    if (cacheIt == asset->platformCaches.end() || !cacheIt->valid) {
-        return MediaStatus::Imported;
-    }
-
-    if (!AssetRegistry::instance().isCacheValid(sourceID, platform))
-        return MediaStatus::Outdated;
-
-    return MediaStatus::Converted;
+    return MediaStatus::Available;
 }
 
 MediaStatus MediaPool::cachedStatus(uint32_t sourceID) const
@@ -280,7 +256,7 @@ MediaStatus MediaPool::cachedStatus(uint32_t sourceID) const
     if (statusCachePlatform_ == PlatformContextService::instance().context().primary
         && it != statusCache_.end())
         return it.value();
-    return AssetRegistry::instance().contains(sourceID) ? MediaStatus::Imported : MediaStatus::Missing;
+    return AssetRegistry::instance().contains(sourceID) ? MediaStatus::Available : MediaStatus::Missing;
 }
 
 QMap<uint32_t, MediaStatus> MediaPool::batchGetStatus(
@@ -360,12 +336,11 @@ void MediaPool::commitReplacements(const QVector<PendingReplace>& pending)
             pr.sourceID, pr.newMeta, pr.destPath, pr.contentHash,
             static_cast<uint64_t>(pr.lastModified)))
             emit AssetRegistry::instance().assetModified(pr.sourceID);
-        AssetRegistry::instance().invalidateAllCaches(pr.sourceID);
         WaveformCache::remove(pr.destPath);
         refreshWaveform(pr.sourceID);
-        HarkenEditor::Bridge::mediaRegistryRegister(pr.sourceID, pr.destPath);
+        harken::studio::bridge::mediaRegistryRegister(pr.sourceID, pr.destPath);
 
-        emit mediaStatusChanged(pr.sourceID, MediaStatus::Imported);
+        emit mediaStatusChanged(pr.sourceID, MediaStatus::Available);
         emit mediaHotSwapped(pr.sourceID, pr.destPath);
     }
 }
@@ -410,77 +385,6 @@ QVector<BatchReplaceResult> MediaPool::batchReplace(
 }
 
 
-void MediaPool::batchConvert(const QVector<uint32_t>& sourceIDs, ProjectPlatformId platform)
-{
-    if (sourceFileChangeDepth_ != 0) {
-        for (const auto sourceID : sourceIDs)
-            deferredConversions_[platform].insert(sourceID);
-        return;
-    }
-    const auto activity = ProjectPlatformActivity::acquire();
-    if (sourceRefreshWatcher_) {
-        for (const auto sourceID : sourceIDs)
-            deferredConversions_[platform].insert(sourceID);
-        const auto generation = sourceRefreshGeneration_;
-        const auto revision = AssetRegistry::instance().buildSnapshot(false).platformRevisions.value(platform);
-        connect(sourceRefreshWatcher_, &QFutureWatcherBase::finished, this,
-            [this, sourceIDs, platform, generation, revision, activity]() {
-                if (generation != sourceRefreshGeneration_ || revision.isNull()) return;
-                auto pending = deferredConversions_.find(platform);
-                if (pending != deferredConversions_.end()) {
-                    for (const auto sourceID : sourceIDs)
-                        pending->remove(sourceID);
-                    if (pending->isEmpty())
-                        deferredConversions_.erase(pending);
-                }
-                const auto current = AssetRegistry::instance().buildSnapshot(false);
-                if (current.platformRevisions.value(platform) == revision) batchConvert(sourceIDs, platform);
-            });
-        return;
-    }
-    const auto snapshot = AssetRegistry::instance().buildSnapshot();
-    auto converter = std::make_shared<AssetConverter>();
-    converter->setBuildSnapshot(snapshot);
-    auto batch = std::make_shared<ConversionBatch>();
-    batch->converter = converter;
-    batch->sourceIDs = sourceIDs;
-    batch->platform = platform;
-    const auto generation = sourceFileGeneration_;
-    if (platform == PlatformContextService::instance().context().primary) {
-        for (uint32_t id : sourceIDs) emit mediaStatusChanged(id, MediaStatus::Converting);
-    }
-    auto* watcher = new QFutureWatcher<QList<ConversionResult>>(this);
-    connect(watcher, &QFutureWatcher<QList<ConversionResult>>::finished, this,
-            [this, watcher, batch, snapshot, platform, activity, generation]() {
-        const auto results = watcher->result();
-        watcher->deleteLater();
-        conversionBatches_.removeAll(batch);
-        if (generation != sourceFileGeneration_)
-            return;
-        const auto current = AssetRegistry::instance().buildSnapshot();
-        if (current.registrySession != snapshot.registrySession
-            || current.platformRevisions.value(platform).isNull()
-            || current.platformRevisions.value(platform) != snapshot.platformRevisions.value(platform)) return;
-        int succeeded = 0, failed = 0;
-        for (const auto& result : results) {
-            const auto request = snapshot.request(result.sourceID, platform);
-            if (!request || !AssetRegistry::instance().accepts(*request)) continue;
-            if (result.success) ++succeeded;
-            else ++failed;
-            if (platform == PlatformContextService::instance().context().primary)
-                emit mediaStatusChanged(result.sourceID,
-                    result.success ? MediaStatus::Converted : MediaStatus::Error);
-        }
-        refreshStatusCacheAsync();
-        emit batchOperationComplete(succeeded, failed);
-    });
-    const auto future = converter->convertBatchAsync(sourceIDs, platform);
-    batch->future = QFuture<void>(future);
-    conversionBatches_.append(batch);
-    watcher->setFuture(future);
-}
-
-
 PoolStats MediaPool::getStats(ProjectPlatformId platform) const
 {
     if (platform.isNull()) platform = PlatformContextService::instance().context().primary;
@@ -496,12 +400,10 @@ PoolStats MediaPool::getStats(ProjectPlatformId platform) const
 
         stats.totalOriginalBytes += asset->metadata.fileSize;
 
-        MediaStatus s = statusCache_.value(id, MediaStatus::Imported);
+        MediaStatus s = statusCache_.value(id, MediaStatus::Available);
         switch (s) {
-            case MediaStatus::Imported:   ++stats.importedCount; break;
-            case MediaStatus::Converted:  ++stats.convertedCount; break;
+            case MediaStatus::Available:   ++stats.availableCount; break;
             case MediaStatus::Missing:    ++stats.missingCount; break;
-            case MediaStatus::Outdated:   ++stats.outdatedCount; break;
             case MediaStatus::Orphaned:   ++stats.orphanedCount; break;
             default: break;
         }
@@ -523,16 +425,6 @@ bool MediaPool::isSourceFileMissing(const AssetInfo& info) const
     }
 
     return !QFileInfo(absPath).isFile();
-}
-
-bool MediaPool::hasAnyValidCache(const AssetInfo& info) const
-{
-    for (auto it = info.platformCaches.constBegin();
-         it != info.platformCaches.constEnd(); ++it) {
-        if (it->valid)
-            return true;
-    }
-    return false;
 }
 
 bool MediaPool::isReferencedByAnyObject(uint32_t sourceID) const
@@ -655,21 +547,7 @@ void MediaPool::refreshStatusCacheAsync(ProjectPlatformId platform)
                 continue;
             }
 
-            const auto cache = snap.platformCaches.constFind(platform);
-            if (cache == snap.platformCaches.cend() || !cache->valid) {
-                newCache[id] = MediaStatus::Imported;
-                continue;
-            }
-
-            if (snap.contentHash.isEmpty())
-                snap.contentHash = AssetImporter::computeContentHash(absPath);
-            const auto request = mediaSnapshot.request(id, platform);
-            if (!request || !request->cacheValid()) {
-                newCache[id] = MediaStatus::Outdated;
-                continue;
-            }
-
-            newCache[id] = MediaStatus::Converted;
+            newCache[id] = MediaStatus::Available;
         }
 
         QMetaObject::invokeMethod(this, [this, platform, startGeneration, sourceGeneration,
@@ -791,7 +669,6 @@ void MediaPool::synchronizeSourceFiles(const QStringList& paths)
                 if (registry.getAsset(sourceID)->contentHash == hash)
                     emit registry.assetModified(sourceID);
             } else {
-                registry.invalidateAllCaches(sourceID);
                 emit registry.assetModified(sourceID);
             }
         } else if (QFileInfo(path).isFile()) {
@@ -805,7 +682,7 @@ void MediaPool::synchronizeSourceFiles(const QStringList& paths)
             info.absolutePath = path;
             info.lastModified = QFileInfo(path).lastModified().toSecsSinceEpoch();
             if (registry.registerAsset(info, false)) {
-                HarkenEditor::Bridge::mediaRegistryRegister(info.sourceID, path);
+                harken::studio::bridge::mediaRegistryRegister(info.sourceID, path);
                 refreshWaveform(info.sourceID);
             }
         }
@@ -877,7 +754,7 @@ void MediaPool::synchronizeSourceFilesAsync(const QStringList& paths)
             info.contentHash = source.contentHash;
             info.lastModified = static_cast<uint64_t>(source.modified.toSecsSinceEpoch());
             if (registry.registerAsset(info, false)) {
-                HarkenEditor::Bridge::mediaRegistryRegister(info.sourceID, source.path);
+                harken::studio::bridge::mediaRegistryRegister(info.sourceID, source.path);
                 refreshWaveform(info.sourceID);
             }
         }
@@ -944,13 +821,12 @@ void MediaPool::commitSourceFile(uint32_t sourceID, const QString& absolutePath,
     const bool changed = AssetRegistry::instance().updateSourceFile(
         sourceID, metadata, absolutePath, contentHash, lastModified);
     if (changed) {
-        AssetRegistry::instance().invalidateAllCaches(sourceID);
         WaveformCache::remove(absolutePath);
     }
     refreshWaveform(sourceID);
-    HarkenEditor::Bridge::mediaRegistryRegister(sourceID, absolutePath);
+    harken::studio::bridge::mediaRegistryRegister(sourceID, absolutePath);
     if (changed)
-        emit mediaStatusChanged(sourceID, MediaStatus::Imported);
+        emit mediaStatusChanged(sourceID, MediaStatus::Available);
     emit mediaHotSwapped(sourceID, absolutePath);
 }
 

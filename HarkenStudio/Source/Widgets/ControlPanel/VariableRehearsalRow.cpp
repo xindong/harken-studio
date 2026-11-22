@@ -16,7 +16,7 @@
 #include <QLabel>
 #include <QScopedValueRollback>
 
-namespace VNX {
+namespace harken::studio {
 
 VariableRehearsalRow::VariableRehearsalRow(const ProjectItem* item, TableWidget* table)
     : QWidget(table->rowsWidget())

@@ -4,7 +4,7 @@
 #include "Core/FontManager.h"
 #include "Widgets/Common/PaneSection.h"
 #include "Widgets/Common/PaneSectionStack.h"
-#include "SourcesTreeWidget.h"
+#include "ResourcesTreeWidget.h"
 #include "Core/AppSettings.h"
 #include "Core/AssetPipeline/AssetRegistry.h"
 #include "Core/AssetPipeline/AssetTypes.h"
@@ -34,17 +34,17 @@
 #include <algorithm>
 #include <functional>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 
-class SourceTreeItem : public QTreeWidgetItem
+class ResourceTreeItem : public QTreeWidgetItem
 {
 public:
     bool operator<(const QTreeWidgetItem& other) const override
     {
-        const bool folder = data(0, kSourceFolderRole).toBool();
-        const bool otherFolder = other.data(0, kSourceFolderRole).toBool();
+        const bool folder = data(0, kResourceFolderRole).toBool();
+        const bool otherFolder = other.data(0, kResourceFolderRole).toBool();
         return folder != otherFolder ? folder
             : text(0).compare(other.text(0), Qt::CaseInsensitive) < 0;
     }
@@ -59,69 +59,69 @@ ProjectExplorer::ProjectExplorer(QWidget* parent)
     initPanel();
 
     connect(ProjectManager::instance().fileWatcher(), &FileWatcher::sourcesChanged,
-            this, &ProjectExplorer::rebuildSourcesTree);
+            this, &ProjectExplorer::rebuildResourcesTree);
 
     auto& registry = AssetRegistry::instance();
     connect(&registry, &AssetRegistry::sourceFoldersChanged,
-            this, &ProjectExplorer::rebuildSourcesTree);
+            this, &ProjectExplorer::rebuildResourcesTree);
     connect(&registry, &AssetRegistry::assetRegistered, this, [this](uint32_t) {
-        rebuildSourcesTree();
+        rebuildResourcesTree();
     });
     connect(&registry, &AssetRegistry::assetUnregistered, this, [this](uint32_t) {
-        rebuildSourcesTree();
+        rebuildResourcesTree();
     });
     connect(&registry, &AssetRegistry::assetModified, this, [this](uint32_t sourceId) {
-        if (QTreeWidgetItem* row = sourceRows_.value(sourceId, nullptr)) {
+        if (QTreeWidgetItem* row = resourceRows_.value(sourceId, nullptr)) {
             if (const AssetInfo* asset = AssetRegistry::instance().getAsset(sourceId)) {
                 if (AssetRegistry::instance().sourceFileExists(sourceId)
-                    && row->data(0, kSourcePathRole).toString() == asset->relativePath)
-                    updateSourceRow(row, *asset);
+                    && row->data(0, kResourcePathRole).toString() == asset->relativePath)
+                    updateResourceRow(row, *asset);
                 else
-                    rebuildSourcesTree();
+                    rebuildResourcesTree();
             }
         } else {
-            rebuildSourcesTree();
+            rebuildResourcesTree();
         }
     });
     connect(&ProjectManager::instance(), &ProjectManager::projectOpened, this,
-            [this](ProjectData*) { rebuildSourcesTree(); });
+            [this](ProjectData*) { rebuildResourcesTree(); });
     connect(&ProjectManager::instance(), &ProjectManager::projectClosed, this,
-            [this]() { rebuildSourcesTree(); });
+            [this]() { rebuildResourcesTree(); });
     connect(&ThemeManager::instance(), &ThemeManager::themeChanged, this, [this]() {
         const int extent = ThemeManager::instance().metrics().iconExtent;
-        sourcesTree_->setIconSize(QSize(extent, extent));
+        resourcesTree_->setIconSize(QSize(extent, extent));
     });
     connect(&ThemeManager::instance(), &ThemeManager::appearanceChanged, this, [this]() {
         auto& theme = ThemeManager::instance();
-        const auto sourceIcon = theme.resolveIcon(QString::fromLatin1(ThemeAssetIds::AudioSource)).icon;
+        const auto resourceIcon = theme.resolveIcon(QString::fromLatin1(ThemeAssetIds::AudioSource)).icon;
         const auto folderIcon = theme.resolveToggleIcon(
             QString::fromLatin1(ThemeAssetIds::TreeFolderOpen),
             QString::fromLatin1(ThemeAssetIds::TreeFolderClosed)).icon;
-        const QSignalBlocker blocker(sourcesTree_->model());
-        for (auto* row : std::as_const(sourceRows_))
-            row->setIcon(0, sourceIcon);
-        for (auto* row : std::as_const(sourceFolders_))
+        const QSignalBlocker blocker(resourcesTree_->model());
+        for (auto* row : std::as_const(resourceRows_))
+            row->setIcon(0, resourceIcon);
+        for (auto* row : std::as_const(resourceFolders_))
             row->setIcon(0, folderIcon);
-        sourcesTree_->viewport()->update();
+        resourcesTree_->viewport()->update();
     });
     connect(&AppSettings::instance(), &AppSettings::fontSizeChanged, this,
             [this](PanelId panelId, int size) {
-                if (panelId != PanelId::Explorer || !sourcesTree_)
+                if (panelId != PanelId::Explorer || !resourcesTree_)
                     return;
                 QFont font = FontManager::instance().getFont(FontRole::Body, size);
-                sourcesTree_->setFont(font);
+                resourcesTree_->setFont(font);
             });
     connect(&FontManager::instance(), &FontManager::fontChanged, this, [this] {
-        sourcesTree_->setFont(FontManager::instance().getFont(
+        resourcesTree_->setFont(FontManager::instance().getFont(
             FontRole::Body, AppSettings::instance().panelFontSize(PanelId::Explorer)));
     });
-    if (sourcesTree_) {
+    if (resourcesTree_) {
         QFont font = FontManager::instance().getFont(
             FontRole::Body, AppSettings::instance().panelFontSize(PanelId::Explorer));
-        sourcesTree_->setFont(font);
+        resourcesTree_->setFont(font);
     }
 
-    rebuildSourcesTree();
+    rebuildResourcesTree();
 }
 
 ProjectExplorer::~ProjectExplorer() = default;
@@ -133,7 +133,7 @@ void ProjectExplorer::setupPanelChrome()
     ThemeLayout::spacing(layout, ThemeLayout::Space::Section);
     layout->addWidget(searchBox_);
     connect(searchBox_, &QLineEdit::textChanged, this, [this]() {
-        applySourcesVisibility();
+        applyResourcesVisibility();
     });
 
     auto* sections = new PaneSectionStack(QStringLiteral("Explorer"), this);
@@ -149,53 +149,53 @@ void ProjectExplorer::setupPanelChrome()
     assetsLayout->addWidget(treeWidget_, 1);
     treeWidget_->setMinimumSize(0, 0);
 
-    sourcesSection_ = sections->addSection(tr("Sources"), QStringLiteral("sources"), 200);
-    sourcesSection_->setObjectName(QStringLiteral("projectSourcesSection"));
-    auto* sourcesLayout = new QVBoxLayout(sourcesSection_->content());
-    sourcesLayout->setContentsMargins(0, 0, 0, 0);
-    sourcesLayout->setSpacing(0);
+    resourcesSection_ = sections->addSection(tr("Resources"), QStringLiteral("sources"), 200);
+    resourcesSection_->setObjectName(QStringLiteral("projectResourcesSection"));
+    auto* resourcesLayout = new QVBoxLayout(resourcesSection_->content());
+    resourcesLayout->setContentsMargins(0, 0, 0, 0);
+    resourcesLayout->setSpacing(0);
 
-    auto* sourcesTree = new SourcesTreeWidget();
-    sourcesTree_ = sourcesTree;
-    sourcesTree->setRootDropTarget(sourcesSection_->header());
-    sourcesTree_->setObjectName("projectSourcesTree");
-    sourcesTree_->setHeaderHidden(true);
-    sourcesTree_->setSelectionMode(QAbstractItemView::ExtendedSelection);
-    sourcesTree_->setDragEnabled(true);
-    sourcesTree_->setDragDropMode(QAbstractItemView::DragDrop);
-    sourcesTree_->setAcceptDrops(true);
-    sourcesTree_->setAnimated(false);
+    auto* resourcesTree = new ResourcesTreeWidget();
+    resourcesTree_ = resourcesTree;
+    resourcesTree->setRootDropTarget(resourcesSection_->header());
+    resourcesTree_->setObjectName("projectResourcesTree");
+    resourcesTree_->setHeaderHidden(true);
+    resourcesTree_->setSelectionMode(QAbstractItemView::ExtendedSelection);
+    resourcesTree_->setDragEnabled(true);
+    resourcesTree_->setDragDropMode(QAbstractItemView::DragDrop);
+    resourcesTree_->setAcceptDrops(true);
+    resourcesTree_->setAnimated(false);
     const int iconExtent = ThemeManager::instance().metrics().iconExtent;
-    sourcesTree_->setIconSize(QSize(iconExtent, iconExtent));
-    sourcesTree_->setExpandsOnDoubleClick(false);
-    sourcesTree_->setRootIsDecorated(true);
-    sourcesTree_->setMinimumSize(0, 0);
-    sourcesTree_->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
-    if (QScrollBar* scrollBar = sourcesTree_->verticalScrollBar()) {
+    resourcesTree_->setIconSize(QSize(iconExtent, iconExtent));
+    resourcesTree_->setExpandsOnDoubleClick(false);
+    resourcesTree_->setRootIsDecorated(true);
+    resourcesTree_->setMinimumSize(0, 0);
+    resourcesTree_->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
+    if (QScrollBar* scrollBar = resourcesTree_->verticalScrollBar()) {
         connect(scrollBar, &QScrollBar::rangeChanged, scrollBar,
                 [scrollBar](int minimum, int maximum) {
                     scrollBar->setEnabled(minimum < maximum);
                 });
         scrollBar->setEnabled(scrollBar->minimum() < scrollBar->maximum());
     }
-    connect(sourcesTree_, &QTreeWidget::itemDoubleClicked, this,
+    connect(resourcesTree_, &QTreeWidget::itemDoubleClicked, this,
             [this](QTreeWidgetItem* item, int) {
                 if (!item)
                     return;
-                const uint32_t sourceId = item->data(0, kSourceIdRole).toUInt();
+                const uint32_t sourceId = item->data(0, kResourceIdRole).toUInt();
                 if (sourceId == 0) {
                     TreeExpansion::toggle(item, QApplication::keyboardModifiers());
                     return;
                 }
-                emit sourceEditorRequested(sourceId);
+                emit fileViewerRequested(sourceId);
             });
-    sourcesLayout->addWidget(sourcesTree_, 1);
+    resourcesLayout->addWidget(resourcesTree_, 1);
 
-    connect(sourcesSection_, &PaneSection::headerContextMenuRequested,
-            sourcesTree, &SourcesTreeWidget::showRootContextMenu);
-    connect(sourcesTree, &SourcesTreeWidget::contentRevealRequested, this, [this]() {
-        sourcesSection_->setExpanded(true);
-        for (auto* row = sourcesTree_->currentItem(); row; row = row->parent()) {
+    connect(resourcesSection_, &PaneSection::headerContextMenuRequested,
+            resourcesTree, &ResourcesTreeWidget::showRootContextMenu);
+    connect(resourcesTree, &ResourcesTreeWidget::contentRevealRequested, this, [this]() {
+        resourcesSection_->setExpanded(true);
+        for (auto* row = resourcesTree_->currentItem(); row; row = row->parent()) {
             if (row->isHidden()) {
                 searchBox_->clear();
                 break;
@@ -218,13 +218,13 @@ void ProjectExplorer::prepareItemReveal(QTreeWidgetItem*)
     assetsSection_->setExpanded(true);
 }
 
-bool ProjectExplorer::pingSource(uint32_t sourceId)
+bool ProjectExplorer::pingResource(uint32_t sourceId)
 {
-    QTreeWidgetItem* row = sourceRows_.value(sourceId, nullptr);
+    QTreeWidgetItem* row = resourceRows_.value(sourceId, nullptr);
     if (!row) return false;
     if (row->isHidden()) searchBox_->clear();
-    sourcesSection_->setExpanded(true);
-    TreeRowPing::ping(sourcesTree_, row);
+    resourcesSection_->setExpanded(true);
+    TreeRowPing::ping(resourcesTree_, row);
     return true;
 }
 
@@ -265,34 +265,34 @@ QIcon ProjectExplorer::iconWithColorChip(const QIcon& base, uint32_t color) cons
     return QIcon(px);
 }
 
-void ProjectExplorer::rebuildSourcesTree()
+void ProjectExplorer::rebuildResourcesTree()
 {
-    if (!sourcesTree_)
+    if (!resourcesTree_)
         return;
 
     QSet<QString> knownFolders;
     QSet<QString> expandedFolders;
     QSet<QString> selectedFolders;
-    QSet<uint32_t> selectedSources;
-    const auto* current = sourcesTree_->currentItem();
-    const uint32_t currentId = current ? current->data(0, kSourceIdRole).toUInt() : 0;
-    const QString currentPath = current ? current->data(0, kSourcePathRole).toString() : QString();
-    const int scroll = sourcesTree_->verticalScrollBar()->value();
-    for (QTreeWidgetItemIterator it(sourcesTree_); *it; ++it) {
+    QSet<uint32_t> selectedResources;
+    const auto* current = resourcesTree_->currentItem();
+    const uint32_t currentId = current ? current->data(0, kResourceIdRole).toUInt() : 0;
+    const QString currentPath = current ? current->data(0, kResourcePathRole).toString() : QString();
+    const int scroll = resourcesTree_->verticalScrollBar()->value();
+    for (QTreeWidgetItemIterator it(resourcesTree_); *it; ++it) {
         auto* row = *it;
-        const QString path = row->data(0, kSourcePathRole).toString();
-        if (row->data(0, kSourceFolderRole).toBool()) {
+        const QString path = row->data(0, kResourcePathRole).toString();
+        if (row->data(0, kResourceFolderRole).toBool()) {
             knownFolders.insert(path);
             if (row->isExpanded()) expandedFolders.insert(path);
             if (row->isSelected()) selectedFolders.insert(path);
         } else if (row->isSelected()) {
-            selectedSources.insert(row->data(0, kSourceIdRole).toUInt());
+            selectedResources.insert(row->data(0, kResourceIdRole).toUInt());
         }
     }
-    const QSignalBlocker blocker(sourcesTree_);
-    sourcesTree_->clear();
-    sourceRows_.clear();
-    sourceFolders_.clear();
+    const QSignalBlocker blocker(resourcesTree_);
+    resourcesTree_->clear();
+    resourceRows_.clear();
+    resourceFolders_.clear();
 
     const QString audioRoot = SourceFileSystem::absolutePath({});
     if (!audioRoot.isEmpty() && QDir(audioRoot).exists()) {
@@ -302,7 +302,7 @@ void ProjectExplorer::rebuildSourcesTree()
             directories.next();
             if (directories.fileInfo().isSymLink())
                 continue;
-            ensureSourcesFolder(QDir(audioRoot).relativeFilePath(directories.filePath()));
+            ensureResourceFolder(QDir(audioRoot).relativeFilePath(directories.filePath()));
         }
     }
 
@@ -315,38 +315,39 @@ void ProjectExplorer::rebuildSourcesTree()
     for (const AssetInfo* asset : assets) {
         if (!asset || !AssetRegistry::instance().sourceFileExists(asset->sourceID))
             continue;
-        auto* row = new SourceTreeItem();
-        updateSourceRow(row, *asset);
-        if (QTreeWidgetItem* folder = ensureSourcesFolder(assetFolderSegments(*asset).join(QLatin1Char('/'))))
+        auto* row = new ResourceTreeItem();
+        updateResourceRow(row, *asset);
+        if (QTreeWidgetItem* folder = ensureResourceFolder(assetFolderSegments(*asset).join(QLatin1Char('/'))))
             folder->addChild(row);
         else
-            sourcesTree_->addTopLevelItem(row);
-        sourceRows_.insert(asset->sourceID, row);
-        row->setSelected(selectedSources.contains(asset->sourceID));
+            resourcesTree_->addTopLevelItem(row);
+        resourceRows_.insert(asset->sourceID, row);
+        row->setSelected(selectedResources.contains(asset->sourceID));
     }
 
-    for (auto it = sourceFolders_.cbegin(); it != sourceFolders_.cend(); ++it) {
+    for (auto it = resourceFolders_.cbegin(); it != resourceFolders_.cend(); ++it) {
         it.value()->setExpanded(!knownFolders.contains(it.key()) || expandedFolders.contains(it.key()));
         it.value()->setSelected(selectedFolders.contains(it.key()));
     }
-    sourcesTree_->sortItems(0, Qt::AscendingOrder);
-    if (auto* restored = currentId ? sourceRows_.value(currentId, nullptr)
-                                  : sourceFolders_.value(currentPath, nullptr))
-        sourcesTree_->setCurrentItem(restored, 0, QItemSelectionModel::NoUpdate);
-    applySourcesVisibility();
-    sourcesTree_->verticalScrollBar()->setValue(scroll);
+    resourcesTree_->sortItems(0, Qt::AscendingOrder);
+    if (auto* restored = currentId ? resourceRows_.value(currentId, nullptr)
+                                  : resourceFolders_.value(currentPath, nullptr))
+        resourcesTree_->setCurrentItem(restored, 0, QItemSelectionModel::NoUpdate);
+    applyResourcesVisibility();
+    resourcesTree_->verticalScrollBar()->setValue(scroll);
 }
 
-void ProjectExplorer::applySourcesVisibility()
+void ProjectExplorer::applyResourcesVisibility()
 {
-    if (!sourcesTree_)
+    if (!resourcesTree_)
         return;
 
     const QString searchText = searchBox_ ? searchBox_->text() : QString();
     const bool hasSearch = !searchText.isEmpty();
 
     std::function<bool(QTreeWidgetItem*, bool)> apply = [&](QTreeWidgetItem* item, bool ancestorMatch) -> bool {
-        const bool matched = !hasSearch || ancestorMatch || item->text(0).contains(searchText, Qt::CaseInsensitive);
+        const bool matched = !hasSearch || ancestorMatch
+            || QFileInfo(item->data(0, kResourcePathRole).toString()).fileName().contains(searchText, Qt::CaseInsensitive);
         bool hasVisibleChild = false;
         for (int i = 0; i < item->childCount(); ++i) {
             if (apply(item->child(i), matched))
@@ -360,23 +361,23 @@ void ProjectExplorer::applySourcesVisibility()
         return visible;
     };
 
-    for (int i = 0; i < sourcesTree_->topLevelItemCount(); ++i)
-        apply(sourcesTree_->topLevelItem(i), false);
+    for (int i = 0; i < resourcesTree_->topLevelItemCount(); ++i)
+        apply(resourcesTree_->topLevelItem(i), false);
 }
 
-void ProjectExplorer::updateSourceRow(QTreeWidgetItem* row, const AssetInfo& asset)
+void ProjectExplorer::updateResourceRow(QTreeWidgetItem* row, const AssetInfo& asset)
 {
     row->setFlags(row->flags() | Qt::ItemIsEditable);
     row->setText(0, assetDisplayName(asset));
     row->setIcon(0, ThemeManager::instance().resolveIcon(
         QString::fromLatin1(ThemeAssetIds::AudioSource)).icon);
-    row->setData(0, kSourceIdRole, asset.sourceID);
-    row->setData(0, kSourcePathRole, PathUtils::normalizeToUnix(asset.relativePath));
-    row->setData(0, kSourceFolderRole, false);
+    row->setData(0, kResourceIdRole, asset.sourceID);
+    row->setData(0, kResourcePathRole, PathUtils::normalizeToUnix(asset.relativePath));
+    row->setData(0, kResourceFolderRole, false);
     row->setToolTip(0, assetTooltip(asset));
 }
 
-QTreeWidgetItem* ProjectExplorer::ensureSourcesFolder(const QString& path)
+QTreeWidgetItem* ProjectExplorer::ensureResourceFolder(const QString& path)
 {
     const QStringList segments = PathUtils::normalizeToUnix(path).split(QLatin1Char('/'), Qt::SkipEmptyParts);
     if (segments.isEmpty())
@@ -386,13 +387,13 @@ QTreeWidgetItem* ProjectExplorer::ensureSourcesFolder(const QString& path)
     QString relative;
     for (const QString& segment : segments) {
         relative = relative.isEmpty() ? segment : relative + QLatin1Char('/') + segment;
-        QTreeWidgetItem* folder = sourceFolders_.value(relative, nullptr);
+        QTreeWidgetItem* folder = resourceFolders_.value(relative, nullptr);
         if (!folder) {
-            folder = new SourceTreeItem();
+            folder = new ResourceTreeItem();
             folder->setFlags(folder->flags() | Qt::ItemIsEditable);
             folder->setText(0, segment);
-            folder->setData(0, kSourcePathRole, relative);
-            folder->setData(0, kSourceFolderRole, true);
+            folder->setData(0, kResourcePathRole, relative);
+            folder->setData(0, kResourceFolderRole, true);
             folder->setToolTip(0, relative);
             folder->setIcon(0, ThemeManager::instance().resolveToggleIcon(
                 QString::fromLatin1(ThemeAssetIds::TreeFolderOpen),
@@ -400,9 +401,9 @@ QTreeWidgetItem* ProjectExplorer::ensureSourcesFolder(const QString& path)
             if (parent)
                 parent->addChild(folder);
             else
-                sourcesTree_->addTopLevelItem(folder);
+                resourcesTree_->addTopLevelItem(folder);
             folder->setExpanded(true);
-            sourceFolders_.insert(relative, folder);
+            resourceFolders_.insert(relative, folder);
         }
         parent = folder;
     }

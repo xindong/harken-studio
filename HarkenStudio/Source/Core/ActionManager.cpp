@@ -6,7 +6,7 @@
 #include <QCoreApplication>
 #include <QDebug>
 
-namespace VNX {
+namespace harken::studio {
 
 
 ActionManager::ActionManager()

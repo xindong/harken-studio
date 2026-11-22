@@ -22,7 +22,7 @@
 
 #include <algorithm>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 
@@ -30,7 +30,7 @@ enum TargetRole { InstanceRole = Qt::UserRole, AddressRole, PortRole, Compatible
 
 }
 
-RemoteConnectPanel::RemoteConnectPanel(HarkenEditor::Bridge::RemoteConnection* connection,
+RemoteConnectPanel::RemoteConnectPanel(harken::studio::bridge::RemoteConnection* connection,
                                        QWidget* parent)
     : QWidget(parent), connection_(connection)
 {
@@ -57,7 +57,7 @@ RemoteConnectPanel::RemoteConnectPanel(HarkenEditor::Bridge::RemoteConnection* c
     footer->removeButton()->hide();
     manual_ = footer->addButton();
     manual_->setObjectName(QStringLiteral("remoteAddConnection"));
-    const auto manualTitle = HarkenEditor::Bridge::RemoteConnection::kLocalConnectionsOnly
+    const auto manualTitle = harken::studio::bridge::RemoteConnection::kLocalConnectionsOnly
         ? tr("Connect to Local Application") : tr("Connect by Address");
     manual_->setToolTip(manualTitle);
     manual_->setAccessibleName(manualTitle);
@@ -96,14 +96,14 @@ RemoteConnectPanel::RemoteConnectPanel(HarkenEditor::Bridge::RemoteConnection* c
     connect(targets_, &QTreeWidget::itemSelectionChanged, this, &RemoteConnectPanel::selectTarget);
     connect(targets_, &QTreeWidget::itemActivated, this, [this] { connectSelectedTarget(); });
     connect(connect_, &QPushButton::clicked, this, &RemoteConnectPanel::connectSelectedTarget);
-    connect(disconnect_, &QPushButton::clicked, connection_, &HarkenEditor::Bridge::RemoteConnection::disconnectTarget);
-    connect(connection_, &HarkenEditor::Bridge::RemoteConnection::stateChanged, this, [this] {
-        if (connection_->state() == HarkenEditor::Bridge::RemoteConnectionState::Connected)
+    connect(disconnect_, &QPushButton::clicked, connection_, &harken::studio::bridge::RemoteConnection::disconnectTarget);
+    connect(connection_, &harken::studio::bridge::RemoteConnection::stateChanged, this, [this] {
+        if (connection_->state() == harken::studio::bridge::RemoteConnectionState::Connected)
             selectedTargetKey_ = connection_->target().instanceId;
         refreshTargets();
     });
-    connect(connection_, &HarkenEditor::Bridge::RemoteConnection::targetsChanged, this, &RemoteConnectPanel::refreshTargets);
-    connect(connection_, &HarkenEditor::Bridge::RemoteConnection::discoveryFailed,
+    connect(connection_, &harken::studio::bridge::RemoteConnection::targetsChanged, this, &RemoteConnectPanel::refreshTargets);
+    connect(connection_, &harken::studio::bridge::RemoteConnection::discoveryFailed,
             this, [this](const QString& error) {
         status_->setText(error);
         QtControlSkin::setSemanticProperty(status_, "textRole", QStringLiteral("error"));
@@ -121,7 +121,7 @@ void RemoteConnectPanel::refreshTargets()
 {
     QSignalBlocker blocker(targets_);
     auto targets = connection_->discoveredTargets();
-    if (connection_->state() == HarkenEditor::Bridge::RemoteConnectionState::Connected) {
+    if (connection_->state() == harken::studio::bridge::RemoteConnectionState::Connected) {
         const auto connected = connection_->target();
         const auto found = std::find_if(targets.begin(), targets.end(), [&](const auto& target) {
             return target.instanceId == connected.instanceId;
@@ -182,7 +182,7 @@ void RemoteConnectPanel::openManualConnection()
     auto* address = new QLineEdit(&dialog);
     address->setObjectName(QStringLiteral("remoteAddress"));
     QSettings settings;
-    if constexpr (HarkenEditor::Bridge::RemoteConnection::kLocalConnectionsOnly) {
+    if constexpr (harken::studio::bridge::RemoteConnection::kLocalConnectionsOnly) {
         address->setText(QStringLiteral("127.0.0.1"));
         address->setReadOnly(true);
     } else {
@@ -204,17 +204,17 @@ void RemoteConnectPanel::openManualConnection()
     submit->setDefault(true);
     layout->addWidget(buttons);
     const auto validate = [this, address, port, submit] {
-        using HarkenEditor::Bridge::RemoteConnectionState;
+        using harken::studio::bridge::RemoteConnectionState;
         const auto state = connection_->state();
         submit->setEnabled((state == RemoteConnectionState::Disconnected || state == RemoteConnectionState::Failed)
                            && !address->text().trimmed().isEmpty() && port->value() != 0);
     };
     connect(address, &QLineEdit::textChanged, &dialog, validate);
     connect(port, &QSpinBox::valueChanged, &dialog, validate);
-    connect(connection_, &HarkenEditor::Bridge::RemoteConnection::stateChanged, &dialog, validate);
+    connect(connection_, &harken::studio::bridge::RemoteConnection::stateChanged, &dialog, validate);
     connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
     validate();
-    if constexpr (HarkenEditor::Bridge::RemoteConnection::kLocalConnectionsOnly)
+    if constexpr (harken::studio::bridge::RemoteConnection::kLocalConnectionsOnly)
         port->setFocus();
     else
         address->setFocus();
@@ -227,7 +227,7 @@ void RemoteConnectPanel::openManualConnection()
 
 void RemoteConnectPanel::refreshState()
 {
-    using HarkenEditor::Bridge::RemoteConnectionState;
+    using harken::studio::bridge::RemoteConnectionState;
     const auto state = connection_->state();
     const bool connected = state == RemoteConnectionState::Connected;
     const bool idle = state == RemoteConnectionState::Disconnected || state == RemoteConnectionState::Failed;

@@ -13,7 +13,7 @@
 #include <QMetaObject>
 #include <QThread>
 
-namespace VNX {
+namespace harken::studio {
 
 static BlueprintCanvasWidget* findBlueprintCanvas()
 {
@@ -296,13 +296,13 @@ void registerDesktopEditorCommands(const DesktopEditorCommandContext& context)
             if (!mainWindow) return mainWindowNotAvailable();
             QString layoutName = args["layout"].toString();
             {
-                auto sel = VNX::resolveSelector(layoutName);
+                auto sel = harken::studio::resolveSelector(layoutName);
                 if (!sel.ok) return {false, {}, sel.errorCode, sel.errorMessage};
                 layoutName = sel.name;
             }
             if (layoutName.isEmpty())
                 return {false, {}, "INVALID_ARGS", "Layout name is required"};
-            const auto* builtin = VNX::BuiltinLayouts::findByToken(layoutName);
+            const auto* builtin = harken::studio::BuiltinLayouts::findByToken(layoutName);
             if (!builtin)
                 return {false, {}, "INVALID_LAYOUT", QString("Unknown layout: %1").arg(layoutName)};
             bool success = mainWindow->switchToView(builtin->id);
@@ -316,16 +316,16 @@ void registerDesktopEditorCommands(const DesktopEditorCommandContext& context)
             if (!mainWindow) return mainWindowNotAvailable();
             QString target = args["layout"].toString();
             {
-                auto sel = VNX::resolveSelector(target);
+                auto sel = harken::studio::resolveSelector(target);
                 if (!sel.ok) return {false, {}, sel.errorCode, sel.errorMessage};
                 target = sel.name;
             }
-            const auto resolved = VNX::BuiltinLayouts::resolveResetTarget(
+            const auto resolved = harken::studio::BuiltinLayouts::resolveResetTarget(
                 target, mainWindow->currentView());
-            if (resolved.kind == VNX::BuiltinLayouts::ResetTargetKind::Invalid)
+            if (resolved.kind == harken::studio::BuiltinLayouts::ResetTargetKind::Invalid)
                 return {false, {}, "INVALID_LAYOUT",
                         QString("Unknown layout: %1").arg(resolved.canonical)};
-            if (resolved.kind == VNX::BuiltinLayouts::ResetTargetKind::Builtin
+            if (resolved.kind == harken::studio::BuiltinLayouts::ResetTargetKind::Builtin
                 && resolved.canonical != mainWindow->currentView())
                 mainWindow->switchToView(resolved.canonical);
             if (!mainWindow->resetCurrentLayout())
@@ -338,7 +338,7 @@ void registerDesktopEditorCommands(const DesktopEditorCommandContext& context)
             if (!mainWindow) return mainWindowNotAvailable();
             QString panelName = args["name"].toString().trimmed();
             {
-                auto sel = VNX::resolveSelector(panelName);
+                auto sel = harken::studio::resolveSelector(panelName);
                 if (!sel.ok) return {false, {}, sel.errorCode, sel.errorMessage};
                 panelName = sel.name;
             }
@@ -418,7 +418,7 @@ void registerDesktopEditorCommands(const DesktopEditorCommandContext& context)
             if (!mainWindow) return mainWindowNotAvailable();
             QString name = args["name"].toString().trimmed();
             {
-                auto sel = VNX::resolveSelector(name);
+                auto sel = harken::studio::resolveSelector(name);
                 if (!sel.ok) return {false, {}, sel.errorCode, sel.errorMessage};
                 name = sel.name;
             }
@@ -434,7 +434,7 @@ void registerDesktopEditorCommands(const DesktopEditorCommandContext& context)
             if (!mainWindow) return mainWindowNotAvailable();
             QString name = args["name"].toString().trimmed();
             {
-                auto sel = VNX::resolveSelector(name);
+                auto sel = harken::studio::resolveSelector(name);
                 if (!sel.ok) return {false, {}, sel.errorCode, sel.errorMessage};
                 name = sel.name;
             }
@@ -449,7 +449,7 @@ void registerDesktopEditorCommands(const DesktopEditorCommandContext& context)
             if (!mainWindow) return mainWindowNotAvailable();
             QString name = args["name"].toString().trimmed();
             {
-                auto sel = VNX::resolveSelector(name);
+                auto sel = harken::studio::resolveSelector(name);
                 if (!sel.ok) return {false, {}, sel.errorCode, sel.errorMessage};
                 name = sel.name;
             }

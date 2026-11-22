@@ -1,26 +1,19 @@
 #pragma once
-#include "TitleBarButton.h"
-
-#include <QWidget>
+#include "TitleBarBase.h"
 
 class QLabel;
-class QHBoxLayout;
 
-namespace VNX {
+namespace harken::studio {
 
-class DialogTitleBar : public QWidget {
+class DialogTitleBar : public TitleBarBase {
     Q_OBJECT
 public:
     explicit DialogTitleBar(QWidget* parent = nullptr);
 
     void setTitle(const QString& title);
 
-    QPushButton* closeButton() const { return btnClose_; }
-
 private:
-    QHBoxLayout* layout_{nullptr};
     QLabel*      titleLabel_{nullptr};
-    TitleBarButton* btnClose_{nullptr};
 };
 
 }

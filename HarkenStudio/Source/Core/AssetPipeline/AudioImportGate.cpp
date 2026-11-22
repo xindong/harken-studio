@@ -12,7 +12,7 @@
 #include <QDir>
 #include <QDirIterator>
 
-namespace VNX {
+namespace harken::studio {
 
 const QStringList& AudioImportGate::acceptedExtensions()
 {

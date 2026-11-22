@@ -8,11 +8,11 @@
 
 #include <QJsonDocument>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 using Property = harkenplayableproperties::PlayablePropertyIdV1;
-using Guid = harkenprojectschema::AuthoringGuid;
+using Guid = harken::studio::project_schema::AuthoringGuid;
 
 bool parseGuid(const QJsonValue& value, Guid& guid)
 {
@@ -39,7 +39,7 @@ ActionResult executeGroupEdit(ProjectManager* manager, const QString& action,
     FieldGroupEditRequest request;
     Guid definition;
     if (!parseGuid(args.value(QStringLiteral("definition_guid")), definition)
-        || harkenprojectschema::IsNull(definition))
+        || harken::studio::project_schema::IsNull(definition))
         return invalid(QStringLiteral("definition_guid must identify an object definition"));
     request.definition = fromFieldGroupGuid(definition);
     const auto groupName = args.value(QStringLiteral("group")).toString();
@@ -47,6 +47,7 @@ ActionResult executeGroupEdit(ProjectManager* manager, const QString& action,
     else if (groupName == QStringLiteral("send")) request.group = FieldGroupId::Send;
     else if (groupName == QStringLiteral("spatialRating")) request.group = FieldGroupId::SpatialRating;
     else if (groupName == QStringLiteral("effect")) request.group = FieldGroupId::Effect;
+    else if (groupName == QStringLiteral("conversion")) request.group = FieldGroupId::Conversion;
     else return invalid(QStringLiteral("Unknown field group"));
     if (args.value(QStringLiteral("scope")) == QJsonValue(QStringLiteral("Shared"))) {
         if (args.contains(QStringLiteral("platform_ids")))
@@ -117,6 +118,15 @@ ActionResult executeGroupEdit(ProjectManager* manager, const QString& action,
         if (!ValidateFieldGroupPayload(FieldGroupId::Effect, effects).empty())
             return invalid(QStringLiteral("Invalid effect chain"));
         request.operation = ReplaceFieldGroupEffects{std::move(effects)};
+    } else if (request.group == FieldGroupId::Conversion) {
+        if (action != QStringLiteral("set_field_group_field")
+            || args.value(QStringLiteral("field")) != QJsonValue(QStringLiteral("settingsRef")))
+            return invalid(QStringLiteral("Conversion only supports settingsRef edits"));
+        Guid ref{};
+        const auto value = args.value(QStringLiteral("value"));
+        if (!value.isNull() && !parseGuid(value, ref))
+            return invalid(QStringLiteral("Conversion settings must be a GUID or null"));
+        request.operation = SetConversionFieldGroup{ConversionFieldGroup{ref}};
     } else {
         const auto name = args.value(QStringLiteral("field")).toString();
         const auto* field = PlayablePropertyAuthoringV1::fieldByJsonKey(name);
@@ -153,7 +163,7 @@ ActionResult executeGroupEdit(ProjectManager* manager, const QString& action,
             if (error.group)
                 detail.insert(QStringLiteral("group"), QString::fromLatin1(FieldGroupName(*error.group).data()));
             if (error.row) detail.insert(QStringLiteral("row"), static_cast<qint64>(*error.row));
-            if (!harkenprojectschema::IsNull(error.relatedGuid))
+            if (!harken::studio::project_schema::IsNull(error.relatedGuid))
                 detail.insert(QStringLiteral("reference_guid"), fromFieldGroupGuid(error.relatedGuid).toString(QUuid::WithoutBraces));
             diagnostics.append(detail);
         }
@@ -164,7 +174,7 @@ ActionResult executeGroupEdit(ProjectManager* manager, const QString& action,
     result.success = true;
     result.data.insert(QStringLiteral("changed"), prepared.changed);
     if (!prepared.changed) return result;
-    const auto source = HarkenEditor::Bridge::canonicalRuntimeProjectSourceIndex(project);
+    const auto source = harken::studio::bridge::canonicalRuntimeProjectSourceIndex(project);
     auto* item = source->byQtGuid.at(request.definition);
     if (!manager->restoreFieldGroupsInternal(item, *prepared.after,
                                                prepared.before, ActionManager::instance().executeOriginator()))
@@ -174,7 +184,7 @@ ActionResult executeGroupEdit(ProjectManager* manager, const QString& action,
                              const DefinitionFieldGroups& from, const DefinitionFieldGroups& to) {
         auto* current = manager->currentProject();
         if (!current || current->projectId != projectId) return;
-        const auto source = HarkenEditor::Bridge::canonicalRuntimeProjectSourceIndex(*current);
+        const auto source = harken::studio::bridge::canonicalRuntimeProjectSourceIndex(*current);
         const auto found = source->byQtGuid.find(guid);
         if (found != source->byQtGuid.end())
             manager->restoreFieldGroupsInternal(found->second, to, from);

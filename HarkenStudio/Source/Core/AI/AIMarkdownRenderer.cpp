@@ -4,7 +4,7 @@
 #include <QGuiApplication>
 #include <QStringList>
 
-namespace VNX {
+namespace harken::studio {
 namespace AIMarkdownRenderer {
 namespace {
 

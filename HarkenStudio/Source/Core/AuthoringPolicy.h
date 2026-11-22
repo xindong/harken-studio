@@ -4,7 +4,7 @@
 #include "TransitionSemantics.h"
 #include "Components/VSelection.h"
 
-namespace VNX::AuthoringPolicy {
+namespace harken::studio::AuthoringPolicy {
 
 using ObjectResolver = std::function<const ProjectItem*(uint32_t)>;
 

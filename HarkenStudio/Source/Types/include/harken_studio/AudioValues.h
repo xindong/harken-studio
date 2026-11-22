@@ -2,7 +2,7 @@
 
 #include "ObjectId.h"
 
-namespace harkenstudio {
+namespace harken::studio::types {
 
 using ChannelLayout = std::uint32_t;
 inline constexpr ChannelLayout kChannelLayoutDefault = 0;

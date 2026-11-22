@@ -16,7 +16,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 QColor withOpacity(QColor color, qreal opacity)

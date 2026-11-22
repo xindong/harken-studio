@@ -1,75 +1,3 @@
-// packc manifest model: parsing for both manifest generations and the
-// normalized v2 emitter.
-//
-// Two manifest generations share one entry model:
-//
-// v1 (no "manifestVersion" member — the original shape, kept working
-// verbatim): a top-level "sounds" array; ids optional (absent ids are
-// minted from content by the tool); the output path arrives on the
-// command line; in --stream mode an optional top-level "chunkFrames".
-//
-// v2 ("manifestVersion": 2 — the canonical authoring input): carries its
-// own output path and build options, and every entry names its id
-// explicitly. Explicit ids are required because the stable u64 id is the
-// asset's identity and the authoring layer owns assigning it; minting
-// ids from content would silently re-identify a sound whenever its
-// samples change. Shape:
-//
-//   {
-//     "manifestVersion": 2,
-//     "output": "ui.pack",
-//     "options": {                       // optional
-//       "cache": true,                   // default true
-//       "cachePath": "ui.pack.cache.json",
-//       "reportPath": "ui.pack.report.json"
-//     },
-//     "entries": [
-//       { "path": "click.wav", "id": 42,
-//         "loopStartFrame": 0, "loopEndFrame": 0,   // optional pair
-//         "codec": "pcm-f32",                       // optional
-//         "downmix": "mono" }                       // optional
-//     ]
-//   }
-//
-// The version member doubles as the dispatcher: its presence selects the
-// v2 rules, its absence the v1 rules, so no heuristic ever guesses.
-// Unknown keys are refused everywhere in both generations (a typo
-// silently ignored would ship wrong content). "codec" accepts only
-// "pcm-f32" — the field exists so future codecs extend the manifest
-// without a shape change, and an unknown value must refuse rather than
-// silently build uncompressed.
-//
-// Each v1 or v2 media entry may carry "downmix": "mono". Absence
-// preserves the source channel layout. Mono sources remain mono; stereo
-// sources use the tool's versioned deterministic stereo-to-mono
-// transform; sources with more than two channels refuse rather than
-// guessing a speaker layout.
-//
-// A v2 manifest may additionally select the v2 (logic-entry) container
-// by carrying a top-level "packKind": "resident" | "content". packKind
-// absent keeps today's v1 container output byte-identical. With
-// packKind present, the optional logic sections — "buses", "busSends",
-// "attenuations", "bindings", "attachments", and "containers" —
-// compile into typed v2 entries (PackFormatV2.h). Studio shipping
-// export does not emit the containers or voiceRecipes sections; packc
-// still accepts both for non-canonical / unit-test manifests. Kind
-// discipline, the compiler half of the spec section 19.1 defense in depth:
-// a resident pack carries no media entries, no containers, and
-// only bus-scope bindings and attachments; a content pack refuses the
-// resident-only infrastructure sections (buses, sends, and attenuations).
-// Logic sections without a packKind refuse — logic entries
-// require a pack kind. Cross-pack references are legal (reference
-// closure is proven at load against the loaded packs), so reference
-// validation here is limited to intra-pack duplicates and
-// self-referential illegality; field validation mirrors the engine's
-// registration contracts so a pack that compiles also registers.
-//
-// Path bases differ by generation on purpose: v1 resolves relative paths
-// against the process working directory (the original contract), while
-// v2 resolves them against the manifest file's own directory — a checked
-// -in authoring file must mean the same sources no matter where the tool
-// runs. Resolution never influences output bytes; paths are not stored
-// in containers.
 #ifndef HARKEN_HOST_PACKC_MANIFEST_H
 #define HARKEN_HOST_PACKC_MANIFEST_H
 
@@ -77,7 +5,6 @@
 #include <harken_studio_build/AuthoredParameters.h>
 #include <harken_studio_build/BindingTransition.h>
 #include "../../Common/JsonReader.h"
-#include "../../Common/JsonWriter.h"
 
 #include <harken_studio/AudioValues.h>
 #include "harken_studio_build/PackFormatV2.h"
@@ -91,13 +18,10 @@
 #include <cstdarg>
 #include <cstdint>
 #include <cstdio>
-#include <filesystem>
-#include "../../Common/Utf8Path.h"
 #include <string>
 #include <vector>
 
-namespace harkenstudiojson {
-namespace packc {
+namespace harken::studio::pack {
 
 inline constexpr std::uint32_t kLegacySelectionWeightedRandom = 0;
 inline constexpr std::uint32_t kLegacySelectionRoundRobin = 1;
@@ -120,22 +44,11 @@ inline bool Fail(Diag* diag, const char* format, ...) {
     return false;
 }
 
-inline constexpr char kCodecPcmF32[] = "pcm-f32";
-inline constexpr char kDownmixMono[] = "mono";
-
 struct ManifestEntry {
-    std::string path;         // as written in the manifest
-    std::string resolvedPath; // path to open (base rules above)
-    harkenstudio::ObjectId soundId{};
-    bool explicitId = false;
-    bool loopable = false;
-    std::uint64_t loopStartFrame = 0;
-    std::uint64_t loopEndFrame = 0; // 0 = whole file
-    std::string codec = kCodecPcmF32;
-    std::string downmix; // "" = preserve source channels; "mono" = mono
+    harken::studio::types::ObjectId soundId{};
+    std::string path;
 };
 
-// --- v2 logic-section working forms ---
 // Parsed images of the logic-entry sections a v2 manifest may carry
 // alongside "packKind". Enum-valued members hold the public VN_* values
 // (mapped from the manifest spelling at parse time).
@@ -146,29 +59,29 @@ struct ManifestEntry {
 // "built-in default" — so the curve carries no enabled flag here.
 struct ManifestCurve {
     std::uint32_t pointCount = 0;
-    float pointX[harkenstudio::kCurveMaxPoints] = {};
-    float pointY[harkenstudio::kCurveMaxPoints] = {};
-    harkenstudiobuild::ParameterCurveHandles handles[harkenstudio::kCurveMaxPoints - 1] = {};
+    float pointX[harken::studio::types::kCurveMaxPoints] = {};
+    float pointY[harken::studio::types::kCurveMaxPoints] = {};
+    harken::studio::build::ParameterCurveHandles handles[harken::studio::types::kCurveMaxPoints - 1] = {};
 };
 
 struct ManifestBus {
-    harkenstudio::ObjectId id{};
-    harkenstudio::ObjectId parent{};
+    harken::studio::types::ObjectId id{};
+    harken::studio::types::ObjectId parent{};
     float volume = 0.0f;
     float outputBusVolume = 0.0f;
 };
 
 struct ManifestBusSend {
-    harkenstudio::ObjectId from{};
-    harkenstudio::ObjectId to{};
+    harken::studio::types::ObjectId from{};
+    harken::studio::types::ObjectId to{};
     float levelDb = 0.0f;
 };
 
 struct ManifestBusEffect {
-    harkenstudio::ObjectId effectId{};
-    harkenstudio::ObjectId bus{};
+    harken::studio::types::ObjectId effectId{};
+    harken::studio::types::ObjectId bus{};
     std::uint32_t slot = 0;
-    std::uint32_t type = harkenstudio::kEffectGain;
+    std::uint32_t type = harken::studio::types::kEffectGain;
     std::uint32_t descriptorVintage = 0;
     bool bypass = false;
     std::uint32_t faderPointGuard = 0;
@@ -176,20 +89,20 @@ struct ManifestBusEffect {
 };
 
 struct ManifestDynamicRoute {
-    harkenstudio::ObjectId targetBus{};
+    harken::studio::types::ObjectId targetBus{};
     std::uint32_t effectSlot = 0;
     std::uint32_t routeSlot = 0;
-    std::uint32_t expectedEffectType = harkenstudio::kEffectCompressor;
-    std::uint32_t signalForm = harkenstudio::kDynamicSignalRawAudio;
-    std::uint32_t sourceKind = harkenstudio::kDynamicSourceBus;
-    std::uint32_t tap = harkenstudio::kDynamicTapBusPostEffects;
-    harkenstudio::ObjectId sourceBus{};
+    std::uint32_t expectedEffectType = harken::studio::types::kEffectCompressor;
+    std::uint32_t signalForm = harken::studio::types::kDynamicSignalRawAudio;
+    std::uint32_t sourceKind = harken::studio::types::kDynamicSourceBus;
+    std::uint32_t tap = harken::studio::types::kDynamicTapBusPostEffects;
+    harken::studio::types::ObjectId sourceBus{};
     float levelDb = 0.0f;
 };
 
 struct ManifestAttenuation {
-    harkenstudio::ObjectId id{};
-    std::uint32_t rolloff = harkenstudio::kRolloffLinear;
+    harken::studio::types::ObjectId id{};
+    std::uint32_t rolloff = harken::studio::types::kRolloffLinear;
     float minDistance = 0.0f;
     float maxDistance = 0.0f;
     float airAbsorptionNearHz = 0.0f;
@@ -212,24 +125,24 @@ struct ManifestAttenuation {
 };
 
 struct ManifestBinding {
-    harkenstudio::ObjectId id{};
-    harkenstudio::ObjectId variable{};
-    std::uint32_t scope = harkenstudio::kTargetScopeVoice;
+    harken::studio::types::ObjectId id{};
+    harken::studio::types::ObjectId variable{};
+    std::uint32_t scope = harken::studio::types::kTargetScopeVoice;
     std::uint32_t target = 0;
     std::uint32_t transitionMs = 0;
     ManifestCurve curve;
 };
 
 struct ManifestAttachment {
-    harkenstudio::ObjectId binding{};
-    std::uint32_t scope = harkenstudio::kTargetScopeVoice;
-    harkenstudio::ObjectId object{};
+    harken::studio::types::ObjectId binding{};
+    std::uint32_t scope = harken::studio::types::kTargetScopeVoice;
+    harken::studio::types::ObjectId object{};
 };
 
 struct ManifestVoiceRecipeEffect {
-    harkenstudio::ObjectId effectId{};
+    harken::studio::types::ObjectId effectId{};
     std::uint32_t slot = 0;
-    std::uint32_t type = harkenstudio::kEffectGain;
+    std::uint32_t type = harken::studio::types::kEffectGain;
     std::uint32_t descriptorVintage = 0;
     bool bypass = false;
     std::vector<float> parameters;
@@ -255,7 +168,7 @@ struct ManifestVoiceRecipeTone {
 
 struct ManifestVoiceRecipeSpatial {
     bool present = false;
-    harkenstudio::ObjectId attenuation{};
+    harken::studio::types::ObjectId attenuation{};
     float distanceScale = 1.0f;
 };
 
@@ -265,16 +178,16 @@ struct ManifestVoiceRecipePlayback {
 };
 
 struct ManifestVoiceRecipe {
-    harkenstudio::ObjectId playable{};
+    harken::studio::types::ObjectId playable{};
     ManifestVoiceRecipeTone tone;
     ManifestVoiceRecipeSpatial spatial;
     ManifestVoiceRecipePlayback playback;
     std::vector<ManifestVoiceRecipeEffect> effects;
-    std::vector<harkenstudio::ObjectId> bindings;
+    std::vector<harken::studio::types::ObjectId> bindings;
 };
 
 struct ManifestContainerChild {
-    harkenstudio::ObjectId playable{};
+    harken::studio::types::ObjectId playable{};
     std::uint32_t weight = 0;
     std::uint32_t matchValue = 0;
     std::uint32_t delayMs = 0;
@@ -282,35 +195,16 @@ struct ManifestContainerChild {
 };
 
 struct ManifestContainer {
-    harkenstudio::ObjectId id{};
+    harken::studio::types::ObjectId id{};
     std::uint32_t order = kLegacySelectionWeightedRandom;
-    harkenstudio::ObjectId selectionVariable{}; // 0 = no match filter
+    harken::studio::types::ObjectId selectionVariable{}; // 0 = no match filter
     std::uint32_t avoidRepeatWindow = 0;
     std::uint32_t defaultIndex = 0xFFFFFFFFu; // = absent
     std::vector<ManifestContainerChild> children;
 };
 
 struct Manifest {
-    int version = 3;
-    std::string manifestPath; // as given on the command line
     std::vector<ManifestEntry> entries;
-
-    // v2 only. The "resolved" forms are what the tool opens/writes; the
-    // plain forms are the manifest's own text, echoed by the emitter and
-    // the report.
-    std::string outputPath;
-    std::string resolvedOutputPath;
-    bool cacheEnabled = true;
-    std::string cachePath;   // "" = default (beside the output)
-    std::string reportPath;  // "" = default (beside the output)
-
-    // v1 --stream only: 0 = manifest did not choose (default applies).
-    std::uint32_t chunkFrames = 0;
-
-    // v2 only. "" = no "packKind" member — the v1 container output, the
-    // pre-logic behavior kept byte-identical; "resident" or "content"
-    // selects the v2 container. The logic sections below are legal only
-    // alongside a pack kind.
     std::string packKind;
     std::vector<ManifestBus> buses;
     std::vector<ManifestBusSend> busSends;
@@ -323,144 +217,23 @@ struct Manifest {
     std::vector<ManifestContainer> containers;
 };
 
-inline bool ManifestHasLogicSections(const Manifest& manifest) {
-    return !manifest.buses.empty() || !manifest.busSends.empty() ||
-           !manifest.busEffects.empty() || !manifest.dynamicRoutes.empty() ||
-           !manifest.attenuations.empty() || !manifest.bindings.empty() ||
-           !manifest.voiceRecipes.empty() ||
-           !manifest.attachments.empty() || !manifest.containers.empty();
-}
-
-inline std::string ResolveAgainst(const std::string& baseDir,
-                                  const std::string& path) {
-    if (baseDir.empty() || Utf8Path(path).is_absolute()) {
-        return path;
-    }
-    return PathUtf8(Utf8Path(baseDir) / Utf8Path(path));
-}
-
-inline std::string DirectoryOf(const std::string& filePath) {
-    return PathUtf8(Utf8Path(filePath).parent_path());
-}
-
-// Shared by both generations: the optional non-negative-integer member
-// contract (present-but-malformed refuses; absent is fine).
-inline bool ReadOptionalU64(const JsonValue& object, const char* key,
-                            const char* arrayName, std::size_t entryIndex,
-                            bool* present, std::uint64_t* out,
-                            Diag* diag) {
-    const JsonValue* value = object.Find(key);
-    if (value == nullptr) {
-        *present = false;
-        return true;
-    }
-    if (!value->AsU64(out)) {
-        return Fail(diag,
-                    "manifest %s[%zu].%s must be a non-negative integer",
-                    arrayName, entryIndex, key);
-    }
-    *present = true;
-    return true;
-}
-
-// One entry object under either generation's array. v2 additionally
-// requires the explicit id and accepts the codec member.
-inline bool ReadObjectIdField(const JsonValue& object, const char* key,
+inline bool ReadObjectIdField(const json::JsonValue& object, const char* key,
     const std::string& context, bool required, bool* present,
-    harkenstudio::ObjectId* out, Diag* diag) {
+    harken::studio::types::ObjectId* out, Diag* diag) {
     const auto* value = object.Find(key);
     if (present) *present = value != nullptr;
     if (!value)
         return !required || Fail(diag, "manifest %s requires a \"%s\" UUID", context.c_str(), key);
-    if (value->kind != JsonValue::Kind::String || !harkenstudio::ParseObjectId(value->text, out))
+    if (value->kind != json::JsonValue::Kind::String || !harken::studio::types::ParseObjectId(value->text, out))
         return Fail(diag, "manifest %s.%s must be a UUID string", context.c_str(), key);
     return true;
 }
-
-inline bool ParseEntry(const JsonValue& item, std::size_t index,
-                       bool v2, const std::string& baseDir,
-                       ManifestEntry* out, Diag* diag) {
-    const char* arrayName = v2 ? "entries" : "sounds";
-    if (item.kind != JsonValue::Kind::Object) {
-        return Fail(diag, "manifest %s[%zu] must be an object", arrayName,
-                    index);
-    }
-    for (const auto& member : item.members) {
-        const bool known =
-            member.first == "path" || member.first == "id" ||
-            member.first == "loopStartFrame" ||
-            member.first == "loopEndFrame" ||
-            member.first == "downmix" ||
-            (v2 && member.first == "codec");
-        if (!known) {
-            return Fail(diag, "unknown key \"%s\" in manifest %s[%zu]",
-                        member.first.c_str(), arrayName, index);
-        }
-    }
-    const JsonValue* path = item.Find("path");
-    if (path == nullptr || path->kind != JsonValue::Kind::String ||
-        path->text.empty()) {
-        return Fail(diag,
-                    "manifest %s[%zu] requires a non-empty \"path\" "
-                    "string",
-                    arrayName, index);
-    }
-    out->path = path->text;
-    out->resolvedPath = ResolveAgainst(baseDir, path->text);
-    bool loopStartPresent = false;
-    bool loopEndPresent = false;
-    if (!ReadObjectIdField(item, "id", std::string(arrayName) + "[" + std::to_string(index) + "]", true, &out->explicitId,
-                         &out->soundId, diag) ||
-        !ReadOptionalU64(item, "loopStartFrame", arrayName, index,
-                         &loopStartPresent, &out->loopStartFrame, diag) ||
-        !ReadOptionalU64(item, "loopEndFrame", arrayName, index,
-                         &loopEndPresent, &out->loopEndFrame, diag)) {
-        return false;
-    }
-    out->loopable = loopStartPresent || loopEndPresent;
-    if (v2 && !out->explicitId) {
-        return Fail(diag,
-                    "manifest entries[%zu] requires an explicit \"id\" — "
-                    "v2 manifests never mint ids from content",
-                    index);
-    }
-    out->codec = kCodecPcmF32;
-    const JsonValue* downmix = item.Find("downmix");
-    if (downmix != nullptr) {
-        if (downmix->kind != JsonValue::Kind::String ||
-            downmix->text != kDownmixMono) {
-            return Fail(diag,
-                        "manifest %s[%zu].downmix: only \"%s\" is "
-                        "supported",
-                        arrayName, index, kDownmixMono);
-        }
-        out->downmix = downmix->text;
-    }
-    if (v2) {
-        const JsonValue* codec = item.Find("codec");
-        if (codec != nullptr) {
-            if (codec->kind != JsonValue::Kind::String ||
-                codec->text != kCodecPcmF32) {
-                return Fail(diag,
-                            "manifest entries[%zu].codec: only \"%s\" is "
-                            "supported",
-                            index, kCodecPcmF32);
-            }
-        }
-    }
-    return true;
-}
-
-// --- logic-section parsing ---
-// Context strings name the exact object being read (for example
-// "containers[2].children[0]"), so every refusal names its location without
-// threading section/index pairs through each helper.
 
 inline std::string IndexedName(const char* section, std::size_t index) {
     return std::string(section) + "[" + std::to_string(index) + "]";
 }
 
-inline bool RefuseUnknownKeys(const JsonValue& object,
+inline bool RefuseUnknownKeys(const json::JsonValue& object,
                               const char* const* known,
                               std::size_t knownCount,
                               const std::string& context, Diag* diag) {
@@ -484,8 +257,8 @@ inline bool RefuseUnknownKeys(const JsonValue& object,
 // reader enforces is a subset of what from_chars accepts, and the
 // conversion is locale-free — the emitter's %.9g literals parse back to
 // the identical f32, which the round-trip fixpoint relies on.
-inline bool ParseFiniteFloat(const JsonValue& value, float* out) {
-    if (value.kind != JsonValue::Kind::Number || value.text.empty()) {
+inline bool ParseFiniteFloat(const json::JsonValue& value, float* out) {
+    if (value.kind != json::JsonValue::Kind::Number || value.text.empty()) {
         return false;
     }
     const char* begin = value.text.c_str();
@@ -503,10 +276,10 @@ inline bool ParseFiniteFloat(const JsonValue& value, float* out) {
 
 // Member readers over one section object. Absent optional members leave
 // *out at its caller-set default; present-but-malformed always refuses.
-inline bool ReadU64Field(const JsonValue& object, const char* key,
+inline bool ReadU64Field(const json::JsonValue& object, const char* key,
                          const std::string& context, bool required,
                          bool* present, std::uint64_t* out, Diag* diag) {
-    const JsonValue* value = object.Find(key);
+    const json::JsonValue* value = object.Find(key);
     if (value == nullptr) {
         if (present != nullptr) {
             *present = false;
@@ -528,7 +301,7 @@ inline bool ReadU64Field(const JsonValue& object, const char* key,
     return true;
 }
 
-inline bool ReadU32Field(const JsonValue& object, const char* key,
+inline bool ReadU32Field(const json::JsonValue& object, const char* key,
                          const std::string& context, bool required,
                          bool* present, std::uint32_t* out, Diag* diag) {
     std::uint64_t wide = *out;
@@ -552,10 +325,10 @@ inline bool ReadU32Field(const JsonValue& object, const char* key,
     return true;
 }
 
-inline bool ReadFloatField(const JsonValue& object, const char* key,
+inline bool ReadFloatField(const json::JsonValue& object, const char* key,
                            const std::string& context, bool required,
                            bool* present, float* out, Diag* diag) {
-    const JsonValue* value = object.Find(key);
+    const json::JsonValue* value = object.Find(key);
     if (value == nullptr) {
         if (present != nullptr) {
             *present = false;
@@ -585,16 +358,16 @@ struct NamedValue {
 };
 
 inline constexpr NamedValue kRolloffNames[] = {
-    {"linear", harkenstudio::kRolloffLinear},
-    {"inverseSquare", harkenstudio::kRolloffInverseSquare},
-    {"logarithmic", harkenstudio::kRolloffLogarithmic},
+    {"linear", harken::studio::types::kRolloffLinear},
+    {"inverseSquare", harken::studio::types::kRolloffInverseSquare},
+    {"logarithmic", harken::studio::types::kRolloffLogarithmic},
 };
 
 inline constexpr NamedValue kTargetScopeNames[] = {
-    {"voice", harkenstudio::kTargetScopeVoice},
-    {"bus", harkenstudio::kTargetScopeBus},
-    {"voiceEffectParam", harkenstudio::kTargetScopeVoiceEffectParam},
-    {"busEffectParam", harkenstudio::kTargetScopeBusEffectParam},
+    {"voice", harken::studio::types::kTargetScopeVoice},
+    {"bus", harken::studio::types::kTargetScopeBus},
+    {"voiceEffectParam", harken::studio::types::kTargetScopeVoiceEffectParam},
+    {"busEffectParam", harken::studio::types::kTargetScopeBusEffectParam},
 };
 
 inline constexpr NamedValue kSelectionOrderNames[] = {
@@ -602,25 +375,12 @@ inline constexpr NamedValue kSelectionOrderNames[] = {
     {"roundRobin", kLegacySelectionRoundRobin},
 };
 
-inline const char* EnumNameOf(const NamedValue* names,
-                              std::size_t nameCount,
-                              std::uint32_t value) {
-    for (std::size_t i = 0; i < nameCount; ++i) {
-        if (names[i].value == value) {
-            return names[i].name;
-        }
-    }
-    return "";
-}
-
-// choices is the human-readable list for the refusal (for example
-// "\"voice\" or \"bus\"").
-inline bool ReadEnumField(const JsonValue& object, const char* key,
+inline bool ReadEnumField(const json::JsonValue& object, const char* key,
                           const std::string& context, bool required,
                           const NamedValue* names, std::size_t nameCount,
                           const char* choices, std::uint32_t* out,
                           Diag* diag) {
-    const JsonValue* value = object.Find(key);
+    const json::JsonValue* value = object.Find(key);
     if (value == nullptr) {
         if (required) {
             return Fail(diag, "manifest %s requires a \"%s\" member",
@@ -628,7 +388,7 @@ inline bool ReadEnumField(const JsonValue& object, const char* key,
         }
         return true;
     }
-    if (value->kind == JsonValue::Kind::String) {
+    if (value->kind == json::JsonValue::Kind::String) {
         for (std::size_t i = 0; i < nameCount; ++i) {
             if (value->text == names[i].name) {
                 *out = names[i].value;
@@ -680,11 +440,11 @@ inline const char* CurveDomainDescription(CurveValueDomain domain) {
 // name. Curves carry 1..8 finite, strictly x-increasing points. Multi-point
 // curves require exactly one absolute (h1x,h1y,h2x,h2y) tuple per segment;
 // single-point curves must omit handles.
-inline bool ParseCurveObject(const JsonValue& value,
+inline bool ParseCurveObject(const json::JsonValue& value,
                              const std::string& context,
                              CurveValueDomain domain,
                              ManifestCurve* out, Diag* diag) {
-    if (value.kind != JsonValue::Kind::Object) {
+    if (value.kind != json::JsonValue::Kind::Object) {
         return Fail(diag, "manifest %s must be a curve object",
                     context.c_str());
     }
@@ -692,21 +452,21 @@ inline bool ParseCurveObject(const JsonValue& value,
     if (!RefuseUnknownKeys(value, kKeys, 2, context, diag)) {
         return false;
     }
-    const JsonValue* points = value.Find("points");
-    if (points == nullptr || points->kind != JsonValue::Kind::Array ||
+    const json::JsonValue* points = value.Find("points");
+    if (points == nullptr || points->kind != json::JsonValue::Kind::Array ||
         points->items.empty() ||
-        points->items.size() > harkenstudio::kCurveMaxPoints) {
+        points->items.size() > harken::studio::types::kCurveMaxPoints) {
         return Fail(diag,
                     "manifest %s.points must be an array of 1..%d "
                     "[x, y] pairs",
-                    context.c_str(), harkenstudio::kCurveMaxPoints);
+                    context.c_str(), harken::studio::types::kCurveMaxPoints);
     }
     out->pointCount = static_cast<std::uint32_t>(points->items.size());
     for (std::size_t i = 0; i < points->items.size(); ++i) {
-        const JsonValue& pair = points->items[i];
+        const json::JsonValue& pair = points->items[i];
         float x = 0.0f;
         float y = 0.0f;
-        if (pair.kind != JsonValue::Kind::Array ||
+        if (pair.kind != json::JsonValue::Kind::Array ||
             pair.items.size() != 2 ||
             !ParseFiniteFloat(pair.items[0], &x) ||
             !ParseFiniteFloat(pair.items[1], &y)) {
@@ -731,7 +491,7 @@ inline bool ParseCurveObject(const JsonValue& value,
         out->pointY[i] = y;
     }
     const std::uint32_t segments = out->pointCount - 1;
-    const JsonValue* handles = value.Find("handles");
+    const json::JsonValue* handles = value.Find("handles");
     if (handles == nullptr) {
         if (segments != 0) {
             return Fail(diag,
@@ -747,7 +507,7 @@ inline bool ParseCurveObject(const JsonValue& value,
                     "single-point curve",
                     context.c_str());
     }
-    if (handles->kind != JsonValue::Kind::Array ||
+    if (handles->kind != json::JsonValue::Kind::Array ||
         handles->items.size() != segments) {
         return Fail(diag,
                     "manifest %s.handles must carry exactly one "
@@ -755,9 +515,9 @@ inline bool ParseCurveObject(const JsonValue& value,
                     context.c_str(), segments);
     }
     for (std::size_t i = 0; i < handles->items.size(); ++i) {
-        const JsonValue& tuple = handles->items[i];
-        harkenstudiobuild::ParameterCurveHandles handle{};
-        if (tuple.kind != JsonValue::Kind::Array ||
+        const json::JsonValue& tuple = handles->items[i];
+        harken::studio::build::ParameterCurveHandles handle{};
+        if (tuple.kind != json::JsonValue::Kind::Array ||
             tuple.items.size() != 4 ||
             !ParseFiniteFloat(tuple.items[0], &handle.h1x) ||
             !ParseFiniteFloat(tuple.items[1], &handle.h1y) ||
@@ -791,12 +551,12 @@ inline bool ParseCurveObject(const JsonValue& value,
     return true;
 }
 
-inline bool ParseBusesSection(const JsonValue& section, Manifest* out,
+inline bool ParseBusesSection(const json::JsonValue& section, Manifest* out,
                               Diag* diag) {
     for (std::size_t i = 0; i < section.items.size(); ++i) {
-        const JsonValue& item = section.items[i];
+        const json::JsonValue& item = section.items[i];
         const std::string context = IndexedName("buses", i);
-        if (item.kind != JsonValue::Kind::Object) {
+        if (item.kind != json::JsonValue::Kind::Object) {
             return Fail(diag, "manifest %s must be an object",
                         context.c_str());
         }
@@ -816,7 +576,7 @@ inline bool ParseBusesSection(const JsonValue& section, Manifest* out,
                             nullptr, &bus.outputBusVolume, diag)) {
             return false;
         }
-        if (harkenstudio::IsNull(bus.id)) {
+        if (harken::studio::types::IsNull(bus.id)) {
             return Fail(diag,
                         "manifest %s.id must be a positive integer — "
                         "bus id 0 is reserved",
@@ -831,12 +591,12 @@ inline bool ParseBusesSection(const JsonValue& section, Manifest* out,
     return true;
 }
 
-inline bool ParseBusSendsSection(const JsonValue& section, Manifest* out,
+inline bool ParseBusSendsSection(const json::JsonValue& section, Manifest* out,
                                  Diag* diag) {
     for (std::size_t i = 0; i < section.items.size(); ++i) {
-        const JsonValue& item = section.items[i];
+        const json::JsonValue& item = section.items[i];
         const std::string context = IndexedName("busSends", i);
-        if (item.kind != JsonValue::Kind::Object) {
+        if (item.kind != json::JsonValue::Kind::Object) {
             return Fail(diag, "manifest %s must be an object",
                         context.c_str());
         }
@@ -857,19 +617,19 @@ inline bool ParseBusSendsSection(const JsonValue& section, Manifest* out,
             return Fail(diag,
                         "manifest %s connects bus %s to itself",
                         context.c_str(),
-                        harkenstudio::ObjectIdString(send.from).c_str());
+                        harken::studio::types::ObjectIdString(send.from).c_str());
         }
         out->busSends.push_back(send);
     }
     return true;
 }
 
-inline bool ParseAttenuationsSection(const JsonValue& section,
+inline bool ParseAttenuationsSection(const json::JsonValue& section,
                                      Manifest* out, Diag* diag) {
     for (std::size_t i = 0; i < section.items.size(); ++i) {
-        const JsonValue& item = section.items[i];
+        const json::JsonValue& item = section.items[i];
         const std::string context = IndexedName("attenuations", i);
-        if (item.kind != JsonValue::Kind::Object) {
+        if (item.kind != json::JsonValue::Kind::Object) {
             return Fail(diag, "manifest %s must be an object",
                         context.c_str());
         }
@@ -940,10 +700,10 @@ inline bool ParseAttenuationsSection(const JsonValue& section,
                         "manifest %s.proximityFrequency must be > 0",
                         context.c_str());
         }
-        const JsonValue* cone = item.Find("cone");
+        const json::JsonValue* cone = item.Find("cone");
         if (cone != nullptr) {
             const std::string coneContext = context + ".cone";
-            if (cone->kind != JsonValue::Kind::Object) {
+            if (cone->kind != json::JsonValue::Kind::Object) {
                 return Fail(diag, "manifest %s must be an object",
                             coneContext.c_str());
             }
@@ -982,7 +742,7 @@ inline bool ParseAttenuationsSection(const JsonValue& section,
                             coneContext.c_str());
             }
         }
-        const JsonValue* volumeCurve = item.Find("volumeCurve");
+        const json::JsonValue* volumeCurve = item.Find("volumeCurve");
         if (volumeCurve != nullptr) {
             attenuation.hasVolumeCurve = true;
             if (!ParseCurveObject(*volumeCurve, context + ".volumeCurve",
@@ -991,7 +751,7 @@ inline bool ParseAttenuationsSection(const JsonValue& section,
                 return false;
             }
         }
-        const JsonValue* lowpassCurve = item.Find("lowpassCurve");
+        const json::JsonValue* lowpassCurve = item.Find("lowpassCurve");
         if (lowpassCurve != nullptr) {
             attenuation.hasLowpassCurve = true;
             if (!ParseCurveObject(*lowpassCurve,
@@ -1001,7 +761,7 @@ inline bool ParseAttenuationsSection(const JsonValue& section,
                 return false;
             }
         }
-        const JsonValue* widthCurve = item.Find("widthCurve");
+        const json::JsonValue* widthCurve = item.Find("widthCurve");
         if (widthCurve != nullptr) {
             attenuation.hasWidthCurve = true;
             if (!ParseCurveObject(*widthCurve, context + ".widthCurve",
@@ -1016,19 +776,19 @@ inline bool ParseAttenuationsSection(const JsonValue& section,
 }
 
 inline bool EffectParamTargetIsBindable(std::uint32_t target) {
-    const harkenstudiobuild::EffectParamLocator locator =
-        harkenstudiobuild::UnpackEffectParamLocator(target);
-    const auto* effect = harkenstudiobuild::FindPackEffectSchemaByType(locator.effectType);
+    const harken::studio::build::EffectParamLocator locator =
+        harken::studio::build::UnpackEffectParamLocator(target);
+    const auto* effect = harken::studio::build::FindPackEffectSchemaByType(locator.effectType);
     return effect && locator.paramIndex < effect->paramCount
-        && (locator.effectType != harkenstudio::kEffectFeedbackDelay || locator.paramIndex >= 2);
+        && (locator.effectType != harken::studio::types::kEffectFeedbackDelay || locator.paramIndex >= 2);
 }
 
-inline bool ParseBindingsSection(const JsonValue& section, Manifest* out,
+inline bool ParseBindingsSection(const json::JsonValue& section, Manifest* out,
                                  Diag* diag) {
     for (std::size_t i = 0; i < section.items.size(); ++i) {
-        const JsonValue& item = section.items[i];
+        const json::JsonValue& item = section.items[i];
         const std::string context = IndexedName("bindings", i);
-        if (item.kind != JsonValue::Kind::Object) {
+        if (item.kind != json::JsonValue::Kind::Object) {
             return Fail(diag, "manifest %s must be an object",
                         context.c_str());
         }
@@ -1054,16 +814,16 @@ inline bool ParseBindingsSection(const JsonValue& section, Manifest* out,
                           &binding.transitionMs, diag)) {
             return false;
         }
-        if (!harkenstudiobuild::IsValidBindingTransitionMs(binding.transitionMs)) {
+        if (!harken::studio::build::IsValidBindingTransitionMs(binding.transitionMs)) {
             return Fail(diag, "manifest %s.transitionMs must be 0..60000", context.c_str());
         }
-        const auto* targetMeta = harkenstudiobuild::FindTargetMeta(binding.scope, binding.target);
-        if ((binding.scope == harkenstudio::kTargetScopeVoice || binding.scope == harkenstudio::kTargetScopeBus)
+        const auto* targetMeta = harken::studio::build::FindTargetMeta(binding.scope, binding.target);
+        if ((binding.scope == harken::studio::types::kTargetScopeVoice || binding.scope == harken::studio::types::kTargetScopeBus)
             && !targetMeta) {
             return Fail(diag, "manifest %s.target is unknown for its scope", context.c_str());
         }
-        if (binding.scope == harkenstudio::kTargetScopeVoiceEffectParam ||
-            binding.scope == harkenstudio::kTargetScopeBusEffectParam) {
+        if (binding.scope == harken::studio::types::kTargetScopeVoiceEffectParam ||
+            binding.scope == harken::studio::types::kTargetScopeBusEffectParam) {
             if (!EffectParamTargetIsBindable(binding.target)) {
                 return Fail(diag,
                             "manifest %s.target must locate a known, "
@@ -1084,7 +844,7 @@ inline bool ParseBindingsSection(const JsonValue& section, Manifest* out,
                         "does not carry a ramp",
                         context.c_str());
         }
-        const JsonValue* curve = item.Find("curve");
+        const json::JsonValue* curve = item.Find("curve");
         if (curve == nullptr) {
             return Fail(diag,
                         "manifest %s requires a \"curve\" member",
@@ -1100,13 +860,13 @@ inline bool ParseBindingsSection(const JsonValue& section, Manifest* out,
     return true;
 }
 
-inline bool ParseRecipeEffectType(const JsonValue& value,
+inline bool ParseRecipeEffectType(const json::JsonValue& value,
                                   std::uint32_t* out) {
-    if (value.kind != JsonValue::Kind::String) {
+    if (value.kind != json::JsonValue::Kind::String) {
         return false;
     }
-    const harkenstudiobuild::PackEffectSchemaRow* row =
-        harkenstudiobuild::FindPackEffectSchemaByManifestName(value.text.c_str());
+    const harken::studio::build::PackEffectSchemaRow* row =
+        harken::studio::build::FindPackEffectSchemaByManifestName(value.text.c_str());
     if (row == nullptr) {
         return false;
     }
@@ -1115,28 +875,22 @@ inline bool ParseRecipeEffectType(const JsonValue& value,
 }
 
 inline std::uint32_t RecipeParamCount(std::uint32_t type) {
-    const harkenstudiobuild::PackEffectSchemaRow* row =
-        harkenstudiobuild::FindPackEffectSchemaByType(type);
+    const harken::studio::build::PackEffectSchemaRow* row =
+        harken::studio::build::FindPackEffectSchemaByType(type);
     return row == nullptr ? 0 : row->paramCount;
-}
-
-inline const char* RecipeEffectTypeName(std::uint32_t type) {
-    const harkenstudiobuild::PackEffectSchemaRow* row =
-        harkenstudiobuild::FindPackEffectSchemaByType(type);
-    return row == nullptr ? "" : row->manifestName;
 }
 
 inline bool RecipeParamInAuthoredRange(std::uint32_t type,
                                        std::uint32_t index, float value) {
-    return harkenstudiobuild::PackEffectParamInAuthoredRange(type, index, value);
+    return harken::studio::build::PackEffectParamInAuthoredRange(type, index, value);
 }
 
-inline bool ParseBusEffectsSection(const JsonValue& section,
+inline bool ParseBusEffectsSection(const json::JsonValue& section,
                                    Manifest* out, Diag* diag) {
     for (std::size_t i = 0; i < section.items.size(); ++i) {
-        const JsonValue& item = section.items[i];
+        const json::JsonValue& item = section.items[i];
         const std::string context = IndexedName("busEffects", i);
-        if (item.kind != JsonValue::Kind::Object) {
+        if (item.kind != json::JsonValue::Kind::Object) {
             return Fail(diag, "manifest %s must be an object",
                         context.c_str());
         }
@@ -1161,32 +915,32 @@ inline bool ParseBusEffectsSection(const JsonValue& section,
                           &effect.faderPointGuard, diag)) {
             return false;
         }
-        const JsonValue* type = item.Find("type");
-        const JsonValue* bypass = item.Find("bypass");
-        const JsonValue* params = item.Find("parameters");
-        if (harkenstudio::IsNull(effect.bus)) {
+        const json::JsonValue* type = item.Find("type");
+        const json::JsonValue* bypass = item.Find("bypass");
+        const json::JsonValue* params = item.Find("parameters");
+        if (harken::studio::types::IsNull(effect.bus)) {
             return Fail(diag, "manifest %s.bus must be nonzero",
                         context.c_str());
         }
-        if (effect.slot >= harkenstudiobuild::kPackVoiceRecipeMaxInstalls) {
+        if (effect.slot >= HK_PACK_VOICE_RECIPE_MAX_INSTALLS) {
             return Fail(diag, "manifest %s.slot must be 0..%u",
                         context.c_str(),
-                        harkenstudiobuild::kPackVoiceRecipeMaxInstalls - 1);
+                        HK_PACK_VOICE_RECIPE_MAX_INSTALLS - 1);
         }
         if (effect.faderPointGuard >
-            harkenstudiobuild::kPackVoiceRecipeMaxInstalls) {
+            HK_PACK_VOICE_RECIPE_MAX_INSTALLS) {
             return Fail(diag,
                         "manifest %s.faderPointGuard must be 0..%u",
                         context.c_str(),
-                        harkenstudiobuild::kPackVoiceRecipeMaxInstalls);
+                        HK_PACK_VOICE_RECIPE_MAX_INSTALLS);
         }
         if (type == nullptr || !ParseRecipeEffectType(*type, &effect.type)) {
             return Fail(diag,
                         "manifest %s.type must name a registered effect",
                         context.c_str());
         }
-        const harkenstudiobuild::PackEffectSchemaRow* effectSchema =
-            harkenstudiobuild::FindPackEffectSchemaByType(effect.type);
+        const harken::studio::build::PackEffectSchemaRow* effectSchema =
+            harken::studio::build::FindPackEffectSchemaByType(effect.type);
         if (!hasDescriptorVintage) {
             effect.descriptorVintage = effectSchema->descriptorVintage;
         }
@@ -1197,14 +951,14 @@ inline bool ParseBusEffectsSection(const JsonValue& section,
                         effectSchema->descriptorVintage);
         }
         if (bypass != nullptr) {
-            if (bypass->kind != JsonValue::Kind::Bool) {
+            if (bypass->kind != json::JsonValue::Kind::Bool) {
                 return Fail(diag, "manifest %s.bypass must be a boolean",
                             context.c_str());
             }
             effect.bypass = bypass->boolean;
         }
         const std::uint32_t expected = RecipeParamCount(effect.type);
-        if (params == nullptr || params->kind != JsonValue::Kind::Array ||
+        if (params == nullptr || params->kind != json::JsonValue::Kind::Array ||
             params->items.size() != expected) {
             return Fail(diag,
                         "manifest %s.parameters must contain exactly %u "
@@ -1234,51 +988,38 @@ inline bool ParseBusEffectsSection(const JsonValue& section,
             out->busEffects[i - 1].slot == out->busEffects[i].slot) {
             return Fail(diag,
                         "manifest busEffects repeats target (%s,%u)",
-                        harkenstudio::ObjectIdString(out->busEffects[i].bus).c_str(),
+                        harken::studio::types::ObjectIdString(out->busEffects[i].bus).c_str(),
                         out->busEffects[i].slot);
         }
     }
     return true;
 }
 
-inline bool ParseDynamicTap(const JsonValue& value, std::uint32_t* out) {
-    if (value.kind != JsonValue::Kind::String) {
+inline bool ParseDynamicTap(const json::JsonValue& value, std::uint32_t* out) {
+    if (value.kind != json::JsonValue::Kind::String) {
         return false;
     }
     if (value.text == "postEffects") {
-        *out = harkenstudio::kDynamicTapBusPostEffects;
+        *out = harken::studio::types::kDynamicTapBusPostEffects;
         return true;
     }
     if (value.text == "preFader") {
-        *out = harkenstudio::kDynamicTapBusPreFader;
+        *out = harken::studio::types::kDynamicTapBusPreFader;
         return true;
     }
     if (value.text == "postFader") {
-        *out = harkenstudio::kDynamicTapBusPostFader;
+        *out = harken::studio::types::kDynamicTapBusPostFader;
         return true;
     }
     return false;
 }
 
-inline const char* DynamicTapName(std::uint32_t tap) {
-    switch (tap) {
-    case harkenstudio::kDynamicTapBusPostEffects:
-        return "postEffects";
-    case harkenstudio::kDynamicTapBusPreFader:
-        return "preFader";
-    case harkenstudio::kDynamicTapBusPostFader:
-        return "postFader";
-    default:
-        return "";
-    }
-}
-
-inline bool ParseDynamicRoutesSection(const JsonValue& section,
+inline bool ParseDynamicRoutesSection(const json::JsonValue& section,
                                       Manifest* out, Diag* diag) {
     for (std::size_t i = 0; i < section.items.size(); ++i) {
-        const JsonValue& item = section.items[i];
+        const json::JsonValue& item = section.items[i];
         const std::string context = IndexedName("dynamicRoutes", i);
-        if (item.kind != JsonValue::Kind::Object) {
+        if (item.kind != json::JsonValue::Kind::Object) {
             return Fail(diag, "manifest %s must be an object",
                         context.c_str());
         }
@@ -1301,19 +1042,19 @@ inline bool ParseDynamicRoutesSection(const JsonValue& section,
                             &route.levelDb, diag)) {
             return false;
         }
-        const JsonValue* tap = item.Find("tap");
-        if (harkenstudio::IsNull(route.targetBus) || harkenstudio::IsNull(route.sourceBus)) {
+        const json::JsonValue* tap = item.Find("tap");
+        if (harken::studio::types::IsNull(route.targetBus) || harken::studio::types::IsNull(route.sourceBus)) {
             return Fail(diag,
                         "manifest %s targetBus and sourceBus must be nonzero",
                         context.c_str());
         }
-        if (route.effectSlot >= harkenstudiobuild::kPackVoiceRecipeMaxInstalls ||
+        if (route.effectSlot >= HK_PACK_VOICE_RECIPE_MAX_INSTALLS ||
             route.routeSlot >= 4) {
             return Fail(diag,
                         "manifest %s effectSlot must be 0..%u and "
                         "routeSlot must be 0..3",
                         context.c_str(),
-                        harkenstudiobuild::kPackVoiceRecipeMaxInstalls - 1);
+                        HK_PACK_VOICE_RECIPE_MAX_INSTALLS - 1);
         }
         if (tap == nullptr || !ParseDynamicTap(*tap, &route.tap)) {
             return Fail(diag,
@@ -1348,7 +1089,7 @@ inline bool ParseDynamicRoutesSection(const JsonValue& section,
             return Fail(diag,
                         "manifest dynamicRoutes repeats target "
                         "(%s,%u,%u)",
-                        harkenstudio::ObjectIdString(b.targetBus).c_str(),
+                        harken::studio::types::ObjectIdString(b.targetBus).c_str(),
                         b.effectSlot, b.routeSlot);
         }
     }
@@ -1357,7 +1098,7 @@ inline bool ParseDynamicRoutesSection(const JsonValue& section,
         for (const ManifestBusEffect& effect : out->busEffects) {
             if (effect.bus == route.targetBus &&
                 effect.slot == route.effectSlot &&
-                effect.type == harkenstudio::kEffectCompressor) {
+                effect.type == harken::studio::types::kEffectCompressor) {
                 declaredTarget = true;
                 break;
             }
@@ -1366,19 +1107,19 @@ inline bool ParseDynamicRoutesSection(const JsonValue& section,
             return Fail(diag,
                         "manifest dynamic route target (%s,%u) must "
                         "name a Compressor in busEffects",
-                        harkenstudio::ObjectIdString(route.targetBus).c_str(),
+                        harken::studio::types::ObjectIdString(route.targetBus).c_str(),
                         route.effectSlot);
         }
     }
     return true;
 }
 
-inline bool ParseVoiceRecipesSection(const JsonValue& section,
+inline bool ParseVoiceRecipesSection(const json::JsonValue& section,
                                      Manifest* out, Diag* diag) {
     for (std::size_t i = 0; i < section.items.size(); ++i) {
-        const JsonValue& item = section.items[i];
+        const json::JsonValue& item = section.items[i];
         const std::string context = IndexedName("voiceRecipes", i);
-        if (item.kind != JsonValue::Kind::Object) {
+        if (item.kind != json::JsonValue::Kind::Object) {
             return Fail(diag, "manifest %s must be an object",
                         context.c_str());
         }
@@ -1393,34 +1134,34 @@ inline bool ParseVoiceRecipesSection(const JsonValue& section,
                           &recipe.playable, diag)) {
             return false;
         }
-        if (harkenstudio::IsNull(recipe.playable)) {
+        if (harken::studio::types::IsNull(recipe.playable)) {
             return Fail(diag, "manifest %s.playable must be nonzero",
                         context.c_str());
         }
-        const JsonValue* tone = item.Find("tone");
-        const JsonValue* spatial = item.Find("spatial");
-        const JsonValue* playback = item.Find("playback");
-        const JsonValue* effects = item.Find("effects");
-        const JsonValue* bindings = item.Find("bindings");
-        if (effects == nullptr || effects->kind != JsonValue::Kind::Array ||
-            effects->items.size() > harkenstudiobuild::kPackVoiceRecipeMaxInstalls) {
+        const json::JsonValue* tone = item.Find("tone");
+        const json::JsonValue* spatial = item.Find("spatial");
+        const json::JsonValue* playback = item.Find("playback");
+        const json::JsonValue* effects = item.Find("effects");
+        const json::JsonValue* bindings = item.Find("bindings");
+        if (effects == nullptr || effects->kind != json::JsonValue::Kind::Array ||
+            effects->items.size() > HK_PACK_VOICE_RECIPE_MAX_INSTALLS) {
             return Fail(diag,
                         "manifest %s.effects must contain at most %u entries",
                         context.c_str(),
-                        harkenstudiobuild::kPackVoiceRecipeMaxInstalls);
+                        HK_PACK_VOICE_RECIPE_MAX_INSTALLS);
         }
         if (bindings == nullptr ||
-            bindings->kind != JsonValue::Kind::Array ||
-            bindings->items.size() > harkenstudiobuild::kPackVoiceRecipeMaxBindings) {
+            bindings->kind != json::JsonValue::Kind::Array ||
+            bindings->items.size() > HK_PACK_VOICE_RECIPE_MAX_BINDINGS) {
             return Fail(diag,
                         "manifest %s.bindings must be an array of at most %u "
                         "ids",
                         context.c_str(),
-                        harkenstudiobuild::kPackVoiceRecipeMaxBindings);
+                        HK_PACK_VOICE_RECIPE_MAX_BINDINGS);
         }
         if (tone != nullptr) {
             const std::string toneContext = context + ".tone";
-            if (tone->kind != JsonValue::Kind::Object) {
+            if (tone->kind != json::JsonValue::Kind::Object) {
                 return Fail(diag, "manifest %s must be an object",
                             toneContext.c_str());
             }
@@ -1436,8 +1177,8 @@ inline bool ParseVoiceRecipesSection(const JsonValue& section,
                 return false;
             }
             const auto readBool = [&](const char* key, bool* value) {
-                const JsonValue* field = tone->Find(key);
-                if (field == nullptr || field->kind != JsonValue::Kind::Bool) {
+                const json::JsonValue* field = tone->Find(key);
+                if (field == nullptr || field->kind != json::JsonValue::Kind::Bool) {
                     return Fail(diag, "manifest %s.%s must be a boolean",
                                 toneContext.c_str(), key);
                 }
@@ -1507,7 +1248,7 @@ inline bool ParseVoiceRecipesSection(const JsonValue& section,
         }
         if (spatial != nullptr) {
             const std::string spatialContext = context + ".spatial";
-            if (spatial->kind != JsonValue::Kind::Object) {
+            if (spatial->kind != json::JsonValue::Kind::Object) {
                 return Fail(diag, "manifest %s must be an object",
                             spatialContext.c_str());
             }
@@ -1523,7 +1264,7 @@ inline bool ParseVoiceRecipesSection(const JsonValue& section,
                                 &recipe.spatial.distanceScale, diag)) {
                 return false;
             }
-            if (harkenstudio::IsNull(recipe.spatial.attenuation) ||
+            if (harken::studio::types::IsNull(recipe.spatial.attenuation) ||
                 recipe.spatial.distanceScale <= 0.0f) {
                 return Fail(diag,
                             "manifest %s requires a nonzero attenuation and "
@@ -1534,7 +1275,7 @@ inline bool ParseVoiceRecipesSection(const JsonValue& section,
         }
         if (playback != nullptr) {
             const std::string playbackContext = context + ".playback";
-            if (playback->kind != JsonValue::Kind::Object) {
+            if (playback->kind != json::JsonValue::Kind::Object) {
                 return Fail(diag, "manifest %s must be an object",
                             playbackContext.c_str());
             }
@@ -1555,10 +1296,10 @@ inline bool ParseVoiceRecipesSection(const JsonValue& section,
                         context.c_str());
         }
         for (std::size_t e = 0; e < effects->items.size(); ++e) {
-            const JsonValue& effect = effects->items[e];
+            const json::JsonValue& effect = effects->items[e];
             const std::string effectContext =
                 context + ".effects[" + std::to_string(e) + "]";
-            if (effect.kind != JsonValue::Kind::Object) {
+            if (effect.kind != json::JsonValue::Kind::Object) {
                 return Fail(diag, "manifest %s must be an object",
                             effectContext.c_str());
             }
@@ -1581,17 +1322,17 @@ inline bool ParseVoiceRecipesSection(const JsonValue& section,
                               diag)) {
                 return false;
             }
-            const JsonValue* type = effect.Find("type");
-            const JsonValue* bypass = effect.Find("bypass");
-            const JsonValue* params = effect.Find("parameters");
+            const json::JsonValue* type = effect.Find("type");
+            const json::JsonValue* bypass = effect.Find("bypass");
+            const json::JsonValue* params = effect.Find("parameters");
             if (type == nullptr || !ParseRecipeEffectType(*type, &parsed.type)) {
                 return Fail(diag,
                             "manifest %s.type must be one of %s",
                             effectContext.c_str(),
-                            harkenstudiobuild::kPackEffectManifestNameList);
+                            harken::studio::build::kPackEffectManifestNameList);
             }
-            const harkenstudiobuild::PackEffectSchemaRow* effectSchema =
-                harkenstudiobuild::FindPackEffectSchemaByType(parsed.type);
+            const harken::studio::build::PackEffectSchemaRow* effectSchema =
+                harken::studio::build::FindPackEffectSchemaByType(parsed.type);
             if (!hasDescriptorVintage) {
                 parsed.descriptorVintage =
                     effectSchema->descriptorVintage;
@@ -1603,20 +1344,20 @@ inline bool ParseVoiceRecipesSection(const JsonValue& section,
                             effectContext.c_str(),
                             effectSchema->descriptorVintage);
             }
-            if (parsed.slot >= harkenstudiobuild::kPackVoiceRecipeMaxInstalls) {
+            if (parsed.slot >= HK_PACK_VOICE_RECIPE_MAX_INSTALLS) {
                 return Fail(diag, "manifest %s.slot must be 0..%u",
                             effectContext.c_str(),
-                            harkenstudiobuild::kPackVoiceRecipeMaxInstalls - 1);
+                            HK_PACK_VOICE_RECIPE_MAX_INSTALLS - 1);
             }
             if (bypass != nullptr) {
-                if (bypass->kind != JsonValue::Kind::Bool) {
+                if (bypass->kind != json::JsonValue::Kind::Bool) {
                     return Fail(diag, "manifest %s.bypass must be a boolean",
                                 effectContext.c_str());
                 }
                 parsed.bypass = bypass->boolean;
             }
             const std::uint32_t expected = RecipeParamCount(parsed.type);
-            if (params == nullptr || params->kind != JsonValue::Kind::Array ||
+            if (params == nullptr || params->kind != json::JsonValue::Kind::Array ||
                 params->items.size() != expected) {
                 return Fail(diag,
                             "manifest %s.parameters must contain exactly %u "
@@ -1636,9 +1377,9 @@ inline bool ParseVoiceRecipesSection(const JsonValue& section,
             }
             recipe.effects.push_back(std::move(parsed));
         }
-        for (const JsonValue& binding : bindings->items) {
-            harkenstudio::ObjectId id{};
-            if (binding.kind != JsonValue::Kind::String || !harkenstudio::ParseObjectId(binding.text, &id) || harkenstudio::IsNull(id)) {
+        for (const json::JsonValue& binding : bindings->items) {
+            harken::studio::types::ObjectId id{};
+            if (binding.kind != json::JsonValue::Kind::String || !harken::studio::types::ParseObjectId(binding.text, &id) || harken::studio::types::IsNull(id)) {
                 return Fail(diag,
                             "manifest %s.bindings must contain nonzero "
                             "integer ids",
@@ -1675,12 +1416,12 @@ inline bool ParseVoiceRecipesSection(const JsonValue& section,
     return true;
 }
 
-inline bool ParseAttachmentsSection(const JsonValue& section,
+inline bool ParseAttachmentsSection(const json::JsonValue& section,
                                     Manifest* out, Diag* diag) {
     for (std::size_t i = 0; i < section.items.size(); ++i) {
-        const JsonValue& item = section.items[i];
+        const json::JsonValue& item = section.items[i];
         const std::string context = IndexedName("attachments", i);
-        if (item.kind != JsonValue::Kind::Object) {
+        if (item.kind != json::JsonValue::Kind::Object) {
             return Fail(diag, "manifest %s must be an object",
                         context.c_str());
         }
@@ -1701,7 +1442,7 @@ inline bool ParseAttachmentsSection(const JsonValue& section,
                           &attachment.object, diag)) {
             return false;
         }
-        if (attachment.scope == harkenstudio::kTargetScopeVoiceEffectParam) {
+        if (attachment.scope == harken::studio::types::kTargetScopeVoiceEffectParam) {
             return Fail(diag,
                         "manifest %s.scope does not support voice-effect-"
                         "parameter attachments; use voiceRecipes[].bindings",
@@ -1712,12 +1453,12 @@ inline bool ParseAttachmentsSection(const JsonValue& section,
     return true;
 }
 
-inline bool ParseContainersSection(const JsonValue& section,
+inline bool ParseContainersSection(const json::JsonValue& section,
                                    Manifest* out, Diag* diag) {
     for (std::size_t i = 0; i < section.items.size(); ++i) {
-        const JsonValue& item = section.items[i];
+        const json::JsonValue& item = section.items[i];
         const std::string context = IndexedName("containers", i);
-        if (item.kind != JsonValue::Kind::Object) {
+        if (item.kind != json::JsonValue::Kind::Object) {
             return Fail(diag, "manifest %s must be an object",
                         context.c_str());
         }
@@ -1749,9 +1490,9 @@ inline bool ParseContainersSection(const JsonValue& section,
         if (defaultPresent) {
             container.defaultIndex = defaultIndex;
         }
-        const JsonValue* children = item.Find("children");
+        const json::JsonValue* children = item.Find("children");
         if (children == nullptr ||
-            children->kind != JsonValue::Kind::Array ||
+            children->kind != json::JsonValue::Kind::Array ||
             children->items.empty()) {
             return Fail(diag,
                         "manifest %s requires a non-empty \"children\" "
@@ -1759,10 +1500,10 @@ inline bool ParseContainersSection(const JsonValue& section,
                         context.c_str());
         }
         for (std::size_t c = 0; c < children->items.size(); ++c) {
-            const JsonValue& childItem = children->items[c];
+            const json::JsonValue& childItem = children->items[c];
             const std::string childContext =
                 context + "." + IndexedName("children", c);
-            if (childItem.kind != JsonValue::Kind::Object) {
+            if (childItem.kind != json::JsonValue::Kind::Object) {
                 return Fail(diag, "manifest %s must be an object",
                             childContext.c_str());
             }
@@ -1816,15 +1557,15 @@ inline bool ParseContainersSection(const JsonValue& section,
     return true;
 }
 
-inline bool ParseLogicSection(const JsonValue& root, const char* key,
-                              bool (*parse)(const JsonValue&, Manifest*,
+inline bool ParseLogicSection(const json::JsonValue& root, const char* key,
+                              bool (*parse)(const json::JsonValue&, Manifest*,
                                             Diag*),
                               Manifest* out, Diag* diag) {
-    const JsonValue* section = root.Find(key);
+    const json::JsonValue* section = root.Find(key);
     if (section == nullptr) {
         return true;
     }
-    if (section->kind != JsonValue::Kind::Array) {
+    if (section->kind != json::JsonValue::Kind::Array) {
         return Fail(diag, "manifest \"%s\" must be an array", key);
     }
     return parse(*section, out, diag);
@@ -1836,15 +1577,6 @@ inline bool ParseLogicSection(const JsonValue& root, const char* key,
 // collision between media and containers. Cross-pack references stay
 // legal on purpose — closure is proven at load, not here.
 inline bool ValidateLogicSections(const Manifest& manifest, Diag* diag) {
-    if (manifest.packKind.empty()) {
-        if (ManifestHasLogicSections(manifest)) {
-            return Fail(diag,
-                        "manifest carries logic sections but no "
-                        "\"packKind\" — logic entries require a pack "
-                        "kind");
-        }
-        return true;
-    }
     if (manifest.packKind == "resident") {
         if (!manifest.entries.empty()) {
             return Fail(diag,
@@ -1864,9 +1596,9 @@ inline bool ValidateLogicSections(const Manifest& manifest, Diag* diag) {
                         "\"voiceRecipes\" section");
         }
         for (std::size_t i = 0; i < manifest.bindings.size(); ++i) {
-            if (manifest.bindings[i].scope == harkenstudio::kTargetScopeVoice ||
+            if (manifest.bindings[i].scope == harken::studio::types::kTargetScopeVoice ||
                 manifest.bindings[i].scope ==
-                    harkenstudio::kTargetScopeVoiceEffectParam) {
+                    harken::studio::types::kTargetScopeVoiceEffectParam) {
                 return Fail(diag,
                             "packKind \"resident\" requires scope "
                             "\"bus\" on bindings[%zu] — voice-scope "
@@ -1875,9 +1607,9 @@ inline bool ValidateLogicSections(const Manifest& manifest, Diag* diag) {
             }
         }
         for (std::size_t i = 0; i < manifest.attachments.size(); ++i) {
-            if (manifest.attachments[i].scope != harkenstudio::kTargetScopeBus &&
+            if (manifest.attachments[i].scope != harken::studio::types::kTargetScopeBus &&
                 manifest.attachments[i].scope !=
-                    harkenstudio::kTargetScopeBusEffectParam) {
+                    harken::studio::types::kTargetScopeBusEffectParam) {
                 return Fail(diag,
                             "packKind \"resident\" requires scope "
                             "\"bus\" or \"busEffectParam\" on "
@@ -1936,7 +1668,7 @@ inline bool ValidateLogicSections(const Manifest& manifest, Diag* diag) {
                             "buses[%zu] and buses[%zu] declare the same "
                             "id %s",
                             i, j,
-                            harkenstudio::ObjectIdString(manifest.buses[i].id).c_str());
+                            harken::studio::types::ObjectIdString(manifest.buses[i].id).c_str());
             }
         }
     }
@@ -1948,8 +1680,8 @@ inline bool ValidateLogicSections(const Manifest& manifest, Diag* diag) {
                             "busSends[%zu] and busSends[%zu] repeat the "
                             "send edge %s -> %s",
                             i, j,
-                            harkenstudio::ObjectIdString(manifest.busSends[i].from).c_str(),
-                            harkenstudio::ObjectIdString(manifest.busSends[i].to).c_str());
+                            harken::studio::types::ObjectIdString(manifest.busSends[i].from).c_str(),
+                            harken::studio::types::ObjectIdString(manifest.busSends[i].to).c_str());
             }
         }
     }
@@ -1962,7 +1694,7 @@ inline bool ValidateLogicSections(const Manifest& manifest, Diag* diag) {
                             "attenuations[%zu] and attenuations[%zu] "
                             "declare the same id %s",
                             i, j,
-                            harkenstudio::ObjectIdString(manifest.attenuations[i].id).c_str());
+                            harken::studio::types::ObjectIdString(manifest.attenuations[i].id).c_str());
             }
         }
     }
@@ -1973,7 +1705,7 @@ inline bool ValidateLogicSections(const Manifest& manifest, Diag* diag) {
                             "bindings[%zu] and bindings[%zu] declare "
                             "the same id %s",
                             i, j,
-                            harkenstudio::ObjectIdString(manifest.bindings[i].id).c_str());
+                            harken::studio::types::ObjectIdString(manifest.bindings[i].id).c_str());
             }
         }
     }
@@ -1985,7 +1717,7 @@ inline bool ValidateLogicSections(const Manifest& manifest, Diag* diag) {
                             "voiceRecipes[%zu] and voiceRecipes[%zu] "
                             "declare the same playable %s",
                             i, j,
-                            harkenstudio::ObjectIdString(manifest.voiceRecipes[i].playable).c_str());
+                            harken::studio::types::ObjectIdString(manifest.voiceRecipes[i].playable).c_str());
             }
         }
     }
@@ -2002,7 +1734,7 @@ inline bool ValidateLogicSections(const Manifest& manifest, Diag* diag) {
                             "attachments[%zu] and attachments[%zu] "
                             "repeat the same attachment (binding %s)",
                             i, j,
-                            harkenstudio::ObjectIdString(manifest.attachments[i].binding).c_str());
+                            harken::studio::types::ObjectIdString(manifest.attachments[i].binding).c_str());
             }
         }
     }
@@ -2014,7 +1746,7 @@ inline bool ValidateLogicSections(const Manifest& manifest, Diag* diag) {
                             "containers[%zu] and containers[%zu] "
                             "declare the same id %s",
                             i, j,
-                            harkenstudio::ObjectIdString(manifest.containers[i].id).c_str());
+                            harken::studio::types::ObjectIdString(manifest.containers[i].id).c_str());
             }
         }
     }
@@ -2029,7 +1761,7 @@ inline bool ValidateLogicSections(const Manifest& manifest, Diag* diag) {
                             "media entry '%s' — containers and sounds "
                             "share one playable id space",
                             i,
-                            harkenstudio::ObjectIdString(manifest.containers[i].id).c_str(),
+                            harken::studio::types::ObjectIdString(manifest.containers[i].id).c_str(),
                             manifest.entries[j].path.c_str());
             }
         }
@@ -2038,625 +1770,6 @@ inline bool ValidateLogicSections(const Manifest& manifest, Diag* diag) {
 }
 
 
-inline bool ParseManifestV3(const JsonValue& root, Manifest* out,
-                            Diag* diag) {
-    out->version = 3;
-    for (const auto& member : root.members) {
-        const bool known =
-            member.first == "manifestVersion" || member.first == "chunkFrames" ||
-            member.first == "output" || member.first == "options" ||
-            member.first == "entries" || member.first == "packKind" ||
-            member.first == "buses" || member.first == "busSends" ||
-            member.first == "busEffects" ||
-            member.first == "dynamicRoutes" ||
-            member.first == "attenuations" ||
-            member.first == "discreteVariables" ||
-            member.first == "meterWirings" ||
-            member.first == "bindings" ||
-            member.first == "voiceRecipes" ||
-            member.first == "attachments" ||
-            member.first == "containers";
-        if (!known) {
-            return Fail(diag, "unknown manifest key \"%s\"",
-                        member.first.c_str());
-        }
-    }
-    const JsonValue* version = root.Find("manifestVersion");
-    std::uint64_t versionValue = 0;
-    if (version == nullptr || !version->AsU64(&versionValue) ||
-        versionValue != 3) {
-        return Fail(diag, "\"manifestVersion\" must be the integer 3");
-    }
-    if (!ReadU32Field(root, "chunkFrames", "", false, nullptr, &out->chunkFrames, diag))
-        return false;
-    const std::string baseDir = DirectoryOf(out->manifestPath);
-    const JsonValue* output = root.Find("output");
-    if (output == nullptr || output->kind != JsonValue::Kind::String ||
-        output->text.empty()) {
-        return Fail(diag,
-                    "manifest requires a non-empty \"output\" string "
-                    "(the .pack path)");
-    }
-    out->outputPath = output->text;
-    out->resolvedOutputPath = ResolveAgainst(baseDir, output->text);
-    const JsonValue* options = root.Find("options");
-    if (options != nullptr) {
-        if (options->kind != JsonValue::Kind::Object) {
-            return Fail(diag, "manifest \"options\" must be an object");
-        }
-        for (const auto& member : options->members) {
-            if (member.first == "cache") {
-                if (member.second.kind != JsonValue::Kind::Bool) {
-                    return Fail(diag,
-                                "manifest options.cache must be a "
-                                "boolean");
-                }
-                out->cacheEnabled = member.second.boolean;
-            } else if (member.first == "cachePath" ||
-                       member.first == "reportPath") {
-                if (member.second.kind != JsonValue::Kind::String ||
-                    member.second.text.empty()) {
-                    return Fail(diag,
-                                "manifest options.%s must be a non-empty "
-                                "string",
-                                member.first.c_str());
-                }
-                if (member.first == "cachePath") {
-                    out->cachePath = member.second.text;
-                } else {
-                    out->reportPath = member.second.text;
-                }
-            } else {
-                return Fail(diag,
-                            "unknown key \"%s\" in manifest options",
-                            member.first.c_str());
-            }
-        }
-    }
-    const JsonValue* packKind = root.Find("packKind");
-    if (packKind != nullptr) {
-        if (packKind->kind != JsonValue::Kind::String ||
-            (packKind->text != "resident" &&
-             packKind->text != "content")) {
-            return Fail(diag,
-                        "manifest \"packKind\" must be \"resident\" or "
-                        "\"content\"");
-        }
-        out->packKind = packKind->text;
-    }
-    const JsonValue* entries = root.Find("entries");
-    if (out->packKind.empty()) {
-        // The pre-logic contract, refusal messages included: a v1
-        // container carries at least one sound.
-        if (entries == nullptr ||
-            entries->kind != JsonValue::Kind::Array) {
-            return Fail(diag, "manifest requires an \"entries\" array");
-        }
-        if (entries->items.empty()) {
-            return Fail(diag,
-                        "manifest \"entries\" array is empty — a pack "
-                        "carries at least one sound");
-        }
-    } else if (entries != nullptr &&
-               entries->kind != JsonValue::Kind::Array) {
-        // A pack kind relaxes presence (a resident pack has no media;
-        // a content pack may be logic-only) but never the shape.
-        return Fail(diag, "manifest \"entries\" must be an array");
-    }
-    if (entries != nullptr) {
-        for (std::size_t i = 0; i < entries->items.size(); ++i) {
-            ManifestEntry entry;
-            if (!ParseEntry(entries->items[i], i, true, baseDir, &entry,
-                            diag)) {
-                return false;
-            }
-            out->entries.push_back(std::move(entry));
-        }
-    }
-    // Explicit ids admit the duplicate check at parse time; refusing
-    // before any decode names the collision as early as possible. (The
-    // post-decode check still runs for v1, whose minted ids exist only
-    // after decoding.)
-    for (std::size_t i = 0; i < out->entries.size(); ++i) {
-        for (std::size_t j = i + 1; j < out->entries.size(); ++j) {
-            if (out->entries[i].soundId == out->entries[j].soundId) {
-                return Fail(
-                    diag,
-                    "entries[%zu] '%s' and entries[%zu] '%s' declare the "
-                    "same id %s",
-                    i, out->entries[i].path.c_str(), j,
-                    out->entries[j].path.c_str(),
-                    harkenstudio::ObjectIdString(out->entries[i].soundId).c_str());
-            }
-        }
-    }
-    if (root.Find("discreteVariables") != nullptr) {
-        return Fail(diag,
-                    "manifest section \"discreteVariables\" is not "
-                    "supported by the current Variable world format");
-    }
-    if (root.Find("meterWirings") != nullptr) {
-        return Fail(diag,
-                    "manifest section \"meterWirings\" is not supported "
-                    "by the current Variable world format");
-    }
-    if (!ParseLogicSection(root, "buses", ParseBusesSection, out,
-                           diag) ||
-        !ParseLogicSection(root, "busSends", ParseBusSendsSection, out,
-                           diag) ||
-        !ParseLogicSection(root, "busEffects", ParseBusEffectsSection,
-                           out, diag) ||
-        !ParseLogicSection(root, "dynamicRoutes",
-                           ParseDynamicRoutesSection, out, diag) ||
-        !ParseLogicSection(root, "attenuations",
-                           ParseAttenuationsSection, out, diag) ||
-        !ParseLogicSection(root, "bindings", ParseBindingsSection, out,
-                           diag) ||
-        !ParseLogicSection(root, "voiceRecipes",
-                           ParseVoiceRecipesSection, out, diag) ||
-        !ParseLogicSection(root, "attachments",
-                           ParseAttachmentsSection, out, diag) ||
-        !ParseLogicSection(root, "containers", ParseContainersSection,
-                           out, diag)) {
-        return false;
-    }
-    return ValidateLogicSections(*out, diag);
-}
-
-inline bool ParseManifestText(const std::string& text,
-    const std::string& manifestPath, bool streamMode, Manifest* out, Diag* diag) {
-    JsonValue root;
-    std::string error;
-    if (!ParseJson(text, &root, &error))
-        return Fail(diag, "manifest is not valid JSON: %s", error.c_str());
-    if (root.kind != JsonValue::Kind::Object)
-        return Fail(diag, "manifest root must be an object");
-    if (!streamMode && root.Find("chunkFrames"))
-        return Fail(diag, "chunkFrames applies only to --stream builds");
-    out->manifestPath = manifestPath;
-    if (!ParseManifestV3(root, out, diag)) return false;
-    if (streamMode && (out->entries.size() != 1 || !out->packKind.empty()))
-        return Fail(diag, "--stream requires exactly one media entry and no packKind");
-    return true;
-}
-
-// %.9g float literal: nine significant digits round-trip an f32
-// exactly (the report's FormatFloat discipline), so emit-then-parse
-// reproduces the identical float value.
-inline std::string FloatLiteral(float value) {
-    char buffer[32];
-    std::snprintf(buffer, sizeof buffer, "%.9g",
-                  static_cast<double>(value));
-    return std::string(buffer);
-}
-
-inline void EmitCurveObject(JsonWriter* writer, const char* key,
-                            const ManifestCurve& curve) {
-    writer->Key(key);
-    writer->BeginObject();
-    writer->Key("points");
-    writer->BeginArray();
-    for (std::uint32_t i = 0; i < curve.pointCount; ++i) {
-        writer->BeginArray();
-        writer->ValueRawNumber(FloatLiteral(curve.pointX[i]));
-        writer->ValueRawNumber(FloatLiteral(curve.pointY[i]));
-        writer->EndArray();
-    }
-    writer->EndArray();
-    // A single-point curve has no segments, so handles must be omitted.
-    if (curve.pointCount > 1) {
-        writer->Key("handles");
-        writer->BeginArray();
-        for (std::uint32_t i = 0; i + 1 < curve.pointCount; ++i) {
-            const harkenstudiobuild::ParameterCurveHandles& handle = curve.handles[i];
-            writer->BeginArray();
-            writer->ValueRawNumber(FloatLiteral(handle.h1x));
-            writer->ValueRawNumber(FloatLiteral(handle.h1y));
-            writer->ValueRawNumber(FloatLiteral(handle.h2x));
-            writer->ValueRawNumber(FloatLiteral(handle.h2y));
-            writer->EndArray();
-        }
-        writer->EndArray();
-    }
-    writer->EndObject();
-}
-
-// Logic sections in entry-kind order, each emitted only when non-empty
-// (absent and empty normalize to the same parsed image, keeping the
-// fixpoint). Optional scalar members with in-band defaults are always
-// spelled out — the codec normalization rule; members whose absence is
-// a distinct state (cone, curves, container default) are
-// emitted only when present.
-inline void EmitLogicSections(JsonWriter* writer,
-                              const Manifest& manifest) {
-    if (!manifest.buses.empty()) {
-        writer->Key("buses");
-        writer->BeginArray();
-        for (const ManifestBus& bus : manifest.buses) {
-            writer->BeginObject();
-            writer->Key("id");
-            writer->ValueString(harkenstudio::ObjectIdString(bus.id));
-            writer->Key("parent");
-            writer->ValueString(harkenstudio::ObjectIdString(bus.parent));
-            writer->Key("volume");
-            writer->ValueRawNumber(FloatLiteral(bus.volume));
-            writer->Key("outputBusVolume");
-            writer->ValueRawNumber(FloatLiteral(bus.outputBusVolume));
-            writer->EndObject();
-        }
-        writer->EndArray();
-    }
-    if (!manifest.busSends.empty()) {
-        writer->Key("busSends");
-        writer->BeginArray();
-        for (const ManifestBusSend& send : manifest.busSends) {
-            writer->BeginObject();
-            writer->Key("from");
-            writer->ValueString(harkenstudio::ObjectIdString(send.from));
-            writer->Key("to");
-            writer->ValueString(harkenstudio::ObjectIdString(send.to));
-            writer->Key("levelDb");
-            writer->ValueRawNumber(FloatLiteral(send.levelDb));
-            writer->EndObject();
-        }
-        writer->EndArray();
-    }
-    if (!manifest.busEffects.empty()) {
-        writer->Key("busEffects");
-        writer->BeginArray();
-        for (const ManifestBusEffect& effect : manifest.busEffects) {
-            writer->BeginObject();
-            writer->Key("effectId");
-            writer->ValueString(harkenstudio::ObjectIdString(effect.effectId));
-            writer->Key("bus");
-            writer->ValueString(harkenstudio::ObjectIdString(effect.bus));
-            writer->Key("slot");
-            writer->ValueU64(effect.slot);
-            writer->Key("type");
-            writer->ValueString(RecipeEffectTypeName(effect.type));
-            writer->Key("descriptorVintage");
-            writer->ValueU64(effect.descriptorVintage);
-            writer->Key("bypass");
-            writer->ValueBool(effect.bypass);
-            writer->Key("faderPointGuard");
-            writer->ValueU64(effect.faderPointGuard);
-            writer->Key("parameters");
-            writer->BeginArray();
-            for (float value : effect.parameters) {
-                writer->ValueRawNumber(FloatLiteral(value));
-            }
-            writer->EndArray();
-            writer->EndObject();
-        }
-        writer->EndArray();
-    }
-    if (!manifest.dynamicRoutes.empty()) {
-        writer->Key("dynamicRoutes");
-        writer->BeginArray();
-        for (const ManifestDynamicRoute& route : manifest.dynamicRoutes) {
-            writer->BeginObject();
-            writer->Key("targetBus");
-            writer->ValueString(harkenstudio::ObjectIdString(route.targetBus));
-            writer->Key("effectSlot");
-            writer->ValueU64(route.effectSlot);
-            writer->Key("routeSlot");
-            writer->ValueU64(route.routeSlot);
-            writer->Key("sourceBus");
-            writer->ValueString(harkenstudio::ObjectIdString(route.sourceBus));
-            writer->Key("tap");
-            writer->ValueString(DynamicTapName(route.tap));
-            writer->Key("levelDb");
-            writer->ValueRawNumber(FloatLiteral(route.levelDb));
-            writer->EndObject();
-        }
-        writer->EndArray();
-    }
-    if (!manifest.attenuations.empty()) {
-        writer->Key("attenuations");
-        writer->BeginArray();
-        for (const ManifestAttenuation& attenuation :
-             manifest.attenuations) {
-            writer->BeginObject();
-            writer->Key("id");
-            writer->ValueString(harkenstudio::ObjectIdString(attenuation.id));
-            writer->Key("rolloff");
-            writer->ValueString(
-                EnumNameOf(kRolloffNames, 3, attenuation.rolloff));
-            writer->Key("minDistance");
-            writer->ValueRawNumber(
-                FloatLiteral(attenuation.minDistance));
-            writer->Key("maxDistance");
-            writer->ValueRawNumber(
-                FloatLiteral(attenuation.maxDistance));
-            writer->Key("airAbsorptionNearHz");
-            writer->ValueRawNumber(
-                FloatLiteral(attenuation.airAbsorptionNearHz));
-            writer->Key("airAbsorptionFarHz");
-            writer->ValueRawNumber(
-                FloatLiteral(attenuation.airAbsorptionFarHz));
-            writer->Key("proximityRadius");
-            writer->ValueRawNumber(
-                FloatLiteral(attenuation.proximityRadius));
-            writer->Key("proximityMaxBoostDb");
-            writer->ValueRawNumber(
-                FloatLiteral(attenuation.proximityMaxBoostDb));
-            writer->Key("proximityFrequency");
-            writer->ValueRawNumber(
-                FloatLiteral(attenuation.proximityFrequency));
-            if (attenuation.coneEnabled) {
-                writer->Key("cone");
-                writer->BeginObject();
-                writer->Key("innerDeg");
-                writer->ValueRawNumber(
-                    FloatLiteral(attenuation.coneInnerDeg));
-                writer->Key("outerDeg");
-                writer->ValueRawNumber(
-                    FloatLiteral(attenuation.coneOuterDeg));
-                writer->Key("outerGainDb");
-                writer->ValueRawNumber(
-                    FloatLiteral(attenuation.coneOuterGainDb));
-                writer->Key("outerLowpassHz");
-                writer->ValueRawNumber(
-                    FloatLiteral(attenuation.coneOuterLowpassHz));
-                writer->EndObject();
-            }
-            if (attenuation.hasVolumeCurve) {
-                EmitCurveObject(writer, "volumeCurve",
-                                attenuation.volumeCurve);
-            }
-            if (attenuation.hasLowpassCurve) {
-                EmitCurveObject(writer, "lowpassCurve",
-                                attenuation.lowpassCurve);
-            }
-            if (attenuation.hasWidthCurve) {
-                EmitCurveObject(writer, "widthCurve",
-                                attenuation.widthCurve);
-            }
-            writer->EndObject();
-        }
-        writer->EndArray();
-    }
-    if (!manifest.bindings.empty()) {
-        writer->Key("bindings");
-        writer->BeginArray();
-        for (const ManifestBinding& binding : manifest.bindings) {
-            writer->BeginObject();
-            writer->Key("id");
-            writer->ValueString(harkenstudio::ObjectIdString(binding.id));
-            writer->Key("variable");
-            writer->ValueString(harkenstudio::ObjectIdString(binding.variable));
-            writer->Key("scope");
-            writer->ValueString(
-                EnumNameOf(kTargetScopeNames, 4, binding.scope));
-            writer->Key("target");
-            writer->ValueU64(binding.target);
-            writer->Key("transitionMs");
-            writer->ValueU64(binding.transitionMs);
-            EmitCurveObject(writer, "curve", binding.curve);
-            writer->EndObject();
-        }
-        writer->EndArray();
-    }
-    if (!manifest.attachments.empty()) {
-        writer->Key("attachments");
-        writer->BeginArray();
-        for (const ManifestAttachment& attachment :
-             manifest.attachments) {
-            writer->BeginObject();
-            writer->Key("binding");
-            writer->ValueString(harkenstudio::ObjectIdString(attachment.binding));
-            writer->Key("scope");
-            writer->ValueString(
-                EnumNameOf(kTargetScopeNames, 4, attachment.scope));
-            writer->Key("object");
-            writer->ValueString(harkenstudio::ObjectIdString(attachment.object));
-            writer->EndObject();
-        }
-        writer->EndArray();
-    }
-    if (!manifest.containers.empty()) {
-        writer->Key("containers");
-        writer->BeginArray();
-        for (const ManifestContainer& container : manifest.containers) {
-            writer->BeginObject();
-            writer->Key("id");
-            writer->ValueString(harkenstudio::ObjectIdString(container.id));
-            writer->Key("order");
-            writer->ValueString(
-                EnumNameOf(kSelectionOrderNames, 2, container.order));
-            writer->Key("selectionVariable");
-            writer->ValueString(harkenstudio::ObjectIdString(container.selectionVariable));
-            writer->Key("avoidRepeatWindow");
-            writer->ValueU64(container.avoidRepeatWindow);
-            if (container.defaultIndex != 0xFFFFFFFFu) {
-                writer->Key("default");
-                writer->ValueU64(container.defaultIndex);
-            }
-            writer->Key("children");
-            writer->BeginArray();
-            for (const ManifestContainerChild& child :
-                 container.children) {
-                writer->BeginObject();
-                writer->Key("playable");
-                writer->ValueString(harkenstudio::ObjectIdString(child.playable));
-                writer->Key("weight");
-                writer->ValueU64(child.weight);
-                writer->Key("matchValue");
-                writer->ValueU64(child.matchValue);
-                writer->Key("delayMs");
-                writer->ValueU64(child.delayMs);
-                writer->Key("delayJitterMs");
-                writer->ValueU64(child.delayJitterMs);
-                writer->EndObject();
-            }
-            writer->EndArray();
-            writer->EndObject();
-        }
-        writer->EndArray();
-    }
-    if (!manifest.voiceRecipes.empty()) {
-        writer->Key("voiceRecipes");
-        writer->BeginArray();
-        for (const ManifestVoiceRecipe& recipe : manifest.voiceRecipes) {
-            writer->BeginObject();
-            writer->Key("playable");
-            writer->ValueString(harkenstudio::ObjectIdString(recipe.playable));
-            if (recipe.tone.present) {
-                writer->Key("tone");
-                writer->BeginObject();
-                writer->Key("lowpassEnabled");
-                writer->ValueBool(recipe.tone.lowpassEnabled);
-                writer->Key("lowpassFrequencyHz");
-                writer->ValueRawNumber(
-                    FloatLiteral(recipe.tone.lowpassFrequencyHz));
-                writer->Key("lowpassQ");
-                writer->ValueRawNumber(FloatLiteral(recipe.tone.lowpassQ));
-                writer->Key("highpassEnabled");
-                writer->ValueBool(recipe.tone.highpassEnabled);
-                writer->Key("highpassFrequencyHz");
-                writer->ValueRawNumber(
-                    FloatLiteral(recipe.tone.highpassFrequencyHz));
-                writer->Key("highpassQ");
-                writer->ValueRawNumber(FloatLiteral(recipe.tone.highpassQ));
-                writer->Key("lowShelfEnabled");
-                writer->ValueBool(recipe.tone.lowShelfEnabled);
-                writer->Key("lowShelfFrequencyHz");
-                writer->ValueRawNumber(
-                    FloatLiteral(recipe.tone.lowShelfFrequencyHz));
-                writer->Key("lowShelfQ");
-                writer->ValueRawNumber(FloatLiteral(recipe.tone.lowShelfQ));
-                writer->Key("lowShelfGainDb");
-                writer->ValueRawNumber(
-                    FloatLiteral(recipe.tone.lowShelfGainDb));
-                writer->Key("highShelfEnabled");
-                writer->ValueBool(recipe.tone.highShelfEnabled);
-                writer->Key("highShelfFrequencyHz");
-                writer->ValueRawNumber(
-                    FloatLiteral(recipe.tone.highShelfFrequencyHz));
-                writer->Key("highShelfQ");
-                writer->ValueRawNumber(FloatLiteral(recipe.tone.highShelfQ));
-                writer->Key("highShelfGainDb");
-                writer->ValueRawNumber(
-                    FloatLiteral(recipe.tone.highShelfGainDb));
-                writer->EndObject();
-            }
-            if (recipe.spatial.present) {
-                writer->Key("spatial");
-                writer->BeginObject();
-                writer->Key("attenuation");
-                writer->ValueString(harkenstudio::ObjectIdString(recipe.spatial.attenuation));
-                writer->Key("distanceScale");
-                writer->ValueRawNumber(
-                    FloatLiteral(recipe.spatial.distanceScale));
-                writer->EndObject();
-            }
-            if (recipe.playback.present) {
-                writer->Key("playback");
-                writer->BeginObject();
-                writer->Key("loopCount");
-                writer->ValueU64(recipe.playback.loopCount);
-                writer->EndObject();
-            }
-            writer->Key("effects");
-            writer->BeginArray();
-            for (const ManifestVoiceRecipeEffect& effect : recipe.effects) {
-                writer->BeginObject();
-                writer->Key("effectId");
-                writer->ValueString(harkenstudio::ObjectIdString(effect.effectId));
-                writer->Key("slot");
-                writer->ValueU64(effect.slot);
-                writer->Key("type");
-                writer->ValueString(RecipeEffectTypeName(effect.type));
-                writer->Key("descriptorVintage");
-                writer->ValueU64(effect.descriptorVintage);
-                writer->Key("bypass");
-                writer->ValueBool(effect.bypass);
-                writer->Key("parameters");
-                writer->BeginArray();
-                for (float parameter : effect.parameters) {
-                    writer->ValueRawNumber(FloatLiteral(parameter));
-                }
-                writer->EndArray();
-                writer->EndObject();
-            }
-            writer->EndArray();
-            writer->Key("bindings");
-            writer->BeginArray();
-            for (harkenstudio::ObjectId binding : recipe.bindings) {
-                writer->ValueString(harkenstudio::ObjectIdString(binding));
-            }
-            writer->EndArray();
-            writer->EndObject();
-        }
-        writer->EndArray();
-    }
-}
-
-// Normalized v2 image: fixed member order, explicit ids, loop members
-// only when loopable, codec always spelled out. Emitting the same
-// logical manifest always yields identical bytes, and re-emitting a
-// parse of the emitted text is a fixpoint — that is the round-trip
-// contract tests pin. Paths are echoed exactly as written; callers that
-// emit to a different directory than the source manifest must account
-// for relative-path bases themselves. Logic members appear only when
-// present — packKind after "options", entries next, then the logic
-// sections in entry-kind order — so a manifest without them emits
-// byte-identically to the pre-logic tool.
-inline std::string EmitManifestV3(const Manifest& manifest) {
-    JsonWriter writer;
-    writer.BeginObject();
-    writer.Key("manifestVersion");
-    writer.ValueU64(3);
-    writer.Key("output");
-    writer.ValueString(manifest.outputPath);
-    writer.Key("options");
-    writer.BeginObject();
-    writer.Key("cache");
-    writer.ValueBool(manifest.cacheEnabled);
-    if (!manifest.cachePath.empty()) {
-        writer.Key("cachePath");
-        writer.ValueString(manifest.cachePath);
-    }
-    if (!manifest.reportPath.empty()) {
-        writer.Key("reportPath");
-        writer.ValueString(manifest.reportPath);
-    }
-    writer.EndObject();
-    if (!manifest.packKind.empty()) {
-        writer.Key("packKind");
-        writer.ValueString(manifest.packKind);
-    }
-    if (!manifest.entries.empty()) {
-        writer.Key("entries");
-        writer.BeginArray();
-        for (const ManifestEntry& entry : manifest.entries) {
-            writer.BeginObject();
-            writer.Key("path");
-            writer.ValueString(entry.path);
-            writer.Key("id");
-            writer.ValueString(harkenstudio::ObjectIdString(entry.soundId));
-            if (entry.loopable) {
-                writer.Key("loopStartFrame");
-                writer.ValueU64(entry.loopStartFrame);
-                writer.Key("loopEndFrame");
-                writer.ValueU64(entry.loopEndFrame);
-            }
-            writer.Key("codec");
-            writer.ValueString(entry.codec);
-            if (!entry.downmix.empty()) {
-                writer.Key("downmix");
-                writer.ValueString(entry.downmix);
-            }
-            writer.EndObject();
-        }
-        writer.EndArray();
-    }
-    EmitLogicSections(&writer, manifest);
-    writer.EndObject();
-    return writer.Finish();
-}
-
-} // namespace packc
-} // namespace harkenstudiojson
+} // namespace harken::studio::pack
 
 #endif // HARKEN_HOST_PACKC_MANIFEST_H

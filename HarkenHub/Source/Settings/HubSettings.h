@@ -1,12 +1,13 @@
 #pragma once
 
 #include <QPoint>
+#include <QRect>
 #include <QSize>
 #include <QString>
 
 #include <optional>
 
-namespace VNH {
+namespace harken::hub {
 
 struct TableSortPreference
 {
@@ -26,12 +27,13 @@ public:
     static bool setProjectLocation(const QString& path);
     static QString languagePreference();
     static bool setLanguagePreference(const QString& preference);
+    static QString themePreference();
+    static bool setThemePreference(const QString& preference);
+    static bool setWindowGeometry(const QRect& geometry, int timeoutMs = -1);
     static QSize windowSize();
-    static bool setWindowSize(const QSize& size);
     static std::optional<QPoint> windowPosition();
-    static bool setWindowPosition(const QPoint& position);
     static TableSortPreference tableSort(const QString& table);
-    static bool setTableSort(const QString& table, const TableSortPreference& sort);
+    static bool setTableSort(const QString& table, const TableSortPreference& sort, int timeoutMs = -1);
     static QString pendingUpdateNotesVersion();
     static bool setPendingUpdateNotesVersion(const QString& version);
     static bool clearPendingUpdateNotesVersion(const QString& version);

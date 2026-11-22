@@ -4,7 +4,7 @@
 
 #include <QString>
 
-namespace VNH {
+namespace harken::hub {
 
 struct ProjectCreateRequest
 {
@@ -12,7 +12,6 @@ struct ProjectCreateRequest
     QString name;
     QString location;
     QString templateId;
-    QString templatePath;
 };
 
 class ProjectCreateFlow

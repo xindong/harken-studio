@@ -3,7 +3,12 @@
 #include <QJsonObject>
 #include <QString>
 
-namespace VNX {
+namespace harken::studio {
+
+enum class ProjectDocumentContract {
+    VersionedSchema,
+    DevelopmentV9
+};
 
 struct ProjectDocumentData
 {
@@ -12,7 +17,6 @@ struct ProjectDocumentData
     QString projectId;
     int schemaVersion = 0;
     QString studioVersion;
-    int packSchemaVersion = 0;
     QJsonObject header;
     QJsonObject content;
 };
@@ -32,7 +36,8 @@ public:
     static bool parse(const QJsonObject& document,
                       const QString& expectedType,
                       ProjectDocumentData* data,
-                      QString* error = nullptr);
+                      QString* error = nullptr,
+                      ProjectDocumentContract contract = ProjectDocumentContract::VersionedSchema);
     static bool validateFieldGroupAuthoring(const QJsonObject& content,
                                               QString* error = nullptr);
     static void discardRetiredMakeUpGain(QJsonObject* properties);

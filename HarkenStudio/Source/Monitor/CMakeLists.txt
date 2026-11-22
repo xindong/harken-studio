@@ -18,6 +18,8 @@ add_library(harken_editor_monitor_data STATIC
     MonitorRecordingBrowser.h
     MonitorRecordingBrowser.cpp
     MonitorSessionCompareUi.h
+    MonitorSessionCompare.cpp
+    MonitorSessionCompare.h
     MonitorSessionCompareUi.cpp
     MonitorCaptureControlHost.h
     MonitorCaptureControlHost.cpp
@@ -78,6 +80,7 @@ target_include_directories(harken_editor_monitor_data PUBLIC
 target_link_libraries(harken_editor_monitor_data PUBLIC
     Qt6::Core
     harken_runtime_bridge
+    harken_buildinfo
 )
 
 if(MSVC)

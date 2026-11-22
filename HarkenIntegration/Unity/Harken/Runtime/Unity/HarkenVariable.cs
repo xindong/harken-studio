@@ -7,7 +7,6 @@ namespace Harken.Unity
     {
         [SerializeField] private HarkenAudioSystem runtime;
         [SerializeField] private HarkenEmitter emitter;
-        [SerializeField] private HarkenVariableId variable;
         [SerializeField] private string variableName = string.Empty;
         [SerializeField] private string projectId = string.Empty;
         [SerializeField] private float value;
@@ -18,19 +17,8 @@ namespace Harken.Unity
         private bool runtimeBound;
         private const int MaxStartupFrames = 120;
 
-        public VnObjectId VariableStableId => variable.stableId;
         public string VariableName => variableName ?? string.Empty;
         public string ProjectId => projectId ?? string.Empty;
-        public HarkenVariableId Variable
-        {
-            get => variable;
-            set
-            {
-                variable = value;
-                variableName = string.Empty;
-                projectId = string.Empty;
-            }
-        }
         public float Value => value;
         public VnResult LastResult { get; private set; } = VnResult.VN_OK;
 
@@ -96,9 +84,7 @@ namespace Harken.Unity
             {
                 return Observe(VnResult.VN_STALE_HANDLE);
             }
-            bool typedOnly = string.IsNullOrEmpty(variableName) && string.IsNullOrEmpty(projectId);
-            if (typedOnly ? !variable.IsAssigned :
-                (string.IsNullOrEmpty(variableName) || string.IsNullOrEmpty(projectId)))
+            if (string.IsNullOrEmpty(variableName) || string.IsNullOrEmpty(projectId))
             {
                 return Observe(VnResult.VN_INVALID_ARG);
             }
@@ -106,24 +92,16 @@ namespace Harken.Unity
             {
                 return Observe(VnResult.VN_NOT_INITIALIZED);
             }
-            if (!typedOnly && variable.IsAssigned)
-            {
-                VnResult resolved = Values.Resolve(variableName, projectId, out VnObjectId namedId);
-                if (resolved != VnResult.VN_OK) return Observe(resolved);
-                if (namedId != variable.stableId) return Observe(VnResult.VN_INVALID_ARG);
-            }
             VnResult result;
             if (emitter != null)
             {
                 result = emitter.IsCreated
-                    ? (typedOnly ? Values.SetValue(variable, value, emitter.Handle)
-                        : Values.SetValue(variableName, projectId, value, emitter.Handle))
+                    ? Values.SetValue(variableName, projectId, value, emitter.Handle)
                     : VnResult.VN_NOT_INITIALIZED;
             }
             else
             {
-                result = typedOnly ? Values.SetValue(variable, value)
-                    : Values.SetValue(variableName, projectId, value);
+                result = Values.SetValue(variableName, projectId, value);
             }
             return Observe(result);
         }

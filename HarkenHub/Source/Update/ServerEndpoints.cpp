@@ -4,7 +4,7 @@
 
 #include <QRegularExpression>
 
-namespace VNH {
+namespace harken::hub {
 
 namespace {
 
@@ -44,10 +44,8 @@ QString ServerEndpoints::hostChannel()
     return prefix + QStringLiteral("-") + ManifestVerifier::hostArchitecture();
 }
 
-QUrl ServerEndpoints::latestUrl(const QUrl& baseUrl, const QString& product,
-                                const QString& channel)
+QUrl ServerEndpoints::latestUrl(const QUrl& baseUrl, const QString& product)
 {
-    Q_UNUSED(channel)
     return withClientPath(baseUrl,
                           QStringLiteral("/release/%1/manifest.json")
                               .arg(product));
@@ -58,28 +56,26 @@ QUrl ServerEndpoints::githubLatestUrl(const QString& product)
     if (product != QStringLiteral("hub") &&
         product != QStringLiteral("harken"))
         return QUrl();
+    QUrl base(QStringLiteral("https://github.com/xindong/harken-studio"));
+#ifdef HARKEN_HUB_TEST_OVERRIDES
+    const auto override = qEnvironmentVariable("HARKEN_HUB_GITHUB_BASE_URL");
+    if (!override.isEmpty()) base = QUrl(override);
+#endif
     return withClientPath(
-        QUrl(QStringLiteral("https://github.com/xindong/harken-studio")),
+        base,
         QStringLiteral("/releases/latest/download/%1-manifest.json")
             .arg(product));
 }
 
 QList<QUrl> ServerEndpoints::manifestUrls(const QUrl& fallbackBaseUrl,
-                                          const QString& product,
-                                          const QString& channel)
+                                          const QString& product)
 {
     QList<QUrl> result;
     const QUrl github = githubLatestUrl(product);
     if (!github.isEmpty())
         result.append(github);
-    result.append(latestUrl(fallbackBaseUrl, product, channel));
+    result.append(latestUrl(fallbackBaseUrl, product));
     return result;
-}
-
-QUrl ServerEndpoints::versionsUrl(const QUrl& baseUrl, const QString& product,
-                                  const QString& channel)
-{
-    return latestUrl(baseUrl, product, channel);
 }
 
 bool ServerEndpoints::isReleaseObjectPath(const QString& objectPath,

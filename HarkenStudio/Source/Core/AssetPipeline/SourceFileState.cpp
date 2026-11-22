@@ -15,7 +15,7 @@
 #include <sys/vfs.h>
 #endif
 
-namespace VNX {
+namespace harken::studio {
 
 struct FileState
 {

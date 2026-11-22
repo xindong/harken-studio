@@ -4,7 +4,7 @@
 #include <harken/Harken.h>
 #include <harken_studio/ObjectId.h>
 
-namespace harkenstudio {
+namespace harken::studio::types {
 
 inline std::ostream& operator<<(std::ostream& stream, ObjectId id)
 {
@@ -20,41 +20,41 @@ inline constexpr bool operator==(ObjectId left, VnObjectId right) noexcept
 
 namespace harkentest {
 
-inline constexpr harkenstudio::ObjectId ToStudio(VnObjectId id) noexcept
+inline constexpr harken::studio::types::ObjectId ToStudio(VnObjectId id) noexcept
 {
     return {id.high, id.low};
 }
 
-inline constexpr VnObjectId ToRuntime(harkenstudio::ObjectId id) noexcept
+inline constexpr VnObjectId ToRuntime(harken::studio::types::ObjectId id) noexcept
 {
     return {id.high, id.low};
 }
 
 inline constexpr VnObjectId ToRuntime(VnObjectId id) noexcept { return id; }
 
-inline constexpr harkenstudio::ObjectId StudioObjectId(std::uint64_t value) noexcept
+inline constexpr harken::studio::types::ObjectId StudioObjectId(std::uint64_t value) noexcept
 {
     return ToStudio(ObjectId(value));
 }
 
-inline constexpr harkenstudio::ObjectId StudioObjectId(harkenstudio::ObjectId value) noexcept
+inline constexpr harken::studio::types::ObjectId StudioObjectId(harken::studio::types::ObjectId value) noexcept
 {
     return value;
 }
 
-inline constexpr harkenstudio::ObjectId StudioObjectId(VnObjectId value) noexcept
+inline constexpr harken::studio::types::ObjectId StudioObjectId(VnObjectId value) noexcept
 {
     return ToStudio(value);
 }
 
-inline constexpr harkenstudio::ObjectId OffsetObjectId(harkenstudio::ObjectId base, std::uint64_t offset) noexcept
+inline constexpr harken::studio::types::ObjectId OffsetObjectId(harken::studio::types::ObjectId base, std::uint64_t offset) noexcept
 {
     return {base.high, base.low + offset};
 }
 
-inline std::string JsonObjectId(harkenstudio::ObjectId id)
+inline std::string JsonObjectId(harken::studio::types::ObjectId id)
 {
-    return "\"" + harkenstudio::ObjectIdString(id) + "\"";
+    return "\"" + harken::studio::types::ObjectIdString(id) + "\"";
 }
 
 }

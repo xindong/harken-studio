@@ -1,3 +1,4 @@
+#include <harken/HarkenDevelopment.h>
 #include "harken/render/SignalRenderPlan.h"
 #include "harken/render/SignalRoutingTypes.h"
 #include "harken/core/LogicAllocCheckpoint.h"

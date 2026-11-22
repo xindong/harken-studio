@@ -1,0 +1,3888 @@
+{
+  "$defs": {
+    "actionComponent": {
+      "additionalProperties": false,
+      "properties": {
+        "steps": {
+          "items": {
+            "$ref": "#/$defs/actionStep"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "actionQuantize": {
+      "additionalProperties": false,
+      "properties": {
+        "ifSilent": {
+          "enum": [
+            "Immediate",
+            "Drop"
+          ]
+        },
+        "referenceRef": {
+          "$ref": "#/$defs/objectReference"
+        },
+        "timing": {
+          "enum": [
+            "Immediate",
+            "NextBeat",
+            "NextBar",
+            "NextMarker",
+            "NaturalEnd",
+            "CurrentLoopEnd",
+            "EntryMarker",
+            "ExitMarker"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "actionStep": {
+      "additionalProperties": false,
+      "properties": {
+        "delay": {
+          "type": "number"
+        },
+        "fadeTime": {
+          "type": "number"
+        },
+        "quantize": {
+          "$ref": "#/$defs/actionQuantize"
+        },
+        "resetScope": {
+          "enum": [
+            "Emitter",
+            "Global"
+          ]
+        },
+        "scope": {
+          "enum": [
+            "Global",
+            "Emitter"
+          ]
+        },
+        "targetRef": {
+          "$ref": "#/$defs/objectReference"
+        },
+        "type": {
+          "enum": [
+            "Play",
+            "Stop",
+            "Post Action",
+            "SetVariable",
+            "Reset"
+          ]
+        },
+        "value": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "type",
+        "delay"
+      ],
+      "type": "object"
+    },
+    "attenuationComponent": {
+      "additionalProperties": false,
+      "properties": {
+        "dimensions": {
+          "items": {
+            "$ref": "#/$defs/attenuationDimension"
+          },
+          "type": "array"
+        },
+        "maxDistance": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "maxDistance",
+        "dimensions"
+      ],
+      "type": "object"
+    },
+    "attenuationDimension": {
+      "additionalProperties": false,
+      "properties": {
+        "handles": {
+          "items": {
+            "items": {
+              "type": "number"
+            },
+            "maxItems": 4,
+            "minItems": 4,
+            "type": "array"
+          },
+          "type": "array"
+        },
+        "points": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "distance": {
+                "type": "number"
+              },
+              "value": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "distance",
+              "value"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "type": {
+          "enum": [
+            "volume",
+            "pitch"
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "points"
+      ],
+      "type": "object"
+    },
+    "audioComponent": {
+      "additionalProperties": false,
+      "properties": {
+        "Priority": {
+          "maximum": 100,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "loopCount": {
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "outputBusOverride": {
+          "type": "boolean"
+        },
+        "overrideBits": {
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "streamingMode": {
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "busComponent": {
+      "additionalProperties": false,
+      "properties": {
+        "channelConfig": {
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "listenerRelativeRouting": {
+          "type": "boolean"
+        },
+        "pan": {
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "busPlayableOverrideRow": {
+      "additionalProperties": false,
+      "properties": {
+        "filter": {
+          "$ref": "#/$defs/filterOverlay"
+        },
+        "loopCount": {
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "outputBusRef": {
+          "$ref": "#/$defs/nullableObjectReference"
+        },
+        "outputBusVolume": {
+          "type": "number"
+        },
+        "pitch": {
+          "type": "number"
+        },
+        "platformId": {
+          "$ref": "#/$defs/projectPlatformId"
+        },
+        "presence": {
+          "pattern": "^000000000000[0-38-b][014589cd][0-9a-f][0-38-b]$",
+          "type": "string"
+        },
+        "sends": {
+          "items": {
+            "$ref": "#/$defs/send"
+          },
+          "type": "array"
+        },
+        "signalGraph": {
+          "deprecated": true,
+          "type": "array"
+        },
+        "spatial.attenuationCurveType": {
+          "deprecated": true,
+          "enum": [
+            0,
+            1,
+            2
+          ],
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "spatial.attenuationDistanceScaling": {
+          "type": "number"
+        },
+        "spatial.attenuationRef": {
+          "$ref": "#/$defs/nullableObjectReference"
+        },
+        "spatial.is3DEnabled": {
+          "type": "boolean"
+        },
+        "spatial.panning": {
+          "type": "number"
+        },
+        "streamingMode": {
+          "enum": [
+            0,
+            1
+          ],
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "volume": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "platformId",
+        "presence"
+      ],
+      "type": "object"
+    },
+    "busPlayableProperties": {
+      "additionalProperties": false,
+      "properties": {
+        "loopCount": {
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "outputBusRef": {
+          "$ref": "#/$defs/nullableObjectReference"
+        },
+        "outputBusVolume": {
+          "type": "number"
+        },
+        "pitch": {
+          "type": "number"
+        },
+        "platformOverrides": {
+          "items": {
+            "$ref": "#/$defs/busPlayableOverrideRow"
+          },
+          "type": "array"
+        },
+        "presence": {
+          "pattern": "^000000000000[0-38-b][014589cd][0-9a-f][0-38-b]$",
+          "type": "string"
+        },
+        "sends": {
+          "items": {
+            "$ref": "#/$defs/send"
+          },
+          "type": "array"
+        },
+        "signalGraph": {
+          "deprecated": true,
+          "type": "array"
+        },
+        "spatial.attenuationCurveType": {
+          "deprecated": true,
+          "enum": [
+            0,
+            1,
+            2
+          ],
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "spatial.attenuationDistanceScaling": {
+          "type": "number"
+        },
+        "spatial.attenuationRef": {
+          "$ref": "#/$defs/nullableObjectReference"
+        },
+        "spatial.is3DEnabled": {
+          "type": "boolean"
+        },
+        "spatial.panning": {
+          "type": "number"
+        },
+        "streamingMode": {
+          "enum": [
+            0,
+            1
+          ],
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "volume": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "presence"
+      ],
+      "type": "object"
+    },
+    "components": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "$ref": "#/$defs/actionComponent"
+        },
+        "attenuation": {
+          "$ref": "#/$defs/attenuationComponent"
+        },
+        "audio": {
+          "$ref": "#/$defs/audioComponent"
+        },
+        "bus": {
+          "$ref": "#/$defs/busComponent"
+        },
+        "conversion": {
+          "$ref": "#/$defs/conversionComponent"
+        },
+        "effect": {
+          "$ref": "#/$defs/effectComponent"
+        },
+        "mixnode": {
+          "$ref": "#/$defs/mixNodeComponent"
+        },
+        "segmenttimeline": {
+          "$ref": "#/$defs/segmentTimelineComponent"
+        },
+        "selection": {
+          "$ref": "#/$defs/selectionComponent"
+        },
+        "sound": {
+          "$ref": "#/$defs/soundComponent"
+        },
+        "spatial": {
+          "$ref": "#/$defs/spatialComponent"
+        },
+        "tracktimeline": {
+          "$ref": "#/$defs/trackTimelineComponent"
+        },
+        "variable": {
+          "$ref": "#/$defs/variableComponent"
+        }
+      },
+      "type": "object"
+    },
+    "conversionComponent": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "rules": {
+              "items": {
+                "$ref": "#/$defs/conversionRule"
+              },
+              "minItems": 1,
+              "type": "array"
+            }
+          },
+          "required": [
+            "rules"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "format": {
+              "enum": [
+                "PCM",
+                "Vorbis"
+              ]
+            },
+            "sampleRateTiers": {
+              "items": {
+                "$ref": "#/$defs/conversionSampleRateTier"
+              },
+              "minItems": 1,
+              "type": "array"
+            },
+            "vorbisQuality": {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            }
+          },
+          "required": [
+            "format",
+            "vorbisQuality",
+            "sampleRateTiers"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "conversionRule": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "format": {
+              "const": "PCM"
+            },
+            "maxBytes": {
+              "$ref": "#/$defs/conversionSizeLimit"
+            },
+            "sampleRate": {
+              "$ref": "#/$defs/conversionSampleRate"
+            }
+          },
+          "required": [
+            "maxBytes",
+            "sampleRate",
+            "format"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "oneOf": [
+            {
+              "required": [
+                "quality"
+              ]
+            },
+            {
+              "required": [
+                "vorbisQuality"
+              ]
+            }
+          ],
+          "properties": {
+            "format": {
+              "const": "Vorbis"
+            },
+            "maxBytes": {
+              "$ref": "#/$defs/conversionSizeLimit"
+            },
+            "quality": {
+              "maximum": 10,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "sampleRate": {
+              "$ref": "#/$defs/conversionSampleRate"
+            },
+            "vorbisQuality": {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            }
+          },
+          "required": [
+            "maxBytes",
+            "sampleRate",
+            "format"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "conversionSampleRate": {
+      "enum": [
+        0,
+        8000,
+        11025,
+        16000,
+        22050,
+        24000,
+        32000,
+        44100,
+        48000
+      ],
+      "type": "integer"
+    },
+    "conversionSampleRateTier": {
+      "additionalProperties": false,
+      "properties": {
+        "maxBytes": {
+          "$ref": "#/$defs/conversionSizeLimit"
+        },
+        "sampleRate": {
+          "$ref": "#/$defs/conversionSampleRate"
+        }
+      },
+      "required": [
+        "maxBytes",
+        "sampleRate"
+      ],
+      "type": "object"
+    },
+    "conversionSizeLimit": {
+      "oneOf": [
+        {
+          "maximum": 9223372036854775807,
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "definitionAudioComponent": {
+      "additionalProperties": false,
+      "properties": {
+        "Priority": {
+          "maximum": 100,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "loopCount": {
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "streamingMode": {
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "definitionComponents": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "$ref": "#/$defs/actionComponent"
+        },
+        "attenuation": {
+          "$ref": "#/$defs/attenuationComponent"
+        },
+        "audio": {
+          "$ref": "#/$defs/definitionAudioComponent"
+        },
+        "bus": {
+          "$ref": "#/$defs/busComponent"
+        },
+        "effect": {
+          "$ref": "#/$defs/effectComponent"
+        },
+        "mixnode": {
+          "$ref": "#/$defs/definitionMixNodeComponent"
+        },
+        "segmenttimeline": {
+          "$ref": "#/$defs/segmentTimelineComponent"
+        },
+        "selection": {
+          "$ref": "#/$defs/selectionComponent"
+        },
+        "sound": {
+          "$ref": "#/$defs/soundComponent"
+        },
+        "spatial": {
+          "$ref": "#/$defs/definitionSpatialComponent"
+        },
+        "tracktimeline": {
+          "$ref": "#/$defs/trackTimelineComponent"
+        },
+        "variable": {
+          "$ref": "#/$defs/variableComponent"
+        }
+      },
+      "type": "object"
+    },
+    "definitionMixNodeComponent": {
+      "additionalProperties": false,
+      "properties": {
+        "bindings": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "filter": {
+          "$ref": "#/$defs/filter"
+        },
+        "pitch": {
+          "type": "number"
+        },
+        "volume": {
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "definitionSpatialComponent": {
+      "additionalProperties": false,
+      "properties": {
+        "spatializationMix": {
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "effectComponent": {
+      "additionalProperties": false,
+      "properties": {
+        "parameters": {
+          "items": {
+            "type": "number"
+          },
+          "type": "array"
+        },
+        "type": {
+          "const": "limiter",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "parameters"
+      ],
+      "type": "object"
+    },
+    "effectEntry": {
+      "oneOf": [
+        {
+          "additionalProperties": true,
+          "properties": {
+            "bypass": {
+              "type": "boolean"
+            },
+            "custom": {
+              "$ref": "#/$defs/effectComponent"
+            },
+            "guid": {
+              "$ref": "#/$defs/uuid"
+            },
+            "mode": {
+              "const": "custom",
+              "type": "string"
+            }
+          },
+          "propertyNames": {
+            "pattern": "^(?!(effectRef|effectGuid|type|parameters)$)"
+          },
+          "required": [
+            "guid",
+            "mode",
+            "custom"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": true,
+          "properties": {
+            "bypass": {
+              "type": "boolean"
+            },
+            "effectRef": {
+              "$ref": "#/$defs/objectReference"
+            },
+            "guid": {
+              "$ref": "#/$defs/uuid"
+            },
+            "mode": {
+              "const": "preset",
+              "type": "string"
+            }
+          },
+          "propertyNames": {
+            "pattern": "^(?!(custom|effectGuid|type|parameters)$)"
+          },
+          "required": [
+            "guid",
+            "effectRef"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "fieldGroupConversionPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "settingsRef": {
+          "$ref": "#/$defs/fieldGroupGuid"
+        }
+      },
+      "required": [
+        "settingsRef"
+      ],
+      "type": "object"
+    },
+    "fieldGroupEffectFields": {
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "effects": {
+          "items": {
+            "$ref": "#/$defs/effectEntry"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "fieldGroupEffectPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "effects": {
+          "items": {
+            "$ref": "#/$defs/effectEntry"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "effects"
+      ],
+      "type": "object"
+    },
+    "fieldGroupGuid": {
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+      "type": "string"
+    },
+    "fieldGroupOutputFields": {
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "outputBusRef": {
+          "$ref": "#/$defs/uuid"
+        },
+        "outputBusVolume": {
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "fieldGroupOutputPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "outputBusRef": {
+          "$ref": "#/$defs/uuid"
+        },
+        "outputBusVolume": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "outputBusRef",
+        "outputBusVolume"
+      ],
+      "type": "object"
+    },
+    "fieldGroupPlatformConversion": {
+      "additionalProperties": false,
+      "properties": {
+        "inherit": {
+          "type": "boolean"
+        },
+        "values": {
+          "$ref": "#/$defs/fieldGroupConversionPayload"
+        }
+      },
+      "type": "object"
+    },
+    "fieldGroupPlatformEffect": {
+      "additionalProperties": false,
+      "properties": {
+        "inherit": {
+          "type": "boolean"
+        },
+        "values": {
+          "$ref": "#/$defs/fieldGroupEffectFields"
+        }
+      },
+      "type": "object"
+    },
+    "fieldGroupPlatformGroups": {
+      "additionalProperties": false,
+      "properties": {
+        "conversion": {
+          "$ref": "#/$defs/fieldGroupPlatformConversion"
+        },
+        "effect": {
+          "$ref": "#/$defs/fieldGroupPlatformEffect"
+        },
+        "output": {
+          "$ref": "#/$defs/fieldGroupPlatformOutput"
+        },
+        "send": {
+          "$ref": "#/$defs/fieldGroupPlatformSend"
+        },
+        "spatialRating": {
+          "$ref": "#/$defs/fieldGroupPlatformSpatialRating"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "fieldGroupPlatformOutput": {
+      "additionalProperties": false,
+      "properties": {
+        "inherit": {
+          "type": "boolean"
+        },
+        "values": {
+          "$ref": "#/$defs/fieldGroupOutputFields"
+        }
+      },
+      "type": "object"
+    },
+    "fieldGroupPlatformSend": {
+      "additionalProperties": false,
+      "properties": {
+        "inherit": {
+          "type": "boolean"
+        },
+        "values": {
+          "$ref": "#/$defs/fieldGroupSendFields"
+        }
+      },
+      "type": "object"
+    },
+    "fieldGroupPlatformSpatialRating": {
+      "additionalProperties": false,
+      "properties": {
+        "inherit": {
+          "type": "boolean"
+        },
+        "values": {
+          "$ref": "#/$defs/fieldGroupSpatialRatingFields"
+        }
+      },
+      "type": "object"
+    },
+    "fieldGroupSendFields": {
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "sends": {
+          "items": {
+            "$ref": "#/$defs/fieldGroupSendRow"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "fieldGroupSendPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "sends": {
+          "items": {
+            "$ref": "#/$defs/fieldGroupSendRow"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "sends"
+      ],
+      "type": "object"
+    },
+    "fieldGroupSendRow": {
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "enum": [
+            0,
+            1,
+            2
+          ],
+          "type": "integer"
+        },
+        "modeVolumes": {
+          "$ref": "#/$defs/sendModeVolumes"
+        },
+        "sendLevel": {
+          "maximum": 24,
+          "minimum": -96,
+          "type": "number"
+        },
+        "targetBusID": {
+          "$ref": "#/$defs/uuid"
+        }
+      },
+      "required": [
+        "targetBusID",
+        "sendLevel"
+      ],
+      "type": "object"
+    },
+    "fieldGroupSharedConversion": {
+      "additionalProperties": false,
+      "if": {
+        "properties": {
+          "inherit": {
+            "const": false
+          }
+        },
+        "required": [
+          "inherit"
+        ]
+      },
+      "properties": {
+        "inherit": {
+          "type": "boolean"
+        },
+        "values": {
+          "$ref": "#/$defs/fieldGroupConversionPayload"
+        }
+      },
+      "required": [
+        "inherit"
+      ],
+      "then": {
+        "required": [
+          "values"
+        ]
+      },
+      "type": "object"
+    },
+    "fieldGroupSharedEffect": {
+      "additionalProperties": false,
+      "if": {
+        "properties": {
+          "inherit": {
+            "const": false
+          }
+        },
+        "required": [
+          "inherit"
+        ]
+      },
+      "properties": {
+        "inherit": {
+          "type": "boolean"
+        },
+        "values": {
+          "$ref": "#/$defs/fieldGroupEffectPayload"
+        }
+      },
+      "required": [
+        "inherit"
+      ],
+      "then": {
+        "required": [
+          "values"
+        ]
+      },
+      "type": "object"
+    },
+    "fieldGroupSharedGroups": {
+      "additionalProperties": false,
+      "properties": {
+        "conversion": {
+          "$ref": "#/$defs/fieldGroupSharedConversion"
+        },
+        "effect": {
+          "$ref": "#/$defs/fieldGroupSharedEffect"
+        },
+        "output": {
+          "$ref": "#/$defs/fieldGroupSharedOutput"
+        },
+        "send": {
+          "$ref": "#/$defs/fieldGroupSharedSend"
+        },
+        "spatialRating": {
+          "$ref": "#/$defs/fieldGroupSharedSpatialRating"
+        }
+      },
+      "required": [
+        "output",
+        "send",
+        "spatialRating",
+        "effect",
+        "conversion"
+      ],
+      "type": "object"
+    },
+    "fieldGroupSharedOutput": {
+      "additionalProperties": false,
+      "if": {
+        "properties": {
+          "inherit": {
+            "const": false
+          }
+        },
+        "required": [
+          "inherit"
+        ]
+      },
+      "properties": {
+        "inherit": {
+          "type": "boolean"
+        },
+        "values": {
+          "$ref": "#/$defs/fieldGroupOutputPayload"
+        }
+      },
+      "required": [
+        "inherit"
+      ],
+      "then": {
+        "required": [
+          "values"
+        ]
+      },
+      "type": "object"
+    },
+    "fieldGroupSharedSend": {
+      "additionalProperties": false,
+      "if": {
+        "properties": {
+          "inherit": {
+            "const": false
+          }
+        },
+        "required": [
+          "inherit"
+        ]
+      },
+      "properties": {
+        "inherit": {
+          "type": "boolean"
+        },
+        "values": {
+          "$ref": "#/$defs/fieldGroupSendPayload"
+        }
+      },
+      "required": [
+        "inherit"
+      ],
+      "then": {
+        "required": [
+          "values"
+        ]
+      },
+      "type": "object"
+    },
+    "fieldGroupSharedSpatialRating": {
+      "additionalProperties": false,
+      "if": {
+        "properties": {
+          "inherit": {
+            "const": false
+          }
+        },
+        "required": [
+          "inherit"
+        ]
+      },
+      "properties": {
+        "inherit": {
+          "type": "boolean"
+        },
+        "values": {
+          "$ref": "#/$defs/fieldGroupSpatialRatingPayload"
+        }
+      },
+      "required": [
+        "inherit"
+      ],
+      "then": {
+        "required": [
+          "values"
+        ]
+      },
+      "type": "object"
+    },
+    "fieldGroupSpatialRatingFields": {
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "spatialAttenuationDistanceScaling": {
+          "maximum": 100,
+          "minimum": 0.01,
+          "type": "number"
+        },
+        "spatialAttenuationRef": {
+          "$ref": "#/$defs/fieldGroupGuid"
+        },
+        "spatialIs3DEnabled": {
+          "type": "boolean"
+        },
+        "spatialPanning": {
+          "maximum": 1,
+          "minimum": -1,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "fieldGroupSpatialRatingPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "spatialAttenuationDistanceScaling": {
+          "maximum": 100,
+          "minimum": 0.01,
+          "type": "number"
+        },
+        "spatialAttenuationRef": {
+          "$ref": "#/$defs/fieldGroupGuid"
+        },
+        "spatialIs3DEnabled": {
+          "type": "boolean"
+        },
+        "spatialPanning": {
+          "maximum": 1,
+          "minimum": -1,
+          "type": "number"
+        }
+      },
+      "required": [
+        "spatialPanning",
+        "spatialIs3DEnabled",
+        "spatialAttenuationRef",
+        "spatialAttenuationDistanceScaling"
+      ],
+      "type": "object"
+    },
+    "fieldGroups": {
+      "additionalProperties": false,
+      "properties": {
+        "platforms": {
+          "additionalProperties": {
+            "$ref": "#/$defs/fieldGroupPlatformGroups"
+          },
+          "propertyNames": {
+            "$ref": "#/$defs/projectPlatformId"
+          },
+          "type": "object"
+        },
+        "shared": {
+          "$ref": "#/$defs/fieldGroupSharedGroups"
+        }
+      },
+      "required": [
+        "shared"
+      ],
+      "type": "object"
+    },
+    "filter": {
+      "additionalProperties": false,
+      "properties": {
+        "highPass": {
+          "$ref": "#/$defs/filterPassSection"
+        },
+        "highShelf": {
+          "$ref": "#/$defs/filterShelfSection"
+        },
+        "lowPass": {
+          "$ref": "#/$defs/filterPassSection"
+        },
+        "lowShelf": {
+          "$ref": "#/$defs/filterShelfSection"
+        }
+      },
+      "required": [
+        "highPass",
+        "highShelf",
+        "lowPass",
+        "lowShelf"
+      ],
+      "type": "object"
+    },
+    "filterOverlay": {
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "highPass": {
+          "additionalProperties": false,
+          "minProperties": 1,
+          "properties": {
+            "frequency": {
+              "maximum": 20000,
+              "minimum": 20,
+              "type": "number"
+            },
+            "q": {
+              "maximum": 10,
+              "minimum": 0.1,
+              "type": "number"
+            }
+          },
+          "type": "object"
+        },
+        "highShelf": {
+          "additionalProperties": false,
+          "minProperties": 1,
+          "properties": {
+            "frequency": {
+              "maximum": 20000,
+              "minimum": 20,
+              "type": "number"
+            },
+            "gain": {
+              "maximum": 48,
+              "minimum": -48,
+              "type": "number"
+            },
+            "q": {
+              "maximum": 10,
+              "minimum": 0.1,
+              "type": "number"
+            }
+          },
+          "type": "object"
+        },
+        "lowPass": {
+          "additionalProperties": false,
+          "minProperties": 1,
+          "properties": {
+            "frequency": {
+              "maximum": 20000,
+              "minimum": 20,
+              "type": "number"
+            },
+            "q": {
+              "maximum": 10,
+              "minimum": 0.1,
+              "type": "number"
+            }
+          },
+          "type": "object"
+        },
+        "lowShelf": {
+          "additionalProperties": false,
+          "minProperties": 1,
+          "properties": {
+            "frequency": {
+              "maximum": 20000,
+              "minimum": 20,
+              "type": "number"
+            },
+            "gain": {
+              "maximum": 48,
+              "minimum": -48,
+              "type": "number"
+            },
+            "q": {
+              "maximum": 10,
+              "minimum": 0.1,
+              "type": "number"
+            }
+          },
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
+    "filterPassSection": {
+      "additionalProperties": false,
+      "properties": {
+        "frequency": {
+          "maximum": 20000,
+          "minimum": 20,
+          "type": "number"
+        },
+        "q": {
+          "maximum": 10,
+          "minimum": 0.1,
+          "type": "number"
+        }
+      },
+      "required": [
+        "frequency",
+        "q"
+      ],
+      "type": "object"
+    },
+    "filterShelfSection": {
+      "additionalProperties": false,
+      "properties": {
+        "frequency": {
+          "maximum": 20000,
+          "minimum": 20,
+          "type": "number"
+        },
+        "gain": {
+          "maximum": 48,
+          "minimum": -48,
+          "type": "number"
+        },
+        "q": {
+          "maximum": 10,
+          "minimum": 0.1,
+          "type": "number"
+        }
+      },
+      "required": [
+        "frequency",
+        "gain",
+        "q"
+      ],
+      "type": "object"
+    },
+    "gridAxis": {
+      "$ref": "#/$defs/uuid"
+    },
+    "identifiedSelectionCurve": {
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "properties": {
+            "handles": {
+              "maxItems": 0
+            },
+            "points": {
+              "maxItems": 0
+            }
+          }
+        },
+        {
+          "properties": {
+            "handles": {
+              "maxItems": 1,
+              "minItems": 1
+            },
+            "points": {
+              "maxItems": 2,
+              "minItems": 2
+            }
+          }
+        },
+        {
+          "properties": {
+            "handles": {
+              "maxItems": 2,
+              "minItems": 2
+            },
+            "points": {
+              "maxItems": 3,
+              "minItems": 3
+            }
+          }
+        },
+        {
+          "properties": {
+            "handles": {
+              "maxItems": 3,
+              "minItems": 3
+            },
+            "points": {
+              "maxItems": 4,
+              "minItems": 4
+            }
+          }
+        },
+        {
+          "properties": {
+            "handles": {
+              "maxItems": 4,
+              "minItems": 4
+            },
+            "points": {
+              "maxItems": 5,
+              "minItems": 5
+            }
+          }
+        },
+        {
+          "properties": {
+            "handles": {
+              "maxItems": 5,
+              "minItems": 5
+            },
+            "points": {
+              "maxItems": 6,
+              "minItems": 6
+            }
+          }
+        },
+        {
+          "properties": {
+            "handles": {
+              "maxItems": 6,
+              "minItems": 6
+            },
+            "points": {
+              "maxItems": 7,
+              "minItems": 7
+            }
+          }
+        },
+        {
+          "properties": {
+            "handles": {
+              "maxItems": 7,
+              "minItems": 7
+            },
+            "points": {
+              "maxItems": 8,
+              "minItems": 8
+            }
+          }
+        }
+      ],
+      "properties": {
+        "blendGuid": {
+          "$ref": "#/$defs/uuid"
+        },
+        "handles": {
+          "items": {
+            "items": {
+              "type": "number"
+            },
+            "maxItems": 4,
+            "minItems": 4,
+            "type": "array"
+          },
+          "maxItems": 7,
+          "minItems": 0,
+          "type": "array"
+        },
+        "order": {
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "points": {
+          "items": {
+            "items": {
+              "type": "number"
+            },
+            "maxItems": 2,
+            "minItems": 2,
+            "type": "array"
+          },
+          "maxItems": 8,
+          "minItems": 0,
+          "type": "array"
+        }
+      },
+      "required": [
+        "order",
+        "blendGuid",
+        "points",
+        "handles"
+      ],
+      "type": "object"
+    },
+    "layerNode": {
+      "additionalProperties": false,
+      "properties": {
+        "children": {
+          "maxItems": 0,
+          "type": "array"
+        },
+        "color": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "components": {
+          "$ref": "#/$defs/definitionComponents"
+        },
+        "fieldGroups": {
+          "$ref": "#/$defs/fieldGroups"
+        },
+        "guid": {
+          "$ref": "#/$defs/uuid"
+        },
+        "name": {
+          "type": "string"
+        },
+        "notes": {
+          "type": "string"
+        },
+        "order": {
+          "type": "integer"
+        },
+        "parentRef": {
+          "$ref": "#/$defs/parentRef"
+        },
+        "playableProperties": {
+          "$ref": "#/$defs/playableProperties"
+        },
+        "type": {
+          "enum": [
+            "Sound",
+            "Container",
+            "Track",
+            "Segment",
+            "Layer"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "type",
+        "guid",
+        "parentRef",
+        "children",
+        "order",
+        "fieldGroups"
+      ],
+      "type": "object"
+    },
+    "legacySelectionCurve": {
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "properties": {
+            "handles": {
+              "maxItems": 0
+            },
+            "points": {
+              "maxItems": 0
+            },
+            "variable": {
+              "type": "null"
+            }
+          }
+        },
+        {
+          "properties": {
+            "handles": {
+              "maxItems": 1,
+              "minItems": 1
+            },
+            "points": {
+              "maxItems": 2,
+              "minItems": 2
+            }
+          }
+        },
+        {
+          "properties": {
+            "handles": {
+              "maxItems": 2,
+              "minItems": 2
+            },
+            "points": {
+              "maxItems": 3,
+              "minItems": 3
+            }
+          }
+        },
+        {
+          "properties": {
+            "handles": {
+              "maxItems": 3,
+              "minItems": 3
+            },
+            "points": {
+              "maxItems": 4,
+              "minItems": 4
+            }
+          }
+        },
+        {
+          "properties": {
+            "handles": {
+              "maxItems": 4,
+              "minItems": 4
+            },
+            "points": {
+              "maxItems": 5,
+              "minItems": 5
+            }
+          }
+        },
+        {
+          "properties": {
+            "handles": {
+              "maxItems": 5,
+              "minItems": 5
+            },
+            "points": {
+              "maxItems": 6,
+              "minItems": 6
+            }
+          }
+        },
+        {
+          "properties": {
+            "handles": {
+              "maxItems": 6,
+              "minItems": 6
+            },
+            "points": {
+              "maxItems": 7,
+              "minItems": 7
+            }
+          }
+        },
+        {
+          "properties": {
+            "handles": {
+              "maxItems": 7,
+              "minItems": 7
+            },
+            "points": {
+              "maxItems": 8,
+              "minItems": 8
+            }
+          }
+        }
+      ],
+      "properties": {
+        "handles": {
+          "items": {
+            "items": {
+              "type": "number"
+            },
+            "maxItems": 4,
+            "minItems": 4,
+            "type": "array"
+          },
+          "maxItems": 7,
+          "minItems": 0,
+          "type": "array"
+        },
+        "order": {
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "points": {
+          "items": {
+            "items": {
+              "type": "number"
+            },
+            "maxItems": 2,
+            "minItems": 2,
+            "type": "array"
+          },
+          "maxItems": 8,
+          "minItems": 0,
+          "type": "array"
+        },
+        "variable": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "order",
+        "variable",
+        "points",
+        "handles"
+      ],
+      "type": "object"
+    },
+    "marker": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "Entry",
+            "Exit",
+            "Custom"
+          ]
+        },
+        "markerGuid": {
+          "$ref": "#/$defs/uuid"
+        },
+        "name": {
+          "type": "string"
+        },
+        "position": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "markerGuid",
+        "kind",
+        "name",
+        "position"
+      ],
+      "type": "object"
+    },
+    "mixNodeComponent": {
+      "additionalProperties": false,
+      "properties": {
+        "bindings": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "effects": {
+          "items": {
+            "$ref": "#/$defs/effectEntry"
+          },
+          "type": "array"
+        },
+        "effectsPlatforms": {
+          "additionalProperties": {
+            "items": {
+              "$ref": "#/$defs/effectEntry"
+            },
+            "type": "array"
+          },
+          "propertyNames": {
+            "$ref": "#/$defs/projectPlatformId"
+          },
+          "type": "object"
+        },
+        "filter": {
+          "$ref": "#/$defs/filter"
+        },
+        "outputBusRef": {
+          "$ref": "#/$defs/objectReference"
+        },
+        "outputBusVolume": {
+          "type": "number"
+        },
+        "pitch": {
+          "type": "number"
+        },
+        "sends": {
+          "items": {
+            "$ref": "#/$defs/send"
+          },
+          "type": "array"
+        },
+        "volume": {
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "nullableObjectReference": {
+      "additionalProperties": false,
+      "properties": {
+        "documentId": {
+          "$ref": "#/$defs/uuid"
+        },
+        "id": {
+          "$ref": "#/$defs/uuid"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "objectReference": {
+      "additionalProperties": false,
+      "properties": {
+        "documentId": {
+          "$ref": "#/$defs/uuid"
+        },
+        "id": {
+          "$ref": "#/$defs/uuid"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "parentRef": {
+      "additionalProperties": false,
+      "properties": {
+        "documentId": {
+          "$ref": "#/$defs/uuid"
+        },
+        "id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "kind": {
+          "enum": [
+            "root",
+            "bus",
+            "item"
+          ]
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    "playableOverrideRow": {
+      "additionalProperties": false,
+      "properties": {
+        "filter": {
+          "$ref": "#/$defs/filterOverlay"
+        },
+        "loopCount": {
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "pitch": {
+          "type": "number"
+        },
+        "platformId": {
+          "$ref": "#/$defs/projectPlatformId"
+        },
+        "presence": {
+          "pattern": "^000000000000[0189]0[01][0-38-b]$",
+          "type": "string"
+        },
+        "signalGraph": {
+          "deprecated": true,
+          "type": "array"
+        },
+        "spatial.attenuationCurveType": {
+          "deprecated": true,
+          "enum": [
+            0,
+            1,
+            2
+          ],
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "streamingMode": {
+          "enum": [
+            0,
+            1
+          ],
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "volume": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "platformId",
+        "presence"
+      ],
+      "type": "object"
+    },
+    "playableProperties": {
+      "additionalProperties": false,
+      "properties": {
+        "loopCount": {
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "pitch": {
+          "type": "number"
+        },
+        "platformOverrides": {
+          "items": {
+            "$ref": "#/$defs/playableOverrideRow"
+          },
+          "type": "array"
+        },
+        "presence": {
+          "pattern": "^000000000000[0189]0[01][0-38-b]$",
+          "type": "string"
+        },
+        "signalGraph": {
+          "deprecated": true,
+          "type": "array"
+        },
+        "spatial.attenuationCurveType": {
+          "deprecated": true,
+          "enum": [
+            0,
+            1,
+            2
+          ],
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "streamingMode": {
+          "enum": [
+            0,
+            1
+          ],
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "volume": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "presence"
+      ],
+      "type": "object"
+    },
+    "positiveInteger": {
+      "minimum": 1,
+      "type": "integer"
+    },
+    "projectAudio": {
+      "additionalProperties": false,
+      "properties": {
+        "channelConfig": {
+          "enum": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ],
+          "type": "integer"
+        },
+        "defaultConversions": {
+          "additionalProperties": {
+            "$ref": "#/$defs/objectReference"
+          },
+          "type": "object"
+        },
+        "renderSampleRate": {
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "projectMetadata": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "projectPlatform": {
+      "additionalProperties": false,
+      "properties": {
+        "basePlatform": {
+          "enum": [
+            "Windows",
+            "macOS",
+            "Linux",
+            "Android",
+            "iOS"
+          ],
+          "type": "string"
+        },
+        "id": {
+          "$ref": "#/$defs/projectPlatformId"
+        },
+        "name": {
+          "maxLength": 120,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "basePlatform"
+      ],
+      "type": "object"
+    },
+    "projectPlatformId": {
+      "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "type": "string"
+    },
+    "s3Pack": {
+      "additionalProperties": false,
+      "properties": {
+        "color": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "components": {
+          "$ref": "#/$defs/components"
+        },
+        "guid": {
+          "$ref": "#/$defs/uuid"
+        },
+        "name": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "notes": {
+          "type": "string"
+        },
+        "parentRef": {
+          "$ref": "#/$defs/parentRef"
+        },
+        "type": {
+          "enum": [
+            "Variable",
+            "Attenuation",
+            "Effect",
+            "Conversion"
+          ]
+        }
+      },
+      "required": [
+        "guid",
+        "type",
+        "name",
+        "parentRef",
+        "components"
+      ],
+      "type": "object"
+    },
+    "segmentTime": {
+      "additionalProperties": false,
+      "properties": {
+        "domain": {
+          "enum": [
+            "Absolute",
+            "Musical"
+          ]
+        },
+        "meterMap": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "denominator": {
+                "type": "integer"
+              },
+              "numerator": {
+                "type": "integer"
+              },
+              "tick": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "tick",
+              "numerator",
+              "denominator"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "tempoMap": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "microsecondsPerQuarter": {
+                "type": "integer"
+              },
+              "tick": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "tick",
+              "microsecondsPerQuarter"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "domain"
+      ],
+      "type": "object"
+    },
+    "segmentTimelineComponent": {
+      "additionalProperties": false,
+      "properties": {
+        "markers": {
+          "items": {
+            "$ref": "#/$defs/marker"
+          },
+          "type": "array"
+        },
+        "segmentTime": {
+          "$ref": "#/$defs/segmentTime"
+        }
+      },
+      "type": "object"
+    },
+    "selectionBehavior": {
+      "additionalProperties": false,
+      "properties": {
+        "avoidRepeat": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "discipline": {
+          "enum": [
+            "draw",
+            "shuffle"
+          ]
+        },
+        "memoryScope": {
+          "enum": [
+            "perEmitter",
+            "global"
+          ]
+        },
+        "resumeFromLast": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "selectionComponent": {
+      "additionalProperties": false,
+      "properties": {
+        "behavior": {
+          "$ref": "#/$defs/selectionBehavior"
+        },
+        "blendResponse": {
+          "enum": [
+            0,
+            1
+          ],
+          "type": "integer"
+        },
+        "matchResponse": {
+          "enum": [
+            0,
+            1
+          ],
+          "type": "integer"
+        },
+        "mode": {
+          "enum": [
+            0,
+            2,
+            4,
+            5
+          ]
+        },
+        "playType": {
+          "enum": [
+            0,
+            1
+          ],
+          "type": "integer"
+        },
+        "selections": {
+          "$ref": "#/$defs/selections"
+        },
+        "spliceByMarker": {
+          "type": "boolean"
+        },
+        "transitions": {
+          "$ref": "#/$defs/transitionTable"
+        }
+      },
+      "required": [
+        "selections"
+      ],
+      "type": "object"
+    },
+    "selectionCondition": {
+      "additionalProperties": false,
+      "properties": {
+        "cells": {
+          "items": {
+            "oneOf": [
+              {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "labelId": {
+                    "$ref": "#/$defs/uuid"
+                  }
+                },
+                "required": [
+                  "labelId"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "type": "array"
+        },
+        "priority": {
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "stableRuleOrdinal": {
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "stableRuleOrdinal",
+        "priority",
+        "cells"
+      ],
+      "type": "object"
+    },
+    "selectionCurve": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/identifiedSelectionCurve"
+        },
+        {
+          "$ref": "#/$defs/legacySelectionCurve"
+        }
+      ]
+    },
+    "selectionEntry": {
+      "additionalProperties": false,
+      "properties": {
+        "childGuid": {
+          "$ref": "#/$defs/uuid"
+        },
+        "conditions": {
+          "items": {
+            "$ref": "#/$defs/selectionCondition"
+          },
+          "type": "array"
+        },
+        "curves": {
+          "items": {
+            "$ref": "#/$defs/selectionCurve"
+          },
+          "type": "array"
+        },
+        "occurrences": {
+          "items": {
+            "$ref": "#/$defs/selectionOccurrence"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "stableMemberOrdinal": {
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "childGuid",
+        "stableMemberOrdinal",
+        "occurrences",
+        "conditions",
+        "curves"
+      ],
+      "type": "object"
+    },
+    "selectionOccurrence": {
+      "additionalProperties": false,
+      "properties": {
+        "order": {
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "stableOccurrenceOrdinal": {
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "weight": {
+          "maximum": 100,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "stableOccurrenceOrdinal",
+        "order",
+        "weight"
+      ],
+      "type": "object"
+    },
+    "selectionTable": {
+      "additionalProperties": false,
+      "properties": {
+        "blendAxes": {
+          "items": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "guid": {
+                    "$ref": "#/$defs/uuid"
+                  },
+                  "variable": {
+                    "oneOf": [
+                      {
+                        "$ref": "#/$defs/uuid"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "guid",
+                  "variable"
+                ],
+                "type": "object"
+              },
+              {
+                "$ref": "#/$defs/uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "type": "array"
+        },
+        "entries": {
+          "items": {
+            "$ref": "#/$defs/selectionEntry"
+          },
+          "type": "array"
+        },
+        "matchAxes": {
+          "items": {
+            "$ref": "#/$defs/uuid"
+          },
+          "type": "array"
+        },
+        "occurrenceOrdinalHighWater": {
+          "maximum": 4294967296,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "ruleOrdinalHighWater": {
+          "maximum": 4294967296,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "occurrenceOrdinalHighWater",
+        "ruleOrdinalHighWater",
+        "entries",
+        "matchAxes",
+        "blendAxes"
+      ],
+      "type": "object"
+    },
+    "selections": {
+      "additionalProperties": false,
+      "properties": {
+        "platforms": {
+          "additionalProperties": {
+            "$ref": "#/$defs/selectionTable"
+          },
+          "propertyNames": {
+            "$ref": "#/$defs/uuid"
+          },
+          "type": "object"
+        },
+        "shared": {
+          "$ref": "#/$defs/selectionTable"
+        }
+      },
+      "required": [
+        "shared",
+        "platforms"
+      ],
+      "type": "object"
+    },
+    "send": {
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "enum": [
+            0,
+            1,
+            2
+          ],
+          "type": "integer"
+        },
+        "modeVolumes": {
+          "$ref": "#/$defs/sendModeVolumes"
+        },
+        "sendLevel": {
+          "type": "number"
+        },
+        "targetBusRef": {
+          "$ref": "#/$defs/objectReference"
+        }
+      },
+      "required": [
+        "sendLevel",
+        "targetBusRef"
+      ],
+      "type": "object"
+    },
+    "sendModeVolumes": {
+      "additionalProperties": false,
+      "properties": {
+        "0": {
+          "maximum": 24,
+          "minimum": -96,
+          "type": "number"
+        },
+        "1": {
+          "maximum": 24,
+          "minimum": -96,
+          "type": "number"
+        },
+        "2": {
+          "maximum": 24,
+          "minimum": -96,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "soundComponent": {
+      "additionalProperties": false,
+      "properties": {
+        "distinguishLanguage": {
+          "type": "boolean"
+        },
+        "scheduleOffsetSec": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "sources": {
+          "$ref": "#/$defs/soundSources"
+        }
+      },
+      "type": "object"
+    },
+    "soundSource": {
+      "additionalProperties": false,
+      "properties": {
+        "entryId": {
+          "$ref": "#/$defs/uuid"
+        },
+        "fadeIn": {
+          "$ref": "#/$defs/soundSourceFadeIn"
+        },
+        "fadeOut": {
+          "$ref": "#/$defs/soundSourceFadeOut"
+        },
+        "loopProvenance": {
+          "enum": [
+            "file",
+            "authored"
+          ]
+        },
+        "loopRegion": {
+          "additionalProperties": false,
+          "properties": {
+            "endFrame": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "startFrame": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "startFrame",
+            "endFrame"
+          ],
+          "type": "object"
+        },
+        "rangeContentHash": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "sourceId": {
+          "$ref": "#/$defs/positiveInteger"
+        },
+        "trimEndFrame": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "trimStartFrame": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "entryId",
+        "sourceId"
+      ],
+      "type": "object"
+    },
+    "soundSourceFadeIn": {
+      "additionalProperties": false,
+      "properties": {
+        "curve": {
+          "const": [
+            {
+              "value": 0,
+              "x": 0
+            },
+            {
+              "value": 1,
+              "x": 1
+            }
+          ],
+          "type": "array"
+        },
+        "durationFrames": {
+          "maximum": 9007199254740992,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "handles": {
+          "items": {
+            "items": {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            "maxItems": 4,
+            "minItems": 4,
+            "type": "array"
+          },
+          "maxItems": 1,
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "durationFrames",
+        "curve",
+        "handles"
+      ],
+      "type": "object"
+    },
+    "soundSourceFadeOut": {
+      "additionalProperties": false,
+      "properties": {
+        "curve": {
+          "const": [
+            {
+              "value": 1,
+              "x": 0
+            },
+            {
+              "value": 0,
+              "x": 1
+            }
+          ],
+          "type": "array"
+        },
+        "durationFrames": {
+          "maximum": 9007199254740992,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "handles": {
+          "items": {
+            "items": {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            "maxItems": 4,
+            "minItems": 4,
+            "type": "array"
+          },
+          "maxItems": 1,
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "durationFrames",
+        "curve",
+        "handles"
+      ],
+      "type": "object"
+    },
+    "soundSourceSet": {
+      "additionalProperties": false,
+      "properties": {
+        "active": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "entries": {
+          "items": {
+            "$ref": "#/$defs/soundSource"
+          },
+          "type": "array"
+        },
+        "platforms": {
+          "additionalProperties": {
+            "additionalProperties": false,
+            "properties": {
+              "active": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "active"
+            ],
+            "type": "object"
+          },
+          "propertyNames": {
+            "$ref": "#/$defs/uuid"
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "entries",
+        "active",
+        "platforms"
+      ],
+      "type": "object"
+    },
+    "soundSources": {
+      "additionalProperties": false,
+      "properties": {
+        "localized": {
+          "additionalProperties": {
+            "$ref": "#/$defs/soundSourceSet"
+          },
+          "propertyNames": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "plain": {
+          "$ref": "#/$defs/soundSourceSet"
+        }
+      },
+      "required": [
+        "plain",
+        "localized"
+      ],
+      "type": "object"
+    },
+    "spatialComponent": {
+      "additionalProperties": false,
+      "properties": {
+        "attenuation": {
+          "deprecated": true,
+          "type": "string"
+        },
+        "attenuationDistanceScaling": {
+          "type": "number"
+        },
+        "attenuationGuid": {
+          "$ref": "#/$defs/uuid",
+          "deprecated": true
+        },
+        "is3DEnabled": {
+          "type": "boolean"
+        },
+        "spatializationMix": {
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "stringArray": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "trackClip": {
+      "additionalProperties": false,
+      "properties": {
+        "clipGuid": {
+          "$ref": "#/$defs/uuid"
+        },
+        "duration": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "playableProperties": {
+          "$ref": "#/$defs/playableProperties"
+        },
+        "stableOccurrenceOrdinal": {
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "start": {
+          "type": "integer"
+        },
+        "targetGuid": {
+          "$ref": "#/$defs/uuid"
+        }
+      },
+      "required": [
+        "clipGuid",
+        "targetGuid",
+        "start",
+        "duration",
+        "stableOccurrenceOrdinal",
+        "playableProperties"
+      ],
+      "type": "object"
+    },
+    "trackTimelineComponent": {
+      "additionalProperties": false,
+      "properties": {
+        "clips": {
+          "items": {
+            "$ref": "#/$defs/trackClip"
+          },
+          "type": "array"
+        },
+        "occurrenceOrdinalHighWater": {
+          "maximum": 4294967296,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "transitionFade": {
+      "additionalProperties": false,
+      "properties": {
+        "curve": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "value": {
+                "type": "number"
+              },
+              "x": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "x",
+              "value"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "durationSeconds": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "handles": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "h1x": {
+                "type": "number"
+              },
+              "h1y": {
+                "type": "number"
+              },
+              "h2x": {
+                "type": "number"
+              },
+              "h2y": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "h1x",
+              "h1y",
+              "h2x",
+              "h2y"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "durationSeconds",
+        "curve",
+        "handles"
+      ],
+      "type": "object"
+    },
+    "transitionTable": {
+      "additionalProperties": false,
+      "properties": {
+        "rules": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "entryMode": {
+                "enum": [
+                  "EntryMarker",
+                  "SamePosition"
+                ],
+                "type": "string"
+              },
+              "exitTiming": {
+                "enum": [
+                  "Immediate",
+                  "NaturalEnd",
+                  "NextBeat",
+                  "NextBar",
+                  "NextMarker",
+                  "ExitMarker"
+                ],
+                "type": "string"
+              },
+              "source": {
+                "format": "uuid",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "sourceFadeOut": {
+                "$ref": "#/$defs/transitionFade"
+              },
+              "target": {
+                "format": "uuid",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "targetFadeIn": {
+                "$ref": "#/$defs/transitionFade"
+              }
+            },
+            "required": [
+              "source",
+              "target",
+              "exitTiming",
+              "sourceFadeOut",
+              "entryMode",
+              "targetFadeIn"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "rules"
+      ],
+      "type": "object"
+    },
+    "uuid": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "variableComponent": {
+      "additionalProperties": false,
+      "properties": {
+        "defaultValue": {
+          "type": "number"
+        },
+        "description": {
+          "type": "string"
+        },
+        "displayScale": {
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "kind": {
+          "enum": [
+            0,
+            1
+          ]
+        },
+        "labels": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "anchor": {
+                "type": "integer"
+              },
+              "id": {
+                "$ref": "#/$defs/uuid"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "anchor",
+              "name"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "precision": {
+          "type": "integer"
+        },
+        "rangeMax": {
+          "type": "number"
+        },
+        "rangeMin": {
+          "type": "number"
+        },
+        "unit": {
+          "type": "string"
+        },
+        "writers": {
+          "enum": [
+            1,
+            2,
+            3
+          ],
+          "maximum": 3,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "$id": "harken://schema/Editor/10",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "projectSchemaVersion": 10,
+  "x-harken-documentEnvelope": "harkenDocument-v1",
+  "x-harken-documentTypes": [
+    {
+      "pathPatterns": [
+        "Actions/**/*.vp"
+      ],
+      "required": false,
+      "schema": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "additionalProperties": false,
+            "properties": {
+              "actions": {
+                "items": {
+                  "$ref": "#/$defs/actionStep"
+                },
+                "type": "array"
+              },
+              "guid": {
+                "$ref": "#/$defs/uuid"
+              },
+              "name": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "notes": {
+                "type": "string"
+              },
+              "parentRef": {
+                "$ref": "#/$defs/parentRef"
+              },
+              "type": {
+                "const": "Action",
+                "type": "string"
+              }
+            },
+            "required": [
+              "guid",
+              "type",
+              "name",
+              "parentRef",
+              "actions"
+            ],
+            "type": "object"
+          },
+          "harkenDocument": {
+            "additionalProperties": true,
+            "properties": {
+              "id": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "projectId": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "schemaVersion": {
+                "const": 10,
+                "type": "integer"
+              },
+              "type": {
+                "const": "project.action",
+                "type": "string"
+              }
+            },
+            "propertyNames": {
+              "pattern": "^(?!(studioVersion|savedStudioVersion|propertyModel)$)"
+            },
+            "required": [
+              "type",
+              "id",
+              "projectId",
+              "schemaVersion"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "harkenDocument",
+          "content"
+        ],
+        "type": "object"
+      },
+      "type": "project.action"
+    },
+    {
+      "pathPatterns": [
+        "Attenuations/**/*.vp"
+      ],
+      "required": false,
+      "schema": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "$ref": "#/$defs/s3Pack",
+            "$schema": "https://json-schema.org/draft/2020-12/schema"
+          },
+          "harkenDocument": {
+            "additionalProperties": true,
+            "properties": {
+              "id": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "projectId": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "schemaVersion": {
+                "const": 10,
+                "type": "integer"
+              },
+              "type": {
+                "const": "project.attenuation",
+                "type": "string"
+              }
+            },
+            "propertyNames": {
+              "pattern": "^(?!(studioVersion|savedStudioVersion|propertyModel)$)"
+            },
+            "required": [
+              "type",
+              "id",
+              "projectId",
+              "schemaVersion"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "harkenDocument",
+          "content"
+        ],
+        "type": "object"
+      },
+      "type": "project.attenuation"
+    },
+    {
+      "pathPatterns": [
+        "Effects/**/*.vp"
+      ],
+      "required": false,
+      "schema": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "$ref": "#/$defs/s3Pack",
+            "$schema": "https://json-schema.org/draft/2020-12/schema"
+          },
+          "harkenDocument": {
+            "additionalProperties": true,
+            "properties": {
+              "id": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "projectId": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "schemaVersion": {
+                "const": 10,
+                "type": "integer"
+              },
+              "type": {
+                "const": "project.effect",
+                "type": "string"
+              }
+            },
+            "propertyNames": {
+              "pattern": "^(?!(studioVersion|savedStudioVersion|propertyModel)$)"
+            },
+            "required": [
+              "type",
+              "id",
+              "projectId",
+              "schemaVersion"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "harkenDocument",
+          "content"
+        ],
+        "type": "object"
+      },
+      "type": "project.effect"
+    },
+    {
+      "pathPatterns": [
+        "Conversions/**/*.vp"
+      ],
+      "required": false,
+      "schema": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "$ref": "#/$defs/s3Pack",
+            "$schema": "https://json-schema.org/draft/2020-12/schema"
+          },
+          "harkenDocument": {
+            "additionalProperties": true,
+            "properties": {
+              "id": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "projectId": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "schemaVersion": {
+                "const": 10,
+                "type": "integer"
+              },
+              "type": {
+                "const": "project.conversion",
+                "type": "string"
+              }
+            },
+            "propertyNames": {
+              "pattern": "^(?!(studioVersion|savedStudioVersion|packSchemaVersion|propertyModel)$)"
+            },
+            "required": [
+              "type",
+              "id",
+              "projectId",
+              "schemaVersion"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "harkenDocument",
+          "content"
+        ],
+        "type": "object"
+      },
+      "type": "project.conversion"
+    },
+    {
+      "pathPatterns": [
+        "Busses/**/*.vp"
+      ],
+      "required": false,
+      "schema": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "additionalProperties": false,
+            "properties": {
+              "components": {
+                "$ref": "#/$defs/components",
+                "required": [
+                  "bus"
+                ]
+              },
+              "guid": {
+                "$ref": "#/$defs/uuid"
+              },
+              "name": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "notes": {
+                "type": "string"
+              },
+              "parentRef": {
+                "$ref": "#/$defs/parentRef"
+              },
+              "playableProperties": {
+                "$ref": "#/$defs/busPlayableProperties"
+              },
+              "type": {
+                "const": "Bus",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "guid",
+              "name",
+              "parentRef",
+              "components"
+            ],
+            "type": "object"
+          },
+          "harkenDocument": {
+            "additionalProperties": true,
+            "properties": {
+              "id": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "projectId": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "schemaVersion": {
+                "const": 10,
+                "type": "integer"
+              },
+              "type": {
+                "const": "project.bus",
+                "type": "string"
+              }
+            },
+            "propertyNames": {
+              "pattern": "^(?!(studioVersion|savedStudioVersion|propertyModel)$)"
+            },
+            "required": [
+              "type",
+              "id",
+              "projectId",
+              "schemaVersion"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "harkenDocument",
+          "content"
+        ],
+        "type": "object"
+      },
+      "type": "project.bus"
+    },
+    {
+      "pathPatterns": [
+        "Layers/**/*.vp"
+      ],
+      "required": false,
+      "schema": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "$ref": "#/$defs/layerNode",
+            "$schema": "https://json-schema.org/draft/2020-12/schema"
+          },
+          "harkenDocument": {
+            "additionalProperties": true,
+            "properties": {
+              "id": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "projectId": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "schemaVersion": {
+                "const": 10,
+                "type": "integer"
+              },
+              "type": {
+                "const": "project.layer",
+                "type": "string"
+              }
+            },
+            "propertyNames": {
+              "pattern": "^(?!(studioVersion|savedStudioVersion|propertyModel)$)"
+            },
+            "required": [
+              "type",
+              "id",
+              "projectId",
+              "schemaVersion"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "harkenDocument",
+          "content"
+        ],
+        "type": "object"
+      },
+      "type": "project.layer"
+    },
+    {
+      "pathPatterns": [
+        "*.hsp"
+      ],
+      "required": true,
+      "schema": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "additionalProperties": false,
+            "properties": {
+              "audio": {
+                "$ref": "#/$defs/projectAudio"
+              },
+              "buildExportPackMetadata": {
+                "type": "boolean"
+              },
+              "buildExportProjectData": {
+                "type": "boolean"
+              },
+              "buildExportWaveforms": {
+                "type": "boolean"
+              },
+              "buildWaveformOutputDir": {
+                "type": "string"
+              },
+              "defaultLanguage": {
+                "type": "string"
+              },
+              "deployLanguages": {
+                "$ref": "#/$defs/stringArray"
+              },
+              "deployPlatforms": {
+                "items": {
+                  "$ref": "#/$defs/projectPlatform"
+                },
+                "minItems": 1,
+                "type": "array"
+              },
+              "metadata": {
+                "$ref": "#/$defs/projectMetadata"
+              },
+              "packBuildOutputDir": {
+                "type": "string"
+              },
+              "sourceAssets": {
+                "additionalProperties": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "propertyNames": {
+                  "pattern": "^[1-9][0-9]{0,9}$"
+                },
+                "type": "object"
+              }
+            },
+            "required": [
+              "metadata",
+              "deployPlatforms"
+            ],
+            "type": "object"
+          },
+          "harkenDocument": {
+            "additionalProperties": true,
+            "properties": {
+              "id": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "projectId": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "schemaVersion": {
+                "const": 10,
+                "type": "integer"
+              },
+              "studioVersion": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "type": {
+                "const": "project.root",
+                "type": "string"
+              }
+            },
+            "propertyNames": {
+              "pattern": "^(?!(savedStudioVersion|propertyModel)$)"
+            },
+            "required": [
+              "type",
+              "id",
+              "projectId",
+              "schemaVersion",
+              "studioVersion"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "harkenDocument",
+          "content"
+        ],
+        "type": "object"
+      },
+      "type": "project.root"
+    },
+    {
+      "pathPatterns": [
+        "Variables/**/*.vp"
+      ],
+      "required": false,
+      "schema": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "$ref": "#/$defs/s3Pack",
+            "$schema": "https://json-schema.org/draft/2020-12/schema"
+          },
+          "harkenDocument": {
+            "additionalProperties": true,
+            "properties": {
+              "id": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "projectId": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "schemaVersion": {
+                "const": 10,
+                "type": "integer"
+              },
+              "type": {
+                "const": "project.variable",
+                "type": "string"
+              }
+            },
+            "propertyNames": {
+              "pattern": "^(?!(studioVersion|savedStudioVersion|propertyModel)$)"
+            },
+            "required": [
+              "type",
+              "id",
+              "projectId",
+              "schemaVersion"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "harkenDocument",
+          "content"
+        ],
+        "type": "object"
+      },
+      "type": "project.variable"
+    }
+  ],
+  "x-harken-extensionPolicy": {
+    "headerAdditionalProperties": "ignorable metadata, preserved on save",
+    "preservedModulePayloads": {
+      "mixNodeComponent.bindings": "unknown object fields and opaque entries preserved; known values parsed by module",
+      "mixNodeComponent.effects": "unknown object fields preserved; known values parsed by module",
+      "playableOverrideRow.signalGraph": "retired input; discarded with its presence bit when loading",
+      "playableProperties.signalGraph": "retired input; discarded with its presence bit when loading"
+    },
+    "unknownBehaviorFields": "reject outside preserved module payloads",
+    "unknownComponents": "reject",
+    "unknownEnumValues": "reject in current behavior fields; legacy fields follow module migration rules"
+  },
+  "x-harken-projectRules": [
+    {
+      "reference": [
+        "parentRef"
+      ],
+      "rule": "acyclic"
+    },
+    {
+      "appliesTo": [
+        "project.layer",
+        "project.bus",
+        "project.action",
+        "project.variable",
+        "project.attenuation",
+        "project.effect",
+        "project.conversion"
+      ],
+      "rule": "documentIdMirrorsRoot"
+    },
+    {
+      "rule": "projectIdUniform"
+    },
+    {
+      "references": [
+        {
+          "kind": "parent",
+          "path": [
+            "parentRef"
+          ]
+        },
+        {
+          "kind": "object",
+          "path": [
+            "components",
+            "mixnode",
+            "outputBusRef"
+          ],
+          "targetTypes": [
+            "Bus"
+          ]
+        },
+        {
+          "kind": "object",
+          "path": [
+            "components",
+            "mixnode",
+            "sends",
+            "*",
+            "targetBusRef"
+          ],
+          "targetTypes": [
+            "Bus"
+          ]
+        },
+        {
+          "kind": "object",
+          "path": [
+            "components",
+            "mixnode",
+            "effects",
+            "*",
+            "effectRef"
+          ],
+          "targetTypes": [
+            "Effect"
+          ]
+        },
+        {
+          "kind": "object",
+          "path": [
+            "components",
+            "mixnode",
+            "effectsPlatforms",
+            "*",
+            "*",
+            "effectRef"
+          ],
+          "targetTypes": [
+            "Effect"
+          ]
+        },
+        {
+          "kind": "object",
+          "path": [
+            "fieldGroups",
+            "shared",
+            "effect",
+            "values",
+            "effects",
+            "*",
+            "effectRef"
+          ],
+          "targetTypes": [
+            "Effect"
+          ]
+        },
+        {
+          "kind": "object",
+          "path": [
+            "fieldGroups",
+            "platforms",
+            "*",
+            "effect",
+            "values",
+            "effects",
+            "*",
+            "effectRef"
+          ],
+          "targetTypes": [
+            "Effect"
+          ]
+        },
+        {
+          "allowNull": true,
+          "kind": "object",
+          "path": [
+            "playableProperties",
+            "outputBusRef"
+          ],
+          "targetTypes": [
+            "Bus"
+          ]
+        },
+        {
+          "allowNull": true,
+          "kind": "object",
+          "path": [
+            "playableProperties",
+            "spatial.attenuationRef"
+          ],
+          "targetTypes": [
+            "Attenuation"
+          ]
+        },
+        {
+          "kind": "object",
+          "path": [
+            "playableProperties",
+            "sends",
+            "*",
+            "targetBusRef"
+          ],
+          "targetTypes": [
+            "Bus"
+          ]
+        },
+        {
+          "kind": "guid",
+          "path": [
+            "components",
+            "selection",
+            "selections",
+            "shared",
+            "entries",
+            "*",
+            "childGuid"
+          ],
+          "targetTypes": [
+            "Sound",
+            "Container",
+            "Track",
+            "Segment"
+          ]
+        },
+        {
+          "kind": "guid",
+          "path": [
+            "components",
+            "selection",
+            "selections",
+            "platforms",
+            "*",
+            "entries",
+            "*",
+            "childGuid"
+          ],
+          "targetTypes": [
+            "Sound",
+            "Container",
+            "Track",
+            "Segment"
+          ]
+        },
+        {
+          "kind": "guid",
+          "path": [
+            "components",
+            "tracktimeline",
+            "clips",
+            "*",
+            "targetGuid"
+          ],
+          "targetTypes": [
+            "Sound",
+            "Container",
+            "Segment"
+          ]
+        },
+        {
+          "allowNull": true,
+          "kind": "object",
+          "path": [
+            "components",
+            "tracktimeline",
+            "clips",
+            "*",
+            "playableProperties",
+            "outputBusRef"
+          ],
+          "targetTypes": [
+            "Bus"
+          ]
+        },
+        {
+          "allowNull": true,
+          "kind": "object",
+          "path": [
+            "components",
+            "tracktimeline",
+            "clips",
+            "*",
+            "playableProperties",
+            "spatial.attenuationRef"
+          ],
+          "targetTypes": [
+            "Attenuation"
+          ]
+        },
+        {
+          "kind": "object",
+          "path": [
+            "components",
+            "tracktimeline",
+            "clips",
+            "*",
+            "playableProperties",
+            "sends",
+            "*",
+            "targetBusRef"
+          ],
+          "targetTypes": [
+            "Bus"
+          ]
+        },
+        {
+          "kind": "object",
+          "path": [
+            "actions",
+            "*",
+            "targetRef"
+          ],
+          "selectorField": "type",
+          "targetTypesBySelector": {
+            "Play": [
+              "Sound",
+              "Container",
+              "Track",
+              "Segment"
+            ],
+            "Post Action": [
+              "Action"
+            ],
+            "Reset": [
+              "Container"
+            ],
+            "SetVariable": [
+              "Variable"
+            ],
+            "Stop": [
+              "Sound",
+              "Container",
+              "Track",
+              "Segment"
+            ]
+          }
+        },
+        {
+          "kind": "object",
+          "path": [
+            "actions",
+            "*",
+            "quantize",
+            "referenceRef"
+          ],
+          "targetTypes": [
+            "Sound",
+            "Container",
+            "Track",
+            "Segment"
+          ]
+        },
+        {
+          "allowNull": true,
+          "kind": "guid",
+          "path": [
+            "fieldGroups",
+            "shared",
+            "conversion",
+            "values",
+            "settingsRef"
+          ],
+          "targetTypes": [
+            "Conversion"
+          ]
+        },
+        {
+          "allowNull": true,
+          "kind": "guid",
+          "path": [
+            "fieldGroups",
+            "platforms",
+            "*",
+            "conversion",
+            "values",
+            "settingsRef"
+          ],
+          "targetTypes": [
+            "Conversion"
+          ]
+        },
+        {
+          "kind": "object",
+          "path": [
+            "audio",
+            "defaultConversions",
+            "*"
+          ],
+          "targetTypes": [
+            "Conversion"
+          ]
+        }
+      ],
+      "rule": "referencesResolve"
+    },
+    {
+      "rule": "schemaVersionUniform"
+    },
+    {
+      "documentType": "project.bus",
+      "message": "Project must contain exactly one root Bus",
+      "rule": "singleton",
+      "where": {
+        "equals": "root",
+        "path": [
+          "parentRef",
+          "kind"
+        ]
+      }
+    },
+    {
+      "fields": [
+        "guid",
+        "documentId"
+      ],
+      "rule": "uniqueAcrossProject"
+    }
+  ]
+}

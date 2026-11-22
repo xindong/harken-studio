@@ -5,7 +5,7 @@
 class QToolButton;
 class QAction;
 
-namespace VNX {
+namespace harken::studio {
 
 class ThemeManager;
 

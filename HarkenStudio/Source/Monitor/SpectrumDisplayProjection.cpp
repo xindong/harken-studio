@@ -1,6 +1,6 @@
 #include "SpectrumDisplayProjection.h"
 
-namespace VNX {
+namespace harken::studio {
 namespace Monitor {
 
 bool spectrumBinsPublished()
@@ -20,4 +20,4 @@ SpectrumDisplayProjection projectSpectrumFace(
 }
 
 } // namespace Monitor
-} // namespace VNX
+} // namespace harken::studio

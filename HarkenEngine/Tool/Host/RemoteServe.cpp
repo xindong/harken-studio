@@ -14,10 +14,11 @@
 #include "RemoteServe.h"
 
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 
 #include "DemoOptions.h"
 #include "Engine.h" // internal: null-mode block pump (test-clock precedent)
-#include "harken_remote/RemoteServer.h"
+#include "harken_host_control/RemoteServer.h"
 #include <harken_buildinfo.h>
 
 #include <chrono>

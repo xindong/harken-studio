@@ -6,9 +6,9 @@
 #include "ProjectSyncBridge.h"
 #include "NativeValues.h"
 #include "RuntimeLink.h"
+#include "MediaServices.h"
 
 #include <harken/Harken.h>
-#include <harken_studio_build/MediaContentRevision.h>
 
 #include <QDebug>
 
@@ -18,30 +18,30 @@
 #include <unordered_set>
 #include <vector>
 
-namespace HarkenEditor {
-namespace Bridge {
+namespace harken::studio {
+namespace bridge {
 
 namespace {
 
 struct LayerState {
-    std::vector<harkenstudio::ObjectId> children;
+    std::vector<harken::studio::types::ObjectId> children;
 };
 
-std::unordered_map<harkenstudio::ObjectId, SoundDesc> g_sounds;
-std::unordered_map<harkenstudio::ObjectId, LayerState> g_layers;
+std::unordered_map<harken::studio::types::ObjectId, SoundDesc> g_sounds;
+std::unordered_map<harken::studio::types::ObjectId, LayerState> g_layers;
 
 } // namespace
 
 bool syncSound(const SoundDesc& desc)
 {
-    if (harkenstudio::IsNull(desc.objectId) || harkenstudio::IsNull(desc.soundId) || desc.sourceId == 0)
+    if (harken::studio::types::IsNull(desc.objectId) || harken::studio::types::IsNull(desc.soundId) || desc.sourceId == 0)
         return false;
 
     g_sounds[desc.objectId] = desc;
     Detail::runtimeRegisterSoundName(desc.name, desc.objectId, desc.soundId,
                                      desc.sourceId, desc.loopCount,
                                      desc.spatialized3D, desc.attenuationId);
-    if (!harkenstudio::IsNull(desc.parentObjectId))
+    if (!harken::studio::types::IsNull(desc.parentObjectId))
         addLayerChild(desc.parentObjectId, desc.soundId);
     return true;
 }
@@ -50,34 +50,26 @@ uint64_t soundPcmContentRevision(const std::vector<float>& samples,
                                  uint32_t channels, uint32_t sampleRate,
                                  uint64_t loopStartFrame, uint64_t loopEndFrame)
 {
-    if (channels == 0 || channels > 8 || sampleRate == 0
-        || samples.empty() || samples.size() % channels != 0)
-        return 0;
-    const float* planes[8]{};
-    for (uint32_t channel = 0; channel < channels; ++channel)
-        planes[channel] = samples.data() + channel;
-    uint64_t revision = 0;
-    if (!harkenstudiobuild::ComputeMediaPcmContentRevisionV1(
-            sampleRate, channels, samples.size() / channels, planes, channels,
-            &revision, loopStartFrame, loopEndFrame))
-        return 0;
-    return revision;
+    const auto services = mediaServices();
+    return services ? services->pcmContentRevision(samples, channels, sampleRate,
+                                                   loopStartFrame, loopEndFrame)
+                    : 0;
 }
 
 bool syncLayer(const LayerDesc& desc)
 {
-    if (harkenstudio::IsNull(desc.objectId))
+    if (harken::studio::types::IsNull(desc.objectId))
         return false;
 
     LayerState& state = g_layers[desc.objectId];
-    if (!harkenstudio::IsNull(desc.parentObjectId))
+    if (!harken::studio::types::IsNull(desc.parentObjectId))
         addLayerChild(desc.parentObjectId, desc.objectId);
     return true;
 }
 
 bool syncAttenuation(const PackAttenuation& attenuation)
 {
-    if (harkenstudio::IsNull(attenuation.id))
+    if (harken::studio::types::IsNull(attenuation.id))
         return false;
     if (!std::isfinite(attenuation.maxDistance) || !(attenuation.maxDistance > 0.0f))
     {
@@ -144,9 +136,9 @@ bool syncAttenuation(const PackAttenuation& attenuation)
     return true;
 }
 
-void addLayerChild(harkenstudio::ObjectId parentLayerId, harkenstudio::ObjectId childObjectId)
+void addLayerChild(harken::studio::types::ObjectId parentLayerId, harken::studio::types::ObjectId childObjectId)
 {
-    if (harkenstudio::IsNull(parentLayerId) || harkenstudio::IsNull(childObjectId))
+    if (harken::studio::types::IsNull(parentLayerId) || harken::studio::types::IsNull(childObjectId))
         return;
 
     const auto parentIt = g_layers.find(parentLayerId);
@@ -162,20 +154,20 @@ void addLayerChild(harkenstudio::ObjectId parentLayerId, harkenstudio::ObjectId 
 
 }
 
-void setObjectOutputBus(harkenstudio::ObjectId objectId, harkenstudio::ObjectId busRuntimeId)
+void setObjectOutputBus(harken::studio::types::ObjectId objectId, harken::studio::types::ObjectId busRuntimeId)
 {
     Detail::runtimeSetObjectOutputBus(objectId, busRuntimeId);
 }
 
-bool runtimeObjectExists(harkenstudio::ObjectId objectId)
+bool runtimeObjectExists(harken::studio::types::ObjectId objectId)
 {
     return g_sounds.find(objectId) != g_sounds.end() ||
            g_layers.find(objectId) != g_layers.end();
 }
 
-void removeRuntimeObject(harkenstudio::ObjectId objectId)
+void removeRuntimeObject(harken::studio::types::ObjectId objectId)
 {
-    if (harkenstudio::IsNull(objectId))
+    if (harken::studio::types::IsNull(objectId))
         return;
     Detail::runtimeUnregisterSoundObject(objectId);
     g_sounds.erase(objectId);
@@ -197,19 +189,19 @@ uint32_t runtimeObjectCount()
 
 bool registerActionNameForPreview(const ActionNameMapping& mapping)
 {
-    if (harkenstudio::IsNull(mapping.id))
+    if (harken::studio::types::IsNull(mapping.id))
         return false;
 
     Detail::runtimeRegisterActionName(mapping.name, mapping.id);
     return true;
 }
 
-void unregisterActionNameForPreview(harkenstudio::ObjectId actionId)
+void unregisterActionNameForPreview(harken::studio::types::ObjectId actionId)
 {
-    if (harkenstudio::IsNull(actionId))
+    if (harken::studio::types::IsNull(actionId))
         return;
     Detail::runtimeUnregisterActionName(actionId);
 }
 
-} // namespace Bridge
-} // namespace HarkenEditor
+} // namespace bridge
+} // namespace harken::studio

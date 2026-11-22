@@ -4,11 +4,12 @@
 #include "../Component.h"
 #include "../PropertyDescriptor.h"
 #include "../ProjectTypes.h"
+#include <harken_pack/PackProperties.h>
 
 #include <cstdint>
 #include <cmath>
 
-namespace VNX {
+namespace harken::studio {
 
 class VSpatial : public ReflectedComponent<VSpatial>
 {
@@ -45,7 +46,7 @@ public:
     float spatializationMix = 1.0f;
     bool spatializationMixPresent = true;
     float attenuationDistanceScaling = 1.0f;
-    harkenstudio::ObjectId attenuationRef{};
+    harken::studio::types::ObjectId attenuationRef{};
 };
 
 #if defined(__clang__)
@@ -65,7 +66,8 @@ inline const PropertySchema& VSpatial::schema()
               return true;
           } },
         { .field="panning", .type=PropType::Float, .label="Panning", .section=PropertySection::Rating,
-          .min=-1.0, .max=1.0, .def=0.0, .decimals=2, .flags={.serialize=false},
+          .min=HK_PACK_PROPERTY_SPATIAL_PANNING_MIN, .max=HK_PACK_PROPERTY_SPATIAL_PANNING_MAX, .def=0.0,
+          .decimals=2, .flags={.serialize=false},
           .get=VNX_PROP_GET(VSpatial, panning), .set=[](IComponent* c, const QVariant& v) {
               auto* s = static_cast<VSpatial*>(c);
               if (s->hostItem() && PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(s->hostItem()->type)) return false;
@@ -73,7 +75,8 @@ inline const PropertySchema& VSpatial::schema()
               return true;
           } },
         { .field="spatializationMix", .type=PropType::Float, .label="Spatialization Mix", .section=PropertySection::Rating,
-          .min=0.0, .max=1.0, .def=1.0, .decimals=2,
+          .min=HK_PACK_PROPERTY_SPATIALIZATION_MIX_MIN, .max=HK_PACK_PROPERTY_SPATIALIZATION_MIX_MAX, .def=1.0,
+          .decimals=2,
           .get=VNX_PROP_GET(VSpatial, spatializationMix), .set=[](IComponent* c, const QVariant& v) {
               bool ok = false;
               const double value = v.toDouble(&ok);
@@ -87,7 +90,9 @@ inline const PropertySchema& VSpatial::schema()
               return static_cast<const VSpatial*>(c)->spatializationMixPresent;
           } },
         { .field="attenuationDistanceScaling", .type=PropType::Float, .label="Distance Scale", .section=PropertySection::Rating,
-          .unit="%", .min=0.1, .max=10.0, .def=1.0, .decimals=0, .displayScale=100.0,
+          .unit="%", .min=HK_PACK_PROPERTY_SPATIAL_ATTENUATION_DISTANCE_SCALING_MIN,
+          .max=HK_PACK_PROPERTY_SPATIAL_ATTENUATION_DISTANCE_SCALING_MAX, .def=1.0, .decimals=0,
+          .displayScale=100.0,
           .get=VNX_PROP_GET(VSpatial, attenuationDistanceScaling), .set=[](IComponent* c, const QVariant& v) {
               auto* s = static_cast<VSpatial*>(c);
               if (s->hostItem() && PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(s->hostItem()->type)) return false;
@@ -95,16 +100,16 @@ inline const PropertySchema& VSpatial::schema()
               return true;
           },
           .coerce=[](const QVariant& v){ return QVariant(qBound(0.1f, v.toFloat(), 10.0f)); },
-          .serializeWhen=[](const VNX::IComponent* c){ return static_cast<const VSpatial*>(c)->attenuationDistanceScaling != 1.0f; } },
+          .serializeWhen=[](const harken::studio::IComponent* c){ return static_cast<const VSpatial*>(c)->attenuationDistanceScaling != 1.0f; } },
         { .field="attenuationRef", .type=PropType::ObjectRef, .label="Attenuation", .section=PropertySection::Rating,
           .flags={.serialize=false},
-          .get=[](const VNX::IComponent* c) { return QVariant::fromValue(
+          .get=[](const harken::studio::IComponent* c) { return QVariant::fromValue(
               static_cast<const VSpatial*>(c)->attenuationRef); },
           .set=[](IComponent* c, const QVariant& v) {
               auto* s = static_cast<VSpatial*>(c);
               if (s->hostItem() && PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(s->hostItem()->type)) return false;
-              if (!v.canConvert<harkenstudio::ObjectId>()) return false;
-              s->attenuationRef = v.value<harkenstudio::ObjectId>();
+              if (!v.canConvert<harken::studio::types::ObjectId>()) return false;
+              s->attenuationRef = v.value<harken::studio::types::ObjectId>();
               return true;
           } },
     });

@@ -8,7 +8,7 @@
 #include <QLocale>
 #include <memory>
 
-namespace VNX {
+namespace harken::studio {
 
 struct LanguageInfo
 {

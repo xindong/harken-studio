@@ -5,7 +5,7 @@
 #include <string>
 #include <string_view>
 
-namespace harkenstudiojson {
+namespace harken::studio::json {
 
 // Tool manifests and command-line arguments use UTF-8 on every platform.
 inline std::filesystem::path Utf8Path(std::string_view text) {
@@ -18,6 +18,6 @@ inline std::string PathUtf8(const std::filesystem::path& path) {
     return std::string(reinterpret_cast<const char*>(text.data()), text.size());
 }
 
-} // namespace harkenstudiojson
+} // namespace harken::studio::json
 
 #endif

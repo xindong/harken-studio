@@ -68,9 +68,9 @@ TEST(UpdateBridgeDeploymentTest, DeploysPayloadAndPrunesStaleBuilds)
               QByteArrayLiteral("old"));
 
     QString error;
-    const QString deployed = VNH::deployUpdateBridgePayload(
+    const QString deployed = harken::hub::deployUpdateBridgePayload(
         source, root, QStringLiteral("run2.bbbb2222"),
-        VNH::updaterAclSddl(), &error);
+        harken::hub::updaterAclSddl(), &error);
     ASSERT_FALSE(deployed.isEmpty()) << error.toStdString();
     const QString deployedDir = QFileInfo(deployed).absolutePath();
     EXPECT_TRUE(QFileInfo(deployedDir).fileName().startsWith(
@@ -82,12 +82,12 @@ TEST(UpdateBridgeDeploymentTest, DeploysPayloadAndPrunesStaleBuilds)
         deployedDir + QStringLiteral("/tls/qschannelbackend.dll")));
     EXPECT_TRUE(QDir(root + QStringLiteral("/run1.aaaa1111")).exists());
 
-    VNH::applyDirectoryAcl(root, permissiveSddl(), &error);
-    VNH::applyDirectoryAcl(deployedDir, permissiveSddl(), &error);
-    VNH::pruneUpdateBridgePayloads(root, deployed);
+    harken::hub::applyDirectoryAcl(root, permissiveSddl(), &error);
+    harken::hub::applyDirectoryAcl(deployedDir, permissiveSddl(), &error);
+    harken::hub::pruneUpdateBridgePayloads(root, deployed);
     EXPECT_FALSE(QDir(root + QStringLiteral("/run1.aaaa1111")).exists());
 
-    VNH::applyDirectoryAcl(root, permissiveSddl(), &error);
+    harken::hub::applyDirectoryAcl(root, permissiveSddl(), &error);
 }
 
 TEST(UpdateBridgeDeploymentTest, RedeployOfTheSameBuildUsesANewDirectory)
@@ -99,7 +99,7 @@ TEST(UpdateBridgeDeploymentTest, RedeployOfTheSameBuildUsesANewDirectory)
     const QString root = temp.filePath(QStringLiteral("machine/Updater"));
 
     QString error;
-    const QString original = VNH::deployUpdateBridgePayload(
+    const QString original = harken::hub::deployUpdateBridgePayload(
         source, root, QStringLiteral("run3.cccc3333"), permissiveSddl(), &error);
     ASSERT_FALSE(original.isEmpty()) << error.toStdString();
 
@@ -108,7 +108,7 @@ TEST(UpdateBridgeDeploymentTest, RedeployOfTheSameBuildUsesANewDirectory)
     ASSERT_GT(bridge.write(QByteArrayLiteral("bridge-v2")), 0);
     bridge.close();
 
-    const QString deployed = VNH::deployUpdateBridgePayload(
+    const QString deployed = harken::hub::deployUpdateBridgePayload(
         source, root, QStringLiteral("run3.cccc3333"), permissiveSddl(),
         &error);
     ASSERT_FALSE(deployed.isEmpty()) << error.toStdString();
@@ -135,7 +135,7 @@ TEST(UpdateBridgeDeploymentTest, RedeployAndPrunePreserveTheRunningBridge)
     ASSERT_TRUE(QFile::copy(qEnvironmentVariable("ComSpec"), sourceExe));
     const QString root = temp.filePath(QStringLiteral("Updater"));
     QString error;
-    const QString original = VNH::deployUpdateBridgePayload(
+    const QString original = harken::hub::deployUpdateBridgePayload(
         source, root, QStringLiteral("same-build"), permissiveSddl(), &error);
     ASSERT_FALSE(original.isEmpty()) << error.toStdString();
 
@@ -151,11 +151,11 @@ TEST(UpdateBridgeDeploymentTest, RedeployAndPrunePreserveTheRunningBridge)
     ASSERT_TRUE(bridge.waitForStarted());
     ASSERT_TRUE(bridge.waitForReadyRead());
     EXPECT_FALSE(DeleteFileW(reinterpret_cast<LPCWSTR>(original.utf16())));
-    const QString deployed = VNH::deployUpdateBridgePayload(
+    const QString deployed = harken::hub::deployUpdateBridgePayload(
         source, root, QStringLiteral("same-build"), permissiveSddl(), &error);
     ASSERT_FALSE(deployed.isEmpty()) << error.toStdString();
     EXPECT_NE(deployed, original);
-    VNH::pruneUpdateBridgePayloads(root, deployed);
+    harken::hub::pruneUpdateBridgePayloads(root, deployed);
     const QDir originalDir = QFileInfo(original).dir();
     EXPECT_TRUE(QFile::exists(original));
     EXPECT_TRUE(QFile::exists(originalDir.filePath(QStringLiteral("Qt6Core.dll"))));
@@ -163,7 +163,7 @@ TEST(UpdateBridgeDeploymentTest, RedeployAndPrunePreserveTheRunningBridge)
 
     bridge.write("\n");
     ASSERT_TRUE(bridge.waitForFinished());
-    VNH::pruneUpdateBridgePayloads(root, deployed);
+    harken::hub::pruneUpdateBridgePayloads(root, deployed);
     EXPECT_FALSE(originalDir.exists());
     EXPECT_TRUE(QFile::exists(deployed));
 }
@@ -176,14 +176,14 @@ TEST(UpdateBridgeDeploymentTest, PrunePreservesPayloadWhenBridgeBinaryCannotBeDe
     makePayload(source);
     const QString root = temp.filePath(QStringLiteral("Updater"));
     QString error;
-    const QString original = VNH::deployUpdateBridgePayload(
+    const QString original = harken::hub::deployUpdateBridgePayload(
         source, root, QStringLiteral("old-build"), permissiveSddl(), &error);
     ASSERT_FALSE(original.isEmpty()) << error.toStdString();
-    const QString deployed = VNH::deployUpdateBridgePayload(
+    const QString deployed = harken::hub::deployUpdateBridgePayload(
         source, root, QStringLiteral("new-build"), permissiveSddl(), &error);
     ASSERT_FALSE(deployed.isEmpty()) << error.toStdString();
     const QDir originalDir = QFileInfo(original).dir();
-    ASSERT_TRUE(VNH::runningExecutablesUnder(originalDir.path()).isEmpty());
+    ASSERT_TRUE(harken::hub::runningExecutablesUnder(originalDir.path()).isEmpty());
 
     {
         const HANDLE locked = CreateFileW(
@@ -192,13 +192,13 @@ TEST(UpdateBridgeDeploymentTest, PrunePreservesPayloadWhenBridgeBinaryCannotBeDe
             nullptr);
         ASSERT_NE(locked, INVALID_HANDLE_VALUE);
         const auto closeLock = qScopeGuard([locked]() { CloseHandle(locked); });
-        VNH::pruneUpdateBridgePayloads(root, deployed);
+        harken::hub::pruneUpdateBridgePayloads(root, deployed);
         EXPECT_TRUE(QFile::exists(original));
         EXPECT_TRUE(QFile::exists(originalDir.filePath(QStringLiteral("Qt6Core.dll"))));
         EXPECT_TRUE(QFile::exists(originalDir.filePath(QStringLiteral("tls/qschannelbackend.dll"))));
     }
 
-    VNH::pruneUpdateBridgePayloads(root, deployed);
+    harken::hub::pruneUpdateBridgePayloads(root, deployed);
     EXPECT_FALSE(originalDir.exists());
     EXPECT_TRUE(QFile::exists(deployed));
 }
@@ -211,10 +211,10 @@ TEST(UpdateBridgeDeploymentTest, FailedDeploymentPreservesThePreviousPayload)
     makePayload(source);
     const QString root = temp.filePath(QStringLiteral("Updater"));
     QString error;
-    const QString original = VNH::deployUpdateBridgePayload(
+    const QString original = harken::hub::deployUpdateBridgePayload(
         source, root, QStringLiteral("same-build"), permissiveSddl(), &error);
     ASSERT_FALSE(original.isEmpty()) << error.toStdString();
-    EXPECT_TRUE(VNH::deployUpdateBridgePayload(
+    EXPECT_TRUE(harken::hub::deployUpdateBridgePayload(
         source, root, QStringLiteral("same-build"), QStringLiteral("invalid"),
         &error).isEmpty());
     EXPECT_TRUE(QFile::exists(original));
@@ -231,7 +231,7 @@ TEST(UpdateBridgeDeploymentTest, RejectsMissingBridgeBinary)
               QByteArrayLiteral("core"));
 
     QString error;
-    EXPECT_TRUE(VNH::deployUpdateBridgePayload(
+    EXPECT_TRUE(harken::hub::deployUpdateBridgePayload(
                     source, temp.filePath(QStringLiteral("machine/Updater")),
                     QStringLiteral("run4.dddd4444"), permissiveSddl(), &error)
                     .isEmpty());
@@ -246,7 +246,7 @@ TEST(UpdateBridgeDeploymentTest, RejectsUnsafeBuildId)
     makePayload(source);
 
     QString error;
-    EXPECT_TRUE(VNH::deployUpdateBridgePayload(
+    EXPECT_TRUE(harken::hub::deployUpdateBridgePayload(
                     source, temp.filePath(QStringLiteral("machine/Updater")),
                     QStringLiteral("../evil"), permissiveSddl(), &error)
                     .isEmpty());
@@ -262,9 +262,9 @@ TEST(UpdateBridgeDeploymentTest, HardensUpdaterRootAcl)
     const QString root = temp.filePath(QStringLiteral("machine/Updater"));
 
     QString error;
-    ASSERT_FALSE(VNH::deployUpdateBridgePayload(
+    ASSERT_FALSE(harken::hub::deployUpdateBridgePayload(
                      source, root, QStringLiteral("run5.eeee5555"),
-                     VNH::updaterAclSddl(), &error)
+                     harken::hub::updaterAclSddl(), &error)
                      .isEmpty())
         << error.toStdString();
 
@@ -300,7 +300,7 @@ TEST(UpdateBridgeDeploymentTest, HardensUpdaterRootAcl)
     EXPECT_TRUE(control & SE_DACL_PROTECTED);
     LocalFree(descriptor);
 
-    VNH::applyDirectoryAcl(root, permissiveSddl(), &error);
+    harken::hub::applyDirectoryAcl(root, permissiveSddl(), &error);
     for (const QFileInfo& child : QDir(root).entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot))
-        VNH::applyDirectoryAcl(child.absoluteFilePath(), permissiveSddl(), &error);
+        harken::hub::applyDirectoryAcl(child.absoluteFilePath(), permissiveSddl(), &error);
 }

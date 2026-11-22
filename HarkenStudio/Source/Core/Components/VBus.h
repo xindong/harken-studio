@@ -14,7 +14,7 @@
 #include <cstdint>
 #include <functional>
 
-namespace VNX {
+namespace harken::studio {
 
 class VBus : public ReflectedComponent<VBus>
 {

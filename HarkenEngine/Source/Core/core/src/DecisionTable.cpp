@@ -1,0 +1,2114 @@
+#include "harken/core/LogicAllocCheckpoint.h"
+#include "harken/core/DecisionTable.h"
+#include "harken/core/ScheduledTransactionPool.h"
+#include "harken/core/CheckedIssuer.h"
+#include "harken/core/QueueRuntime.h"
+
+#include <limits>
+#include <optional>
+#include <cassert>
+#include <utility>
+
+namespace harken {
+namespace {
+
+std::uint64_t PackIdentity(std::uint32_t slot,
+                           std::uint32_t generation) noexcept {
+    return (static_cast<std::uint64_t>(generation) << 32) | slot;
+}
+
+bool SameOriginalDecisionRequest(const DecisionReserveRequest& a,
+    const DecisionReserveRequest& b) noexcept {
+    return a.ticket.sequence == b.ticket.sequence &&
+        a.world == b.world && a.transport == b.transport &&
+        a.expectedContinuationGeneration == b.expectedContinuationGeneration &&
+        a.sliceCount == b.sliceCount &&
+        a.transitionGate.slot == b.transitionGate.slot &&
+        a.transitionGate.generation == b.transitionGate.generation;
+}
+
+bool ValidRequest(const DecisionReserveRequest& request) noexcept {
+    return request.ticket.Valid() && request.world != kNoWorldGeneration &&
+           request.transport != kInvalidTransportEpoch &&
+           request.expectedContinuationGeneration != 0 &&
+           request.sliceCount != 0;
+}
+
+bool ValidPreparedRequest(
+    const DecisionReserveRequest& request) noexcept {
+    return !request.ticket.Valid() &&
+           request.world != kNoWorldGeneration &&
+           request.transport != kInvalidTransportEpoch &&
+           request.expectedContinuationGeneration != 0 &&
+           request.sliceCount != 0;
+}
+
+bool ValidConfig(std::uint32_t capacity,
+                 std::uint32_t maxParticipants) noexcept {
+    return capacity != 0 &&
+           maxParticipants != 0 &&
+           maxParticipants <= kMaxParticipantsPerDecisionHard;
+}
+
+} // namespace
+
+struct DecisionTable::FrontierSidecar {
+    TimelineEventPayload controlPayload{};
+    TimelineProgramView controlProgram{};
+    FrontierActivation activation;
+    std::optional<ScheduleGroupReaderPin> pagePin;
+    DecisionFuturePin observerPin;
+    const ScheduledTransactionPool* operationPool = nullptr;
+    FrontierOwnerIdentity operationOwner{};
+    FrontierPublicationProof* publicationProof = nullptr;
+};
+
+DecisionTable::FrontierPublicationProof::FrontierPublicationProof(
+    FrontierPublicationProof&& other) noexcept { *this = std::move(other); }
+
+DecisionTable::FrontierPublicationProof& DecisionTable::FrontierPublicationProof::operator=(
+    FrontierPublicationProof&& other) noexcept {
+    if (this != &other) {
+        Release();
+        table_ = std::exchange(other.table_, nullptr);
+        row_ = std::exchange(other.row_, nullptr);
+        activation_ = std::exchange(other.activation_, nullptr);
+        token_ = std::exchange(other.token_, DecisionToken{});
+        if (table_ != nullptr) {
+            auto& sidecar = table_->frontiers_[token_.slot];
+            assert(sidecar.publicationProof == &other);
+            sidecar.publicationProof = this;
+        }
+    }
+    return *this;
+}
+
+void DecisionTable::FrontierPublicationProof::Release() noexcept {
+    if (table_ != nullptr) {
+        assert(activation_->State() == FrontierReceiptState::PublicationHeld);
+        activation_->state_.store(FrontierReceiptState::Prepared, std::memory_order_release);
+    }
+    Detach();
+}
+
+void DecisionTable::FrontierPublicationProof::Detach() noexcept {
+    if (table_ != nullptr) {
+        auto& sidecar = table_->frontiers_[token_.slot];
+        assert(sidecar.publicationProof == this && activation_ == &sidecar.activation);
+        sidecar.publicationProof = nullptr;
+        row_->reservation.clear(std::memory_order_release);
+    }
+    table_ = nullptr;
+    row_ = nullptr;
+    activation_ = nullptr;
+    token_ = {};
+}
+
+bool DecisionTable::FrontierPublicationHeld(DecisionToken token) const noexcept {
+    const auto* activation = ResolveFrontierActivation(token);
+    return activation != nullptr && activation->State() == FrontierReceiptState::PublicationHeld;
+}
+
+bool DecisionTable::ProveFrontierActivationPublication(DecisionToken token,
+    const FrontierEntryReceiptRef& entry, const ScheduledTransactionPool& pool,
+    FrontierPublicationProof* out) noexcept {
+    auto* row = Resolve(token);
+    if (row == nullptr || out == nullptr || out->Valid() || PreparedTicketHeld(token) ||
+        frontiers_[token.slot].publicationProof != nullptr ||
+        row->reservation.test_and_set(std::memory_order_acquire)) return false;
+    const auto refuse = [&]() noexcept { row->reservation.clear(std::memory_order_release); return false; };
+    if (Resolve(token) != row || !CanPublishFrontierActivation(token) ||
+        !MatchesPreparedFrontierActivationPool(entry, pool) ||
+        entry.coordinator.slot != token.slot || entry.coordinator.generation != token.generation ||
+        row->audioState.load(std::memory_order_acquire) != AudioGroupState::Pending ||
+        row->consumedSlices.load(std::memory_order_acquire) != 0 ||
+        row->lastAudioSequence.load(std::memory_order_acquire) != 0 ||
+        row->authoredStopInvalidated.load(std::memory_order_acquire)) return refuse();
+    auto& sidecar = frontiers_[token.slot];
+    auto expected = FrontierReceiptState::Prepared;
+    if (!sidecar.activation.state_.compare_exchange_strong(expected, FrontierReceiptState::PublicationHeld,
+            std::memory_order_acq_rel, std::memory_order_acquire)) return refuse();
+    out->table_ = this;
+    out->row_ = row;
+    out->activation_ = &sidecar.activation;
+    out->token_ = token;
+    sidecar.publicationProof = out;
+    return true;
+}
+
+bool DecisionTable::IsFrontierPublicationProofFor(const FrontierPublicationProof& proof,
+    const FrontierActivationDescriptor& descriptor) const noexcept {
+    if (proof.table_ != this || proof.row_ == nullptr || !descriptor.Valid() ||
+        proof.token_.slot != descriptor.entry.coordinator.slot ||
+        proof.token_.generation != descriptor.entry.coordinator.generation ||
+        proof.row_ != Resolve(proof.token_)) return false;
+    const auto& sidecar = frontiers_[proof.token_.slot];
+    return sidecar.publicationProof == &proof && proof.activation_ == &sidecar.activation &&
+        proof.activation_->State() == FrontierReceiptState::PublicationHeld &&
+        proof.activation_->Descriptor() == descriptor;
+}
+
+void DecisionTable::ApplyFrontierActivationPublication(FrontierPublicationProof&& proof) noexcept {
+    assert(proof.Valid() && proof.activation_->State() == FrontierReceiptState::PublicationHeld);
+    if (!proof.Valid()) return;
+    auto* activation = proof.activation_;
+    // Dispose logic ownership before the audio owner can advance Pending.
+    proof.Detach();
+    activation->state_.store(FrontierReceiptState::Pending, std::memory_order_release);
+}
+
+PreparedDecisionReservation::PreparedDecisionReservation(
+    PreparedDecisionReservation&& other) noexcept {
+    *this = std::move(other);
+}
+
+PreparedDecisionReservation& PreparedDecisionReservation::operator=(
+    PreparedDecisionReservation&& other) noexcept {
+    if (this == &other ||
+        (owner_ != nullptr && owner_->PreparedTicketHeld(token_)) ||
+        (other.owner_ != nullptr && other.owner_->PreparedTicketHeld(other.token_))) return *this;
+    owner_ = std::exchange(other.owner_, nullptr);
+    token_ = std::exchange(other.token_, {});
+    prepared_ = std::exchange(other.prepared_, false);
+    originalRequest_ = std::exchange(other.originalRequest_, {});
+    originalLifetimeMarker_ = std::exchange(other.originalLifetimeMarker_, 0);
+    attachedTransitionGate_ = std::exchange(other.attachedTransitionGate_, {});
+    attachedSliceCount_ = std::exchange(other.attachedSliceCount_, 0);
+    return *this;
+}
+
+DecisionTable::PreparedTicketCommitProof::PreparedTicketCommitProof(
+    PreparedTicketCommitProof&& other) noexcept {
+    *this = std::move(other);
+}
+
+DecisionTable::PreparedTicketCommitProof&
+DecisionTable::PreparedTicketCommitProof::operator=(PreparedTicketCommitProof&& other) noexcept {
+    if (this != &other) {
+        Release();
+        table_ = std::exchange(other.table_, nullptr);
+        row_ = std::exchange(other.row_, nullptr);
+        original_ = std::exchange(other.original_, nullptr);
+        token_ = std::exchange(other.token_, {});
+        sequence_ = std::exchange(other.sequence_, 0);
+    }
+    return *this;
+}
+
+void DecisionTable::PreparedTicketCommitProof::Release() noexcept {
+    if (Valid()) {
+        row_->commit.store(DecisionCommitState::Open, std::memory_order_release);
+        row_->reservation.clear(std::memory_order_release);
+    }
+    table_ = nullptr;
+    row_ = nullptr;
+    original_ = nullptr;
+    token_ = {};
+    sequence_ = 0;
+}
+
+bool DecisionTable::PreparedTicketHeld(DecisionToken token) const noexcept {
+    const auto* row = Resolve(token);
+    return row != nullptr && row->commit.load(std::memory_order_acquire) ==
+        DecisionCommitState::PreparedTicketHeld;
+}
+
+bool DecisionTable::ProvePreparedReservationCommit(PreparedDecisionReservation& original,
+    const DecisionReserveRequest& originalInput, LogicCommitSequence expectedSequence,
+    PreparedTicketCommitProof* out) noexcept {
+    if (out == nullptr || out->Valid() || original.owner_ != this || !original.prepared_ ||
+        expectedSequence == 0 || !ValidPreparedRequest(originalInput)) return false;
+    const auto token = original.token_;
+    Row* row = Resolve(token);
+    if (row == nullptr || row->reservation.test_and_set(std::memory_order_acquire)) return false;
+    const auto fail = [&]() noexcept { row->reservation.clear(std::memory_order_release); return false; };
+    const auto& issued = original.originalRequest_;
+    const auto expectedGate = original.attachedTransitionGate_.Valid()
+        ? original.attachedTransitionGate_ : issued.transitionGate;
+    const auto expectedSlices = original.attachedTransitionGate_.Valid()
+        ? original.attachedSliceCount_ : issued.sliceCount;
+    const auto& sidecar = frontiers_[token.slot];
+    if (Resolve(token) != row || row->ticket.Valid() ||
+        (original.originalLifetimeMarker_ != 0 &&
+         (row->originalLifetimeMarker != original.originalLifetimeMarker_ ||
+          !SameOriginalDecisionRequest(issued, row->originalLifetimeRequest))) ||
+        originalInput.ticket.sequence != issued.ticket.sequence ||
+        originalInput.world != issued.world || originalInput.transport != issued.transport ||
+        originalInput.expectedContinuationGeneration != issued.expectedContinuationGeneration ||
+        originalInput.sliceCount != issued.sliceCount ||
+        originalInput.transitionGate.slot != issued.transitionGate.slot ||
+        originalInput.transitionGate.generation != issued.transitionGate.generation ||
+        row->world != issued.world || row->transport != issued.transport ||
+        row->continuationGeneration.load(std::memory_order_acquire) != issued.expectedContinuationGeneration ||
+        row->sliceCount != expectedSlices || row->transitionGate.slot != expectedGate.slot ||
+        row->transitionGate.generation != expectedGate.generation ||
+        row->audioState.load(std::memory_order_acquire) != AudioGroupState::Pending ||
+        row->consumedSlices.load(std::memory_order_acquire) != 0 ||
+        row->lastAudioSequence.load(std::memory_order_acquire) != 0 ||
+        row->authoredStopInvalidated.load(std::memory_order_acquire) ||
+        row->participantCount != 0 || row->pages.Valid() || row->armGroup.Valid() ||
+        row->futurePinCount.load(std::memory_order_acquire) != 0 ||
+        sidecar.activation.State() != FrontierReceiptState::Empty || sidecar.pagePin.has_value() ||
+        sidecar.observerPin.Valid() || sidecar.operationPool != nullptr) return fail();
+    DecisionCommitState expected = DecisionCommitState::Open;
+    if (!row->commit.compare_exchange_strong(expected, DecisionCommitState::PreparedTicketHeld,
+            std::memory_order_acq_rel, std::memory_order_acquire)) return fail();
+    out->table_ = this;
+    out->row_ = row;
+    out->original_ = &original;
+    out->token_ = token;
+    out->sequence_ = expectedSequence;
+    return true;
+}
+
+void DecisionTable::ConsumePreparedReservationCommit(PreparedTicketCommitProof&& proof) noexcept {
+    assert(proof.Valid() && proof.sequence_ != 0);
+    if (!proof.Valid()) return;
+    proof.row_->ticket.sequence = proof.sequence_;
+    proof.original_->owner_ = nullptr;
+    proof.original_->token_ = {};
+    proof.original_->prepared_ = false;
+    proof.original_->originalRequest_ = {};
+    proof.original_->originalLifetimeMarker_ = 0;
+    proof.original_->attachedTransitionGate_ = {};
+    proof.original_->attachedSliceCount_ = 0;
+    proof.Release();
+}
+
+DecisionTable::DecisionTable(std::uint32_t capacity,
+                             std::uint32_t maxParticipantsPerDecision)
+    : capacity_(ValidConfig(capacity, maxParticipantsPerDecision)
+                    ? std::min(capacity, UINT32_MAX / maxParticipantsPerDecision)
+                    : 0),
+      maxParticipantsPerDecision_(capacity_ != 0 ? maxParticipantsPerDecision : 0) {}
+
+bool DecisionTable::PrepareDependencies(std::uint32_t count) noexcept {
+    return count <= capacity_ && participants_.ConstructThrough(count * maxParticipantsPerDecision_) &&
+        frontiers_.ConstructThrough(count) &&
+        (prepareDependencies_ == nullptr || prepareDependencies_(preparationContext_, count));
+}
+
+bool DecisionTable::PrepareSlotStorage(std::uint32_t slot) noexcept {
+    if (slot >= capacity_) return false;
+    if (rows_.ConstructThrough(slot + 1u, [this](auto count) noexcept { return PrepareDependencies(count); }))
+        return true;
+    if (!rows_.PreparedUseActive() && !memguard::IsAudioTagged())
+        detail::RecordLogicAllocFailure(detail::LogicAllocSite::EngineStorage);
+    return false;
+}
+
+std::uint32_t DecisionTable::FindFreeSlot() noexcept {
+    return rows_.FindFreeSlot(capacity_, [](const Row& row) noexcept {
+        return row.slotState.load(std::memory_order_acquire) == SlotState::Free &&
+            !row.reservation.test(std::memory_order_acquire);
+    }, [this](auto count) noexcept { return PrepareSlotStorage(count - 1u); });
+}
+
+std::uint32_t DecisionTable::CountOccupiedUntil(std::uint64_t needed) const noexcept {
+    std::uint32_t occupied = 0;
+    for (const auto& row : rows_) {
+        if (needed == 0) break;
+        if (row.slotState.load(std::memory_order_acquire) != SlotState::Free) ++occupied;
+        else --needed;
+    }
+    return occupied;
+}
+
+std::uint32_t DecisionTable::FreeCount() const noexcept {
+    return Capacity() - CountOccupiedUntil(UINT64_MAX);
+}
+
+bool DecisionTable::PrepareAvailable(std::uint32_t count) noexcept {
+    if (count == 0) return true;
+    const auto needed = count + (rows_.PreparedUseActive() ? 0ull : rows_.HeldRows());
+    const auto occupied = CountOccupiedUntil(needed);
+    return needed <= capacity_ - occupied && PrepareSlotStorage(occupied + count - 1u);
+}
+
+bool DecisionTable::PrepareBacking(std::uint32_t count, BackingPreparation* out) noexcept {
+    if (out == nullptr || out->Valid() || memguard::IsAudioTagged() || rows_.PreparedUseActive()) return false;
+    const auto needed = rows_.HeldRows() + count;
+    const auto occupied = CountOccupiedUntil(needed);
+    if (needed > capacity_ - occupied) return false;
+    if (rows_.PrepareBacking(count, occupied, out, [this](auto required) noexcept {
+            return PrepareDependencies(required);
+        })) return true;
+    detail::RecordLogicAllocFailure(detail::LogicAllocSite::EngineStorage);
+    return false;
+}
+
+std::uint64_t DecisionTable::RowStorageBytes() const noexcept {
+    return rows_.RequestedBytes() + participants_.RequestedBytes() + frontiers_.RequestedBytes();
+}
+
+std::uint64_t DecisionTable::RowCommittedBytes() const noexcept {
+    return rows_.CommittedBytes() + participants_.CommittedBytes() + frontiers_.CommittedBytes();
+}
+
+std::uint64_t DecisionTable::RowReservedBytes() const noexcept {
+    return rows_.ReservedBytes() + participants_.ReservedBytes() + frontiers_.ReservedBytes();
+}
+
+DecisionTable::~DecisionTable() {
+    for (std::uint32_t index = 0; index < frontiers_.ConstructedCount(); ++index)
+        if (frontiers_[index].publicationProof != nullptr) frontiers_[index].publicationProof->Release();
+    for (std::uint32_t index = 0; index < rows_.ConstructedCount(); ++index)
+        assert(rows_[index].originalLifetimePinCount == 0);
+}
+
+OriginalDecisionLifetimePin::~OriginalDecisionLifetimePin() {
+    const bool released = Release();
+    assert(released);
+    (void)released;
+}
+
+OriginalDecisionLifetimePin::OriginalDecisionLifetimePin(
+    OriginalDecisionLifetimePin&& other) noexcept { *this = std::move(other); }
+
+OriginalDecisionLifetimePin& OriginalDecisionLifetimePin::operator=(
+    OriginalDecisionLifetimePin&& other) noexcept {
+    if (this != &other) {
+        const bool released = Release();
+        assert(released);
+        if (!released) return *this;
+        owner_ = std::exchange(other.owner_, nullptr);
+        token_ = std::exchange(other.token_, {});
+        marker_ = std::exchange(other.marker_, 0);
+    }
+    return *this;
+}
+
+bool OriginalDecisionLifetimePin::Borrow(OriginalDecisionLifetimePin* out) const noexcept {
+    return owner_ != nullptr && owner_->BorrowOriginalDecisionLifetime(*this, out);
+}
+
+bool OriginalDecisionLifetimePin::Release() noexcept {
+    return owner_ == nullptr || owner_->ReleaseOriginalDecisionLifetime(*this);
+}
+
+bool DecisionTable::CanIssueOriginalDecisionLifetime(
+    const OriginalDecisionLifetimePin* out) const noexcept {
+    return out == nullptr || (!out->Valid() && !originalLifetimeMarkerExhausted_ &&
+        nextOriginalLifetimeMarker_ != 0);
+}
+
+void DecisionTable::IssueOriginalDecisionLifetime(Row& row, DecisionToken token,
+    const DecisionReserveRequest& request, OriginalDecisionLifetimePin& out) noexcept {
+    assert(!out.Valid() && row.originalLifetimePinCount == 0 &&
+        row.originalLifetimeMarker == 0);
+    const auto issued = harken::TryIssue(&nextOriginalLifetimeMarker_,
+        &originalLifetimeMarkerExhausted_);
+    assert(issued.status == harken::IssueStatus::Ok);
+    row.originalLifetimeMarker = issued.value;
+    row.originalLifetimePinCount = 1;
+    row.originalLifetimeRequest = request;
+    out.owner_ = this;
+    out.token_ = token;
+    out.marker_ = issued.value;
+}
+
+bool DecisionTable::MatchesOriginalDecisionLifetime(
+    const OriginalDecisionLifetimePin& original) const noexcept {
+    if (original.owner_ != this || original.marker_ == 0) return false;
+    const auto* row = Resolve(original.token_);
+    return row != nullptr && row->originalLifetimeMarker == original.marker_ &&
+        row->originalLifetimePinCount != 0;
+}
+
+bool DecisionTable::IsOriginalDecisionLifetimePinFor(
+    const OriginalDecisionLifetimePin& original, DecisionToken token) const noexcept {
+    return MatchesOriginalDecisionLifetime(original) &&
+        original.token_.slot == token.slot && original.token_.generation == token.generation;
+}
+
+bool DecisionTable::MatchesOriginalPreparedDecision(const OriginalDecisionLifetimePin& original,
+    const PreparedDecisionReservation& preparation) const noexcept {
+    if (!MatchesOriginalDecisionLifetime(original) || preparation.owner_ != this || !preparation.Valid() ||
+        preparation.token_.slot != original.token_.slot || preparation.token_.generation != original.token_.generation ||
+        preparation.originalLifetimeMarker_ != original.marker_) return false;
+    const auto& row = rows_[original.token_.slot];
+    const auto commit = row.commit.load(std::memory_order_acquire);
+    return !row.ticket.Valid() && (commit == DecisionCommitState::Open || commit == DecisionCommitState::PreparedTicketHeld) &&
+        row.audioState.load(std::memory_order_acquire) == AudioGroupState::Pending &&
+        row.consumedSlices.load(std::memory_order_acquire) == 0 &&
+        row.lastAudioSequence.load(std::memory_order_acquire) == 0 &&
+        !row.authoredStopInvalidated.load(std::memory_order_acquire) &&
+        SameOriginalDecisionRequest(preparation.originalRequest_, row.originalLifetimeRequest) &&
+        row.world == preparation.originalRequest_.world && row.transport == preparation.originalRequest_.transport &&
+        row.continuationGeneration.load(std::memory_order_acquire) == preparation.originalRequest_.expectedContinuationGeneration;
+}
+
+bool DecisionTable::MatchesOriginalDecisionFactory(
+    const OriginalDecisionLifetimePin& original,
+    const DecisionReserveRequest& request) const noexcept {
+    if (!MatchesOriginalDecisionLifetime(original)) return false;
+    return SameOriginalDecisionRequest(rows_[original.token_.slot].originalLifetimeRequest, request);
+}
+
+bool DecisionTable::BorrowOriginalDecisionLifetime(
+    const OriginalDecisionLifetimePin& original, OriginalDecisionLifetimePin* out) noexcept {
+    if (out == nullptr || out->Valid() || !MatchesOriginalDecisionLifetime(original)) return false;
+    auto& row = rows_[original.token_.slot];
+    if (row.originalLifetimePinCount == UINT32_MAX) return false;
+    ++row.originalLifetimePinCount;
+    out->owner_ = this;
+    out->token_ = original.token_;
+    out->marker_ = original.marker_;
+    return true;
+}
+
+bool DecisionTable::ReleaseOriginalDecisionLifetime(
+    OriginalDecisionLifetimePin& original) noexcept {
+    if (!MatchesOriginalDecisionLifetime(original)) return false;
+    auto& row = rows_[original.token_.slot];
+    --row.originalLifetimePinCount;
+    // Immutable factory metadata remains until actual row disposition.
+    original.owner_ = nullptr;
+    original.token_ = {};
+    original.marker_ = 0;
+    return true;
+}
+
+bool DecisionTable::RegisterOriginalLifetimeBaselineResolver(void* context,
+    OriginalLifetimeBaselineResolver resolver) noexcept {
+    if (context == nullptr || resolver == nullptr || originalLifetimeBaselineResolver_ != nullptr) return false;
+    for (std::uint32_t i = 0; i < rows_.ConstructedCount(); ++i)
+        if (rows_[i].originalLifetimePinCount != 0) return false;
+    originalLifetimeBaselineContext_ = context;
+    originalLifetimeBaselineResolver_ = resolver;
+    return true;
+}
+OriginalDecisionLifetimePin* DecisionTable::ResolveOriginalLifetimeBaseline(
+    DecisionToken token, OriginalDecisionLifetimePin* explicitBaseline) noexcept {
+    if (explicitBaseline != nullptr || originalLifetimeBaselineResolver_ == nullptr) return explicitBaseline;
+    auto* original = originalLifetimeBaselineResolver_(originalLifetimeBaselineContext_, *this, token);
+    // A numerical token cannot create a native original. The returned object
+    // must still match this receiver's issued full token and private marker.
+    return original != nullptr && IsOriginalDecisionLifetimePinFor(*original, token) ? original : nullptr;
+}
+
+bool DecisionTable::OriginalDecisionRetirementReady(const Row& row, DecisionToken token,
+    const OriginalDecisionLifetimePin* baseline) const noexcept {
+    return baseline != nullptr
+        ? IsOriginalDecisionLifetimePinFor(*baseline, token) && row.originalLifetimePinCount == 1
+        : row.originalLifetimePinCount == 0;
+}
+
+void DecisionTable::ConsumeOriginalDecisionBaseline(Row& row, DecisionToken token,
+    OriginalDecisionLifetimePin* baseline) noexcept {
+    if (baseline != nullptr) {
+        // Live -> Reclaiming already owns this exact native row exclusively.
+        assert(baseline->owner_ == this && baseline->token_.slot == token.slot &&
+            baseline->token_.generation == token.generation &&
+            baseline->marker_ == row.originalLifetimeMarker &&
+            row.originalLifetimePinCount == 1);
+        --row.originalLifetimePinCount;
+        baseline->owner_ = nullptr;
+        baseline->token_ = {};
+        baseline->marker_ = 0;
+    }
+    assert(row.originalLifetimePinCount == 0);
+    row.originalLifetimeMarker = 0;
+    row.originalLifetimeRequest = {};
+}
+
+const TimelineProgramView* DecisionTable::PrepareFrontierControlProgram(DecisionToken token,
+    std::uint64_t programGeneration) noexcept {
+    if (PreparedTicketHeld(token)) { return nullptr; }
+    auto* row = Resolve(token);
+    if (row == nullptr || programGeneration == 0) return nullptr;
+    auto& sidecar = frontiers_[token.slot];
+    if (sidecar.controlProgram.generation != 0)
+        return sidecar.controlProgram.generation == programGeneration ? &sidecar.controlProgram : nullptr;
+    if (row->commit.load(std::memory_order_acquire) != DecisionCommitState::Open)
+        return nullptr;
+    sidecar.controlPayload = {};
+    sidecar.controlPayload.kind = TimelineEventKind::ControllerActivation;
+    sidecar.controlProgram = {programGeneration, &sidecar.controlPayload, 1,
+        TimelineProgramRole::ControllerActivation};
+    return &sidecar.controlProgram;
+}
+
+bool DecisionTable::CaptureFrontierControlProgram(DecisionToken token,
+    TimelineTransactionProgramRef* out) const noexcept {
+    if (out == nullptr || Resolve(token) == nullptr) return false;
+    *out = {};
+    const auto& sidecar = frontiers_[token.slot];
+    if (sidecar.controlProgram.generation == 0) return true;
+    if (sidecar.controlProgram.role != TimelineProgramRole::ControllerActivation ||
+        sidecar.controlProgram.payloads != &sidecar.controlPayload ||
+        sidecar.controlProgram.payloadCount != 1 ||
+        sidecar.controlPayload.kind != TimelineEventKind::ControllerActivation)
+        return false;
+    *out = {sidecar.controlProgram.generation, &sidecar.controlProgram};
+    return true;
+}
+
+void DecisionTable::ResetFrontierStorage(std::uint32_t slot) noexcept {
+    if (rows_[slot].commit.load(std::memory_order_acquire) == DecisionCommitState::PreparedTicketHeld) return;
+    auto& sidecar = frontiers_[slot];
+    if (sidecar.activation.State() == FrontierReceiptState::PublicationHeld) return;
+    assert(!sidecar.pagePin.has_value() && !sidecar.observerPin.Valid());
+    assert(sidecar.operationPool == nullptr);
+    sidecar.controlProgram = {};
+    sidecar.controlPayload = {};
+    auto& activation = sidecar.activation;
+    activation.lease_ = nullptr;
+    activation.descriptor_ = {};
+    activation.receipt_ = {};
+    activation.logicPayloadReady_.store(false, std::memory_order_relaxed);
+    activation.sourceWaitSequence_.store(0, std::memory_order_relaxed);
+    activation.state_.store(FrontierReceiptState::Empty, std::memory_order_release);
+}
+
+std::uint64_t DecisionTable::FrontierStorageBytes() const noexcept {
+    return frontiers_.RequestedBytes();
+}
+
+bool DecisionTable::ValidateFrontierDecisionApply(DecisionToken token,
+    std::uint64_t audioSequence, FrontierDecisionApplyProof* out) noexcept {
+    Row* row = Resolve(token);
+    auto* activation = ResolveFrontierActivation(token);
+    if (row == nullptr || activation == nullptr || out == nullptr || audioSequence == 0 ||
+        activation->State() != FrontierReceiptState::AudioStaging || activation->lease_ == nullptr ||
+        activation->lease_->Capture().state != AudioSliceState::Ready ||
+        row->commit.load(std::memory_order_acquire) != DecisionCommitState::Committed ||
+        row->audioState.load(std::memory_order_acquire) != AudioGroupState::Pending ||
+        row->sliceCount != 1 || row->consumedSlices.load(std::memory_order_acquire) != 0 ||
+        row->lastAudioSequence.load(std::memory_order_acquire) > audioSequence) return false;
+    out->row_ = row;
+    out->table_ = this;
+    out->activation_ = activation;
+    out->lease_ = activation->lease_;
+    out->audioSequence_ = audioSequence;
+    out->sliceIndex_ = 0;
+    out->prelude_ = false;
+    return true;
+}
+
+void DecisionTable::ApplyClaimedFrontierDecision(const FrontierDecisionApplyProof& proof) noexcept {
+    assert(proof.table_ == this && proof.Valid() && proof.lease_ != nullptr);
+    const auto state = proof.lease_->Capture().state;
+    assert(state == AudioSliceState::SliceClaimed || state == AudioSliceState::SliceClaimedWithInvalidation);
+    (void)state;
+    auto& row = *static_cast<Row*>(proof.row_);
+    assert(row.audioState.load(std::memory_order_acquire) == AudioGroupState::Pending ||
+        row.audioState.load(std::memory_order_acquire) == AudioGroupState::AudioClaimed ||
+        row.audioState.load(std::memory_order_acquire) == AudioGroupState::Admitted);
+    row.audioState.store(proof.prelude_ ? AudioGroupState::AudioClaimed : AudioGroupState::Admitted,
+        std::memory_order_release);
+    row.lastAudioSequence.store(proof.audioSequence_, std::memory_order_relaxed);
+    row.consumedSlices.store(static_cast<std::uint16_t>(proof.sliceIndex_ + 1u), std::memory_order_release);
+}
+
+bool DecisionTable::HasFrontierDecisionBinding(DecisionToken token) const noexcept {
+    return Resolve(token) != nullptr && frontiers_[token.slot].operationPool != nullptr;
+}
+
+bool DecisionTable::MayMutateFrontierDecision(DecisionToken token,
+    AudioSliceInvalidateReason reason) const noexcept {
+    if (PreparedTicketHeld(token) || FrontierPublicationHeld(token)) { return false; }
+    if (!HasFrontierDecisionBinding(token)) return true;
+    const auto& sidecar = frontiers_[token.slot];
+    return sidecar.operationPool->InvalidateFrontierOwnerOperations(sidecar.operationOwner, token, reason);
+}
+
+bool DecisionTable::BindFrontierDecision(DecisionToken token,
+    const FrontierGroupBinding& binding, const ScheduledTransactionPool& pool) noexcept {
+    if (PreparedTicketHeld(token)) { return false; }
+    auto* row = Resolve(token);
+    SchedulePageGroupView group{};
+    if (row == nullptr || !binding.Valid() || binding.role == FrontierGroupRole::Coordinator ||
+        binding.operation.group.decision.slot != token.slot || binding.operation.group.decision.generation != token.generation ||
+        binding.operation.world != row->world || binding.operation.transport != row->transport ||
+        !pool.PrivateScheduleGroupBindable(binding.operation.group) ||
+        !pool.ResolveScheduleGroupSliceProducer(binding.operation.group, &group) || group.frontier != &binding ||
+        group.lease == nullptr || group.lease->Capture().state != AudioSliceState::Ready ||
+        ResolveFrontierActivation(token) != nullptr) return false;
+    auto& sidecar = frontiers_[token.slot];
+    if (sidecar.operationPool != nullptr)
+        return sidecar.operationPool == &pool && sidecar.operationOwner == binding.operation.owner;
+    if (!AcquireFuturePin(token, &sidecar.observerPin)) return false;
+    sidecar.operationOwner = binding.operation.owner;
+    sidecar.operationPool = &pool;
+    return true;
+}
+
+bool DecisionTable::IsFrontierDecisionBindingFor(DecisionToken token,
+    const FrontierGroupBinding& binding, const ScheduledTransactionPool& pool) const noexcept {
+    const auto* row = Resolve(token);
+    SchedulePageGroupView original{};
+    return row != nullptr && binding.Valid() && binding.role != FrontierGroupRole::Coordinator &&
+        binding.operation.group.decision.slot == token.slot &&
+        binding.operation.group.decision.generation == token.generation &&
+        binding.operation.world == row->world && binding.operation.transport == row->transport &&
+        HasFrontierDecisionBinding(token) && frontiers_[token.slot].operationPool == &pool &&
+        frontiers_[token.slot].operationOwner == binding.operation.owner &&
+        pool.ResolveScheduleGroupSliceProducer(binding.operation.group, &original) &&
+        original.frontier == &binding;
+}
+
+bool DecisionTable::ReleaseFrontierDecisionBinding(DecisionToken token) noexcept {
+    if (PreparedTicketHeld(token)) { return false; }
+    if (!HasFrontierDecisionBinding(token)) return false;
+    auto& sidecar = frontiers_[token.slot];
+    if (sidecar.operationPool->HasFrontierOwnerOperations(sidecar.operationOwner, token) ||
+        !sidecar.observerPin.Release()) return false;
+    sidecar.operationPool = nullptr;
+    sidecar.operationOwner = {};
+    return true;
+}
+
+bool DecisionTable::CanRollbackPreparedFrontierDecision(DecisionToken token, DecisionToken coordinator,
+    const FrontierGroupBinding* binding) const noexcept {
+    const auto* row = Resolve(token);
+    const auto* activation = ResolveFrontierActivation(coordinator);
+    if (row == nullptr || activation == nullptr || activation->State() != FrontierReceiptState::Prepared ||
+        activation->lease_ == nullptr || activation->lease_->Capture().state != AudioSliceState::Ready ||
+        row->ticket.sequence != activation->Descriptor().order.logicCommitSequence ||
+        row->audioState.load(std::memory_order_acquire) != AudioGroupState::Pending ||
+        row->consumedSlices.load(std::memory_order_acquire) != 0 ||
+        row->lastAudioSequence.load(std::memory_order_acquire) != 0) return false;
+    if (token.slot != coordinator.slot || token.generation != coordinator.generation) {
+        SchedulePageGroupView group{};
+        if (binding == nullptr || !binding->Valid() || binding->role != FrontierGroupRole::EntryMember ||
+            !(binding->entry == activation->Descriptor().entry) ||
+            !(binding->primary == activation->Descriptor().primary) ||
+            binding->operation.group.decision.slot != token.slot ||
+            binding->operation.group.decision.generation != token.generation ||
+            !HasFrontierDecisionBinding(token) ||
+            !(frontiers_[token.slot].operationOwner == binding->operation.owner) ||
+            !frontiers_[token.slot].operationPool->PrivateScheduleGroupBindable(
+                binding->operation.group) ||
+            !frontiers_[token.slot].operationPool->ResolveScheduleGroupSliceProducer(binding->operation.group, &group) ||
+            group.frontier != binding || group.lease == nullptr ||
+            group.lease->Capture().state != AudioSliceState::Ready) return false;
+    } else if (binding != nullptr) return false;
+    const auto state = row->commit.load(std::memory_order_acquire);
+    return state == DecisionCommitState::Open || state == DecisionCommitState::Committed;
+}
+
+bool DecisionTable::RollbackPreparedFrontierDecision(DecisionToken token, DecisionToken coordinator,
+    const FrontierGroupBinding* binding) noexcept {
+    if (PreparedTicketHeld(token)) { return false; }
+    if (!CanRollbackPreparedFrontierDecision(token, coordinator, binding)) return false;
+    auto* row = Resolve(token);
+    auto expected = DecisionCommitState::Committed;
+    if (!row->commit.compare_exchange_strong(expected, DecisionCommitState::Open,
+            std::memory_order_acq_rel, std::memory_order_acquire)) return expected == DecisionCommitState::Open;
+    row->participantCount = 0;
+    row->pages = {};
+    row->armGroup = {};
+    return true;
+}
+
+bool DecisionTable::CanRollbackPrivatePendingQueueFrontierDecision(const FrontierGroupBinding& binding,
+    const ScheduledTransactionPool& pool, const PrivatePendingQueueFrontierBinding& queue) const noexcept {
+    const auto* row = Resolve(binding.operation.group.decision);
+    if (!queue.Matches(binding, pool) || !MatchesPreparedFrontierActivationPool(binding.entry, pool) ||
+        !IsFrontierDecisionBindingFor(binding.operation.group.decision, binding, pool) || row == nullptr ||
+        row->transitionGate.Valid() != binding.transition.Valid() ||
+        (binding.transition.Valid() && (row->transitionGate.slot != binding.transition.slot ||
+            row->transitionGate.generation != binding.transition.generation))) return false;
+    if (binding.role == FrontierGroupRole::EntryMember)
+        return CanRollbackPreparedFrontierDecision(binding.operation.group.decision, binding.entry.coordinator, &binding);
+    const auto* activation = ResolveFrontierActivation(binding.entry.coordinator);
+    SchedulePageGroupView native{};
+    if (binding.role != FrontierGroupRole::Future || binding.operation.kind != FrontierOperationKind::Dependent ||
+        binding.operation.group.sliceIndex != 1 || row == nullptr || activation == nullptr ||
+        binding.entry != activation->Descriptor().entry || binding.primary != activation->Descriptor().primary ||
+        row->sliceCount != 2 || row->ticket.sequence != activation->Descriptor().order.logicCommitSequence ||
+        row->world != binding.operation.world || row->transport != binding.operation.transport ||
+        !row->transitionGate.Valid() || row->transitionGate.slot != binding.transition.slot ||
+        row->transitionGate.generation != binding.transition.generation ||
+        row->audioState.load(std::memory_order_acquire) != AudioGroupState::Pending ||
+        row->consumedSlices.load(std::memory_order_acquire) != 0 || row->lastAudioSequence.load(std::memory_order_acquire) != 0 ||
+        row->authoredStopInvalidated.load(std::memory_order_acquire) ||
+        !pool.PrivateImmediateLaneFrontierRollbackReady(binding.operation.group) ||
+        !pool.ResolveScheduleGroupSliceProducer(binding.operation.group, &native) || native.frontier != &binding ||
+        native.lease == nullptr || native.lease->Capture().state != AudioSliceState::Ready) return false;
+    const auto state = row->commit.load(std::memory_order_acquire);
+    return state == DecisionCommitState::Open || state == DecisionCommitState::Committed;
+}
+
+bool DecisionTable::RollbackPrivatePendingQueueFrontierDecision(const FrontierGroupBinding& binding,
+    const ScheduledTransactionPool& pool, const PrivatePendingQueueFrontierBinding& queue) noexcept {
+    const auto token = binding.operation.group.decision;
+    if (PreparedTicketHeld(token) || !CanRollbackPrivatePendingQueueFrontierDecision(binding, pool, queue)) return false;
+    if (binding.role == FrontierGroupRole::EntryMember)
+        return RollbackPreparedFrontierDecision(token, binding.entry.coordinator, &binding);
+    auto* row = Resolve(token);
+    auto expected = DecisionCommitState::Committed;
+    if (!row->commit.compare_exchange_strong(expected, DecisionCommitState::Open,
+            std::memory_order_acq_rel, std::memory_order_acquire)) return expected == DecisionCommitState::Open;
+    row->participantCount = 0; row->pages = {}; row->armGroup = {};
+    return true;
+}
+
+bool DecisionTable::ValidateFrontierMemberDecisionApply(const FrontierGroupBinding& binding,
+    AudioSliceLease& lease, std::uint64_t audioSequence, FrontierDecisionApplyProof* out) noexcept {
+    const auto token = binding.operation.group.decision;
+    auto* row = Resolve(token);
+    if (row == nullptr || out == nullptr || audioSequence == 0 || !binding.Valid() ||
+        binding.role == FrontierGroupRole::Coordinator || !HasFrontierDecisionBinding(token) ||
+        binding.operation.group.sliceIndex >= row->sliceCount ||
+        row->transitionGate.Valid() != binding.transition.Valid() ||
+        (row->transitionGate.Valid() && (row->transitionGate.slot != binding.transition.slot ||
+            row->transitionGate.generation != binding.transition.generation)) ||
+        (binding.role == FrontierGroupRole::EntryMember && binding.operation.group.sliceIndex != 0) ||
+        row->commit.load(std::memory_order_acquire) != DecisionCommitState::Committed ||
+        row->audioState.load(std::memory_order_acquire) != (binding.operation.group.sliceIndex == 0 ?
+            AudioGroupState::Pending : (binding.variableSide.Valid() && row->sliceCount == 2 ?
+                AudioGroupState::AudioClaimed : AudioGroupState::Admitted)) ||
+        row->authoredStopInvalidated.load(std::memory_order_acquire) ||
+        row->consumedSlices.load(std::memory_order_acquire) != binding.operation.group.sliceIndex ||
+        row->lastAudioSequence.load(std::memory_order_acquire) > audioSequence ||
+        row->world != binding.operation.world || row->transport != binding.operation.transport ||
+        lease.Capture().state != AudioSliceState::Ready) return false;
+    const auto& sidecar = frontiers_[token.slot];
+    SchedulePageGroupView group{};
+    if (!(sidecar.operationOwner == binding.operation.owner) ||
+        !sidecar.operationPool->ResolveScheduleGroupSliceRt(binding.operation.group, &group) ||
+        group.frontier != &binding || group.lease != &lease) return false;
+    out->row_ = row;
+    out->table_ = this;
+    out->activation_ = nullptr;
+    out->lease_ = &lease;
+    out->audioSequence_ = audioSequence;
+    out->sliceIndex_ = binding.operation.group.sliceIndex;
+    out->prelude_ = binding.variableSide.Valid() && row->sliceCount == 2 && out->sliceIndex_ == 0;
+    return true;
+}
+
+bool DecisionTable::PrepareFrontierActivation(DecisionToken token,
+    const FrontierActivationDescriptor& descriptor, ScheduledTransactionPool& pool) noexcept {
+    if (PreparedTicketHeld(token)) { return false; }
+    Row* row = Resolve(token);
+    SchedulePageGroupView primary{};
+    const bool committedExact = row != nullptr &&
+        row->commit.load(std::memory_order_acquire) == DecisionCommitState::Committed &&
+        descriptor.order.logicCommitSequence == row->ticket.sequence &&
+        descriptor.expectedMemberCount == row->participantCount;
+    if (row == nullptr || (!IsOpen(token) && !committedExact) || !descriptor.Valid() ||
+        descriptor.entry.coordinator.slot != token.slot ||
+        descriptor.entry.coordinator.generation != token.generation ||
+        descriptor.worldGeneration != row->world || descriptor.primary.transportEpoch != row->transport ||
+        descriptor.expectedMemberCount > maxParticipantsPerDecision_ ||
+        !pool.ResolveScheduleGroupSliceProducer(descriptor.primary, &primary) ||
+        primary.memberCount != 0 || primary.sourceControlCount != 0) return false;
+    auto& sidecar = frontiers_[token.slot];
+    if (sidecar.activation.State() != FrontierReceiptState::Empty || sidecar.pagePin.has_value() ||
+        sidecar.observerPin.Valid()) return false;
+    sidecar.pagePin.emplace();
+    if (!pool.AcquireScheduleGroupReader(descriptor.primary, &*sidecar.pagePin)) {
+        sidecar.pagePin.reset();
+        return false;
+    }
+    if (!AcquireFuturePin(token, &sidecar.observerPin)) {
+        (void)sidecar.pagePin->Release(0);
+        sidecar.pagePin.reset();
+        return false;
+    }
+    if (!sidecar.activation.Prepare(descriptor, primary.lease)) {
+        (void)sidecar.observerPin.Release();
+        (void)sidecar.pagePin->Release(0);
+        sidecar.pagePin.reset();
+        return false;
+    }
+    return true;
+}
+
+FrontierActivation* DecisionTable::ResolveFrontierActivation(DecisionToken token) noexcept {
+    return Resolve(token) != nullptr && frontiers_[token.slot].activation.State() != FrontierReceiptState::Empty ?
+        &frontiers_[token.slot].activation : nullptr;
+}
+
+const FrontierActivation* DecisionTable::ResolveFrontierActivation(DecisionToken token) const noexcept {
+    return const_cast<DecisionTable*>(this)->ResolveFrontierActivation(token);
+}
+
+bool DecisionTable::MatchesPreparedFrontierActivationPool(const FrontierEntryReceiptRef& entry,
+    const ScheduledTransactionPool& pool) const noexcept {
+    const auto* activation = ResolveFrontierActivation(entry.coordinator);
+    SchedulePageGroupView primary{};
+    if (!entry.Valid() || activation == nullptr || activation->State() != FrontierReceiptState::Prepared ||
+        !(activation->Descriptor().entry == entry)) return false;
+    const auto& sidecar = frontiers_[entry.coordinator.slot];
+    return sidecar.pagePin.has_value() && sidecar.observerPin.Valid() &&
+        pool.IsScheduleGroupReaderFor(*sidecar.pagePin, activation->Descriptor().primary) &&
+        pool.ResolveScheduleGroupSliceProducer(activation->Descriptor().primary, &primary) &&
+        primary.memberCount == 0 && primary.sourceControlCount == 0 && primary.lease != nullptr &&
+        primary.lease == activation->lease_ && primary.lease->Capture().state == AudioSliceState::Ready;
+}
+
+bool DecisionTable::CaptureFrontierActivationSidecar(DecisionToken token,
+    const FrontierEntryReceiptRef& entry, std::uint64_t completedAudioSequence,
+    FrontierActivationSidecarSnapshot* out) const noexcept {
+    const auto* activation = ResolveFrontierActivation(token);
+    if (out == nullptr || !entry.Valid() ||
+        entry.coordinator.slot != token.slot ||
+        entry.coordinator.generation != token.generation ||
+        activation == nullptr || !(activation->Descriptor().entry == entry)) return false;
+    const auto& sidecar = frontiers_[token.slot];
+    FrontierActivationSidecarSnapshot snapshot{};
+    snapshot.state = activation->State();
+    snapshot.primary = activation->Descriptor().primary;
+    snapshot.pagePinHeld = sidecar.pagePin.has_value();
+    snapshot.observerPinHeld = sidecar.observerPin.Valid();
+    snapshot.receiptRead = activation->Read(entry, completedAudioSequence, &snapshot.receipt);
+    *out = snapshot;
+    return true;
+}
+
+bool DecisionTable::CanPublishFrontierActivation(DecisionToken token) const noexcept {
+    const Row* row = Resolve(token);
+    const auto* activation = ResolveFrontierActivation(token);
+    if (row == nullptr || activation == nullptr ||
+        activation->State() != FrontierReceiptState::Prepared ||
+        row->commit.load(std::memory_order_acquire) != DecisionCommitState::Committed ||
+        activation->descriptor_.order.logicCommitSequence != row->ticket.sequence ||
+        activation->descriptor_.expectedMemberCount != row->participantCount) return false;
+    for (std::uint32_t i = 0; i < row->participantCount; ++i) {
+        if (Participant(token.slot, i).kind != DecisionParticipantKind::Subdecision) return false;
+    }
+    return true;
+}
+
+bool DecisionTable::FrontierActivationBindingsDetached(const FrontierEntryReceiptRef& entry,
+    const ScheduledTransactionPool& pool, std::uint64_t completedAudioSequence) const noexcept {
+    const auto* activation = ResolveFrontierActivation(entry.coordinator);
+    if (!entry.Valid() || activation == nullptr || !(activation->Descriptor().entry == entry)) return false;
+    const auto& sidecar = frontiers_[entry.coordinator.slot];
+    if (activation->State() == FrontierReceiptState::Prepared) {
+        if (completedAudioSequence != 0 || !sidecar.pagePin.has_value() || !sidecar.observerPin.Valid())
+            return false;
+    } else {
+        FrontierActivationReceipt receipt{};
+        if (activation->Read(entry, completedAudioSequence, &receipt) != FrontierReceiptRead::Ready) return false;
+    }
+    // Exclude only this activation's original structural loan, never an arbitrary reader.
+    return pool.FrontierCoordinatorDetached(activation->Descriptor().primary, entry,
+        completedAudioSequence, sidecar.pagePin.has_value() ? &*sidecar.pagePin : nullptr) &&
+        !pool.HasFrontierOwnerOperations(entry.owner, entry.coordinator);
+}
+
+bool DecisionTable::PublishFrontierActivation(DecisionToken token) noexcept {
+    if (PreparedTicketHeld(token)) { return false; }
+    if (!CanPublishFrontierActivation(token)) return false;
+    auto* activation = ResolveFrontierActivation(token);
+    auto expected = FrontierReceiptState::Prepared;
+    return activation->state_.compare_exchange_strong(expected, FrontierReceiptState::Pending,
+        std::memory_order_release, std::memory_order_relaxed);
+}
+
+bool DecisionTable::CancelPreparedFrontierActivation(DecisionToken token) noexcept {
+    if (PreparedTicketHeld(token)) { return false; }
+    auto* activation = ResolveFrontierActivation(token);
+    if (activation == nullptr || activation->State() != FrontierReceiptState::Prepared) return false;
+    auto& sidecar = frontiers_[token.slot];
+    if (!sidecar.pagePin.has_value() || !sidecar.pagePin->Release(0) ||
+        !sidecar.observerPin.Release()) return false;
+    sidecar.pagePin.reset();
+    activation->lease_ = nullptr;
+    activation->descriptor_ = {};
+    activation->receipt_ = {};
+    activation->state_.store(FrontierReceiptState::Empty, std::memory_order_release);
+    return true;
+}
+
+bool DecisionTable::ReconcileFrontierActivation(DecisionToken token,
+    const FrontierEntryReceiptRef& entry, std::uint64_t completedAudioSequence,
+    FrontierActivationReceipt* out) noexcept {
+    if (PreparedTicketHeld(token)) { return false; }
+    auto* activation = ResolveFrontierActivation(token);
+    FrontierActivationReceipt receipt{};
+    if (activation == nullptr || out == nullptr ||
+        activation->Read(entry, completedAudioSequence, &receipt) != FrontierReceiptRead::Ready) return false;
+    auto& sidecar = frontiers_[token.slot];
+    if (sidecar.pagePin.has_value()) {
+        if (!sidecar.pagePin->Release(completedAudioSequence)) return false;
+        sidecar.pagePin.reset();
+        activation->lease_ = nullptr;
+    }
+    if (!sidecar.observerPin.Release()) return false;
+    *out = receipt;
+    return true;
+}
+
+DecisionParticipantRef& DecisionTable::Participant(std::uint32_t slot, std::uint32_t index) noexcept {
+    return participants_[slot * maxParticipantsPerDecision_ + index];
+}
+
+const DecisionParticipantRef& DecisionTable::Participant(std::uint32_t slot, std::uint32_t index) const noexcept {
+    return participants_[slot * maxParticipantsPerDecision_ + index];
+}
+
+DecisionTable::Row* DecisionTable::Resolve(DecisionToken token) noexcept {
+    if (!token.Valid() || token.slot >= rows_.ConstructedCount()) {
+        return nullptr;
+    }
+    Row& row = rows_[token.slot];
+    if (row.slotState.load(std::memory_order_acquire) != SlotState::Live ||
+        row.identity.load(std::memory_order_acquire) !=
+            PackIdentity(token.slot, token.generation)) {
+        return nullptr;
+    }
+    return &row;
+}
+
+const DecisionTable::Row* DecisionTable::Resolve(
+    DecisionToken token) const noexcept {
+    return const_cast<DecisionTable*>(this)->Resolve(token);
+}
+
+std::uint32_t DecisionTable::LiveCount() const noexcept {
+    std::uint32_t count = 0;
+    for (std::uint32_t slot = 0; slot < rows_.ConstructedCount(); ++slot) {
+        if (rows_[slot].slotState.load(std::memory_order_acquire) ==
+            SlotState::Live) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+std::uint32_t DecisionTable::QuarantinedCount() const noexcept {
+    std::uint32_t count = 0;
+    for (std::uint32_t slot = 0; slot < rows_.ConstructedCount(); ++slot) {
+        if (rows_[slot].slotState.load(std::memory_order_acquire) ==
+            SlotState::Quarantined) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+bool DecisionTable::Reserve(const DecisionReserveRequest& request,
+                            DecisionToken* outToken,
+                            OriginalDecisionLifetimePin* outOriginal) noexcept {
+    if (outToken == nullptr || maxParticipantsPerDecision_ == 0 ||
+        !ValidRequest(request) || !CanIssueOriginalDecisionLifetime(outOriginal)) {
+        return false;
+    }
+    for (auto slot = FindFreeSlot(); slot != UINT32_MAX; slot = FindFreeSlot()) {
+        Row& row = rows_[slot];
+        if (row.slotState.load(std::memory_order_acquire) != SlotState::Free ||
+            row.reservation.test_and_set(std::memory_order_acquire)) {
+            continue;
+        }
+        SlotState expected = SlotState::Free;
+        row.ticket = request.ticket;
+        row.world = request.world;
+        row.transport = request.transport;
+        row.continuationGeneration.store(
+            request.expectedContinuationGeneration,
+            std::memory_order_relaxed);
+        row.audioState.store(AudioGroupState::Pending,
+                             std::memory_order_relaxed);
+        row.authoredStopInvalidated.store(false, std::memory_order_relaxed);
+        row.sliceCount = request.sliceCount;
+        row.consumedSlices.store(0, std::memory_order_relaxed);
+        row.lastAudioSequence.store(0, std::memory_order_relaxed);
+        row.transitionGate = request.transitionGate;
+        row.participantCount = 0;
+        row.pages = {};
+        row.armGroup = {};
+        row.futurePinCount.store(0, std::memory_order_relaxed);
+        row.commit.store(DecisionCommitState::Open,
+                         std::memory_order_relaxed);
+        row.identity.store(PackIdentity(slot, row.generation),
+                           std::memory_order_release);
+        if (row.slotState.compare_exchange_strong(
+                expected, SlotState::Live, std::memory_order_acq_rel,
+                std::memory_order_acquire)) {
+            if (outOriginal != nullptr)
+                IssueOriginalDecisionLifetime(row, {slot, row.generation}, request, *outOriginal);
+            row.reservation.clear(std::memory_order_release);
+            *outToken = {slot, row.generation};
+            return true;
+        }
+        row.identity.store(0, std::memory_order_release);
+        row.reservation.clear(std::memory_order_release);
+    }
+    return false;
+}
+
+bool DecisionTable::PrepareReservation(
+    const DecisionReserveRequest& request,
+    PreparedDecisionReservation* out,
+    OriginalDecisionLifetimePin* outOriginal) noexcept {
+    if (out == nullptr || out->Valid() ||
+        maxParticipantsPerDecision_ == 0 ||
+        !ValidPreparedRequest(request) || !CanIssueOriginalDecisionLifetime(outOriginal)) {
+        return false;
+    }
+    for (auto slot = FindFreeSlot(); slot != UINT32_MAX; slot = FindFreeSlot()) {
+        Row& row = rows_[slot];
+        if (row.slotState.load(std::memory_order_acquire) != SlotState::Free ||
+            row.reservation.test_and_set(std::memory_order_acquire)) {
+            continue;
+        }
+        SlotState expected = SlotState::Free;
+        row.ticket = {};
+        row.world = request.world;
+        row.transport = request.transport;
+        row.continuationGeneration.store(
+            request.expectedContinuationGeneration,
+            std::memory_order_relaxed);
+        row.audioState.store(AudioGroupState::Pending,
+                             std::memory_order_relaxed);
+        row.authoredStopInvalidated.store(false, std::memory_order_relaxed);
+        row.sliceCount = request.sliceCount;
+        row.consumedSlices.store(0, std::memory_order_relaxed);
+        row.lastAudioSequence.store(0, std::memory_order_relaxed);
+        row.transitionGate = request.transitionGate;
+        row.participantCount = 0;
+        row.pages = {};
+        row.armGroup = {};
+        row.futurePinCount.store(0, std::memory_order_relaxed);
+        row.commit.store(DecisionCommitState::Open,
+                         std::memory_order_relaxed);
+        row.identity.store(PackIdentity(slot, row.generation),
+                           std::memory_order_release);
+        if (row.slotState.compare_exchange_strong(
+                expected, SlotState::Live, std::memory_order_acq_rel,
+                std::memory_order_acquire)) {
+            if (outOriginal != nullptr)
+                IssueOriginalDecisionLifetime(row, {slot, row.generation}, request, *outOriginal);
+            row.reservation.clear(std::memory_order_release);
+            out->owner_ = this;
+            out->token_ = {slot, row.generation};
+            out->prepared_ = true;
+            out->originalRequest_ = request;
+            out->attachedTransitionGate_ = {};
+            out->attachedSliceCount_ = 0;
+            out->originalLifetimeMarker_ = row.originalLifetimeMarker;
+            return true;
+        }
+        row.identity.store(0, std::memory_order_release);
+        row.reservation.clear(std::memory_order_release);
+    }
+    return false;
+}
+
+bool DecisionTable::CommitPreparedReservation(
+    PreparedDecisionReservation* prepared,
+    LogicCommitSequence sequence,
+    DecisionToken* outToken) noexcept {
+    if (PreparedTicketHeld(prepared != nullptr ? prepared->token_ : DecisionToken{})) { return false; }
+    if (prepared == nullptr || prepared->owner_ != this ||
+        !prepared->prepared_ || sequence == 0 || outToken == nullptr) {
+        return false;
+    }
+    Row* row = Resolve(prepared->token_);
+    if (row == nullptr || row->ticket.Valid() ||
+        (prepared->originalLifetimeMarker_ != 0 &&
+         (row->originalLifetimeMarker != prepared->originalLifetimeMarker_ ||
+          !SameOriginalDecisionRequest(prepared->originalRequest_, row->originalLifetimeRequest))) ||
+        row->commit.load(std::memory_order_acquire) !=
+            DecisionCommitState::Open) {
+        return false;
+    }
+    row->ticket.sequence = sequence;
+    *outToken = prepared->token_;
+    prepared->owner_ = nullptr;
+    prepared->token_ = {};
+    prepared->prepared_ = false;
+    prepared->originalLifetimeMarker_ = 0;
+    prepared->attachedTransitionGate_ = {};
+    prepared->attachedSliceCount_ = 0;
+    return true;
+}
+
+bool DecisionTable::CancelPreparedReservation(
+    PreparedDecisionReservation* prepared,
+    OriginalDecisionLifetimePin* originalBaseline) noexcept {
+    if (PreparedTicketHeld(prepared != nullptr ? prepared->token_ : DecisionToken{})) { return false; }
+    if (prepared == nullptr || prepared->owner_ != this ||
+        !prepared->prepared_) {
+        return false;
+    }
+    const DecisionToken token = prepared->token_;
+    originalBaseline = ResolveOriginalLifetimeBaseline(token, originalBaseline);
+    if (originalBaseline != nullptr && !IsOriginalDecisionLifetimePinFor(*originalBaseline, token)) return false;
+    Row* row = Resolve(token);
+    if (row == nullptr || row->reservation.test_and_set(std::memory_order_acquire)) {
+        return false;
+    }
+    struct ReservationUnlock {
+        std::atomic_flag& flag;
+        ~ReservationUnlock() { flag.clear(std::memory_order_release); }
+    } unlock{row->reservation};
+    if (row->ticket.Valid() || row->futurePinCount.load(std::memory_order_acquire) != 0 ||
+        ResolveFrontierActivation(token) != nullptr || HasFrontierDecisionBinding(token)) {
+        return false;
+    }
+    const auto commit = row->commit.load(std::memory_order_acquire);
+    if ((commit != DecisionCommitState::Open && commit != DecisionCommitState::Cancelled) ||
+        (commit == DecisionCommitState::Open && !Cancel(token))) {
+        return false;
+    }
+    const bool reclaimed = ReclaimCancelled(token, originalBaseline);
+    const auto& sidecar = frontiers_[token.slot];
+    const bool disposedFinalGeneration = !reclaimed && token.generation == UINT32_MAX &&
+        row->generation == token.generation && row->identity.load(std::memory_order_acquire) == 0 &&
+        row->slotState.load(std::memory_order_acquire) == SlotState::Quarantined &&
+        sidecar.operationPool == nullptr && !sidecar.pagePin.has_value() &&
+        !sidecar.observerPin.Valid() && sidecar.controlProgram.generation == 0 &&
+        sidecar.activation.State() == FrontierReceiptState::Empty;
+    if (!reclaimed && !disposedFinalGeneration) {
+        return false;
+    }
+    prepared->owner_ = nullptr;
+    prepared->token_ = {};
+    prepared->prepared_ = false;
+    prepared->originalLifetimeMarker_ = 0;
+    prepared->attachedTransitionGate_ = {};
+    prepared->attachedSliceCount_ = 0;
+    return true;
+}
+
+bool DecisionTable::IsOpen(DecisionToken token) const noexcept {
+    const Row* row = Resolve(token);
+    return row != nullptr &&
+           row->commit.load(std::memory_order_acquire) ==
+               DecisionCommitState::Open;
+}
+
+bool DecisionTable::MatchesOpenReservation(DecisionToken token,
+    const DecisionReserveRequest& request) const noexcept {
+    const Row* row = Resolve(token);
+    return row != nullptr &&
+        row->commit.load(std::memory_order_acquire) == DecisionCommitState::Open &&
+        row->ticket.sequence == request.ticket.sequence &&
+        row->world == request.world && row->transport == request.transport &&
+        row->continuationGeneration.load(std::memory_order_acquire) ==
+            request.expectedContinuationGeneration &&
+        row->sliceCount == request.sliceCount &&
+        row->transitionGate.slot == request.transitionGate.slot &&
+        row->transitionGate.generation == request.transitionGate.generation &&
+        row->futurePinCount.load(std::memory_order_acquire) == 0;
+}
+
+bool DecisionTable::MatchesPinnedOpenReservation(DecisionToken token,
+    const DecisionReserveRequest& request, const DecisionFuturePin& pin) const noexcept {
+    if (pin.owner_ != this || pin.token_.slot != token.slot ||
+        pin.token_.generation != token.generation) return false;
+    const Row* row = Resolve(pin.token_);
+    return row != nullptr &&
+        row->commit.load(std::memory_order_acquire) == DecisionCommitState::Open &&
+        row->ticket.sequence == request.ticket.sequence &&
+        row->world == request.world && row->transport == request.transport &&
+        row->continuationGeneration.load(std::memory_order_acquire) ==
+            request.expectedContinuationGeneration &&
+        row->sliceCount == request.sliceCount &&
+        row->transitionGate.slot == request.transitionGate.slot &&
+        row->transitionGate.generation == request.transitionGate.generation &&
+        row->futurePinCount.load(std::memory_order_acquire) != 0;
+}
+
+bool DecisionTable::IsCancelled(DecisionToken token) const noexcept {
+    const Row* row = Resolve(token);
+    return row != nullptr &&
+           row->commit.load(std::memory_order_acquire) ==
+               DecisionCommitState::Cancelled;
+}
+
+bool DecisionTable::MatchesCancelledReservation(DecisionToken token,
+    const DecisionReserveRequest& request) const noexcept {
+    const Row* row = Resolve(token);
+    return row != nullptr &&
+        row->commit.load(std::memory_order_acquire) == DecisionCommitState::Cancelled &&
+        row->ticket.sequence == request.ticket.sequence &&
+        row->world == request.world && row->transport == request.transport &&
+        row->continuationGeneration.load(std::memory_order_acquire) == request.expectedContinuationGeneration &&
+        row->sliceCount == request.sliceCount &&
+        row->transitionGate.slot == request.transitionGate.slot &&
+        row->transitionGate.generation == request.transitionGate.generation &&
+        row->futurePinCount.load(std::memory_order_acquire) == 0;
+}
+
+bool DecisionTable::AttachPreparedTransitionGateBeforeCommit(
+    PreparedDecisionReservation& original,
+    TransitionAudibleGateRef transitionGate,
+    std::uint16_t sliceCount) noexcept {
+    if (original.owner_ != this || !original.prepared_ ||
+        original.attachedTransitionGate_.Valid() || original.originalRequest_.transitionGate.Valid() ||
+        !transitionGate.Valid() || sliceCount == 0 || PreparedTicketHeld(original.token_))
+        return false;
+    auto* row = Resolve(original.token_);
+    if (row == nullptr || row->reservation.test_and_set(std::memory_order_acquire)) return false;
+    const auto fail = [&]() noexcept { row->reservation.clear(std::memory_order_release); return false; };
+    const auto& request = original.originalRequest_;
+    const auto& sidecar = frontiers_[original.token_.slot];
+    if (row->ticket.Valid() || row->commit.load(std::memory_order_acquire) != DecisionCommitState::Open ||
+        row->world != request.world || row->transport != request.transport ||
+        row->continuationGeneration.load(std::memory_order_acquire) != request.expectedContinuationGeneration ||
+        row->sliceCount != request.sliceCount || row->transitionGate.Valid() ||
+        row->audioState.load(std::memory_order_acquire) != AudioGroupState::Pending ||
+        row->consumedSlices.load(std::memory_order_acquire) != 0 ||
+        row->lastAudioSequence.load(std::memory_order_acquire) != 0 ||
+        row->authoredStopInvalidated.load(std::memory_order_acquire) || row->participantCount != 0 ||
+        row->pages.Valid() || row->armGroup.Valid() || row->futurePinCount.load(std::memory_order_acquire) != 0 ||
+        sidecar.activation.State() != FrontierReceiptState::Empty || sidecar.pagePin.has_value() ||
+        sidecar.observerPin.Valid() || sidecar.operationPool != nullptr ||
+        (original.originalLifetimeMarker_ != 0 &&
+         (row->originalLifetimeMarker != original.originalLifetimeMarker_ ||
+          row->originalLifetimePinCount != 1 ||
+          !SameOriginalDecisionRequest(request, row->originalLifetimeRequest)))) return fail();
+    row->transitionGate = transitionGate;
+    row->sliceCount = sliceCount;
+    original.attachedTransitionGate_ = transitionGate;
+    original.attachedSliceCount_ = sliceCount;
+    row->reservation.clear(std::memory_order_release);
+    return true;
+}
+
+bool DecisionTable::AttachTransitionGateBeforeCommit(
+    DecisionToken token,
+    TransitionAudibleGateRef transitionGate,
+    std::uint16_t sliceCount) noexcept {
+    if (PreparedTicketHeld(token)) { return false; }
+    if (!transitionGate.Valid() || sliceCount == 0) {
+        return false;
+    }
+    Row* row = Resolve(token);
+    if (row == nullptr ||
+        row->commit.load(std::memory_order_acquire) !=
+            DecisionCommitState::Open ||
+        row->transitionGate.Valid()) {
+        return false;
+    }
+    row->transitionGate = transitionGate;
+    row->sliceCount = sliceCount;
+    return true;
+}
+
+bool DecisionTable::Commit(DecisionToken token,
+                           const DecisionCommitPayload& payload) noexcept {
+    if (PreparedTicketHeld(token)) { return false; }
+    if (!payload.pages.Valid() || !payload.armGroup.Valid() ||
+        payload.participantCount > maxParticipantsPerDecision_ ||
+        (payload.participantCount != 0 && payload.participants == nullptr)) {
+        return false;
+    }
+    for (std::uint32_t index = 0; index < payload.participantCount; ++index) {
+        if (!payload.participants[index].Valid()) {
+            return false;
+        }
+    }
+    Row* row = Resolve(token);
+    if (row == nullptr) {
+        return false;
+    }
+    DecisionCommitState expected = DecisionCommitState::Open;
+    if (!row->commit.compare_exchange_strong(
+            expected, DecisionCommitState::CommitSealed,
+            std::memory_order_acq_rel, std::memory_order_acquire)) {
+        return false;
+    }
+    for (std::uint32_t index = 0; index < payload.participantCount; ++index) {
+        Participant(token.slot, index) = payload.participants[index];
+    }
+    row->participantCount = payload.participantCount;
+    row->pages = payload.pages;
+    row->armGroup = payload.armGroup;
+    row->commit.store(DecisionCommitState::Committed,
+                      std::memory_order_release);
+    return true;
+}
+
+bool DecisionTable::Cancel(DecisionToken token) noexcept {
+    if (PreparedTicketHeld(token)) { return false; }
+    Row* row = Resolve(token);
+    if (row == nullptr || ResolveFrontierActivation(token) != nullptr || HasFrontierDecisionBinding(token)) {
+        return false;
+    }
+    DecisionCommitState expected = DecisionCommitState::Open;
+    return row->commit.compare_exchange_strong(
+        expected, DecisionCommitState::Cancelled,
+        std::memory_order_acq_rel, std::memory_order_acquire);
+}
+
+bool DecisionTable::TryClaimAudio(DecisionToken token) noexcept {
+    if (PreparedTicketHeld(token)) { return false; }
+    Row* row = Resolve(token);
+    if (row == nullptr || ResolveFrontierActivation(token) != nullptr || HasFrontierDecisionBinding(token) ||
+        row->commit.load(std::memory_order_acquire) !=
+            DecisionCommitState::Committed) {
+        return false;
+    }
+    AudioGroupState expected = AudioGroupState::Pending;
+    return row->audioState.compare_exchange_strong(
+        expected, AudioGroupState::AudioClaimed, std::memory_order_acq_rel,
+        std::memory_order_acquire);
+}
+
+void DecisionTable::ApplyClaimedAudioSlice(DecisionToken token) noexcept {
+    if (PreparedTicketHeld(token)) { return; }
+    Row* row = Resolve(token);
+    if (row == nullptr || ResolveFrontierActivation(token) != nullptr || HasFrontierDecisionBinding(token)) return;
+    const AudioGroupState prior = row->audioState.exchange(
+        AudioGroupState::Admitted, std::memory_order_acq_rel);
+    if (prior == AudioGroupState::Invalidated) {
+        row->audioState.store(AudioGroupState::PostStartInvalidated,
+                              std::memory_order_release);
+    } else if (prior == AudioGroupState::DeadlineInvalidated) {
+        row->audioState.store(
+            AudioGroupState::PostStartDeadlineInvalidated,
+            std::memory_order_release);
+    }
+}
+
+bool DecisionTable::TryInvalidatePending(DecisionToken token) noexcept {
+    if (PreparedTicketHeld(token)) { return false; }
+    if (!MayMutateFrontierDecision(token, AudioSliceInvalidateReason::Cancel)) return false;
+    if (auto* activation = ResolveFrontierActivation(token)) {
+        const auto result = activation->Cancel(activation->Descriptor().entry, AudioSliceInvalidateReason::Cancel);
+        if (result != FrontierCancelDisposition::CancelledBeforeAudio &&
+            result != FrontierCancelDisposition::AlreadyCancelled) return false;
+    }
+    Row* row = Resolve(token);
+    if (row == nullptr ||
+        row->commit.load(std::memory_order_acquire) !=
+            DecisionCommitState::Committed) {
+        return false;
+    }
+    AudioGroupState expected = AudioGroupState::Pending;
+    return row->audioState.compare_exchange_strong(
+        expected, AudioGroupState::Invalidated, std::memory_order_acq_rel,
+        std::memory_order_acquire);
+}
+
+bool DecisionTable::MarkAudioAdmitted(DecisionToken token) noexcept {
+    if (PreparedTicketHeld(token)) { return false; }
+    Row* row = Resolve(token);
+    if (row == nullptr || ResolveFrontierActivation(token) != nullptr || HasFrontierDecisionBinding(token) ||
+        row->commit.load(std::memory_order_acquire) !=
+            DecisionCommitState::Committed) {
+        return false;
+    }
+    AudioGroupState expected = AudioGroupState::AudioClaimed;
+    if (row->audioState.compare_exchange_strong(
+            expected, AudioGroupState::Admitted, std::memory_order_acq_rel,
+            std::memory_order_acquire)) {
+        return true;
+    }
+    return expected == AudioGroupState::PostStartInvalidated ||
+           expected == AudioGroupState::PostStartDeadlineInvalidated;
+}
+
+bool DecisionTable::RecordAppliedSlice(
+    DecisionToken token, PreparedGroupToken pages, std::uint16_t sliceIndex,
+    std::uint64_t audioSequence) noexcept {
+    if (PreparedTicketHeld(token)) { return false; }
+    Row* row = Resolve(token);
+    if (row == nullptr || ResolveFrontierActivation(token) != nullptr || HasFrontierDecisionBinding(token) || !pages.Valid() || audioSequence == 0 ||
+        row->commit.load(std::memory_order_acquire) != DecisionCommitState::Committed ||
+        row->pages.slot != pages.slot || row->pages.generation != pages.generation ||
+        sliceIndex >= row->sliceCount) return false;
+    const auto state = row->audioState.load(std::memory_order_acquire);
+    if (state != AudioGroupState::AudioClaimed && state != AudioGroupState::Admitted &&
+        state != AudioGroupState::PostStartInvalidated &&
+        state != AudioGroupState::PostStartDeadlineInvalidated) return false;
+    const auto consumed = row->consumedSlices.load(std::memory_order_acquire);
+    if (sliceIndex < consumed) return true;
+    if (sliceIndex != consumed ||
+        audioSequence < row->lastAudioSequence.load(std::memory_order_acquire)) return false;
+    row->lastAudioSequence.store(audioSequence, std::memory_order_relaxed);
+    row->consumedSlices.store(static_cast<std::uint16_t>(consumed + 1u), std::memory_order_release);
+    return true;
+}
+
+bool DecisionTable::Retire(DecisionToken token,
+                           std::uint64_t audioSequence) noexcept {
+    return TryRetire(token, audioSequence) == DecisionRetirementDisposition::Retired;
+}
+
+DecisionRetirementDisposition DecisionTable::TryRetire(DecisionToken token,
+    std::uint64_t audioSequence) noexcept {
+    if (PreparedTicketHeld(token) || FrontierPublicationHeld(token))
+        return DecisionRetirementDisposition::NotEligible;
+    if (auto* activation = ResolveFrontierActivation(token)) {
+        const auto receiptState = activation->State();
+        if (receiptState != FrontierReceiptState::AudioFinal &&
+            receiptState != FrontierReceiptState::LogicFinal)
+            return DecisionRetirementDisposition::NotEligible;
+    }
+    Row* row = Resolve(token);
+    if (row == nullptr || audioSequence == 0 ||
+        row->commit.load(std::memory_order_acquire) !=
+            DecisionCommitState::Committed) {
+        return DecisionRetirementDisposition::NotEligible;
+    }
+    AudioGroupState state =
+        row->audioState.load(std::memory_order_acquire);
+    if (state != AudioGroupState::Invalidated &&
+        state != AudioGroupState::DeadlineInvalidated &&
+        state != AudioGroupState::Admitted &&
+        state != AudioGroupState::PostStartInvalidated &&
+        state != AudioGroupState::PostStartDeadlineInvalidated &&
+        state != AudioGroupState::Retired)
+        return DecisionRetirementDisposition::NotEligible;
+    if (HasFrontierDecisionBinding(token)) {
+        const auto& sidecar = frontiers_[token.slot];
+        const auto disposition = sidecar.operationPool->TryInvalidateFrontierOwnerOperations(
+            sidecar.operationOwner, token, AudioSliceInvalidateReason::Cancel);
+        if (disposition == FrontierOwnerInvalidationDisposition::NotEligible)
+            return DecisionRetirementDisposition::NotEligible;
+        if (disposition == FrontierOwnerInvalidationDisposition::DeferredAfterClaim)
+            return DecisionRetirementDisposition::DeferredByFrontier;
+    }
+    while (state == AudioGroupState::Invalidated ||
+           state == AudioGroupState::DeadlineInvalidated ||
+           state == AudioGroupState::Admitted ||
+           state == AudioGroupState::PostStartInvalidated ||
+           state == AudioGroupState::PostStartDeadlineInvalidated) {
+        if (row->audioState.compare_exchange_weak(
+                state, AudioGroupState::Retired,
+                std::memory_order_acq_rel,
+                std::memory_order_acquire)) {
+            row->lastAudioSequence.store(audioSequence,
+                                         std::memory_order_release);
+            return DecisionRetirementDisposition::Retired;
+        }
+    }
+    return state == AudioGroupState::Retired ? DecisionRetirementDisposition::Retired :
+        DecisionRetirementDisposition::NotEligible;
+}
+
+bool DecisionTable::ReclaimRetired(DecisionToken token,
+    OriginalDecisionLifetimePin* originalBaseline) noexcept {
+    if (PreparedTicketHeld(token)) { return false; }
+    originalBaseline = ResolveOriginalLifetimeBaseline(token, originalBaseline);
+    Row* row = Resolve(token);
+    if (row == nullptr ||
+        row->audioState.load(std::memory_order_acquire) !=
+            AudioGroupState::Retired ||
+        row->futurePinCount.load(std::memory_order_acquire) != 0 ||
+        !OriginalDecisionRetirementReady(*row, token, originalBaseline)) {
+        return false;
+    }
+    SlotState expected = SlotState::Live;
+    if (!row->slotState.compare_exchange_strong(
+            expected, SlotState::Reclaiming, std::memory_order_acq_rel,
+            std::memory_order_acquire)) {
+        return false;
+    }
+    ConsumeOriginalDecisionBaseline(*row, token, originalBaseline);
+    ResetFrontierStorage(token.slot);
+    row->identity.store(0, std::memory_order_release);
+    if (row->generation ==
+        (std::numeric_limits<std::uint32_t>::max)()) {
+        row->slotState.store(SlotState::Quarantined,
+                             std::memory_order_release);
+        // The exact-baseline overload reports completed permanent disposition.
+        return originalBaseline != nullptr;
+    }
+    ++row->generation;
+    row->slotState.store(SlotState::Free, std::memory_order_release);
+    return true;
+}
+
+DecisionDeadlineDisposition DecisionTable::InvalidateForDeadline(
+    DecisionToken token) noexcept {
+    if (PreparedTicketHeld(token)) { return DecisionDeadlineDisposition::NotEligible; }
+    if (!MayMutateFrontierDecision(token, AudioSliceInvalidateReason::Deadline))
+        return DecisionDeadlineDisposition::DeferredByFrontier;
+    if (auto* activation = ResolveFrontierActivation(token); activation != nullptr && activation->lease_ != nullptr) {
+        const auto result = activation->Cancel(activation->Descriptor().entry, AudioSliceInvalidateReason::Deadline);
+        if (result == FrontierCancelDisposition::DeferredToAudio) return DecisionDeadlineDisposition::DeferredByFrontier;
+        if (result == FrontierCancelDisposition::Stale) return DecisionDeadlineDisposition::NotEligible;
+    }
+    Row* row = Resolve(token);
+    if (row == nullptr ||
+        row->commit.load(std::memory_order_acquire) !=
+            DecisionCommitState::Committed) {
+        return DecisionDeadlineDisposition::Stale;
+    }
+    AudioGroupState state = row->audioState.load(std::memory_order_acquire);
+    for (;;) {
+        AudioGroupState desired{};
+        switch (state) {
+        case AudioGroupState::Pending:
+            desired = AudioGroupState::DeadlineInvalidated;
+            break;
+        case AudioGroupState::AudioClaimed:
+            desired = AudioGroupState::PostStartDeadlineInvalidated;
+            break;
+        case AudioGroupState::Admitted:
+            desired = AudioGroupState::PostStartDeadlineInvalidated;
+            break;
+        case AudioGroupState::DeadlineInvalidated:
+        case AudioGroupState::PostStartDeadlineInvalidated:
+            return DecisionDeadlineDisposition::AlreadyInvalidated;
+        case AudioGroupState::Invalidated:
+        case AudioGroupState::PostStartInvalidated:
+        case AudioGroupState::Retired:
+            return DecisionDeadlineDisposition::NotEligible;
+        }
+        if (row->audioState.compare_exchange_weak(
+                state, desired, std::memory_order_acq_rel,
+                std::memory_order_acquire)) {
+            return DecisionDeadlineDisposition::NewlyInvalidated;
+        }
+    }
+}
+
+DecisionInvalidationDisposition DecisionTable::Invalidate(
+    DecisionToken token) noexcept {
+    if (PreparedTicketHeld(token)) { return DecisionInvalidationDisposition::NotEligible; }
+    if (!MayMutateFrontierDecision(token, AudioSliceInvalidateReason::Cancel))
+        return DecisionInvalidationDisposition::DeferredByFrontier;
+    if (auto* activation = ResolveFrontierActivation(token); activation != nullptr && activation->lease_ != nullptr) {
+        const auto result = activation->Cancel(activation->Descriptor().entry, AudioSliceInvalidateReason::Cancel);
+        if (result == FrontierCancelDisposition::DeferredToAudio) return DecisionInvalidationDisposition::DeferredByFrontier;
+        if (result == FrontierCancelDisposition::Stale) return DecisionInvalidationDisposition::NotEligible;
+    }
+    Row* row = Resolve(token);
+    if (row == nullptr ||
+        row->commit.load(std::memory_order_acquire) !=
+            DecisionCommitState::Committed) {
+        return DecisionInvalidationDisposition::Stale;
+    }
+    AudioGroupState state = row->audioState.load(std::memory_order_acquire);
+    for (;;) {
+        AudioGroupState desired{};
+        switch (state) {
+        case AudioGroupState::Pending:
+            desired = AudioGroupState::Invalidated;
+            break;
+        case AudioGroupState::AudioClaimed:
+        case AudioGroupState::Admitted:
+            desired = AudioGroupState::PostStartInvalidated;
+            break;
+        case AudioGroupState::Invalidated:
+        case AudioGroupState::PostStartInvalidated:
+            return DecisionInvalidationDisposition::AlreadyInvalidated;
+        case AudioGroupState::DeadlineInvalidated:
+        case AudioGroupState::PostStartDeadlineInvalidated:
+        case AudioGroupState::Retired:
+            return DecisionInvalidationDisposition::NotEligible;
+        }
+        if (row->audioState.compare_exchange_weak(
+                state, desired, std::memory_order_acq_rel,
+                std::memory_order_acquire)) {
+            return DecisionInvalidationDisposition::NewlyInvalidated;
+        }
+    }
+}
+
+DecisionInvalidationDisposition DecisionTable::InvalidateForAuthoredStop(
+    DecisionToken token) noexcept {
+    if (PreparedTicketHeld(token)) { return DecisionInvalidationDisposition::NotEligible; }
+    Row* row = Resolve(token);
+    if (row == nullptr) return DecisionInvalidationDisposition::Stale;
+    const auto result = Invalidate(token);
+    if (result == DecisionInvalidationDisposition::NewlyInvalidated) {
+        row->authoredStopInvalidated.store(true, std::memory_order_release);
+    }
+    return result;
+}
+
+DecisionFuturePin::~DecisionFuturePin() { (void)Release(); }
+
+DecisionFuturePin::DecisionFuturePin(DecisionFuturePin&& other) noexcept
+    : owner_(other.owner_), token_(other.token_) {
+    other.owner_ = nullptr;
+    other.token_ = {};
+}
+
+DecisionFuturePin& DecisionFuturePin::operator=(DecisionFuturePin&& other) noexcept {
+    if (this != &other) {
+        (void)Release();
+        owner_ = other.owner_;
+        token_ = other.token_;
+        other.owner_ = nullptr;
+        other.token_ = {};
+    }
+    return *this;
+}
+
+bool DecisionFuturePin::Release() noexcept {
+    if (owner_ == nullptr) return true;
+    if (!owner_->ReleaseFuturePin(token_)) return false;
+    owner_ = nullptr;
+    token_ = {};
+    return true;
+}
+
+bool DecisionTable::AcquireFuturePin(DecisionToken token, DecisionFuturePin* out) noexcept {
+    if (PreparedTicketHeld(token) || FrontierPublicationHeld(token)) { return false; }
+    Row* row = Resolve(token);
+    if (row == nullptr || out == nullptr || out->Valid() ||
+        row->commit.load(std::memory_order_acquire) == DecisionCommitState::Cancelled ||
+        row->audioState.load(std::memory_order_acquire) == AudioGroupState::Retired) return false;
+    const auto count = row->futurePinCount.load(std::memory_order_relaxed);
+    if (count == UINT32_MAX) return false;
+    row->futurePinCount.store(count + 1u, std::memory_order_release);
+    out->owner_ = this;
+    out->token_ = token;
+    return true;
+}
+
+bool DecisionTable::ReleaseFuturePin(DecisionToken token) noexcept {
+    if (PreparedTicketHeld(token)) { return false; }
+    Row* row = Resolve(token);
+    if (row == nullptr) return false;
+    const auto count = row->futurePinCount.load(std::memory_order_relaxed);
+    if (count == 0) return false;
+    row->futurePinCount.store(count - 1u, std::memory_order_release);
+    return true;
+}
+
+bool DecisionTable::CloneFuturePin(const DecisionFuturePin& source, DecisionFuturePin* out) noexcept {
+    if (PreparedTicketHeld(source.token_) || FrontierPublicationHeld(source.token_)) { return false; }
+    if (source.owner_ != this || out == nullptr || out->Valid()) return false;
+    Row* row = Resolve(source.token_);
+    if (row == nullptr || row->commit.load(std::memory_order_acquire) == DecisionCommitState::Cancelled ||
+        ResolveFrontierActivation(source.token_) == nullptr) return false;
+    const auto count = row->futurePinCount.load(std::memory_order_acquire);
+    if (count == 0 || count == UINT32_MAX) return false;
+    row->futurePinCount.store(count + 1u, std::memory_order_release);
+    out->owner_ = this;
+    out->token_ = source.token_;
+    return true;
+}
+
+bool DecisionTable::CaptureFrontierSliceDependency(const DecisionFuturePin& original,
+    const ScheduleGroupReaderPin& reader, const ScheduledTransactionPool& pool,
+    const FrontierOwnerIdentity& dependent, FrontierSliceDependency* out) const noexcept {
+    if (out == nullptr || out->Valid() || !dependent.Valid() || original.Owner() != this ||
+        !original.Valid() || !pool.IsScheduleGroupReaderFor(reader, reader.Identity())) return false;
+    const auto identity = reader.Identity();
+    const auto token = original.Token();
+    if (PreparedTicketHeld(token) || FrontierPublicationHeld(token)) return false;
+    const auto* row = Resolve(token);
+    SchedulePageGroupView group{};
+    if (row == nullptr || identity.backing != ScheduleGroupBacking::Page ||
+        identity.decision.slot != token.slot || identity.decision.generation != token.generation ||
+        row->futurePinCount.load(std::memory_order_acquire) == 0 ||
+        row->commit.load(std::memory_order_acquire) == DecisionCommitState::Cancelled ||
+        identity.sliceIndex >= row->sliceCount || !row->transitionGate.Valid() ||
+        !pool.ResolveScheduleGroupSliceProducer(identity, &group) || group.frontier == nullptr || group.lease == nullptr ||
+        group.frontier->role != FrontierGroupRole::Future ||
+        !IsFrontierDecisionBindingFor(token, *group.frontier, pool)) return false;
+    const auto& binding = *group.frontier;
+    const auto state = group.lease->Capture().state;
+    if (!(binding.operation.group == identity) || !binding.transition.Valid() ||
+        binding.transition.slot != row->transitionGate.slot || binding.transition.generation != row->transitionGate.generation ||
+        binding.operation.order.logicCommitSequence != row->ticket.sequence ||
+        binding.operation.order.executeFrame < binding.transition.audibleFrame ||
+        dependent.invocation != binding.operation.owner.invocation ||
+        dependent.invocationEpoch != binding.operation.owner.invocationEpoch ||
+        (state != AudioSliceState::Ready && state != AudioSliceState::SliceClaimed &&
+         state != AudioSliceState::SliceClaimedWithInvalidation && state != AudioSliceState::SliceApplied)) return false;
+    FrontierSliceDependency captured{};
+    captured.issuer_ = this;
+    captured.pool_ = &pool;
+    captured.original_ = binding.operation;
+    captured.dependent_ = dependent;
+    captured.transition_ = binding.transition;
+    *out = captured;
+    return true;
+}
+
+bool DecisionTable::IsFrontierSliceDependencyFor(const FrontierSliceDependency& dependency,
+    const FrontierGroupBinding& original, const FrontierOwnerIdentity& dependent) const noexcept {
+    return dependent == dependency.dependent_ && dependency.issuer_ == this && dependency.pool_ != nullptr && original.Valid() &&
+        original.role == FrontierGroupRole::Future && original.operation.group == dependency.original_.group &&
+        original.operation.order == dependency.original_.order && original.operation.owner == dependency.original_.owner &&
+        original.operation.world == dependency.original_.world && original.operation.transport == dependency.original_.transport &&
+        original.transition.slot == dependency.transition_.slot && original.transition.generation == dependency.transition_.generation;
+}
+
+FrontierSliceDependencyStatus DecisionTable::ReadFrontierSliceDependency(const FrontierSliceDependency& dependency) const noexcept {
+    using Status = FrontierSliceDependencyStatus;
+    const auto& original = dependency.original_;
+    if (dependency.issuer_ != this || dependency.pool_ == nullptr ||
+        dependency.pool_->Epoch() != original.transport) return Status::Rejected;
+    const auto* row = Resolve(original.group.decision);
+    if (row == nullptr || row->futurePinCount.load(std::memory_order_acquire) == 0 ||
+        row->world != original.world || row->transport != original.transport ||
+        row->ticket.sequence != original.order.logicCommitSequence || original.group.sliceIndex >= row->sliceCount ||
+        row->transitionGate.slot != dependency.transition_.slot ||
+        row->transitionGate.generation != dependency.transition_.generation) return Status::Rejected;
+    const auto commit = row->commit.load(std::memory_order_acquire);
+    if (commit == DecisionCommitState::Cancelled) return Status::Rejected;
+    // Consumption is the immutable receipt. Retirement updates lastAudioSequence
+    // and can release the frontier binding and original page before this reader.
+    if (commit == DecisionCommitState::Committed &&
+        row->consumedSlices.load(std::memory_order_acquire) > original.group.sliceIndex) return Status::Applied;
+    const auto audio = row->audioState.load(std::memory_order_acquire);
+    if (audio == AudioGroupState::Invalidated || audio == AudioGroupState::DeadlineInvalidated ||
+        audio == AudioGroupState::PostStartInvalidated || audio == AudioGroupState::PostStartDeadlineInvalidated ||
+        audio == AudioGroupState::Retired) return Status::Rejected;
+    // Open preparations have no audio-visible page yet.
+    if (commit == DecisionCommitState::Open) return Status::Pending;
+    SchedulePageGroupView group{};
+    // A committed preparation may not have reached the audio-visible page yet.
+    if (!dependency.pool_->ResolveScheduleGroupSliceRt(original.group, &group)) return Status::Pending;
+    if (group.lease == nullptr || group.frontier == nullptr || group.frontier->role != FrontierGroupRole::Future ||
+        !(group.frontier->operation.owner == original.owner) || group.frontier->operation.order != original.order)
+        return Status::Rejected;
+    const auto state = group.lease->Capture().state;
+    return state == AudioSliceState::SliceInvalidated ? Status::Rejected : Status::Pending;
+}
+
+bool DecisionTable::CaptureAppliedSignalDependency(const DecisionFuturePin& original,
+    const ScheduleGroupReaderPin& primaryPin, const ScheduleGroupReaderPin& memberPin,
+    const ScheduledTransactionPool& pool, std::uint64_t completedAudioSequence,
+    FrontierAppliedSignalDependency* out) const noexcept {
+    if (out == nullptr || out->Valid() || original.Owner() != this || !original.Valid()) return false;
+    const auto* activation = ResolveFrontierActivation(original.Token());
+    if (activation == nullptr) return false;
+    const auto& descriptor = activation->Descriptor();
+    const auto& member = memberPin.Identity();
+    FrontierActivationReceipt receipt{};
+    SchedulePageGroupView primary{}, signal{};
+    if (!descriptor.Valid() || descriptor.sourceCohort || descriptor.primary.backing != ScheduleGroupBacking::Page ||
+        !pool.IsScheduleGroupReaderFor(primaryPin, descriptor.primary) ||
+        !pool.IsScheduleGroupReaderFor(memberPin, member) || member.backing != ScheduleGroupBacking::Page ||
+        activation->Read(descriptor.entry, completedAudioSequence, &receipt) != FrontierReceiptRead::Ready ||
+        receipt.outcome != FrontierReceiptOutcome::Applied || receipt.origin != FrontierReceiptOrigin::Audio ||
+        receipt.reason != FrontierReceiptReason::None || receipt.audioSequence == 0 ||
+        receipt.order != descriptor.order ||
+        !pool.ResolveScheduleGroupSliceProducer(descriptor.primary, &primary) ||
+        !pool.ResolveScheduleGroupSliceProducer(member, &signal) ||
+        primary.frontier == nullptr || signal.frontier == nullptr ||
+        !primary.frontier->Valid() || !signal.frontier->Valid() || primary.lease == nullptr ||
+        signal.lease != primary.lease || primary.lease->Capture().state != AudioSliceState::SliceApplied ||
+        primary.frontier->role != FrontierGroupRole::Coordinator ||
+        !(primary.frontier->entry == descriptor.entry) || !(primary.frontier->primary == descriptor.primary) ||
+        !(primary.frontier->operation.group == descriptor.primary) ||
+        !(primary.frontier->operation.owner == descriptor.entry.owner) ||
+        primary.frontier->operation.order != descriptor.order ||
+        signal.frontier->role != FrontierGroupRole::EntryMember || !signal.frontier->queueSignal.Valid() ||
+        !(signal.frontier->entry == descriptor.entry) || !(signal.frontier->primary == descriptor.primary) ||
+        !(signal.frontier->operation.group == member) ||
+        signal.frontier->operation.kind != FrontierOperationKind::Entry ||
+        signal.frontier->operation.owner.invocation != descriptor.entry.owner.invocation ||
+        signal.frontier->operation.owner.invocationEpoch != descriptor.entry.owner.invocationEpoch ||
+        primary.frontier->operation.world != descriptor.worldGeneration ||
+        signal.frontier->operation.world != descriptor.worldGeneration ||
+        primary.frontier->operation.transport != descriptor.primary.transportEpoch ||
+        signal.frontier->operation.transport != descriptor.primary.transportEpoch ||
+        signal.frontier->operation.order.executeFrame != descriptor.order.executeFrame ||
+        signal.frontier->operation.order.logicCommitSequence != descriptor.order.logicCommitSequence) return false;
+    FrontierAppliedSignalDependency captured{};
+    captured.owner_ = this;
+    captured.entry_ = descriptor.entry;
+    captured.primary_ = descriptor.primary;
+    captured.member_ = member;
+    captured.memberOrder_ = signal.frontier->operation.order;
+    captured.audioSequence_ = receipt.audioSequence;
+    if (!IsAppliedSignalDependencyFor(captured, descriptor.entry, descriptor.primary,
+            member, completedAudioSequence)) return false;
+    *out = captured;
+    return true;
+}
+
+bool DecisionTable::IsAppliedSignalDependencyFor(const FrontierAppliedSignalDependency& original,
+    const FrontierEntryReceiptRef& entry, const ScheduleGroupSliceIdentity& primary,
+    const ScheduleGroupSliceIdentity& member, std::uint64_t completedAudioSequence) const noexcept {
+    return IsAppliedEntryDependencyFor(original, FrontierEntryPrerequisiteKind::QueueSignal,
+        entry, primary, member, completedAudioSequence);
+}
+
+bool DecisionTable::IsAppliedSourceCohortDependencyFor(const FrontierAppliedSignalDependency& original,
+    const FrontierEntryReceiptRef& entry, const ScheduleGroupSliceIdentity& primary,
+    const ScheduleGroupSliceIdentity& member, std::uint64_t completedAudioSequence) const noexcept {
+    return IsAppliedEntryDependencyFor(original, FrontierEntryPrerequisiteKind::SourceCohortChild,
+        entry, primary, member, completedAudioSequence);
+}
+
+bool DecisionTable::IsAppliedEntryDependencyFor(const FrontierAppliedSignalDependency& original,
+    FrontierEntryPrerequisiteKind kind, const FrontierEntryReceiptRef& entry,
+    const ScheduleGroupSliceIdentity& primary, const ScheduleGroupSliceIdentity& member,
+    std::uint64_t completedAudioSequence) const noexcept {
+    if (original.kind_ != kind || original.owner_ != this || !(original.entry_ == entry) || !(original.primary_ == primary) ||
+        !(original.member_ == member) || !entry.Valid() || !primary.Exact() || !member.Exact() ||
+        original.audioSequence_ == 0 || original.audioSequence_ > completedAudioSequence) return false;
+    const auto* activation = ResolveFrontierActivation(entry.coordinator);
+    DecisionCommittedSnapshot coordinator{};
+    FrontierActivationReceipt receipt{};
+    if (activation == nullptr || (kind == FrontierEntryPrerequisiteKind::QueueSignal && activation->Descriptor().sourceCohort) ||
+        (kind == FrontierEntryPrerequisiteKind::SourceCohortChild &&
+            (!activation->Descriptor().sourceCohort || !original.memberEntry_.Valid() ||
+             original.memberEntry_ == entry || primary == member)) ||
+        !(activation->Descriptor().entry == entry) ||
+        !(activation->Descriptor().primary == primary) ||
+        !CaptureCommitted(entry.coordinator, &coordinator) || coordinator.futurePinCount == 0 ||
+        coordinator.commit != DecisionCommitState::Committed ||
+        coordinator.participantCount != activation->Descriptor().expectedMemberCount ||
+        coordinator.world != activation->Descriptor().worldGeneration || coordinator.transport != primary.transportEpoch ||
+        activation->Read(entry, completedAudioSequence, &receipt) != FrontierReceiptRead::Ready ||
+        receipt.outcome != FrontierReceiptOutcome::Applied || receipt.origin != FrontierReceiptOrigin::Audio ||
+        receipt.reason != FrontierReceiptReason::None || receipt.audioSequence != original.audioSequence_ ||
+        receipt.order != activation->Descriptor().order) return false;
+    std::uint32_t matches = 0;
+    for (std::uint32_t index = 0; index < coordinator.participantCount; ++index) {
+        DecisionParticipantRef participant{};
+        if (!CaptureCommittedParticipant(entry.coordinator, index, &participant)) return false;
+        if (participant.kind == DecisionParticipantKind::Subdecision &&
+            participant.slot == member.decision.slot && participant.generation == member.decision.generation) ++matches;
+    }
+    return matches == 1u;
+}
+
+bool DecisionTable::ProveAppliedSignalPrerequisite(const FrontierAppliedSignalDependency& original,
+    const FrontierGroupBinding& child, std::uint64_t completedAudioSequence) const noexcept {
+    if (child.prerequisiteKind != FrontierEntryPrerequisiteKind::QueueSignal ||
+        !child.Valid() || child.role != FrontierGroupRole::Coordinator ||
+        child.operation.group.backing != ScheduleGroupBacking::Page || child.appliedPrerequisite != &original ||
+        !IsAppliedSignalDependencyFor(original, child.prerequisite, original.primary_,
+            child.prerequisiteMember, completedAudioSequence)) return false;
+    const auto* activation = ResolveFrontierActivation(child.prerequisite.coordinator);
+    const auto& descriptor = activation->Descriptor();
+    return child.operation.owner.invocation == child.prerequisite.owner.invocation &&
+        child.operation.owner.invocationEpoch == child.prerequisite.owner.invocationEpoch &&
+        child.operation.world == descriptor.worldGeneration &&
+        child.operation.transport == descriptor.primary.transportEpoch &&
+        descriptor.order < child.operation.order && original.memberOrder_ < child.operation.order;
+}
+
+bool DecisionTable::ValidateSourceCohortPrerequisite(const FrontierGroupBinding& child,
+    const FrontierGroupBinding& primary, const FrontierGroupBinding& member) const noexcept {
+    if (!child.Valid() || !primary.Valid() || !member.Valid() ||
+        child.prerequisiteKind != FrontierEntryPrerequisiteKind::SourceCohortChild ||
+        member.prerequisiteKind != FrontierEntryPrerequisiteKind::SourceCohortChild ||
+        child.role != FrontierGroupRole::Coordinator || primary.role != FrontierGroupRole::Coordinator ||
+        member.role != FrontierGroupRole::Coordinator ||
+        child.operation.kind != FrontierOperationKind::Entry || primary.operation.kind != FrontierOperationKind::Entry ||
+        member.operation.kind != FrontierOperationKind::Entry ||
+        child.primary.backing != ScheduleGroupBacking::Page || primary.primary.backing != ScheduleGroupBacking::Page ||
+        member.primary.backing != ScheduleGroupBacking::Page ||
+        !(child.operation.group == child.primary) || !(primary.operation.group == primary.primary) ||
+        !(member.operation.group == member.primary) ||
+        !(child.prerequisite == primary.entry) || !(member.prerequisite == primary.entry) ||
+        !(child.prerequisiteMember == member.primary) || !(member.prerequisiteMember == member.primary) ||
+        primary.entry == child.entry || primary.entry == member.entry || primary.primary == member.primary ||
+        child.operation.owner.invocation != primary.entry.owner.invocation ||
+        child.operation.owner.invocationEpoch != primary.entry.owner.invocationEpoch ||
+        member.operation.owner.invocation != primary.entry.owner.invocation ||
+        member.operation.owner.invocationEpoch != primary.entry.owner.invocationEpoch ||
+        child.operation.world != primary.operation.world || member.operation.world != primary.operation.world ||
+        child.operation.transport != primary.operation.transport || member.operation.transport != primary.operation.transport ||
+        child.operation.order.executeFrame < member.operation.order.executeFrame ||
+        member.operation.order.executeFrame != primary.operation.order.executeFrame ||
+        member.operation.order.logicCommitSequence != primary.operation.order.logicCommitSequence ||
+        !(primary.operation.order < member.operation.order) || !(primary.operation.order < child.operation.order)) return false;
+    const bool direct = child.entry == member.entry && child.primary == member.primary;
+    if (direct ? child.operation.order != member.operation.order : !(member.operation.order < child.operation.order))
+        return false;
+    const auto* activation = ResolveFrontierActivation(primary.entry.coordinator);
+    DecisionCommittedSnapshot coordinator{};
+    if (activation == nullptr || !activation->Descriptor().sourceCohort ||
+        !(activation->Descriptor().entry == primary.entry) || !(activation->Descriptor().primary == primary.primary) ||
+        activation->Descriptor().order != primary.operation.order ||
+        !(primary.operation.owner == primary.entry.owner) || !(member.operation.owner == member.entry.owner) ||
+        !(child.operation.owner == child.entry.owner) ||
+        activation->Descriptor().worldGeneration != primary.operation.world ||
+        primary.primary.transportEpoch != primary.operation.transport ||
+        !CaptureCommitted(primary.entry.coordinator, &coordinator) ||
+        coordinator.commit != DecisionCommitState::Committed ||
+        coordinator.participantCount != activation->Descriptor().expectedMemberCount ||
+        coordinator.world != primary.operation.world || coordinator.transport != primary.operation.transport) return false;
+    std::uint32_t matches = 0;
+    for (std::uint32_t index = 0; index < coordinator.participantCount; ++index) {
+        DecisionParticipantRef participant{};
+        if (!CaptureCommittedParticipant(primary.entry.coordinator, index, &participant)) return false;
+        if (participant.kind == DecisionParticipantKind::Subdecision &&
+            participant.slot == member.entry.coordinator.slot &&
+            participant.generation == member.entry.coordinator.generation) ++matches;
+    }
+    return matches == 1u;
+}
+
+bool DecisionTable::CaptureAppliedSourceCohortDependency(const DecisionFuturePin& original,
+    const ScheduleGroupReaderPin& primaryPin, const ScheduleGroupReaderPin& memberPin,
+    const ScheduledTransactionPool& pool, std::uint64_t completedAudioSequence,
+    FrontierAppliedSignalDependency* out) const noexcept {
+    if (out == nullptr || out->Valid() || original.Owner() != this || !original.Valid()) return false;
+    const auto* activation = ResolveFrontierActivation(original.Token());
+    if (activation == nullptr) return false;
+    const auto& descriptor = activation->Descriptor();
+    const auto& memberIdentity = memberPin.Identity();
+    FrontierActivationReceipt receipt{};
+    SchedulePageGroupView primary{}, member{};
+    if (!descriptor.Valid() || !descriptor.sourceCohort ||
+        !pool.IsScheduleGroupReaderFor(primaryPin, descriptor.primary) ||
+        !pool.IsScheduleGroupReaderFor(memberPin, memberIdentity) ||
+        activation->Read(descriptor.entry, completedAudioSequence, &receipt) != FrontierReceiptRead::Ready ||
+        receipt.outcome != FrontierReceiptOutcome::Applied || receipt.origin != FrontierReceiptOrigin::Audio ||
+        receipt.reason != FrontierReceiptReason::None || receipt.audioSequence == 0 || receipt.order != descriptor.order ||
+        !pool.ResolveScheduleGroupSliceProducer(descriptor.primary, &primary) ||
+        !pool.ResolveScheduleGroupSliceProducer(memberIdentity, &member) ||
+        primary.frontier == nullptr || member.frontier == nullptr || primary.lease == nullptr || member.lease == nullptr ||
+        primary.lease->Capture().state != AudioSliceState::SliceApplied ||
+        member.lease->Capture().state != AudioSliceState::SliceApplied ||
+        !ValidateSourceCohortPrerequisite(*member.frontier, *primary.frontier, *member.frontier)) return false;
+    FrontierAppliedSignalDependency captured{};
+    captured.owner_ = this;
+    captured.entry_ = descriptor.entry;
+    captured.primary_ = descriptor.primary;
+    captured.member_ = memberIdentity;
+    captured.memberOrder_ = member.frontier->operation.order;
+    captured.memberEntry_ = member.frontier->entry;
+    captured.kind_ = FrontierEntryPrerequisiteKind::SourceCohortChild;
+    captured.audioSequence_ = receipt.audioSequence;
+    if (!IsAppliedSourceCohortDependencyFor(captured, descriptor.entry, descriptor.primary,
+            memberIdentity, completedAudioSequence)) return false;
+    *out = captured;
+    return true;
+}
+
+bool DecisionTable::ProveAppliedSourceCohortPrerequisite(const FrontierAppliedSignalDependency& original,
+    const FrontierGroupBinding& child, std::uint64_t completedAudioSequence) const noexcept {
+    if (!child.Valid() || child.prerequisiteKind != FrontierEntryPrerequisiteKind::SourceCohortChild ||
+        child.role != FrontierGroupRole::Coordinator || child.operation.group.backing != ScheduleGroupBacking::Page ||
+        child.appliedPrerequisite != &original || child.entry == child.prerequisite ||
+        !IsAppliedSourceCohortDependencyFor(original, child.prerequisite, original.primary_,
+            child.prerequisiteMember, completedAudioSequence)) return false;
+    const auto& descriptor = ResolveFrontierActivation(child.prerequisite.coordinator)->Descriptor();
+    const bool direct = child.entry == original.memberEntry_ && child.primary == original.member_;
+    return child.operation.owner.invocation == descriptor.entry.owner.invocation &&
+        child.operation.owner.invocationEpoch == descriptor.entry.owner.invocationEpoch &&
+        child.operation.world == descriptor.worldGeneration && child.operation.transport == descriptor.primary.transportEpoch &&
+        descriptor.order < child.operation.order &&
+        (direct ? original.memberOrder_ == child.operation.order : original.memberOrder_ < child.operation.order);
+}
+
+bool DecisionTable::SetFuturePinCountForTests(DecisionToken token, std::uint32_t count) noexcept {
+    if (PreparedTicketHeld(token) || FrontierPublicationHeld(token)) { return false; }
+    Row* row = Resolve(token);
+    if (row == nullptr) return false;
+    row->futurePinCount.store(count, std::memory_order_relaxed);
+    return true;
+}
+
+bool DecisionTable::ReclaimCancelled(DecisionToken token,
+    OriginalDecisionLifetimePin* originalBaseline) noexcept {
+    if (PreparedTicketHeld(token)) { return false; }
+    originalBaseline = ResolveOriginalLifetimeBaseline(token, originalBaseline);
+    Row* row = Resolve(token);
+    if (row == nullptr ||
+        row->commit.load(std::memory_order_acquire) !=
+            DecisionCommitState::Cancelled ||
+        row->futurePinCount.load(std::memory_order_acquire) != 0 ||
+        !OriginalDecisionRetirementReady(*row, token, originalBaseline)) {
+        return false;
+    }
+    SlotState expected = SlotState::Live;
+    if (!row->slotState.compare_exchange_strong(
+            expected, SlotState::Reclaiming, std::memory_order_acq_rel,
+            std::memory_order_acquire)) {
+        return false;
+    }
+    ConsumeOriginalDecisionBaseline(*row, token, originalBaseline);
+    ResetFrontierStorage(token.slot);
+    row->identity.store(0, std::memory_order_release);
+    if (row->generation == std::numeric_limits<std::uint32_t>::max()) {
+        row->slotState.store(SlotState::Quarantined,
+                             std::memory_order_release);
+        // The exact-baseline overload reports completed permanent disposition.
+        return originalBaseline != nullptr;
+    }
+    ++row->generation;
+    row->slotState.store(SlotState::Free, std::memory_order_release);
+    return true;
+}
+
+bool DecisionTable::CaptureCommitted(
+    DecisionToken token, DecisionCommittedSnapshot* out) const noexcept {
+    if (out == nullptr) {
+        return false;
+    }
+    const Row* row = Resolve(token);
+    if (row == nullptr ||
+        row->commit.load(std::memory_order_acquire) !=
+            DecisionCommitState::Committed) {
+        return false;
+    }
+    DecisionCommittedSnapshot snapshot{};
+    snapshot.commit = DecisionCommitState::Committed;
+    snapshot.ticket = row->ticket;
+    snapshot.world = row->world;
+    snapshot.transport = row->transport;
+    snapshot.continuationGeneration =
+        row->continuationGeneration.load(std::memory_order_acquire);
+    snapshot.audioState = row->audioState.load(std::memory_order_acquire);
+    snapshot.authoredStopInvalidated = row->authoredStopInvalidated.load(std::memory_order_acquire);
+    snapshot.sliceCount = row->sliceCount;
+    snapshot.consumedSlices =
+        row->consumedSlices.load(std::memory_order_acquire);
+    snapshot.participantCount = row->participantCount;
+    snapshot.pages = row->pages;
+    snapshot.armGroup = row->armGroup;
+    snapshot.futurePinCount =
+        row->futurePinCount.load(std::memory_order_acquire);
+    snapshot.lastAudioSequence =
+        row->lastAudioSequence.load(std::memory_order_acquire);
+    snapshot.transitionGate = row->transitionGate;
+    *out = snapshot;
+    return true;
+}
+
+bool DecisionTable::HasExclusiveParticipant(DecisionToken token,
+    DecisionParticipantRef participant) const noexcept {
+    const auto* row = Resolve(token);
+    if (row == nullptr || !participant.Valid() ||
+        row->commit.load(std::memory_order_acquire) != DecisionCommitState::Committed) return false;
+    std::uint32_t matches = 0;
+    for (std::uint32_t i = 0; i < row->participantCount; ++i) {
+        const auto& entry = Participant(token.slot, i);
+        if (entry.kind != participant.kind) continue;
+        if (entry.slot != participant.slot || entry.generation != participant.generation) return false;
+        ++matches;
+    }
+    return matches == 1;
+}
+
+bool DecisionTable::CopyCommittedParticipants(
+    DecisionToken token, DecisionParticipantRef* out,
+    std::uint32_t capacity, std::uint32_t* outCount) const noexcept {
+    if (outCount == nullptr) {
+        return false;
+    }
+    const Row* row = Resolve(token);
+    if (row == nullptr ||
+        row->commit.load(std::memory_order_acquire) !=
+            DecisionCommitState::Committed ||
+        row->participantCount > capacity ||
+        (row->participantCount != 0 && out == nullptr)) {
+        return false;
+    }
+    for (std::uint32_t index = 0; index < row->participantCount; ++index) {
+        out[index] = Participant(token.slot, index);
+    }
+    *outCount = row->participantCount;
+    return true;
+}
+
+bool DecisionTable::CaptureCommittedParticipant(DecisionToken token, std::uint32_t index,
+    DecisionParticipantRef* out) const noexcept {
+    const auto* row = Resolve(token);
+    if (out == nullptr || row == nullptr ||
+        row->commit.load(std::memory_order_acquire) != DecisionCommitState::Committed ||
+        index >= row->participantCount) return false;
+    *out = Participant(token.slot, index);
+    return true;
+}
+
+bool DecisionTable::SetGenerationForTests(
+    std::uint32_t slot, std::uint32_t generation) noexcept {
+    if (slot >= capacity_ || generation == 0 || !PrepareSlotStorage(slot) ||
+        rows_[slot].slotState.load(std::memory_order_acquire) !=
+            SlotState::Free) {
+        return false;
+    }
+    rows_[slot].generation = generation;
+    return true;
+}
+
+} // namespace harken

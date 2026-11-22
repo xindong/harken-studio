@@ -1,3 +1,10 @@
+#include "Core/ActionManager.h"
+#include "Core/ConversionEditing.h"
+#include "Core/FieldGroupProjectAdapter.h"
+#include "Widgets/Inspector/InspectorCustomizationBootstrap.h"
+#include "Widgets/Inspector/InspectorPanel.h"
+#include "Widgets/Selector/ObjectRefWidget.h"
+#include <QCheckBox>
 #include "Widgets/Inspector/PropertyEditorEngine.h"
 #include "Widgets/Inspector/ProjectItemInspectorRows.h"
 #include "Widgets/Common/CollapsibleSection.h"
@@ -31,21 +38,21 @@ void ensureApp()
 {
     if (qApp) return;
     static int argc = 1;
-    static char arg0[] = "harken_editor_tests";
+    static char arg0[] = "harken_studio_tests";
     static char* argv[] = {arg0, nullptr};
     static QApplication app(argc, argv);
 }
 
 struct NotesFixture
 {
-    VNX::PropertyEditorEngine engine;
+    harken::studio::PropertyEditorEngine engine;
     std::unique_ptr<QWidget> page;
     QPlainTextEdit* edit = nullptr;
 
     NotesFixture()
     {
-        engine.setSchema({VNX::notesInspectorDescriptor()}, VNX::ComponentType::_Count);
-        engine.setItemType(VNX::ProjectItem::Type::Sound);
+        engine.setSchema({harken::studio::notesInspectorDescriptor()}, harken::studio::ComponentType::_Count);
+        engine.setItemType(harken::studio::ProjectItem::Type::Sound);
         page.reset(engine.buildPage());
         edit = page->findChild<QPlainTextEdit*>(QStringLiteral("prop_notes"));
     }
@@ -58,10 +65,10 @@ TEST(PropertyEditorEngineNotes, NarrowLayoutsSettleWithoutChangingText)
     ensureApp();
     const QString style = qApp->styleSheet();
     const auto restoreStyle = qScopeGuard([&] { qApp->setStyleSheet(style); });
-    qApp->setStyleSheet(VNX::QtControlSkin::current().applicationStyleSheet());
+    qApp->setStyleSheet(harken::studio::QtControlSkin::current().applicationStyleSheet());
     NotesFixture fx;
     ASSERT_NE(fx.edit, nullptr);
-    auto* section = fx.page->findChild<VNX::CollapsibleSection*>();
+    auto* section = fx.page->findChild<harken::studio::CollapsibleSection*>();
     ASSERT_NE(section, nullptr);
     section->setDynamicContent(true);
     fx.page->resize(480, 240);
@@ -89,7 +96,7 @@ TEST(PropertyEditorEngineNotes, NarrowLayoutsSettleWithoutChangingText)
     for (bool expanded : {true, false}) {
         SCOPED_TRACE(expanded);
         section->setExpanded(expanded);
-        for (int height : {VNX::QtControlSkin::current().fieldHeight(), 96}) {
+        for (int height : {harken::studio::QtControlSkin::current().fieldHeight(), 96}) {
             SCOPED_TRACE(height);
             fx.edit->setFixedHeight(height);
             for (const auto& text : samples) {
@@ -115,7 +122,7 @@ TEST(PropertyEditorEngineNotes, NarrowLayoutsSettleWithoutChangingText)
 
 TEST(PropertyEditorEnginePlatformContext, SwitchingMatchesFreshBindingWithoutAuthoringChanges)
 {
-    using namespace VNX;
+    using namespace harken::studio;
     ensureApp();
     auto& manager = ProjectManager::instance();
     auto& platforms = PlatformContextService::instance();
@@ -209,4 +216,107 @@ TEST(PropertyEditorEnginePlatformContext, SwitchingMatchesFreshBindingWithoutAut
         EXPECT_FALSE(undo.canUndo());
         EXPECT_EQ(changes, 0);
     }
+}
+
+TEST(PropertyEditorEngineSelection, SharedReferencesKeepMixedInheritanceAndAtomicHistoryAcrossPlatforms)
+{
+    using namespace harken::studio;
+    ensureApp();
+    registerBuiltinInspectorCustomizations();
+    auto& manager = ProjectManager::instance();
+    auto& history = UndoRedoManager::instance();
+    ActionManager::instance().clearAllForTesting();
+    registerProjectActions(ActionManager::instance(), &manager, nullptr);
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    ProjectConfig config;
+    config.name = QStringLiteral("SharedReferenceSelection");
+    config.location = directory.path();
+    ASSERT_TRUE(manager.createProject(config));
+    const auto close = qScopeGuard([&] {
+        history.clear();
+        manager.closeProject();
+        ActionManager::instance().clearAllForTesting();
+    });
+    auto* parent = manager.createItem(nullptr, QStringLiteral("Parent"), ProjectItem::Type::Layer);
+    ASSERT_NE(parent, nullptr);
+    auto* first = manager.createItem(parent, QStringLiteral("First"), ProjectItem::Type::Sound);
+    auto* second = manager.createItem(parent, QStringLiteral("Second"), ProjectItem::Type::Sound);
+    ASSERT_NE(first, nullptr);
+    ASSERT_NE(second, nullptr);
+    second->fieldGroups.conversion.shared = {FieldGroupMode::Local, ConversionFieldGroup{}};
+    const auto firstBefore = first->fieldGroups;
+    const auto secondBefore = second->fieldGroups;
+    const auto parentBefore = parent->fieldGroups;
+    ASSERT_FALSE(manager.currentProject()->conversionItems.empty());
+    auto* preset = manager.currentProject()->conversionItems.front().rootItem.get();
+    ASSERT_NE(preset, nullptr);
+    history.clear();
+    InspectorPanel panel;
+    panel.showItemInspector(first);
+    panel.setConversionSelection({first, second});
+    auto* inherit = panel.findChild<QCheckBox*>(QStringLiteral("inherit_conversion"));
+    auto* settings = panel.findChild<ObjectRefWidget*>(QStringLiteral("prop_settingsRef"));
+    ASSERT_NE(inherit, nullptr);
+    ASSERT_NE(settings, nullptr);
+    EXPECT_EQ(inherit->checkState(), Qt::PartiallyChecked);
+    EXPECT_TRUE(settings->isReadOnly());
+    inherit->click();
+    EXPECT_EQ(inherit->checkState(), Qt::Checked);
+    EXPECT_EQ(history.undoStack()->count(), 1);
+    history.undo();
+    EXPECT_EQ(first->fieldGroups, firstBefore);
+    EXPECT_EQ(second->fieldGroups, secondBefore);
+    EXPECT_EQ(inherit->checkState(), Qt::PartiallyChecked);
+    history.redo();
+    inherit->click();
+    EXPECT_EQ(inherit->checkState(), Qt::Unchecked);
+    EXPECT_FALSE(settings->isReadOnly());
+    const auto firstLocal = first->fieldGroups;
+    const auto secondLocal = second->fieldGroups;
+    emit settings->objectChanged(preset->objectID);
+    EXPECT_EQ(history.undoStack()->count(), 3);
+    history.undo();
+    EXPECT_EQ(first->fieldGroups, firstLocal);
+    EXPECT_EQ(second->fieldGroups, secondLocal);
+    history.redo();
+    for (const auto& platform : manager.currentProject()->platforms) {
+        PlatformContextService::instance().setSelected({platform.id}, platform.id);
+        EXPECT_EQ(settings->currentObjectID(), preset->objectID);
+        EXPECT_FALSE(settings->isReadOnly());
+    }
+    PlatformContextService::instance().setAll(true);
+    emit settings->objectChanged(0);
+    EXPECT_EQ(history.undoStack()->count(), 4);
+    EXPECT_TRUE(harken::studio::project_schema::IsNull(first->fieldGroups.conversion.shared.localHistory->settingsRef));
+    EXPECT_TRUE(harken::studio::project_schema::IsNull(second->fieldGroups.conversion.shared.localHistory->settingsRef));
+    history.undo();
+    EXPECT_EQ(settings->currentObjectID(), preset->objectID);
+    EXPECT_EQ(parent->fieldGroups, parentBefore);
+    const auto firstStable = first->fieldGroups;
+    const auto secondStable = second->fieldGroups;
+    const QVector<FieldGroupDefinitionSnapshot> expected{
+        {first->guid, firstStable}, {second->guid, secondStable}};
+    second->fieldGroups.conversion.shared.localHistory->settingsRef = {};
+    const auto secondChanged = second->fieldGroups;
+    const int historyIndex = history.undoStack()->index();
+    emit settings->objectChanged(0);
+    EXPECT_EQ(first->fieldGroups, firstStable);
+    EXPECT_EQ(second->fieldGroups, secondChanged);
+    QString error;
+    EXPECT_FALSE(ConversionEditing::setObjects(manager, {first->guid, second->guid},
+        std::nullopt, QUuid{}, {}, expected, nullptr, &error));
+    EXPECT_FALSE(error.isEmpty());
+    EXPECT_EQ(first->fieldGroups, firstStable);
+    EXPECT_EQ(second->fieldGroups, secondChanged);
+    EXPECT_EQ(history.undoStack()->index(), historyIndex);
+    ASSERT_TRUE(manager.restoreFieldGroupsInternal(second, secondStable, secondChanged));
+    panel.showItemInspector(first);
+    emit settings->objectChanged(0);
+    EXPECT_TRUE(harken::studio::project_schema::IsNull(first->fieldGroups.conversion.shared.localHistory->settingsRef));
+    EXPECT_EQ(second->fieldGroups, secondStable);
+    EXPECT_EQ(history.undoStack()->index(), historyIndex + 1);
+    history.undo();
+    EXPECT_EQ(first->fieldGroups, firstStable);
+    EXPECT_EQ(second->fieldGroups, secondStable);
 }

@@ -59,50 +59,30 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p .temp/package/HarkenIntegration
-          tar -C HarkenIntegration -cf - API_SURFACE.md Unity Tooling \
+          tar -C HarkenIntegration -cf - Unity \
             | tar -C .temp/package/HarkenIntegration -xf -
           runtime_root=".temp/runtime"
           unity_plugins=".temp/package/HarkenIntegration/Unity/Harken/Runtime/Plugins"
-          install -Dm644 "$runtime_root/windows-x64/HarkenCore.dll" "$unity_plugins/x86_64/HarkenCore.dll"
-          install -Dm644 "$runtime_root/macos-universal/libHarkenCore.dylib" "$unity_plugins/macOS/libHarkenCore.dylib"
-          install -Dm644 "$runtime_root/ios-arm64/libHarkenCore.a" "$unity_plugins/iOS/libHarkenCore.a"
-          install -Dm644 "$runtime_root/linux-x64/libHarkenCore.so" "$unity_plugins/x86_64/libHarkenCore.so"
-          install -Dm644 "$runtime_root/android/arm64-v8a/libHarkenCore.so" "$unity_plugins/Android/arm64-v8a/libHarkenCore.so"
-
-          windows_runtime=".temp/package/HarkenIntegration/Unity/Harken/Runtime/Plugins/x86_64/HarkenCore.dll"
-          macos_runtime=".temp/package/HarkenIntegration/Unity/Harken/Runtime/Plugins/macOS/libHarkenCore.dylib"
-          ios_runtime=".temp/package/HarkenIntegration/Unity/Harken/Runtime/Plugins/iOS/libHarkenCore.a"
-          linux_runtime=".temp/package/HarkenIntegration/Unity/Harken/Runtime/Plugins/x86_64/libHarkenCore.so"
-          android_arm64_runtime=".temp/package/HarkenIntegration/Unity/Harken/Runtime/Plugins/Android/arm64-v8a/libHarkenCore.so"
-          for runtime in \
-            "$windows_runtime" \
-            "$macos_runtime" \
-            "$ios_runtime" \
-            "$linux_runtime" \
-            "$android_arm64_runtime"; do
-            if [ ! -s "$runtime" ]; then
-              echo "::error file=$runtime::required integration runtime is missing or empty"
-              exit 1
-            fi
+          for edition in HarkenEngine HarkenEngineDev; do
+            install -Dm644 "$runtime_root/windows-x64/bin/$edition.dll" "$unity_plugins/x86_64/$edition.dll"
+            install -Dm644 "$runtime_root/macos-universal/lib/lib$edition.dylib" "$unity_plugins/macOS/lib$edition.dylib"
+            install -Dm644 "$runtime_root/ios-arm64/lib/lib$edition.a" "$unity_plugins/iOS/lib$edition.a"
+            install -Dm644 "$runtime_root/linux-x64/lib/lib$edition.so" "$unity_plugins/x86_64/lib$edition.so"
+            install -Dm644 "$runtime_root/android/arm64-v8a/lib/lib$edition.so" "$unity_plugins/Android/arm64-v8a/lib$edition.so"
+            for runtime in \
+              "$unity_plugins/x86_64/$edition.dll" \
+              "$unity_plugins/macOS/lib$edition.dylib" \
+              "$unity_plugins/iOS/lib$edition.a" \
+              "$unity_plugins/x86_64/lib$edition.so" \
+              "$unity_plugins/Android/arm64-v8a/lib$edition.so"; do
+              if [ ! -s "$runtime" ]; then
+                echo "::error file=$runtime::required integration runtime is missing or empty"
+                exit 1
+              fi
+            done
           done
 
-          python3 <<'PY'
-          import json
-          from pathlib import Path
-
-          integration = Path('.temp/package/HarkenIntegration/Unity/Harken')
-          manifest = json.loads((integration / 'harken-integration.json').read_text(encoding='utf-8'))
-          missing = []
-          for relative in manifest.get('required_files', []):
-              path = integration / relative
-              if not path.exists() or (path.is_file() and path.stat().st_size == 0):
-                  missing.append(relative)
-          if missing:
-              raise SystemExit('Missing required Unity Integration content: ' + ', '.join(missing))
-          print(f"Verified {len(manifest.get('required_files', []))} shared Unity Integration files")
-          PY
-
-          python3 .scripts/check_unity_integration_contract.py \
+          python3 HarkenIntegration/Unity/Binding/check_unity_integration_contract.py \
             --integration-root .temp/package/HarkenIntegration/Unity/Harken \
             --require-binaries
 
@@ -117,8 +97,9 @@ jobs:
           <your-checkout>\\build\\bin\\Release\\HarkenIntegration
 
           The HarkenIntegration directory contains the shared Unity integration package plus
+          release (HarkenEngine) and development (HarkenEngineDev) runtimes for
           Windows x64, macOS universal (arm64 + x86_64), iOS device arm64,
-          Linux x64, and Android arm64-v8a runtimes.
+          Linux x64, and Android arm64-v8a.
           EOF
 
       - name: Record Integration dependencies and build evidence

@@ -36,7 +36,7 @@ void ensureApp()
 {
     if (qApp) return;
     static int argc = 1;
-    static char arg0[] = "harken_editor_tests";
+    static char arg0[] = "harken_studio_tests";
     static char* argv[] = {arg0, nullptr};
     static QApplication app(argc, argv);
 }
@@ -64,56 +64,56 @@ protected:
     void SetUp() override
     {
         ensureApp();
-        auto& manager = VNX::ProjectManager::instance();
+        auto& manager = harken::studio::ProjectManager::instance();
         if (manager.isProjectOpen())
             manager.closeProject();
-        VNX::LanguageContextService::instance().setStorageForTesting(
-            std::make_unique<VNX::MemorySettingsStorage>());
-        VNX::ActionManager::instance().clearAllForTesting();
-        VNX::registerProjectActions(VNX::ActionManager::instance(), &manager, nullptr);
+        harken::studio::LanguageContextService::instance().setStorageForTesting(
+            std::make_unique<harken::studio::MemorySettingsStorage>());
+        harken::studio::ActionManager::instance().clearAllForTesting();
+        harken::studio::registerProjectActions(harken::studio::ActionManager::instance(), &manager, nullptr);
 
         ASSERT_TRUE(tempDir_.isValid());
-        VNX::ProjectConfig config;
+        harken::studio::ProjectConfig config;
         config.name = QStringLiteral("TimelinePanelProject");
         config.location = tempDir_.path();
         ASSERT_TRUE(manager.createProject(config));
 
-        auto* owner = manager.createItem(nullptr, QStringLiteral("TrackSegment"), VNX::ProjectItem::Type::Segment);
+        auto* owner = manager.createItem(nullptr, QStringLiteral("TrackSegment"), harken::studio::ProjectItem::Type::Segment);
         ASSERT_NE(owner, nullptr);
-        owner->comp<VNX::VSegment>()->segmentTime = {};
-        owner->comp<VNX::VSegment>()->markers = {};
+        owner->comp<harken::studio::VSegment>()->segmentTime = {};
+        owner->comp<harken::studio::VSegment>()->markers = {};
         track_ = manager.createItem(owner, QStringLiteral("Track"),
-                                    VNX::ProjectItem::Type::Track);
+                                    harken::studio::ProjectItem::Type::Track);
         segment_ = manager.createItem(nullptr, QStringLiteral("Segment"),
-                                    VNX::ProjectItem::Type::Segment);
+                                    harken::studio::ProjectItem::Type::Segment);
         sound_ = manager.createItem(track_, QStringLiteral("Sound"),
-                                    VNX::ProjectItem::Type::Sound);
+                                    harken::studio::ProjectItem::Type::Sound);
         ASSERT_NE(track_, nullptr);
         ASSERT_NE(segment_, nullptr);
         ASSERT_NE(sound_, nullptr);
-        segment_->comp<VNX::VSegment>()->segmentTime = {};
-        segment_->comp<VNX::VSegment>()->markers = {};
-        track_->comp<VNX::VTrack>()->clips = {};
-        VNX::UndoRedoManager::instance().clear();
+        segment_->comp<harken::studio::VSegment>()->segmentTime = {};
+        segment_->comp<harken::studio::VSegment>()->markers = {};
+        track_->comp<harken::studio::VTrack>()->clips = {};
+        harken::studio::UndoRedoManager::instance().clear();
     }
 
     void TearDown() override
     {
-        VNX::UndoRedoManager::instance().clear();
-        auto& manager = VNX::ProjectManager::instance();
+        harken::studio::UndoRedoManager::instance().clear();
+        auto& manager = harken::studio::ProjectManager::instance();
         if (manager.isProjectOpen())
             manager.closeProject();
-        VNX::ActionManager::instance().clearAllForTesting();
-        VNX::LanguageContextService::instance().setStorageForTesting(
-            VNX::SettingsStorageFactory::create(
-                VNX::SettingsStorageFactory::StorageType::QSettings,
+        harken::studio::ActionManager::instance().clearAllForTesting();
+        harken::studio::LanguageContextService::instance().setStorageForTesting(
+            harken::studio::SettingsStorageFactory::create(
+                harken::studio::SettingsStorageFactory::StorageType::QSettings,
                 QStringLiteral("HarkenSound"), QStringLiteral("HarkenStudio")));
     }
 
     QTemporaryDir tempDir_;
-    VNX::ProjectItem* track_ = nullptr;
-    VNX::ProjectItem* segment_ = nullptr;
-    VNX::ProjectItem* sound_ = nullptr;
+    harken::studio::ProjectItem* track_ = nullptr;
+    harken::studio::ProjectItem* segment_ = nullptr;
+    harken::studio::ProjectItem* sound_ = nullptr;
 };
 
 class TimelineTrackHostTest : public TimelineEditorPanelTest,
@@ -124,12 +124,12 @@ protected:
     {
         TimelineEditorPanelTest::SetUp();
         if (HasFatalFailure() || GetParam()) return;
-        auto& manager = VNX::ProjectManager::instance();
+        auto& manager = harken::studio::ProjectManager::instance();
         auto* layer = manager.createItem(nullptr, QStringLiteral("StandaloneTracks"),
-            VNX::ProjectItem::Type::Layer);
+            harken::studio::ProjectItem::Type::Layer);
         ASSERT_NE(layer, nullptr);
         ASSERT_TRUE(manager.moveItem(track_, layer));
-        VNX::UndoRedoManager::instance().clear();
+        harken::studio::UndoRedoManager::instance().clear();
     }
 };
 
@@ -138,8 +138,8 @@ INSTANTIATE_TEST_SUITE_P(TimelineHosts, TimelineTrackHostTest, ::testing::Bool()
 
 TEST_F(TimelineEditorPanelTest, DeletingBoundItemClearsBinding)
 {
-    auto& manager = VNX::ProjectManager::instance();
-    VNX::TimelineEditorPanel panel;
+    auto& manager = harken::studio::ProjectManager::instance();
+    harken::studio::TimelineEditorPanel panel;
     panel.bindItem(segment_);
     ASSERT_EQ(panel.boundItem(), segment_);
 
@@ -150,7 +150,7 @@ TEST_F(TimelineEditorPanelTest, DeletingBoundItemClearsBinding)
 TEST_P(TimelineTrackHostTest, TrackCursorDragEndsBeforePanelDestruction)
 {
     for (const bool handle : {false, true}) {
-        auto panel = std::make_unique<VNX::TimelineEditorPanel>();
+        auto panel = std::make_unique<harken::studio::TimelineEditorPanel>();
         panel->setEditCursorVisible(true);
         panel->resize(900, 360);
         panel->bindItem(track_);
@@ -158,8 +158,8 @@ TEST_P(TimelineTrackHostTest, TrackCursorDragEndsBeforePanelDestruction)
         drainEvents();
         panel->setZoomPercent(200);
         panel->setEditCursor(5000000000LL, true);
-        auto* canvas = panel->findChild<VNX::TimelineCanvas*>("timelineLaneViewport");
-        auto* ruler = panel->findChild<VNX::TimelineRuler*>("timelineRuler");
+        auto* canvas = panel->findChild<harken::studio::TimelineCanvas*>("timelineLaneViewport");
+        auto* ruler = panel->findChild<harken::studio::TimelineRuler*>("timelineRuler");
         ASSERT_NE(canvas, nullptr);
         ASSERT_NE(ruler, nullptr);
         QPointer<QLabel> value = panel->findChild<QLabel*>("timelineCursorValue");
@@ -184,9 +184,9 @@ TEST_P(TimelineTrackHostTest, TrackCursorDragEndsBeforePanelDestruction)
 
 TEST_P(TimelineTrackHostTest, CoordinateSpaceTracksModelNotificationsAndUndoRedo)
 {
-    auto& manager = VNX::ProjectManager::instance();
-    auto& undo = VNX::UndoRedoManager::instance();
-    VNX::TimelineEditorPanel panel;
+    auto& manager = harken::studio::ProjectManager::instance();
+    auto& undo = harken::studio::UndoRedoManager::instance();
+    harken::studio::TimelineEditorPanel panel;
     panel.resize(900, 360);
     panel.bindItem(track_);
     panel.show();
@@ -202,15 +202,15 @@ TEST_P(TimelineTrackHostTest, CoordinateSpaceTracksModelNotificationsAndUndoRedo
     const int64_t duration = panel.clipDuration(0, 0);
     const int64_t distantStart = initialEnd * 2 + 123456789;
     panel.timeTicks();
-    track_->comp<VNX::VTrack>()->clips.items.front().start = distantStart;
+    track_->comp<harken::studio::VTrack>()->clips.items.front().start = distantStart;
     emit manager.itemPropertyChanged(track_, QStringLiteral("clips"));
 
     EXPECT_EQ(panel.coordinateAtPixel(0, right), distantStart + duration);
     EXPECT_EQ(panel.snapCoordinate(0, distantStart + 1, false), distantStart);
     const int64_t negativeStart = -initialEnd / 2;
-    auto invalidClips = track_->comp<VNX::VTrack>()->clips;
+    auto invalidClips = track_->comp<harken::studio::VTrack>()->clips;
     invalidClips.items.front().start = negativeStart;
-    EXPECT_FALSE(VNX::TimelineEditing::replaceClips(&manager, track_, invalidClips).success);
+    EXPECT_FALSE(harken::studio::TimelineEditing::replaceClips(&manager, track_, invalidClips).success);
     EXPECT_FALSE(panel.commitClipMoves({{track_->guid, track_->guid, guid, negativeStart}}));
     EXPECT_EQ(panel.clipStart(0, 0), distantStart);
     EXPECT_EQ(undo.undoStack()->count(), 0);
@@ -249,19 +249,19 @@ TEST_P(TimelineTrackHostTest, CoordinateSpaceTracksModelNotificationsAndUndoRedo
 
 TEST_F(TimelineEditorPanelTest, TrackReorderingAndDeletionPreserveLiveCoordinateMapping)
 {
-    auto& manager = VNX::ProjectManager::instance();
-    VNX::registerContainerActions(VNX::ActionManager::instance(), &manager);
+    auto& manager = harken::studio::ProjectManager::instance();
+    harken::studio::registerContainerActions(harken::studio::ActionManager::instance(), &manager);
     auto* otherTrack = manager.createItem(track_->parent, QStringLiteral("OtherTrack"),
-        VNX::ProjectItem::Type::Track);
+        harken::studio::ProjectItem::Type::Track);
     ASSERT_NE(otherTrack, nullptr);
     auto* otherSound = manager.createItem(otherTrack, QStringLiteral("OtherSound"),
-        VNX::ProjectItem::Type::Sound);
+        harken::studio::ProjectItem::Type::Sound);
     ASSERT_NE(otherSound, nullptr);
-    otherTrack->comp<VNX::VTrack>()->clips = {};
+    otherTrack->comp<harken::studio::VTrack>()->clips = {};
     const QUuid firstTrackGuid = track_->guid;
     const QUuid otherTrackGuid = otherTrack->guid;
 
-    VNX::TimelineEditorPanel panel;
+    harken::studio::TimelineEditorPanel panel;
     panel.resize(900, 360);
     panel.bindItem(track_->parent);
     panel.show();
@@ -291,8 +291,8 @@ TEST_F(TimelineEditorPanelTest, TrackReorderingAndDeletionPreserveLiveCoordinate
 
 TEST_P(TimelineTrackHostTest, DragPreviewPreservesAuthoredStateUntilUndoableCommit)
 {
-    auto& undo = VNX::UndoRedoManager::instance();
-    VNX::TimelineEditorPanel panel;
+    auto& undo = harken::studio::UndoRedoManager::instance();
+    harken::studio::TimelineEditorPanel panel;
     panel.resize(900, 360);
     panel.bindItem(track_);
     panel.setEditCursorVisible(false);
@@ -300,9 +300,9 @@ TEST_P(TimelineTrackHostTest, DragPreviewPreservesAuthoredStateUntilUndoableComm
     ASSERT_TRUE(panel.placeItem(sound_, 0, 1000000000LL, true));
     drainEvents();
     undo.clear();
-    auto* canvas = panel.findChild<VNX::TimelineCanvas*>("timelineLaneViewport");
+    auto* canvas = panel.findChild<harken::studio::TimelineCanvas*>("timelineLaneViewport");
     ASSERT_NE(canvas, nullptr);
-    const auto authored = track_->comp<VNX::VTrack>()->clips;
+    const auto authored = track_->comp<harken::studio::VTrack>()->clips;
     const QUuid guid = panel.clipGuid(0, 0);
     const int64_t start = panel.clipStart(0, 0);
     const int64_t duration = panel.clipDuration(0, 0);
@@ -319,7 +319,7 @@ TEST_P(TimelineTrackHostTest, DragPreviewPreservesAuthoredStateUntilUndoableComm
     ASSERT_TRUE(canvas->isGestureActive());
     const int64_t preview = canvas->previewStart();
     EXPECT_NE(preview, start);
-    EXPECT_EQ(track_->comp<VNX::VTrack>()->clips, authored);
+    EXPECT_EQ(track_->comp<harken::studio::VTrack>()->clips, authored);
     EXPECT_EQ(undo.undoStack()->count(), 0);
     QMouseEvent release(QEvent::MouseButtonRelease, to, canvas->mapToGlobal(to),
         Qt::LeftButton, Qt::NoButton, Qt::AltModifier);
@@ -330,18 +330,18 @@ TEST_P(TimelineTrackHostTest, DragPreviewPreservesAuthoredStateUntilUndoableComm
     EXPECT_EQ(panel.clipStart(0, 0), preview);
     EXPECT_EQ(panel.clipDuration(0, 0), duration);
     EXPECT_EQ(undo.undoStack()->count(), 1);
-    const auto committed = track_->comp<VNX::VTrack>()->clips;
+    const auto committed = track_->comp<harken::studio::VTrack>()->clips;
     ASSERT_TRUE(undo.undo());
-    EXPECT_EQ(track_->comp<VNX::VTrack>()->clips, authored);
+    EXPECT_EQ(track_->comp<harken::studio::VTrack>()->clips, authored);
     ASSERT_TRUE(undo.redo());
-    EXPECT_EQ(track_->comp<VNX::VTrack>()->clips, committed);
+    EXPECT_EQ(track_->comp<harken::studio::VTrack>()->clips, committed);
 
     const int64_t firstStart = panel.clipStart(0, 0);
     const int64_t secondStart = firstStart + duration + 1000000000LL;
     ASSERT_TRUE(panel.placeItem(sound_, 0, secondStart, true));
     const QUuid secondGuid = panel.clipGuid(0, 1);
     const int64_t spacing = secondStart - firstStart;
-    const auto groupAuthored = track_->comp<VNX::VTrack>()->clips;
+    const auto groupAuthored = track_->comp<harken::studio::VTrack>()->clips;
     drainEvents();
 
     for (const auto modifiers : {Qt::NoModifier, Qt::AltModifier}) {
@@ -368,7 +368,7 @@ TEST_P(TimelineTrackHostTest, DragPreviewPreservesAuthoredStateUntilUndoableComm
 
         ASSERT_TRUE(canvas->isGestureActive());
         EXPECT_EQ(canvas->previewStart(), spacing);
-        EXPECT_EQ(track_->comp<VNX::VTrack>()->clips, groupAuthored);
+        EXPECT_EQ(track_->comp<harken::studio::VTrack>()->clips, groupAuthored);
         EXPECT_EQ(undo.undoStack()->count(), 0);
         canvas->repaint();
         const auto& visuals = canvas->lastRenderData().clipItems;
@@ -392,53 +392,53 @@ TEST_P(TimelineTrackHostTest, DragPreviewPreservesAuthoredStateUntilUndoableComm
         EXPECT_EQ(panel.clipDuration(0, firstIndex), duration);
         EXPECT_EQ(panel.clipDuration(0, secondIndex), duration);
         EXPECT_EQ(undo.undoStack()->count(), 1);
-        const auto groupCommitted = track_->comp<VNX::VTrack>()->clips;
+        const auto groupCommitted = track_->comp<harken::studio::VTrack>()->clips;
         ASSERT_TRUE(undo.undo());
-        EXPECT_EQ(track_->comp<VNX::VTrack>()->clips, groupAuthored);
+        EXPECT_EQ(track_->comp<harken::studio::VTrack>()->clips, groupAuthored);
         ASSERT_TRUE(undo.redo());
-        EXPECT_EQ(track_->comp<VNX::VTrack>()->clips, groupCommitted);
+        EXPECT_EQ(track_->comp<harken::studio::VTrack>()->clips, groupCommitted);
         ASSERT_TRUE(undo.undo());
-        EXPECT_EQ(track_->comp<VNX::VTrack>()->clips, groupAuthored);
+        EXPECT_EQ(track_->comp<harken::studio::VTrack>()->clips, groupAuthored);
     }
 }
 
 TEST_F(TimelineEditorPanelTest, BatchCommitFailureRollsBackWithoutUndoStep)
 {
-    VNX::TimelineEditorPanel panel;
+    harken::studio::TimelineEditorPanel panel;
     panel.bindItem(track_);
     ASSERT_TRUE(panel.placeItem(sound_, 0, 0, true));
     const int64_t originalStart = panel.clipStart(0, 0);
     const int64_t originalDuration = panel.clipDuration(0, 0);
-    VNX::UndoRedoManager::instance().clear();
-    const int undoCount = VNX::UndoRedoManager::instance().undoStack()->count();
+    harken::studio::UndoRedoManager::instance().clear();
+    const int undoCount = harken::studio::UndoRedoManager::instance().undoStack()->count();
 
     bool firstUndone = false;
-    std::vector<VNX::ActionResult> results(2);
+    std::vector<harken::studio::ActionResult> results(2);
     results[0].success = true;
     results[0].undoFn = [&firstUndone, track = track_, originalStart]() {
         firstUndone = true;
-        auto* timeline = track->comp<VNX::VTrack>();
+        auto* timeline = track->comp<harken::studio::VTrack>();
         ASSERT_NE(timeline, nullptr);
         ASSERT_FALSE(timeline->clips.items.empty());
         timeline->clips.items.front().start = originalStart;
     };
     results[1].success = false;
     results[1].errorMessage = QStringLiteral("forced batch failure");
-    track_->comp<VNX::VTrack>()->clips.items.front().start = originalStart + 123;
+    track_->comp<harken::studio::VTrack>()->clips.items.front().start = originalStart + 123;
 
     EXPECT_FALSE(panel.commitTimelineActions(std::move(results), QStringLiteral("Move Clips")));
     EXPECT_TRUE(firstUndone);
     EXPECT_EQ(panel.clipStart(0, 0), originalStart);
     EXPECT_EQ(panel.clipDuration(0, 0), originalDuration);
-    EXPECT_EQ(VNX::UndoRedoManager::instance().undoStack()->count(), undoCount);
+    EXPECT_EQ(harken::studio::UndoRedoManager::instance().undoStack()->count(), undoCount);
 }
 
 TEST_F(TimelineEditorPanelTest, ClockChangesPreserveCoordinateMeaningAndViewportHistory)
 {
-    auto& undo = VNX::UndoRedoManager::instance();
-    track_->parent->comp<VNX::VSegment>()->markers.items.push_back(
-        {QUuid::createUuid(), VNX::MarkerKind::Custom, QStringLiteral("Point"), 2000000000LL});
-    VNX::TimelineEditorPanel panel;
+    auto& undo = harken::studio::UndoRedoManager::instance();
+    track_->parent->comp<harken::studio::VSegment>()->markers.items.push_back(
+        {QUuid::createUuid(), harken::studio::MarkerKind::Custom, QStringLiteral("Point"), 2000000000LL});
+    harken::studio::TimelineEditorPanel panel;
     panel.resize(900, 360);
     panel.bindItem(track_);
     panel.show();
@@ -453,11 +453,11 @@ TEST_F(TimelineEditorPanelTest, ClockChangesPreserveCoordinateMeaningAndViewport
     const int64_t cursor = panel.editCursor();
     undo.clear();
 
-    ASSERT_TRUE(panel.setTimelineDomain(VNX::TimelineDomain::Musical));
+    ASSERT_TRUE(panel.setTimelineDomain(harken::studio::TimelineDomain::Musical));
     drainEvents();
     const auto musical = panel.effectiveTimeSpec(0);
     const auto toAbsolute = [&](int64_t coordinate) {
-        const auto converted = VNX::TimelineCoordinates::convert(coordinate, musical, absolute);
+        const auto converted = harken::studio::TimelineCoordinates::convert(coordinate, musical, absolute);
         EXPECT_TRUE(converted.ok());
         return converted.value;
     };
@@ -482,34 +482,34 @@ TEST_F(TimelineEditorPanelTest, ClockChangesPreserveCoordinateMeaningAndViewport
 
     ASSERT_TRUE(undo.undo());
     drainEvents();
-    EXPECT_EQ(panel.timelineDomain(), VNX::TimelineDomain::Absolute);
+    EXPECT_EQ(panel.timelineDomain(), harken::studio::TimelineDomain::Absolute);
     EXPECT_EQ(panel.clipStart(0, 0), start);
     EXPECT_EQ(panel.markerPosition(0), marker);
     EXPECT_EQ(panel.editCursor(), cursor);
     ASSERT_TRUE(undo.redo());
     drainEvents();
-    EXPECT_EQ(panel.timelineDomain(), VNX::TimelineDomain::Musical);
+    EXPECT_EQ(panel.timelineDomain(), harken::studio::TimelineDomain::Musical);
     EXPECT_EQ(panel.editCursor(), cursorTick);
 }
 
 TEST_F(TimelineEditorPanelTest, AxisPresentationPreservesAuthoredCoordinatesAndViewportState)
 {
-    auto& undo = VNX::UndoRedoManager::instance();
-    VNX::TimelineEditorPanel panel;
+    auto& undo = harken::studio::UndoRedoManager::instance();
+    harken::studio::TimelineEditorPanel panel;
     panel.resize(900, 360);
     panel.bindItem(track_);
     panel.show();
-    ASSERT_TRUE(panel.setTimelineDomain(VNX::TimelineDomain::Musical));
+    ASSERT_TRUE(panel.setTimelineDomain(harken::studio::TimelineDomain::Musical));
     ASSERT_TRUE(panel.setTempoMicrosecondsPerQuarter(487805));
     ASSERT_TRUE(panel.setMeter(7, 8));
     const auto spec = panel.effectiveTimeSpec(0);
-    const auto start = VNX::TimelineCoordinates::fromSeconds(1.23, spec);
-    const auto end = VNX::TimelineCoordinates::fromSeconds(10.0, spec);
+    const auto start = harken::studio::TimelineCoordinates::fromSeconds(1.23, spec);
+    const auto end = harken::studio::TimelineCoordinates::fromSeconds(10.0, spec);
     ASSERT_TRUE(start.ok());
     ASSERT_TRUE(end.ok());
     ASSERT_TRUE(panel.placeItem(sound_, 0, start.value, true));
-    ASSERT_TRUE(panel.addMarker(VNX::MarkerKind::Entry, 0));
-    ASSERT_TRUE(panel.addMarker(VNX::MarkerKind::Exit, end.value));
+    ASSERT_TRUE(panel.addMarker(harken::studio::MarkerKind::Entry, 0));
+    ASSERT_TRUE(panel.addMarker(harken::studio::MarkerKind::Exit, end.value));
     panel.setEditCursor(start.value + 137, true);
     drainEvents();
     panel.setZoomPercent(250.0);
@@ -517,8 +517,8 @@ TEST_F(TimelineEditorPanelTest, AxisPresentationPreservesAuthoredCoordinatesAndV
     panel.setLaneHeight(0, 168);
     panel.zoomVertically(0, 1.25);
     drainEvents();
-    const auto authoredTrack = track_->comp<VNX::VTrack>()->toJson();
-    const auto authoredSegment = track_->parent->comp<VNX::VSegment>()->toJson();
+    const auto authoredTrack = track_->comp<harken::studio::VTrack>()->toJson();
+    const auto authoredSegment = track_->parent->comp<harken::studio::VSegment>()->toJson();
     const auto cursor = panel.editCursor();
     const auto zoom = panel.zoomPercent();
     const auto verticalZoom = panel.verticalZoom();
@@ -529,15 +529,15 @@ TEST_F(TimelineEditorPanelTest, AxisPresentationPreservesAuthoredCoordinatesAndV
     const auto clipPixel = panel.viewportPositionAtCoordinate(0, start.value);
     undo.clear();
 
-    for (const auto mode : {VNX::TimelineEditorPanel::AxisMode::Seconds,
-                           VNX::TimelineEditorPanel::AxisMode::MeasureBeats,
-                           VNX::TimelineEditorPanel::AxisMode::SecondsWithMeasureBeats,
-                           VNX::TimelineEditorPanel::AxisMode::MeasureBeatsWithSeconds}) {
+    for (const auto mode : {harken::studio::TimelineEditorPanel::AxisMode::Seconds,
+                           harken::studio::TimelineEditorPanel::AxisMode::MeasureBeats,
+                           harken::studio::TimelineEditorPanel::AxisMode::SecondsWithMeasureBeats,
+                           harken::studio::TimelineEditorPanel::AxisMode::MeasureBeatsWithSeconds}) {
         panel.setAxisMode(mode);
         ASSERT_FALSE(panel.timeTicks().ticks.isEmpty());
         const auto state = panel.snapshotState();
-        panel.setAxisMode(mode == VNX::TimelineEditorPanel::AxisMode::Seconds
-            ? VNX::TimelineEditorPanel::AxisMode::MeasureBeats : VNX::TimelineEditorPanel::AxisMode::Seconds);
+        panel.setAxisMode(mode == harken::studio::TimelineEditorPanel::AxisMode::Seconds
+            ? harken::studio::TimelineEditorPanel::AxisMode::MeasureBeats : harken::studio::TimelineEditorPanel::AxisMode::Seconds);
         panel.fitClips();
         panel.zoomVertically(0, 0.5);
         panel.setLaneHeight(0, 112);
@@ -545,8 +545,8 @@ TEST_F(TimelineEditorPanelTest, AxisPresentationPreservesAuthoredCoordinatesAndV
         panel.restoreState(state);
         drainEvents();
         EXPECT_EQ(panel.axisMode(), mode);
-        EXPECT_EQ(track_->comp<VNX::VTrack>()->toJson(), authoredTrack);
-        EXPECT_EQ(track_->parent->comp<VNX::VSegment>()->toJson(), authoredSegment);
+        EXPECT_EQ(track_->comp<harken::studio::VTrack>()->toJson(), authoredTrack);
+        EXPECT_EQ(track_->parent->comp<harken::studio::VSegment>()->toJson(), authoredSegment);
         EXPECT_EQ(panel.editCursor(), cursor);
         EXPECT_DOUBLE_EQ(panel.zoomPercent(), zoom);
         EXPECT_DOUBLE_EQ(panel.verticalZoom(), verticalZoom);
@@ -560,34 +560,34 @@ TEST_F(TimelineEditorPanelTest, AxisPresentationPreservesAuthoredCoordinatesAndV
 }
 
 class TimelineDomainTest : public TimelineEditorPanelTest,
-                           public ::testing::WithParamInterface<VNX::TimelineDomain>
+                           public ::testing::WithParamInterface<harken::studio::TimelineDomain>
 {
 };
 
 INSTANTIATE_TEST_SUITE_P(Clocks, TimelineDomainTest,
-    ::testing::Values(VNX::TimelineDomain::Absolute, VNX::TimelineDomain::Musical),
-    [](const ::testing::TestParamInfo<VNX::TimelineDomain>& info) {
-        return info.param == VNX::TimelineDomain::Absolute ? "Absolute" : "Musical";
+    ::testing::Values(harken::studio::TimelineDomain::Absolute, harken::studio::TimelineDomain::Musical),
+    [](const ::testing::TestParamInfo<harken::studio::TimelineDomain>& info) {
+        return info.param == harken::studio::TimelineDomain::Absolute ? "Absolute" : "Musical";
     });
 
 TEST_P(TimelineDomainTest, CursorAndViewportStayWithinEditableRange)
 {
-    VNX::TimelineEditorPanel panel;
+    harken::studio::TimelineEditorPanel panel;
     panel.resize(900, 360);
     panel.bindItem(track_);
     panel.show();
     ASSERT_TRUE(panel.setTimelineDomain(GetParam()));
-    const int64_t unit = VNX::TimelineSemantics::coordinateUnitFor(panel.effectiveTimeSpec(0));
+    const int64_t unit = harken::studio::TimelineSemantics::coordinateUnitFor(panel.effectiveTimeSpec(0));
     drainEvents();
-    VNX::UndoRedoManager::instance().clear();
+    harken::studio::UndoRedoManager::instance().clear();
 
-    for (const auto mode : {VNX::TimelineEditorPanel::AxisMode::Seconds,
-                           VNX::TimelineEditorPanel::AxisMode::MeasureBeats,
-                           VNX::TimelineEditorPanel::AxisMode::SecondsWithMeasureBeats,
-                           VNX::TimelineEditorPanel::AxisMode::MeasureBeatsWithSeconds}) {
+    for (const auto mode : {harken::studio::TimelineEditorPanel::AxisMode::Seconds,
+                           harken::studio::TimelineEditorPanel::AxisMode::MeasureBeats,
+                           harken::studio::TimelineEditorPanel::AxisMode::SecondsWithMeasureBeats,
+                           harken::studio::TimelineEditorPanel::AxisMode::MeasureBeatsWithSeconds}) {
         panel.setAxisMode(mode);
-        EXPECT_EQ(panel.axisMode(), GetParam() == VNX::TimelineDomain::Musical
-            ? mode : VNX::TimelineEditorPanel::AxisMode::Seconds);
+        EXPECT_EQ(panel.axisMode(), GetParam() == harken::studio::TimelineDomain::Musical
+            ? mode : harken::studio::TimelineEditorPanel::AxisMode::Seconds);
         for (const bool disableSnap : {false, true}) {
             panel.setEditCursor(-unit, disableSnap);
             EXPECT_EQ(panel.editCursor(), 0);
@@ -611,35 +611,35 @@ TEST_P(TimelineDomainTest, CursorAndViewportStayWithinEditableRange)
         drainEvents();
         EXPECT_EQ(panel.editCursor(), 0);
         EXPECT_EQ(panel.coordinateAtViewportPixel(0, 0), 0);
-        EXPECT_EQ(VNX::UndoRedoManager::instance().undoStack()->count(), 0);
+        EXPECT_EQ(harken::studio::UndoRedoManager::instance().undoStack()->count(), 0);
     }
 }
 
 TEST_P(TimelineDomainTest, MarkerValueEditsExtendContentAndPreserveUndo)
 {
-    auto& manager = VNX::ProjectManager::instance();
-    auto& undo = VNX::UndoRedoManager::instance();
+    auto& manager = harken::studio::ProjectManager::instance();
+    auto& undo = harken::studio::UndoRedoManager::instance();
     auto* segment = manager.createItem(nullptr, QStringLiteral("EmptySegment"),
-        VNX::ProjectItem::Type::Segment);
+        harken::studio::ProjectItem::Type::Segment);
     ASSERT_NE(segment, nullptr);
-    VNX::TimelineEditorPanel panel;
+    harken::studio::TimelineEditorPanel panel;
     panel.resize(900, 480);
     panel.bindItem(segment);
     panel.show();
     ASSERT_TRUE(panel.setTimelineDomain(GetParam()));
     drainEvents();
-    auto* timeline = segment->comp<VNX::VSegment>();
+    auto* timeline = segment->comp<harken::studio::VSegment>();
     const auto before = timeline->markers;
-    const auto* entry = before.find(VNX::MarkerKind::Entry);
-    const auto* exit = before.find(VNX::MarkerKind::Exit);
+    const auto* entry = before.find(harken::studio::MarkerKind::Entry);
+    const auto* exit = before.find(harken::studio::MarkerKind::Exit);
     ASSERT_NE(entry, nullptr);
     ASSERT_NE(exit, nullptr);
-    const auto target = VNX::TimelineCoordinates::fromSeconds(20.0, timeline->segmentTime);
+    const auto target = harken::studio::TimelineCoordinates::fromSeconds(20.0, timeline->segmentTime);
     ASSERT_TRUE(target);
     ASSERT_GT(target.value, exit->position);
-    const bool musical = GetParam() == VNX::TimelineDomain::Musical;
-    const double divisor = musical ? VNX::TimelineCoordinates::kPpq
-        : VNX::TimelineCoordinates::kNanosecondsPerSecond;
+    const bool musical = GetParam() == harken::studio::TimelineDomain::Musical;
+    const double divisor = musical ? harken::studio::TimelineCoordinates::kPpq
+        : harken::studio::TimelineCoordinates::kNanosecondsPerSecond;
 
     for (const double zoom : {100.0, 200.0}) {
         SCOPED_TRACE(zoom);
@@ -651,14 +651,14 @@ TEST_P(TimelineDomainTest, MarkerValueEditsExtendContentAndPreserveUndo)
         ASSERT_NE(editor, nullptr);
         auto* spin = editor->findChild<QDoubleSpinBox*>("timelineMarkerPositionSpin");
         ASSERT_NE(spin, nullptr);
-        const auto maximum = musical ? VNX::TimelineCoordinates::beatsToTicks(spin->maximum())
-            : VNX::TimelineCoordinates::fromSeconds(spin->maximum(), {});
+        const auto maximum = musical ? harken::studio::TimelineCoordinates::beatsToTicks(spin->maximum())
+            : harken::studio::TimelineCoordinates::fromSeconds(spin->maximum(), {});
         EXPECT_TRUE(maximum);
         spin->setValue(double(target.value) / divisor);
         editor->accept();
         drainEvents();
-        EXPECT_EQ(timeline->markers.find(VNX::MarkerKind::Exit)->position, target.value);
-        EXPECT_EQ(*timeline->markers.find(VNX::MarkerKind::Entry), *entry);
+        EXPECT_EQ(timeline->markers.find(harken::studio::MarkerKind::Exit)->position, target.value);
+        EXPECT_EQ(*timeline->markers.find(harken::studio::MarkerKind::Entry), *entry);
         EXPECT_TRUE(segment->children.empty());
         EXPECT_DOUBLE_EQ(panel.zoomPercent(), zoom);
         const int pixel = panel.viewportPixelAtCoordinate(0, target.value);
@@ -694,36 +694,36 @@ TEST_P(TimelineDomainTest, MarkerValueEditsExtendContentAndPreserveUndo)
 
 TEST_P(TimelineDomainTest, MarkerDragPreviewCommitsOnceAndSharesViewportCoordinates)
 {
-    auto& undo = VNX::UndoRedoManager::instance();
-    VNX::TimelineEditorPanel panel;
+    auto& undo = harken::studio::UndoRedoManager::instance();
+    harken::studio::TimelineEditorPanel panel;
     panel.resize(900, 480);
     panel.bindItem(track_);
     panel.show();
     ASSERT_TRUE(panel.setTimelineDomain(GetParam()));
-    if (GetParam() == VNX::TimelineDomain::Musical)
+    if (GetParam() == harken::studio::TimelineDomain::Musical)
         ASSERT_TRUE(panel.setMeter(7, 8));
     const auto spec = panel.effectiveTimeSpec(0);
-    const int64_t unit = VNX::TimelineSemantics::coordinateUnitFor(spec);
-    ASSERT_TRUE(panel.addMarker(VNX::MarkerKind::Entry, unit * 2));
+    const int64_t unit = harken::studio::TimelineSemantics::coordinateUnitFor(spec);
+    ASSERT_TRUE(panel.addMarker(harken::studio::MarkerKind::Entry, unit * 2));
     ASSERT_TRUE(panel.placeItem(sound_, 0, 0, true));
     ASSERT_TRUE(panel.resizeClip(0, panel.clipGuid(0, 0), 0, unit * 6, true));
     panel.setEditCursor(unit * 8, true);
     drainEvents();
     undo.clear();
-    auto* ruler = panel.findChild<VNX::TimelineMarkerRuler*>("timelineMarkerRuler");
-    auto* canvas = panel.findChild<VNX::TimelineCanvas*>("timelineLaneViewport");
+    auto* ruler = panel.findChild<harken::studio::TimelineMarkerRuler*>("timelineMarkerRuler");
+    auto* canvas = panel.findChild<harken::studio::TimelineCanvas*>("timelineLaneViewport");
     ASSERT_NE(ruler, nullptr);
     ASSERT_NE(canvas, nullptr);
     ASSERT_TRUE(ruler->isVisible());
     for (const auto& tick : panel.timeTicks().ticks) {
-        const auto coordinate = GetParam() == VNX::TimelineDomain::Musical
-            ? VNX::TimelineCoordinates::beatsToTicks(tick.value)
-            : VNX::TimelineCoordinates::fromSeconds(tick.value, {});
+        const auto coordinate = GetParam() == harken::studio::TimelineDomain::Musical
+            ? harken::studio::TimelineCoordinates::beatsToTicks(tick.value)
+            : harken::studio::TimelineCoordinates::fromSeconds(tick.value, {});
         ASSERT_TRUE(coordinate.ok());
         EXPECT_EQ(panel.snapCoordinate(0, coordinate.value, false), coordinate.value);
     }
-    const auto before = track_->parent->comp<VNX::VSegment>()->markers;
-    const auto clips = track_->comp<VNX::VTrack>()->clips;
+    const auto before = track_->parent->comp<harken::studio::VSegment>()->markers;
+    const auto clips = track_->comp<harken::studio::VTrack>()->clips;
     const QUuid marker = panel.markerGuid(0);
     const int clipY = panel.laneRect(0).center().y();
     const int blankY = canvas->height() - 16;
@@ -736,7 +736,7 @@ TEST_P(TimelineDomainTest, MarkerDragPreviewCommitsOnceAndSharesViewportCoordina
         const QPoint from(panel.viewportPixelAtCoordinate(0, unit * 2), y);
         const QPoint to(panel.viewportPixelAtCoordinate(0, unit * 4), y);
         sendMouse(widget, QEvent::MouseMove, from, Qt::NoButton, Qt::NoButton);
-        EXPECT_TRUE(VNX::ToolTip::text().contains(QStringLiteral("Entry")));
+        EXPECT_TRUE(harken::studio::ToolTip::text().contains(QStringLiteral("Entry")));
         EXPECT_EQ(widget->cursor().shape(), Qt::SizeHorCursor);
         sendMouse(widget, QEvent::MouseButtonPress, from, Qt::LeftButton, Qt::LeftButton);
         ASSERT_TRUE(panel.isMarkerDragActive());
@@ -749,8 +749,8 @@ TEST_P(TimelineDomainTest, MarkerDragPreviewCommitsOnceAndSharesViewportCoordina
         const auto preview = panel.markerDragPreviewPosition();
         EXPECT_EQ(preview, panel.coordinateAtViewportPixel(0, to.x()));
         EXPECT_EQ(panel.markerDisplayPosition(0), preview);
-        EXPECT_EQ(track_->parent->comp<VNX::VSegment>()->markers, before);
-        EXPECT_EQ(track_->comp<VNX::VTrack>()->clips, clips);
+        EXPECT_EQ(track_->parent->comp<harken::studio::VSegment>()->markers, before);
+        EXPECT_EQ(track_->comp<harken::studio::VTrack>()->clips, clips);
         EXPECT_EQ(undo.undoStack()->count(), 0);
         EXPECT_TRUE(value->text().contains(QStringLiteral("Entry")));
         sendMouse(widget, QEvent::MouseButtonRelease, to, Qt::LeftButton, Qt::NoButton, Qt::AltModifier);
@@ -759,7 +759,7 @@ TEST_P(TimelineDomainTest, MarkerDragPreviewCommitsOnceAndSharesViewportCoordina
         EXPECT_EQ(panel.markerPosition(0), preview);
         EXPECT_EQ(undo.undoStack()->count(), 1);
         ASSERT_TRUE(undo.undo());
-        EXPECT_EQ(track_->parent->comp<VNX::VSegment>()->markers, before);
+        EXPECT_EQ(track_->parent->comp<harken::studio::VSegment>()->markers, before);
         ASSERT_TRUE(undo.redo());
         EXPECT_EQ(panel.markerPosition(0), preview);
         ASSERT_TRUE(undo.undo());
@@ -772,8 +772,8 @@ TEST_P(TimelineDomainTest, MarkerDragPreviewCommitsOnceAndSharesViewportCoordina
         EXPECT_FALSE(panel.isMarkerDragActive());
         EXPECT_FALSE(value->isVisible());
         EXPECT_EQ(panel.markerDisplayPosition(0), unit * 2);
-        EXPECT_EQ(track_->parent->comp<VNX::VSegment>()->markers, before);
-        EXPECT_EQ(track_->comp<VNX::VTrack>()->clips, clips);
+        EXPECT_EQ(track_->parent->comp<harken::studio::VSegment>()->markers, before);
+        EXPECT_EQ(track_->comp<harken::studio::VTrack>()->clips, clips);
         EXPECT_EQ(undo.undoStack()->count(), 0);
 
         sendMouse(widget, QEvent::MouseButtonDblClick, from, Qt::LeftButton, Qt::LeftButton);
@@ -781,15 +781,15 @@ TEST_P(TimelineDomainTest, MarkerDragPreviewCommitsOnceAndSharesViewportCoordina
         ASSERT_NE(editor, nullptr);
         auto* spin = editor->findChild<QDoubleSpinBox*>("timelineMarkerPositionSpin");
         ASSERT_NE(spin, nullptr);
-        const double divisor = GetParam() == VNX::TimelineDomain::Musical
-            ? VNX::TimelineCoordinates::kPpq : VNX::TimelineCoordinates::kNanosecondsPerSecond;
+        const double divisor = GetParam() == harken::studio::TimelineDomain::Musical
+            ? harken::studio::TimelineCoordinates::kPpq : harken::studio::TimelineCoordinates::kNanosecondsPerSecond;
         spin->setValue(double(unit * 3) / divisor);
         editor->accept();
         drainEvents();
         EXPECT_EQ(panel.markerPosition(0), unit * 3);
         EXPECT_EQ(undo.undoStack()->count(), 1);
         ASSERT_TRUE(undo.undo());
-        EXPECT_EQ(track_->parent->comp<VNX::VSegment>()->markers, before);
+        EXPECT_EQ(track_->parent->comp<harken::studio::VSegment>()->markers, before);
     }
     undo.clear();
     ASSERT_TRUE(panel.moveMarker(marker, 0, true));
@@ -810,30 +810,30 @@ TEST_P(TimelineDomainTest, MarkerDragPreviewCommitsOnceAndSharesViewportCoordina
     EXPECT_FALSE(panel.isMarkerDragActive());
     EXPECT_EQ(panel.editCursor(), 0);
     EXPECT_EQ(panel.markerPosition(0), 0);
-    EXPECT_EQ(track_->comp<VNX::VTrack>()->clips, clips);
+    EXPECT_EQ(track_->comp<harken::studio::VTrack>()->clips, clips);
     EXPECT_EQ(undo.undoStack()->count(), 0);
-    VNX::ToolTip::hideText();
+    harken::studio::ToolTip::hideText();
 }
 
 TEST_P(TimelineDomainTest, CursorLineInteractionsShareStateAcrossSurfaces)
 {
-    auto& undo = VNX::UndoRedoManager::instance();
-    VNX::TimelineEditorPanel panel;
+    auto& undo = harken::studio::UndoRedoManager::instance();
+    harken::studio::TimelineEditorPanel panel;
     panel.resize(900, 480);
     panel.bindItem(track_);
     panel.show();
     ASSERT_TRUE(panel.setTimelineDomain(GetParam()));
-    const int64_t unit = VNX::TimelineSemantics::coordinateUnitFor(panel.effectiveTimeSpec(0));
+    const int64_t unit = harken::studio::TimelineSemantics::coordinateUnitFor(panel.effectiveTimeSpec(0));
     ASSERT_TRUE(panel.placeItem(sound_, 0, 0, true));
     ASSERT_TRUE(panel.resizeClip(0, panel.clipGuid(0, 0), 0, unit * 6, true));
-    ASSERT_TRUE(panel.addMarker(VNX::MarkerKind::Entry, unit * 2));
+    ASSERT_TRUE(panel.addMarker(harken::studio::MarkerKind::Entry, unit * 2));
     drainEvents();
     undo.clear();
-    const auto authored = track_->comp<VNX::VTrack>()->clips;
-    const auto markers = track_->parent->comp<VNX::VSegment>()->markers;
-    auto* ruler = panel.findChild<VNX::TimelineRuler*>("timelineRuler");
-    auto* band = panel.findChild<VNX::TimelineMarkerRuler*>("timelineMarkerRuler");
-    auto* canvas = panel.findChild<VNX::TimelineCanvas*>("timelineLaneViewport");
+    const auto authored = track_->comp<harken::studio::VTrack>()->clips;
+    const auto markers = track_->parent->comp<harken::studio::VSegment>()->markers;
+    auto* ruler = panel.findChild<harken::studio::TimelineRuler*>("timelineRuler");
+    auto* band = panel.findChild<harken::studio::TimelineMarkerRuler*>("timelineMarkerRuler");
+    auto* canvas = panel.findChild<harken::studio::TimelineCanvas*>("timelineLaneViewport");
     ASSERT_NE(ruler, nullptr);
     ASSERT_NE(band, nullptr);
     ASSERT_NE(canvas, nullptr);
@@ -849,7 +849,7 @@ TEST_P(TimelineDomainTest, CursorLineInteractionsShareStateAcrossSurfaces)
         const QPoint to(offset + panel.viewportPixelAtCoordinate(0, unit * 5), y);
         sendMouse(widget, QEvent::MouseMove, from, Qt::NoButton, Qt::NoButton);
         EXPECT_TRUE(panel.isCursorHovered());
-        EXPECT_TRUE(VNX::ToolTip::text().contains(QStringLiteral("Cursor")));
+        EXPECT_TRUE(harken::studio::ToolTip::text().contains(QStringLiteral("Cursor")));
         EXPECT_EQ(widget->cursor().shape(), Qt::SizeHorCursor);
         sendMouse(widget, QEvent::MouseButtonPress, from, Qt::LeftButton, Qt::LeftButton);
         ASSERT_TRUE(panel.isCursorDragActive());
@@ -865,8 +865,8 @@ TEST_P(TimelineDomainTest, CursorLineInteractionsShareStateAcrossSurfaces)
         EXPECT_FALSE(panel.isCursorDragActive());
         EXPECT_FALSE(value->isVisible());
         EXPECT_EQ(panel.editCursor(), unit * 4);
-        EXPECT_EQ(track_->comp<VNX::VTrack>()->clips, authored);
-        EXPECT_EQ(track_->parent->comp<VNX::VSegment>()->markers, markers);
+        EXPECT_EQ(track_->comp<harken::studio::VTrack>()->clips, authored);
+        EXPECT_EQ(track_->parent->comp<harken::studio::VSegment>()->markers, markers);
         EXPECT_EQ(undo.undoStack()->count(), 0);
 
         sendMouse(widget, QEvent::MouseButtonDblClick, from, Qt::LeftButton, Qt::LeftButton);
@@ -874,13 +874,13 @@ TEST_P(TimelineDomainTest, CursorLineInteractionsShareStateAcrossSurfaces)
         ASSERT_NE(editor, nullptr);
         auto* spin = editor->findChild<QDoubleSpinBox*>("timelineCursorValueInput");
         ASSERT_NE(spin, nullptr);
-        const double divisor = GetParam() == VNX::TimelineDomain::Musical
-            ? VNX::TimelineCoordinates::kPpq : VNX::TimelineCoordinates::kNanosecondsPerSecond;
+        const double divisor = GetParam() == harken::studio::TimelineDomain::Musical
+            ? harken::studio::TimelineCoordinates::kPpq : harken::studio::TimelineCoordinates::kNanosecondsPerSecond;
         spin->setValue(double(unit * 5) / divisor);
         editor->accept();
         drainEvents();
         EXPECT_EQ(panel.editCursor(), unit * 5);
         EXPECT_EQ(undo.undoStack()->count(), 0);
     }
-    VNX::ToolTip::hideText();
+    harken::studio::ToolTip::hideText();
 }

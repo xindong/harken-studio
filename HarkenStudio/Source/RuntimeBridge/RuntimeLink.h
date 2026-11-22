@@ -11,6 +11,7 @@
 #include "PlaybackBridge.h"
 
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 
 #include <QString>
 #include <cstdint>
@@ -18,8 +19,8 @@
 #include <utility>
 #include <vector>
 
-namespace HarkenEditor {
-namespace Bridge {
+namespace harken::studio {
+namespace bridge {
 struct PreviewVoiceEffectEntry;
 namespace Detail {
 
@@ -41,12 +42,8 @@ void runtimePublishMeterPeaks();
 int runtimeActiveVoiceCount();
 void runtimeDrainEndedPlaybacks(std::vector<uint64_t>& out);
 void runtimeDrainStudioNotifications(std::vector<EngineNotification>& out);
-void runtimeInjectNotificationForTest(uint32_t type,
-                                      uint64_t voiceHandle,
-                                      uint64_t blockTimestamp);
-void runtimeInvalidateNotificationsForTest();
 void runtimeMasterMeterPeak(float& l, float& r);
-bool runtimeBusMeterPeak(harkenstudio::ObjectId busId, float& l, float& r);
+bool runtimeBusMeterPeak(harken::studio::types::ObjectId busId, float& l, float& r);
 float runtimeAudioCpuPercent();
 double runtimeOutputLatency();
 int runtimeActualSampleRate();
@@ -55,29 +52,34 @@ EngineResult runtimeReconfigureBufferSize(int32_t newBlockSize);
 
 bool runtimeSetMasterFade(float volume, int fadeMs);
 
-void runtimeRegisterSoundName(const QString& name, harkenstudio::ObjectId objectId,
-                              harkenstudio::ObjectId soundId, uint32_t sourceId,
+void runtimeRegisterSoundName(const QString& name, harken::studio::types::ObjectId objectId,
+                              harken::studio::types::ObjectId soundId, uint32_t sourceId,
                               uint32_t loopCount, bool spatialized3D,
-                              harkenstudio::ObjectId attenuationId);
+                              harken::studio::types::ObjectId attenuationId);
 bool runtimePrepareMedia(uint32_t sourceId);
-uint64_t runtimeRegisteredSoundRevision(harkenstudio::ObjectId soundId);
-VnResult runtimeRegisterSoundPcm(harkenstudio::ObjectId soundId, const std::vector<float>& samples,
+uint64_t runtimeRegisteredSoundRevision(harken::studio::types::ObjectId soundId);
+std::optional<PreparedPreviewMedia> runtimePreparePreviewMedia(
+    const harken::studio::SoundSourceDerivative::MaterializedArtifact& artifact, QString* error);
+VnResult runtimeRegisterPreviewMedia(harken::studio::types::ObjectId soundId, const PreparedPreviewMedia& media);
+VnResult runtimeRegisterSoundPcm(harken::studio::types::ObjectId soundId, const std::vector<float>& samples,
                                   uint32_t channels, uint32_t sampleRate,
                                   uint64_t loopStartFrame, uint64_t loopEndFrame);
-void runtimeUnregisterSoundObject(harkenstudio::ObjectId objectId);
-void runtimeSetObjectOutputBus(harkenstudio::ObjectId objectId, harkenstudio::ObjectId busId);
+void runtimeUnregisterSoundObject(harken::studio::types::ObjectId objectId);
+void runtimeSetObjectOutputBus(harken::studio::types::ObjectId objectId, harken::studio::types::ObjectId busId);
 void runtimeClearSoundNames();
-void runtimeRegisterActionName(const QString& name, harkenstudio::ObjectId actionId);
-void runtimeUnregisterActionName(harkenstudio::ObjectId actionId);
+void runtimeRegisterActionName(const QString& name, harken::studio::types::ObjectId actionId);
+void runtimeUnregisterActionName(harken::studio::types::ObjectId actionId);
 void runtimeClearActionNames();
 
-bool runtimeLoadPack(const QString& path, EngineResult* outResult = nullptr);
+bool runtimeLoadCanonicalPack(const QString& path, const QByteArray& bytes,
+                              uint64_t packStableId, uint32_t packKind,
+                              EngineResult* outResult = nullptr);
 bool runtimeUnloadPack(const QString& path, EngineResult* outResult = nullptr);
 uint32_t runtimeLoadedPackCount();
 QStringList runtimeLoadedPackPaths();
 
-harkenstudio::ObjectId runtimeMintRawPcmSoundId();
-EngineResult runtimeRegisterRawPcmSlice(harkenstudio::ObjectId soundId,
+harken::studio::types::ObjectId runtimeMintRawPcmSoundId();
+EngineResult runtimeRegisterRawPcmSlice(harken::studio::types::ObjectId soundId,
                                         const QString& absolutePath,
                                         uint64_t startFrame,
                                         uint64_t frameCount,
@@ -86,12 +88,12 @@ EngineResult runtimeRegisterRawPcmSlice(harkenstudio::ObjectId soundId,
                                         uint32_t* outSampleRate = nullptr,
                                         uint64_t* outWindowStartFrame = nullptr,
                                         uint64_t* outWindowFrameCount = nullptr);
-EngineResult runtimeRegisterRawPcmSlice(harkenstudio::ObjectId soundId,
+EngineResult runtimeRegisterRawPcmSlice(harken::studio::types::ObjectId soundId,
                                         std::vector<float> interleaved,
                                         int channels, int sampleRate,
                                         uint64_t startFrame, uint64_t frameCount,
                                         bool loops);
-EngineResult runtimeRelocateRawPcmSlice(harkenstudio::ObjectId soundId,
+EngineResult runtimeRelocateRawPcmSlice(harken::studio::types::ObjectId soundId,
                                         uint64_t startFrame,
                                         uint64_t* outStartFrame = nullptr,
                                         uint64_t* outFrameCount = nullptr,
@@ -100,12 +102,12 @@ EngineResult runtimeRelocateRawPcmSlice(harkenstudio::ObjectId soundId,
                                         uint64_t* outWindowStartFrame = nullptr,
                                         uint64_t* outWindowFrameCount = nullptr,
                                         bool* outLoops = nullptr);
-EngineResult runtimeUnregisterRawPcm(harkenstudio::ObjectId soundId);
-uint64_t runtimePlayRawPcm(harkenstudio::ObjectId soundId, bool loops,
+EngineResult runtimeUnregisterRawPcm(harken::studio::types::ObjectId soundId);
+uint64_t runtimePlayRawPcm(harken::studio::types::ObjectId soundId, bool loops,
                            EngineResult* outResult = nullptr);
 bool runtimeStopRawPcm(uint64_t playbackHandle, uint32_t fadeMs = 0);
 
-bool runtimeHasActionProgram(harkenstudio::ObjectId actionId);
+bool runtimeHasActionProgram(harken::studio::types::ObjectId actionId);
 uint64_t runtimePlayByName(const QString& name, bool spatialized,
                            float x, float y, float z,
                            EngineResult* outResult = nullptr,
@@ -126,11 +128,11 @@ EngineResult runtimeSetPreviewVoiceEffectChain(uint64_t voiceInstance,
     const std::vector<PreviewVoiceEffectEntry>& chain);
 EngineResult runtimeRefreshPreviewVoiceBindings(uint64_t voiceInstance);
 EngineResult runtimeSetPreviewVoiceProperty(uint64_t voiceInstance, uint8_t property,
-    float value, harkenstudio::ObjectId sendBusId = {});
-EngineResult runtimeSetPreviewVoiceEffect(uint64_t voiceInstance, harkenstudio::ObjectId effectId,
+    float value, harken::studio::types::ObjectId sendBusId = {});
+EngineResult runtimeSetPreviewVoiceEffect(uint64_t voiceInstance, harken::studio::types::ObjectId effectId,
     uint32_t effectType, const std::vector<float>& parameters, bool bypass);
-EngineResult runtimeSetPreviewBusEffect(uint64_t ownerId, harkenstudio::ObjectId busId,
-    harkenstudio::ObjectId effectId, uint32_t effectType,
+EngineResult runtimeSetPreviewBusEffect(uint64_t ownerId, harken::studio::types::ObjectId busId,
+    harken::studio::types::ObjectId effectId, uint32_t effectType,
     const std::vector<float>& parameters, bool bypass);
 void runtimePumpNullMixer(std::uint32_t blockCount);
 void runtimeSetVoicePitchByName(const QString& name, float cents);
@@ -139,15 +141,15 @@ void runtimeSetVoiceOutputVolumeByName(const QString& name, float volumeDb);
 void runtimeSetVoiceSpatMixByName(const QString& name, float mix);
 void runtimeSetVoiceDistanceScaleByName(const QString& name, float scale);
 void runtimeSetVoiceSendsByName(const QString& name,
-                                const std::vector<std::pair<harkenstudio::ObjectId, float>>& sends);
+                                const std::vector<std::pair<harken::studio::types::ObjectId, float>>& sends);
 bool runtimeSetPlaybackPosition(uint64_t handle, float x, float y, float z);
 bool runtimeOwnsPlayback(uint64_t handle);
 
 bool runtimeCurrentWorldBusAdmissionIsOpen(uint64_t worldGeneration);
-EngineResult runtimeSetBusMute(harkenstudio::ObjectId busId, bool mute, uint32_t fadeMs);
-EngineResult runtimeSetBusSolo(harkenstudio::ObjectId busId, bool solo, uint32_t fadeMs);
-EngineResult runtimeSetBusOutputVolume(harkenstudio::ObjectId busId, float db, uint32_t fadeMs);
+EngineResult runtimeSetBusMute(harken::studio::types::ObjectId busId, bool mute, uint32_t fadeMs);
+EngineResult runtimeSetBusSolo(harken::studio::types::ObjectId busId, bool solo, uint32_t fadeMs);
+EngineResult runtimeSetBusOutputVolume(harken::studio::types::ObjectId busId, float db, uint32_t fadeMs);
 
 } // namespace Detail
-} // namespace Bridge
-} // namespace HarkenEditor
+} // namespace bridge
+} // namespace harken::studio

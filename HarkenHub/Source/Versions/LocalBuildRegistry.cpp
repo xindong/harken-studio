@@ -3,8 +3,7 @@
 #include "Packaging/PackageReader.h"
 #include "Platform/AtomicFile.h"
 #include "Platform/PlatformPaths.h"
-#include "Versions/SelfTestRunner.h"
-#include "Versions/StudioCapabilities.h"
+#include "Versions/StudioInterface.h"
 
 #include <QCryptographicHash>
 #include <QDir>
@@ -15,14 +14,18 @@
 #include <QJsonObject>
 #include <QMutex>
 #include <QMutexLocker>
+#include <QLockFile>
+#include <QDeadlineTimer>
+#include <QThread>
 
 #include <algorithm>
 
-namespace VNH {
+namespace harken::hub {
 
 namespace {
 
 QMutex registryMutex;
+QMutex registryIoMutex;
 
 QString normalizedPath(const QString& path)
 {
@@ -44,13 +47,11 @@ QJsonObject toJson(const LocalBuildRecord& record)
     object[QStringLiteral("reportedBuildId")] = record.reportedBuildId;
     object[QStringLiteral("version")] = record.semanticVersion;
     object[QStringLiteral("channel")] = record.channel;
-    object[QStringLiteral("buildType")] = record.buildType;
     object[QStringLiteral("lastProbeError")] = record.lastProbeError;
     object[QStringLiteral("executableFingerprint")] = record.executableFingerprint;
     object[QStringLiteral("executableSize")] = record.executableSize;
     object[QStringLiteral("executableModifiedMs")] =
         record.executableModifiedMs;
-    object[QStringLiteral("capabilitiesVersion")] = record.capabilitiesVersion;
     object[QStringLiteral("releaseSequence")] = record.releaseSequence;
     return object;
 }
@@ -64,15 +65,12 @@ LocalBuildRecord fromJson(const QJsonObject& object)
         object[QStringLiteral("reportedBuildId")].toString();
     record.semanticVersion = object[QStringLiteral("version")].toString();
     record.channel = object[QStringLiteral("channel")].toString();
-    record.buildType = object[QStringLiteral("buildType")].toString();
     record.lastProbeError = object[QStringLiteral("lastProbeError")].toString();
     record.executableFingerprint = object[QStringLiteral("executableFingerprint")].toString();
     record.executableSize =
         object[QStringLiteral("executableSize")].toInteger(-1);
     record.executableModifiedMs =
         object[QStringLiteral("executableModifiedMs")].toInteger(0);
-    record.capabilitiesVersion =
-        object[QStringLiteral("capabilitiesVersion")].toInt(0);
     record.releaseSequence = object[QStringLiteral("releaseSequence")].toInteger(0);
     return record;
 }
@@ -100,8 +98,7 @@ QString LocalBuildRegistry::fileFingerprint(const QString& executablePath)
 bool LocalBuildRegistry::metadataMatchesFile(const LocalBuildRecord& record)
 {
     const QFileInfo executable(record.executablePath);
-    return (record.capabilitiesVersion == 1 || record.capabilitiesVersion == kStudioCapabilitiesVersion)
-        && !record.executableFingerprint.isEmpty()
+    return !record.executableFingerprint.isEmpty()
         && record.lastProbeError.isEmpty()
         && !record.reportedBuildId.isEmpty() && !record.semanticVersion.isEmpty()
         && executable.exists() && executable.isFile() &&
@@ -123,15 +120,19 @@ bool LocalBuildRegistry::contains(const QString& executablePath,
 
 static std::vector<LocalBuildRecord> loadRecords(QString* error)
 {
+    const QMutexLocker io(&registryIoMutex);
     if (error)
         error->clear();
     QFile file(LocalBuildRegistry::filePath());
     if (!file.exists())
         return {};
-    if (!file.open(QIODevice::ReadOnly)) {
-        if (error)
-            *error = file.errorString();
-        return {};
+    QDeadlineTimer deadline(50);
+    while (!file.open(QIODevice::ReadOnly)) {
+        if (deadline.hasExpired()) {
+            if (error) *error = file.errorString();
+            return {};
+        }
+        QThread::msleep(1);
     }
 
     QJsonParseError parseError;
@@ -160,13 +161,13 @@ static std::vector<LocalBuildRecord> loadRecords(QString* error)
 
 std::vector<LocalBuildRecord> LocalBuildRegistry::load(QString* error)
 {
-    const QMutexLocker lock(&registryMutex);
     return loadRecords(error);
 }
 
 static bool saveRecords(const std::vector<LocalBuildRecord>& records,
                         QString* error)
 {
+    const QMutexLocker io(&registryIoMutex);
     QJsonArray entries;
     for (const auto& record : records)
         entries.append(toJson(record));
@@ -189,32 +190,28 @@ bool LocalBuildRegistry::probe(const QString& executablePath,
     }
 
     const QString fingerprint = fileFingerprint(executablePath);
-    const SelfTestResult result = SelfTestRunner::run(
-        executable.absoluteFilePath(),
-        {QStringLiteral("--self-test"), QStringLiteral("--json")},
-        QString(), 10000);
-    if (!result.ok) {
+    QString identifyError;
+    const auto identity = StudioInterface::identify(executable.absoluteFilePath(), &identifyError);
+    if (!identity) {
         if (error)
-            *error = result.error;
+            *error = identifyError;
         return false;
     }
     if (fingerprint.isEmpty() || fileFingerprint(executablePath) != fingerprint) {
         if (error)
-            *error = QStringLiteral("The executable changed during its self-test. Try again.");
+            *error = QStringLiteral("The executable changed while Hub read its version. Try again.");
         return false;
     }
     if (record) {
         const QFileInfo refreshed(executable.absoluteFilePath());
         record->executablePath = refreshed.absoluteFilePath();
         record->executableFingerprint = fingerprint;
-        record->reportedBuildId = result.reportedBuildId;
-        record->semanticVersion = result.reportedVersion;
-        record->channel = result.channel;
-        record->buildType = result.buildType;
+        record->reportedBuildId = identity->buildId;
+        record->semanticVersion = identity->version;
+        record->channel = identity->channel;
         record->executableSize = refreshed.size();
         record->executableModifiedMs =
             refreshed.lastModified().toMSecsSinceEpoch();
-        record->capabilitiesVersion = result.capabilitiesVersion;
         record->lastProbeError.clear();
     }
     return true;
@@ -223,6 +220,12 @@ bool LocalBuildRegistry::probe(const QString& executablePath,
 bool LocalBuildRegistry::upsert(const LocalBuildRecord& record, QString* error)
 {
     const QMutexLocker lock(&registryMutex);
+    QDir().mkpath(QFileInfo(filePath()).absolutePath());
+    QLockFile processLock(filePath() + QStringLiteral(".lock"));
+    if (!processLock.tryLock(5000)) {
+        if (error) *error = QStringLiteral("The local build registry is busy; try again shortly");
+        return false;
+    }
     QString loadError;
     std::vector<LocalBuildRecord> records = loadRecords(&loadError);
     if (!loadError.isEmpty()) {
@@ -246,6 +249,12 @@ bool LocalBuildRegistry::updateExisting(const LocalBuildRecord& record,
                                         QString* error)
 {
     const QMutexLocker lock(&registryMutex);
+    QDir().mkpath(QFileInfo(filePath()).absolutePath());
+    QLockFile processLock(filePath() + QStringLiteral(".lock"));
+    if (!processLock.tryLock(5000)) {
+        if (error) *error = QStringLiteral("The local build registry is busy; try again shortly");
+        return false;
+    }
     QString loadError;
     std::vector<LocalBuildRecord> records = loadRecords(&loadError);
     if (!loadError.isEmpty()) {
@@ -272,6 +281,12 @@ bool LocalBuildRegistry::requestRecheck(const QString& executablePath,
                                        QString* error)
 {
     const QMutexLocker lock(&registryMutex);
+    QDir().mkpath(QFileInfo(filePath()).absolutePath());
+    QLockFile processLock(filePath() + QStringLiteral(".lock"));
+    if (!processLock.tryLock(5000)) {
+        if (error) *error = QStringLiteral("The local build registry is busy; try again shortly");
+        return false;
+    }
     QString loadError;
     auto records = loadRecords(&loadError);
     if (!loadError.isEmpty()) {
@@ -297,6 +312,12 @@ bool LocalBuildRegistry::requestRecheck(const QString& executablePath,
 bool LocalBuildRegistry::remove(const QString& executablePath, QString* error)
 {
     const QMutexLocker lock(&registryMutex);
+    QDir().mkpath(QFileInfo(filePath()).absolutePath());
+    QLockFile processLock(filePath() + QStringLiteral(".lock"));
+    if (!processLock.tryLock(5000)) {
+        if (error) *error = QStringLiteral("The local build registry is busy; try again shortly");
+        return false;
+    }
     QString loadError;
     std::vector<LocalBuildRecord> records = loadRecords(&loadError);
     if (!loadError.isEmpty()) {

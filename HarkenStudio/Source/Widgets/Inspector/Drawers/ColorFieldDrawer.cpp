@@ -10,7 +10,7 @@
 #include <QPushButton>
 #include <QVariant>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 

@@ -9,7 +9,7 @@
 #include <algorithm>
 #include <limits>
 
-namespace VNX {
+namespace harken::studio {
 
 
 QString VQLEvaluator::typeToString(int type)

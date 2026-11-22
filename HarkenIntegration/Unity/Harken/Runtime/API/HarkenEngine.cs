@@ -1,3 +1,6 @@
+#if HARKEN_NATIVE_DEVELOPMENT || (!HARKEN_NATIVE_RELEASE && (UNITY_EDITOR || DEVELOPMENT_BUILD))
+#define HARKEN_ENGINE_DEV
+#endif
 using System;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -18,8 +21,10 @@ namespace Harken
     public static class HarkenEngine
     {
         private static int updateDepth;
+        internal static uint NativeAbiMinor { get; private set; }
         internal static bool IsUpdating => updateDepth != 0;
         internal static event Action OutermostUpdateReturned;
+        internal static event Action Initialized;
 
         /// <summary>
         /// A <see cref="VnConfig"/> with <c>structSize</c> preset to the current
@@ -40,12 +45,64 @@ namespace Harken
         public static VnResult QueryRuntimeFault(out RuntimeFaultInfo info)
             => RuntimeFaultDiagnostics.Query(out info);
 
-        public static VnResult Init(in VnConfig config)
+        internal static bool TryGetAbi(out VnAbiVersionInfo abi)
         {
+            abi = default;
+            abi.structSize = (uint)Marshal.SizeOf<VnAbiVersionInfo>();
+            try
+            {
+                return HarkenNative.Vn_QueryAbiVersion(ref abi) == VnResult.VN_OK &&
+                    abi.major == VnConstants.VN_ABI_VERSION_MAJOR;
+            }
+            catch (EntryPointNotFoundException) { return false; }
+        }
+
+        internal static ulong BeginOutputPreparation(in VnConfig config)
+        {
+#if UNITY_STANDALONE_WIN && !UNITY_EDITOR
+            try
+            {
+                if (TryGetAbi(out var abi) && abi.minor >= 5 &&
+                    HarkenNative.Vn_BeginOutputPreparation(config, out ulong ticket) == VnResult.VN_OK)
+                    return ticket;
+            }
+            catch (DllNotFoundException) { }
+            catch (EntryPointNotFoundException) { }
+            catch (BadImageFormatException) { }
+#endif
+            return 0;
+        }
+
+        internal static void CancelOutputPreparation(ulong ticket)
+        {
+#if UNITY_STANDALONE_WIN && !UNITY_EDITOR
+            if (ticket != 0) HarkenNative.Vn_CancelOutputPreparation(ticket);
+#endif
+        }
+
+        public static VnResult Init(in VnConfig config) => Init(config, 0);
+
+        internal static VnResult Init(in VnConfig config, ulong ticket)
+        {
+            if (!TryGetAbi(out var abi)) return VnResult.VN_CAPABILITY_UNAVAILABLE;
             VnResult support = Emitter.CheckStateOnlySupport();
             if (support != VnResult.VN_OK) return support;
-            VnResult result = HarkenNative.Vn_Init(config);
-            if (result == VnResult.VN_OK) VariableGameplay.NotifySessionChanged();
+            VnResult result;
+#if UNITY_STANDALONE_WIN && !UNITY_EDITOR
+            if (ticket != 0)
+            {
+                result = HarkenNative.Vn_InitWithOutputPreparation(config, ticket);
+                if (result == VnResult.VN_INVALID_CONFIG &&
+                    HarkenNative.Vn_CancelOutputPreparation(ticket) == VnResult.VN_OK)
+                    result = HarkenNative.Vn_Init(config);
+            }
+            else
+#endif
+                result = HarkenNative.Vn_Init(config);
+            if (result != VnResult.VN_OK) return result;
+            NativeAbiMinor = abi.minor;
+            VariableGameplay.NotifySessionChanged();
+            Initialized?.Invoke();
             return result;
         }
 
@@ -62,12 +119,19 @@ namespace Harken
         public static VnResult Resume() => HarkenNative.Vn_Resume();
 
         /// <summary>
+        /// Silences or restores the platform device output for the host, such as
+        /// an editor mute toggle. Mixing, metering and audio time are unaffected.
+        /// </summary>
+        public static VnResult SetHostOutputMute(uint mute01, uint fadeMs)
+            => HarkenNative.Vn_SetHostOutputMute(mute01, fadeMs);
+
+#if HARKEN_ENGINE_DEV
+        /// <summary>
         /// Explicitly enables optional communication for the initialized host.
         /// Call on the externally synchronized engine thread. Failure leaves
         /// audio running; the host may retry without creating another session.
         /// </summary>
         public static VnResult StartRemoteCommunication(
-            // string applicationName, string bindAddress = "0.0.0.0", int port = 0,
             string applicationName, string bindAddress = "127.0.0.1", int port = 0,
             bool enableDiscovery = true, int discoveryPort = 0, string projectName = null)
             => RemoteCommunication.Start(applicationName, bindAddress, port,
@@ -79,11 +143,16 @@ namespace Harken
         /// <summary>Reads communication state, including the last startup failure.</summary>
         public static VnResult QueryRemoteCommunication(out VnRemoteStatus status)
             => RemoteCommunication.GetStatus(out status);
+#endif
 
         public static VnResult Term()
         {
             VnResult result = HarkenNative.Vn_Term();
-            if (result == VnResult.VN_OK) VariableGameplay.NotifySessionChanged();
+            if (result == VnResult.VN_OK)
+            {
+                NameTable.Clear();
+                VariableGameplay.NotifySessionChanged();
+            }
             return result;
         }
 
@@ -103,59 +172,6 @@ namespace Harken
             }
         }
 
-        /// <summary>A <see cref="VnSnapshot"/> with <c>structSize</c> preset; pass
-        /// by ref to <see cref="Capture"/>.</summary>
-        internal static VnSnapshot DefaultSnapshot()
-        {
-            VnSnapshot s = default;
-            s.structSize = (uint)Marshal.SizeOf<VnSnapshot>();
-            return s;
-        }
-
-        internal static VnResult Capture(ref VnSnapshot snapshot)
-            => HarkenNative.Vn_CaptureSnapshot(ref snapshot);
-
-        /// <summary>
-        /// Applies one complete owner-scoped Bus and Send snapshot. The arrays
-        /// are pinned only for the native call and are safe for Mono and IL2CPP.
-        /// Retry the same revision after <see cref="VnResult.VN_BACKPRESSURE"/>.
-        /// </summary>
-        internal static unsafe VnResult ApplyBusTopology(
-            ulong ownerId, ulong baseRevision, ulong revision,
-            VnBusTopologyBus[] buses, VnBusTopologySend[] sends)
-        {
-            buses = buses ?? System.Array.Empty<VnBusTopologyBus>();
-            sends = sends ?? System.Array.Empty<VnBusTopologySend>();
-            uint busSize = (uint)Marshal.SizeOf<VnBusTopologyBus>();
-            uint sendSize = (uint)Marshal.SizeOf<VnBusTopologySend>();
-            for (int i = 0; i < buses.Length; ++i)
-                buses[i].structSize = busSize;
-            for (int i = 0; i < sends.Length; ++i)
-                sends[i].structSize = sendSize;
-
-            fixed (VnBusTopologyBus* busRows = buses)
-            fixed (VnBusTopologySend* sendRows = sends)
-            {
-                VnBusTopologyDesc topology = default;
-                topology.structSize =
-                    (uint)Marshal.SizeOf<VnBusTopologyDesc>();
-                topology.ownerId = ownerId;
-                topology.baseRevision = baseRevision;
-                topology.revision = revision;
-                topology.busCount = (uint)buses.Length;
-                topology.busStructSize = busSize;
-                topology.buses = (System.IntPtr)busRows;
-                topology.sendCount = (uint)sends.Length;
-                topology.sendStructSize = sendSize;
-                topology.sends = (System.IntPtr)sendRows;
-                return HarkenNative.Vn_ApplyBusTopology(topology);
-            }
-        }
-
-        /// <summary>Creates a bus under an existing parent.</summary>
-        internal static VnResult CreateBus(VnObjectId busId, VnObjectId parentId)
-            => HarkenNative.Vn_CreateBus(busId, parentId);
-
         /// <summary>Sets a bus volume (hot-path-safe: blittable args, no allocation).</summary>
         public static VnResult SetBusVolume(VnObjectId busId, float volumeDb, uint rampMs)
             => HarkenNative.Vn_SetBusVolume(busId, volumeDb, rampMs);
@@ -164,38 +180,8 @@ namespace Harken
         public static VnResult SetBusOutputVolume(VnObjectId busId, float volumeDb, uint rampMs)
             => HarkenNative.Vn_SetBusOutputVolume(busId, volumeDb, rampMs);
 
-        /// <summary>Sets a bus mix-wide lowpass (0) or highpass (1) filter.</summary>
-        internal static VnResult SetBusFilter(VnObjectId busId, uint filterKind,
-            float cutoffHz, float q, uint enable01, uint rampMs)
-            => HarkenNative.Vn_SetBusFilter(busId, filterKind, cutoffHz, q,
-                enable01, rampMs);
-
-        /// <summary>Sets a bus Direct/output-only lowpass (0) or highpass (1).</summary>
-        internal static VnResult SetBusOutputFilter(VnObjectId busId, uint filterKind,
-            float cutoffHz, float q, uint enable01, uint rampMs)
-            => HarkenNative.Vn_SetBusOutputFilter(busId, filterKind, cutoffHz, q,
-                enable01, rampMs);
-
-        /// <summary>Sets a live voice's lowpass (0) or highpass (1) tone filter.</summary>
-        internal static VnResult SetVoiceFilter(ulong handle, uint filterKind,
-            float cutoffHz, float q, uint enable01, uint rampMs)
-            => HarkenNative.Vn_SetVoiceFilter(handle, filterKind, cutoffHz, q,
-                enable01, rampMs);
-
         /// <summary>Mutes or unmutes a bus; composes with (never overwrites) its volume state.</summary>
         public static VnResult SetBusMute(VnObjectId busId, uint mute01, uint fadeMs)
             => HarkenNative.Vn_SetBusMute(busId, mute01, fadeMs);
-
-        /// <summary>Solos or unsolos a bus (tree-path audibility scoping).</summary>
-        internal static VnResult SetBusSolo(VnObjectId busId, uint solo01, uint fadeMs)
-            => HarkenNative.Vn_SetBusSolo(busId, solo01, fadeMs);
-
-        /// <summary>Moves a live bus (with its subtree) under a new parent, atomically at a block boundary.</summary>
-        internal static VnResult ReparentBus(VnObjectId busId, VnObjectId newParentId)
-            => HarkenNative.Vn_ReparentBus(busId, newParentId);
-
-        /// <summary>Destroys a bus and its whole subtree; routed voices migrate to the surviving parent.</summary>
-        internal static VnResult DestroyBus(VnObjectId busId)
-            => HarkenNative.Vn_DestroyBus(busId);
     }
 }

@@ -6,7 +6,7 @@
 #include "Core/ItemTypeCatalog.h"
 #include "Widgets/ProjectTree/ProjectTreePanel.h"
 
-namespace VNX {
+namespace harken::studio {
 
 class Hierarchy : public ProjectTreePanel
 {

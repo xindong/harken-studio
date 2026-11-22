@@ -30,6 +30,7 @@
 #include "Core/Components/VEffect.h"
 #include "Core/Components/VAudio.h"
 #include "Core/Components/VBus.h"
+#include "Core/Components/VConversion.h"
 #include "Core/Components/VMixNode.h"
 #include "Core/Components/VSelection.h"
 #include "Core/Components/VSound.h"
@@ -72,7 +73,7 @@
 #include <set>
 #include <stdexcept>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 
@@ -371,7 +372,7 @@ std::optional<QJsonValue> editorWireValue(
     if (authoredId == 0) return QJsonValue(objectIdString({}));
     ProjectItem* item = ProjectManager::instance().findItemByObjectID(
         static_cast<uint32_t>(authoredId));
-    if (!item || harkenstudio::IsNull(item->runtimeId())
+    if (!item || harken::studio::types::IsNull(item->runtimeId())
         || !itemMatchesReferenceRole(*item, field.referenceRole)
         || ProjectManager::instance().findItemByRuntimeStableId(
                item->runtimeId()) != item)
@@ -384,9 +385,9 @@ std::optional<QVariant> editorValue(
 {
     if (!objectReferenceRole(field.referenceRole)) return value.toVariant();
     if (!value.isString()) return std::nullopt;
-    harkenstudio::ObjectId stableId{};
+    harken::studio::types::ObjectId stableId{};
     if (!parseObjectIdJson(value, &stableId)) return std::nullopt;
-    if (harkenstudio::IsNull(stableId)) return QVariant::fromValue(static_cast<uint32_t>(0));
+    if (harken::studio::types::IsNull(stableId)) return QVariant::fromValue(static_cast<uint32_t>(0));
     ProjectItem* item = ProjectManager::instance().findItemByRuntimeStableId(stableId);
     if (!item || !itemMatchesReferenceRole(*item, field.referenceRole))
         return QVariant(value.toString());
@@ -399,9 +400,9 @@ QVariant playableBaseEditorValue(ProjectItem& owner,
 {
     if (PlayablePropertyAuthoringV1::isComponentStored(property.id)) {
         if (const auto* project = ProjectManager::instance().currentProject()) {
-            const auto index = HarkenEditor::Bridge::canonicalRuntimeProjectSourceIndex(*project);
+            const auto index = harken::studio::bridge::canonicalRuntimeProjectSourceIndex(*project);
             if (index && index->valid)
-                return HarkenEditor::Bridge::resolvedStudioSpatializationMix(owner, *index);
+                return harken::studio::bridge::resolvedStudioSpatializationMix(owner, *index);
         }
         const auto source = PlayablePropertyAuthoringV1::resolveSpatializationMix(owner);
         return source ? source->state.value.toVariant() : QVariant(1.0f);
@@ -484,6 +485,8 @@ void PropertyEditorEngine::releasePage()
     sectionBindings_.clear();
     groupBindings_.clear();
     groupPreviews_.clear();
+    conversionSelection_.clear();
+    conversionViews_.clear();
 }
 
 std::optional<PlayablePropertyLocatorV1>
@@ -1539,6 +1542,7 @@ IComponent* PropertyEditorEngine::resolveComponentTyped(ProjectItem* item, Compo
         case ComponentType::Track:       return item->comp<VTrack>();
         case ComponentType::Segment:       return item->comp<VSegment>();
         case ComponentType::Sound:       return item->comp<VSound>();
+        case ComponentType::Conversion:  return item->comp<VConversion>();
         default:                         return nullptr;
     }
 }
@@ -1609,6 +1613,7 @@ void PropertyEditorEngine::bindItem(ProjectItem* item)
 {
     cancelGroupEdits(item == currentItem_);
     ProjectItem* previousItem = currentItem_;
+    if (item != previousItem) conversionSelection_.clear();
     for (auto& binding : bindings_)
     {
         if (binding.parameterBinding && binding.parameterBinding->isEditing())
@@ -1808,6 +1813,10 @@ bool PropertyEditorEngine::playablePropertyEventRelated(
 {
     if (owner && currentItem_
         && (field == QLatin1String("fieldGroups") || fieldGroup(field))) {
+        for (const auto& guid : conversionSelection_)
+            for (auto* ancestor = ProjectManager::instance().findItemByGuid(guid);
+                 ancestor; ancestor = ancestor->parent)
+                if (ancestor == owner) return true;
         for (auto* ancestor = currentItem_; ancestor; ancestor = ancestor->parent)
             if (ancestor == owner) return true;
         return false;
@@ -1818,7 +1827,7 @@ bool PropertyEditorEngine::playablePropertyEventRelated(
     if (PlayablePropertyAuthoringV1::isComponentStored(property->id)) {
         const auto* project = ProjectManager::instance().currentProject();
         if (!project) return owner == currentItem_;
-        const auto index = HarkenEditor::Bridge::canonicalRuntimeProjectSourceIndex(*project);
+        const auto index = harken::studio::bridge::canonicalRuntimeProjectSourceIndex(*project);
         if (!index || !index->valid) return false;
         for (auto* ancestor = currentItem_; ancestor;) {
             if (ancestor == owner) return true;

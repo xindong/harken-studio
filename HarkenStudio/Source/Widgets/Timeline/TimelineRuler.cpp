@@ -24,7 +24,7 @@
 
 #include <algorithm>
 
-namespace VNX {
+namespace harken::studio {
 
 TimelineRuler::TimelineRuler(TimelineEditorPanel* panel, QWidget* parent)
     : QWidget(parent)

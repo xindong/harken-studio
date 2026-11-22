@@ -12,7 +12,7 @@ class QPushButton;
 class QShowEvent;
 class QSpinBox;
 
-namespace VNX {
+namespace harken::studio {
 
 class OpenAICompatibleLLMProvider;
 

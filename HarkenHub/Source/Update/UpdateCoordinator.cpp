@@ -5,6 +5,7 @@
 #include "Platform/PlatformPaths.h"
 #include "Transactions/HandoffArea.h"
 #include "Transactions/InstallIndex.h"
+#include "Transactions/InstallExecutor.h"
 #include "Transactions/InstallRequest.h"
 #include "Update/BridgeDispatcher.h"
 #include "Update/ServerEndpoints.h"
@@ -18,7 +19,7 @@
 #include <QRegularExpression>
 #include <QStorageInfo>
 
-namespace VNH {
+namespace harken::hub {
 
 namespace {
 
@@ -89,10 +90,11 @@ void UpdateCoordinator::configure(const Options& options)
 bool UpdateCoordinator::start(const Options& options)
 {
     configure(options);
+    reconcileElevation(QDateTime::currentDateTimeUtc());
 
     UpdateChecker::Options checkerOptions;
     QList<QUrl> manifestUrls = ServerEndpoints::manifestUrls(
-        options_.serverBaseUrl, kServerProduct, ServerEndpoints::hostChannel());
+        options_.serverBaseUrl, kServerProduct);
     checkerOptions.latestUrl = manifestUrls.takeFirst();
     checkerOptions.fallbackUrls = manifestUrls;
     checkerOptions.trustedHttpOrigin = options_.serverBaseUrl;
@@ -105,7 +107,7 @@ bool UpdateCoordinator::start(const Options& options)
     if (started_) {
         const UpdateStateRecord existing = UpdateStateStore::load(kProduct);
         if (existing.found &&
-            existing.state == QStringLiteral("AwaitingBridge"))
+            (existing.state == QStringLiteral("AwaitingBridge") || existing.state == QStringLiteral("AwaitingElevation")))
             startBridgePoll();
         else if (existing.found &&
                  existing.state == QStringLiteral("Verified"))
@@ -142,14 +144,37 @@ void UpdateCoordinator::setAutomaticDownloadEnabled(bool enabled)
     }
 }
 
+#ifdef HARKEN_HUB_TEST_OVERRIDES
 bool UpdateCoordinator::isDownloading() const
 {
     return downloading_;
 }
+#endif
 
 UpdateStateRecord UpdateCoordinator::currentState() const
 {
     return UpdateStateStore::load(kProduct);
+}
+
+void UpdateCoordinator::reconcileElevation(const QDateTime& now)
+{
+    const auto pending = UpdateStateStore::load(kProduct);
+    if (pending.state != QStringLiteral("AwaitingElevation") || !HandoffArea::isValidTransactionId(pending.transactionId)) return;
+    const auto lease = DownloadLease::acquire(pending.downloadPath);
+    if (!lease || InstallExecutor::isTransactionActive()) return;
+    if (!HandoffArea::discard(pending.transactionId) || InstallExecutor::isTransactionActive()) return;
+    const auto index = InstallIndex::snapshot();
+    if (!index.ok) return;
+    for (const auto& record : index.records)
+        if (record.buildId == pending.buildId && record.healthState == QStringLiteral("Installed")) {
+            UpdateStateStore::clear(pending);
+            return;
+        }
+    auto failed = pending;
+    failed.state = QStringLiteral("InstallFailed");
+    failed.failureCode = QStringLiteral("InstallInterrupted");
+    failed.failureDetail = QStringLiteral("The installer stopped before completing. Review the downloaded update before retrying.");
+    UpdateStateStore::replace(pending, failed, now);
 }
 
 bool UpdateCoordinator::isBuildInstalled(const QString& buildId) const
@@ -236,7 +261,12 @@ void UpdateCoordinator::handleCheckResult(const UpdateCheckResult& result,
         return;
     if (!isSafeFileToken(manifest.buildId) || !isSafeFileToken(manifest.version))
         return;
+    reconcileElevation(now);
     const UpdateStateRecord observed = UpdateStateStore::load(kProduct);
+    if (observed.state == QStringLiteral("AwaitingElevation")) {
+        if (!bridgePollTimer_.isActive()) startBridgePoll();
+        return;
+    }
     if (observed.found && manifest.releaseSequence >= 0 &&
         observed.releaseSequence >= 0 &&
         (manifest.releaseSequence < observed.releaseSequence ||
@@ -570,8 +600,10 @@ void UpdateCoordinator::pollBridgeOutcome()
 {
     bridgePollElapsedMs_ += options_.bridgePollIntervalMs;
     const QDateTime now = QDateTime::currentDateTimeUtc();
+    reconcileElevation(now);
 
     UpdateStateRecord record = UpdateStateStore::load(kProduct);
+    if (record.state == QStringLiteral("AwaitingElevation")) return;
     auto expected = record;
     if (!record.found || record.state != QStringLiteral("AwaitingBridge")) {
         bridgePollTimer_.stop();

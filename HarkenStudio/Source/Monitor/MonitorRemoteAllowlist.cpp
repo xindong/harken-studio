@@ -2,7 +2,7 @@
 
 #include <cstring>
 
-namespace VNX {
+namespace harken::studio {
 namespace Monitor {
 namespace {
 
@@ -13,7 +13,6 @@ const MonitorRemoteAllowlistEntry kObserveAllowlist[] = {
     {"Vn_MonitorGetCaptureControlStatus", true},
     {"Vn_MonitorGetEffectiveCapturePlan", true},
     {"Vn_MonitorGetConsumerStatus", true},
-    {"Vn_MonitorGetRecordingStatus", true},
     {"Vn_MonitorCaptureRegistry", true},
     {"Vn_MonitorPoll", true},
 };
@@ -24,8 +23,6 @@ const char* kMutationNames[] = {
     "Vn_MonitorValidateCapturePlan",
     "Vn_MonitorApplyCapturePlan",
     "Vn_MonitorStopCapture",
-    "Vn_MonitorStartRecording",
-    "Vn_MonitorStopRecording",
     "Vn_MonitorOpenSession",
     "Vn_MonitorCloseSession",
     "Vn_MonitorRequestStateCut",
@@ -83,4 +80,4 @@ std::vector<std::string> productionObserveAllowlistNames()
 }
 
 } // namespace Monitor
-} // namespace VNX
+} // namespace harken::studio

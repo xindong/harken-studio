@@ -7,7 +7,7 @@
 #include <optional>
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 namespace Monitor {
 
 enum class BusCellState
@@ -30,9 +30,9 @@ struct BusMonitorRow
 {
     std::uint64_t instanceHandle = 0;
     std::uint64_t instanceGeneration = 0;
-    harkenstudio::ObjectId stableId = {};
+    harken::studio::types::ObjectId stableId = {};
     std::uint64_t executeFrame = 0;
-    harkenstudio::ObjectId routeBusId{};
+    harken::studio::types::ObjectId routeBusId{};
     bool parentPublished = false;
     std::uint32_t mute01 = 0;
     bool mutePublished = false;
@@ -60,4 +60,4 @@ BusMonitorProjection projectBusRows(
     std::optional<std::int64_t> executeFrame);
 
 } // namespace Monitor
-} // namespace VNX
+} // namespace harken::studio

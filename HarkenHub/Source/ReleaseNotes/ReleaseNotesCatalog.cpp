@@ -6,7 +6,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 
-namespace VNH {
+namespace harken::hub {
 
 namespace {
 

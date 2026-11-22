@@ -11,14 +11,14 @@
 #include <QTemporaryDir>
 #include <map>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 const QStringList& managedBuckets()
 {
     static const QStringList buckets{QStringLiteral("Actions"), QStringLiteral("Layers"),
         QStringLiteral("Attenuations"), QStringLiteral("Variables"), QStringLiteral("Busses"),
-        QStringLiteral("Effects")};
+        QStringLiteral("Effects"), QStringLiteral("Conversions")};
     return buckets;
 }
 

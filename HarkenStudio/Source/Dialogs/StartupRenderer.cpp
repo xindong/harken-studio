@@ -10,6 +10,7 @@
 #include <QOpenGLVertexArrayObject>
 #include <QPainter>
 #include <QThread>
+#include <QTimer>
 #include <QVector2D>
 #include <QVector3D>
 #include <QVector4D>
@@ -170,7 +171,7 @@ void drawLogo(QOpenGLPaintDevice& device, const QImage& logo, qreal time,
 
 }
 
-namespace VNX {
+namespace harken::studio {
 
 StartupRenderer::StartupRenderer(ThemeSnapshotPtr theme)
     : theme_(std::move(theme))
@@ -193,24 +194,56 @@ StartupRenderer::~StartupRenderer()
 {
     stop();
 }
+struct StartupRenderer::Frame
+{
+    QOpenGLContext context;
+    QOpenGLShaderProgram waveProgram;
+    QOpenGLShaderProgram ditherProgram;
+    QOpenGLVertexArrayObject vao;
+    std::unique_ptr<QOpenGLFramebufferObject> field;
+    QOpenGLFramebufferObjectFormat fieldFormat;
+    QImage logo;
+    QElapsedTimer clock;
+    QTimer timer;
+    bool initialized = false;
+    bool failed = false;
+};
 
 void StartupRenderer::start()
 {
-    if (thread_)
+    if (running_.load(std::memory_order_acquire))
         return;
     initialFramePresented_.store(false, std::memory_order_release);
+    if (!frame_) {
+        frame_ = std::make_unique<Frame>();
+        frame_->timer.setInterval(16);
+        connect(&frame_->timer, &QTimer::timeout, this, [this]() { renderFrame(); });
+    }
+    threadId_.store(reinterpret_cast<quintptr>(QThread::currentThreadId()),
+                    std::memory_order_release);
     running_.store(true, std::memory_order_release);
-    thread_ = QThread::create([this]() { renderLoop(); });
-    thread_->start();
+    // Present the first frame synchronously: startup work is queued on the next
+    // event loop turn and would otherwise run before anything is on screen.
+    if (exposed_.load(std::memory_order_acquire))
+        renderFrame();
+    if (running_.load(std::memory_order_acquire) && !frame_->timer.isActive())
+        frame_->timer.start();
 }
 
 void StartupRenderer::stop()
 {
     running_.store(false, std::memory_order_release);
-    if (thread_) {
-        thread_->wait();
-        delete thread_;
-        thread_ = nullptr;
+    if (frame_) {
+        frame_->timer.stop();
+        if (frame_->initialized && frame_->context.isValid()) {
+            frame_->context.makeCurrent(window_);
+            frame_->field.reset();
+            frame_->vao.destroy();
+            frame_->ditherProgram.removeAllShaders();
+            frame_->waveProgram.removeAllShaders();
+            frame_->context.doneCurrent();
+        }
+        frame_.reset();
     }
     threadId_.store(0, std::memory_order_release);
 }
@@ -231,134 +264,131 @@ void StartupRenderer::setExposed(bool exposed)
     exposed_.store(exposed, std::memory_order_release);
 }
 
-void StartupRenderer::renderLoop()
+void StartupRenderer::renderFrame()
 {
-    threadId_.store(reinterpret_cast<quintptr>(QThread::currentThreadId()),
-                    std::memory_order_release);
-
-    QOpenGLContext context;
-    context.setFormat(format_);
-    if (!context.create() || !context.makeCurrent(window_)) {
-        qWarning() << "Startup renderer could not create an OpenGL context";
-        running_.store(false, std::memory_order_release);
-        threadId_.store(0, std::memory_order_release);
-        emit initializationFailed();
+    if (!running_.load(std::memory_order_acquire))
         return;
-    }
-
-    QOpenGLFunctions* functions = context.functions();
-    functions->initializeOpenGLFunctions();
-    functions->glDisable(GL_DEPTH_TEST);
-    functions->glDisable(GL_BLEND);
-
-    QOpenGLShaderProgram waveProgram;
-    QOpenGLShaderProgram ditherProgram;
-    if (!waveProgram.addShaderFromSourceCode(QOpenGLShader::Vertex, kVertexShader)
-        || !waveProgram.addShaderFromSourceCode(QOpenGLShader::Fragment, kWaveFragmentShader)
-        || !waveProgram.link()
-        || !ditherProgram.addShaderFromSourceCode(QOpenGLShader::Vertex, kVertexShader)
-        || !ditherProgram.addShaderFromSourceCode(QOpenGLShader::Fragment, kDitherFragmentShader)
-        || !ditherProgram.link()) {
-        qWarning().noquote() << "Startup renderer shader initialization failed"
-                             << waveProgram.log() << ditherProgram.log();
-        context.doneCurrent();
-        running_.store(false, std::memory_order_release);
-        threadId_.store(0, std::memory_order_release);
-        emit initializationFailed();
+    Frame& frame = *frame_;
+    if (frame.failed)
         return;
-    }
-    const auto& paletteColors = theme_->domains.startup.wavePalette;
-    QVector4D palette[4];
-    for (int i = 0; i < 4; ++i)
-        palette[i] = QVector4D(paletteColors[i].redF(), paletteColors[i].greenF(),
-                               paletteColors[i].blueF(), paletteColors[i].alphaF());
-    const QColor& background = theme_->ui.colors.bgPrimary;
-    ditherProgram.bind();
-    ditherProgram.setUniformValueArray("uPalette", palette, 4);
-    ditherProgram.setUniformValue("uBackground",
-        QVector3D(background.redF(), background.greenF(), background.blueF()));
-    ditherProgram.release();
 
-    QOpenGLVertexArrayObject vao;
-    vao.create();
-    QOpenGLFramebufferObjectFormat fieldFormat;
-    fieldFormat.setInternalTextureFormat(GL_R16F);
-    std::unique_ptr<QOpenGLFramebufferObject> field;
-    const QImage logoSource(QStringLiteral(":/Resources/branding/HarkenStudioWhite.png"));
-    QImage logo;
-    QElapsedTimer clock;
-    clock.start();
-
-    while (running_.load(std::memory_order_acquire)) {
-        if (exposed_.load(std::memory_order_acquire)) {
-            if (!context.makeCurrent(window_)) {
-                QThread::msleep(16);
-                continue;
-            }
-            const int width = pixelWidth_.load(std::memory_order_acquire);
-            const int height = pixelHeight_.load(std::memory_order_acquire);
-            const qreal dpr = devicePixelRatio_.load(std::memory_order_acquire);
-            const int logoPixelWidth = qRound(theme_->ui.metrics.startup.logoWidth * dpr);
-            if (logo.width() != logoPixelWidth || logo.devicePixelRatio() != dpr) {
-                logo = logoSource.scaledToWidth(logoPixelWidth, Qt::SmoothTransformation);
-                logo.setDevicePixelRatio(dpr);
-            }
-            const int cell = qMax(1, qRound(kPixelSize * dpr));
-            const QSize fieldSize((width + cell - 1) / cell, (height + cell - 1) / cell);
-            if (!field || field->size() != fieldSize) {
-                field = std::make_unique<QOpenGLFramebufferObject>(fieldSize, fieldFormat);
-                if (!field->isValid()) {
-                    qWarning() << "Startup renderer could not create the wave framebuffer";
-                    running_.store(false, std::memory_order_release);
-                    emit initializationFailed();
-                    break;
-                }
-            }
-
-            const qreal time = static_cast<qreal>(clock.elapsed()) / 1000.0;
-            functions->glDisable(GL_BLEND);
-            functions->glDisable(GL_SCISSOR_TEST);
-            vao.bind();
-            field->bind();
-            functions->glViewport(0, 0, fieldSize.width(), fieldSize.height());
-            waveProgram.bind();
-            waveProgram.setUniformValue("uResolution", QVector2D(width, height));
-            waveProgram.setUniformValue("uCell", static_cast<float>(cell));
-            waveProgram.setUniformValue("uTime", static_cast<float>(time));
-            waveProgram.setUniformValue("uWaveSpeed", 0.12f);
-            waveProgram.setUniformValue("uWaveFrequency", 3.0f);
-            waveProgram.setUniformValue("uWaveAmplitude", 0.3f);
-            waveProgram.setUniformValue("uScale", 0.9f);
-            functions->glDrawArrays(GL_TRIANGLES, 0, 3);
-            waveProgram.release();
-            field->release();
-
-            functions->glViewport(0, 0, width, height);
-            functions->glActiveTexture(GL_TEXTURE0);
-            functions->glBindTexture(GL_TEXTURE_2D, field->texture());
-            ditherProgram.bind();
-            ditherProgram.setUniformValue("uField", 0);
-            ditherProgram.setUniformValue("uCellDevice", static_cast<float>(cell));
-            functions->glDrawArrays(GL_TRIANGLES, 0, 3);
-            ditherProgram.release();
-            functions->glBindTexture(GL_TEXTURE_2D, 0);
-            vao.release();
-
-            QOpenGLPaintDevice device(QSize(width, height));
-            device.setDevicePixelRatio(dpr);
-            drawLogo(device, logo, time, theme_->ui.colors.panelBackground,
-                     theme_->domains.startup.logoPalette);
-            context.swapBuffers(window_);
-            if (!initialFramePresented_.exchange(true, std::memory_order_acq_rel))
-                emit initialFramePresented();
+    if (!frame.initialized) {
+        frame.context.setFormat(format_);
+        if (!frame.context.create() || !frame.context.makeCurrent(window_)) {
+            qWarning() << "Startup renderer could not create an OpenGL context";
+            frame.failed = true;
+            running_.store(false, std::memory_order_release);
+            threadId_.store(0, std::memory_order_release);
+            emit initializationFailed();
+            return;
         }
-        QThread::msleep(16);
+
+        QOpenGLFunctions* functions = frame.context.functions();
+        functions->initializeOpenGLFunctions();
+        functions->glDisable(GL_DEPTH_TEST);
+        functions->glDisable(GL_BLEND);
+
+        if (!frame.waveProgram.addShaderFromSourceCode(QOpenGLShader::Vertex, kVertexShader)
+            || !frame.waveProgram.addShaderFromSourceCode(QOpenGLShader::Fragment, kWaveFragmentShader)
+            || !frame.waveProgram.link()
+            || !frame.ditherProgram.addShaderFromSourceCode(QOpenGLShader::Vertex, kVertexShader)
+            || !frame.ditherProgram.addShaderFromSourceCode(QOpenGLShader::Fragment, kDitherFragmentShader)
+            || !frame.ditherProgram.link()) {
+            qWarning().noquote() << "Startup renderer shader initialization failed"
+                                 << frame.waveProgram.log() << frame.ditherProgram.log();
+            frame.context.doneCurrent();
+            frame.failed = true;
+            running_.store(false, std::memory_order_release);
+            threadId_.store(0, std::memory_order_release);
+            emit initializationFailed();
+            return;
+        }
+
+        const auto& paletteColors = theme_->domains.startup.wavePalette;
+        QVector4D palette[4];
+        for (int i = 0; i < 4; ++i)
+            palette[i] = QVector4D(paletteColors[i].redF(), paletteColors[i].greenF(),
+                                   paletteColors[i].blueF(), paletteColors[i].alphaF());
+        const QColor& background = theme_->ui.colors.bgPrimary;
+        frame.ditherProgram.bind();
+        frame.ditherProgram.setUniformValueArray("uPalette", palette, 4);
+        frame.ditherProgram.setUniformValue("uBackground",
+            QVector3D(background.redF(), background.greenF(), background.blueF()));
+        frame.ditherProgram.release();
+
+        frame.vao.create();
+        frame.fieldFormat.setInternalTextureFormat(GL_R16F);
+        frame.clock.start();
+        frame.initialized = true;
+    } else if (!frame.context.makeCurrent(window_)) {
+        return;
     }
 
-    field.reset();
-    vao.destroy();
-    context.doneCurrent();
-    threadId_.store(0, std::memory_order_release);
+    if (!exposed_.load(std::memory_order_acquire)) {
+        frame.context.doneCurrent();
+        return;
+    }
+
+    QOpenGLFunctions* functions = frame.context.functions();
+    const int width = pixelWidth_.load(std::memory_order_acquire);
+    const int height = pixelHeight_.load(std::memory_order_acquire);
+    const qreal dpr = devicePixelRatio_.load(std::memory_order_acquire);
+    static const QImage logoSource(QStringLiteral(":/Resources/branding/HarkenStudioWhite.png"));
+    const int logoPixelWidth = qRound(theme_->ui.metrics.startup.logoWidth * dpr);
+    if (frame.logo.width() != logoPixelWidth || frame.logo.devicePixelRatio() != dpr) {
+        frame.logo = logoSource.scaledToWidth(logoPixelWidth, Qt::SmoothTransformation);
+        frame.logo.setDevicePixelRatio(dpr);
+    }
+    const int cell = qMax(1, qRound(kPixelSize * dpr));
+    const QSize fieldSize((width + cell - 1) / cell, (height + cell - 1) / cell);
+    if (!frame.field || frame.field->size() != fieldSize) {
+        frame.field = std::make_unique<QOpenGLFramebufferObject>(fieldSize, frame.fieldFormat);
+        if (!frame.field->isValid()) {
+            qWarning() << "Startup renderer could not create the wave framebuffer";
+            frame.context.doneCurrent();
+            frame.failed = true;
+            running_.store(false, std::memory_order_release);
+            emit initializationFailed();
+            return;
+        }
+    }
+
+    const qreal time = static_cast<qreal>(frame.clock.elapsed()) / 1000.0;
+    functions->glDisable(GL_BLEND);
+    functions->glDisable(GL_SCISSOR_TEST);
+    frame.vao.bind();
+    frame.field->bind();
+    functions->glViewport(0, 0, fieldSize.width(), fieldSize.height());
+    frame.waveProgram.bind();
+    frame.waveProgram.setUniformValue("uResolution", QVector2D(width, height));
+    frame.waveProgram.setUniformValue("uCell", static_cast<float>(cell));
+    frame.waveProgram.setUniformValue("uTime", static_cast<float>(time));
+    frame.waveProgram.setUniformValue("uWaveSpeed", 0.12f);
+    frame.waveProgram.setUniformValue("uWaveFrequency", 3.0f);
+    frame.waveProgram.setUniformValue("uWaveAmplitude", 0.3f);
+    frame.waveProgram.setUniformValue("uScale", 0.9f);
+    functions->glDrawArrays(GL_TRIANGLES, 0, 3);
+    frame.waveProgram.release();
+    frame.field->release();
+
+    functions->glViewport(0, 0, width, height);
+    functions->glActiveTexture(GL_TEXTURE0);
+    functions->glBindTexture(GL_TEXTURE_2D, frame.field->texture());
+    frame.ditherProgram.bind();
+    frame.ditherProgram.setUniformValue("uField", 0);
+    frame.ditherProgram.setUniformValue("uCellDevice", static_cast<float>(cell));
+    functions->glDrawArrays(GL_TRIANGLES, 0, 3);
+    frame.ditherProgram.release();
+    functions->glBindTexture(GL_TEXTURE_2D, 0);
+    frame.vao.release();
+
+    QOpenGLPaintDevice device(QSize(width, height));
+    device.setDevicePixelRatio(dpr);
+    drawLogo(device, frame.logo, time, theme_->ui.colors.panelBackground,
+             theme_->domains.startup.logoPalette);
+    frame.context.swapBuffers(window_);
+    if (!initialFramePresented_.exchange(true, std::memory_order_acq_rel))
+        emit initialFramePresented();
 }
 
 }

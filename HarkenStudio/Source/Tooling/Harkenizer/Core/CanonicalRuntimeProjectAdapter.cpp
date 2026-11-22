@@ -39,15 +39,15 @@
 #include <map>
 #include <set>
 
-namespace HarkenEditor::Bridge {
+namespace harken::studio::bridge {
 
 class CompiledProjectSnapshot::Impl
 {
 public:
-    harkenprojectschema::FrontEndResult frontEnd;
-    harkenprojectschema::ResourceTable resources;
-    std::optional<harkenprojectschema::SegmentIR> ir;
-    std::optional<harkenprojectschema::SegmentProgram> program;
+    harken::studio::project_schema::FrontEndResult frontEnd;
+    harken::studio::project_schema::ResourceTable resources;
+    std::optional<harken::studio::project_schema::SegmentIR> ir;
+    std::optional<harken::studio::project_schema::SegmentProgram> program;
 };
 
 CompiledProjectSnapshot::CompiledProjectSnapshot()
@@ -71,7 +71,7 @@ const void* compiledProjectSnapshotImpl(const CompiledProjectSnapshot& snapshot)
     return snapshot.impl_.get();
 }
 
-const harkenprojectschema::SegmentProgram* compiledSegmentProgram(
+const harken::studio::project_schema::SegmentProgram* compiledSegmentProgram(
     const CompiledProjectSnapshot& snapshot)
 {
     const auto* impl = static_cast<const CompiledProjectSnapshot::Impl*>(
@@ -79,9 +79,9 @@ const harkenprojectschema::SegmentProgram* compiledSegmentProgram(
     return impl && impl->program ? &*impl->program : nullptr;
 }
 
-std::vector<harkenstudio::ObjectId> compiledSegmentIds(const CompiledProjectSnapshot& snapshot)
+std::vector<harken::studio::types::ObjectId> compiledSegmentIds(const CompiledProjectSnapshot& snapshot)
 {
-    std::vector<harkenstudio::ObjectId> result;
+    std::vector<harken::studio::types::ObjectId> result;
     const auto* program = compiledSegmentProgram(snapshot);
     if (!program) return result;
     result.reserve(program->ir().segments().size());
@@ -92,8 +92,8 @@ std::vector<harkenstudio::ObjectId> compiledSegmentIds(const CompiledProjectSnap
 
 namespace {
 
-using namespace harkenprojectschema;
-using namespace VNX;
+using namespace harken::studio::project_schema;
+using namespace harken::studio;
 
 AuthoringGuid toAuthoringGuid(const QUuid& value)
 {
@@ -180,7 +180,7 @@ std::shared_ptr<CanonicalRuntimeProjectSourceIndexV1> buildSourceIndex(
         if (!binding || !binding->rootItem) continue;
         assignDocumentPath(binding->rootItem.get());
     }
-    std::set<harkenstudio::ObjectId> stableIds;
+    std::set<harken::studio::types::ObjectId> stableIds;
     std::set<ProjectItem*> visited;
     std::map<ProjectItem*, ProjectItem*> owners;
     std::vector<ProjectItem*> items;
@@ -212,7 +212,7 @@ std::shared_ptr<CanonicalRuntimeProjectSourceIndexV1> buildSourceIndex(
         if (item->objectID != 0
             && !index->byObjectId.emplace(item->objectID, item).second)
             index->valid = false;
-        if (!harkenstudio::IsNull(item->runtimeId()) && !stableIds.insert(item->runtimeId()).second)
+        if (!harken::studio::types::IsNull(item->runtimeId()) && !stableIds.insert(item->runtimeId()).second)
             index->duplicateStableIds.insert(item->runtimeId());
         if (isContentType(item->type))
             index->definitions.push_back(item);
@@ -298,10 +298,10 @@ std::shared_ptr<CanonicalRuntimeProjectSourceIndexV1> buildSourceIndex(
     return index;
 }
 
-harkenprojectschema::RuntimeIdentityKindV1 identityKindForItem(
+harken::studio::project_schema::RuntimeIdentityKindV1 identityKindForItem(
     ProjectItem::Type type)
 {
-    using Kind = harkenprojectschema::RuntimeIdentityKindV1;
+    using Kind = harken::studio::project_schema::RuntimeIdentityKindV1;
     switch (type) {
     case ProjectItem::Type::Sound: return Kind::Sound;
     case ProjectItem::Type::Container: return Kind::Container;
@@ -316,21 +316,21 @@ harkenprojectschema::RuntimeIdentityKindV1 identityKindForItem(
     }
 }
 
-harkenprojectschema::RuntimeIdentityIndexBuildOutcomeV1
+harken::studio::project_schema::RuntimeIdentityIndexBuildOutcomeV1
 buildRuntimeIdentityIndex(const ProjectData& project,
                           const std::vector<const ProjectItem*>& buses,
                           const std::optional<
-                              harkenprojectschema::RuntimeIdentityClaimV1>&
+                              harken::studio::project_schema::RuntimeIdentityClaimV1>&
                               transientPreviewSegment = std::nullopt)
 {
-    using namespace harkenprojectschema;
+    using namespace harken::studio::project_schema;
     std::vector<RuntimeIdentityIndexBuildRowV1> claims;
     std::set<const ProjectItem*> visited;
     std::function<void(const ProjectItem*)> visit = [&](const ProjectItem* item) {
         if (!item || !visited.insert(item).second) return;
         const auto kind = identityKindForItem(item->type);
         if (kind != RuntimeIdentityKindV1::Invalid) {
-            const harkenstudio::ObjectId id = item->runtimeId();
+            const harken::studio::types::ObjectId id = item->runtimeId();
             const auto guid = toAuthoringGuid(item->guid);
             claims.push_back({item->objectID,
                               {id, kind, guid, {guid, kind, 0, id}}});
@@ -403,7 +403,7 @@ buildRuntimeIdentityIndex(const ProjectData& project,
     return BuildRuntimeIdentityIndexV1(claims);
 }
 
-std::shared_ptr<const harkenprojectschema::RuntimeIdentityIndexV1>
+std::shared_ptr<const harken::studio::project_schema::RuntimeIdentityIndexV1>
 buildCanonicalRuntimeIdentityIndex(ProjectData& project)
 {
     std::vector<const ProjectItem*> buses;
@@ -427,18 +427,18 @@ buildCanonicalRuntimeIdentityIndex(ProjectData& project)
     return outcome.ok() ? outcome.index : nullptr;
 }
 
-std::optional<harkenprojectschema::AuthoringGuid> transientPreviewSegmentGuid(
+std::optional<harken::studio::project_schema::AuthoringGuid> transientPreviewSegmentGuid(
     const CanonicalRuntimeProjectSourceIndexV1& index,
-    const harkenprojectschema::AuthoringGuid& trackGuid)
+    const harken::studio::project_schema::AuthoringGuid& trackGuid)
 {
     constexpr std::uint64_t kHighSalt = UINT64_C(0x5a4f9c31d27be680);
     constexpr std::uint64_t kLowSalt = UINT64_C(0xa5b064ce2d84197f);
     const std::size_t attempts = index.byGuid.size() + 1;
     for (std::size_t salt = 0; salt < attempts; ++salt) {
-        const harkenprojectschema::AuthoringGuid candidate{
+        const harken::studio::project_schema::AuthoringGuid candidate{
             trackGuid.high ^ kHighSalt,
             trackGuid.low ^ (kLowSalt + static_cast<std::uint64_t>(salt))};
-        if (!harkenprojectschema::IsNull(candidate)
+        if (!harken::studio::project_schema::IsNull(candidate)
             && index.byGuid.find(candidate) == index.byGuid.end()) {
             return candidate;
         }
@@ -446,32 +446,32 @@ std::optional<harkenprojectschema::AuthoringGuid> transientPreviewSegmentGuid(
     return std::nullopt;
 }
 
-const harkenprojectschema::RuntimeIdentityClaimV1* findBusClaimForObjectHandle(
-    const harkenprojectschema::RuntimeIdentityIndexV1& identity,
+const harken::studio::project_schema::RuntimeIdentityClaimV1* findBusClaimForObjectHandle(
+    const harken::studio::project_schema::RuntimeIdentityIndexV1& identity,
     uint32_t objectId)
 {
     const auto* claim = identity.findBySourceHandle(
-        harkenprojectschema::RuntimeIdentityKindV1::Bus, objectId);
+        harken::studio::project_schema::RuntimeIdentityKindV1::Bus, objectId);
     return claim && claim->kind ==
-            harkenprojectschema::RuntimeIdentityKindV1::Bus
+            harken::studio::project_schema::RuntimeIdentityKindV1::Bus
         ? claim : nullptr;
 }
 
-harkenstudio::ObjectId resolveBusObjectReference(
-    const harkenprojectschema::RuntimeIdentityIndexV1& identity,
+harken::studio::types::ObjectId resolveBusObjectReference(
+    const harken::studio::project_schema::RuntimeIdentityIndexV1& identity,
     uint32_t objectId)
 {
     const auto* claim = findBusClaimForObjectHandle(identity, objectId);
-    return claim ? claim->stableId : harkenstudio::ObjectId{};
+    return claim ? claim->stableId : harken::studio::types::ObjectId{};
 }
 
-std::shared_ptr<const harkenbuscompiler::CompiledBusResultV1>
+std::shared_ptr<const harken::studio::bus_compiler::CompiledBusResultV1>
 compileBusResult(
     const ProjectData& project,
     const CanonicalRuntimeProjectSourceIndexV1& index,
-    const std::shared_ptr<const harkenprojectschema::RuntimeIdentityIndexV1>&
+    const std::shared_ptr<const harken::studio::project_schema::RuntimeIdentityIndexV1>&
         identityIndex,
-    const std::shared_ptr<const harkenprojectschema::CompileTargetProfileV1>&
+    const std::shared_ptr<const harken::studio::project_schema::CompileTargetProfileV1>&
         compileTargetProfile,
     std::uint64_t projectGeneration,
     std::vector<ProjectInputDiagnostic>& diagnostics,
@@ -487,7 +487,7 @@ compileBusResult(
     }
     const ProjectItem* master = project.busses.front().rootItem.get();
     if (index.buses.empty()) return {};
-    if (master->runtimeId() == harkenstudio::kMasterBusObjectId) {
+    if (master->runtimeId() == harken::studio::types::kMasterBusObjectId) {
         appendDiagnostic(diagnostics,
                          ProjectInputDiagnosticCode::UnsupportedField,
                          QStringLiteral("Project Master Bus must have its own UUID"),
@@ -501,7 +501,7 @@ compileBusResult(
                          master, {}, QStringLiteral("runtimeStableId"));
         return {};
     }
-    harkenbuscompiler::BusCompilerInputV1 input;
+    harken::studio::bus_compiler::BusCompilerInputV1 input;
     input.projectGeneration = projectGeneration;
     input.identityIndex = identityIndex;
     input.compileTargetProfile = compileTargetProfile;
@@ -519,14 +519,14 @@ compileBusResult(
     bool invalidBusProperty = !unsupported.empty();
 
     std::set<const ProjectItem*> addedBuses;
-    std::function<void(const ProjectItem*, harkenstudio::ObjectId)> add =
-        [&](const ProjectItem* item, harkenstudio::ObjectId parentId) {
+    std::function<void(const ProjectItem*, harken::studio::types::ObjectId)> add =
+        [&](const ProjectItem* item, harken::studio::types::ObjectId parentId) {
         if (!item || item->type != ProjectItem::Type::Bus
             || !addedBuses.insert(item).second)
             return;
-        const harkenstudio::ObjectId id = item->runtimeId();
+        const harken::studio::types::ObjectId id = item->runtimeId();
         const auto* mix = item->comp<VMixNode>();
-        harkenbuscompiler::BusAuthoringV1 bus;
+        harken::studio::bus_compiler::BusAuthoringV1 bus;
         bus.busId = id;
         bus.parentId = parentId;
         const auto locator = PlayablePropertyAuthoringV1::definitionLocator(*item);
@@ -586,7 +586,7 @@ compileBusResult(
                 const auto parameterPath = preset ? std::string("/parameters/")
                     : effectSource.fieldPath + "/custom/parameters/";
                 for (uint32_t i = 0; i < asset->parameters.size(); ++i) {
-                    harkenbuscompiler::BusSourceLocationV1 parameterSource{
+                    harken::studio::bus_compiler::BusSourceLocationV1 parameterSource{
                         toAuthoringGuid(definitionGuid), definitionPath,
                         parameterPath + std::to_string(i)};
                     input.effectParameters.push_back({effect.runtimeId(), i,
@@ -641,10 +641,10 @@ compileBusResult(
                     continue;
                 }
                 const auto targetHandle = static_cast<std::uint32_t>(targetNumber);
-                const harkenstudio::ObjectId target = resolveBusObjectReference(
+                const harken::studio::types::ObjectId target = resolveBusObjectReference(
                     *identityIndex, targetHandle == kMasterBusID
                         ? master->objectID : targetHandle);
-                if (harkenstudio::IsNull(target)) {
+                if (harken::studio::types::IsNull(target)) {
                     appendDiagnostic(diagnostics, ProjectInputDiagnosticCode::MissingReference,
                         QStringLiteral("Bus send row %1 has no Bus target")
                             .arg(sendIndex), item, {}, QStringLiteral("sends"));
@@ -663,7 +663,7 @@ compileBusResult(
             if (child && child->type == ProjectItem::Type::Bus)
                 add(child.get(), id);
     };
-    add(master, harkenstudio::kMasterBusObjectId);
+    add(master, harken::studio::types::kMasterBusObjectId);
     if (addedBuses.size() != index.buses.size()) {
         appendDiagnostic(diagnostics,
                          ProjectInputDiagnosticCode::UnsupportedField,
@@ -672,10 +672,10 @@ compileBusResult(
         return {};
     }
     if (invalidBusProperty) return {};
-    const auto outcome = harkenbuscompiler::CompileBusProjectV1(input);
+    const auto outcome = harken::studio::bus_compiler::CompileBusProjectV1(input);
     for (const auto& diagnostic : outcome.diagnostics) {
-        const auto code = diagnostic.code == harkenbuscompiler::BusDiagnosticCodeV1::MissingParent
-            || diagnostic.code == harkenbuscompiler::BusDiagnosticCodeV1::MissingSendTarget
+        const auto code = diagnostic.code == harken::studio::bus_compiler::BusDiagnosticCodeV1::MissingParent
+            || diagnostic.code == harken::studio::bus_compiler::BusDiagnosticCodeV1::MissingSendTarget
             ? ProjectInputDiagnosticCode::MissingReference
             : ProjectInputDiagnosticCode::UnsupportedField;
         appendDiagnostic(diagnostics, code,
@@ -703,7 +703,7 @@ ProjectInputDiagnosticCode diagnosticCode(DiagnosticCode code)
 }
 
 std::vector<ProjectInputDiagnostic> validateBusPublicationSupport(
-    const VNX::ProjectData& project, QUuid targetPlatform)
+    const harken::studio::ProjectData& project, QUuid targetPlatform)
 {
     std::vector<ProjectInputDiagnostic> diagnostics;
     const PlatformScope scope = targetPlatform.isNull()
@@ -746,7 +746,7 @@ std::vector<ProjectInputDiagnostic> validateBusPublicationSupport(
 }
 
 std::shared_ptr<const CanonicalRuntimeProjectSourceIndexV1>
-canonicalRuntimeProjectSourceIndex(const VNX::ProjectData& project)
+canonicalRuntimeProjectSourceIndex(const harken::studio::ProjectData& project)
 {
     return buildSourceIndex(project);
 }
@@ -894,13 +894,13 @@ bool copyStudioDefinitionPayload(
     if (const auto* mix = item.comp<VMixNode>()) {
         for (const ParameterBindingDef& binding : mix->bindings.entries()) {
             if (binding.typed && BindingContractSemantics::engineTargetId(binding.address)
-                && harkenstudio::IsNull(binding.runtimeId()))
+                && harken::studio::types::IsNull(binding.runtimeId()))
                 return fail(QStringLiteral("Typed binding is missing a stable identity"));
         }
     }
     uint32_t previous = 0;
     for (const EffectEntry& effect : effective.effects.effects.entries()) {
-        if (!effect.typed || harkenstudio::IsNull(effect.runtimeId()))
+        if (!effect.typed || harken::studio::types::IsNull(effect.runtimeId()))
             return fail(QStringLiteral("Effect chain contains an untyped entry"));
         const auto target = index.byQtGuid.find(effect.effectGuid);
         const auto* preset = target != index.byQtGuid.end()
@@ -921,7 +921,7 @@ bool copyStudioDefinitionPayload(
         graphNode.flags = effect.bypass ? 1u : 0u;
         if (exportPresetReferences && effect.mode == EffectMode::Preset) {
             graphNode.presetId = target->second->runtimeId();
-            if (harkenstudio::IsNull(graphNode.presetId))
+            if (harken::studio::types::IsNull(graphNode.presetId))
                 return fail(QStringLiteral("Effect preset is missing a stable identity"));
         }
         for (size_t i = 0; i < asset->parameters.size(); ++i)
@@ -990,9 +990,9 @@ bool copyStudioOccurrencePayload(
 }
 
 CanonicalRuntimeProjectContextV1 canonicalRuntimeProjectContext(
-    VNX::ProjectData& project,
+    harken::studio::ProjectData& project,
     uint64_t projectGeneration,
-    std::optional<harkenstudio::ObjectId> previewTrackStableId,
+    std::optional<harken::studio::types::ObjectId> previewTrackStableId,
     PlatformScope busPlatformScope)
 {
     return canonicalRuntimeProjectContext(project, projectGeneration,
@@ -1000,9 +1000,9 @@ CanonicalRuntimeProjectContextV1 canonicalRuntimeProjectContext(
 }
 
 CanonicalRuntimeProjectContextV1 canonicalRuntimeProjectContext(
-    VNX::ProjectData& project,
+    harken::studio::ProjectData& project,
     uint64_t projectGeneration,
-    std::optional<harkenstudio::ObjectId> previewTrackStableId,
+    std::optional<harken::studio::types::ObjectId> previewTrackStableId,
     PlatformScope busPlatformScope,
     std::shared_ptr<const CanonicalRuntimeProjectSourceIndexV1> sourceIndex)
 {
@@ -1016,17 +1016,17 @@ CanonicalRuntimeProjectContextV1 canonicalRuntimeProjectContext(
             QStringLiteral("Duplicate ProjectItem GUID"),
             sourceIndex->byQtGuid.at(guid), guid, QStringLiteral("guid"));
     }
-    for (harkenstudio::ObjectId id : sourceIndex->duplicateStableIds) {
+    for (harken::studio::types::ObjectId id : sourceIndex->duplicateStableIds) {
         appendDiagnostic(
             context.diagnostics,
             ProjectInputDiagnosticCode::DuplicateIdentity,
-            QStringLiteral("Duplicate runtimeStableId %1").arg(VNX::objectIdString(id)), nullptr,
+            QStringLiteral("Duplicate runtimeStableId %1").arg(harken::studio::objectIdString(id)), nullptr,
             {}, QStringLiteral("runtimeStableId"));
     }
     if (!sourceIndex->valid || !context.diagnostics.empty())
         return context;
 
-    std::optional<harkenprojectschema::RuntimeIdentityClaimV1>
+    std::optional<harken::studio::project_schema::RuntimeIdentityClaimV1>
         transientPreviewSegment;
     if (previewTrackStableId.has_value()) {
         const auto track = std::find_if(
@@ -1056,12 +1056,12 @@ CanonicalRuntimeProjectContextV1 canonicalRuntimeProjectContext(
         context.previewTrack = *track;
         context.previewRootGuid = *wrapperGuid;
         context.previewRootStableId = *wrapperGuid;
-        transientPreviewSegment = harkenprojectschema::RuntimeIdentityClaimV1{
+        transientPreviewSegment = harken::studio::project_schema::RuntimeIdentityClaimV1{
             context.previewRootStableId,
-            harkenprojectschema::RuntimeIdentityKindV1::Segment,
+            harken::studio::project_schema::RuntimeIdentityKindV1::Segment,
             context.previewRootGuid,
             {context.previewRootGuid,
-             harkenprojectschema::RuntimeIdentityKindV1::Segment, 0,
+             harken::studio::project_schema::RuntimeIdentityKindV1::Segment, 0,
              context.previewRootStableId}};
     }
 
@@ -1102,7 +1102,7 @@ CanonicalRuntimeProjectContextV1 canonicalRuntimeProjectContext(
 
 ProjectInputCompileResult compileStudioProjectInputForContext(
     const ProjectData& project, PlatformScope scope, const QString& language,
-    std::optional<harkenstudio::ObjectId> previewTrackStableId,
+    std::optional<harken::studio::types::ObjectId> previewTrackStableId,
     uint64_t projectGeneration)
 {
     ProjectInputCompileResult result;
@@ -1117,7 +1117,7 @@ ProjectInputCompileResult compileStudioProjectInputForContext(
         for (const ProjectItem* bus : context.sourceIndex->buses) {
             if (!bus) continue;
             const auto* claim = context.identityIndex->findBySourceHandle(
-                harkenprojectschema::RuntimeIdentityKindV1::Bus,
+                harken::studio::project_schema::RuntimeIdentityKindV1::Bus,
                 bus->objectID);
             if (claim)
                 result.legacyPackBusDisplayRows.push_back(
@@ -1158,7 +1158,7 @@ ProjectInputCompileResult compileStudioProjectInputForContext(
             if (child && isContentType(child->type)) owned.insert(child->guid);
 
     for (ProjectItem* item : index.definitions) {
-        if (item->guid.isNull() || harkenstudio::IsNull(item->runtimeId())) {
+        if (item->guid.isNull() || harken::studio::types::IsNull(item->runtimeId())) {
             appendDiagnostic(result, ProjectInputDiagnosticCode::MissingIdentity,
                              QStringLiteral("Content object has no stable identity"), item,
                              {}, QStringLiteral("identity"));
@@ -1212,7 +1212,7 @@ ProjectInputCompileResult compileStudioProjectInputForContext(
                 continue;
             }
             for (size_t i = 0; i < timeline->clips.items.size(); ++i) {
-                const VNX::Clip& source = timeline->clips.items[i];
+                const harken::studio::Clip& source = timeline->clips.items[i];
                 const auto target = index.byQtGuid.find(source.targetGuid);
                 if (target == index.byQtGuid.end()) {
                     appendDiagnostic(result, ProjectInputDiagnosticCode::MissingReference,
@@ -1228,7 +1228,7 @@ ProjectInputCompileResult compileStudioProjectInputForContext(
                 }
                 InputClip clip;
                 clip.guid = toAuthoringGuid(source.clipGuid);
-                if (harkenstudio::IsNull(source.runtimeId())) {
+                if (harken::studio::types::IsNull(source.runtimeId())) {
                     appendDiagnostic(result, ProjectInputDiagnosticCode::MissingIdentity,
                                      QStringLiteral("Clip has no runtime stable identity"),
                                      item, source.clipGuid, QStringLiteral("clips.runtimeId()"));
@@ -1270,8 +1270,8 @@ ProjectInputCompileResult compileStudioProjectInputForContext(
             node.timeSpec = std::move(time);
             node.startPoint = InputStartPoint{};
             uint32_t nextMarkerId = 1;
-            for (const VNX::Marker& source : timeline->markers.items) {
-                if (source.kind == VNX::MarkerKind::Entry) {
+            for (const harken::studio::Marker& source : timeline->markers.items) {
+                if (source.kind == harken::studio::MarkerKind::Entry) {
                     if (source.position != 0) {
                         appendDiagnostic(result, ProjectInputDiagnosticCode::UnsupportedField,
                                          QStringLiteral("ProjectSchema entry start point cannot carry an authored position"),
@@ -1279,7 +1279,7 @@ ProjectInputCompileResult compileStudioProjectInputForContext(
                     }
                     continue;
                 }
-                if (harkenstudio::IsNull(source.runtimeId())) {
+                if (harken::studio::types::IsNull(source.runtimeId())) {
                     appendDiagnostic(result, ProjectInputDiagnosticCode::MissingIdentity,
                                      QStringLiteral("Marker has no runtime stable identity"),
                                      item, source.markerGuid, QStringLiteral("markers.runtimeId()"));
@@ -1289,8 +1289,8 @@ ProjectInputCompileResult compileStudioProjectInputForContext(
                 InputMarker marker;
                 marker.guid = toAuthoringGuid(source.markerGuid);
                 marker.markerId = id;
-                marker.kind = source.kind == VNX::MarkerKind::Exit ? harkenprojectschema::MarkerKind::Exit
-                                                        : harkenprojectschema::MarkerKind::Custom;
+                marker.kind = source.kind == harken::studio::MarkerKind::Exit ? harken::studio::project_schema::MarkerKind::Exit
+                                                        : harken::studio::project_schema::MarkerKind::Custom;
                 marker.position = source.position;
                 node.markers.push_back(marker);
             }
@@ -1301,8 +1301,8 @@ ProjectInputCompileResult compileStudioProjectInputForContext(
     }
     if (previewTrackStableId) {
         const ProjectItem* track = context.previewTrack;
-        if (!track || harkenstudio::IsNull(context.previewRootStableId)
-            || harkenprojectschema::IsNull(context.previewRootGuid))
+        if (!track || harken::studio::types::IsNull(context.previewRootStableId)
+            || harken::studio::project_schema::IsNull(context.previewRootGuid))
             return result;
         InputNode wrapper;
         wrapper.kind = ContentKind::Segment;
@@ -1344,7 +1344,7 @@ ProjectInputCompileResult compileStudioProjectInputForContext(
         return result;
     }
 
-    std::map<harkenstudio::ObjectId, const ProjectItem*> contentByStableId;
+    std::map<harken::studio::types::ObjectId, const ProjectItem*> contentByStableId;
     for (const ProjectItem* item : index.definitions)
         contentByStableId.emplace(item->runtimeId(), item);
     for (const auto& object : compiled.project->objects) {
@@ -1402,36 +1402,36 @@ ProjectInputCompileResult compileStudioProjectInputForContext(
     return result;
 }
 
-harkenbuscompiler::PublishedBusProjectionV1 compileStudioBusProjectionForPlatform(
-    const VNX::ProjectData& project, QUuid targetPlatform,
+harken::studio::bus_compiler::PublishedBusProjectionV1 compileStudioBusProjectionForPlatform(
+    const harken::studio::ProjectData& project, QUuid targetPlatform,
     std::vector<ProjectInputDiagnostic>* diagnostics)
 {
     auto context = canonicalRuntimeProjectContext(
-        const_cast<VNX::ProjectData&>(project), 0, std::nullopt, targetPlatform);
+        const_cast<harken::studio::ProjectData&>(project), 0, std::nullopt, targetPlatform);
     if (diagnostics) *diagnostics = context.diagnostics;
     if (targetPlatform.isNull() || !context.ok()) return {};
-    return harkenbuscompiler::BuildPublishedBusProjectionV1(
+    return harken::studio::bus_compiler::BuildPublishedBusProjectionV1(
         *context.busResult,
-        harkenbuscompiler::BusPublicationCapabilityVintageV1::
+        harken::studio::bus_compiler::BusPublicationCapabilityVintageV1::
             TopologyVolumeSendAndEffectsNeutralOtherProperties);
 }
 
-const harkenbuscompiler::CompiledBusResultV1* compiledBusResult(
+const harken::studio::bus_compiler::CompiledBusResultV1* compiledBusResult(
     const ProjectInputCompileResult& result)
 {
     return result.busResult.get();
 }
 
-std::shared_ptr<const harkenprojectschema::RuntimeIdentityIndexV1>
-canonicalRuntimeIdentityIndexForProject(VNX::ProjectData& project)
+std::shared_ptr<const harken::studio::project_schema::RuntimeIdentityIndexV1>
+canonicalRuntimeIdentityIndexForProject(harken::studio::ProjectData& project)
 {
     return buildCanonicalRuntimeIdentityIndex(project);
 }
 
 }
 
-std::shared_ptr<const harkenprojectschema::RuntimeIdentityIndexV1>
-VNX::canonicalRuntimeIdentityIndex(VNX::ProjectData& project)
+std::shared_ptr<const harken::studio::project_schema::RuntimeIdentityIndexV1>
+harken::studio::canonicalRuntimeIdentityIndex(harken::studio::ProjectData& project)
 {
-    return HarkenEditor::Bridge::canonicalRuntimeIdentityIndexForProject(project);
+    return harken::studio::bridge::canonicalRuntimeIdentityIndexForProject(project);
 }

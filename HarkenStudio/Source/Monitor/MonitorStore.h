@@ -13,7 +13,7 @@
 #include <unordered_map>
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 namespace Monitor {
 
 enum class MonitorStoreReject
@@ -114,4 +114,4 @@ private:
 };
 
 } // namespace Monitor
-} // namespace VNX
+} // namespace harken::studio

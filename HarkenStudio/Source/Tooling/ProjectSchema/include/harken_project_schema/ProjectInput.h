@@ -35,7 +35,7 @@
 #include <utility>
 #include <vector>
 
-namespace harkenprojectschema {
+namespace harken::studio::project_schema {
 
 // A clip as authored, before its reference is resolved to a stable id. The
 // target is named by authoring GUID and by the kind the author believes it to
@@ -185,7 +185,7 @@ struct InputNode : PlayablePropertyPayloadV1 {
 struct ProjectInput {
     std::vector<InputNode> nodes;
     std::vector<AuthoringGuid> roots;
-    harkenstudio::ObjectId projectId{};
+    harken::studio::types::ObjectId projectId{};
 
     // One immutable project-wide identity view may be shared by every
     // compiler consuming this input. It is ephemeral and never serialized.
@@ -196,6 +196,6 @@ struct ProjectInput {
     std::shared_ptr<const CompileTargetProfileV1> compileTargetProfile;
 };
 
-}  // namespace harkenprojectschema
+}  // namespace harken::studio::project_schema
 
 #endif  // HARKEN_PROJECT_SCHEMA_PROJECT_INPUT_H

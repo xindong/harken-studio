@@ -1,7 +1,7 @@
 #pragma once
 #include "Utils/ObjectId.h"
 
-#include "harken_playable_property_studio.g.h"
+#include "harken_playable_properties/PlayablePropertyStudio.h"
 #include "PlatformContext.h"
 #include "SelectionData.h"
 
@@ -21,14 +21,14 @@
 #include <variant>
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 
 struct ProjectItem;
 enum class ProjectItemType;
 class PlayablePropertyAuthoringV1;
 
 using PlayablePropertyOccurrenceValueV1 =
-    std::variant<float, bool, uint32_t, harkenstudio::ObjectId, QJsonArray>;
+    std::variant<float, bool, uint32_t, harken::studio::types::ObjectId, QJsonArray>;
 
 struct PlayablePropertyOccurrenceV1
 {

@@ -1,11 +1,15 @@
 #pragma once
 
 #include "Components/VSound.h"
+#include "Core/AssetPipeline/CacheArtifactWriter.h"
+#include "Core/ConversionResolution.h"
 #include "ProjectPlatform.h"
+#include "Tooling/Harkenizer/Core/VorbisEncoder.h"
 
 #include <QByteArray>
 #include <QHash>
 #include <QMutex>
+#include <QObject>
 #include <QString>
 #include <cstdint>
 #include <functional>
@@ -13,12 +17,25 @@
 #include <optional>
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 class BuildSourceInput;
 struct AudioMetadata;
 }
 
-namespace VNX::SoundSourceDerivative {
+namespace harken::studio::SoundSourceDerivative {
+
+inline constexpr uint32_t kVorbisSeekGrainFrames = VorbisEncoder::kSeekGrainFrames;
+
+class MaterializationEvents final : public QObject
+{
+    Q_OBJECT
+
+public:
+    static MaterializationEvents& instance();
+
+signals:
+    void artifactReady(const QString& path);
+};
 
 struct FrameRange
 {
@@ -28,6 +45,7 @@ struct FrameRange
 
 struct MaterializedArtifact
 {
+    ConversionFormat format = ConversionFormat::PCM;
     QString path;
     QString cacheKey;
     uint32_t sampleRate = 0;
@@ -38,7 +56,10 @@ struct MaterializedArtifact
     bool cacheHit = false;
     QString contentHash;
     std::shared_ptr<const std::vector<float>> samples;
+    std::shared_ptr<const VorbisEncoder::EncodedMedia> encodedMedia;
+    QByteArray cacheImage;
     uint64_t revision = 0;
+    uint64_t outputBytes = 0;
 };
 
 class MaterializationCache
@@ -46,6 +67,9 @@ class MaterializationCache
 public:
     std::optional<MaterializedArtifact> find(const QByteArray& request);
     void insert(const QByteArray& request, const MaterializedArtifact& artifact);
+    std::optional<MaterializedArtifact> getOrCreate(const QByteArray& request,
+        const std::function<std::optional<MaterializedArtifact>(QString*)>& create,
+        QString* error = nullptr, const QString& outputDir = {});
     std::optional<uint64_t> contentRevision(const MaterializedArtifact& artifact);
     void clear();
 
@@ -65,22 +89,25 @@ struct PreparedMedia
 };
 
 QString cacheKey(const QString& inputFingerprint, const SoundSourceDef& source,
-                 double scheduleOffsetSec, const ConversionSettings& settings,
+                 double scheduleOffsetSec, const std::optional<ResolvedConversion>& conversion,
                  const AudioMetadata& metadata);
+
+std::optional<CachedMediaProperties> inspectCachedArtifact(const QString& key,
+    const QString& outputDir, ConversionFormat format);
 
 std::optional<FrameRange> mapFrameRange(const SoundSourceDef& source,
                                         uint64_t totalFrames);
 std::optional<PreparedMedia> prepare(const QString& inputPath,
                                      const SoundSourceDef& source,
                                      double scheduleOffsetSec,
-                                     const ConversionSettings& settings,
+                                     const std::optional<ResolvedConversion>& conversion,
                                      QString* error = nullptr);
 std::optional<MaterializedArtifact> materialize(const QString& inputPath,
                                                 const SoundSourceDef& source,
                                                 double scheduleOffsetSec,
                                                 ProjectPlatformId platform,
                                                 const QString& outputDir,
-                                                const ConversionSettings& settings,
+                                                const std::optional<ResolvedConversion>& conversion,
                                                 QString* error = nullptr,
                                                 MaterializationCache* cache = nullptr,
                                                 const BuildSourceInput* input = nullptr,

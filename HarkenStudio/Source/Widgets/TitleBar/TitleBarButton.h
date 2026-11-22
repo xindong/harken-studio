@@ -1,9 +1,9 @@
 #pragma once
 
 #include <QColor>
-#include <QPushButton>
+#include <QAbstractButton>
 
-namespace VNX {
+namespace harken::studio {
 
 enum class TitleBarButtonKind {
     Minimize,
@@ -12,7 +12,7 @@ enum class TitleBarButtonKind {
     Close
 };
 
-class TitleBarButton : public QPushButton {
+class TitleBarButton : public QAbstractButton {
 public:
     explicit TitleBarButton(TitleBarButtonKind kind, QWidget* parent = nullptr);
 

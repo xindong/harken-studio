@@ -40,7 +40,7 @@
 #include <algorithm>
 #include <functional>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 
@@ -130,16 +130,6 @@ protected:
     void drawRow(QPainter* painter, const QStyleOptionViewItem& option,
                  const QModelIndex& index) const override
     {
-        if (index.data(TreeRowStyle::kBucketRole).toBool())
-        {
-            int depth = 0;
-            for (QModelIndex p = index.parent(); p.isValid(); p = p.parent())
-                ++depth;
-            QStyleOptionViewItem opt = option;
-            opt.rect.setLeft(opt.rect.left() + depth * indentation());
-            TreeRowStyle::paintBucketRow(painter, opt, index, isExpanded(index));
-            return;
-        }
         QTreeWidget::drawRow(painter, option, index);
         if (selectionModel()->isSelected(index))
             TreeRowStyle::paintRowAccent(painter, option.rect);
@@ -152,7 +142,7 @@ protected:
             return;
 
         TreeRowStyle::paintBranches(painter, rect, index, model(), indentation(),
-                                    isExpanded(index));
+                                    isExpanded(index), rootIsDecorated());
     }
 };
 
@@ -309,7 +299,6 @@ SelectorWindow::SelectorWindow()
     updateIconSize();
     connect(&ThemeManager::instance(), &ThemeManager::themeChanged, this, updateIconSize);
     tree_->setItemDelegate(new SelectorItemDelegate(tree_));
-    tree_->setRootIsDecorated(false);
     tree_->setExpandsOnDoubleClick(false);
     tree_->setMouseTracking(true);
     layout->addWidget(tree_, 1);
@@ -359,12 +348,12 @@ SelectorWindow::SelectorWindow()
 
     connect(searchBox_, &QLineEdit::textChanged,
             this, &SelectorWindow::applySearchFilter);
-    const auto toggleBucket = [this](QTreeWidgetItem* item, int) {
-        if (!request_.creation && item && item->data(0, TreeRowStyle::kBucketRole).toBool())
+    const auto toggleFolder = [this](QTreeWidgetItem* item, int) {
+        if (!request_.creation && item && item->data(0, kRoleFolderPath).isValid())
             TreeExpansion::toggle(item, QApplication::keyboardModifiers());
     };
-    connect(tree_, &QTreeWidget::itemClicked, this, toggleBucket);
-    connect(tree_, &QTreeWidget::itemDoubleClicked, this, toggleBucket);
+    connect(tree_, &QTreeWidget::itemClicked, this, toggleFolder);
+    connect(tree_, &QTreeWidget::itemDoubleClicked, this, toggleFolder);
     connect(tree_, &QTreeWidget::itemActivated, this,
             [this](QTreeWidgetItem* item, int) {
                 if (request_.creation) {
@@ -406,6 +395,8 @@ void SelectorWindow::applyRequest(const SelectorRequest& request)
     lastNotifiedID_ = request.currentObjectID;
     setWindowTitle(request.title.isEmpty() ? tr("Select") : request.title);
     tree_->setColumnCount(request.onToggled ? 2 : 1);
+    tree_->setRootIsDecorated(!request.creation
+        && (request.domain == RefDomain::AudioAsset || !request.directChildParentGuid.isNull()));
     tree_->header()->setStretchLastSection(!request.onToggled);
     tree_->header()->setSectionResizeMode(0, QHeaderView::Stretch);
     if (request.onToggled) {
@@ -489,6 +480,7 @@ void SelectorWindow::rebuildLocations(bool preserveState)
         root->setData(0, kRoleSelectable, true);
         root->setData(0, kRoleSearchPath, bucket);
         tree_->addTopLevelItem(root);
+        root->setFirstColumnSpanned(true);
         locationFolders_.insert(root, nullptr);
         const auto addFolder = [&](auto&& self, const PhysicalFolder* folder, QTreeWidgetItem* parent) -> void {
             auto* row = TreeRowStyle::makeFolderRow(folder->name);

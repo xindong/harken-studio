@@ -38,11 +38,11 @@ protected:
         qputenv("HARKEN_HUB_USER_ROOT", dir.path().toUtf8());
         qputenv("HARKEN_HUB_MACHINE_ROOT", dir.filePath("machine").toUtf8());
         ASSERT_TRUE(store.open(dir.filePath("projects.db")));
-        VNH::LocalBuildRecord local;
+        harken::hub::LocalBuildRecord local;
         QString error;
-        ASSERT_TRUE(VNH::LocalBuildRegistry::probe(QString::fromUtf8(HARKEN_HUB_STUDIO_FIXTURE), &local, &error)) << error.toStdString();
-        ASSERT_TRUE(VNH::LocalBuildRegistry::upsert(local, &error));
-        versions = VNH::VersionScanner::scanLocalBuilds();
+        ASSERT_TRUE(harken::hub::LocalBuildRegistry::probe(QString::fromUtf8(HARKEN_HUB_STUDIO_FIXTURE), &local, &error)) << error.toStdString();
+        ASSERT_TRUE(harken::hub::LocalBuildRegistry::upsert(local, &error));
+        versions = harken::hub::VersionScanner::scanLocalBuilds();
         ASSERT_EQ(versions.size(), 1u);
         projectPath = dir.filePath("Demo.hsp");
         writeJson(projectPath, {{"harkenDocument", QJsonObject{
@@ -50,7 +50,7 @@ protected:
             {"projectId", "11111111-2222-3333-4444-555555555555"},
             {"schemaVersion", 2}, {"savedStudioVersion", "1.4.0"}}}});
         QString canonical;
-        ASSERT_TRUE(VNH::ProjectOpenFlow::ensureRegistered(&store, projectPath, &canonical, &error));
+        ASSERT_TRUE(harken::hub::ProjectOpenFlow::ensureRegistered(&store, projectPath, &canonical, &error));
         projectPath = canonical;
         writeJson(projectPath + ".scenario.json", {});
     }
@@ -59,8 +59,8 @@ protected:
     {
         const auto pid = launchLog().value("pid").toInteger();
         if (pid > 0) {
-            VNH::terminateProcessById(pid);
-            spinUntil([pid]() { return VNH::executablePathForPid(pid).isEmpty(); });
+            harken::hub::terminateProcessById(pid);
+            spinUntil([pid]() { return harken::hub::executablePathForPid(pid).isEmpty(); });
         }
         QThreadPool::globalInstance()->waitForDone(5000);
         qunsetenv("HARKEN_HUB_USER_ROOT");
@@ -83,8 +83,8 @@ protected:
     }
 
     QTemporaryDir dir;
-    VNH::ProjectStore store;
-    std::vector<VNH::InstalledVersion> versions;
+    harken::hub::ProjectStore store;
+    std::vector<harken::hub::InstalledVersion> versions;
     QString projectPath;
     QWidget parent;
 };
@@ -92,17 +92,16 @@ protected:
 TEST_F(ProjectOpenFlowTest, DispatchDoesNotClaimProjectSuccessOrOwnTheStudioLifetime)
 {
     const auto before = store.listProjects().front();
-    const auto result = VNH::ProjectOpenFlow::open(&store, projectPath, versions, &parent);
-    ASSERT_EQ(result.result, VNH::ProjectOpenOutcome::Result::Started);
+    const auto result = harken::hub::ProjectOpenFlow::open(&store, projectPath, versions, &parent);
+    ASSERT_EQ(result.result, harken::hub::ProjectOpenOutcome::Result::Started);
     ASSERT_TRUE(spinUntil([this]() { return !launchLog().isEmpty(); }));
     parent.close();
     QCoreApplication::processEvents();
     const auto pid = launchLog().value("pid").toInteger();
-    EXPECT_FALSE(VNH::executablePathForPid(pid).isEmpty());
+    EXPECT_FALSE(harken::hub::executablePathForPid(pid).isEmpty());
     const auto after = store.listProjects().front();
     EXPECT_EQ(after.lastKnownGoodStudioBuildId, before.lastKnownGoodStudioBuildId);
     EXPECT_EQ(after.lastOpenedAt, before.lastOpenedAt);
-    EXPECT_EQ(after.detectedSchema, before.detectedSchema);
     EXPECT_EQ(after.preferredStudioBuildId, before.preferredStudioBuildId);
 }
 
@@ -110,9 +109,9 @@ TEST_F(ProjectOpenFlowTest, UnavailableExecutableReturnsAnErrorWithoutAStartupSe
 {
     versions.front().available = false;
     versions.front().availabilityError = QStringLiteral("Unavailable test installation");
-    const auto result = VNH::ProjectOpenFlow::open(
+    const auto result = harken::hub::ProjectOpenFlow::open(
         &store, projectPath, versions, &parent, versions.front().buildId);
-    EXPECT_EQ(result.result, VNH::ProjectOpenOutcome::Result::Blocked);
+    EXPECT_EQ(result.result, harken::hub::ProjectOpenOutcome::Result::Blocked);
     EXPECT_EQ(result.error, versions.front().availabilityError);
     EXPECT_TRUE(launchLog().isEmpty());
     EXPECT_TRUE(store.listProjects().front().lastOpenedAt.isEmpty());
@@ -120,47 +119,47 @@ TEST_F(ProjectOpenFlowTest, UnavailableExecutableReturnsAnErrorWithoutAStartupSe
 
 TEST_F(ProjectOpenFlowTest, HashMismatchSchedulesAnActualBackgroundSelfTest)
 {
-    auto records = VNH::LocalBuildRegistry::load();
+    auto records = harken::hub::LocalBuildRegistry::load();
     ASSERT_EQ(records.size(), 1u);
     const auto verifiedFingerprint = records.front().executableFingerprint;
     records.front().executableFingerprint = QString(64, QLatin1Char('0'));
     QString error;
-    ASSERT_TRUE(VNH::LocalBuildRegistry::upsert(records.front(), &error));
-    versions = VNH::VersionScanner::scanLocalBuilds();
+    ASSERT_TRUE(harken::hub::LocalBuildRegistry::upsert(records.front(), &error));
+    versions = harken::hub::VersionScanner::scanLocalBuilds();
     ASSERT_TRUE(versions.front().available);
     const auto project = store.listProjects().front();
-    EXPECT_EQ(VNH::LaunchPreflight::evaluate(project, versions, {}).verdict,
-              VNH::LaunchVerdict::Blocked);
-    ASSERT_FALSE(VNH::LocalBuildRegistry::load().front().lastProbeError.isEmpty());
+    EXPECT_EQ(harken::hub::LaunchPreflight::evaluate(project, versions, {}).verdict,
+              harken::hub::LaunchVerdict::Blocked);
+    ASSERT_FALSE(harken::hub::LocalBuildRegistry::load().front().lastProbeError.isEmpty());
 
-    VNH::LocalBuildRefreshCoordinator coordinator;
+    harken::hub::LocalBuildRefreshCoordinator coordinator;
     coordinator.start();
     ASSERT_TRUE(spinUntil([&]() {
-        const auto refreshed = VNH::LocalBuildRegistry::load();
+        const auto refreshed = harken::hub::LocalBuildRegistry::load();
         return refreshed.size() == 1 && refreshed.front().lastProbeError.isEmpty()
             && refreshed.front().executableFingerprint == verifiedFingerprint;
     }));
-    versions = VNH::VersionScanner::scanLocalBuilds();
-    EXPECT_EQ(VNH::LaunchPreflight::evaluate(project, versions, {}).verdict,
-              VNH::LaunchVerdict::Ready);
+    versions = harken::hub::VersionScanner::scanLocalBuilds();
+    EXPECT_EQ(harken::hub::LaunchPreflight::evaluate(project, versions, {}).verdict,
+              harken::hub::LaunchVerdict::Ready);
 }
 
 #if defined(Q_OS_WIN)
 TEST_F(ProjectOpenFlowTest, BackgroundRefreshRecoversAfterRegistryStorageIsReleased)
 {
-    auto records = VNH::LocalBuildRegistry::load();
+    auto records = harken::hub::LocalBuildRegistry::load();
     ASSERT_EQ(records.size(), 1u);
     const auto verifiedFingerprint = records.front().executableFingerprint;
     records.front().executableFingerprint.clear();
     QString error;
-    ASSERT_TRUE(VNH::LocalBuildRegistry::upsert(records.front(), &error));
+    ASSERT_TRUE(harken::hub::LocalBuildRegistry::upsert(records.front(), &error));
 
-    QFile reader(VNH::LocalBuildRegistry::filePath());
+    QFile reader(harken::hub::LocalBuildRegistry::filePath());
     ASSERT_TRUE(reader.open(QIODevice::ReadOnly));
     const auto original = reader.readAll();
-    VNH::LocalBuildRefreshCoordinator coordinator;
+    harken::hub::LocalBuildRefreshCoordinator coordinator;
     bool refreshStarted = false;
-    QObject::connect(&coordinator, &VNH::LocalBuildRefreshCoordinator::buildsChanged,
+    QObject::connect(&coordinator, &harken::hub::LocalBuildRefreshCoordinator::buildsChanged,
                      &coordinator, [&]() { refreshStarted = true; });
     coordinator.start();
     ASSERT_TRUE(spinUntil([&]() { return refreshStarted; }));
@@ -170,7 +169,7 @@ TEST_F(ProjectOpenFlowTest, BackgroundRefreshRecoversAfterRegistryStorageIsRelea
     reader.close();
 
     ASSERT_TRUE(spinUntil([&]() {
-        const auto refreshed = VNH::LocalBuildRegistry::load();
+        const auto refreshed = harken::hub::LocalBuildRegistry::load();
         return refreshed.size() == 1 && refreshed.front().lastProbeError.isEmpty()
             && refreshed.front().executableFingerprint == verifiedFingerprint;
     }));
@@ -179,24 +178,23 @@ TEST_F(ProjectOpenFlowTest, BackgroundRefreshRecoversAfterRegistryStorageIsRelea
 
 TEST_F(ProjectOpenFlowTest, BackgroundRecheckExposesTheSelfTestFailure)
 {
-    VNH::LocalBuildRecord old;
+    harken::hub::LocalBuildRecord old;
     old.executablePath = dir.filePath(QStringLiteral("BrokenStudio.exe"));
     QFile binary(old.executablePath);
     ASSERT_TRUE(binary.open(QIODevice::WriteOnly));
     binary.write("not an executable");
     binary.close();
-    old.capabilitiesVersion = 1;
     QString error;
-    ASSERT_TRUE(VNH::LocalBuildRegistry::upsert(old, &error));
-    VNH::LocalBuildRefreshCoordinator refresh;
+    ASSERT_TRUE(harken::hub::LocalBuildRegistry::upsert(old, &error));
+    harken::hub::LocalBuildRefreshCoordinator refresh;
     refresh.start();
     ASSERT_TRUE(spinUntil([&]() {
-        const auto records = VNH::LocalBuildRegistry::load();
+        const auto records = harken::hub::LocalBuildRegistry::load();
         return std::any_of(records.begin(), records.end(), [&](const auto& value) {
             return value.executablePath == old.executablePath && !value.lastProbeError.isEmpty();
         });
     }));
-    const auto records = VNH::VersionScanner::scanLocalBuilds();
+    const auto records = harken::hub::VersionScanner::scanLocalBuilds();
     const auto broken = std::find_if(records.begin(), records.end(), [&](const auto& value) {
         return value.executablePath == old.executablePath;
     });

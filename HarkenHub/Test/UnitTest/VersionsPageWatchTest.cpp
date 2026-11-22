@@ -24,7 +24,7 @@
 
 #include <gtest/gtest.h>
 
-using VNH::VersionsPage;
+using harken::hub::VersionsPage;
 
 TEST(VersionsPageWatchTest, ReturnsRootWhenItExists)
 {
@@ -58,9 +58,9 @@ TEST(VersionsPageWatchTest, PromotesToRootAfterCreation)
 
 namespace {
 
-VNH::InstalledVersion version(const QString& buildId)
+harken::hub::InstalledVersion version(const QString& buildId)
 {
-    VNH::InstalledVersion result;
+    harken::hub::InstalledVersion result;
     result.buildId = buildId;
     result.semanticVersion = buildId;
     return result;
@@ -70,7 +70,7 @@ VNH::InstalledVersion version(const QString& buildId)
 
 TEST(VersionsPageSortTest, SortsNewestSemanticVersionFirst)
 {
-    std::vector<VNH::InstalledVersion> versions = {
+    std::vector<harken::hub::InstalledVersion> versions = {
         version(QStringLiteral("0.1.6-dev")),
         version(QStringLiteral("0.1.10-dev")),
         version(QStringLiteral("0.1.8-dev")),
@@ -91,7 +91,7 @@ TEST(VersionsPageSortTest, UsesBuildIdForEqualVersions)
     first.semanticVersion = QStringLiteral("1.2.3-dev");
     auto second = version(QStringLiteral("build-b"));
     second.semanticVersion = QStringLiteral("1.2.3-dev");
-    std::vector<VNH::InstalledVersion> versions = {first, second};
+    std::vector<harken::hub::InstalledVersion> versions = {first, second};
 
     VersionsPage::sortForDisplay(versions);
 
@@ -125,25 +125,22 @@ protected:
         ASSERT_TRUE(file.open(QIODevice::WriteOnly));
         file.write(bytes);
     }
-    VNH::InstalledVersionRecord install(const QString& id, const QString& health = "Installed")
+    harken::hub::InstalledVersionRecord install(const QString& id, const QString& health = "Installed")
     {
-        VNH::InstalledVersionRecord record;
+        harken::hub::InstalledVersionRecord record;
         record.buildId = id;
         record.semanticVersion = "0.1.20-dev";
-        record.installPath = QDir(VNH::studioVersionsRoot()).filePath(id);
+        record.installPath = QDir(harken::hub::studioVersionsRoot()).filePath(id);
         record.healthState = health;
-        write(QDir(record.installPath).filePath(VNH::studioBinaryRelativePath()), "stub");
+        write(QDir(record.installPath).filePath(harken::hub::studioBinaryRelativePath()), "stub");
         write(record.installPath + "/package-manifest.json", QJsonDocument(QJsonObject{
             {"product", "HarkenStudio"}, {"buildId", id}, {"version", record.semanticVersion}}).toJson());
-        auto capabilities = HarkenHubTest::studioCapabilities(id, record.semanticVersion);
-        capabilities["capabilitiesVersion"] = 1;
-        write(record.installPath + "/capabilities.json", QJsonDocument(capabilities).toJson());
         QString error;
-        EXPECT_TRUE(VNH::InstallIndex::commitInstallation(record, 1, &error));
+        EXPECT_TRUE(harken::hub::InstallIndex::commitInstallation(record, 1, &error));
         return record;
     }
     QTemporaryDir temp;
-    VNH::ProjectStore store;
+    harken::hub::ProjectStore store;
 };
 
 TEST_F(VersionsPageIssuesTest, LegacyVersionIsVisibleAndDoesNotNeedRepair)
@@ -152,21 +149,20 @@ TEST_F(VersionsPageIssuesTest, LegacyVersionIsVisibleAndDoesNotNeedRepair)
     VersionsPage page(&store);
     page.refresh();
     ASSERT_EQ(page.installedVersions().size(), 1u);
-    EXPECT_EQ(page.installedVersions().front().capabilitiesVersion, 1);
     EXPECT_TRUE(page.findChild<QFrame*>("installationIssueBanner")->isHidden());
 }
 
 TEST_F(VersionsPageIssuesTest, AsyncInstallationOwnsAllCacheInputsAfterViewCloses)
 {
-    VNH::UpdateStateRecord record;
+    harken::hub::UpdateStateRecord record;
     record.product = QStringLiteral("HarkenStudio");
     record.state = QStringLiteral("AwaitingUserInstall");
     record.buildId = QStringLiteral("build");
-    record.downloadPath = VNH::userDataDir() + QStringLiteral("/downloads/build.zip");
-    record.manifestEnvelopePath = VNH::userDataDir() + QStringLiteral("/downloads/manual/build.manifest");
+    record.downloadPath = harken::hub::userDataDir() + QStringLiteral("/downloads/build.zip");
+    record.manifestEnvelopePath = harken::hub::userDataDir() + QStringLiteral("/downloads/manual/build.manifest");
     write(record.downloadPath, "package");
     write(record.manifestEnvelopePath, "manifest");
-    ASSERT_TRUE(VNH::UpdateStateStore::save(record, QDateTime::currentDateTimeUtc()));
+    ASSERT_TRUE(harken::hub::UpdateStateStore::save(record, QDateTime::currentDateTimeUtc()));
 
     auto* pool = QThreadPool::globalInstance();
     pool->waitForDone();
@@ -191,39 +187,23 @@ TEST_F(VersionsPageIssuesTest, AsyncInstallationOwnsAllCacheInputsAfterViewClose
         ASSERT_NE(installButton, nullptr);
         ASSERT_TRUE(installButton->isEnabled());
         installButton->click();
-        EXPECT_FALSE(VNH::DownloadLease::acquire(record.downloadPath));
-        EXPECT_FALSE(VNH::DownloadLease::acquire(record.manifestEnvelopePath));
+        EXPECT_FALSE(harken::hub::DownloadLease::acquire(record.downloadPath));
+        EXPECT_FALSE(harken::hub::DownloadLease::acquire(record.manifestEnvelopePath));
     }
-    EXPECT_FALSE(VNH::DownloadLease::acquire(record.downloadPath));
-    EXPECT_FALSE(VNH::DownloadLease::acquire(record.manifestEnvelopePath));
+    EXPECT_FALSE(harken::hub::DownloadLease::acquire(record.downloadPath));
+    EXPECT_FALSE(harken::hub::DownloadLease::acquire(record.manifestEnvelopePath));
     release.release();
     ASSERT_TRUE(pool->waitForDone(5000));
-    EXPECT_TRUE(VNH::DownloadLease::acquire(record.downloadPath));
-    EXPECT_TRUE(VNH::DownloadLease::acquire(record.manifestEnvelopePath));
-}
-
-TEST_F(VersionsPageIssuesTest, NewerProtocolRemainsInstalledWithSpecificHubLimitations)
-{
-    const auto record = install("newer-protocol");
-    auto capabilities = HarkenHubTest::studioCapabilities(record.buildId, record.semanticVersion);
-    capabilities["capabilitiesVersion"] = 3;
-    write(record.installPath + "/capabilities.json", QJsonDocument(capabilities).toJson());
-    VersionsPage page(&store);
-    page.refresh();
-    ASSERT_EQ(page.installedVersions().size(), 1u);
-    EXPECT_TRUE(page.installedVersions().front().available);
-    EXPECT_TRUE(page.findChild<QFrame*>("installationIssueBanner")->isHidden());
-    auto* table = page.findChild<QTableWidget*>();
-    ASSERT_NE(table, nullptr);
-    ASSERT_NE(table->item(0, 0), nullptr);
+    EXPECT_TRUE(harken::hub::DownloadLease::acquire(record.downloadPath));
+    EXPECT_TRUE(harken::hub::DownloadLease::acquire(record.manifestEnvelopePath));
 }
 
 TEST_F(VersionsPageIssuesTest, MultipleIssuesExposeTheSelectedCauseAndPreserveSelection)
 {
     const auto first = install("missing-executable");
-    const auto second = install("missing-capabilities");
-    ASSERT_TRUE(QFile::remove(QDir(first.installPath).filePath(VNH::studioBinaryRelativePath())));
-    ASSERT_TRUE(QFile::remove(second.installPath + "/capabilities.json"));
+    const auto second = install("missing-manifest");
+    ASSERT_TRUE(QFile::remove(QDir(first.installPath).filePath(harken::hub::studioBinaryRelativePath())));
+    ASSERT_TRUE(QFile::remove(second.installPath + "/package-manifest.json"));
     VersionsPage page(&store);
     page.refresh();
     auto* selector = page.findChild<QComboBox*>("installationIssueSelector");
@@ -239,7 +219,7 @@ TEST_F(VersionsPageIssuesTest, ActiveInstallDoesNotAppearAsDamagedButInterrupted
     install("pending", "Installing");
     QProcess installer;
     installer.start(QString::fromUtf8(HARKEN_HUB_STUDIO_FIXTURE),
-                    {QStringLiteral("--hold-lock"), VNH::InstallExecutor::lockFilePath()});
+                    {QStringLiteral("--hold-lock"), harken::hub::InstallExecutor::lockFilePath()});
     ASSERT_TRUE(installer.waitForStarted());
     const auto stopInstaller = qScopeGuard([&]() {
         if (installer.state() != QProcess::NotRunning) {
@@ -255,11 +235,11 @@ TEST_F(VersionsPageIssuesTest, ActiveInstallDoesNotAppearAsDamagedButInterrupted
     EXPECT_TRUE(page.findChild<QFrame*>("installationIssueBanner")->isHidden());
     installer.kill();
     ASSERT_TRUE(installer.waitForFinished());
-    ASSERT_TRUE(QFileInfo::exists(VNH::InstallExecutor::lockFilePath()));
+    ASSERT_TRUE(QFileInfo::exists(harken::hub::InstallExecutor::lockFilePath()));
     page.refresh();
     EXPECT_FALSE(page.findChild<QFrame*>("installationIssueBanner")->isHidden());
     EXPECT_TRUE(page.findChild<QPushButton*>("installationRepairButton")->isEnabled());
-    EXPECT_TRUE(QFileInfo::exists(VNH::InstallExecutor::lockFilePath()));
+    EXPECT_TRUE(QFileInfo::exists(harken::hub::InstallExecutor::lockFilePath()));
 }
 
 TEST_F(VersionsPageIssuesTest, RepairMarkerCanBeCheckedWithoutACachedPackage)
@@ -275,39 +255,16 @@ TEST_F(VersionsPageIssuesTest, IdentityMismatchDisablesFileOperationsEvenWhenThe
     const auto record = install("registered-build");
     write(record.installPath + "/package-manifest.json", QJsonDocument(QJsonObject{
         {"product", "HarkenStudio"}, {"buildId", "other-build"}, {"version", record.semanticVersion}}).toJson());
-    ASSERT_TRUE(QFile::remove(QDir(record.installPath).filePath(VNH::studioBinaryRelativePath())));
+    ASSERT_TRUE(QFile::remove(QDir(record.installPath).filePath(harken::hub::studioBinaryRelativePath())));
     VersionsPage page(&store);
     page.refresh();
     EXPECT_FALSE(page.findChild<QPushButton*>("installationRepairButton")->isEnabled());
     EXPECT_FALSE(page.findChild<QPushButton*>("installationUninstallButton")->isEnabled());
 }
 
-TEST_F(VersionsPageIssuesTest, CapabilityIdentityMismatchPreventsFileOperationsAndUninstall)
-{
-    for (const auto* field : {"buildId", "studioVersion"}) {
-        for (const auto* health : {"Installed", "NeedsRepair"}) {
-            const auto record = install("registered-build", health);
-            auto capabilities = HarkenHubTest::studioCapabilities(record.buildId, record.semanticVersion);
-            capabilities[field] = "other-identity";
-            write(record.installPath + "/capabilities.json", QJsonDocument(capabilities).toJson());
-            ASSERT_TRUE(QFile::remove(QDir(record.installPath).filePath(VNH::studioBinaryRelativePath())));
-            VersionsPage page(&store);
-            page.refresh();
-            EXPECT_FALSE(page.findChild<QPushButton*>("installationRepairButton")->isEnabled());
-            EXPECT_FALSE(page.findChild<QPushButton*>("installationUninstallButton")->isEnabled());
-            const auto outcome = VNH::UninstallExecutor::run(record.buildId, QDateTime::currentDateTimeUtc(),
-                [](const QString&) { return QStringList(); });
-            EXPECT_FALSE(outcome.ok);
-            EXPECT_EQ(outcome.failureCode, QStringLiteral("IdentityMismatch"));
-            EXPECT_TRUE(QDir(record.installPath).exists());
-            EXPECT_EQ(VNH::InstallIndex::snapshot().records.size(), 1u);
-        }
-    }
-}
-
 TEST_F(VersionsPageIssuesTest, CorruptIndexShowsAnErrorAndNoVersionActions)
 {
-    write(VNH::InstallIndex::filePath(), "invalid-json");
+    write(harken::hub::InstallIndex::filePath(), "invalid-json");
     VersionsPage page(&store);
     page.refresh();
     EXPECT_FALSE(page.findChild<QFrame*>("installationIssueBanner")->isHidden());

@@ -4,7 +4,7 @@
 #include <QEvent>
 #include <QSpinBox>
 
-namespace VNX {
+namespace harken::studio {
 
 class NumericToolTip final : public QObject
 {

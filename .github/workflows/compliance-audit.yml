@@ -47,6 +47,11 @@ jobs:
           --markdown-out .temp/compliance/compliance-report.md
           --fail-on high
 
+      - name: Enforce product boundaries
+        run: |
+          python .scripts/tests/test_product_boundary_check.py -v
+          python .scripts/product_boundary_check.py --json-out .temp/compliance/product-boundary.json --strict
+
       - name: Publish GitHub compliance report
         if: always() && hashFiles('.temp/compliance/compliance-report.json') != ''
         env:

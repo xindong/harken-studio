@@ -12,6 +12,7 @@
 // the audio-origin notification drain, the pre-audibility logic
 // notification drain, the post-audibility logic notification drain, the
 // audio log-record drain, and the logic log-record drain.
+#include <harken/HarkenDevelopment.h>
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/TestUtil.h"
 

@@ -20,7 +20,7 @@
 #include <functional>
 #include <optional>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 
@@ -298,7 +298,7 @@ void registerMixerActions(ActionManager& mgr,
 
             QString name = args["name"].toString("New Bus");
             uint32_t parentBusId = static_cast<uint32_t>(args["parent_bus_id"].toInteger(
-                static_cast<qint64>(VNX::kMasterBusID)));
+                static_cast<qint64>(harken::studio::kMasterBusID)));
 
             ProjectItem* parent = pm.findBusItem(parentBusId);
             if (!parent)
@@ -688,7 +688,7 @@ void registerMixerActions(ActionManager& mgr,
                 ActionManager::instance().executeOriginator());
             if (!r.success) return r;
             r.data = QJsonObject{{"bus", busItem->name}, {"bus_guid", busItem->guid.toString(QUuid::WithoutBraces)},
-                                 {"bus_volume_db", db}};
+                                 {"bus_volume_db", busItem->comp<VMixNode>()->volume}};
             return r;
         };
         mgr.registerAction(def);

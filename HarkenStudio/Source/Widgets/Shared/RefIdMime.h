@@ -8,7 +8,7 @@
 
 class QMimeData;
 
-namespace VNX {
+namespace harken::studio {
 namespace RefIdMime {
 
 void write(QMimeData* mime, RefDomain domain, const QList<uint32_t>& ids);

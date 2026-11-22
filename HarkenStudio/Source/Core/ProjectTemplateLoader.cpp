@@ -21,7 +21,7 @@
 #include <cmath>
 #include <set>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 

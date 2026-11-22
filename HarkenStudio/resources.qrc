@@ -26,6 +26,7 @@
         <file alias="layer.svg">Resources/icons/layer.svg</file>
         <file alias="attenuation.svg">Resources/icons/attenuation.svg</file>
         <file alias="effect.svg">Resources/icons/effect.svg</file>
+        <file alias="conversion.svg">Resources/icons/conversion.svg</file>
         <file alias="chat.svg">Resources/icons/chat.svg</file>
         <file alias="check-black.png">Resources/icons/check-black.png</file>
         <file alias="check-black@2x.png">Resources/icons/check-black@2x.png</file>
@@ -71,11 +72,11 @@
         <file alias="pause.svg">Resources/icons/pause.svg</file>
         <file alias="play.svg">Resources/icons/play.svg</file>
         <file alias="curve-s.svg">Resources/icons/curve-s.svg</file>
-        <file alias="curve-log3.svg">Resources/icons/curve-log3.svg</file>
-        <file alias="curve-convex.svg">Resources/icons/curve-convex.svg</file>
+        <file alias="curve-cubic-ease-out.svg">Resources/icons/curve-cubic-ease-out.svg</file>
+        <file alias="curve-quadratic-ease-out.svg">Resources/icons/curve-quadratic-ease-out.svg</file>
         <file alias="curve-linear.svg">Resources/icons/curve-linear.svg</file>
-        <file alias="curve-concave.svg">Resources/icons/curve-concave.svg</file>
-        <file alias="curve-exp3.svg">Resources/icons/curve-exp3.svg</file>
+        <file alias="curve-quadratic-ease-in.svg">Resources/icons/curve-quadratic-ease-in.svg</file>
+        <file alias="curve-cubic-ease-in.svg">Resources/icons/curve-cubic-ease-in.svg</file>
         <file alias="curve-inverse-s.svg">Resources/icons/curve-inverse-s.svg</file>
         <file alias="plus.svg">Resources/icons/plus.svg</file>
         <file alias="redo.svg">Resources/icons/redo.svg</file>

@@ -5,7 +5,7 @@
 
 class QDialog;
 
-namespace VNH {
+namespace harken::hub {
 
 void configureDialog(QDialog* dialog, const QSize& preferredSize,
                      const QSize& minimumSize = QSize(320, 180));

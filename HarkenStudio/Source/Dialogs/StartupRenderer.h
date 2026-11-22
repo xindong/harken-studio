@@ -4,14 +4,14 @@
 
 #include <QSize>
 #include <QSurfaceFormat>
-#include <QThread>
 #include <QWindow>
 
 #include <QObject>
 
 #include <atomic>
+#include <memory>
 
-namespace VNX {
+namespace harken::studio {
 
 class StartupRenderer final : public QObject
 {
@@ -35,12 +35,13 @@ signals:
     void initializationFailed();
 
 private:
-    void renderLoop();
+    struct Frame;
+    void renderFrame();
 
     const ThemeSnapshotPtr theme_;
     QWindow* window_ = nullptr;
     QSurfaceFormat format_;
-    QThread* thread_ = nullptr;
+    std::unique_ptr<Frame> frame_;
     std::atomic_bool running_{false};
     std::atomic_bool exposed_{false};
     std::atomic_bool initialFramePresented_{false};

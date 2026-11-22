@@ -14,11 +14,12 @@
 
 class QWidget;
 
-namespace VNX {
+namespace harken::studio {
 
 struct ControlVisual
 {
     QColor background;
+    QColor backgroundOverlay;
     QColor foreground;
     QColor alternateBackground;
     QColor selectionBackground;

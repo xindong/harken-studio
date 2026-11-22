@@ -5,7 +5,7 @@
 #include <QSettings>
 #include <memory>
 
-namespace VNX {
+namespace harken::studio {
 
 class QSettingsStorage : public ISettingsStorage {
 public:

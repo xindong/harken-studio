@@ -5,7 +5,7 @@
 #include <QFile>
 #include <QTemporaryDir>
 
-using VNH::HandoffArea;
+using harken::hub::HandoffArea;
 
 namespace {
 

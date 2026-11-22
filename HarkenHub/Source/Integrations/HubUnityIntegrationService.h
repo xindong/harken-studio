@@ -1,111 +1,26 @@
 #pragma once
 
-#include <QString>
-#include <QStringList>
-#include <QVector>
-#include <QMap>
-#include <QJsonObject>
+#include "Integrations/Unity/UnityIntegrationService.h"
 
-namespace VNH {
+namespace harken::hub {
 
-enum class UnityIntegrationStepStatus
-{
-    Pending,
-    Running,
-    Succeeded,
-    Warning,
-    Failed,
-    Skipped,
-};
-
-struct UnityIntegrationStep
-{
-    QString id;
-    QString title;
-    UnityIntegrationStepStatus status = UnityIntegrationStepStatus::Pending;
-    QString summary;
-    QString cause;
-    QString remediation;
-    QStringList details;
-    QStringList artifacts;
-    qint64 elapsedMs = 0;
-};
+using UnityIntegrationStepStatus = harken::hub::unity::UnityIntegrationService::StepStatus;
+using UnityIntegrationStep = harken::hub::unity::UnityIntegrationService::StepResult;
 
 struct UnityIntegrationRequest
 {
     QString unityProjectPath;
     QString integrationSourcePath;
     QString integrationInstallPath;
-    bool installToAssets = false;
     bool checkOnly = false;
-    bool verifyInstalledOnly = false;
-    bool confirmTargetChanges = false;
-    QByteArray approvedPlanHash;
-    bool preserveUnownedTarget = false;
-    bool restoreIntegration = false;
-    bool confirmUnownedConflicts = false;
-    bool recoverRestore = false;
-    QJsonObject officialRelease;
-    QMap<QString, QByteArray> officialFileHashes;
-    QString restorationBackupPath;
+    bool inspectOnly = false;
     bool removeIntegration = false;
-    bool confirmRemoval = false;
-    QString removalBackupPath;
-    bool migrateIntegration = false;
-    bool recoverMigration = false;
-    bool confirmMigration = false;
-    QString migrationTargetPath;
-    QString migrationBackupPath;
-    QString migrationPlanHash;
+    bool restorePrevious = false;
 };
 
-struct UnityIntegrationFileChange
-{
-    QString action;
-    QString path;
-};
-
-struct UnityIntegrationResult
+struct UnityIntegrationResult : harken::hub::unity::UnityIntegrationService::Result
 {
     bool cancelled = false;
-    bool success = false;
-    bool hasWarnings = false;
-    bool requiresConfirmation = false;
-    bool targetAlreadyCurrent = false;
-    bool targetCurrent = false;
-    bool targetInstalled = false;
-    bool integrationFound = false;
-    bool integrationRemoved = false;
-    bool removalBackupCreated = false;
-    bool changesDetected = false;
-    QByteArray planHash;
-    QStringList modifiedFiles;
-    QStringList conflictingFiles;
-    QStringList lineEndingFiles;
-    QStringList encodingFiles;
-    QStringList missingFiles;
-    QStringList missingOptionalFiles;
-    QStringList unreadableFiles;
-    bool integrationMigrated = false;
-    bool migrationRecovered = false;
-    QString migrationBackupPath;
-    QString migrationTargetPath;
-    QString migrationPlanHash;
-    QVector<UnityIntegrationStep> steps;
-    QVector<UnityIntegrationFileChange> fileChanges;
-    QString unityProjectPath;
-    QString integrationSourcePath;
-    QString integrationInstallPath;
-    QString removalBackupPath;
-    QString restorationBackupPath;
-    QString jsonReportPath;
-    QString textReportPath;
-    int integrationFilesCopied = 0;
-    int filesAdded = 0;
-    int filesChanged = 0;
-    int staleFilesToRemove = 0;
-    int targetOnlyFilesPreserved = 0;
-    int filesRemoved = 0;
 };
 
 class HubUnityIntegrationService

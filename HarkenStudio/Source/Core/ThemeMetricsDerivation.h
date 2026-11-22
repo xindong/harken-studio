@@ -2,9 +2,9 @@
 
 #include "ThemeSnapshot.h"
 
-namespace VNX {
+namespace harken::studio {
 
 void deriveThemeMetrics(ThemeSnapshot& theme);
-void deriveThemeMetrics(ThemeSnapshot& theme, const ThemeMetrics& worldTokens);
+void deriveThemeMetrics(ThemeSnapshot& theme, const ThemeMetrics& baseMetrics);
 
 }

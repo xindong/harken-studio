@@ -6,7 +6,7 @@
 #include <vector>
 #include <cstdint>
 
-namespace VNX {
+namespace harken::studio {
 
 struct ProjectData;
 struct ProjectItem;

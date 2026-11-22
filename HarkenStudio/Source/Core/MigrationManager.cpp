@@ -1,12 +1,17 @@
 
 #include "MigrationManager.h"
+#include "ConversionMigration.h"
+#include "AssetPipeline/PathUtils.h"
 #include "ItemTypeCatalog.h"
 #include "ProjectDataPolicy.h"
 #include "ProjectDocument.h"
 #include "ProjectContract.h"
 #include "ProjectTypes.h"
 
+#include <QCryptographicHash>
 #include <QDebug>
+#include <QFile>
+#include <QJsonDocument>
 #include <QDir>
 #include <QDirIterator>
 #include <QFileInfo>
@@ -14,7 +19,7 @@
 #include <QJsonObject>
 #include <QUuid>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 QStringList projectDocumentRelativePaths(const QString& projectDirectory,
@@ -104,10 +109,11 @@ bool migrateLegacyContent(QJsonObject* content, QString* error)
         };
         auto shared = groups.value(QStringLiteral("shared")).toObject();
         migrateOutput(&shared);
-        shared.insert(QStringLiteral("effect"), QJsonObject{
-            {QStringLiteral("inherit"), false},
-            {QStringLiteral("values"), QJsonObject{
-                {QStringLiteral("effects"), mix.take(QStringLiteral("effects")).toArray()}}}});
+        if (!shared.contains(QStringLiteral("effect")))
+            shared.insert(QStringLiteral("effect"), QJsonObject{
+                {QStringLiteral("inherit"), false},
+                {QStringLiteral("values"), QJsonObject{
+                    {QStringLiteral("effects"), mix.take(QStringLiteral("effects")).toArray()}}}});
         groups.insert(QStringLiteral("shared"), shared);
         if (groups.value(QStringLiteral("platforms")).isObject()) {
             auto platforms = groups.value(QStringLiteral("platforms")).toObject();
@@ -169,32 +175,14 @@ MigrationManager::MigrationManager()
         step.writeSet = {QStringLiteral("<all-documents>")};
         step.transform = [targetSchema](ProjectMigrationWorkspace& workspace,
                                        QStringList*, QString* error) {
-            for (const QString& relative : workspace.writeSet()) {
+            const auto paths = projectDocumentRelativePaths(workspace.sourceDirectory(),
+                QDir(workspace.sourceDirectory()).filePath(workspace.projectFile()));
+            for (const QString& relative : paths) {
                 QJsonObject document;
                 if (!workspace.readObject(relative, &document, error))
                     return false;
                 QJsonObject header = document.value(QStringLiteral("harkenDocument")).toObject();
                 header.insert(QStringLiteral("schemaVersion"), targetSchema);
-                if (targetSchema == CURRENT_PROJECT_SCHEMA_VERSION) {
-                    header = ProjectDocument::createHeader(
-                        header.value(QStringLiteral("type")).toString(),
-                        header.value(QStringLiteral("id")).toString(),
-                        header.value(QStringLiteral("projectId")).toString(), header);
-                    auto content = document.value(QStringLiteral("content")).toObject();
-                    if (header.value(QStringLiteral("type")) == QStringLiteral("project.root")) {
-                        auto metadata = content.value(QStringLiteral("metadata")).toObject();
-                        QJsonObject audio;
-                        audio.insert(QStringLiteral("renderSampleRate"), metadata.take(QStringLiteral("sampleRate")));
-                        audio.insert(QStringLiteral("channelConfig"), metadata.take(QStringLiteral("channelConfig")));
-                        content.insert(QStringLiteral("audio"), audio);
-                        content.insert(QStringLiteral("deployPlatforms"), metadata.take(QStringLiteral("platforms")));
-                        content.insert(QStringLiteral("deployLanguages"), content.take(QStringLiteral("projectLanguages")));
-                        content.insert(QStringLiteral("metadata"), metadata);
-                    }
-                    if (!migrateLegacyContent(&content, error)
-                        || !ProjectDocument::normalizeContent(&content, error)) return false;
-                    document.insert(QStringLiteral("content"), content);
-                }
                 document.insert(QStringLiteral("harkenDocument"), header);
                 if (!workspace.writeObject(relative, document, error))
                     return false;
@@ -203,6 +191,17 @@ MigrationManager::MigrationManager()
         };
         registry_.registerStep(std::move(step));
     }
+    ProjectMigrationStep conversion;
+    conversion.id = QStringLiteral("project-schema-9-to-10");
+    conversion.fromSchema = 9;
+    conversion.toSchema = 10;
+    conversion.writeSet = {QStringLiteral("<all-documents>")};
+    conversion.transform = [](ProjectMigrationWorkspace&, QStringList*, QString* error) {
+        if (error) *error = QStringLiteral("Conversion migration requires a project plan");
+        return false;
+    };
+    registry_.registerStep(std::move(conversion));
+
 }
 
 MigrationManager::MigrationManager(ProjectMigrationRegistry registry)
@@ -254,6 +253,80 @@ ProjectMigrationPlan MigrationManager::planProject(
     expandWriteSetPlaceholders(&plan.writeSet, projectDirectory, projectFile);
     for (ProjectMigrationStep& step : plan.steps)
         expandWriteSetPlaceholders(&step.writeSet, projectDirectory, projectFile);
+    for (ProjectMigrationStep& step : plan.steps) {
+        if (step.id != QStringLiteral("project-schema-9-to-10")) continue;
+        QMap<QString, QJsonObject> documents;
+        for (const auto& relative : step.writeSet) {
+            QFile file(QDir(projectDirectory).filePath(relative));
+            if (!file.open(QIODevice::ReadOnly)) {
+                plan.ok = false;
+                plan.error = QStringLiteral("Cannot read migration input: %1").arg(relative);
+                return plan;
+            }
+            QJsonParseError parseError;
+            const auto json = QJsonDocument::fromJson(file.readAll(), &parseError);
+            if (parseError.error != QJsonParseError::NoError || !json.isObject()) {
+                plan.ok = false;
+                plan.error = QStringLiteral("Invalid migration input: %1").arg(relative);
+                return plan;
+            }
+            auto document = json.object();
+            auto header = document.value(QStringLiteral("harkenDocument")).toObject();
+            header = ProjectDocument::createHeader(header.value(QStringLiteral("type")).toString(),
+                header.value(QStringLiteral("id")).toString(),
+                header.value(QStringLiteral("projectId")).toString(), header);
+            auto content = document.value(QStringLiteral("content")).toObject();
+            if (header.value(QStringLiteral("type")) == QStringLiteral("project.root")
+                && !content.contains(QStringLiteral("audio"))) {
+                auto metadata = content.value(QStringLiteral("metadata")).toObject();
+                content.insert(QStringLiteral("audio"), QJsonObject{
+                    {QStringLiteral("renderSampleRate"), metadata.take(QStringLiteral("sampleRate"))},
+                    {QStringLiteral("channelConfig"), metadata.take(QStringLiteral("channelConfig"))}});
+                content.insert(QStringLiteral("deployPlatforms"), metadata.take(QStringLiteral("platforms")));
+                content.insert(QStringLiteral("deployLanguages"), content.take(QStringLiteral("projectLanguages")));
+                content.insert(QStringLiteral("metadata"), metadata);
+            }
+            if (!migrateLegacyContent(&content, &plan.error)
+                || !ProjectDocument::normalizeContent(&content, &plan.error)) {
+                plan.ok = false;
+                return plan;
+            }
+            document.insert(QStringLiteral("harkenDocument"), header);
+            document.insert(QStringLiteral("content"), content);
+            documents.insert(relative, document);
+        }
+        const QString registryPath = QDir::fromNativeSeparators(QDir(projectDirectory).relativeFilePath(
+            QDir(PathUtils::getAssetRegistryCacheDir(projectDirectory)).filePath(QStringLiteral("assets.json"))));
+        QFile registryFile(QDir(projectDirectory).filePath(registryPath));
+        QByteArray fingerprint;
+        if (registryFile.exists()) {
+            if (!registryFile.open(QIODevice::ReadOnly)) {
+                plan.ok = false;
+                plan.error = QStringLiteral("Cannot read the legacy asset registry");
+                return plan;
+            }
+            fingerprint = QCryptographicHash::hash(registryFile.readAll(), QCryptographicHash::Sha256);
+        }
+        plan.inputFingerprints.insert(registryPath, fingerprint);
+        QStringList migrationWarnings;
+        const QString relativeProject = QDir::fromNativeSeparators(QDir(projectDirectory).relativeFilePath(projectFile));
+        if (!prepareConversionMigration(projectDirectory, relativeProject, documents,
+                                         plan.inputFingerprints, &migrationWarnings, &plan.error)) {
+            plan.ok = false;
+            return plan;
+        }
+        step.writeSet = documents.keys();
+        plan.writeSet.append(step.writeSet);
+        plan.writeSet.sort();
+        plan.writeSet.removeDuplicates();
+        step.transform = [documents, migrationWarnings](ProjectMigrationWorkspace& workspace,
+                                                        QStringList* warnings, QString* error) {
+            for (auto entry = documents.cbegin(); entry != documents.cend(); ++entry)
+                if (!workspace.writeObject(entry.key(), entry.value(), error)) return false;
+            if (warnings) warnings->append(migrationWarnings);
+            return true;
+        };
+    }
     plan.fileCount = plan.writeSet.size();
     plan.recoveryBytes = 0;
     for (const QString& path : plan.writeSet) {
@@ -295,7 +368,7 @@ bool MigrationManager::migrateProject(const ProjectMigrationPlan& plan,
         if (treeValidatorForTesting_)
             return treeValidatorForTesting_(migrationWorkspace.stagingDirectory(),
                                             expectedVersion, validationError);
-        const QStringList errors = ProjectContractRegistry::instance().validateTree(
+        const QStringList errors = ProjectContractRegistry::instance().validateSnapshot(
             migrationWorkspace.stagingDirectory(), root, false,
             migrationWorkspace.loadedObjects());
         if (errors.isEmpty())

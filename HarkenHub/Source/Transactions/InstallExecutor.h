@@ -4,7 +4,7 @@
 #include <QDateTime>
 #include <QString>
 
-namespace VNH {
+namespace harken::hub {
 
 inline constexpr int kInstallMachineDataUnavailableExitCode = 3;
 
@@ -27,7 +27,8 @@ public:
     static InstallOutcome run(const QString& transactionId,
                               const QByteArray& manifestPublicKey,
                               const QDateTime& now,
-                              bool explicitInstall = false);
+                              bool explicitInstall = false, const QString& reviewedDestination = {},
+                              const QString& reviewedIndexHash = {}, const QString& reviewedManifestHash = {});
 };
 
 }

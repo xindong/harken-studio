@@ -3,7 +3,7 @@
 #include <QString>
 #include <QStringList>
 
-namespace VNH {
+namespace harken::hub {
 
 struct StudioLaunchSpec
 {
@@ -18,7 +18,6 @@ struct StudioCreateSpec
     QString projectName;
     QString projectLocation;
     QString templateId;
-    QString templatePath;
 };
 
 class StudioLauncher

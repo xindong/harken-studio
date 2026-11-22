@@ -10,12 +10,13 @@
 // thread API journal. The recorder is owned by the Engine, written only
 // from public API entry hooks, Vn_Update, and Vn_TraceStart/Stop — all
 // externally synchronized logic-thread calls. Nothing under
-// Source/Runtime/render includes TraceRecorder.h, and the mixer's render
+// Source/Core/render includes TraceRecorder.h, and the mixer's render
 // path carries no trace branch; the recorder OBSERVES the audio thread only
 // through the snapshot double buffer's reader side, which the audio thread
 // never waits on. Tracing OFF is one null-pointer test per API call.
 #include "Common/ObjectIdTestSupport.h"
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 
 #include "Common/TestUtil.h"
 #include "TraceFormat.h"

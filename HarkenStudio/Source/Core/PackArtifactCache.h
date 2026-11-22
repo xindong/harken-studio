@@ -6,7 +6,9 @@
 #include <QStringList>
 #include <QVector>
 
-namespace VNX {
+namespace harken::studio {
+
+inline constexpr int kPackBuildStateVersion = 3;
 
 struct ProjectData;
 

@@ -4,12 +4,13 @@
 // observable synchronously and must leave no trace behind. Also covers
 // the cross-namespace exclusivity with Vn_RegisterPCM — one VnSoundId
 // names one asset, resident or streamed, never both.
+#include <harken/HarkenDevelopment.h>
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/StreamBuilder.h"
 #include "Common/TestUtil.h"
 #include "Common/MonitorExecutionTestSupport.h"
 
-#include "harken/media/StreamFormat.h"
+#include "harken/media/PackFormatV2.h"
 #include "harken/media/StreamManager.h"
 
 #include <algorithm>
@@ -72,7 +73,7 @@ struct StreamManagerTestAccess {
         const auto& source = manager.m_slots[slot];
         if (source.stagedChunk == StreamManager::kNoChunk) return true;
         const auto& file = *manager.m_files[source.fileIndex];
-        const auto bytes = StreamChunkBytes(file.chunkFrames, file.toc.channelCount);
+        const auto bytes = hkPackStreamFileChunkBytes(file.chunkFrames, file.toc.channelCount);
         return source.stagedChunk < file.chunkChecksums.size() &&
             source.staging.size() * sizeof(float) == bytes &&
             Fnv1a64(source.staging.data(), static_cast<std::size_t>(bytes)) ==
@@ -119,11 +120,11 @@ void FixTocChecksum(std::vector<std::uint8_t>* bytes) {
         bytes->data() + header.tocOffset);
     std::uint64_t checksum =
         harken::Fnv1a64(bytes->data() + header.tocOffset,
-                       harken::kStreamTocEntryBytes);
+                       HK_PACK_STREAM_FILE_TOC_ENTRY_BYTES);
     checksum = harken::Fnv1a64(
         bytes->data() + static_cast<std::size_t>(entry.chunkChecksumOffset),
         static_cast<std::size_t>(entry.chunkCount) *
-            harken::kStreamChunkChecksumBytes,
+            HK_PACK_STREAM_FILE_CHUNK_CHECKSUM_BYTES,
         checksum);
     header.tocChecksum = checksum;
     harken::SerializeStreamHeader(header, bytes->data());
@@ -572,7 +573,7 @@ TEST(StreamRegister, SlowSameSourceActiveReadDoesNotBlockHealthyInstanceOrReleas
     source->maxRead = 16 * sizeof(float);
     const auto samples = ServiceSamples(4096, 0);
     source->bytes = BuildStreamBytes(spec, samples);
-    const auto toc = harken::ParseStreamTocEntry(source->bytes.data() + harken::kStreamHeaderBytes);
+    const auto toc = harken::ParseStreamTocEntry(source->bytes.data() + HK_PACK_STREAM_FILE_HEADER_BYTES);
     Manager::SourceToken prepared;
     ASSERT_EQ(VN_OK, streams.BeginSource(spec.soundId, source, false, 0, &prepared));
     ASSERT_TRUE(WaitUntil([&] { return streams.QuerySource(prepared) == Manager::PreparationState::Ready; }));
@@ -720,7 +721,7 @@ TEST(StreamRegister, OptionalReadAheadNeverRequiresFutureBytesOrRetriesCancellat
         spec.chunkFrames = 64;
         auto samples = ServiceSamples(4096, 0);
         source->bytes = BuildStreamBytes(spec, samples);
-        source->payload = harken::ParseStreamTocEntry(source->bytes.data() + harken::kStreamHeaderBytes).payloadOffset;
+        source->payload = harken::ParseStreamTocEntry(source->bytes.data() + HK_PACK_STREAM_FILE_HEADER_BYTES).payloadOffset;
         source->behavior = behavior;
         harken::StreamManager::SourceToken sourceToken;
         ASSERT_EQ(VN_OK, streams.BeginSource(spec.soundId, source, false, 0, &sourceToken));
@@ -1165,8 +1166,8 @@ TEST(StreamRegister, ReplacementIntegrityFailureWinsOverBufferedFrames) {
     spec.soundId = harkentest::ObjectId(17203);
     spec.chunkFrames = 8;
     auto bytes = BuildStreamBytes(spec, ServiceSamples(64, 0));
-    const auto toc = harken::ParseStreamTocEntry(bytes.data() + harken::kStreamHeaderBytes);
-    bytes[static_cast<std::size_t>(toc.payloadOffset + harken::StreamChunkBytes(8, 1))] ^= 1u;
+    const auto toc = harken::ParseStreamTocEntry(bytes.data() + HK_PACK_STREAM_FILE_HEADER_BYTES);
+    bytes[static_cast<std::size_t>(toc.payloadOffset + hkPackStreamFileChunkBytes(8, 1))] ^= 1u;
     const auto path = TempPath("stream_replacement_bad_chunk.stream");
     WriteFileBytes(path, bytes);
     ASSERT_EQ(VN_OK, streams.RegisterFile(spec.soundId, path.c_str()));
@@ -1383,10 +1384,10 @@ TEST(StreamRegister, AdjacentStreamIntegrityFailureDoesNotStopHealthyNeighbor) {
             sources[slot] = ServiceSamples(512, slot * 512);
             auto bytes = BuildStreamBytes(spec, sources[slot]);
             if (slot == badSlot && fault != Fault::ShortRead) {
-                const auto toc = harken::ParseStreamTocEntry(bytes.data() + harken::kStreamHeaderBytes);
+                const auto toc = harken::ParseStreamTocEntry(bytes.data() + HK_PACK_STREAM_FILE_HEADER_BYTES);
                 const auto chunkIndex = 128 / spec.chunkFrames;
-                const auto chunkBytes = harken::StreamChunkBytes(spec.chunkFrames, 1);
-                auto* chunk = bytes.data() + harken::StreamChunkFileOffset(
+                const auto chunkBytes = hkPackStreamFileChunkBytes(spec.chunkFrames, 1);
+                auto* chunk = bytes.data() + hkPackStreamFileChunkOffset(
                     toc.payloadOffset, chunkIndex, chunkBytes);
                 if (fault == Fault::Checksum) {
                     chunk[0] ^= 1u;
@@ -1394,7 +1395,7 @@ TEST(StreamRegister, AdjacentStreamIntegrityFailureDoesNotStopHealthyNeighbor) {
                     const std::uint32_t nonfinite = 0x7fc12345u;
                     std::memcpy(chunk, &nonfinite, sizeof(nonfinite));
                     harken::StoreLE64(bytes.data() + toc.chunkChecksumOffset +
-                        chunkIndex * harken::kStreamChunkChecksumBytes,
+                        chunkIndex * HK_PACK_STREAM_FILE_CHUNK_CHECKSUM_BYTES,
                         harken::Fnv1a64(chunk, static_cast<std::size_t>(chunkBytes)));
                     FixTocChecksum(&bytes);
                     ASSERT_FALSE(::testing::Test::HasFatalFailure());
@@ -1638,7 +1639,7 @@ TEST(StreamRegister, RegisterExposesTocFactsThroughFindFile) {
     EXPECT_EQ(44100u, facts.sampleRate);
     EXPECT_EQ(2u, facts.channelCount);
     EXPECT_EQ(800u, facts.frameCount);
-    EXPECT_EQ(harken::kStreamFlagLoopable, facts.flags);
+    EXPECT_EQ(HK_PACK_MEDIA_FLAG_LOOPABLE, facts.flags);
     EXPECT_EQ(100u, facts.loopStartFrame);
     EXPECT_EQ(700u, facts.loopEndFrame);
     EXPECT_NE(0u, facts.contentRevision);
@@ -1675,7 +1676,7 @@ TEST(StreamRegister, PendingReferencePreservesWideBackingThroughNarrowStartsAndR
     auto monoSource = std::make_shared<ControlledSource>();
     monoSource->bytes = MakeValidImage(harkentest::ObjectId(7012), 4096);
     monoSource->maxRead = 256 * sizeof(float);
-    const auto monoToc = harken::ParseStreamTocEntry(monoSource->bytes.data() + harken::kStreamHeaderBytes);
+    const auto monoToc = harken::ParseStreamTocEntry(monoSource->bytes.data() + HK_PACK_STREAM_FILE_HEADER_BYTES);
     ASSERT_EQ(VN_OK, streams.RegisterFile(spec.soundId, widePath.c_str()));
     harken::StreamManager::SourceToken prepared;
     ASSERT_EQ(VN_OK, streams.BeginSource(harkentest::ObjectId(7012), monoSource, false, 0, &prepared));
@@ -1880,7 +1881,7 @@ TEST(StreamRegister, ChunkFramesAcceptanceMatchesSharedCeiling) {
     spec.soundId = harkentest::ObjectId(7010);
     spec.sampleRate = kRate;
     spec.channelCount = 1;
-    spec.chunkFrames = harken::kMaxStreamChunkFrames;
+    spec.chunkFrames = HK_PACK_STREAM_FILE_MAX_CHUNK_FRAMES;
     const std::string acceptedPath =
         TempPath("stream_reg_chunk_ceiling.stream");
     WriteFileBytes(acceptedPath, BuildStreamBytes(spec, oneFrame));
@@ -1888,7 +1889,7 @@ TEST(StreamRegister, ChunkFramesAcceptanceMatchesSharedCeiling) {
               Vn_RegisterStreamFile(spec.soundId, acceptedPath.c_str()));
 
     spec.soundId = harkentest::ObjectId(7011);
-    spec.chunkFrames = harken::kMaxStreamChunkFrames + 1;
+    spec.chunkFrames = HK_PACK_STREAM_FILE_MAX_CHUNK_FRAMES + 1;
     const std::string refusedPath =
         TempPath("stream_reg_chunk_over_ceiling.stream");
     WriteFileBytes(refusedPath, BuildStreamBytes(spec, oneFrame));
@@ -1941,32 +1942,32 @@ TEST(StreamRegister, CorruptContainersRefusedWithoutSideEffects) {
          }},
         {"TOC entry byte flipped (tocChecksum mismatch)",
          [](std::vector<std::uint8_t>* b) {
-             (*b)[harken::kStreamHeaderBytes + 16] ^= 0x01;
+             (*b)[HK_PACK_STREAM_FILE_HEADER_BYTES + 16] ^= 0x01;
          }},
         {"chunk-checksum table byte flipped (tocChecksum mismatch)",
          [](std::vector<std::uint8_t>* b) {
-             (*b)[harken::kStreamHeaderBytes +
-                  harken::kStreamTocEntryBytes] ^= 0x01;
+             (*b)[HK_PACK_STREAM_FILE_HEADER_BYTES +
+                  HK_PACK_STREAM_FILE_TOC_ENTRY_BYTES] ^= 0x01;
          }},
         {"file truncated mid-payload",
          [](std::vector<std::uint8_t>* b) { b->resize(b->size() / 2); }},
         {"chunk count off by one (validated field, checksum refit)",
          [](std::vector<std::uint8_t>* b) {
              harken::StreamTocEntry entry = harken::ParseStreamTocEntry(
-                 b->data() + harken::kStreamHeaderBytes);
+                 b->data() + HK_PACK_STREAM_FILE_HEADER_BYTES);
              entry.chunkCount += 1;
              harken::SerializeStreamTocEntry(
-                 entry, b->data() + harken::kStreamHeaderBytes);
+                 entry, b->data() + HK_PACK_STREAM_FILE_HEADER_BYTES);
              FixTocChecksum(b);
          }},
         {"loop fields on a non-loopable entry (checksum refit)",
          [](std::vector<std::uint8_t>* b) {
              harken::StreamTocEntry entry = harken::ParseStreamTocEntry(
-                 b->data() + harken::kStreamHeaderBytes);
+                 b->data() + HK_PACK_STREAM_FILE_HEADER_BYTES);
              entry.loopStartFrame = 10;
              entry.loopEndFrame = 20;
              harken::SerializeStreamTocEntry(
-                 entry, b->data() + harken::kStreamHeaderBytes);
+                 entry, b->data() + HK_PACK_STREAM_FILE_HEADER_BYTES);
              FixTocChecksum(b);
          }},
     };
@@ -2171,7 +2172,7 @@ TEST(StreamRegister, StreamObservationsMeasureProviderCallsCacheFailuresAndReuse
         ASSERT_EQ(VN_OK, streams.TakeSource(request, &facts));
         source->reads = 0; source->totalBytes = 0; source->failure = failure;
         if (failure == 3) {
-            const auto toc = harken::ParseStreamTocEntry(source->bytes.data() + harken::kStreamHeaderBytes);
+            const auto toc = harken::ParseStreamTocEntry(source->bytes.data() + HK_PACK_STREAM_FILE_HEADER_BYTES);
             source->bytes[static_cast<std::size_t>(toc.payloadOffset)] ^= 1;
         }
         ASSERT_TRUE(streams.PrepareSlotWorkingSet(0, 1));

@@ -2,7 +2,7 @@
 
 #include <QHash>
 
-namespace VNX {
+namespace harken::studio {
 namespace EditorLaunchMap {
 
 namespace {
@@ -19,6 +19,7 @@ QString editorPanelTypeForSlot(const QString& slot)
         { QStringLiteral("attenuation"), QStringLiteral("ExternalEditor") },
         { QStringLiteral("timeline"), QStringLiteral("TimelineEditor") },
         { QStringLiteral("selections"), QStringLiteral("GridEditor") },
+        { QStringLiteral("conversion"), QStringLiteral("ConversionEditor") },
     };
     auto it = map.find(slot);
     return it != map.end() ? it.value() : QString();

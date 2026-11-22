@@ -33,7 +33,7 @@
 #include <unordered_map>
 #include <utility>
 
-namespace VNX {
+namespace harken::studio {
 namespace ProjectLoaderInternal {
 
 constexpr const char* kActionsFolder = ItemTypeCatalog::kActionsFolderName;
@@ -139,6 +139,7 @@ const std::vector<SingleObjHierarchySpec>& s3Specs()
 {
     static const std::vector<SingleObjHierarchySpec> specs = {
         { QStringLiteral("Attenuations"),    ProjectItem::Type::Attenuation },
+        { QStringLiteral("Conversions"),     ProjectItem::Type::Conversion },
         { QLatin1String(ItemTypeCatalog::kEffectsFolderName), ProjectItem::Type::Effect },
         { QLatin1String(ItemTypeCatalog::kVariablesFolderName),
                                              ProjectItem::Type::Variable },
@@ -155,6 +156,7 @@ QString s3DocumentType(const SingleObjHierarchySpec& spec)
 {
     switch (spec.topType) {
     case ProjectItem::Type::Attenuation: return QStringLiteral("project.attenuation");
+    case ProjectItem::Type::Conversion: return QStringLiteral("project.conversion");
     case ProjectItem::Type::Effect: return QStringLiteral("project.effect");
     case ProjectItem::Type::Variable: return QStringLiteral("project.variable");
     default: return {};
@@ -177,6 +179,8 @@ bool loadS3PayloadByType(const SingleObjHierarchySpec& spec,
     switch (spec.topType) {
     case ProjectItem::Type::Attenuation:
         return serializer.attenuationPackFromJson(obj, item);
+    case ProjectItem::Type::Conversion:
+        return serializer.conversionPackFromJson(obj, item);
     case ProjectItem::Type::Effect:
         return serializer.effectPackFromJson(obj, item);
     case ProjectItem::Type::Variable:
@@ -399,7 +403,7 @@ bool loadBussesPacksImpl(const QString& projectRoot,
     int rootCount = 0;
     for (const auto& child : scratchRoot->children) {
         if (!child) continue;
-        if (!child->comp<VNX::VBus>()) continue;
+        if (!child->comp<harken::studio::VBus>()) continue;
         if (child->objectID == 0 || !byObjectID.emplace(child->objectID, child).second) {
             ++failed;
             if (errOut)

@@ -25,7 +25,7 @@
 #include <QToolButton>
 #include <QVBoxLayout>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 
@@ -103,24 +103,15 @@ GridEditorWidget::GridEditorWidget(QWidget* parent)
 
     gridPage_ = new PaneSectionStack(QStringLiteral("SelectionEditor"), stack_);
     gridPage_->setObjectName(QStringLiteral("selectionEditorPage"));
-    const auto fill = [](PaneSection* section, QWidget* content) {
-        auto* layout = new QVBoxLayout(section->content());
-        layout->setSpacing(0);
-        layout->addWidget(content, 1);
-        ThemeManager::instance().bindMetrics(content, [layout](const ThemeMetrics& metrics) {
-            const int padding = metrics.layout.panelPadding;
-            layout->setContentsMargins(padding, padding, padding, padding);
-        });
-    };
     contentSection_ = gridPage_->addSection(tr("Content"), QStringLiteral("content"), 300);
     contentSection_->setObjectName(QStringLiteral("selectionContentSection"));
     editorStack_ = new QStackedWidget(contentSection_->content());
     editorStack_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
-    fill(contentSection_, editorStack_);
+    contentSection_->setContentWidget(editorStack_);
     transitionSection_ = gridPage_->addSection(tr("Transition"), QStringLiteral("transition"), 200);
     transitionSection_->setObjectName(QStringLiteral("selectionTransitionSection"));
     transitionTable_ = new TransitionTableWidget(transitionSection_->content());
-    fill(transitionSection_, transitionTable_);
+    transitionSection_->setContentWidget(transitionTable_);
 
     discreteGrid_ = new DiscreteGridWidget(editorStack_);
     editorStack_->addWidget(discreteGrid_);

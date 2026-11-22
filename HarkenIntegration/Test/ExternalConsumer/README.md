@@ -4,7 +4,6 @@ Run from the repository root with Python 3.12 and .NET 9:
 
 ```text
 python HarkenIntegration/Test/ExternalConsumer/check_boundary.py
-python HarkenIntegration/Test/ExternalConsumer/check_boundary.py --native-dir <production-runtime-directory> --publication HarkenIntegration/Test/UnityFixture/Data/U4Original
 ```
 
 The runner stages the selected Unity Integration Package, builds `Harken.Core.dll`, and compiles an
@@ -21,29 +20,3 @@ configuration. `Directory.Build.props` sets this before NuGet restore. The
 runner overrides it with `--artifacts-path` inside each invocation's work
 directory, so staged fixtures and concurrent runs keep separate build outputs.
 Any legacy `bin/` or `obj/` directories are ignored and excluded from staging.
-
-Native execution uses the requested production library and checks file/byte
-companion startup, Action preparation/query/stop, spatial calls, resource failures and explicit retry,
-ownership, host registration disposal, and optional Remote startup/stop/termination.
-Null audio does not render automatically: release before retirement returns
-`VN_IN_USE`; shutdown owns the remaining firing. This runner does not claim audio
-completion or delivered notification coverage.
-
-For real Unity compilation and callback/AOT coverage, copy `Unity/` to the
-dedicated fixture project's `Assets/ExternalConsumer` directory. Keep the
-`Harken.ExternalUnityConsumer` assembly name unchanged and outside the managed API's friend
-lists. Prepare the project with the existing `../UnityFixture/README.md` process,
-the current Integration Package, and the dedicated **test-only** native bridge. Enable
-`HARKEN_SDK_TEST_NULL_PUMP` for Standalone and run the external test alongside
-`Harken.Unity.PlayModeTests` in PlayMode and a Standalone Windows IL2CPP Player.
-Also run `Harken.Unity.EditModeTests`. PlayableDemo remains suspended and is not a runtime validation input.
-
-`PublicHostPreservesCallbacksAndTerminalActionRelease` posts and stops an authored
-Action, advances null audio until the same firing is terminal, and releases it.
-It queues a fresh native notification, forces GC, pumps the public Update path,
-and verifies delivery, host state and calling thread. The private P/Invokes in
-that test only drive the existing native test bridge; they do not grant access
-to managed API internals. Never distribute the bridge DLL or test define with a production
-Integration Package.
-Unity Player tests complement the production-library host run; neither replaces
-actual device/game/listening acceptance when a change requires it.

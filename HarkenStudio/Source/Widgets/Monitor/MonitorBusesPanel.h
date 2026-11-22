@@ -15,7 +15,7 @@
 class QLabel;
 class QTableView;
 
-namespace VNX {
+namespace harken::studio {
 
 class MonitorBusesPanel : public QWidget
 {
@@ -66,4 +66,4 @@ private:
     Monitor::MonitorBusesTableState tableState_ = Monitor::MonitorBusesTableState::UnsupportedLayout;
 };
 
-} // namespace VNX
+} // namespace harken::studio

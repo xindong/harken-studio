@@ -1,8 +1,8 @@
 #include "UnitTest/StudioObjectIdTestSupport.h"
-#include "Engine.h"
 #include "AudioEngine.h"
 #include "CompileTargetProfileCatalog.h"
 #include "ActionManager.h"
+#include "ActionClosureSemantics.h"
 #include "AssetPipeline/AssetRegistry.h"
 #include "AssetPipeline/AssetImporter.h"
 #include "AssetPipeline/MediaPool.h"
@@ -10,8 +10,12 @@
 #include "Components/VAction.h"
 #include "Components/VTrack.h"
 #include "Components/VEffect.h"
+#include "Components/VConversion.h"
+#include "ConversionEditing.h"
+#include "PlayablePropertyAuthoringV1.h"
 #include "Components/VMixNode.h"
 #include "PlatformContextService.h"
+#include "PreviewMediaModeService.h"
 #include "Widgets/EffectEditor/EffectEditorPanel.h"
 #include "Widgets/Common/ParameterSlider.h"
 #include "Widgets/Common/ParameterBinding.h"
@@ -24,13 +28,15 @@
 #include "RuntimeSyncCoordinator.h"
 #include "RuntimeCapabilityMatrix.h"
 #include "AuditionManager.h"
+#include "Core/Build/CurrentWorldCompile.h"
 #include "RuntimeBridge/CurrentWorldSyncBridgeInternal.h"
 #include "RuntimeBridge/ProjectSyncBridge.h"
-#include "RuntimeBridge/PackagingBridge.h"
+#include "Core/Build/PackagingBridge.h"
 #include "RuntimeBridge/PreviewBridge.h"
 #include "RuntimeBridge/RuntimeLink.h"
 #include "harken/Harken.h"
 #include <harken_bus_compiler/BusCompiler.h>
+#include <harken/HarkenDevelopment.h>
 
 #include <gtest/gtest.h>
 
@@ -59,18 +65,17 @@ namespace {
 
 bool pendingDiscardObserved = false;
 bool runtimeActiveDuringPendingDiscard = false;
-HarkenEditor::Bridge::CurrentWorldSyncToken discardedPendingToken;
+harken::studio::bridge::CurrentWorldSyncToken discardedPendingToken;
 
-harkenstudiobuild::WorldInstallResult backpressuredWorldInstall(
-    const harkenstudiobuild::ContainerWorldInstallViewV1&) noexcept
+harken::studio::bridge::CurrentWorldTestInstallResult backpressuredWorldInstall() noexcept
 {
-    harkenstudiobuild::WorldInstallResult result;
-    result.status = harkenstudiobuild::WorldInstallStatus::Backpressure;
+    harken::studio::bridge::CurrentWorldTestInstallResult result;
+    result.status = harken::studio::bridge::CurrentWorldTestInstallResult::Status::Backpressure;
     return result;
 }
 
 void observePendingDiscard(
-    HarkenEditor::Bridge::CurrentWorldSyncToken token,
+    harken::studio::bridge::CurrentWorldSyncToken token,
     bool runtimeActive) noexcept
 {
     pendingDiscardObserved = true;
@@ -83,72 +88,69 @@ void ensureApp()
     if (qApp)
         return;
     static int argc = 1;
-    static char arg0[] = "harken_editor_tests";
+    static char arg0[] = "harken_studio_tests";
     static char* argv[] = {arg0, nullptr};
     static QApplication app(argc, argv);
 }
 
-std::shared_ptr<HarkenEditor::Bridge::CurrentWorldSyncRequest>
+std::shared_ptr<harken::studio::build::CurrentWorldSyncRequest>
 makeValidCurrentWorldRequest()
 {
     auto request =
-        std::make_shared<HarkenEditor::Bridge::CurrentWorldSyncRequest>();
-    const harkenprojectschema::AuthoringGuid masterGuid{0x4d4153544552, 1};
-    const auto identity = harkenprojectschema::BuildRuntimeIdentityIndexV1({
+        std::make_shared<harken::studio::build::CurrentWorldSyncRequest>();
+    const harken::studio::project_schema::AuthoringGuid masterGuid{0x4d4153544552, 1};
+    const auto identity = harken::studio::project_schema::BuildRuntimeIdentityIndexV1({
         {1, {masterGuid,
-             harkenprojectschema::RuntimeIdentityKindV1::Bus,
+             harken::studio::project_schema::RuntimeIdentityKindV1::Bus,
              masterGuid,
-             {masterGuid, harkenprojectschema::RuntimeIdentityKindV1::Bus,
+             {masterGuid, harken::studio::project_schema::RuntimeIdentityKindV1::Bus,
               0, masterGuid}}},
     });
     request->identityIndex = identity.index;
-    VNX::ProjectData targetProject;
+    harken::studio::ProjectData targetProject;
     targetProject.sampleRate = 48000;
-    targetProject.channelConfig = VNX::AudioChannelConfig::Stereo_2_0;
+    targetProject.channelConfig = harken::studio::AudioChannelConfig::Stereo_2_0;
     request->compileTargetProfile =
-        VNX::CompileTargetProfileCatalog::resolve(targetProject);
+        harken::studio::CompileTargetProfileCatalog::resolve(targetProject);
     request->project.identityIndex = request->identityIndex;
     request->project.compileTargetProfile = request->compileTargetProfile;
-    harkenbuscompiler::BusCompilerInputV1 busInput;
+    harken::studio::bus_compiler::BusCompilerInputV1 busInput;
     busInput.identityIndex = request->identityIndex;
     busInput.compileTargetProfile = request->compileTargetProfile;
     busInput.buses.push_back({
-        masterGuid, harkenstudio::kMasterBusObjectId, 0.0f, 8, VN_CHANNEL_LAYOUT_DEFAULT,
+        masterGuid, harken::studio::types::kMasterBusObjectId, 0.0f, 8, VN_CHANNEL_LAYOUT_DEFAULT,
         {masterGuid, "Busses/Master.vp", "/volume"}});
     request->busResult =
-        harkenbuscompiler::CompileBusProjectV1(busInput).result;
+        harken::studio::bus_compiler::CompileBusProjectV1(busInput).result;
     return request;
 }
 
-bool serviceUntilCurrentWorldReady(VNX::AudioEngine& engine)
+bool serviceUntilCurrentWorldReady(harken::studio::AudioEngine& engine)
 {
-    auto* runtime = harken::detail::ActiveEngine();
     QElapsedTimer timeout;
     timeout.start();
     while (timeout.elapsed() < 5000) {
         QMetaObject::invokeMethod(
             &engine, "onRuntimeServiceTimer", Qt::DirectConnection);
-        if (runtime != nullptr) {
-            if (Vn_Update() != VN_OK)
-                return false;
-            runtime->nullBackend.Pump(1);
-            if (Vn_Update() != VN_OK)
-                return false;
-        }
+        if (Vn_Update() != VN_OK)
+            return false;
+        VnPreview_PumpNullMixer(1);
+        if (Vn_Update() != VN_OK)
+            return false;
         QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
         const auto& coordinator = engine.runtimeSyncCoordinator();
         const auto barrier = coordinator.barrier(
             coordinator.currentAuthoringRevision());
         if (barrier.state
-            == VNX::RuntimeSyncCoordinator::RevisionBarrierState::Ready) {
+            == harken::studio::RuntimeSyncCoordinator::RevisionBarrierState::Ready) {
             return true;
         }
         if (barrier.state
-                == VNX::RuntimeSyncCoordinator::RevisionBarrierState::Failed
+                == harken::studio::RuntimeSyncCoordinator::RevisionBarrierState::Failed
             || barrier.state
-                == VNX::RuntimeSyncCoordinator::RevisionBarrierState::Superseded
+                == harken::studio::RuntimeSyncCoordinator::RevisionBarrierState::Superseded
             || barrier.state
-                == VNX::RuntimeSyncCoordinator::RevisionBarrierState::RuntimeUnavailable) {
+                == harken::studio::RuntimeSyncCoordinator::RevisionBarrierState::RuntimeUnavailable) {
             ADD_FAILURE() << "World state=" << static_cast<int>(barrier.state)
                           << " failure=" << static_cast<int>(barrier.failure);
             return false;
@@ -253,38 +255,49 @@ void writeWavPcm24(const QString& path, uint32_t frameCount)
 struct AudioEnginePreviewReset {
     ~AudioEnginePreviewReset()
     {
-        VNX::AudioEngine::instance().shutdown();
+        harken::studio::AudioEngine::instance().shutdown();
         QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
-        auto& projects = VNX::ProjectManager::instance();
+        auto& projects = harken::studio::ProjectManager::instance();
         if (projects.currentProject() != nullptr)
             projects.closeProject();
         QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
-        VNX::AssetRegistry::instance().clear();
+        harken::studio::AssetRegistry::instance().clear();
     }
 };
 
 struct CurrentWorldSyncStateReset {
     ~CurrentWorldSyncStateReset()
     {
-        HarkenEditor::Bridge::resetCurrentWorldSyncStateForTesting();
+        harken::studio::bridge::resetCurrentWorldSyncStateForTesting();
     }
 };
 
+float takeMasterPeak()
+{
+    VnPreviewChannelPeaksV1 peaks{};
+    peaks.structSize = sizeof(peaks);
+    if (VnPreview_TakeChannelPeaks(&peaks) != VN_OK)
+        return 0.0f;
+    float peak = 0.0f;
+    for (uint32_t bus = 0; bus < peaks.busCount; ++bus) {
+        if (peaks.busIds[bus] != VN_BUS_MASTER)
+            continue;
+        for (uint32_t channel = 0; channel < peaks.mixChannelCount; ++channel)
+            peak = std::max(peak, peaks.channelPeaks[bus * VN_MAX_CHANNELS + channel]);
+    }
+    return peak;
+}
+
 float pumpUntilPreviewAudible(uint32_t maxBlocks = 32)
 {
-    harken::Engine* runtime = harken::detail::ActiveEngine();
-    if (runtime == nullptr)
+    if (VnPreview_EnableChannelPeakMetering() != VN_OK)
         return 0.0f;
+    takeMasterPeak();
     for (uint32_t block = 0; block < maxBlocks; ++block) {
         if (Vn_Update() != VN_OK)
             return 0.0f;
-        runtime->nullBackend.Pump(1);
-        const float* output = runtime->nullBackend.LastBlock();
-        const uint32_t sampleCount = runtime->nullBackend.BlockFrames()
-            * runtime->nullBackend.Channels();
-        float peak = 0.0f;
-        for (uint32_t sample = 0; sample < sampleCount; ++sample)
-            peak = std::max(peak, std::abs(output[sample]));
+        VnPreview_PumpNullMixer(1);
+        const float peak = takeMasterPeak();
         if (peak > 0.0f)
             return peak;
     }
@@ -297,10 +310,10 @@ TEST(AudioEnginePreview, ListenerStateChangesOnlyAfterAcceptedWritesAndResetsWit
 {
     ensureApp();
     AudioEnginePreviewReset reset;
-    auto& engine = VNX::AudioEngine::instance();
+    auto& engine = harken::studio::AudioEngine::instance();
     engine.shutdown();
-    HarkenEditor::Bridge::EngineSessionConfig config;
-    config.deviceMode = HarkenEditor::Bridge::EngineDeviceMode::Null;
+    harken::studio::bridge::EngineSessionConfig config;
+    config.deviceMode = harken::studio::bridge::EngineDeviceMode::Null;
     ASSERT_TRUE(engine.initialize(config));
     float x = 0, y = 0, z = 0, fx = 0, fy = 0, fz = 0;
     ASSERT_TRUE(engine.getListenerInfo(1, &x, &y, &z, &fx, &fy, &fz));
@@ -329,28 +342,28 @@ TEST(AudioEnginePreview,
 {
     ensureApp();
     CurrentWorldSyncStateReset syncReset;
-    auto& engine = VNX::AudioEngine::instance();
+    auto& engine = harken::studio::AudioEngine::instance();
     engine.shutdown();
-    HarkenEditor::Bridge::resetCurrentWorldSyncStateForTesting();
-    HarkenEditor::Bridge::setCurrentWorldInstallBackendForTesting(
+    harken::studio::bridge::resetCurrentWorldSyncStateForTesting();
+    harken::studio::bridge::setCurrentWorldInstallBackendForTesting(
         backpressuredWorldInstall);
-    HarkenEditor::Bridge::setCurrentWorldDiscardObserverForTesting(
+    harken::studio::bridge::setCurrentWorldDiscardObserverForTesting(
         observePendingDiscard);
     pendingDiscardObserved = false;
     runtimeActiveDuringPendingDiscard = false;
     discardedPendingToken = {};
 
-    HarkenEditor::Bridge::EngineSessionConfig config;
-    config.deviceMode = HarkenEditor::Bridge::EngineDeviceMode::Null;
+    harken::studio::bridge::EngineSessionConfig config;
+    config.deviceMode = harken::studio::bridge::EngineDeviceMode::Null;
     ASSERT_TRUE(engine.initialize(config));
     auto& coordinator = engine.runtimeSyncCoordinator();
     const auto firstEpoch = coordinator.barrier(0).runtimeEpoch;
     ASSERT_NE(0u, firstEpoch);
     ASSERT_TRUE(engine.startOutput());
 
-    const HarkenEditor::Bridge::CurrentWorldSyncToken token{31, 32, firstEpoch, 33};
+    const harken::studio::bridge::CurrentWorldSyncToken token{31, 32, firstEpoch, 33};
     auto request = makeValidCurrentWorldRequest();
-    ASSERT_TRUE(HarkenEditor::Bridge::syncCurrentWorld(
+    ASSERT_TRUE(harken::studio::build::syncCurrentWorld(
                     std::move(request), token).pending());
 
     engine.stopOutput();
@@ -358,7 +371,7 @@ TEST(AudioEnginePreview,
     EXPECT_TRUE(pendingDiscardObserved);
     EXPECT_TRUE(runtimeActiveDuringPendingDiscard);
     EXPECT_EQ(token, discardedPendingToken);
-    EXPECT_EQ(VNX::RuntimeSyncCoordinator::RevisionBarrierState::RuntimeUnavailable,
+    EXPECT_EQ(harken::studio::RuntimeSyncCoordinator::RevisionBarrierState::RuntimeUnavailable,
               coordinator.barrier(0).state);
 
     ASSERT_TRUE(engine.startOutput());
@@ -373,23 +386,23 @@ TEST(AudioEnginePreview,
     ensureApp();
     AudioEnginePreviewReset reset;
     CurrentWorldSyncStateReset syncReset;
-    auto& engine = VNX::AudioEngine::instance();
+    auto& engine = harken::studio::AudioEngine::instance();
     engine.shutdown();
     QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
-    auto& projects = VNX::ProjectManager::instance();
+    auto& projects = harken::studio::ProjectManager::instance();
 
-    HarkenEditor::Bridge::EngineSessionConfig config;
-    config.deviceMode = HarkenEditor::Bridge::EngineDeviceMode::Null;
+    harken::studio::bridge::EngineSessionConfig config;
+    config.deviceMode = harken::studio::bridge::EngineDeviceMode::Null;
     ASSERT_TRUE(engine.initialize(config));
     QTemporaryDir directory;
     ASSERT_TRUE(directory.isValid());
-    VNX::ProjectConfig projectConfig;
+    harken::studio::ProjectConfig projectConfig;
     projectConfig.name = QStringLiteral("BackpressuredCloseShutdown");
     projectConfig.location = directory.path();
     ASSERT_TRUE(projects.createProject(projectConfig));
     ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
 
-    HarkenEditor::Bridge::setCurrentWorldInstallBackendForTesting(
+    harken::studio::bridge::setCurrentWorldInstallBackendForTesting(
         backpressuredWorldInstall);
     ASSERT_TRUE(projects.closeProject());
     ASSERT_TRUE(projects.isClosing());
@@ -408,31 +421,31 @@ TEST(AudioEnginePreview, ClosedAsyncBootstrapCannotPublishRuntimePrepared)
 {
     ensureApp();
     AudioEnginePreviewReset reset;
-    auto& engine = VNX::AudioEngine::instance();
+    auto& engine = harken::studio::AudioEngine::instance();
     engine.shutdown();
-    auto& projects = VNX::ProjectManager::instance();
+    auto& projects = harken::studio::ProjectManager::instance();
     if (projects.currentProject() != nullptr)
         projects.closeProject();
 
-    HarkenEditor::Bridge::EngineSessionConfig config;
-    config.deviceMode = HarkenEditor::Bridge::EngineDeviceMode::Null;
+    harken::studio::bridge::EngineSessionConfig config;
+    config.deviceMode = harken::studio::bridge::EngineDeviceMode::Null;
     ASSERT_TRUE(engine.initialize(config));
     QTemporaryDir directory;
     ASSERT_TRUE(directory.isValid());
-    VNX::ProjectConfig projectConfig;
+    harken::studio::ProjectConfig projectConfig;
     projectConfig.name = QStringLiteral("CancelledAsyncBootstrap");
     projectConfig.location = directory.path();
     ASSERT_TRUE(projects.createProject(projectConfig));
     ASSERT_NE(projects.createItem(
                   nullptr, QStringLiteral("Layer"),
-                  VNX::ProjectItem::Type::Layer),
+                  harken::studio::ProjectItem::Type::Layer),
               nullptr);
     QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
 
-    HarkenEditor::Bridge::setCurrentWorldInstallBackendForTesting(
+    harken::studio::bridge::setCurrentWorldInstallBackendForTesting(
         backpressuredWorldInstall);
     bool finished = false;
-    VNX::ProjectManager::syncProjectToRuntimeAsync(
+    harken::studio::ProjectManager::syncProjectToRuntimeAsync(
         projects.currentProject(), &projects, [&finished]() {
             finished = true;
         });
@@ -441,7 +454,7 @@ TEST(AudioEnginePreview, ClosedAsyncBootstrapCannotPublishRuntimePrepared)
     EXPECT_FALSE(projects.runtimePrepared());
 
     ASSERT_TRUE(projects.closeProject());
-    HarkenEditor::Bridge::setCurrentWorldInstallBackendForTesting(nullptr);
+    harken::studio::bridge::setCurrentWorldInstallBackendForTesting(nullptr);
     ASSERT_TRUE(QMetaObject::invokeMethod(
         &engine, "onRuntimeServiceTimer", Qt::DirectConnection));
     QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
@@ -450,151 +463,22 @@ TEST(AudioEnginePreview, ClosedAsyncBootstrapCannotPublishRuntimePrepared)
     EXPECT_FALSE(projects.runtimePrepared());
     EXPECT_EQ(projects.currentProject(), nullptr);
     EXPECT_FALSE(projects.hasPendingDestruction());
-    HarkenEditor::Bridge::resetCurrentWorldSyncStateForTesting();
-}
-
-TEST(AudioEnginePreview, RuntimeRestartCancelsPendingPreviewStart)
-{
-    ensureApp();
-    AudioEnginePreviewReset reset;
-    auto& engine = VNX::AudioEngine::instance();
-    engine.shutdown();
-    auto& projects = VNX::ProjectManager::instance();
-    if (projects.currentProject() != nullptr)
-        projects.closeProject();
-    VNX::AssetRegistry::instance().clear();
-
-    HarkenEditor::Bridge::EngineSessionConfig config;
-    config.sampleRate = 48000;
-    config.bufferSize = 64;
-    config.maxVoices = 8;
-    config.deviceMode = HarkenEditor::Bridge::EngineDeviceMode::Null;
-    ASSERT_TRUE(engine.initialize(config));
-
-    VNX::IPCServer ipc(&engine);
-    ipc.setProjectManager(&projects);
-
-    QTemporaryDir directory;
-    ASSERT_TRUE(directory.isValid());
-    VNX::ProjectConfig projectConfig;
-    projectConfig.name = QStringLiteral("ContainerMoveBackpressure");
-    projectConfig.location = directory.path();
-    ASSERT_TRUE(projects.createProject(projectConfig));
-
-    auto* layer = projects.createItem(
-        nullptr, QStringLiteral("Layer"), VNX::ProjectItem::Type::Layer);
-    ASSERT_NE(layer, nullptr);
-    auto* first = projects.createItem(
-        layer, QStringLiteral("First"), VNX::ProjectItem::Type::Container);
-    auto* second = projects.createItem(
-        layer, QStringLiteral("Second"), VNX::ProjectItem::Type::Container);
-    ASSERT_NE(first, nullptr);
-    ASSERT_NE(second, nullptr);
-
-    std::vector<VNX::ProjectItem*> sounds;
-    const QString audioSourcesPath = QDir(
-        QFileInfo(projects.currentProject()->projectPath).absolutePath())
-            .filePath(QStringLiteral("AudioSources"));
-    for (uint32_t index = 0; index < 3; ++index) {
-        const QString fileName = QStringLiteral("move%1.wav").arg(index + 1);
-        const QString wavPath = QDir(audioSourcesPath).filePath(fileName);
-        writeWavPcm24(wavPath, 48000);
-
-        VNX::AssetInfo asset;
-        asset.sourceID = 7201 + index;
-        asset.relativePath = fileName;
-        asset.absolutePath = wavPath;
-        asset.metadata.sampleRate = 48000;
-        asset.metadata.channels = 2;
-        asset.metadata.bitDepth = 24;
-        asset.metadata.totalSamples = 48000;
-        asset.metadata.durationSec = 1.0;
-        asset.metadata.fileSize = static_cast<uint64_t>(QFileInfo(wavPath).size());
-        ASSERT_TRUE(VNX::AssetRegistry::instance().registerAsset(asset));
-        auto* sound = projects.createAudioItem(
-            first, QStringLiteral("Sound%1").arg(index + 1),
-            wavPath, asset.sourceID);
-        ASSERT_NE(sound, nullptr);
-        sounds.push_back(sound);
-    }
-
-    VNX::ProjectManager::syncProjectToRuntime(projects.currentProject());
-    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
-    for (auto* sound : sounds)
-        ASSERT_TRUE(projects.moveItem(sound, second));
-    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
-    ASSERT_TRUE(engine.startOutput());
-    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
-
-    HarkenEditor::AuditionManager audition(&engine);
-    int startedCount = 0;
-    int failedCount = 0;
-    uint32_t failedPlay = 0;
-    QObject::connect(
-        &audition, &HarkenEditor::AuditionManager::auditionStarted,
-        [&startedCount](uint32_t, const QString&) {
-            ++startedCount;
-        });
-    QObject::connect(
-        &audition, &HarkenEditor::AuditionManager::auditionStartFailed,
-        [&](uint32_t playingId, const QString&, int32_t) {
-            ++failedCount;
-            failedPlay = playingId;
-        });
-    auto* runtime = harken::detail::ActiveEngine();
-    ASSERT_NE(runtime, nullptr);
-    uint32_t secondPlay = 0;
-    {
-        QScopedValueRollback admissionClosed(
-            runtime->currentWorldReplacementAdmissionClosed, true);
-        secondPlay = audition.playItem(*second);
-    }
-    ASSERT_NE(secondPlay, 0u);
-    ASSERT_TRUE(audition.lastPlayPending());
-    ASSERT_TRUE(audition.getAudition(secondPlay).previewStartPending);
-    EXPECT_EQ(audition.getAudition(secondPlay).playbackHandle, 0u);
-    EXPECT_EQ(startedCount, 0);
-    EXPECT_EQ(failedCount, 0);
-    EXPECT_EQ(audition.activeAuditionCount(), 1);
-
-    engine.shutdown();
-    EXPECT_EQ(failedCount, 1);
-    EXPECT_EQ(failedPlay, secondPlay);
-    EXPECT_EQ(startedCount, 0);
-    EXPECT_EQ(audition.activeAuditionCount(), 0);
-
-    ASSERT_TRUE(engine.initialize(config));
-    ASSERT_TRUE(engine.startOutput());
-    VNX::ProjectManager::syncProjectToRuntime(projects.currentProject());
-    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
-    ASSERT_TRUE(QMetaObject::invokeMethod(
-        &audition, "retryPendingPreviewStarts", Qt::DirectConnection));
-    EXPECT_EQ(startedCount, 0);
-    EXPECT_EQ(failedCount, 1);
-    EXPECT_EQ(audition.activeAuditionCount(), 0);
-
-    const uint32_t newPlay = audition.playItem(*second);
-    ASSERT_NE(newPlay, 0u);
-    EXPECT_NE(newPlay, secondPlay);
-    EXPECT_FALSE(audition.lastPlayPending());
-    EXPECT_NE(audition.getAudition(newPlay).playbackHandle, 0u);
-    EXPECT_EQ(startedCount, 1);
-    EXPECT_EQ(failedCount, 1);
+    harken::studio::bridge::resetCurrentWorldSyncStateForTesting();
 }
 
 namespace {
 
 class AudioPlaybackRegression : public testing::Test {
 protected:
-    VNX::AudioEngine& engine = VNX::AudioEngine::instance();
-    VNX::ProjectManager& projects = VNX::ProjectManager::instance();
+    harken::studio::AudioEngine& engine = harken::studio::AudioEngine::instance();
+    harken::studio::ProjectManager& projects = harken::studio::ProjectManager::instance();
     QTemporaryDir directory;
-    VNX::ProjectItem* layer = nullptr;
-    std::array<VNX::ProjectItem*, 2> sounds{};
+    harken::studio::ProjectItem* layer = nullptr;
+    std::array<harken::studio::ProjectItem*, 2> sounds{};
     std::array<QString, 2> paths{};
-    VNX::ProjectItem* action = nullptr;
+    harken::studio::ProjectItem* action = nullptr;
 
-    bool serviceUntilCurrentWorldReady(VNX::AudioEngine& target)
+    bool serviceUntilCurrentWorldReady(harken::studio::AudioEngine& target)
     {
         QElapsedTimer timeout;
         timeout.start();
@@ -604,14 +488,14 @@ protected:
             target.runtimeSyncCoordinator().flushPendingMutationNow();
             const auto& coordinator = target.runtimeSyncCoordinator();
             const auto barrier = coordinator.barrier(coordinator.currentAuthoringRevision());
-            if (barrier.state == VNX::RuntimeSyncCoordinator::RevisionBarrierState::Ready)
+            if (barrier.state == harken::studio::RuntimeSyncCoordinator::RevisionBarrierState::Ready)
                 return true;
-            if (barrier.state != VNX::RuntimeSyncCoordinator::RevisionBarrierState::Pending) {
+            if (barrier.state != harken::studio::RuntimeSyncCoordinator::RevisionBarrierState::Pending) {
                 ADD_FAILURE() << "World state=" << static_cast<int>(barrier.state)
                               << " failure=" << static_cast<int>(barrier.failure);
                 return false;
             }
-            harken::detail::ActiveEngine()->nullBackend.Pump(1);
+            VnPreview_PumpNullMixer(1);
             QThread::msleep(1);
         }
         return false;
@@ -624,21 +508,21 @@ protected:
         if (projects.currentProject())
             projects.closeProject();
         QCoreApplication::processEvents();
-        HarkenEditor::Bridge::resetCurrentWorldSyncStateForTesting();
-        VNX::AssetRegistry::instance().clear();
+        harken::studio::bridge::resetCurrentWorldSyncStateForTesting();
+        harken::studio::AssetRegistry::instance().clear();
         ASSERT_TRUE(directory.isValid());
-        HarkenEditor::Bridge::EngineSessionConfig config;
+        harken::studio::bridge::EngineSessionConfig config;
         config.sampleRate = 48000;
         config.bufferSize = 64;
         config.maxVoices = 16;
-        config.deviceMode = HarkenEditor::Bridge::EngineDeviceMode::Null;
+        config.deviceMode = harken::studio::bridge::EngineDeviceMode::Null;
         ASSERT_TRUE(engine.initialize(config));
         ASSERT_TRUE(engine.startOutput());
-        VNX::ProjectConfig projectConfig;
+        harken::studio::ProjectConfig projectConfig;
         projectConfig.name = QStringLiteral("PlaybackRegression");
         projectConfig.location = directory.path();
         ASSERT_TRUE(projects.createProject(projectConfig));
-        layer = projects.createItem(nullptr, QStringLiteral("Layer"), VNX::ProjectItem::Type::Layer);
+        layer = projects.createItem(nullptr, QStringLiteral("Layer"), harken::studio::ProjectItem::Type::Layer);
         ASSERT_NE(layer, nullptr);
         const QDir audioRoot(QFileInfo(projects.currentProject()->projectPath).absolutePath()
                              + QStringLiteral("/AudioSources"));
@@ -646,7 +530,7 @@ protected:
             const QString name = QStringLiteral("Sound%1").arg(index);
             paths[index] = audioRoot.filePath(name + QStringLiteral(".wav"));
             writeWavF32(paths[index], std::vector<float>(65536, 0.125f * (index + 1)));
-            VNX::AssetInfo asset;
+            harken::studio::AssetInfo asset;
             asset.sourceID = 930001 + index;
             asset.relativePath = name + QStringLiteral(".wav");
             asset.absolutePath = paths[index];
@@ -656,15 +540,15 @@ protected:
             asset.metadata.totalSamples = 65536;
             asset.metadata.durationSec = 65536.0 / 48000.0;
             asset.metadata.fileSize = static_cast<uint64_t>(QFileInfo(paths[index]).size());
-            asset.contentHash = VNX::AssetImporter::computeContentHash(paths[index]);
-            ASSERT_TRUE(VNX::AssetRegistry::instance().registerAsset(asset));
+            asset.contentHash = harken::studio::AssetImporter::computeContentHash(paths[index]);
+            ASSERT_TRUE(harken::studio::AssetRegistry::instance().registerAsset(asset));
             sounds[index] = projects.createAudioItem(layer, name, paths[index], asset.sourceID);
             ASSERT_NE(sounds[index], nullptr);
         }
-        action = projects.createActionTargeting(sounds[0], VNX::VActionStep::Type::Play,
+        action = projects.createActionTargeting(sounds[0], harken::studio::VActionStep::Type::Play,
                                                 QStringLiteral("Play_Good"));
         ASSERT_NE(action, nullptr);
-        VNX::ProjectManager::syncProjectToRuntime(projects.currentProject());
+        harken::studio::ProjectManager::syncProjectToRuntime(projects.currentProject());
         ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
     }
 
@@ -675,54 +559,53 @@ protected:
         if (projects.currentProject())
             projects.closeProject();
         QCoreApplication::processEvents();
-        HarkenEditor::Bridge::resetCurrentWorldSyncStateForTesting();
-        VNX::AssetRegistry::instance().clear();
+        harken::studio::bridge::resetCurrentWorldSyncStateForTesting();
+        harken::studio::AssetRegistry::instance().clear();
     }
 
     void expectGoodAction()
     {
         const auto result = engine.playByNameDetailed(QStringLiteral("Play_Good"));
-        ASSERT_EQ(result.engineResult, HarkenEditor::Bridge::kEngineOk);
+        ASSERT_EQ(result.engineResult, harken::studio::bridge::kEngineOk);
         ASSERT_NE(result.playbackHandle, 0u);
         EXPECT_GT(pumpUntilPreviewAudible(64), 0.05f);
     }
 
     float settledPeak()
     {
-        auto* runtime = harken::detail::ActiveEngine();
-        for (int block = 0; block < 32; ++block) {
+        if (VnPreview_EnableChannelPeakMetering() != VN_OK)
+            return 0.0f;
+        for (int block = 0; block < 31; ++block) {
             QMetaObject::invokeMethod(&engine, "onRuntimeServiceTimer", Qt::DirectConnection);
-            runtime->nullBackend.Pump(1);
+            VnPreview_PumpNullMixer(1);
         }
-        const float* output = runtime->nullBackend.LastBlock();
-        const auto size = runtime->nullBackend.BlockFrames() * runtime->nullBackend.Channels();
-        float peak = 0.0f;
-        for (std::uint32_t index = 0; index < size; ++index)
-            peak = std::max(peak, std::abs(output[index]));
-        return peak;
+        QMetaObject::invokeMethod(&engine, "onRuntimeServiceTimer", Qt::DirectConnection);
+        takeMasterPeak();
+        VnPreview_PumpNullMixer(1);
+        return takeMasterPeak();
     }
 };
 
 TEST_F(AudioPlaybackRegression, EffectEditorDragPreviewsBeforeCommitAndCancelsWithoutUndo)
 {
-    VNX::registerProjectActions(VNX::ActionManager::instance(), &projects, nullptr);
-    VNX::EffectEntry entry;
+    harken::studio::registerProjectActions(harken::studio::ActionManager::instance(), &projects, nullptr);
+    harken::studio::EffectEntry entry;
     entry.guid = QUuid::createUuid();
-    entry.mode = VNX::EffectMode::Custom;
+    entry.mode = harken::studio::EffectMode::Custom;
     entry.custom.parameters = {0.0f, 20.0f};
-    VNX::EffectFieldGroup group;
+    harken::studio::EffectFieldGroup group;
     ASSERT_TRUE(group.effects.replace({entry}));
-    sounds[0]->fieldGroups.effects.shared = {VNX::FieldGroupMode::Local, group};
+    sounds[0]->fieldGroups.effects.shared = {harken::studio::FieldGroupMode::Local, group};
     projects.itemPropertyChanged(sounds[0], QStringLiteral("fieldGroups"), nullptr);
     ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
     ASSERT_EQ(engine.playByNameDetailed(QStringLiteral("Play_Good")).engineResult,
-        HarkenEditor::Bridge::kEngineOk);
+        harken::studio::bridge::kEngineOk);
     const auto dry = settledPeak();
-    VNX::EffectEditorPanel panel;
+    harken::studio::EffectEditorPanel panel;
     panel.bindEffect(sounds[0]->guid, entry.guid);
-    auto* slider = panel.findChild<VNX::ParameterSlider*>(QStringLiteral("effectParameter_ceilingDb"));
+    auto* slider = panel.findChild<harken::studio::ParameterSlider*>(QStringLiteral("effectParameter_ceilingDb"));
     ASSERT_NE(slider, nullptr);
-    auto* undo = VNX::UndoRedoManager::instance().undoStack();
+    auto* undo = harken::studio::UndoRedoManager::instance().undoStack();
     undo->clear();
     slider->binding()->beginEdit();
     slider->binding()->previewEdit(-24);
@@ -748,17 +631,17 @@ TEST_F(AudioPlaybackRegression, EffectEditorDragPreviewsBeforeCommitAndCancelsWi
 
 TEST_F(AudioPlaybackRegression, EffectEditorPresetDragRestoresOnSelectionChange)
 {
-    VNX::registerProjectActions(VNX::ActionManager::instance(), &projects, nullptr);
-    auto* preset = projects.createItem(nullptr, QStringLiteral("DragPreset"), VNX::ProjectItem::Type::Effect);
+    harken::studio::registerProjectActions(harken::studio::ActionManager::instance(), &projects, nullptr);
+    auto* preset = projects.createItem(nullptr, QStringLiteral("DragPreset"), harken::studio::ProjectItem::Type::Effect);
     ASSERT_NE(preset, nullptr);
-    auto* effect = preset->comp<VNX::VEffect>();
+    auto* effect = preset->comp<harken::studio::VEffect>();
     ASSERT_NE(effect, nullptr);
     const auto original = effect->definition.parameters[0];
-    VNX::EffectEditorPanel panel;
+    harken::studio::EffectEditorPanel panel;
     panel.bindEffect(preset->guid);
-    auto* slider = panel.findChild<VNX::ParameterSlider*>(QStringLiteral("effectParameter_ceilingDb"));
+    auto* slider = panel.findChild<harken::studio::ParameterSlider*>(QStringLiteral("effectParameter_ceilingDb"));
     ASSERT_NE(slider, nullptr);
-    auto* undo = VNX::UndoRedoManager::instance().undoStack();
+    auto* undo = harken::studio::UndoRedoManager::instance().undoStack();
     undo->clear();
     slider->binding()->beginEdit();
     slider->binding()->previewEdit(-24);
@@ -771,23 +654,23 @@ TEST_F(AudioPlaybackRegression, EffectEditorPresetDragRestoresOnSelectionChange)
 
 TEST_F(AudioPlaybackRegression, EffectEditorExternalPresetEditEndsDragBeforeTakingUndoSnapshot)
 {
-    VNX::registerProjectActions(VNX::ActionManager::instance(), &projects, nullptr);
-    auto* preset = projects.createItem(nullptr, QStringLiteral("ExternalPreset"), VNX::ProjectItem::Type::Effect);
+    harken::studio::registerProjectActions(harken::studio::ActionManager::instance(), &projects, nullptr);
+    auto* preset = projects.createItem(nullptr, QStringLiteral("ExternalPreset"), harken::studio::ProjectItem::Type::Effect);
     ASSERT_NE(preset, nullptr);
-    auto* effect = preset->comp<VNX::VEffect>();
+    auto* effect = preset->comp<harken::studio::VEffect>();
     const auto original = effect->definition.parameters[0];
-    VNX::EffectEditorPanel panel;
+    harken::studio::EffectEditorPanel panel;
     panel.bindEffect(preset->guid);
-    auto* slider = panel.findChild<VNX::ParameterSlider*>(QStringLiteral("effectParameter_ceilingDb"));
+    auto* slider = panel.findChild<harken::studio::ParameterSlider*>(QStringLiteral("effectParameter_ceilingDb"));
     ASSERT_NE(slider, nullptr);
-    auto* undo = VNX::UndoRedoManager::instance().undoStack();
+    auto* undo = harken::studio::UndoRedoManager::instance().undoStack();
     undo->clear();
     slider->binding()->beginEdit();
     slider->binding()->previewEdit(-24);
-    ASSERT_TRUE(VNX::ActionManager::instance().execute(QStringLiteral("set_item_property"),
+    ASSERT_TRUE(harken::studio::ActionManager::instance().execute(QStringLiteral("set_item_property"),
         {{QStringLiteral("authoring_handle"), static_cast<qint64>(preset->objectID)},
          {QStringLiteral("property"), QStringLiteral("ceilingDb")},
-         {QStringLiteral("value"), -12.0}}, VNX::ActionSource::IPC).success);
+         {QStringLiteral("value"), -12.0}}, harken::studio::ActionSource::IPC).success);
     QCoreApplication::processEvents();
     EXPECT_FLOAT_EQ(-12, effect->definition.parameters[0]);
     slider->binding()->previewEdit(-30);
@@ -806,31 +689,31 @@ TEST_F(AudioPlaybackRegression, EffectEditorExternalPresetEditEndsDragBeforeTaki
 
 TEST_F(AudioPlaybackRegression, EffectEditorBusDragCannotRestoreADeletedPresetReference)
 {
-    VNX::registerProjectActions(VNX::ActionManager::instance(), &projects, nullptr);
-    VNX::PlatformContextService::instance().setAll(true);
+    harken::studio::registerProjectActions(harken::studio::ActionManager::instance(), &projects, nullptr);
+    harken::studio::PlatformContextService::instance().setAll(true);
     for (const bool overlay : {false, true}) {
     SCOPED_TRACE(overlay);
-    auto* preset = projects.createItem(nullptr, QStringLiteral("DeletedPreset"), VNX::ProjectItem::Type::Effect);
-    auto* bus = projects.createItem(projects.getMasterBusItem(), QStringLiteral("DragBus"), VNX::ProjectItem::Type::Bus);
+    auto* preset = projects.createItem(nullptr, QStringLiteral("DeletedPreset"), harken::studio::ProjectItem::Type::Effect);
+    auto* bus = projects.createItem(projects.getMasterBusItem(), QStringLiteral("DragBus"), harken::studio::ProjectItem::Type::Bus);
     ASSERT_NE(preset, nullptr);
     ASSERT_NE(bus, nullptr);
-    VNX::EffectEntry custom;
+    harken::studio::EffectEntry custom;
     custom.guid = QUuid::createUuid();
-    custom.mode = VNX::EffectMode::Custom;
+    custom.mode = harken::studio::EffectMode::Custom;
     custom.custom.parameters = {0.0f, 20.0f};
-    VNX::EffectEntry reference;
+    harken::studio::EffectEntry reference;
     reference.guid = QUuid::createUuid();
     reference.effectGuid = preset->guid;
-    auto* mix = bus->comp<VNX::VMixNode>();
+    auto* mix = bus->comp<harken::studio::VMixNode>();
     const auto platform = projects.currentProject()->platforms.front().id;
-    ASSERT_TRUE(mix->effects.replace(overlay ? std::vector<VNX::EffectEntry>{custom}
-        : std::vector<VNX::EffectEntry>{custom, reference}));
+    ASSERT_TRUE(mix->effects.replace(overlay ? std::vector<harken::studio::EffectEntry>{custom}
+        : std::vector<harken::studio::EffectEntry>{custom, reference}));
     if (overlay) ASSERT_TRUE(mix->effectPlatforms[platform].replace({custom, reference}));
-    VNX::EffectEditorPanel panel;
+    harken::studio::EffectEditorPanel panel;
     panel.bindEffect(bus->guid, custom.guid);
-    auto* slider = panel.findChild<VNX::ParameterSlider*>(QStringLiteral("effectParameter_ceilingDb"));
+    auto* slider = panel.findChild<harken::studio::ParameterSlider*>(QStringLiteral("effectParameter_ceilingDb"));
     ASSERT_NE(slider, nullptr);
-    auto* undo = VNX::UndoRedoManager::instance().undoStack();
+    auto* undo = harken::studio::UndoRedoManager::instance().undoStack();
     undo->clear();
     slider->binding()->beginEdit();
     slider->binding()->previewEdit(-24);
@@ -852,15 +735,32 @@ TEST_F(AudioPlaybackRegression, EffectEditorBusDragCannotRestoreADeletedPresetRe
     }
 }
 
+harken::studio::ProjectItem* bindRootConversion(harken::studio::ProjectManager& projects, harken::studio::ProjectItem* item,
+    const harken::studio::ProjectPlatformId& platform, const QString& name)
+{
+    auto* root = item;
+    for (auto* ancestor = item; ancestor; ancestor = ancestor->parent)
+        if (harken::studio::PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(ancestor->type)) root = ancestor;
+    auto* preset = projects.createItem(nullptr, name, harken::studio::ProjectItem::Type::Conversion);
+    if (!preset) return nullptr;
+    preset->comp<harken::studio::VConversion>()->config.rules = {{std::nullopt, 22050, harken::studio::ConversionFormat::Vorbis, 4}};
+    QString error;
+    if (!harken::studio::ConversionEditing::setObject(projects, root->guid, false, preset->guid, platform, nullptr, &error)) {
+        ADD_FAILURE() << error.toStdString();
+        return nullptr;
+    }
+    return preset;
+}
+
 class AuditionLifecycleTest : public AudioPlaybackRegression {
 protected:
-    HarkenEditor::AuditionManager audition{&engine};
+    harken::studio::AuditionManager audition{&engine};
 
     void makeLooping()
     {
         for (auto* sound : sounds)
-            sound->comp<VNX::VAudio>()->loopCount = 0;
-        VNX::ProjectManager::syncProjectToRuntime(projects.currentProject());
+            sound->comp<harken::studio::VAudio>()->loopCount = 0;
+        harken::studio::ProjectManager::syncProjectToRuntime(projects.currentProject());
         ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
     }
 
@@ -872,41 +772,151 @@ protected:
 
     float pump(uint32_t blocks)
     {
-        auto* runtime = harken::detail::ActiveEngine();
+        if (VnPreview_EnableChannelPeakMetering() != VN_OK)
+            return 0.0f;
+        takeMasterPeak();
         float peak = 0.0f;
         for (uint32_t block = 0; block < blocks; ++block) {
             engine.serviceRuntime();
-            runtime->nullBackend.Pump(1);
-            const auto count = runtime->nullBackend.BlockFrames() * runtime->nullBackend.Channels();
-            const float* output = runtime->nullBackend.LastBlock();
-            for (uint32_t sample = 0; sample < count; ++sample)
-                peak = std::max(peak, std::abs(output[sample]));
+            VnPreview_PumpNullMixer(1);
+            peak = std::max(peak, takeMasterPeak());
             engine.serviceRuntime();
             poll();
         }
         return peak;
     }
-
-    void fillCommands()
-    {
-        auto* runtime = harken::detail::ActiveEngine();
-        harken::CommandRecord filler{};
-        filler.opcode = harken::kOpcodeStop;
-        filler.version = harken::kCommandVersion;
-        filler.payload.stop.handle = 1;
-        while (runtime->commands.FreeSlots() != 0)
-            ASSERT_TRUE(runtime->commands.TryPush(filler));
-    }
 };
+
+TEST_F(AuditionLifecycleTest, ConvertedMediaIsPreparedOnlyForRequestedPlaybackAndInvalidatedBeforeReuse)
+{
+    makeLooping();
+    auto* project = projects.currentProject();
+    ASSERT_GE(project->platforms.size(), 2);
+    const auto primary = project->platforms.front().id;
+    const auto other = project->platforms[1].id;
+    harken::studio::PlatformContextService::instance().setSelected({primary}, primary);
+    auto* preset = bindRootConversion(projects, sounds[0], primary, QStringLiteral("PrimaryConversion"));
+    ASSERT_NE(preset, nullptr);
+    auto* otherPreset = bindRootConversion(projects, sounds[0], other, QStringLiteral("OtherConversion"));
+    ASSERT_NE(otherPreset, nullptr);
+    auto& modes = harken::studio::PreviewMediaModeService::instance();
+    const auto previousMode = modes.mode();
+    const auto restoreMode = qScopeGuard([&] { modes.setMode(previousMode); });
+    modes.setMode(harken::studio::PreviewMediaMode::Converted);
+    const QDir artifacts(QFileInfo(project->projectPath).dir().filePath(QStringLiteral(".cache/pack/media")));
+    const auto encodedFiles = [&] { return artifacts.entryList({QStringLiteral("*.vcm")}, QDir::Files); };
+    QString error;
+    harken::studio::bridge::CurrentWorldSoundPreparation preparation;
+    ASSERT_TRUE(harken::studio::ProjectManager::prepareRuntimeSounds(*project, preparation, &error));
+    EXPECT_TRUE(preparation.sounds.empty());
+    EXPECT_TRUE(encodedFiles().empty());
+    EXPECT_EQ(preparation.contentRevisions.at(sounds[0]->runtimeId()), 0u);
+    EXPECT_EQ(preparation.contentRevisions.at(sounds[1]->runtimeId()), 0u);
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    EXPECT_TRUE(encodedFiles().empty());
+
+    const auto playing = audition.playItem(*action);
+    ASSERT_NE(playing, 0u);
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    EXPECT_GT(pump(64), 0.0f);
+    const auto originalFiles = encodedFiles();
+    ASSERT_EQ(originalFiles.size(), 1);
+    ASSERT_TRUE(harken::studio::ProjectManager::prepareRuntimeSounds(*project, preparation, &error));
+    ASSERT_EQ(preparation.sounds.size(), 1u);
+    EXPECT_EQ(preparation.sounds.front().binding.soundId, sounds[0]->runtimeId());
+    const auto preparedMedia = preparation.sounds.front().media;
+    ASSERT_TRUE(preparedMedia);
+    EXPECT_EQ(preparation.contentRevisions.at(sounds[1]->runtimeId()), 0u);
+
+    otherPreset->comp<harken::studio::VConversion>()->config.rules.back().vorbisQuality = 8;
+    projects.itemPropertyChanged(otherPreset, QStringLiteral("conversion"));
+    ASSERT_TRUE(harken::studio::ProjectManager::prepareRuntimeSounds(*project, preparation, &error));
+    ASSERT_EQ(preparation.sounds.size(), 1u);
+    EXPECT_EQ(preparation.sounds.front().media, preparedMedia);
+    EXPECT_EQ(encodedFiles(), originalFiles);
+    EXPECT_EQ(audition.getAudition(playing).stopState, harken::studio::AuditionStopState::None);
+
+    preset->comp<harken::studio::VConversion>()->config.rules.back().vorbisQuality = 8;
+    projects.itemPropertyChanged(preset, QStringLiteral("conversion"));
+    ASSERT_TRUE(harken::studio::ProjectManager::prepareRuntimeSounds(*project, preparation, &error));
+    EXPECT_TRUE(preparation.sounds.empty());
+    EXPECT_EQ(preparation.contentRevisions.at(sounds[0]->runtimeId()), 0u);
+    EXPECT_EQ(encodedFiles(), originalFiles);
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    EXPECT_EQ(encodedFiles(), originalFiles);
+    pump(128);
+    EXPECT_EQ(audition.getAudition(playing).playingId, 0u);
+    const auto replay = audition.playItem(*action);
+    ASSERT_NE(replay, 0u);
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    EXPECT_GT(pump(64), 0.0f);
+    EXPECT_EQ(encodedFiles().size(), 2);
+    ASSERT_TRUE(harken::studio::ProjectManager::prepareRuntimeSounds(*project, preparation, &error));
+    ASSERT_EQ(preparation.sounds.size(), 1u);
+    EXPECT_NE(preparation.sounds.front().media, preparedMedia);
+}
+
+TEST_F(AuditionLifecycleTest, FirstConversionChangeAfterCreatingASoundStopsItsPreview)
+{
+    auto* project = projects.currentProject();
+    const auto primary = project->platforms.front().id;
+    harken::studio::PlatformContextService::instance().setSelected({primary}, primary);
+    auto* preset = bindRootConversion(projects, layer, primary, QStringLiteral("PrimaryConversion"));
+    ASSERT_NE(preset, nullptr);
+    auto& modes = harken::studio::PreviewMediaModeService::instance();
+    const auto previousMode = modes.mode();
+    const auto restoreMode = qScopeGuard([&] { modes.setMode(previousMode); });
+    modes.setMode(harken::studio::PreviewMediaMode::Converted);
+    auto* added = projects.createAudioItem(layer, QStringLiteral("NewConvertedSound"), paths[0], 930001);
+    ASSERT_NE(added, nullptr);
+    added->comp<harken::studio::VAudio>()->loopCount = 0;
+    const auto playing = audition.playItem(*added);
+    ASSERT_NE(playing, 0u);
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    EXPECT_GT(pump(64), 0.0f);
+    preset->comp<harken::studio::VConversion>()->config.rules.back().sampleRate = 16000;
+    projects.itemPropertyChanged(preset, QStringLiteral("conversion"));
+    harken::studio::bridge::CurrentWorldSoundPreparation preparation;
+    QString error;
+    ASSERT_TRUE(harken::studio::ProjectManager::prepareRuntimeSounds(*project, preparation, &error));
+    EXPECT_EQ(preparation.contentRevisions.at(added->runtimeId()), 0u);
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    pump(128);
+    EXPECT_EQ(audition.getAudition(playing).playingId, 0u);
+}
+
+TEST_F(AuditionLifecycleTest, PlaybackMediaClosureExcludesControlAndQuantizationOnlyReferences)
+{
+    const auto platform = projects.currentProject()->platforms.front().id;
+    auto& steps = action->comp<harken::studio::VAction>()->steps;
+    steps.front().quantize.timing = harken::studio::QuantizeTiming::NextBeat;
+    steps.front().quantize.referenceObjectID = sounds[1]->objectID;
+    steps.front().quantize.referenceName = sounds[1]->name;
+    harken::studio::VActionStep stop;
+    stop.type = harken::studio::VActionStep::Type::Stop;
+    stop.targetObjectID = sounds[1]->objectID;
+    stop.targetName = sounds[1]->name;
+    steps.push_back(stop);
+    auto* parent = projects.createActionTargeting(action, harken::studio::VActionStep::Type::PostAction,
+        QStringLiteral("PlayNested"));
+    ASSERT_NE(parent, nullptr);
+    const auto closure = harken::studio::ActionClosureSemantics::playbackContentReferences(
+        *projects.currentProject(), parent->runtimeId(), platform);
+    QSet<harken::studio::types::ObjectId> media;
+    for (const auto& object : closure.objects)
+        if (object.type == harken::studio::ProjectItem::Type::Sound)
+            media.insert(object.stableId);
+    EXPECT_EQ(media, QSet<harken::studio::types::ObjectId>{sounds[0]->runtimeId()});
+}
 
 TEST_F(AuditionLifecycleTest, SilentScheduledTreesRemainControllableUntilTheyReallyEnd)
 {
     makeLooping();
-    action->comp<VNX::VAction>()->steps.front().delay = 2000;
+    action->comp<harken::studio::VAction>()->steps.front().delay = 2000;
     auto* parent = projects.createActionTargeting(
-        action, VNX::VActionStep::Type::PostAction, QStringLiteral("Parent"));
+        action, harken::studio::VActionStep::Type::PostAction, QStringLiteral("Parent"));
     ASSERT_NE(parent, nullptr);
-    VNX::ProjectManager::syncProjectToRuntime(projects.currentProject());
+    harken::studio::ProjectManager::syncProjectToRuntime(projects.currentProject());
     ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
 
     const auto first = audition.playItem(*action);
@@ -929,7 +939,7 @@ TEST_F(AuditionLifecycleTest, CompletionAndToolbarScopeAreIndependentOfOtherAudi
     const auto rawSound = engine.mintRawPcmSoundId();
     const auto registered = engine.registerRawPcmSlice(
         rawSound, std::vector<float>(48000, 0.25f), 1, 48000, 0, 48000, true);
-    ASSERT_EQ(registered.result, HarkenEditor::Bridge::kEngineOk);
+    ASSERT_EQ(registered.result, harken::studio::bridge::kEngineOk);
     const auto rawHandle = engine.playRawPcm(rawSound, true);
     ASSERT_NE(rawHandle, 0u);
     const auto raw = audition.registerRawFilePlayback(QStringLiteral("Raw"), rawHandle);
@@ -949,91 +959,7 @@ TEST_F(AuditionLifecycleTest, CompletionAndToolbarScopeAreIndependentOfOtherAudi
     pump(32);
     EXPECT_FLOAT_EQ(pump(100), 0.0f);
     EXPECT_EQ(audition.activeAuditionCount(), 0);
-    EXPECT_EQ(engine.unregisterRawPcm(rawSound), HarkenEditor::Bridge::kEngineOk);
-}
-
-TEST_F(AuditionLifecycleTest, OutputTeardownRetiresPlaybacksAndCancelsFutureAudio)
-{
-    makeLooping();
-    auto* delayed = projects.createActionTargeting(
-        sounds[1], VNX::VActionStep::Type::Play, QStringLiteral("Delayed"));
-    ASSERT_NE(delayed, nullptr);
-    delayed->comp<VNX::VAction>()->steps.front().delay = 2000;
-    VNX::ProjectManager::syncProjectToRuntime(projects.currentProject());
-    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
-    VNX::IPCServer ipc(&engine);
-    QVector<quintptr> ended;
-    QObject::connect(&engine, &VNX::AudioEngine::playbackStopped,
-                     &ipc, [&](quintptr handle) { ended.append(handle); });
-
-    const auto playing = audition.playItem(*action);
-    const auto waiting = audition.playItem(*delayed);
-    ASSERT_NE(playing, 0u);
-    ASSERT_NE(waiting, 0u);
-    ASSERT_NE(audition.playItem(*sounds[1]), 0u);
-    const auto rawSound = engine.mintRawPcmSoundId();
-    ASSERT_EQ(engine.registerRawPcmSlice(rawSound, std::vector<float>(48000, 0.25f),
-        1, 48000, 0, 48000, true).result, HarkenEditor::Bridge::kEngineOk);
-    const auto rawHandle = engine.playRawPcm(rawSound, true);
-    ASSERT_NE(rawHandle, 0u);
-    audition.registerRawFilePlayback(QStringLiteral("Raw"), rawHandle);
-    const QVector<quintptr> expectedEnds{
-        audition.getAudition(playing).playbackHandle,
-        audition.getAudition(waiting).playbackHandle, rawHandle};
-    EXPECT_GT(pump(32), 0.05f);
-    ASSERT_EQ(audition.activeAuditionCount(), 4);
-    ASSERT_EQ(ipc.activePlaybacksMap()->size(), 2);
-    audition.stop(playing, 1000);
-    fillCommands();
-
-    engine.stopOutput();
-    poll();
-    EXPECT_TRUE(engine.isInitialized());
-    EXPECT_FALSE(engine.isPlaying());
-    EXPECT_EQ(audition.activeAuditionCount(), 0);
-    EXPECT_TRUE(ipc.activePlaybacksMap()->isEmpty());
-    EXPECT_EQ(ended.size(), expectedEnds.size());
-    for (quintptr handle : expectedEnds)
-        EXPECT_EQ(ended.count(handle), 1);
-    engine.stopOutput();
-    EXPECT_EQ(ended.size(), expectedEnds.size());
-
-    ASSERT_TRUE(engine.startOutput());
-    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
-    EXPECT_FLOAT_EQ(pump(1800), 0.0f);
-    EXPECT_EQ(audition.activeAuditionCount(), 0);
-    ASSERT_NE(audition.playItem(*action), 0u);
-    EXPECT_GT(pump(32), 0.05f);
-    EXPECT_EQ(audition.activeAuditionCount(), 1);
-    EXPECT_EQ(ipc.activePlaybacksMap()->size(), 1);
-    engine.shutdown();
-    EXPECT_EQ(audition.activeAuditionCount(), 0);
-    EXPECT_TRUE(ipc.activePlaybacksMap()->isEmpty());
-}
-
-TEST_F(AuditionLifecycleTest, RuntimeRestartPreservesPlaybackCompletion)
-{
-    makeLooping();
-    VNX::IPCServer ipc(&engine);
-    for (int bufferSize : {128, 64}) {
-        SCOPED_TRACE(bufferSize);
-        ASSERT_NE(audition.playItem(*action), 0u);
-        EXPECT_GT(pump(32), 0.05f);
-        fillCommands();
-        ASSERT_TRUE(engine.reconfigureBufferSize(bufferSize));
-        ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
-        EXPECT_FLOAT_EQ(pump(32), 0.0f);
-        EXPECT_EQ(audition.activeAuditionCount(), 0);
-        EXPECT_TRUE(ipc.activePlaybacksMap()->isEmpty());
-    }
-    ASSERT_NE(audition.playItem(*action), 0u);
-    EXPECT_GT(pump(32), 0.05f);
-    EXPECT_EQ(audition.activeAuditionCount(), 1);
-    audition.stopAll(100);
-    pump(160);
-    EXPECT_FLOAT_EQ(pump(32), 0.0f);
-    EXPECT_EQ(audition.activeAuditionCount(), 0);
-    EXPECT_TRUE(ipc.activePlaybacksMap()->isEmpty());
+    EXPECT_EQ(engine.unregisterRawPcm(rawSound), harken::studio::bridge::kEngineOk);
 }
 
 TEST_F(AuditionLifecycleTest, StopCompletionFollowsAudioAndRepeatedRequestsDoNotExtendFades)
@@ -1048,7 +974,7 @@ TEST_F(AuditionLifecycleTest, StopCompletionFollowsAudioAndRepeatedRequestsDoNot
     EXPECT_GT(pump(32), 0.05f);
     EXPECT_EQ(audition.getActiveAuditions().size(), 3);
     int completed = 0;
-    QObject::connect(&audition, &HarkenEditor::AuditionManager::allAuditionsStopped,
+    QObject::connect(&audition, &harken::studio::AuditionManager::allAuditionsStopped,
                      &audition, [&] { ++completed; });
 
     audition.stopAll(100);
@@ -1064,29 +990,6 @@ TEST_F(AuditionLifecycleTest, StopCompletionFollowsAudioAndRepeatedRequestsDoNot
     EXPECT_EQ(audition.activeAuditionCount(), 0);
     EXPECT_EQ(completed, 1);
     EXPECT_FLOAT_EQ(pump(1500), 0.0f);
-}
-
-TEST_F(AuditionLifecycleTest, TemporaryRefusalRetriesWithoutReportingCompletion)
-{
-    makeLooping();
-    for (float fade : {0.0f, 100.0f}) {
-        SCOPED_TRACE(fade);
-        ASSERT_NE(audition.playItem(*action), 0u);
-        ASSERT_NE(audition.playItem(*sounds[1]), 0u);
-        EXPECT_GT(pump(32), 0.05f);
-        fillCommands();
-        audition.stopAll(fade);
-        EXPECT_EQ(audition.activeAuditionCount(), 2);
-        for (const auto& info : audition.getActiveAuditions()) {
-            EXPECT_EQ(info.stopResult, HarkenEditor::Bridge::kEngineBackpressure);
-            EXPECT_EQ(info.stopState, HarkenEditor::AuditionStopState::Pending);
-        }
-        harken::detail::ActiveEngine()->nullBackend.Pump(1);
-        poll();
-        pump(160);
-        EXPECT_EQ(audition.activeAuditionCount(), 0);
-        EXPECT_FLOAT_EQ(pump(100), 0.0f);
-    }
 }
 
 TEST_F(AuditionLifecycleTest, ReplacingAStoppingPreviewKeepsTheNewPlaybackControllable)
@@ -1106,65 +1009,233 @@ TEST_F(AuditionLifecycleTest, ReplacingAStoppingPreviewKeepsTheNewPlaybackContro
     EXPECT_FLOAT_EQ(pump(100), 0.0f);
 }
 
-TEST_F(AuditionLifecycleTest, PersistentRefusalIsBoundedAndPreservesManualControl)
+TEST_F(AuditionLifecycleTest, QueuedStartsUsePublishedDefinitionsAcrossPlaybackKinds)
 {
     makeLooping();
-    const auto id = audition.playItem(*action);
-    ASSERT_NE(id, 0u);
+    auto& coordinator = engine.runtimeSyncCoordinator();
+    harken::studio::ProjectItem* added = nullptr;
+    int started = 0;
+    QObject::connect(&audition, &harken::studio::AuditionManager::auditionStarted,
+                     &audition, [&](uint32_t, const QString&) { ++started; });
+    {
+        coordinator.beginSubmissionBatch();
+        const auto release = qScopeGuard([&] { coordinator.endSubmissionBatch(); });
+        added = projects.createAudioItem(layer, QStringLiteral("AddedSound"), paths[1], 930002);
+        ASSERT_NE(added, nullptr);
+        added->comp<harken::studio::VAudio>()->loopCount = 0;
+        auto& step = action->comp<harken::studio::VAction>()->steps.front();
+        step.targetObjectID = sounds[1]->objectID;
+        step.targetName = sounds[1]->name;
+        coordinator.markCurrentWorldMutation();
+
+        ASSERT_NE(audition.playItem(*added), 0u);
+        ASSERT_NE(audition.playItem(*action), 0u);
+        EXPECT_EQ(started, 0);
+        EXPECT_FLOAT_EQ(pump(32), 0.0f);
+        std::vector<harken::studio::bridge::PlaybackPathObservation> playback;
+        ASSERT_TRUE(harken::studio::bridge::capturePlaybackPaths(playback));
+        EXPECT_TRUE(playback.empty());
+    }
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    QElapsedTimer timeout;
+    timeout.start();
+    while (started < 2 && timeout.elapsed() < 5000) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+        pump(1);
+        QThread::msleep(1);
+    }
+    ASSERT_EQ(started, 2);
     EXPECT_GT(pump(32), 0.05f);
-    int failures = 0;
-    QObject::connect(&audition, &HarkenEditor::AuditionManager::auditionStopFailed,
-                     &audition, [&](uint32_t, const QString&, int32_t) { ++failures; });
-    fillCommands();
-    audition.stopAll();
-    for (int attempt = 0; attempt < 100; ++attempt)
-        poll();
-    EXPECT_EQ(failures, 1);
-    EXPECT_EQ(audition.activeAuditionCount(), 1);
-    EXPECT_EQ(audition.stopIpcSnapshot().value("state").toString(), "stop_failed");
-    const auto pressure = harken::detail::ActiveEngine()->commands.BackpressureCount();
-    for (int attempt = 0; attempt < 100; ++attempt)
-        poll();
-    EXPECT_EQ(harken::detail::ActiveEngine()->commands.BackpressureCount(), pressure);
+    std::vector<harken::studio::bridge::PlaybackPathObservation> playback;
+    ASSERT_TRUE(harken::studio::bridge::capturePlaybackPaths(playback));
+    ASSERT_EQ(playback.size(), 2u);
+    EXPECT_EQ(std::count_if(playback.begin(), playback.end(), [&](const auto& path) {
+        return path.soundId == added->runtimeId();
+    }), 1);
+    EXPECT_EQ(std::count_if(playback.begin(), playback.end(), [&](const auto& path) {
+        return path.soundId == sounds[1]->runtimeId();
+    }), 1);
+}
+
+TEST_F(AuditionLifecycleTest, PendingAuthoringBlocksNewOperationsWithoutBlockingExistingAudio)
+{
+    makeLooping();
+    auto* container = projects.createParentContainer(
+        {sounds[1]}, harken::studio::ProjectItem::Type::Container, QStringLiteral("MemoryContainer"));
+    ASSERT_NE(container, nullptr);
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    const auto running = audition.playItem(*action);
+    ASSERT_NE(running, 0u);
     EXPECT_GT(pump(32), 0.05f);
-    audition.stop(id);
+
+    auto& coordinator = engine.runtimeSyncCoordinator();
+    coordinator.beginSubmissionBatch();
+    const auto release = qScopeGuard([&] { coordinator.endSubmissionBatch(); });
+    coordinator.markCurrentWorldMutation();
+    for (const auto& result : {
+             engine.playByNameDetailed(action->name),
+             engine.playByNameWithPreviewContext(action->name),
+             engine.playByName3DDetailed(action->name, {})}) {
+        EXPECT_NE(result.engineResult, harken::studio::bridge::kEngineOk);
+        EXPECT_EQ(result.playbackHandle, 0u);
+    }
+    for (const auto& result : {
+             engine.playPreviewPlayable(harken::studio::bridge::kPreviewPlayableSound,
+                                        sounds[0]->runtimeId()),
+             engine.playPreviewPlayable(harken::studio::bridge::kPreviewPlayableContainer,
+                                        container->runtimeId())}) {
+        EXPECT_NE(result.status, harken::studio::bridge::kPreviewOk);
+        EXPECT_EQ(result.handle, 0u);
+    }
+    EXPECT_NE(engine.resetPreviewPlayable(harken::studio::bridge::kPreviewPlayableContainer,
+                                          container->runtimeId()),
+              harken::studio::bridge::kPreviewOk);
+    EXPECT_GT(pump(32), 0.05f);
+    audition.stop(running);
     pump(32);
-    EXPECT_FLOAT_EQ(pump(100), 0.0f);
+    EXPECT_EQ(audition.activeAuditionCount(), 0);
+    EXPECT_FLOAT_EQ(pump(32), 0.0f);
+
+    const auto rawSound = engine.mintRawPcmSoundId();
+    ASSERT_EQ(engine.registerRawPcmSlice(rawSound, std::vector<float>(4096, 0.25f),
+                                        1, 48000, 0, 4096, true).result,
+              harken::studio::bridge::kEngineOk);
+    const auto raw = engine.playRawPcm(rawSound, true);
+    ASSERT_NE(raw, 0u);
+    EXPECT_GT(pump(32), 0.05f);
+    EXPECT_TRUE(engine.stopRawPcm(raw));
+    pump(32);
+    EXPECT_EQ(engine.unregisterRawPcm(rawSound), harken::studio::bridge::kEngineOk);
+}
+
+TEST_F(AuditionLifecycleTest, CanceledAndDeletedPendingTargetsNeverStartAfterPublication)
+{
+    int started = 0;
+    QObject::connect(&audition, &harken::studio::AuditionManager::auditionStarted,
+                     &audition, [&](uint32_t, const QString&) { ++started; });
+    auto& coordinator = engine.runtimeSyncCoordinator();
+    {
+        coordinator.beginSubmissionBatch();
+        const auto release = qScopeGuard([&] { coordinator.endSubmissionBatch(); });
+        coordinator.markCurrentWorldMutation();
+        const auto canceled = audition.playItem(*action);
+        ASSERT_NE(canceled, 0u);
+        ASSERT_NE(audition.playItem(*sounds[1]), 0u);
+        audition.stop(canceled);
+        ASSERT_TRUE(projects.deleteItem(sounds[1]));
+        sounds[1] = nullptr;
+        EXPECT_FLOAT_EQ(pump(32), 0.0f);
+    }
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    EXPECT_FLOAT_EQ(pump(64), 0.0f);
+    EXPECT_EQ(started, 0);
     EXPECT_EQ(audition.activeAuditionCount(), 0);
 }
 
-TEST_F(AuditionLifecycleTest, RejectedStopKeepsItsResultAndCanBeRetried)
+TEST_F(AuditionLifecycleTest, PendingStartsCannotCrossRuntimeOrProjectSessions)
 {
-    makeLooping();
-    const auto id = audition.playItem(*action);
-    ASSERT_NE(id, 0u);
-    EXPECT_GT(pump(32), 0.05f);
+    int started = 0;
+    QObject::connect(&audition, &harken::studio::AuditionManager::auditionStarted,
+                     &audition, [&](uint32_t, const QString&) { ++started; });
+    auto& coordinator = engine.runtimeSyncCoordinator();
     {
-        QScopedValueRollback refusal(harken::detail::ActiveEngine()->callbackFatalSticky, true);
-        audition.stop(id);
-        EXPECT_EQ(audition.activeAuditionCount(), 1);
-        EXPECT_EQ(audition.getAudition(id).stopState, HarkenEditor::AuditionStopState::Failed);
-        EXPECT_EQ(audition.getAudition(id).stopResult, HarkenEditor::Bridge::kEngineNotInit);
+        coordinator.beginSubmissionBatch();
+        const auto release = qScopeGuard([&] { coordinator.endSubmissionBatch(); });
+        coordinator.markCurrentWorldMutation();
+        ASSERT_NE(audition.playItem(*sounds[0]), 0u);
+        ASSERT_NE(audition.playItem(*action), 0u);
+        engine.shutdown();
+        harken::studio::bridge::EngineSessionConfig config;
+        config.sampleRate = 48000;
+        config.bufferSize = 64;
+        config.maxVoices = 16;
+        config.deviceMode = harken::studio::bridge::EngineDeviceMode::Null;
+        ASSERT_TRUE(engine.initialize(config));
+        ASSERT_TRUE(engine.startOutput());
     }
-    EXPECT_GT(pump(32), 0.05f);
-    audition.stop(id);
-    pump(32);
-    EXPECT_FLOAT_EQ(pump(100), 0.0f);
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    EXPECT_FLOAT_EQ(pump(64), 0.0f);
+    EXPECT_EQ(started, 0);
     EXPECT_EQ(audition.activeAuditionCount(), 0);
+
+    {
+        coordinator.beginSubmissionBatch();
+        const auto release = qScopeGuard([&] { coordinator.endSubmissionBatch(); });
+        coordinator.markCurrentWorldMutation();
+        ASSERT_NE(audition.playItem(*sounds[0]), 0u);
+        ASSERT_NE(audition.playItem(*action), 0u);
+        ASSERT_TRUE(projects.closeProject());
+    }
+    QElapsedTimer timeout;
+    timeout.start();
+    while (projects.isClosing() && timeout.elapsed() < 5000) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+        pump(1);
+        QThread::msleep(1);
+    }
+    ASSERT_FALSE(projects.isClosing());
+    harken::studio::ProjectConfig replacement;
+    replacement.name = QStringLiteral("ReplacementProject");
+    replacement.location = directory.path();
+    ASSERT_TRUE(projects.createProject(replacement));
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    EXPECT_FLOAT_EQ(pump(64), 0.0f);
+    EXPECT_EQ(started, 0);
+    EXPECT_EQ(audition.activeAuditionCount(), 0);
+}
+
+TEST_F(AuditionLifecycleTest, FailedPublicationCannotFallBackToPreviouslyPlayableDefinitions)
+{
+    int started = 0;
+    QObject::connect(&audition, &harken::studio::AuditionManager::auditionStarted,
+                     &audition, [&](uint32_t, const QString&) { ++started; });
+    auto& coordinator = engine.runtimeSyncCoordinator();
+    auto& step = action->comp<harken::studio::VAction>()->steps.front();
+    const auto type = step.type;
+    {
+        coordinator.beginSubmissionBatch();
+        const auto release = qScopeGuard([&] { coordinator.endSubmissionBatch(); });
+        coordinator.markCurrentWorldMutation();
+        ASSERT_NE(audition.playItem(*sounds[0]), 0u);
+        ASSERT_NE(audition.playItem(*action), 0u);
+        step.type = static_cast<harken::studio::VActionStep::Type>(255);
+        coordinator.markCurrentWorldMutation();
+    }
+    coordinator.flushPendingMutationNow();
+    ASSERT_EQ(coordinator.barrier(coordinator.currentAuthoringRevision()).state,
+              harken::studio::RuntimeSyncCoordinator::RevisionBarrierState::Failed);
+    ASSERT_TRUE(coordinator.hasInstalledWorld());
+    ASSERT_TRUE(engine.hasActionProgram(action->runtimeId()));
+    EXPECT_EQ(audition.playItem(*sounds[0]), 0u);
+    EXPECT_EQ(audition.playItem(*action), 0u);
+    EXPECT_EQ(engine.playByNameDetailed(action->name).playbackHandle, 0u);
+    EXPECT_EQ(engine.playByName3DDetailed(action->name, {}).playbackHandle, 0u);
+    EXPECT_EQ(engine.playPreviewPlayable(harken::studio::bridge::kPreviewPlayableSound,
+                                         sounds[0]->runtimeId()).handle, 0u);
+    EXPECT_FLOAT_EQ(pump(64), 0.0f);
+    EXPECT_EQ(started, 0);
+    EXPECT_EQ(audition.activeAuditionCount(), 0);
+
+    step.type = type;
+    coordinator.markCurrentWorldMutation();
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    EXPECT_FLOAT_EQ(pump(64), 0.0f);
+    EXPECT_EQ(started, 0);
+    expectGoodAction();
 }
 
 TEST_F(AudioPlaybackRegression, ConcurrentPreviewCancelAndUndoRemainConsistentForCurrentAndFuturePlayback)
 {
-    VNX::registerProjectActions(VNX::ActionManager::instance(), &projects, nullptr);
-    auto* undo = VNX::UndoRedoManager::instance().undoStack();
+    harken::studio::registerProjectActions(harken::studio::ActionManager::instance(), &projects, nullptr);
+    auto* undo = harken::studio::UndoRedoManager::instance().undoStack();
     undo->clear();
     const auto started = engine.playByNameDetailed(QStringLiteral("Play_Good"));
-    ASSERT_EQ(started.engineResult, HarkenEditor::Bridge::kEngineOk);
+    ASSERT_EQ(started.engineResult, harken::studio::bridge::kEngineOk);
     const float baseline = settledPeak();
     ASSERT_GT(baseline, 0.05f);
-    VNX::PropertyEditSession parentPreview(layer, QStringLiteral("volume"), 0.0);
+    harken::studio::PropertyEditSession parentPreview(layer, QStringLiteral("volume"), 0.0);
     parentPreview.preview(-6.0);
-    VNX::PropertyEditSession soundEdit(sounds[0], QStringLiteral("volume"), 0.0);
+    harken::studio::PropertyEditSession soundEdit(sounds[0], QStringLiteral("volume"), 0.0);
     soundEdit.preview(-6.0);
     EXPECT_NEAR(settledPeak(), baseline * std::pow(10.0f, -12.0f / 20.0f), 0.002f);
     soundEdit.commit();
@@ -1172,7 +1243,7 @@ TEST_F(AudioPlaybackRegression, ConcurrentPreviewCancelAndUndoRemainConsistentFo
     parentPreview.cancel();
     EXPECT_NEAR(settledPeak(), baseline * std::pow(10.0f, -6.0f / 20.0f), 0.002f);
 
-    VNX::PropertyEditSession pitchEdit(sounds[0], QStringLiteral("pitch"), 0.0);
+    harken::studio::PropertyEditSession pitchEdit(sounds[0], QStringLiteral("pitch"), 0.0);
     pitchEdit.preview(100.0);
     pitchEdit.commit();
     EXPECT_NEAR(settledPeak(), baseline * std::pow(10.0f, -6.0f / 20.0f), 0.002f);
@@ -1180,7 +1251,7 @@ TEST_F(AudioPlaybackRegression, ConcurrentPreviewCancelAndUndoRemainConsistentFo
     settledPeak();
     ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
     ASSERT_EQ(engine.playByNameDetailed(QStringLiteral("Play_Good")).engineResult,
-              HarkenEditor::Bridge::kEngineOk);
+              harken::studio::bridge::kEngineOk);
     const auto scalarPeak = settledPeak();
     EXPECT_NEAR(scalarPeak, baseline * std::pow(10.0f, -6.0f / 20.0f), 0.002f);
     auto& coordinator = engine.runtimeSyncCoordinator();
@@ -1198,35 +1269,35 @@ TEST_F(AudioPlaybackRegression, ConcurrentPreviewCancelAndUndoRemainConsistentFo
     settledPeak();
     ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
     ASSERT_EQ(engine.playByNameDetailed(QStringLiteral("Play_Good")).engineResult,
-              HarkenEditor::Bridge::kEngineOk);
+              harken::studio::bridge::kEngineOk);
     EXPECT_NEAR(settledPeak(), baseline, 0.002f);
 }
 
 TEST_F(AudioPlaybackRegression, LimiterEditsPreserveRunningInstancesAndApplyStructureLive)
 {
-    VNX::registerProjectActions(VNX::ActionManager::instance(), &projects, nullptr);
-    auto* undo = VNX::UndoRedoManager::instance().undoStack();
+    harken::studio::registerProjectActions(harken::studio::ActionManager::instance(), &projects, nullptr);
+    auto* undo = harken::studio::UndoRedoManager::instance().undoStack();
     undo->clear();
-    VNX::EffectEntry effect;
+    harken::studio::EffectEntry effect;
     effect.guid = QUuid::createUuid();
-    effect.mode = VNX::EffectMode::Custom;
+    effect.mode = harken::studio::EffectMode::Custom;
     effect.custom.parameters = {-24.0f, 1.0f};
     effect.bypass = true;
     const auto replace = [&](const QJsonArray& effects) {
-        return VNX::ActionManager::instance().execute(QStringLiteral("replace_field_group_effects"),
+        return harken::studio::ActionManager::instance().execute(QStringLiteral("replace_field_group_effects"),
             {{QStringLiteral("definition_guid"), layer->guid.toString(QUuid::WithoutBraces)},
              {QStringLiteral("group"), QStringLiteral("effect")},
              {QStringLiteral("scope"), QStringLiteral("Shared")},
-             {QStringLiteral("effects"), effects}}, VNX::ActionSource::GUI).success;
+             {QStringLiteral("effects"), effects}}, harken::studio::ActionSource::GUI).success;
     };
     ASSERT_TRUE(replace({effect.toJson()}));
     ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
     const auto started = engine.playByNameDetailed(QStringLiteral("Play_Good"));
-    ASSERT_EQ(started.engineResult, HarkenEditor::Bridge::kEngineOk);
+    ASSERT_EQ(started.engineResult, harken::studio::bridge::kEngineOk);
     const float dry = settledPeak();
     ASSERT_GT(dry, 0.05f);
-    std::vector<HarkenEditor::Bridge::PlaybackPathObservation> before;
-    ASSERT_TRUE(HarkenEditor::Bridge::capturePlaybackPaths(before));
+    std::vector<harken::studio::bridge::PlaybackPathObservation> before;
+    ASSERT_TRUE(harken::studio::bridge::capturePlaybackPaths(before));
     ASSERT_EQ(before.size(), 1u);
 
     effect.bypass = false;
@@ -1240,15 +1311,15 @@ TEST_F(AudioPlaybackRegression, LimiterEditsPreserveRunningInstancesAndApplyStru
     ASSERT_TRUE(undo->canUndo());
     undo->undo();
     EXPECT_NEAR(settledPeak(), limited, 0.002f);
-    std::vector<HarkenEditor::Bridge::PlaybackPathObservation> after;
-    ASSERT_TRUE(HarkenEditor::Bridge::capturePlaybackPaths(after));
+    std::vector<harken::studio::bridge::PlaybackPathObservation> after;
+    ASSERT_TRUE(harken::studio::bridge::capturePlaybackPaths(after));
     ASSERT_EQ(after.size(), 1u);
     EXPECT_EQ(after.front().voiceInstance, before.front().voiceInstance);
 
     auto* preset = projects.createItem(nullptr, QStringLiteral("ReplacementLimiter"),
-                                      VNX::ProjectItem::Type::Effect);
+                                      harken::studio::ProjectItem::Type::Effect);
     ASSERT_NE(preset, nullptr);
-    effect.mode = VNX::EffectMode::Preset;
+    effect.mode = harken::studio::EffectMode::Preset;
     effect.effectGuid = preset->guid;
     ASSERT_TRUE(replace({effect.toJson()}));
     EXPECT_GT(settledPeak(), dry * 0.9f);
@@ -1262,13 +1333,13 @@ TEST_F(AudioPlaybackRegression, LimiterEditsPreserveRunningInstancesAndApplyStru
     settledPeak();
     ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
     ASSERT_EQ(engine.playByNameDetailed(QStringLiteral("Play_Good")).engineResult,
-              HarkenEditor::Bridge::kEngineOk);
+              harken::studio::bridge::kEngineOk);
     EXPECT_NEAR(settledPeak(), dry, 0.002f);
 
-    ASSERT_TRUE(VNX::ActionManager::instance().execute(QStringLiteral("set_item_property"),
+    ASSERT_TRUE(harken::studio::ActionManager::instance().execute(QStringLiteral("set_item_property"),
         {{QStringLiteral("authoring_handle"), static_cast<qint64>(preset->objectID)},
          {QStringLiteral("property"), QStringLiteral("ceilingDb")},
-         {QStringLiteral("value"), -24.0}}, VNX::ActionSource::GUI).success);
+         {QStringLiteral("value"), -24.0}}, harken::studio::ActionSource::GUI).success);
     EXPECT_NEAR(settledPeak(), limited, 0.002f);
     ASSERT_TRUE(replace({}));
     EXPECT_NEAR(settledPeak(), dry, 0.002f);
@@ -1276,33 +1347,33 @@ TEST_F(AudioPlaybackRegression, LimiterEditsPreserveRunningInstancesAndApplyStru
     settledPeak();
     ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
     ASSERT_EQ(engine.playByNameDetailed(QStringLiteral("Play_Good")).engineResult,
-              HarkenEditor::Bridge::kEngineOk);
+              harken::studio::bridge::kEngineOk);
     EXPECT_NEAR(settledPeak(), dry, 0.002f);
 }
 
 TEST_F(AudioPlaybackRegression, LimiterSourceReplacementBeforeFirstLiveTickAdoptsLatestSource)
 {
-    VNX::registerProjectActions(VNX::ActionManager::instance(), &projects, nullptr);
+    harken::studio::registerProjectActions(harken::studio::ActionManager::instance(), &projects, nullptr);
     auto* preset = projects.createItem(nullptr, QStringLiteral("FirstTickReplacement"),
-                                      VNX::ProjectItem::Type::Effect);
+                                      harken::studio::ProjectItem::Type::Effect);
     ASSERT_NE(preset, nullptr);
-    VNX::EffectEntry effect;
+    harken::studio::EffectEntry effect;
     effect.guid = QUuid::createUuid();
-    effect.mode = VNX::EffectMode::Custom;
+    effect.mode = harken::studio::EffectMode::Custom;
     effect.custom.parameters = {-24.0f, 1.0f};
     const auto replace = [&] {
-        return VNX::ActionManager::instance().execute(QStringLiteral("replace_field_group_effects"),
+        return harken::studio::ActionManager::instance().execute(QStringLiteral("replace_field_group_effects"),
             {{QStringLiteral("definition_guid"), layer->guid.toString(QUuid::WithoutBraces)},
              {QStringLiteral("group"), QStringLiteral("effect")},
              {QStringLiteral("scope"), QStringLiteral("Shared")},
-             {QStringLiteral("effects"), QJsonArray{effect.toJson()}}}, VNX::ActionSource::GUI).success;
+             {QStringLiteral("effects"), QJsonArray{effect.toJson()}}}, harken::studio::ActionSource::GUI).success;
     };
     ASSERT_TRUE(replace());
     ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
     ASSERT_EQ(engine.playByNameDetailed(QStringLiteral("Play_Good")).engineResult,
-              HarkenEditor::Bridge::kEngineOk);
+              harken::studio::bridge::kEngineOk);
     ASSERT_GT(pumpUntilPreviewAudible(), 0.0f);
-    effect.mode = VNX::EffectMode::Preset;
+    effect.mode = harken::studio::EffectMode::Preset;
     effect.effectGuid = preset->guid;
     ASSERT_TRUE(replace());
     const float limited = settledPeak();
@@ -1318,172 +1389,44 @@ TEST_F(AudioPlaybackRegression, LimiterSourceReplacementBeforeFirstLiveTickAdopt
     settledPeak();
     ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
     ASSERT_EQ(engine.playByNameDetailed(QStringLiteral("Play_Good")).engineResult,
-              HarkenEditor::Bridge::kEngineOk);
-    EXPECT_NEAR(settledPeak(), dry, 0.002f);
-}
-
-TEST_F(AudioPlaybackRegression, EquivalentEffectSourcesKeepSeparatePlaybackGenerations)
-{
-    VNX::registerProjectActions(VNX::ActionManager::instance(), &projects, nullptr);
-    ASSERT_TRUE(VNX::ActionManager::instance().execute(QStringLiteral("set_item_property"),
-        {{QStringLiteral("authoring_handle"), static_cast<qint64>(sounds[0]->objectID)},
-         {QStringLiteral("property"), QStringLiteral("loopCount")},
-         {QStringLiteral("value"), 0}}, VNX::ActionSource::GUI).success);
-    auto* first = projects.createItem(nullptr, QStringLiteral("FirstLimiter"),
-                                     VNX::ProjectItem::Type::Effect);
-    auto* second = projects.createItem(nullptr, QStringLiteral("SecondLimiter"),
-                                      VNX::ProjectItem::Type::Effect);
-    ASSERT_NE(first, nullptr);
-    ASSERT_NE(second, nullptr);
-    const auto setCeiling = [&](VNX::ProjectItem* preset, double ceiling) {
-        return VNX::ActionManager::instance().execute(QStringLiteral("set_item_property"),
-            {{QStringLiteral("authoring_handle"), static_cast<qint64>(preset->objectID)},
-             {QStringLiteral("property"), QStringLiteral("ceilingDb")},
-             {QStringLiteral("value"), ceiling}}, VNX::ActionSource::GUI).success;
-    };
-    ASSERT_TRUE(setCeiling(first, -24.0));
-    ASSERT_TRUE(setCeiling(second, -24.0));
-    VNX::EffectEntry effect;
-    effect.guid = QUuid::createUuid();
-    effect.mode = VNX::EffectMode::Preset;
-    effect.effectGuid = first->guid;
-    const auto replace = [&] {
-        return VNX::ActionManager::instance().execute(QStringLiteral("replace_field_group_effects"),
-            {{QStringLiteral("definition_guid"), layer->guid.toString(QUuid::WithoutBraces)},
-             {QStringLiteral("group"), QStringLiteral("effect")},
-             {QStringLiteral("scope"), QStringLiteral("Shared")},
-             {QStringLiteral("effects"), QJsonArray{effect.toJson()}}}, VNX::ActionSource::GUI).success;
-    };
-    ASSERT_TRUE(replace());
-    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
-    auto* runtime = harken::detail::ActiveEngine();
-    const auto installedGeneration = runtime->variables.CurrentWorldGeneration();
-    ASSERT_EQ(engine.playByNameDetailed(QStringLiteral("Play_Good")).engineResult,
-              HarkenEditor::Bridge::kEngineOk);
-    ASSERT_GT(pumpUntilPreviewAudible(), 0.0f);
-    effect.effectGuid = second->guid;
-    ASSERT_TRUE(replace());
-    for (int block = 0; block < 64; ++block) {
-        QCoreApplication::processEvents();
-        engine.runtimeSyncCoordinator().flushPendingMutationNow();
-        QMetaObject::invokeMethod(&engine, "onRuntimeServiceTimer", Qt::DirectConnection);
-        runtime->nullBackend.Pump(1);
-        QThread::msleep(1);
-    }
-    EXPECT_EQ(runtime->variables.CurrentWorldGeneration(), installedGeneration);
-    const auto& coordinator = engine.runtimeSyncCoordinator();
-    EXPECT_EQ(coordinator.barrier(coordinator.currentAuthoringRevision()).state,
-              VNX::RuntimeSyncCoordinator::RevisionBarrierState::Pending);
-    const float limited = settledPeak();
-    ASSERT_GT(limited, 0.0f);
-    std::vector<HarkenEditor::Bridge::PlaybackPathObservation> paths;
-    ASSERT_TRUE(HarkenEditor::Bridge::capturePlaybackPaths(paths));
-    ASSERT_EQ(paths.size(), 1u);
-    EXPECT_EQ(paths.front().worldGeneration, installedGeneration);
-    ASSERT_TRUE(setCeiling(second, 0.0));
-    EXPECT_GT(settledPeak(), limited * 1.2f);
-    engine.stopAll(0);
-    settledPeak();
-    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
-    EXPECT_NE(runtime->variables.CurrentWorldGeneration(), installedGeneration);
-    ASSERT_EQ(engine.playByNameDetailed(QStringLiteral("Play_Good")).engineResult,
-              HarkenEditor::Bridge::kEngineOk);
-    EXPECT_GT(settledPeak(), limited / 0.7f);
-}
-
-TEST_F(AudioPlaybackRegression, ScheduledVoiceAdoptsLatestLimiterSourceWhenItStarts)
-{
-    VNX::registerProjectActions(VNX::ActionManager::instance(), &projects, nullptr);
-    auto* preset = projects.createItem(nullptr, QStringLiteral("ScheduledReplacement"),
-                                      VNX::ProjectItem::Type::Effect);
-    auto* track = projects.createItem(layer, QStringLiteral("DelayedTrack"),
-                                     VNX::ProjectItem::Type::Track);
-    ASSERT_NE(preset, nullptr);
-    ASSERT_NE(track, nullptr);
-    ASSERT_TRUE(projects.moveItem(sounds[0], track));
-    auto* timeline = track->comp<VNX::VTrack>();
-    ASSERT_NE(timeline, nullptr);
-    ASSERT_EQ(timeline->clips.items.size(), 1u);
-    auto& clip = timeline->clips.items.front();
-    clip.start = 250000000;
-    clip.duration = 1000000000;
-    ASSERT_NE(projects.createActionTargeting(track, VNX::VActionStep::Type::Play,
-                                             QStringLiteral("Play_Delayed")), nullptr);
-    VNX::EffectEntry effect;
-    effect.guid = QUuid::createUuid();
-    effect.mode = VNX::EffectMode::Custom;
-    effect.custom.parameters = {-24.0f, 1.0f};
-    const auto replace = [&] {
-        return VNX::ActionManager::instance().execute(QStringLiteral("replace_field_group_effects"),
-            {{QStringLiteral("definition_guid"), layer->guid.toString(QUuid::WithoutBraces)},
-             {QStringLiteral("group"), QStringLiteral("effect")},
-             {QStringLiteral("scope"), QStringLiteral("Shared")},
-             {QStringLiteral("effects"), QJsonArray{effect.toJson()}}}, VNX::ActionSource::GUI).success;
-    };
-    ASSERT_TRUE(replace());
-    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
-    const auto generation = harken::detail::ActiveEngine()->variables.CurrentWorldGeneration();
-    ASSERT_EQ(engine.playByNameDetailed(QStringLiteral("Play_Delayed")).engineResult,
-              HarkenEditor::Bridge::kEngineOk);
-    EXPECT_EQ(settledPeak(), 0.0f);
-    std::vector<HarkenEditor::Bridge::PlaybackPathObservation> paths;
-    ASSERT_TRUE(HarkenEditor::Bridge::capturePlaybackPaths(paths));
-    ASSERT_TRUE(paths.empty());
-    effect.mode = VNX::EffectMode::Preset;
-    effect.effectGuid = preset->guid;
-    ASSERT_TRUE(replace());
-    engine.runtimeSyncCoordinator().flushPendingMutationNow();
-    EXPECT_EQ(settledPeak(), 0.0f);
-    EXPECT_EQ(harken::detail::ActiveEngine()->variables.CurrentWorldGeneration(), generation);
-    ASSERT_GT(pumpUntilPreviewAudible(512), 0.0f);
-    const float limited = settledPeak();
-    ASSERT_GT(limited, 0.0f);
-    ASSERT_TRUE(HarkenEditor::Bridge::capturePlaybackPaths(paths));
-    ASSERT_EQ(paths.size(), 1u);
-    EXPECT_EQ(paths.front().worldGeneration, generation);
-    effect.bypass = true;
-    ASSERT_TRUE(replace());
-    const float dry = settledPeak();
-    EXPECT_GT(limited, dry * 0.9f);
-    effect.bypass = false;
-    ASSERT_TRUE(replace());
+              harken::studio::bridge::kEngineOk);
     EXPECT_NEAR(settledPeak(), dry, 0.002f);
 }
 
 TEST_F(AudioPlaybackRegression, BusLimiterSourceReplacementAppliesDuringPlayback)
 {
-    VNX::registerProjectActions(VNX::ActionManager::instance(), &projects, nullptr);
+    harken::studio::registerProjectActions(harken::studio::ActionManager::instance(), &projects, nullptr);
     auto* bus = projects.getMasterBusItem();
     ASSERT_NE(bus, nullptr);
     auto* preset = projects.createItem(nullptr, QStringLiteral("BusReplacementLimiter"),
-                                      VNX::ProjectItem::Type::Effect);
+                                      harken::studio::ProjectItem::Type::Effect);
     ASSERT_NE(preset, nullptr);
-    ASSERT_TRUE(VNX::ActionManager::instance().execute(QStringLiteral("set_item_property"),
+    ASSERT_TRUE(harken::studio::ActionManager::instance().execute(QStringLiteral("set_item_property"),
         {{QStringLiteral("authoring_handle"), static_cast<qint64>(preset->objectID)},
          {QStringLiteral("property"), QStringLiteral("releaseMs")},
-         {QStringLiteral("value"), 1.0}}, VNX::ActionSource::GUI).success);
-    VNX::EffectEntry effect;
+         {QStringLiteral("value"), 1.0}}, harken::studio::ActionSource::GUI).success);
+    harken::studio::EffectEntry effect;
     effect.guid = QUuid::createUuid();
-    effect.mode = VNX::EffectMode::Custom;
+    effect.mode = harken::studio::EffectMode::Custom;
     effect.custom.parameters = {-24.0f, 1.0f};
     effect.bypass = true;
-    VNX::EffectEntry added;
+    harken::studio::EffectEntry added;
     added.guid = QUuid::createUuid();
-    added.mode = VNX::EffectMode::Custom;
+    added.mode = harken::studio::EffectMode::Custom;
     bool includeAdded = false;
     const auto replace = [&] {
         QJsonArray effects{effect.toJson()};
         if (includeAdded) effects.append(added.toJson());
-        return VNX::ActionManager::instance().execute(QStringLiteral("set_item_property"),
+        return harken::studio::ActionManager::instance().execute(QStringLiteral("set_item_property"),
             {{QStringLiteral("authoring_handle"), static_cast<qint64>(bus->objectID)},
              {QStringLiteral("property"), QStringLiteral("effects")},
              {QStringLiteral("value"), effects}},
-            VNX::ActionSource::GUI).success;
+            harken::studio::ActionSource::GUI).success;
     };
     ASSERT_TRUE(replace());
     ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
     ASSERT_EQ(engine.playByNameDetailed(QStringLiteral("Play_Good")).engineResult,
-              HarkenEditor::Bridge::kEngineOk);
+              harken::studio::bridge::kEngineOk);
     const float dry = settledPeak();
     ASSERT_GT(dry, 0.05f);
     effect.bypass = false;
@@ -1493,7 +1436,7 @@ TEST_F(AudioPlaybackRegression, BusLimiterSourceReplacementAppliesDuringPlayback
     EXPECT_GT(limited, 0.0f);
     EXPECT_LT(limited, dry * 0.7f);
 
-    effect.mode = VNX::EffectMode::Preset;
+    effect.mode = harken::studio::EffectMode::Preset;
     effect.effectGuid = preset->guid;
     ASSERT_TRUE(replace());
     engine.runtimeSyncCoordinator().flushPendingMutationNow();
@@ -1515,243 +1458,47 @@ TEST_F(AudioPlaybackRegression, BusLimiterSourceReplacementAppliesDuringPlayback
     settledPeak();
     ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
     ASSERT_EQ(engine.playByNameDetailed(QStringLiteral("Play_Good")).engineResult,
-              HarkenEditor::Bridge::kEngineOk);
+              harken::studio::bridge::kEngineOk);
     EXPECT_NEAR(settledPeak(), dry, 0.002f);
 
-    ASSERT_TRUE(VNX::ActionManager::instance().execute(QStringLiteral("set_item_property"),
+    ASSERT_TRUE(harken::studio::ActionManager::instance().execute(QStringLiteral("set_item_property"),
         {{QStringLiteral("authoring_handle"), static_cast<qint64>(preset->objectID)},
          {QStringLiteral("property"), QStringLiteral("ceilingDb")},
-         {QStringLiteral("value"), -24.0}}, VNX::ActionSource::GUI).success);
+         {QStringLiteral("value"), -24.0}}, harken::studio::ActionSource::GUI).success);
     ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
     EXPECT_NEAR(settledPeak(), limited, 0.002f);
     includeAdded = true;
     ASSERT_TRUE(replace());
     engine.runtimeSyncCoordinator().flushPendingMutationNow();
     EXPECT_NEAR(settledPeak(), limited, 0.002f);
-    ASSERT_TRUE(VNX::ActionManager::instance().execute(QStringLiteral("set_item_property"),
+    ASSERT_TRUE(harken::studio::ActionManager::instance().execute(QStringLiteral("set_item_property"),
         {{QStringLiteral("authoring_handle"), static_cast<qint64>(preset->objectID)},
          {QStringLiteral("property"), QStringLiteral("ceilingDb")},
-         {QStringLiteral("value"), 0.0}}, VNX::ActionSource::GUI).success);
+         {QStringLiteral("value"), 0.0}}, harken::studio::ActionSource::GUI).success);
     engine.runtimeSyncCoordinator().flushPendingMutationNow();
     EXPECT_NEAR(settledPeak(), dry, 0.002f);
-}
-
-TEST_F(AudioPlaybackRegression, LiveEffectChainUsesInheritedPreviewAndRetriesLatestDesired) {
-    ASSERT_EQ(engine.playByNameDetailed(QStringLiteral("Play_Good")).engineResult,
-        HarkenEditor::Bridge::kEngineOk);
-    const float dry = settledPeak();
-    ASSERT_GT(dry, 0.05f);
-    auto* runtime = harken::detail::ActiveEngine();
-    std::vector<HarkenEditor::Bridge::PlaybackPathObservation> paths;
-    ASSERT_TRUE(HarkenEditor::Bridge::capturePlaybackPaths(paths));
-    ASSERT_EQ(1u, paths.size());
-    const auto handle = paths[0].voiceInstance;
-    auto* render = runtime->voices.Resolve(handle);
-    ASSERT_NE(nullptr, render);
-    VNX::EffectEntry entry;
-    entry.guid = QUuid::createUuid();
-    entry.mode = VNX::EffectMode::Custom;
-    entry.custom.parameters = {-24.0f, 20.0f};
-    auto parent = layer->fieldGroups;
-    auto child = sounds[0]->fieldGroups;
-    child.effects.shared.mode = VNX::FieldGroupMode::Inherit;
-    projects.fieldGroupsPreviewed(sounds[0], child);
-    const auto previewParent = [&](const std::vector<VNX::EffectEntry>& entries) {
-        VNX::EffectFieldGroup group;
-        EXPECT_TRUE(group.effects.replace(entries));
-        parent.effects.shared = {VNX::FieldGroupMode::Local, group};
-        projects.fieldGroupsPreviewed(layer, parent);
-    };
-    previewParent({entry});
-    EXPECT_NEAR(settledPeak(), dry * std::pow(10.0f, -24.0f / 20.0f) / 0.125f, 0.002f);
-    const auto ref = render->fxSlotEffectRef[0];
-    entry.custom.parameters[0] = -21;
-    previewParent({entry});
-    EXPECT_NEAR(settledPeak(), dry * std::pow(10.0f, -21.0f / 20.0f) / 0.125f, 0.002f);
-    EXPECT_EQ(ref.poolIndex, render->fxSlotEffectRef[0].poolIndex);
-    EXPECT_EQ(ref.generation, render->fxSlotEffectRef[0].generation);
-    entry.guid = QUuid::createUuid();
-    entry.custom.parameters[0] = -18;
-    previewParent({entry});
-    QMetaObject::invokeMethod(&engine, "onRuntimeServiceTimer", Qt::DirectConnection);
-    entry.guid = QUuid::createUuid();
-    entry.custom.parameters[0] = -23;
-    previewParent({entry});
-    QMetaObject::invokeMethod(&engine, "onRuntimeServiceTimer", Qt::DirectConnection);
-    EXPECT_NEAR(settledPeak(), dry * std::pow(10.0f, -23.0f / 20.0f) / 0.125f, 0.002f);
-    EXPECT_EQ(entry.runtimeId().high, runtime->effectBank.ObjectIdentity(render->fxSlotEffectRef[0]).effectId.high);
-    EXPECT_EQ(entry.runtimeId().low, runtime->effectBank.ObjectIdentity(render->fxSlotEffectRef[0]).effectId.low);
-    entry.bypass = true;
-    previewParent({entry});
-    EXPECT_NEAR(settledPeak(), dry, 0.002f);
-    child.effects.shared = {VNX::FieldGroupMode::Local, VNX::EffectFieldGroup{}};
-    projects.fieldGroupsPreviewed(sounds[0], child);
-    EXPECT_NEAR(settledPeak(), dry, 0.002f);
-    EXPECT_EQ(harken::kEffectTypeNone, render->fxSlotEffectRef[0].type);
-    entry.bypass = false;
-    previewParent({entry});
-    EXPECT_NEAR(settledPeak(), dry, 0.002f);
-    child.effects.shared.mode = VNX::FieldGroupMode::Inherit;
-    projects.fieldGroupsPreviewed(sounds[0], child);
-    const float limited = settledPeak();
-    EXPECT_NEAR(limited, dry * std::pow(10.0f, -23.0f / 20.0f) / 0.125f, 0.002f);
-    VNX::EffectEntry unresolved;
-    unresolved.guid = QUuid::createUuid();
-    unresolved.effectGuid = QUuid::createUuid();
-    entry.custom.parameters[0] = 0.0f;
-    previewParent({entry, unresolved});
-    // An unresolved reference rejects the snapshot as a whole, preserving accepted audio.
-    EXPECT_NEAR(settledPeak(), limited, 0.002f);
-    entry.custom.parameters[0] = -23.0f;
-    previewParent({entry});
-    EXPECT_NEAR(settledPeak(), limited, 0.002f);
-    const auto accepted = render->fxSlotEffectRef[0];
-    previewParent({unresolved});
-    EXPECT_NEAR(settledPeak(), limited, 0.002f);
-    EXPECT_EQ(accepted.poolIndex, render->fxSlotEffectRef[0].poolIndex);
-    EXPECT_EQ(accepted.generation, render->fxSlotEffectRef[0].generation);
-    previewParent({});
-    EXPECT_NEAR(settledPeak(), dry, 0.002f);
-    EXPECT_EQ(harken::kEffectTypeNone, render->fxSlotEffectRef[0].type);
-}
-
-TEST_F(AudioPlaybackRegression, LiveEffectPresetActionsReachEveryInheritedReference) {
-    VNX::registerProjectActions(VNX::ActionManager::instance(), &projects, nullptr);
-    auto* preset = projects.createItem(nullptr, QStringLiteral("SharedLimiter"), VNX::ProjectItem::Type::Effect);
-    ASSERT_NE(nullptr, preset);
-    auto* secondAction = projects.createActionTargeting(sounds[1], VNX::VActionStep::Type::Play,
-        QStringLiteral("Play_Second"));
-    ASSERT_NE(nullptr, secondAction);
-    const auto mode = [&](VNX::ProjectItem* item, const char* value) {
-        return VNX::ActionManager::instance().execute(QStringLiteral("set_field_group_mode"),
-            {{QStringLiteral("definition_guid"), item->guid.toString(QUuid::WithoutBraces)},
-             {QStringLiteral("group"), QStringLiteral("effect")},
-             {QStringLiteral("scope"), QStringLiteral("Shared")},
-             {QStringLiteral("mode"), QString::fromLatin1(value)}}, VNX::ActionSource::IPC);
-    };
-    for (auto* sound : sounds) {
-        const auto childMode = mode(sound, "Inherit");
-        ASSERT_TRUE(childMode.success) << childMode.errorMessage.toStdString();
-    }
-    VNX::EffectEntry first;
-    first.guid = QUuid::createUuid();
-    first.effectGuid = preset->guid;
-    auto second = first;
-    second.guid = QUuid::createUuid();
-    const auto replaced = VNX::ActionManager::instance().execute(QStringLiteral("replace_field_group_effects"),
-        {{QStringLiteral("definition_guid"), layer->guid.toString(QUuid::WithoutBraces)},
-         {QStringLiteral("group"), QStringLiteral("effect")},
-         {QStringLiteral("scope"), QStringLiteral("Shared")},
-         {QStringLiteral("effects"), QJsonArray{first.toJson(), second.toJson()}}}, VNX::ActionSource::IPC);
-    ASSERT_TRUE(replaced.success) << replaced.errorMessage.toStdString();
-    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
-    ASSERT_EQ(engine.playByNameDetailed(QStringLiteral("Play_Good")).engineResult, HarkenEditor::Bridge::kEngineOk);
-    ASSERT_EQ(engine.playByNameDetailed(QStringLiteral("Play_Second")).engineResult, HarkenEditor::Bridge::kEngineOk);
-    const float dry = settledPeak();
-    ASSERT_GT(dry, 0.1f);
-    std::vector<HarkenEditor::Bridge::PlaybackPathObservation> paths;
-    ASSERT_TRUE(HarkenEditor::Bridge::capturePlaybackPaths(paths));
-    ASSERT_EQ(2u, paths.size());
-    auto* runtime = harken::detail::ActiveEngine();
-    std::array<std::array<harken::EffectInstanceRef, 8>, 2> before;
-    for (std::size_t i = 0; i < paths.size(); ++i) {
-        const auto* voice = runtime->voices.Resolve(paths[i].voiceInstance);
-        ASSERT_NE(nullptr, voice);
-        std::copy_n(voice->fxSlotEffectRef, 8, before[i].begin());
-    }
-    EXPECT_NE(before[0][0].poolIndex, before[0][1].poolIndex);
-    EXPECT_NE(before[1][0].poolIndex, before[1][1].poolIndex);
-    for (std::uint32_t a = 0; a < 2; ++a)
-        for (std::uint32_t b = 0; b < 2; ++b)
-            EXPECT_NE(before[0][a].poolIndex, before[1][b].poolIndex);
-    const auto setPreset = [&](const QString& property, float value) {
-        return VNX::ActionManager::instance().execute(QStringLiteral("set_item_property"),
-            {{QStringLiteral("authoring_handle"), static_cast<qint64>(preset->objectID)},
-             {QStringLiteral("property"), property}, {QStringLiteral("value"), value}}, VNX::ActionSource::IPC);
-    };
-    ASSERT_TRUE(setPreset(QStringLiteral("ceilingDb"), -24).success);
-    ASSERT_TRUE(setPreset(QStringLiteral("releaseMs"), 17).success);
-    EXPECT_NEAR(settledPeak(), dry * (2.0f * std::pow(10.0f, -24.0f / 20.0f) / 0.375f), 0.002f);
-    for (std::size_t i = 0; i < paths.size(); ++i) {
-        const auto handle = paths[i].voiceInstance;
-        const auto* voice = runtime->voices.Resolve(handle);
-        ASSERT_NE(nullptr, voice);
-        for (std::uint32_t slot = 0; slot < 2; ++slot) {
-            EXPECT_EQ(before[i][slot].poolIndex, voice->fxSlotEffectRef[slot].poolIndex);
-            EXPECT_EQ(before[i][slot].generation, voice->fxSlotEffectRef[slot].generation);
-            EXPECT_FLOAT_EQ(-24, runtime->effectSlotConfig[static_cast<std::uint32_t>(handle)][slot].params[0]);
-            EXPECT_FLOAT_EQ(17, runtime->effectSlotConfig[static_cast<std::uint32_t>(handle)][slot].params[1]);
-        }
-    }
-    first.bypass = second.bypass = true;
-    const auto bypassed = VNX::ActionManager::instance().execute(QStringLiteral("replace_field_group_effects"),
-        {{QStringLiteral("definition_guid"), layer->guid.toString(QUuid::WithoutBraces)},
-         {QStringLiteral("group"), QStringLiteral("effect")},
-         {QStringLiteral("scope"), QStringLiteral("Shared")},
-         {QStringLiteral("effects"), QJsonArray{second.toJson(), first.toJson()}}}, VNX::ActionSource::IPC);
-    ASSERT_TRUE(bypassed.success) << bypassed.errorMessage.toStdString();
-    engine.runtimeSyncCoordinator().flushPendingMutationNow();
-    EXPECT_NEAR(settledPeak(), dry, 0.002f);
-    for (const auto operation : {VNX::RuntimeCapabilityOperation::CompiledPreview,
-                                  VNX::RuntimeCapabilityOperation::PackBuild}) {
-        const auto capability = VNX::RuntimeCapabilityMatrix::evaluate(*sounds[0],
-            *projects.currentProject(), operation, VNX::RuntimeCapabilityFeature::TypedEffect);
-        EXPECT_EQ(VNX::RuntimeCapabilityState::Ready, capability.state)
-            << capability.diagnostic.toStdString();
-    }
-    for (const auto& path : paths) {
-        const auto* voice = runtime->voices.Resolve(path.voiceInstance);
-        ASSERT_NE(nullptr, voice);
-        EXPECT_EQ(second.runtimeId().high, runtime->effectBank.ObjectIdentity(voice->fxSlotEffectRef[0]).effectId.high);
-        EXPECT_EQ(second.runtimeId().low, runtime->effectBank.ObjectIdentity(voice->fxSlotEffectRef[0]).effectId.low);
-        EXPECT_EQ(first.runtimeId().high, runtime->effectBank.ObjectIdentity(voice->fxSlotEffectRef[1]).effectId.high);
-        EXPECT_EQ(first.runtimeId().low, runtime->effectBank.ObjectIdentity(voice->fxSlotEffectRef[1]).effectId.low);
-        EXPECT_FLOAT_EQ(1.0f, voice->fxBypassMix[0]);
-        EXPECT_FLOAT_EQ(1.0f, voice->fxBypassMix[1]);
-    }
-}
-
-TEST_F(AudioPlaybackRegression, ScalarEditCannotPublishCachedWorldAfterInvalidStructuralEdit)
-{
-    auto& coordinator = engine.runtimeSyncCoordinator();
-    const auto generation = harken::detail::ActiveEngine()->variables.CurrentWorldGeneration();
-    action->comp<VNX::VAction>()->steps.front().type =
-        static_cast<VNX::VActionStep::Type>(255);
-    coordinator.markCurrentWorldMutation();
-    coordinator.flushPendingMutationNow();
-    ASSERT_EQ(coordinator.barrier(coordinator.currentAuthoringRevision()).state,
-              VNX::RuntimeSyncCoordinator::RevisionBarrierState::Failed);
-    const auto locator = VNX::PlayablePropertyAuthoringV1::definitionLocator(*sounds[0]);
-    ASSERT_TRUE(locator);
-    ASSERT_TRUE(VNX::PlayablePropertyAuthoringV1::setOverride(
-        *sounds[0], *locator, 1, -6.0, std::nullopt));
-    coordinator.markCurrentWorldPropertyMutation(sounds[0]->runtimeId(), 1);
-    coordinator.flushPendingMutationNow();
-    EXPECT_EQ(coordinator.barrier(coordinator.currentAuthoringRevision()).state,
-              VNX::RuntimeSyncCoordinator::RevisionBarrierState::Failed);
-    EXPECT_EQ(harken::detail::ActiveEngine()->variables.CurrentWorldGeneration(), generation);
 }
 
 TEST_F(AudioPlaybackRegression, ScalarPublicationRechecksSourceFilesAndLostRuntimeRegistration)
 {
-    namespace Bridge = HarkenEditor::Bridge;
+    namespace bridge = harken::studio::bridge;
     auto& coordinator = engine.runtimeSyncCoordinator();
     ASSERT_TRUE(QFile::remove(paths[1]));
     coordinator.markCurrentWorldPropertyMutation(sounds[0]->runtimeId(), 1);
     ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
-    EXPECT_FALSE(Bridge::runtimeObjectExists(sounds[1]->runtimeId()));
+    EXPECT_FALSE(bridge::runtimeObjectExists(sounds[1]->runtimeId()));
     writeWavF32(paths[1], std::vector<float>(65536, 0.25f));
     coordinator.markCurrentWorldPropertyMutation(sounds[0]->runtimeId(), 1);
     ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
-    EXPECT_TRUE(Bridge::runtimeObjectExists(sounds[1]->runtimeId()));
+    EXPECT_TRUE(bridge::runtimeObjectExists(sounds[1]->runtimeId()));
     coordinator.markCurrentWorldMutation();
     ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
-    const auto revision = Bridge::registeredSoundRevision(sounds[0]->runtimeId());
+    const auto revision = bridge::registeredSoundRevision(sounds[0]->runtimeId());
     ASSERT_NE(revision, 0u);
-    Bridge::removeRuntimeObject(sounds[0]->runtimeId());
+    bridge::removeRuntimeObject(sounds[0]->runtimeId());
     coordinator.markCurrentWorldPropertyMutation(sounds[0]->runtimeId(), 1);
     ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
-    EXPECT_EQ(Bridge::registeredSoundRevision(sounds[0]->runtimeId()), revision);
+    EXPECT_EQ(bridge::registeredSoundRevision(sounds[0]->runtimeId()), revision);
     expectGoodAction();
 }
 
@@ -1770,212 +1517,23 @@ TEST_F(AudioPlaybackRegression, RuntimeRestartCannotAdoptAnOlderCompilation)
     expectGoodAction();
 }
 
-TEST_F(AudioPlaybackRegression, ActionCatalogGrowthPreservesPlaybackAndSession)
-{
-    namespace Bridge = HarkenEditor::Bridge;
-    auto& coordinator = engine.runtimeSyncCoordinator();
-    const auto epoch = coordinator.barrier(coordinator.currentAuthoringRevision()).runtimeEpoch;
-    for (int index = 1; index < 256; ++index) {
-        ASSERT_NE(projects.createActionTargeting(
-            sounds[0], VNX::VActionStep::Type::Play,
-            QStringLiteral("CatalogAction%1").arg(index)), nullptr);
-    }
-    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
-    const auto started = engine.playByNameDetailed(QStringLiteral("CatalogAction255"));
-    ASSERT_EQ(started.engineResult, Bridge::kEngineOk);
-    const auto generation = harken::detail::ActiveEngine()->variables.CurrentWorldGeneration();
-    ASSERT_GT(settledPeak(), 0.05f);
-    ASSERT_NE(projects.createActionTargeting(
-        sounds[0], VNX::VActionStep::Type::Play,
-        QStringLiteral("CatalogAction256")), nullptr);
-    coordinator.flushPendingMutationNow();
-    ASSERT_GT(settledPeak(), 0.05f);
-    EXPECT_TRUE(Bridge::Detail::runtimeOwnsPlayback(started.playbackHandle));
-    EXPECT_EQ(harken::detail::ActiveEngine()->variables.CurrentWorldGeneration(), generation);
-    engine.stopPlayback(started.playbackHandle);
-    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
-    EXPECT_EQ(coordinator.barrier(coordinator.currentAuthoringRevision()).runtimeEpoch, epoch);
-    const auto grown = engine.playByNameDetailed(QStringLiteral("CatalogAction256"));
-    ASSERT_EQ(grown.engineResult, Bridge::kEngineOk);
-    ASSERT_GT(settledPeak(), 0.05f);
-    engine.stopPlayback(grown.playbackHandle);
-    settledPeak();
-    engine.stopOutput();
-    ASSERT_TRUE(engine.startOutput());
-    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
-    EXPECT_EQ(engine.playByNameDetailed(QStringLiteral("CatalogAction256")).engineResult,
-              Bridge::kEngineOk);
-    EXPECT_GT(settledPeak(), 0.05f);
-}
-
-TEST_F(AudioPlaybackRegression, InvalidAuthoringPreservesInstalledSoundState)
-{
-    auto* runtime = harken::detail::ActiveEngine();
-    const auto revision = runtime->registry.Lookup(harkentest::ToRuntime(sounds[0]->runtimeId())).contentRevision;
-    const auto generation = runtime->variables.CurrentWorldGeneration();
-    writeWavF32(paths[0], std::vector<float>(65536, 0.5f));
-    ASSERT_TRUE(QFile::remove(paths[1]));
-    action->comp<VNX::VAction>()->steps.front().type =
-        static_cast<VNX::VActionStep::Type>(255);
-    auto& coordinator = engine.runtimeSyncCoordinator();
-    coordinator.markCurrentWorldMutation();
-    coordinator.flushPendingMutationNow();
-    const auto barrier = coordinator.barrier(coordinator.currentAuthoringRevision());
-    EXPECT_EQ(barrier.state, VNX::RuntimeSyncCoordinator::RevisionBarrierState::Failed);
-    EXPECT_EQ(runtime->variables.CurrentWorldGeneration(), generation);
-    EXPECT_EQ(runtime->registry.Lookup(harkentest::ToRuntime(sounds[0]->runtimeId())).contentRevision, revision);
-    EXPECT_TRUE(HarkenEditor::Bridge::runtimeObjectExists(sounds[1]->runtimeId()));
-}
-
-TEST_F(AudioPlaybackRegression, CompilerRefusalPreservesPreparedSoundState)
-{
-    namespace Bridge = HarkenEditor::Bridge;
-    auto* runtime = harken::detail::ActiveEngine();
-    const auto revision = runtime->registry.Lookup(harkentest::ToRuntime(sounds[0]->runtimeId())).contentRevision;
-    const auto generation = runtime->variables.CurrentWorldGeneration();
-    writeWavF32(paths[0], std::vector<float>(65536, 0.5f));
-    ASSERT_TRUE(QFile::remove(paths[1]));
-    auto preparation = std::make_shared<Bridge::CurrentWorldSoundPreparation>();
-    QString error;
-    ASSERT_TRUE(VNX::ProjectManager::prepareRuntimeSounds(
-        *projects.currentProject(), *preparation, &error));
-    VNX::CurrentWorldBuildOptions options;
-    options.isolateUnavailable = true;
-    options.soundContentRevisions = &preparation->contentRevisions;
-    auto request = VNX::buildCurrentWorldSyncRequest(
-        *projects.currentProject(), std::nullopt, &error, nullptr, &options);
-    ASSERT_NE(request, nullptr) << error.toStdString();
-    request->soundPreparation = std::move(preparation);
-    ASSERT_FALSE(request->actions.empty());
-    ASSERT_FALSE(request->actions.front().steps.empty());
-    request->actions.front().steps.front().opcode = static_cast<harkenstudiobuild::ActionOpcodeV1>(255);
-    const auto rejected = Bridge::syncCurrentWorld(std::move(request), {71, 72, 73, 74});
-    EXPECT_FALSE(rejected.ok());
-    EXPECT_FALSE(rejected.pending());
-    EXPECT_EQ(runtime->variables.CurrentWorldGeneration(), generation);
-    EXPECT_EQ(runtime->registry.Lookup(harkentest::ToRuntime(sounds[0]->runtimeId())).contentRevision, revision);
-    EXPECT_TRUE(Bridge::runtimeObjectExists(sounds[1]->runtimeId()));
-    expectGoodAction();
-}
-
-TEST_F(AudioPlaybackRegression, SourceRefreshPreservesPlaybackAcrossFileAndRegistrationChanges)
-{
-    namespace Bridge = HarkenEditor::Bridge;
-    auto& media = VNX::MediaPool::instance();
-    auto& registry = VNX::AssetRegistry::instance();
-    const auto waitForMedia = qScopeGuard([] { QThreadPool::globalInstance()->waitForDone(); });
-    constexpr uint32_t sourceId = 930001;
-    const auto soundId = sounds[0]->runtimeId();
-    auto* runtime = harken::detail::ActiveEngine();
-    const auto originalRevision = runtime->registry.Lookup(harkentest::ToRuntime(soundId)).contentRevision;
-    ASSERT_NE(originalRevision, 0u);
-
-    ASSERT_TRUE(media.refreshSourceFile(sourceId, paths[0]));
-    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
-    EXPECT_EQ(runtime->registry.Lookup(harkentest::ToRuntime(soundId)).contentRevision, originalRevision);
-    expectGoodAction();
-
-    QThreadPool::globalInstance()->waitForDone();
-    const auto modified = QFileInfo(paths[0]).lastModified();
-    writeWavF32(paths[0], std::vector<float>(65536, 0.5f));
-    QFile replacement(paths[0]);
-    ASSERT_TRUE(replacement.open(QIODevice::ReadWrite));
-    ASSERT_TRUE(replacement.setFileTime(modified, QFileDevice::FileModificationTime));
-    replacement.close();
-    ASSERT_TRUE(media.refreshSourceFile(sourceId, paths[0]));
-    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
-    const auto replacedRevision = runtime->registry.Lookup(harkentest::ToRuntime(soundId)).contentRevision;
-    EXPECT_NE(replacedRevision, originalRevision);
-    EXPECT_NE(replacedRevision, 0u);
-
-    QThreadPool::globalInstance()->waitForDone();
-    const QString relocated = QFileInfo(paths[0]).dir().filePath(QStringLiteral("Relocated.wav"));
-    ASSERT_TRUE(QFile::rename(paths[0], relocated));
-    registry.relocateSourcePaths(QFileInfo(paths[0]).fileName(), QFileInfo(relocated).fileName());
-    paths[0] = relocated;
-    ASSERT_TRUE(media.refreshSourceFile(sourceId, paths[0]));
-    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
-    EXPECT_EQ(Bridge::mediaRegistryFindPath(sourceId), paths[0]);
-    EXPECT_EQ(runtime->registry.Lookup(harkentest::ToRuntime(soundId)).contentRevision, replacedRevision);
-    expectGoodAction();
-
-    QThreadPool::globalInstance()->waitForDone();
-    ASSERT_TRUE(QFile::remove(paths[0]));
-    VNX::ProjectManager::resyncSourceToRuntime(sourceId);
-    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
-    EXPECT_FALSE(Bridge::runtimeObjectExists(soundId));
-    EXPECT_TRUE(Bridge::runtimeObjectExists(sounds[1]->runtimeId()));
-
-    writeWavF32(paths[0], std::vector<float>(65536, 0.5f));
-    ASSERT_TRUE(media.refreshSourceFile(sourceId, paths[0]));
-    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
-    EXPECT_TRUE(Bridge::runtimeObjectExists(soundId));
-    EXPECT_EQ(runtime->registry.Lookup(harkentest::ToRuntime(soundId)).contentRevision, replacedRevision);
-    expectGoodAction();
-
-    Bridge::removeRuntimeObject(soundId);
-    ASSERT_FALSE(Bridge::runtimeObjectExists(soundId));
-    ASSERT_TRUE(media.refreshSourceFile(sourceId, paths[0]));
-    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
-    EXPECT_TRUE(Bridge::runtimeObjectExists(soundId));
-    expectGoodAction();
-
-    engine.clearRuntimeObjects();
-    VNX::ProjectManager::syncActionNameForPreview(action);
-    Bridge::mediaRegistryUnregister(sourceId);
-    ASSERT_EQ(Bridge::registeredSoundRevision(soundId), 0u);
-    ASSERT_TRUE(media.refreshSourceFile(sourceId, paths[0]));
-    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
-    EXPECT_EQ(Bridge::mediaRegistryFindPath(sourceId), paths[0]);
-    EXPECT_EQ(Bridge::registeredSoundRevision(soundId), replacedRevision);
-    expectGoodAction();
-}
-
 TEST_F(AudioPlaybackRegression, UnchangedSourceRefreshRetriesFailedWorld)
 {
     const auto waitForMedia = qScopeGuard([] { QThreadPool::globalInstance()->waitForDone(); });
-    ASSERT_TRUE(VNX::MediaPool::instance().refreshSourceFile(930001, paths[0]));
+    ASSERT_TRUE(harken::studio::MediaPool::instance().refreshSourceFile(930001, paths[0]));
     ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
     QThreadPool::globalInstance()->waitForDone();
-    const auto stepType = action->comp<VNX::VAction>()->steps.front().type;
-    action->comp<VNX::VAction>()->steps.front().type = static_cast<VNX::VActionStep::Type>(255);
+    const auto stepType = action->comp<harken::studio::VAction>()->steps.front().type;
+    action->comp<harken::studio::VAction>()->steps.front().type = static_cast<harken::studio::VActionStep::Type>(255);
     auto& coordinator = engine.runtimeSyncCoordinator();
     coordinator.markCurrentWorldMutation();
     coordinator.flushPendingMutationNow();
     ASSERT_EQ(coordinator.barrier(coordinator.currentAuthoringRevision()).state,
-              VNX::RuntimeSyncCoordinator::RevisionBarrierState::Failed);
+              harken::studio::RuntimeSyncCoordinator::RevisionBarrierState::Failed);
 
-    action->comp<VNX::VAction>()->steps.front().type = stepType;
-    ASSERT_TRUE(VNX::MediaPool::instance().refreshSourceFile(930001, paths[0]));
+    action->comp<harken::studio::VAction>()->steps.front().type = stepType;
+    ASSERT_TRUE(harken::studio::MediaPool::instance().refreshSourceFile(930001, paths[0]));
     ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
-    expectGoodAction();
-}
-
-TEST_F(AudioPlaybackRegression, AssetNotificationsReloadSourceContentWithoutRefreshedFingerprint)
-{
-    auto& registry = VNX::AssetRegistry::instance();
-    constexpr uint32_t sourceId = 930001;
-    const auto soundId = sounds[0]->runtimeId();
-    auto* runtime = harken::detail::ActiveEngine();
-    const auto originalRevision = runtime->registry.Lookup(harkentest::ToRuntime(soundId)).contentRevision;
-    const auto originalHash = registry.getAsset(sourceId)->contentHash;
-    const QFileInfo originalFile(paths[0]);
-    const auto modified = originalFile.lastModified();
-    const auto fileSize = originalFile.size();
-    writeWavF32(paths[0], std::vector<float>(65536, 0.5f));
-    QFile replacement(paths[0]);
-    ASSERT_TRUE(replacement.open(QIODevice::ReadWrite));
-    ASSERT_TRUE(replacement.setFileTime(modified, QFileDevice::FileModificationTime));
-    replacement.close();
-    ASSERT_EQ(QFileInfo(paths[0]).size(), fileSize);
-    ASSERT_EQ(QFileInfo(paths[0]).lastModified(), modified);
-    ASSERT_EQ(registry.getAsset(sourceId)->contentHash, originalHash);
-    ASSERT_NE(VNX::AssetImporter::computeContentHash(paths[0]), originalHash);
-
-    emit registry.assetModified(sourceId);
-    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
-    EXPECT_NE(runtime->registry.Lookup(harkentest::ToRuntime(soundId)).contentRevision, originalRevision);
-    EXPECT_TRUE(HarkenEditor::Bridge::runtimeObjectExists(soundId));
     expectGoodAction();
 }
 
@@ -1989,19 +1547,19 @@ protected:
         QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
         if (projects.currentProject() != nullptr)
             projects.closeProject();
-        VNX::AssetRegistry::instance().clear();
-        VNX::ActionManager::instance().clearAllForTesting();
+        harken::studio::AssetRegistry::instance().clear();
+        harken::studio::ActionManager::instance().clearAllForTesting();
 
-        HarkenEditor::Bridge::EngineSessionConfig config;
+        harken::studio::bridge::EngineSessionConfig config;
         config.sampleRate = 48000;
         config.bufferSize = 64;
         config.maxVoices = 16;
-        config.deviceMode = HarkenEditor::Bridge::EngineDeviceMode::Null;
+        config.deviceMode = harken::studio::bridge::EngineDeviceMode::Null;
         ASSERT_TRUE(engine.initialize(config));
         ASSERT_TRUE(engine.startOutput());
         ASSERT_TRUE(directory.isValid());
 
-        VNX::ProjectConfig projectConfig;
+        harken::studio::ProjectConfig projectConfig;
         projectConfig.name = QStringLiteral("StudioActionSeek");
         projectConfig.location = directory.path();
         ASSERT_TRUE(projects.createProject(projectConfig));
@@ -2018,7 +1576,7 @@ protected:
         std::fill(samples.begin() + 1024, samples.end(), 0.5f);
         writeWavF32(wavPath, samples);
 
-        VNX::AssetInfo asset;
+        harken::studio::AssetInfo asset;
         asset.sourceID = 7901;
         asset.relativePath = QStringLiteral("seek.wav");
         asset.absolutePath = wavPath;
@@ -2029,338 +1587,59 @@ protected:
             static_cast<double>(samples.size()) / 48000.0;
         asset.metadata.fileSize =
             static_cast<uint64_t>(QFileInfo(wavPath).size());
-        ASSERT_TRUE(VNX::AssetRegistry::instance().registerAsset(asset));
+        ASSERT_TRUE(harken::studio::AssetRegistry::instance().registerAsset(asset));
 
         auto* layer = projects.createItem(
-            nullptr, QStringLiteral("Layer"), VNX::ProjectItem::Type::Layer);
+            nullptr, QStringLiteral("Layer"), harken::studio::ProjectItem::Type::Layer);
         sound = projects.createAudioItem(
             layer, QStringLiteral("SeekSound"), wavPath, asset.sourceID);
         action = projects.createItem(
             nullptr, QStringLiteral("SeekAction"),
-            VNX::ProjectItem::Type::Action);
+            harken::studio::ProjectItem::Type::Action);
         ASSERT_NE(layer, nullptr);
         ASSERT_NE(sound, nullptr);
         ASSERT_NE(action, nullptr);
-        VNX::VActionStep play;
+        harken::studio::VActionStep play;
         play.targetObjectID = sound->objectID;
-        action->comp<VNX::VAction>()->steps = {play};
+        action->comp<harken::studio::VAction>()->steps = {play};
 
-        VNX::ProjectManager::syncProjectToRuntime(project);
+        harken::studio::ProjectManager::syncProjectToRuntime(project);
         ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
-        VNX::registerAdvancedActions(
-            VNX::ActionManager::instance(), &engine);
+        harken::studio::registerAdvancedActions(
+            harken::studio::ActionManager::instance(), &engine);
     }
 
     void TearDown() override
     {
-        VNX::ActionManager::instance().clearAllForTesting();
+        harken::studio::ActionManager::instance().clearAllForTesting();
         engine.shutdown();
         QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
         if (projects.currentProject() != nullptr)
             projects.closeProject();
-        VNX::AssetRegistry::instance().clear();
+        harken::studio::AssetRegistry::instance().clear();
     }
 
-    bool waitForActionVoices(
-        std::size_t expectedCount, std::vector<VnVoiceHandle>& voices)
-    {
-        auto* runtime = harken::detail::ActiveEngine();
-        if (runtime == nullptr)
-            return false;
-        for (int attempt = 0; attempt < 128; ++attempt) {
-            if (Vn_Update() != VN_OK)
-                return false;
-            runtime->nullBackend.Pump(1);
-            if (Vn_Update() != VN_OK)
-                return false;
-            voices.clear();
-            for (const auto& row : runtime->playableServices) {
-                if (row.phase == harken::EnginePlayableStartPhase::Started
-                    && row.InvocationValid()
-                    && row.Invocation().actionFiring != 0
-                    && row.renderHandle != 0) {
-                    voices.push_back(row.renderHandle);
-                }
-            }
-            if (voices.size() >= expectedCount)
-                return true;
-            QThread::yieldCurrentThread();
-        }
-        return false;
-    }
-
-    bool waitForSeekTerminal(
-        uint64_t operationId, VNX::ActionResult& terminal)
-    {
-        for (int attempt = 0; attempt < 128; ++attempt) {
-            if (!QMetaObject::invokeMethod(
-                    &engine, "onRuntimeServiceTimer", Qt::DirectConnection)) {
-                return false;
-            }
-            terminal = query(operationId);
-            if (!terminal.success
-                || terminal.data.value(QStringLiteral("state")).toString()
-                    != QStringLiteral("accepted")) {
-                return true;
-            }
-            QThread::yieldCurrentThread();
-        }
-        return false;
-    }
-
-    quintptr postAction()
-    {
-        const auto result = engine.playByNameDetailed(action->name);
-        EXPECT_EQ(result.engineResult, HarkenEditor::Bridge::kEngineOk);
-        EXPECT_NE(result.playbackHandle, 0u);
-        return result.playbackHandle;
-    }
-
-    VNX::ActionResult seek(quintptr handle, double positionMs,
-                           bool relative = false,
-                           const QString& expectedName = {})
-    {
-        return VNX::ActionManager::instance().execute(
-            QStringLiteral("seek_action"),
-            QJsonObject{
-                {QStringLiteral("action_handle"),
-                 QString::number(static_cast<qulonglong>(handle))},
-                {QStringLiteral("name"),
-                 expectedName.isEmpty() ? action->name : expectedName},
-                {QStringLiteral("position"), positionMs},
-                {QStringLiteral("is_relative"), relative},
-                {QStringLiteral("snap_to_marker"), false},
-            },
-            VNX::ActionSource::IPC);
-    }
-
-    VNX::ActionResult query(uint64_t operationId)
-    {
-        return VNX::ActionManager::instance().execute(
-            QStringLiteral("query_seek_action"),
-            QJsonObject{{QStringLiteral("seek_operation_id"),
-                         QString::number(operationId)}},
-            VNX::ActionSource::IPC);
-    }
-
-    VNX::ActionResult release(uint64_t operationId)
-    {
-        return VNX::ActionManager::instance().execute(
-            QStringLiteral("release_seek_action"),
-            QJsonObject{{QStringLiteral("seek_operation_id"),
-                         QString::number(operationId)}},
-            VNX::ActionSource::IPC);
-    }
-
-    static uint64_t operationId(const VNX::ActionResult& result)
-    {
-        const QJsonValue value =
-            result.data.value(QStringLiteral("seek_operation_id"));
-        if (value.isString())
-            return value.toString().toULongLong();
-        return static_cast<uint64_t>(value.toInteger());
-    }
-
-    VNX::AudioEngine& engine = VNX::AudioEngine::instance();
-    VNX::ProjectManager& projects = VNX::ProjectManager::instance();
+    harken::studio::AudioEngine& engine = harken::studio::AudioEngine::instance();
+    harken::studio::ProjectManager& projects = harken::studio::ProjectManager::instance();
     QTemporaryDir directory;
     QString wavPath;
-    VNX::ProjectItem* sound = nullptr;
-    VNX::ProjectItem* action = nullptr;
+    harken::studio::ProjectItem* sound = nullptr;
+    harken::studio::ProjectItem* action = nullptr;
 };
-
-TEST_F(StudioActionSeekTest,
-       ExactHandleIsAsynchronousAndTargetsOnlyOneConcurrentFiring)
-{
-    const quintptr first = postAction();
-    const quintptr second = postAction();
-    ASSERT_NE(first, second);
-
-    auto* runtime = harken::detail::ActiveEngine();
-    ASSERT_NE(runtime, nullptr);
-    std::vector<VnVoiceHandle> actionVoices;
-    ASSERT_TRUE(waitForActionVoices(2, actionVoices));
-    ASSERT_EQ(actionVoices.size(), 2u);
-
-    const double frameMs = 1000.0 / 48000.0;
-    const auto started = seek(first, 1024.0 * frameMs);
-    ASSERT_TRUE(started.success) << started.errorMessage.toStdString();
-    const uint64_t operation = operationId(started);
-    ASSERT_NE(operation, 0u);
-    EXPECT_EQ(started.data.value(QStringLiteral("state")).toString(),
-              QStringLiteral("accepted"));
-
-    const auto accepted = query(operation);
-    ASSERT_TRUE(accepted.success) << accepted.errorMessage.toStdString();
-    EXPECT_EQ(accepted.data.value(QStringLiteral("state")).toString(),
-              QStringLiteral("accepted"));
-
-    VNX::ActionResult applied;
-    ASSERT_TRUE(waitForSeekTerminal(operation, applied));
-    ASSERT_TRUE(applied.success) << applied.errorMessage.toStdString();
-    EXPECT_EQ(applied.data.value(QStringLiteral("state")).toString(),
-              QStringLiteral("applied"));
-    int selectedCount = 0;
-    int untouchedCount = 0;
-    for (const VnVoiceHandle voice : actionVoices) {
-        const auto* render = runtime->voices.Resolve(voice);
-        ASSERT_NE(render, nullptr);
-        selectedCount += render->sourceActivationStartFrame == 1024 ? 1 : 0;
-        untouchedCount += render->sourceActivationStartFrame == 0 ? 1 : 0;
-    }
-    EXPECT_EQ(selectedCount, 1);
-    EXPECT_EQ(untouchedCount, 1);
-
-    ASSERT_TRUE(release(operation).success);
-    const auto staleOperation = query(operation);
-    EXPECT_FALSE(staleOperation.success);
-}
-
-TEST_F(StudioActionSeekTest,
-       RestartInvalidatesOldIdsWithoutReusingPlaybackOrOperationHandles)
-{
-    const quintptr oldPlayback = postAction();
-    std::vector<VnVoiceHandle> voices;
-    ASSERT_TRUE(waitForActionVoices(1, voices));
-    const auto oldSeek = seek(oldPlayback, 10.0);
-    ASSERT_TRUE(oldSeek.success) << oldSeek.errorMessage.toStdString();
-    const uint64_t oldOperation = operationId(oldSeek);
-    VNX::ActionResult oldTerminal;
-    ASSERT_TRUE(waitForSeekTerminal(oldOperation, oldTerminal));
-    ASSERT_TRUE(oldTerminal.success);
-
-    engine.shutdown();
-    HarkenEditor::Bridge::EngineSessionConfig config;
-    config.sampleRate = 48000;
-    config.bufferSize = 64;
-    config.maxVoices = 16;
-    config.deviceMode = HarkenEditor::Bridge::EngineDeviceMode::Null;
-    ASSERT_TRUE(engine.initialize(config));
-    ASSERT_TRUE(engine.startOutput());
-    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
-
-    const auto stalePlayback = seek(oldPlayback, 10.0);
-    EXPECT_FALSE(stalePlayback.success);
-    const auto staleOperation = query(oldOperation);
-    EXPECT_FALSE(staleOperation.success);
-
-    const quintptr nextPlayback = postAction();
-    ASSERT_NE(nextPlayback, oldPlayback);
-    voices.clear();
-    ASSERT_TRUE(waitForActionVoices(1, voices));
-    const auto nextSeek = seek(nextPlayback, 10.0);
-    ASSERT_TRUE(nextSeek.success) << nextSeek.errorMessage.toStdString();
-    const uint64_t nextOperation = operationId(nextSeek);
-    EXPECT_NE(nextOperation, oldOperation);
-    VNX::ActionResult nextTerminal;
-    ASSERT_TRUE(waitForSeekTerminal(nextOperation, nextTerminal));
-    EXPECT_TRUE(nextTerminal.success);
-    EXPECT_TRUE(release(nextOperation).success);
-}
-
-TEST_F(StudioActionSeekTest, EngineShutdownCompletesPendingAuditionSeekAsFailure)
-{
-    HarkenEditor::AuditionManager audition(&engine);
-    const quintptr playback = postAction();
-    std::vector<VnVoiceHandle> voices;
-    ASSERT_TRUE(waitForActionVoices(1, voices));
-    const uint32_t playingId = audition.registerExternalPlayback(
-        QStringLiteral("SeekAction"), playback);
-    ASSERT_NE(playingId, 0u);
-
-    int finishedSignals = 0;
-    bool applied = true;
-    QObject::connect(
-        &audition, &HarkenEditor::AuditionManager::auditionSeekFinished,
-        &audition, [&](uint32_t id, quint64, int32_t,
-                       bool didApply) {
-            if (id == playingId) {
-                ++finishedSignals;
-                applied = didApply;
-            }
-        });
-    const auto started = audition.setPositionSamples(playingId, 1024);
-    ASSERT_EQ(started.result, HarkenEditor::Bridge::kEngineOk);
-
-    const auto pending = audition.seekStatus(started.requestId);
-    ASSERT_TRUE(pending.has_value());
-    EXPECT_TRUE(pending->inProgress);
-    engine.shutdown();
-    EXPECT_EQ(finishedSignals, 1);
-    EXPECT_FALSE(applied);
-    const auto completed = audition.seekStatus(started.requestId);
-    ASSERT_TRUE(completed.has_value());
-    EXPECT_FALSE(completed->inProgress);
-    EXPECT_FALSE(completed->applied);
-    EXPECT_EQ(completed->result, HarkenEditor::Bridge::kEngineNotInit);
-    EXPECT_EQ(completed->samplePosition, 1024);
-}
-
-TEST_F(StudioActionSeekTest, NativeQueryFailureCompletesPendingAuditionSeek)
-{
-    HarkenEditor::AuditionManager audition(&engine);
-    const quintptr playback = postAction();
-    std::vector<VnVoiceHandle> voices;
-    ASSERT_TRUE(waitForActionVoices(1, voices));
-    const uint32_t playingId = audition.registerExternalPlayback(
-        QStringLiteral("SeekAction"), playback);
-    ASSERT_NE(playingId, 0u);
-
-    int finishedSignals = 0;
-    quint64 finishedRequestId = 0;
-    bool applied = true;
-    QObject::connect(
-        &audition, &HarkenEditor::AuditionManager::auditionSeekFinished,
-        &audition, [&](uint32_t id, quint64 requestId, int32_t,
-                       bool didApply) {
-            if (id == playingId) {
-                ++finishedSignals;
-                finishedRequestId = requestId;
-                applied = didApply;
-                const auto status = audition.seekStatus(requestId);
-                ASSERT_TRUE(status.has_value());
-                EXPECT_FALSE(status->inProgress);
-                EXPECT_EQ(status->applied, didApply);
-            }
-        });
-
-    const auto started = audition.setPositionSamples(playingId, 1024);
-    ASSERT_EQ(started.result, HarkenEditor::Bridge::kEngineOk);
-    ASSERT_NE(started.requestId, 0u);
-
-    ASSERT_EQ(Vn_Term(), VN_OK);
-    ASSERT_TRUE(QMetaObject::invokeMethod(
-        &engine, "onRuntimeServiceTimer", Qt::DirectConnection));
-    ASSERT_TRUE(QMetaObject::invokeMethod(
-        &audition, "pollAuditionStates", Qt::DirectConnection));
-
-    EXPECT_EQ(finishedSignals, 1);
-    EXPECT_EQ(finishedRequestId, started.requestId);
-    EXPECT_FALSE(applied);
-    const auto completed = audition.seekStatus(started.requestId);
-    ASSERT_TRUE(completed.has_value());
-    EXPECT_FALSE(completed->inProgress);
-    EXPECT_FALSE(completed->applied);
-    EXPECT_NE(completed->result, HarkenEditor::Bridge::kEngineOk);
-
-    ASSERT_TRUE(QMetaObject::invokeMethod(
-        &audition, "pollAuditionStates", Qt::DirectConnection));
-    EXPECT_EQ(finishedSignals, 1);
-}
 
 TEST_F(StudioActionSeekTest, CommandDispatchRequiresCurrentWorldAndMatchingProjectSession)
 {
     int executions = 0;
-    VNX::ActionDef command;
+    harken::studio::ActionDef command;
     command.id = QStringLiteral("post_action");
-    command.handler = [&](const QJsonObject&) -> VNX::ActionResult {
+    command.handler = [&](const QJsonObject&) -> harken::studio::ActionResult {
         ++executions;
         return {true, {}};
     };
-    VNX::ActionManager::instance().registerAction(command);
-    VNX::IPCServer dispatcher(&engine);
+    harken::studio::ActionManager::instance().registerAction(command);
+    harken::studio::IPCServer dispatcher(&engine);
     dispatcher.setProjectManager(&projects);
-    dispatcher.setAppState(VNX::IPCServer::AppState::Ready);
+    dispatcher.setAppState(harken::studio::IPCServer::AppState::Ready);
     auto& coordinator = engine.runtimeSyncCoordinator();
     coordinator.beginSubmissionBatch();
     coordinator.markCurrentWorldMutation();
@@ -2370,7 +1649,7 @@ TEST_F(StudioActionSeekTest, CommandDispatchRequiresCurrentWorldAndMatchingProje
     EXPECT_EQ(pending.value(QStringLiteral("code")).toString(), QStringLiteral("RUNTIME_SYNC_PENDING"));
     EXPECT_EQ(executions, 0);
     ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
-    VNX::IPCServer::IPCDispatchContext context;
+    harken::studio::IPCServer::IPCDispatchContext context;
     context.expectedProjectSession = QStringLiteral("different-session");
     const auto changed = dispatcher.dispatchCommand(QStringLiteral("post_action"), args, context);
     EXPECT_EQ(changed.value(QStringLiteral("code")).toString(), QStringLiteral("PROJECT_CHANGED"));

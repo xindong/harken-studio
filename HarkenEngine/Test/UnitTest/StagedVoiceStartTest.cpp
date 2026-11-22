@@ -14,6 +14,7 @@
 // the drain waits until one quantum can apply the complete batch. These cases
 // assert both queue/drain indivisibility and first-block output, plus the flag's
 // validation, deterministic capacity refusal, and infallible rollback.
+#include <harken/HarkenDevelopment.h>
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/TestUtil.h"
 

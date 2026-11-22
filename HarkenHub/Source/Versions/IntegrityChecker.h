@@ -1,9 +1,10 @@
 #pragma once
 
 #include <QString>
+#include <QJsonObject>
 #include <QStringList>
 
-namespace VNH {
+namespace harken::hub {
 
 struct IntegrityReport
 {
@@ -13,13 +14,20 @@ struct IntegrityReport
     QStringList mismatchedFiles;
 };
 
+struct InstallationSnapshot
+{
+    QJsonObject files;
+    QString hash;
+    QString error;
+};
+
 class IntegrityChecker
 {
 public:
+    static InstallationSnapshot snapshot(const QString& installPath);
     static IntegrityReport check(
         const QString& installPath,
-        const QString& expectedPackageManifestHash = QString(),
-        const QString& expectedCapabilitiesHash = QString());
+        const QString& expectedPackageManifestHash = QString());
 };
 
 }

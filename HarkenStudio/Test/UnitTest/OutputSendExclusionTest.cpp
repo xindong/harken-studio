@@ -22,7 +22,7 @@ void ensureApp()
 {
     if (qApp) return;
     static int argc = 1;
-    static char arg0[] = "harken_editor_tests";
+    static char arg0[] = "harken_studio_tests";
     static char* argv[] = {arg0, nullptr};
     static QApplication app(argc, argv);
 }
@@ -33,29 +33,29 @@ protected:
     void SetUp() override
     {
         ensureApp();
-        auto& pm = VNX::ProjectManager::instance();
+        auto& pm = harken::studio::ProjectManager::instance();
         if (pm.isProjectOpen())
             pm.closeProject();
-        VNX::UndoRedoManager::instance().clear();
-        VNX::PlatformContextService::instance().setStorageForTesting(
-            std::make_unique<VNX::MemorySettingsStorage>());
+        harken::studio::UndoRedoManager::instance().clear();
+        harken::studio::PlatformContextService::instance().setStorageForTesting(
+            std::make_unique<harken::studio::MemorySettingsStorage>());
         ASSERT_TRUE(tempDir.isValid());
-        VNX::ProjectConfig config;
+        harken::studio::ProjectConfig config;
         config.name = QStringLiteral("OutputSendExclusionProject");
         config.location = tempDir.path();
         config.platforms = {
-            {QUuid::createUuid(), QStringLiteral("Windows"), VNX::BasePlatform::Windows},
-            {QUuid::createUuid(), QStringLiteral("Android"), VNX::BasePlatform::Android}};
+            {QUuid::createUuid(), QStringLiteral("Windows"), harken::studio::BasePlatform::Windows},
+            {QUuid::createUuid(), QStringLiteral("Android"), harken::studio::BasePlatform::Android}};
         ASSERT_TRUE(pm.createProject(config));
     }
 
     void TearDown() override
     {
-        auto& pm = VNX::ProjectManager::instance();
+        auto& pm = harken::studio::ProjectManager::instance();
         if (pm.isProjectOpen())
             pm.closeProject();
-        VNX::UndoRedoManager::instance().clear();
-        VNX::ActionManager::instance().clearAllForTesting();
+        harken::studio::UndoRedoManager::instance().clear();
+        harken::studio::ActionManager::instance().clearAllForTesting();
     }
 
     QTemporaryDir tempDir;
@@ -65,8 +65,8 @@ protected:
 
 TEST_F(OutputSendExclusionTest, MasterKeepsItsOwnUuidAcrossSaveAndOpen)
 {
-    auto& pm = VNX::ProjectManager::instance();
-    VNX::ProjectItem* master = pm.findBusItem(VNX::kMasterBusID);
+    auto& pm = harken::studio::ProjectManager::instance();
+    harken::studio::ProjectItem* master = pm.findBusItem(harken::studio::kMasterBusID);
     ASSERT_NE(master, nullptr);
 
     const auto masterId = master->runtimeId();
@@ -76,7 +76,7 @@ TEST_F(OutputSendExclusionTest, MasterKeepsItsOwnUuidAcrossSaveAndOpen)
     ASSERT_TRUE(pm.loadProject(projectPath));
     EXPECT_EQ(pm.getMasterBusItem()->runtimeId(), masterId);
     pm.closeProject();
-    VNX::ProjectConfig config;
+    harken::studio::ProjectConfig config;
     config.name = QStringLiteral("IndependentMasterProject");
     config.location = tempDir.path();
     ASSERT_TRUE(pm.createProject(config));
@@ -85,7 +85,7 @@ TEST_F(OutputSendExclusionTest, MasterKeepsItsOwnUuidAcrossSaveAndOpen)
 
 TEST_F(OutputSendExclusionTest, RouteCommandsRestoreCompleteAuthoredProperty)
 {
-    using namespace VNX;
+    using namespace harken::studio;
     auto& manager = ProjectManager::instance();
     auto* source = manager.createItem(manager.getMasterBusItem(), QStringLiteral("Source"),
                                       ProjectItem::Type::Bus);
@@ -139,7 +139,7 @@ TEST_F(OutputSendExclusionTest, RouteCommandsRestoreCompleteAuthoredProperty)
 
 TEST_F(OutputSendExclusionTest, StructuralEditsPreserveIndependentRoutingScopes)
 {
-    using namespace VNX;
+    using namespace harken::studio;
     auto& manager = ProjectManager::instance();
     auto& undo = UndoRedoManager::instance();
     auto* source = manager.createItem(manager.getMasterBusItem(), QStringLiteral("Source"),
@@ -224,7 +224,7 @@ TEST_F(OutputSendExclusionTest, StructuralEditsPreserveIndependentRoutingScopes)
 
 TEST_F(OutputSendExclusionTest, UnsupportedCommandFieldsRejectBeforeAuthoringOrAuditionMutation)
 {
-    using namespace VNX;
+    using namespace harken::studio;
     auto& manager = ProjectManager::instance();
     auto& actions = ActionManager::instance();
     auto& undo = UndoRedoManager::instance();
@@ -270,7 +270,7 @@ TEST_F(OutputSendExclusionTest, UnsupportedCommandFieldsRejectBeforeAuthoringOrA
 
 TEST_F(OutputSendExclusionTest, RoutingEditsRejectCyclesAtomicallyAcrossLandingScopes)
 {
-    using namespace VNX;
+    using namespace harken::studio;
     auto& manager = ProjectManager::instance();
     auto& actions = ActionManager::instance();
     auto& undo = UndoRedoManager::instance();
@@ -353,7 +353,7 @@ TEST_F(OutputSendExclusionTest, RoutingEditsRejectCyclesAtomicallyAcrossLandingS
 
 TEST_F(OutputSendExclusionTest, GraphRouteEditsPreserveUnselectedScopesAndRestoreOverlayAbsence)
 {
-    using namespace VNX;
+    using namespace harken::studio;
     auto& manager = ProjectManager::instance();
     auto& undo = UndoRedoManager::instance();
     auto* source = manager.createItem(manager.getMasterBusItem(), QStringLiteral("Source"), ProjectItem::Type::Bus);
@@ -433,7 +433,7 @@ TEST_F(OutputSendExclusionTest, GraphRouteEditsPreserveUnselectedScopesAndRestor
 
 TEST_F(OutputSendExclusionTest, CombinedGraphRouteAndParentEditsReplayCompleteScopedState)
 {
-    using namespace VNX;
+    using namespace harken::studio;
     auto& manager = ProjectManager::instance();
     auto& undo = UndoRedoManager::instance();
     auto* master = manager.getMasterBusItem();

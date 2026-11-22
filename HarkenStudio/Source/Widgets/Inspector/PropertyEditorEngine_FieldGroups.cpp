@@ -2,6 +2,7 @@
 #include "Core/ThemeLayout.h"
 
 #include "Core/ActionManager.h"
+#include "Core/ConversionEditing.h"
 #include "Core/PlatformContextService.h"
 #include "Core/ProjectManager.h"
 #include "Core/PropertyEditSession.h"
@@ -21,7 +22,7 @@
 #include <QSignalBlocker>
 #include <algorithm>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 class InheritCheckBox final : public QCheckBox {
@@ -77,6 +78,7 @@ std::optional<FieldGroupId> PropertyEditorEngine::fieldGroup(const QString& fiel
         return {};
     }
     if (field == QLatin1String("effects")) return FieldGroupId::Effect;
+    if (field == QLatin1String("settingsRef")) return FieldGroupId::Conversion;
     const auto* property = PlayablePropertyAuthoringV1::fieldByName(field);
     return property ? FieldGroupForProperty(
         static_cast<harkenplayableproperties::PlayablePropertyIdV1>(property->id))
@@ -101,6 +103,7 @@ void PropertyEditorEngine::buildGroupHeader(FieldGroupId group, CollapsibleSecti
         case FieldGroupId::Send: label = tr("Inherit Sends"); break;
         case FieldGroupId::Effect: label = tr("Inherit Effects"); break;
         case FieldGroupId::SpatialRating: label = tr("Inherit Spatial Rating"); break;
+        case FieldGroupId::Conversion: label = tr("Inherit Conversion"); break;
         }
     }
     auto* inherit = new InheritCheckBox(label, header);
@@ -138,8 +141,26 @@ bool PropertyEditorEngine::groupContextMatches(
         || view.definition != currentItem_->guid
         || view.context != PlatformContextService::instance().context())
         return false;
-    const auto* item = ProjectManager::instance().findItemByGuid(view.definition);
-    return item == currentItem_ && item->fieldGroups == view.expectedBefore;
+    const auto& manager = ProjectManager::instance();
+    const auto* item = manager.findItemByGuid(view.definition);
+    if (item != currentItem_ || item->fieldGroups != view.expectedBefore) return false;
+    if (view.group == FieldGroupId::Conversion)
+        for (const auto& selected : conversionViews_) {
+            const auto* target = manager.findItemByGuid(selected.definition);
+            if (!target || target->fieldGroups != selected.expectedBefore) return false;
+        }
+    return true;
+}
+
+void PropertyEditorEngine::setConversionSelection(const QList<ProjectItem*>& items)
+{
+    QVector<QUuid> selected;
+    for (const auto* item : items)
+        if (item && !selected.contains(item->guid)) selected.append(item->guid);
+    if (!currentItem_ || !selected.contains(currentItem_->guid)) selected.clear();
+    if (selected == conversionSelection_) return;
+    conversionSelection_ = std::move(selected);
+    refreshFieldGroups();
 }
 
 void PropertyEditorEngine::cancelGroupEdits(bool preserveListRows)
@@ -239,10 +260,25 @@ void PropertyEditorEngine::refreshFieldGroups()
     const bool wasUpdating = updating_;
     updating_ = true;
     const auto* project = ProjectManager::instance().currentProject();
+    conversionViews_.clear();
     for (auto& [group, binding] : groupBindings_) {
         binding.view = project && currentItem_
             ? buildFieldGroupInspectorView(*project, currentItem_->guid, group, context)
             : FieldGroupInspectorView{};
+        if (group == FieldGroupId::Conversion && project && currentItem_
+            && conversionSelection_.size() > 1) {
+            auto& aggregate = binding.view;
+            for (const auto& guid : conversionSelection_) {
+                auto selected = buildFieldGroupInspectorView(*project, guid, group, context);
+                aggregate.valid &= selected.valid;
+                aggregate.canInherit &= selected.canInherit;
+                aggregate.fieldsEditable &= selected.fieldsEditable;
+                aggregate.inheritanceMixed |= selected.inheritanceMixed
+                    || selected.effectiveInherit != aggregate.effectiveInherit;
+                aggregate.diagnostics.append(selected.diagnostics);
+                conversionViews_.push_back(std::move(selected));
+            }
+        }
         const auto& view = binding.view;
         QString tooltip = project ? view.sourceTooltip(*project) : QString();
         if (!view.diagnostics.isEmpty()) tooltip = view.diagnostics.join(QLatin1Char('\n'));
@@ -250,6 +286,7 @@ void PropertyEditorEngine::refreshFieldGroups()
         for (const auto& inherit : binding.inheritControls) {
             if (!inherit) continue;
             QSignalBlocker blocker(inherit);
+            inherit->setVisible(group != FieldGroupId::Conversion || view.canInherit);
             inherit->setEnabled(view.valid && view.canInherit);
             inherit->setTristate(view.inheritanceMixed);
             inherit->setCheckState(view.inheritanceMixed ? Qt::PartiallyChecked
@@ -334,6 +371,11 @@ QVariant PropertyEditorEngine::groupFieldValue(
     if (found == groupBindings_.end()) return {};
     const auto& view = preview ? *preview : found->second.view;
     auto value = view.field(field);
+    if (*group == FieldGroupId::Conversion && conversionViews_.size() > 1)
+        for (const auto& selected : conversionViews_) {
+            const auto other = selected.field(field);
+            if (!selected.valid || !other.uniform || other.value != value.value) return {};
+        }
     if (*group == FieldGroupId::Send && view.editScopes.shared && view.fieldsEditable) {
         QVariantList rows;
         if (view.expectedBefore.send.shared.localHistory)
@@ -368,6 +410,8 @@ bool PropertyEditorEngine::groupReferenceSelectable(const QString& field, uint32
     if (!group || !target) return false;
     if (*group == FieldGroupId::SpatialRating)
         return target->type == ProjectItem::Type::Attenuation;
+    if (*group == FieldGroupId::Conversion)
+        return target->type == ProjectItem::Type::Conversion;
     if (target->type != ProjectItem::Type::Bus) return false;
     const auto peer = groupBindings_.find(*group == FieldGroupId::Output
         ? FieldGroupId::Send : FieldGroupId::Output);
@@ -445,7 +489,8 @@ bool PropertyEditorEngine::applyGroupFieldView(FieldBinding& binding)
     }
     if (const auto* project = ProjectManager::instance().currentProject()) {
         QString tooltip = view.sourceTooltip(*project, binding.field);
-        if (mixed) tooltip.prepend(*group == FieldGroupId::Send
+        if (mixed) tooltip.prepend(*group == FieldGroupId::Conversion && conversionViews_.size() > 1
+            ? tr("Mixed values across selected objects.\n") : *group == FieldGroupId::Send
             ? tr("Mixed table. Select a single platform to edit.\n") : tr("Mixed values across platforms.\n"));
         binding.mixedTooltip = tooltip;
         binding.widget->setToolTip(tooltip);
@@ -499,6 +544,14 @@ void PropertyEditorEngine::commitFieldChange(
         return;
     }
     auto args = groupArgs.value_or(groupBindings_.at(*group).view.actionArgs());
+    if (*group == FieldGroupId::Conversion) {
+        const auto ref = referenceActionValue(value);
+        if (!ref) return;
+        args.insert(QStringLiteral("field"), QStringLiteral("settingsRef"));
+        args.insert(QStringLiteral("value"), *ref);
+        executeGroupAction(*group, QStringLiteral("set_field_group_field"), std::move(args));
+        return;
+    }
     const auto* property = PlayablePropertyAuthoringV1::fieldByName(field);
     if (!property) return;
     QString action = QStringLiteral("set_field_group_field");
@@ -533,6 +586,31 @@ void PropertyEditorEngine::commitFieldChange(
 
 void PropertyEditorEngine::executeGroupAction(FieldGroupId group, const QString& action, QJsonObject args)
 {
+    if (group == FieldGroupId::Conversion && conversionViews_.size() > 1) {
+        const auto& view = groupBindings_.at(group).view;
+        if (!groupContextMatches(view, groupEditRevision_)) return;
+        QVector<QUuid> definitions;
+        QVector<FieldGroupDefinitionSnapshot> expected;
+        for (const auto& selected : conversionViews_) {
+            definitions.append(selected.definition);
+            expected.append({selected.definition, selected.expectedBefore});
+        }
+        const auto inherit = action == QLatin1String("set_field_group_mode")
+            ? std::optional<bool>(args.value(QStringLiteral("mode")) == QJsonValue(QStringLiteral("Inherit")))
+            : std::nullopt;
+        const auto settings = action == QLatin1String("set_field_group_field")
+            ? std::optional<QUuid>(QUuid(args.value(QStringLiteral("value")).toString())) : std::nullopt;
+        const auto platform = view.editScopes.shared ? PlatformScope{}
+            : PlatformScope{fromFieldGroupGuid(view.editScopes.platforms.front())};
+        cancelGroupEdits();
+        QString error;
+        const bool changed = ConversionEditing::setObjects(ProjectManager::instance(),
+            definitions, inherit, settings, platform, expected, this, &error);
+        groupBindings_.at(group).error = error;
+        refreshFieldGroups();
+        if (changed) emit fieldGroupChanged();
+        return;
+    }
     cancelGroupEdits(action == QStringLiteral("set_field_group_field")
         || action == QStringLiteral("replace_field_group_sends"));
     const auto result = ActionManager::instance().execute(action, args, ActionSource::GUI, this);
@@ -553,6 +631,7 @@ void PropertyEditorEngine::executeGroupAction(FieldGroupId group, const QString&
 
 void PropertyEditorEngine::showGroupMenu(FieldGroupId group, const QPoint& globalPosition)
 {
+    if (group == FieldGroupId::Conversion && conversionViews_.size() > 1) return;
     refreshFieldGroups();
     auto& binding = groupBindings_.at(group);
     if (!binding.view.valid || !binding.section) return;

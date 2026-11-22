@@ -1032,7 +1032,6 @@ class RuntimeQualificationTest(unittest.TestCase):
             rc_path = toolchain_dir / "rc.exe"
             cmake_path = toolchain_dir / "cmake.exe"
             ctest_path = toolchain_dir / "ctest.exe"
-            dotnet_path = toolchain_dir / "dotnet.exe"
             powercfg_path = toolchain_dir / "powercfg.exe"
             for path in (
                 compiler_path,
@@ -1040,7 +1039,6 @@ class RuntimeQualificationTest(unittest.TestCase):
                 rc_path,
                 cmake_path,
                 ctest_path,
-                dotnet_path,
                 powercfg_path,
             ):
                 path.write_bytes(path.name.encode("ascii"))
@@ -1074,7 +1072,6 @@ class RuntimeQualificationTest(unittest.TestCase):
             tool_versions = {
                 "cmake": (cmake_path, "cmake version 4.0.4"),
                 "ctest": (ctest_path, "ctest version 4.0.4"),
-                "dotnet": (dotnet_path, "10.0.200"),
                 "powercfg": (powercfg_path, "Power Scheme GUID: test"),
                 sys.executable: (
                     Path(sys.executable).resolve(),
@@ -1410,30 +1407,6 @@ class RuntimeQualificationTest(unittest.TestCase):
             )()
             with self.assertRaises(ValueError):
                 MODULE.record_external(incomplete_vs_args)
-
-            native_dir = (
-                run_root / "build" / "vs" / "bin" / "Release"
-            )
-            native_dir.mkdir(parents=True, exist_ok=True)
-            native_dll = native_dir / "HarkenCore.dll"
-            native_dll.write_bytes(b"native")
-            overrides, native_inputs = MODULE.command_environment(
-                [f"HARKEN_NATIVE_DIR={native_dir}"],
-                run_root,
-            )
-            self.assertEqual(str(native_dir), overrides["HARKEN_NATIVE_DIR"])
-            self.assertEqual(
-                MODULE.sha256_file(native_dll),
-                native_inputs[0]["sha256"],
-            )
-            with self.assertRaises(ValueError):
-                MODULE.command_environment(
-                    [
-                        "HARKEN_NATIVE_DIR="
-                        + str(run_root / "build" / "native")
-                    ],
-                    run_root,
-                )
 
             manifest_path = run_root / "manifest.json"
             prepared_manifest = json.loads(

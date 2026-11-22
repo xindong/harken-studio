@@ -17,7 +17,7 @@
 class QObject;
 class QTreeWidget;
 
-namespace VNX {
+namespace harken::studio {
 
 struct SelectorRequest;
 

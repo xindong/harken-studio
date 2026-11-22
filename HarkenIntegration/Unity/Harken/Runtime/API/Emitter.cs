@@ -76,42 +76,6 @@ namespace Harken
 
         public VnResult Stop(uint fadeMs) => HarkenNative.Vn_StopEmitter(Handle, fadeMs);
 
-        [Obsolete("Use Values.SetValue(variable, value, emitter).")]
-        internal VnResult SetValue(VnObjectId variableId, float value)
-            => Values.SetValue(variableId, value, this);
-
-        [Obsolete("Use Values.SetValue(variable, value, emitter).")]
-        internal VnResult SetValue(HarkenVariableId variable, float value)
-            => Values.SetValue(variable, value, this);
-
-        [Obsolete("Use Values.SetValue(variable, value, emitter).")]
-        internal VnResult SetValues(VnVariableWriteV1[] writes, int count,
-            out VnVariableTicketV1 ticket)
-        {
-            ticket = default;
-            return IsValid ? Values.DispatchRaw(Handle, false, writes, count, out ticket)
-                           : VnResult.VN_INVALID_ARG;
-        }
-
-        public VnResult QueryVariable(HarkenVariableId variable,
-            out VnVariableQueryResultV1 result)
-        {
-            result = default;
-            result.structSize =
-                (uint)System.Runtime.InteropServices.Marshal.SizeOf<VnVariableQueryResultV1>();
-            VnResult guard = VariableCatalogGuard.QueryAndEvaluate();
-            if (guard != VnResult.VN_OK)
-            {
-                return guard;
-            }
-            VnVariableQueryDescV1 desc = default;
-            desc.structSize =
-                (uint)System.Runtime.InteropServices.Marshal.SizeOf<VnVariableQueryDescV1>();
-            desc.variableId = variable.stableId;
-            desc.emitter = Handle;
-            return HarkenNative.Vn_QueryVariable(in desc, ref result);
-        }
-
         public bool Equals(Emitter other) => Handle == other.Handle;
 
         public override bool Equals(object obj) => obj is Emitter e && Equals(e);

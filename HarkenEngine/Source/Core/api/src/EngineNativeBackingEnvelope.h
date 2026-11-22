@@ -1,0 +1,976 @@
+#ifndef HARKEN_ENGINE_NATIVE_BACKING_ENVELOPE_H
+#define HARKEN_ENGINE_NATIVE_BACKING_ENVELOPE_H
+
+// Count under the retained content authority before retiring original sources.
+// This helper allocates nothing and owns no native rights.
+#include <harken/core/PlayablePropertyCut.h>
+#include <harken/core/PackPlaybackView.h>
+#include <harken/core/CurrentSelection.h>
+#include <harken/core/EngineConfig.h>
+#include <harken/core/TimelineProgram.h>
+#include <harken/param/BindingTable.h>
+#include "harken/render/EffectRegistry.h"
+
+#include <algorithm>
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <limits>
+#include <utility>
+#include <vector>
+
+namespace harken::native_backing {
+
+inline constexpr std::uint32_t kLeafCapacity = kMaxKnownScheduleLeaves;
+inline constexpr std::uint32_t kPathCapacity = kSelectionPathNodeCapacity;
+inline constexpr std::uint32_t kControlSideCapacity = 2u * (kLeafCapacity + kPathCapacity + 1u);
+static_assert(kLeafCapacity == 64 && kPathCapacity == 64);
+
+enum class Status : std::uint8_t {
+    Ok,
+    InvalidInput,
+    MissingContent,
+    FingerprintMismatch,
+    UnsupportedKind,
+    UnsupportedMode,
+    WorkspaceExhausted,
+    AuthorityMismatch,
+};
+
+enum Flag : std::uint32_t {
+    UnprunedSchedule = 1u << 0,
+    ExistingDynamicPath = 1u << 1,
+    ExistingDirectRefusal = 1u << 2,
+    SaturatedLegalBound = 1u << 3,
+    OmittedDepthBranch = 1u << 4,
+    OmittedPathBranch = 1u << 5,
+    OmittedSeedBranch = 1u << 6,
+    IndependentFutureEnvelope = 1u << 7,
+};
+
+struct VoiceColumns {
+    std::uint32_t bindings = 0;
+    std::uint32_t path = 0;
+    std::uint32_t sends = 0;
+    std::uint32_t effects = 0;
+    std::array<std::uint32_t, kEffectRegistryRowCount> effectInstances{};
+
+    void Include(const VoiceColumns& other) noexcept {
+        bindings = std::max(bindings, other.bindings);
+        path = std::max(path, other.path);
+        sends = std::max(sends, other.sends);
+        effects = std::max(effects, other.effects);
+        for (std::size_t type = 0; type < effectInstances.size(); ++type)
+            effectInstances[type] = std::max(effectInstances[type], other.effectInstances[type]);
+    }
+    void AddPathPrefix(std::uint32_t rows) noexcept {
+        if (path != 0) path = static_cast<std::uint32_t>(std::min<std::uint64_t>(
+            kPlaybackPathRowCapacity, static_cast<std::uint64_t>(path) + rows));
+    }
+};
+
+struct QueueColumns {
+    std::uint32_t programs = 0;
+    std::uint32_t events = 0;
+
+    void Include(const QueueColumns& other) noexcept {
+        programs = std::max(programs, other.programs);
+        events = std::max(events, other.events);
+    }
+};
+
+struct Profile {
+    std::uint32_t current = 0;
+    std::uint32_t instanceRows = 0;
+    std::uint32_t preparationTrees = 0;
+    std::uint32_t referenceRows = 0;
+    std::uint32_t containerRows = 0;
+    std::array<std::uint32_t, kLeafCapacity + 1u> H{};
+    // Number of concurrent completion owners requiring at least each width.
+    std::array<std::uint32_t, kLeafCapacity + 1u> completionWidths{};
+    std::array<std::uint32_t, kLeafCapacity + 1u> controllerWeights{};
+    std::array<std::uint32_t, kLeafCapacity + 1u> controllerChildWeights{};
+    std::array<std::uint32_t, kLeafCapacity + 1u> controllerInitialArms{};
+    std::uint32_t rootContinuousMembers = 0;
+    std::uint32_t rootContinuousChildren = 0;
+    std::uint32_t rootInitialMembers = 0;
+    std::uint32_t Q = 0;
+    std::uint32_t controlSides = 0;
+    std::uint32_t transitionRows = 0;
+    std::uint32_t variableControls = 0;
+    std::uint32_t queueRows = 0;
+    std::uint32_t scheduleBankRows = 0;
+    std::uint32_t conditionalRows = 0;
+    std::uint64_t embeddedArmGroups = 0;
+    std::uint64_t embeddedArmMembers = 0;
+    bool mayExposeMusic = false;
+    std::uint32_t selectionCount = 0;
+    VoiceColumns voice{};
+    QueueColumns queue{};
+    SelectionMemoryTableV1::BackingShape selection{};
+};
+
+struct Result {
+    Status status = Status::Ok;
+    std::uint32_t flags = 0;
+    Profile profile{};
+    explicit operator bool() const noexcept { return status == Status::Ok; }
+};
+
+struct Limits {
+    std::uint32_t immediateFutureSides = 0;
+    std::uint32_t queueRoleCapacity = 0;
+    std::uint32_t currentScheduleDepth = 0;
+    std::uint32_t directFutureScheduleDepth = 0;
+    std::uint32_t propertyPrefixCount = 0;
+    std::uint32_t seedPrefixCount = 0;
+    bool includeDynamicInstanceRows = false;
+};
+
+struct AuthorityStamp {
+    std::uint64_t generation = 0;
+    std::uint64_t semanticFingerprint = 0;
+    bool operator==(const AuthorityStamp& other) const noexcept {
+        return generation == other.generation && semanticFingerprint == other.semanticFingerprint;
+    }
+};
+
+inline bool SameRef(const PlayableRefV1& a, const PlayableRefV1& b) noexcept {
+    return a.kind == b.kind && a.reserved == b.reserved && a.stableId == b.stableId &&
+        a.expectedProgramSemanticFingerprint == b.expectedProgramSemanticFingerprint &&
+        a.contentRevision == b.contentRevision && a.routeStableId == b.routeStableId &&
+        a.compatibilityFingerprint == b.compatibilityFingerprint;
+}
+
+class WorldContent {
+public:
+    explicit WorldContent(const PlayableWorldViewV1& view,
+        const BindingTable* bindings = nullptr,
+        std::span<const std::pair<VnObjectId, std::uint32_t>> prospectiveBindings = {}) noexcept
+        : view_(view), bindings_(bindings), prospectiveBindings_(prospectiveBindings) {}
+    AuthorityStamp Authority() const noexcept {
+        return {view_.generation, view_.identity.runtimeSemanticFingerprint};
+    }
+    static constexpr bool kDirectNestedContainer = true;
+    std::uint32_t QueueResetScheduleDepth() const noexcept { return view_.maxTrackSegmentScheduleDepth; }
+    const PlayablePropertyProgramViewV1* Property(const PlayableRefV1& ref) const noexcept {
+        for (std::uint32_t i = 0; view_.properties != nullptr && i < view_.propertyCount; ++i)
+            if (view_.properties[i].stableId == ref.stableId &&
+                view_.properties[i].programSemanticFingerprint == ref.expectedProgramSemanticFingerprint)
+                return &view_.properties[i];
+        return nullptr;
+    }
+    std::uint32_t BindingCount(VnObjectId object) const noexcept {
+        for (const auto& [id, count] : prospectiveBindings_) if (id == object) return count;
+        return bindings_ == nullptr ? 0u : bindings_->VoiceAttachmentCount(object);
+    }
+    std::uint32_t EffectType(const EffectNodeV1& node) const noexcept { return node.effectType; }
+    const ContainerProgramViewV3* Container(const PlayableRefV1& ref) const noexcept {
+        if (view_.containers == nullptr) return nullptr;
+        for (std::uint32_t i = 0; i < view_.containerCount; ++i) {
+            const auto& item = view_.containers[i];
+            if (item.containerStableId == ref.stableId &&
+                item.programSemanticFingerprint == ref.expectedProgramSemanticFingerprint) return &item;
+        }
+        return nullptr;
+    }
+    const TrackScheduleProgramViewV1* Track(const PlayableRefV1& ref) const noexcept {
+        if (view_.trackSchedules == nullptr) return nullptr;
+        for (std::uint32_t i = 0; i < view_.trackScheduleCount; ++i)
+            if (SameRef(view_.trackSchedules[i].rootDefinition, ref)) return &view_.trackSchedules[i];
+        return nullptr;
+    }
+    bool HasMusicBody(const SegmentScheduleProgramViewV1& segment) const noexcept;
+    const SegmentScheduleProgramViewV1* Segment(const PlayableRefV1& ref) const noexcept {
+        if (view_.segmentSchedules == nullptr) return nullptr;
+        for (std::uint32_t i = 0; i < view_.segmentScheduleCount; ++i)
+            if (SameRef(view_.segmentSchedules[i].rootDefinition, ref)) return &view_.segmentSchedules[i];
+        return nullptr;
+    }
+private:
+    const PlayableWorldViewV1& view_;
+    const BindingTable* bindings_ = nullptr;
+    std::span<const std::pair<VnObjectId, std::uint32_t>> prospectiveBindings_;
+};
+
+class PackContent {
+public:
+    explicit PackContent(const PackPlaybackView& view) noexcept : view_(view) {}
+    AuthorityStamp Authority() const noexcept {
+        return {view_.CompositeGeneration(), view_.WorldSemanticFingerprint()};
+    }
+    static constexpr bool kDirectNestedContainer = false;
+    std::uint32_t QueueResetScheduleDepth() const noexcept { return kPathCapacity; }
+    const PlayablePropertyProgramViewV1* Property(const PlayableRefV1& ref) const noexcept {
+        using Kind = playableproperties::ContentPropertyKindV1;
+        const auto kind = ref.kind == PlayableKindV1::Sound ? Kind::Sound
+            : ref.kind == PlayableKindV1::Container ? Kind::Container
+            : ref.kind == PlayableKindV1::Track ? Kind::Track : Kind::Segment;
+        return view_.ResolveProperty(kind, ref.stableId);
+    }
+    std::uint32_t BindingCount(VnObjectId object) const noexcept {
+        return view_.ResolveVoiceBindings(object, nullptr, 0);
+    }
+    std::uint32_t EffectType(const EffectNodeV1& node) const noexcept {
+        if (node.presetId == VnObjectId{}) return node.effectType;
+        const auto* preset = view_.ResolveEffectPreset(node.presetId);
+        return preset != nullptr ? preset->effectType : UINT32_MAX;
+    }
+    const ContainerProgramViewV3* Container(const PlayableRefV1& ref) const noexcept {
+        return view_.ResolveContainer(ref.stableId, ref.expectedProgramSemanticFingerprint).programView;
+    }
+    const TrackScheduleProgramViewV1* Track(const PlayableRefV1& ref) const noexcept {
+        const auto item = view_.ResolveTrack(ref.stableId, 0);
+        return item != nullptr && SameRef(item->rootDefinition, ref) ? item.programView : nullptr;
+    }
+    bool HasMusicBody(const SegmentScheduleProgramViewV1& segment) const noexcept;
+    const SegmentScheduleProgramViewV1* Segment(const PlayableRefV1& ref) const noexcept {
+        const auto item = view_.ResolveSegment(ref.stableId, 0);
+        return item != nullptr && SameRef(item->rootDefinition, ref) ? item.programView : nullptr;
+    }
+private:
+    const PackPlaybackView& view_;
+};
+
+inline Result Failure(Status status) noexcept {
+    Result result{};
+    result.status = status;
+    return result;
+}
+
+inline Result Omitted(std::uint32_t flags) noexcept {
+    Result result{};
+    result.flags = flags;
+    return result;
+}
+
+inline std::uint32_t SaturatingAdd(std::uint32_t a, std::uint32_t b,
+    std::uint32_t limit, std::uint32_t& flags) noexcept {
+    if (a > limit || b > limit - a) {
+        flags |= SaturatedLegalBound;
+        return limit;
+    }
+    return a + b;
+}
+
+inline void Concurrent(Result& a, const Result& b, const Limits& limits) noexcept {
+    if (!a) return;
+    if (!b) { a = b; return; }
+    a.flags |= b.flags;
+    a.profile.current = SaturatingAdd(a.profile.current, b.profile.current, kLeafCapacity, a.flags);
+    a.profile.preparationTrees = SaturatingAdd(a.profile.preparationTrees, b.profile.preparationTrees, UINT32_MAX, a.flags);
+    a.profile.instanceRows = SaturatingAdd(a.profile.instanceRows, b.profile.instanceRows, UINT32_MAX, a.flags);
+    a.profile.referenceRows = SaturatingAdd(a.profile.referenceRows, b.profile.referenceRows, UINT32_MAX, a.flags);
+    a.profile.containerRows = SaturatingAdd(a.profile.containerRows, b.profile.containerRows, UINT32_MAX, a.flags);
+    a.profile.Q = SaturatingAdd(a.profile.Q, b.profile.Q, limits.queueRoleCapacity, a.flags);
+    a.profile.transitionRows = SaturatingAdd(a.profile.transitionRows, b.profile.transitionRows, UINT32_MAX, a.flags);
+    a.profile.mayExposeMusic |= b.profile.mayExposeMusic;
+    a.profile.variableControls = SaturatingAdd(a.profile.variableControls, b.profile.variableControls, UINT32_MAX, a.flags);
+    a.profile.queueRows = SaturatingAdd(a.profile.queueRows, b.profile.queueRows, UINT32_MAX, a.flags);
+    a.profile.scheduleBankRows = SaturatingAdd(a.profile.scheduleBankRows, b.profile.scheduleBankRows, UINT32_MAX, a.flags);
+    a.profile.conditionalRows = SaturatingAdd(a.profile.conditionalRows, b.profile.conditionalRows, UINT32_MAX, a.flags);
+    a.profile.embeddedArmGroups = std::min<std::uint64_t>(UINT32_MAX + 1ull, a.profile.embeddedArmGroups + b.profile.embeddedArmGroups);
+    a.profile.embeddedArmMembers = std::min<std::uint64_t>(UINT32_MAX + 1ull, a.profile.embeddedArmMembers + b.profile.embeddedArmMembers);
+    a.profile.controlSides = SaturatingAdd(a.profile.controlSides, b.profile.controlSides,
+        kControlSideCapacity, a.flags);
+    a.profile.voice.Include(b.profile.voice);
+    a.profile.queue.Include(b.profile.queue);
+    a.profile.selectionCount = SaturatingAdd(a.profile.selectionCount, b.profile.selectionCount, UINT32_MAX, a.flags);
+    a.profile.selection.Include(b.profile.selection);
+    a.profile.rootContinuousMembers = 0;
+    a.profile.rootContinuousChildren = 0;
+    a.profile.rootInitialMembers = 0;
+    for (std::uint32_t t = 1; t <= kLeafCapacity; ++t) {
+        a.profile.completionWidths[t] = SaturatingAdd(a.profile.completionWidths[t],
+            b.profile.completionWidths[t], UINT32_MAX, a.flags);
+        a.profile.H[t] = SaturatingAdd(a.profile.H[t], b.profile.H[t], limits.immediateFutureSides, a.flags);
+        a.profile.controllerWeights[t] = SaturatingAdd(a.profile.controllerWeights[t], b.profile.controllerWeights[t],
+            kControlSideCapacity, a.flags);
+        a.profile.controllerChildWeights[t] = SaturatingAdd(a.profile.controllerChildWeights[t],
+            b.profile.controllerChildWeights[t], kControlSideCapacity, a.flags);
+        a.profile.controllerInitialArms[t] = SaturatingAdd(a.profile.controllerInitialArms[t],
+            b.profile.controllerInitialArms[t], kControlSideCapacity, a.flags);
+    }
+}
+
+inline void Alternative(Result& a, const Result& b) noexcept {
+    if (!a) return;
+    if (!b) { a = b; return; }
+    a.flags |= b.flags;
+    a.profile.current = std::max(a.profile.current, b.profile.current);
+    a.profile.preparationTrees = std::max(a.profile.preparationTrees, b.profile.preparationTrees);
+    a.profile.instanceRows = std::max(a.profile.instanceRows, b.profile.instanceRows);
+    a.profile.referenceRows = std::max(a.profile.referenceRows, b.profile.referenceRows);
+    a.profile.containerRows = std::max(a.profile.containerRows, b.profile.containerRows);
+    a.profile.Q = std::max(a.profile.Q, b.profile.Q);
+    a.profile.transitionRows = std::max(a.profile.transitionRows, b.profile.transitionRows);
+    a.profile.mayExposeMusic |= b.profile.mayExposeMusic;
+    a.profile.variableControls = std::max(a.profile.variableControls, b.profile.variableControls);
+    a.profile.queueRows = std::max(a.profile.queueRows, b.profile.queueRows);
+    a.profile.scheduleBankRows = std::max(a.profile.scheduleBankRows, b.profile.scheduleBankRows);
+    a.profile.conditionalRows = std::max(a.profile.conditionalRows, b.profile.conditionalRows);
+    a.profile.embeddedArmGroups = std::max(a.profile.embeddedArmGroups, b.profile.embeddedArmGroups);
+    a.profile.embeddedArmMembers = std::max(a.profile.embeddedArmMembers, b.profile.embeddedArmMembers);
+    a.profile.controlSides = std::max(a.profile.controlSides, b.profile.controlSides);
+    a.profile.voice.Include(b.profile.voice);
+    a.profile.queue.Include(b.profile.queue);
+    a.profile.selectionCount = std::max(a.profile.selectionCount, b.profile.selectionCount);
+    a.profile.selection.Include(b.profile.selection);
+    a.profile.rootContinuousMembers = 0;
+    a.profile.rootContinuousChildren = 0;
+    a.profile.rootInitialMembers = 0;
+    for (std::uint32_t t = 1; t <= kLeafCapacity; ++t) {
+        a.profile.completionWidths[t] = std::max(a.profile.completionWidths[t], b.profile.completionWidths[t]);
+        a.profile.H[t] = std::max(a.profile.H[t], b.profile.H[t]);
+        a.profile.controllerWeights[t] = std::max(a.profile.controllerWeights[t], b.profile.controllerWeights[t]);
+        a.profile.controllerChildWeights[t] = std::max(a.profile.controllerChildWeights[t], b.profile.controllerChildWeights[t]);
+        a.profile.controllerInitialArms[t] = std::max(a.profile.controllerInitialArms[t], b.profile.controllerInitialArms[t]);
+    }
+}
+
+inline void AddFuture(Result& result, std::uint32_t capacity, const Limits& limits) noexcept {
+    for (std::uint32_t t = 1; t <= capacity; ++t)
+        result.profile.H[t] = SaturatingAdd(result.profile.H[t], 1, limits.immediateFutureSides, result.flags);
+    if (capacity != 0) result.flags |= IndependentFutureEnvelope;
+}
+
+inline std::uint64_t ReservedRows(const Profile& profile) noexcept {
+    std::uint64_t rows = profile.current;
+    for (std::uint32_t t = 1; t <= kLeafCapacity; ++t) rows += profile.H[t];
+    return rows;
+}
+
+// Current control sides share a coordinator. A queue may also retain
+// the entry and exit groups of both its current and following transition.
+inline std::uint64_t ArmGroupRows(const Profile& profile) noexcept {
+    return std::max(2u, profile.controlSides) + 1ull + 4ull * profile.Q;
+}
+
+inline std::uint64_t DeferredArmGroups(const Profile& p) noexcept {
+    return p.embeddedArmGroups + (p.controlSides || p.Q ? ArmGroupRows(p) : 0u);
+}
+
+inline std::uint64_t DeferredArmMembers(const Profile& p) noexcept {
+    if (!p.controlSides && !p.Q) return p.embeddedArmMembers;
+    // A queue can retain its current group while preparing both transition sides.
+    const auto futureLeaves = ReservedRows(p) - p.current;
+    return p.embeddedArmMembers + p.current * (1ull + p.Q) + 2ull * (futureLeaves + p.Q);
+}
+
+template<class Emit>
+bool EmitDescendingCapacities(const std::array<std::uint32_t, kLeafCapacity + 1u>& capacities,
+    Emit&& emit) noexcept {
+    for (std::uint32_t t = 1; t < kLeafCapacity; ++t)
+        if (capacities[t] < capacities[t + 1u]) return false;
+    std::uint32_t next = 0;
+    for (std::uint32_t t = kLeafCapacity; t != 0; --t) {
+        const auto count = capacities[t] - next;
+        for (std::uint32_t i = 0; i < count; ++i) if (!emit(t)) return false;
+        next = capacities[t];
+    }
+    return true;
+}
+
+inline bool AppendCompositeWidths(const Profile& profile, std::vector<std::uint32_t>& widths) {
+    if (profile.completionWidths[1] > UINT32_MAX - widths.size()) return false;
+    widths.reserve(widths.size() + profile.completionWidths[1]);
+    return EmitDescendingCapacities(profile.completionWidths, [&](std::uint32_t width) noexcept {
+        widths.push_back(width);
+        return true;
+    });
+}
+
+template<class Emit>
+bool EmitDescendingFutureCapacities(const Profile& profile, Emit&& emit) noexcept {
+    return EmitDescendingCapacities(profile.H, std::forward<Emit>(emit));
+}
+
+enum class Mode : std::uint8_t { Audit, Frontier, StaticSchedule, DirectNested };
+enum class Domain : std::uint8_t { Current, DirectFuture };
+
+struct Budget {
+    std::uint32_t containers = 0;
+    std::uint32_t schedules = 0;
+    std::uint32_t materializedPath = 0;
+    std::uint32_t frontierDepth = 0;
+    Domain domain = Domain::Current;
+    bool operator==(const Budget& other) const noexcept {
+        return containers == other.containers && schedules == other.schedules &&
+            materializedPath == other.materializedPath && frontierDepth == other.frontierDepth &&
+            domain == other.domain;
+    }
+};
+
+struct MemoKey {
+    PlayableRefV1 ref{};
+    Mode mode = Mode::Audit;
+    Budget budget{};
+    bool operator==(const MemoKey& other) const noexcept {
+        return SameRef(ref, other.ref) && mode == other.mode && budget == other.budget;
+    }
+};
+
+enum class MemoState : std::uint8_t { Empty, Visiting, Ready };
+struct MemoEntry {
+    MemoKey key{};
+    Result result{};
+    std::size_t next = SIZE_MAX;
+    MemoState state = MemoState::Empty;
+};
+
+inline std::uint64_t Hash(const MemoKey& key) noexcept {
+    std::uint64_t value = UINT64_C(14695981039346656037);
+    const auto mix = [&](std::uint64_t part) { value = (value ^ part) * UINT64_C(1099511628211); };
+    mix(static_cast<std::uint32_t>(key.ref.kind)); mix(key.ref.reserved);
+    mix(key.ref.stableId.high); mix(key.ref.stableId.low);
+    mix(key.ref.expectedProgramSemanticFingerprint); mix(key.ref.contentRevision);
+    mix(key.ref.routeStableId.high); mix(key.ref.routeStableId.low); mix(key.ref.compatibilityFingerprint);
+    mix(static_cast<std::uint32_t>(key.mode)); mix(key.budget.containers); mix(key.budget.schedules);
+    mix(key.budget.materializedPath); mix(key.budget.frontierDepth);
+    mix(static_cast<std::uint32_t>(key.budget.domain));
+    return value;
+}
+
+class MemoWorkspace {
+public:
+    MemoWorkspace(MemoEntry* entries, std::size_t capacity) noexcept
+        : entries_(entries), capacity_(entries != nullptr && capacity <= SIZE_MAX / sizeof(MemoEntry) ? capacity : 0) {}
+    void Clear() noexcept {
+        used_ = 0;
+        head_ = tail_ = SIZE_MAX;
+        for (std::size_t i = 0; i < capacity_; ++i) entries_[i].state = MemoState::Empty;
+    }
+    MemoEntry* FindOrInsert(const MemoKey& key, bool& inserted) noexcept {
+        inserted = false;
+        if (capacity_ == 0) return nullptr;
+        auto slot = static_cast<std::size_t>(Hash(key) % capacity_);
+        for (std::size_t probe = 0; probe < capacity_; ++probe) {
+            auto& entry = entries_[slot];
+            if (entry.state == MemoState::Empty) {
+                entry.key = key;
+                entry.result = {};
+                entry.next = SIZE_MAX;
+                entry.state = MemoState::Visiting;
+                if (tail_ == SIZE_MAX) head_ = slot;
+                else entries_[tail_].next = slot;
+                tail_ = slot;
+                ++used_;
+                highWater_ = std::max(highWater_, used_);
+                inserted = true;
+                return &entry;
+            }
+            if (entry.key == key) return &entry;
+            slot = slot + 1u == capacity_ ? 0 : slot + 1u;
+        }
+        return nullptr;
+    }
+    MemoEntry* First() noexcept { return head_ == SIZE_MAX ? nullptr : &entries_[head_]; }
+    MemoEntry* Next(const MemoEntry& entry) noexcept {
+        return entry.next == SIZE_MAX ? nullptr : &entries_[entry.next];
+    }
+    std::size_t Used() const noexcept { return used_; }
+    std::size_t HighWater() const noexcept { return highWater_; }
+    std::size_t CapacityBytes() const noexcept { return capacity_ * sizeof(MemoEntry); }
+private:
+    MemoEntry* entries_ = nullptr;
+    std::size_t capacity_ = 0;
+    std::size_t used_ = 0;
+    std::size_t highWater_ = 0;
+    std::size_t head_ = SIZE_MAX;
+    std::size_t tail_ = SIZE_MAX;
+};
+
+inline bool KnownMode(ContainerModeV1 mode) noexcept {
+    switch (mode) {
+    case ContainerModeV1::Random:
+    case ContainerModeV1::Sequence:
+    case ContainerModeV1::RandomQueue:
+    case ContainerModeV1::SequenceQueue:
+    case ContainerModeV1::VariableControl: return true;
+    }
+    return false;
+}
+
+template<class Content>
+class Counter {
+public:
+    Counter(const Content& content, Limits limits, MemoWorkspace& memo) noexcept
+        : content_(content), limits_(limits), memo_(memo) {}
+    Result Count(const PlayableRefV1& root, AuthorityStamp expected,
+        const PlayableRefV1* inheritedRoot = nullptr,
+        std::span<const SelectionPathNodeV1> inheritedPath = {}) noexcept {
+        if (limits_.currentScheduleDepth == 0 || limits_.currentScheduleDepth > kPathCapacity ||
+            limits_.directFutureScheduleDepth == 0 || limits_.directFutureScheduleDepth > kPathCapacity ||
+            limits_.propertyPrefixCount > kPathCapacity || limits_.seedPrefixCount > kPathCapacity)
+            return Failure(Status::InvalidInput);
+        if (expected.generation == 0 || !(content_.Authority() == expected))
+            return Failure(Status::AuthorityMismatch);
+        memo_.Clear();
+        auto result = Audit(root);
+        if (!(content_.Authority() == expected)) return Failure(Status::AuthorityMismatch);
+        if (!result) return result;
+        memo_.Clear();
+        result = Visit(root, Mode::Frontier, {kPathCapacity, limits_.currentScheduleDepth,
+            kPathCapacity - limits_.propertyPrefixCount, 0, Domain::Current});
+        if (result && result.profile.voice.path != 0) {
+            const auto& propertyRoot = inheritedRoot == nullptr ? root : *inheritedRoot;
+            result.profile.voice.bindings = std::max(result.profile.voice.bindings,
+                content_.BindingCount(propertyRoot.stableId));
+            for (const auto& node : inheritedPath) {
+                result.profile.voice.AddPathPrefix(node.kind == PlayableKindV1::Segment ? 1u : 2u);
+                result.profile.voice.bindings = std::max(result.profile.voice.bindings,
+                    content_.BindingCount(node.objectId));
+            }
+            const auto* property = content_.Property(propertyRoot);
+            if (property != nullptr) {
+                const bool structural = property->structuralAncestorCount != 0;
+                const auto count = structural ? property->structuralAncestorCount : property->organizationLayerAncestorCount;
+                result.profile.voice.AddPathPrefix(count);
+                for (std::uint32_t i = 0; i < count; ++i) {
+                    if ((structural && property->structuralAncestors == nullptr) ||
+                        (!structural && property->organizationLayerAncestors == nullptr))
+                        return Failure(Status::InvalidInput);
+                    const auto id = structural ? property->structuralAncestors[i].stableId
+                        : property->organizationLayerAncestors[i].layerStableId;
+                    const auto count = content_.BindingCount(id);
+                    result.profile.voice.bindings = std::max(result.profile.voice.bindings, count);
+                }
+            }
+        }
+        if (!(content_.Authority() == expected)) return Failure(Status::AuthorityMismatch);
+        return result;
+    }
+private:
+    Result EnqueueAudit(const PlayableRefV1& ref) noexcept {
+        bool inserted = false;
+        return memo_.FindOrInsert({ref, Mode::Audit, {}}, inserted) == nullptr
+            ? Failure(Status::WorkspaceExhausted) : Result{};
+    }
+    Result Audit(const PlayableRefV1& root) noexcept {
+        auto result = EnqueueAudit(root);
+        if (!result) return result;
+        // The insertion chain is a caller-backed work list, not a recursive
+        // validation stack. Cycles are visited once and counted with budgets.
+        for (auto* entry = memo_.First(); entry != nullptr; entry = memo_.Next(*entry)) {
+            const auto ref = entry->key.ref;
+            switch (ref.kind) {
+            case PlayableKindV1::Sound: break;
+            case PlayableKindV1::Track: {
+                const auto* track = content_.Track(ref);
+                if (track == nullptr) return Failure(Status::MissingContent);
+                if (track->placementCount != 0 && track->placements == nullptr) return Failure(Status::InvalidInput);
+                for (std::uint32_t i = 0; i < track->placementCount; ++i) {
+                    const auto child = track->placements[i].content;
+                    if (child.kind != PlayableKindV1::Sound && child.kind != PlayableKindV1::Segment &&
+                        child.kind != PlayableKindV1::Container) return Failure(Status::UnsupportedKind);
+                    result = EnqueueAudit(child);
+                    if (!result) return result;
+                }
+                break;
+            }
+            case PlayableKindV1::Segment: {
+                const auto* segment = content_.Segment(ref);
+                if (segment == nullptr) return Failure(Status::MissingContent);
+                if (segment->trackRefCount != 0 && segment->trackRefs == nullptr) return Failure(Status::InvalidInput);
+                for (std::uint32_t i = 0; i < segment->trackRefCount; ++i) {
+                    const auto& child = segment->trackRefs[i];
+                    if (child.trackDefinition.kind != PlayableKindV1::Track) return Failure(Status::UnsupportedKind);
+                    const auto* track = content_.Track(child.trackDefinition);
+                    if (track == nullptr) return Failure(Status::MissingContent);
+                    if (track->scheduleSemanticFingerprint != child.trackScheduleSemanticFingerprint)
+                        return Failure(Status::FingerprintMismatch);
+                    result = EnqueueAudit(child.trackDefinition);
+                    if (!result) return result;
+                }
+                break;
+            }
+            case PlayableKindV1::Container: {
+                const auto* program = content_.Container(ref);
+                if (program == nullptr) return Failure(Status::MissingContent);
+                if (!KnownMode(program->mode)) return Failure(Status::UnsupportedMode);
+                if ((program->mode == ContainerModeV1::RandomQueue || program->mode == ContainerModeV1::SequenceQueue) &&
+                    program->queueCycle != QueueCycleV1::Once && program->queueCycle != QueueCycleV1::Loop)
+                    return Failure(Status::UnsupportedMode);
+                if ((program->childCount != 0 && program->children == nullptr) ||
+                    (program->discreteRowCount != 0 && program->discreteRows == nullptr) ||
+                    (program->continuousRowCount != 0 && program->continuousRows == nullptr))
+                    return Failure(Status::InvalidInput);
+                for (std::uint32_t i = 0; i < program->childCount; ++i) {
+                    result = EnqueueAudit(program->children[i].playable);
+                    if (!result) return result;
+                }
+                if (program->mode == ContainerModeV1::VariableControl) {
+                    for (std::uint32_t i = 0; i < program->discreteRowCount; ++i)
+                        if (Child(*program, program->discreteRows[i].childStableOrdinal) == nullptr)
+                            return Failure(Status::MissingContent);
+                    for (std::uint32_t i = 0; i < program->continuousRowCount; ++i)
+                        if (Child(*program, program->continuousRows[i].childStableOrdinal) == nullptr)
+                            return Failure(Status::MissingContent);
+                }
+                break;
+            }
+            default: return Failure(Status::UnsupportedKind);
+            }
+            entry->state = MemoState::Ready;
+        }
+        return {};
+    }
+
+    const Result& Visit(const PlayableRefV1& ref, Mode mode, Budget budget) noexcept {
+        bool inserted = false;
+        auto* entry = memo_.FindOrInsert({ref, mode, budget}, inserted);
+        static const Result exhausted = Failure(Status::WorkspaceExhausted);
+        static const Result invalid = Failure(Status::InvalidInput);
+        if (entry == nullptr) return exhausted;
+        if (!inserted) return entry->state == MemoState::Visiting ? invalid : entry->result;
+        entry->result = Compute(ref, mode, budget);
+        if (entry->result && ref.kind == PlayableKindV1::Container)
+            entry->result.profile.referenceRows = SaturatingAdd(entry->result.profile.referenceRows,
+                entry->result.profile.current, UINT32_MAX, entry->result.flags);
+        if (entry->result && entry->result.profile.voice.path != 0) {
+            auto& voice = entry->result.profile.voice;
+            if (ref.kind != PlayableKindV1::Sound)
+                voice.AddPathPrefix(ref.kind == PlayableKindV1::Segment ? 1u : 2u);
+            const auto count = content_.BindingCount(ref.stableId);
+            voice.bindings = std::max(voice.bindings, count);
+        }
+        entry->state = MemoState::Ready;
+        return entry->result;
+    }
+
+    Result Compute(const PlayableRefV1& ref, Mode mode, Budget budget) noexcept {
+        if (ref.kind == PlayableKindV1::Sound) {
+            Result result{};
+            result.profile.current = 1;
+            result.profile.instanceRows = 1;
+            result.profile.referenceRows = 1;
+            result.profile.voice.path = 1;
+            const auto* property = content_.Property(ref);
+            if (property != nullptr) {
+                result.profile.voice.sends = property->payload.sendCount;
+                result.profile.voice.effects = property->payload.effectNodeCount;
+                if (property->payload.effectNodeCount != 0 && property->payload.effectNodes == nullptr)
+                    return Failure(Status::InvalidInput);
+                for (std::uint32_t index = 0; index < std::min(property->payload.effectNodeCount,
+                        kTimelineMaxVoiceEffects); ++index) {
+                    const auto effectType = content_.EffectType(property->payload.effectNodes[index]);
+                    const auto* effect = FindEffectRow(effectType);
+                    if (effect == nullptr) return Failure(Status::MissingContent);
+                    ++result.profile.voice.effectInstances[effect - kEffectRegistry];
+                }
+            }
+            return result;
+        }
+        if (ref.kind == PlayableKindV1::Track || ref.kind == PlayableKindV1::Segment) return Schedule(ref, budget);
+        if (ref.kind != PlayableKindV1::Container) return Failure(Status::UnsupportedKind);
+        const auto* program = content_.Container(ref);
+        if (program == nullptr) return Failure(Status::MissingContent);
+        if (!KnownMode(program->mode)) return Failure(Status::UnsupportedMode);
+        if (mode == Mode::StaticSchedule) return Omitted(ExistingDynamicPath);
+        if (budget.containers == 0) return Omitted(OmittedDepthBranch);
+        if (budget.materializedPath == 0) return Omitted(OmittedPathBranch);
+        if (mode == Mode::Frontier &&
+            (program->mode == ContainerModeV1::Random || program->mode == ContainerModeV1::Sequence) &&
+            budget.frontierDepth > kPathCapacity - limits_.seedPrefixCount)
+            return Omitted(OmittedSeedBranch);
+        --budget.containers;
+        --budget.materializedPath;
+        ++budget.frontierDepth;
+        Result result;
+        if (mode == Mode::DirectNested) {
+            if (program->childCount != 1u) return Omitted(ExistingDynamicPath);
+            result = Visit(program->children[0].playable, Mode::DirectNested, budget);
+        } else {
+            switch (program->mode) {
+            case ContainerModeV1::Random:
+            case ContainerModeV1::Sequence: result = Choices(*program, budget); break;
+            case ContainerModeV1::VariableControl: result = Variable(*program, budget); break;
+            case ContainerModeV1::RandomQueue:
+            case ContainerModeV1::SequenceQueue: result = Queue(*program, budget); break;
+            default: return Failure(Status::UnsupportedMode);
+            }
+        }
+        if (result) {
+            if (limits_.includeDynamicInstanceRows)
+                result.profile.preparationTrees = SaturatingAdd(result.profile.preparationTrees, 1u, UINT32_MAX, result.flags);
+            result.profile.containerRows = SaturatingAdd(result.profile.containerRows, 1u, UINT32_MAX, result.flags);
+            result.profile.instanceRows = SaturatingAdd(result.profile.instanceRows, 1u, UINT32_MAX, result.flags);
+        }
+        return result;
+    }
+
+    Result Schedule(const PlayableRefV1& ref, Budget budget) noexcept {
+        if (budget.schedules == 0) return Omitted(UnprunedSchedule | OmittedDepthBranch);
+        --budget.schedules;
+        Result result{};
+        result.profile.instanceRows = 1;
+        result.flags = UnprunedSchedule;
+        result.profile.preparationTrees = limits_.includeDynamicInstanceRows ? 1u : 0u;
+        if (ref.kind == PlayableKindV1::Segment) {
+            const auto* segment = content_.Segment(ref);
+            if (segment == nullptr) return Failure(Status::MissingContent);
+            result.profile.mayExposeMusic = content_.HasMusicBody(*segment);
+            for (std::uint32_t i = 0; i < segment->trackRefCount; ++i) {
+                Concurrent(result, Visit(segment->trackRefs[i].trackDefinition, Mode::StaticSchedule, budget), limits_);
+                if (!result) return result;
+            }
+            return result;
+        }
+        const auto* track = content_.Track(ref);
+        if (track == nullptr) return Failure(Status::MissingContent);
+        if (track->placementCount != 0 && budget.materializedPath == 0)
+            return Omitted(UnprunedSchedule | OmittedPathBranch);
+        if (track->placementCount != 0) --budget.materializedPath;
+        for (std::uint32_t i = 0; i < track->placementCount; ++i) {
+            const auto child = track->placements[i].content;
+            if (child.kind == PlayableKindV1::Container) {
+                result.flags |= ExistingDynamicPath;
+                if (limits_.includeDynamicInstanceRows) {
+                    // Dynamic clips instantiate their selected tree even when the
+                    // static schedule has no voice columns for that clip.
+                    const auto dynamic = Visit(child, Mode::Frontier, budget);
+                    if (!dynamic) return dynamic;
+                    result.profile.instanceRows = SaturatingAdd(result.profile.instanceRows,
+                        dynamic.profile.instanceRows, UINT32_MAX, result.flags);
+                    result.profile.preparationTrees = SaturatingAdd(result.profile.preparationTrees,
+                        dynamic.profile.preparationTrees, UINT32_MAX, result.flags);
+                    result.profile.transitionRows = SaturatingAdd(result.profile.transitionRows,
+                        dynamic.profile.transitionRows, UINT32_MAX, result.flags);
+                    result.profile.variableControls = SaturatingAdd(result.profile.variableControls,
+                        dynamic.profile.variableControls, UINT32_MAX, result.flags);
+                    result.profile.queueRows = SaturatingAdd(result.profile.queueRows, dynamic.profile.queueRows, UINT32_MAX, result.flags);
+                    result.profile.queue.Include(dynamic.profile.queue);
+                    result.profile.scheduleBankRows = SaturatingAdd(result.profile.scheduleBankRows,
+                        dynamic.profile.scheduleBankRows, UINT32_MAX, result.flags);
+                    result.profile.conditionalRows = SaturatingAdd(result.profile.conditionalRows, dynamic.profile.conditionalRows, UINT32_MAX, result.flags);
+                    for (std::uint32_t t = 1; t <= kLeafCapacity; ++t)
+                        result.profile.completionWidths[t] = SaturatingAdd(result.profile.completionWidths[t],
+                            dynamic.profile.completionWidths[t], UINT32_MAX, result.flags);
+                    result.profile.embeddedArmGroups = std::min<std::uint64_t>(UINT32_MAX + 1ull,
+                        result.profile.embeddedArmGroups + DeferredArmGroups(dynamic.profile));
+                    result.profile.embeddedArmMembers = std::min<std::uint64_t>(UINT32_MAX + 1ull,
+                        result.profile.embeddedArmMembers + DeferredArmMembers(dynamic.profile));
+                    result.profile.mayExposeMusic |= dynamic.profile.mayExposeMusic;
+                }
+            } else {
+                Concurrent(result, Visit(child, Mode::StaticSchedule, budget), limits_);
+                if (!result) return result;
+            }
+        }
+        return result;
+    }
+
+    const ContainerChildProgramViewV2* Child(const ContainerProgramViewV3& program,
+        std::uint32_t ordinal) const noexcept {
+        for (std::uint32_t i = 0; i < program.childCount; ++i)
+            if (program.children[i].stableChildOrdinal == ordinal) return &program.children[i];
+        return nullptr;
+    }
+
+    Result Choices(const ContainerProgramViewV3& program, Budget budget) noexcept {
+        Result result{};
+        for (std::uint32_t i = 0; i < program.childCount; ++i) {
+            const auto& ref = program.children[i].playable;
+            auto child = Visit(ref, Mode::Frontier, budget);
+            if (child && (ref.kind == PlayableKindV1::Track || ref.kind == PlayableKindV1::Segment) && child.profile.current) {
+                child.profile.scheduleBankRows = SaturatingAdd(child.profile.scheduleBankRows, 1u, UINT32_MAX, child.flags);
+                child.profile.queue.Include({child.profile.current, 2u * child.profile.current});
+            }
+            Alternative(result, child);
+            if (!result) return result;
+        }
+        result.profile.selectionCount = SaturatingAdd(result.profile.selectionCount, 1u, UINT32_MAX, result.flags);
+        result.profile.selection.Include({program.avoidLastN,
+            program.mode == ContainerModeV1::Random && program.randomDiscipline == RandomDisciplineV1::Rotation
+                ? program.childCount : 0u,
+            limits_.seedPrefixCount + budget.frontierDepth - 1u, program.childCount});
+        return result;
+    }
+
+    Result Variable(const ContainerProgramViewV3& program, Budget budget) noexcept {
+        Result discrete{};
+        for (std::uint32_t i = 0; i < program.discreteRowCount; ++i) {
+            const auto* child = Child(program, program.discreteRows[i].childStableOrdinal);
+            if (child == nullptr) return Failure(Status::MissingContent);
+            Alternative(discrete, Visit(child->playable, Mode::Frontier, budget));
+            if (!discrete) return discrete;
+        }
+        Result continuous{};
+        std::uint32_t continuousChildren = 0;
+        for (std::uint32_t i = 0; i < program.continuousRowCount; ++i) {
+            const auto ordinal = program.continuousRows[i].childStableOrdinal;
+            bool first = true;
+            for (std::uint32_t j = 0; j < i; ++j)
+                if (program.continuousRows[j].childStableOrdinal == ordinal) first = false;
+            if (!first) continue;
+            const auto* child = Child(program, ordinal);
+            if (child == nullptr) return Failure(Status::MissingContent);
+            continuousChildren = SaturatingAdd(continuousChildren, 1u, kLeafCapacity, continuous.flags);
+            Concurrent(continuous, Visit(child->playable, Mode::Frontier, budget), limits_);
+            if (!continuous) return continuous;
+        }
+        auto& result = discrete;
+        Concurrent(result, continuous, limits_);
+        result.profile.rootContinuousMembers = continuous.profile.current;
+        result.profile.rootContinuousChildren = continuousChildren;
+        for (std::uint32_t t = 1; t <= continuousChildren; ++t)
+            result.profile.controllerChildWeights[t] = SaturatingAdd(result.profile.controllerChildWeights[t], 1u,
+                kControlSideCapacity, result.flags);
+        result.profile.rootInitialMembers = result.profile.current;
+        for (std::uint32_t t = 1; t <= continuous.profile.current; ++t)
+            result.profile.controllerWeights[t] = SaturatingAdd(result.profile.controllerWeights[t], 1u,
+                kControlSideCapacity, result.flags);
+        for (std::uint32_t t = 1; t <= result.profile.current; ++t)
+            result.profile.controllerInitialArms[t] = SaturatingAdd(result.profile.controllerInitialArms[t], 1u,
+                kControlSideCapacity, result.flags);
+        // The replacement may be prepared while the outgoing transition is still live.
+        if (program.discreteRowCount != 0 &&
+            (program.transitionProgramIndex != UINT32_MAX || discrete.profile.mayExposeMusic))
+            result.profile.transitionRows = SaturatingAdd(result.profile.transitionRows, 2u, UINT32_MAX, result.flags);
+        result.profile.variableControls = SaturatingAdd(result.profile.variableControls, 1u, UINT32_MAX, result.flags);
+        result.profile.controlSides = SaturatingAdd(result.profile.controlSides, 2u,
+            kControlSideCapacity, result.flags);
+        return result;
+    }
+
+    bool CanWrap(const ContainerProgramViewV3& program) const noexcept {
+        return program.queueCycle == QueueCycleV1::Loop && (program.queueCycleCount == 0 || program.queueCycleCount > 1u);
+    }
+
+    Result DirectFuture(const ContainerChildProgramViewV2& child) noexcept {
+        const Budget fresh{kPathCapacity, limits_.directFutureScheduleDepth,
+            kPathCapacity - 1u, 0, Domain::DirectFuture};
+        const auto kind = child.playable.kind;
+        const auto hint = child.timingHint.kind;
+        if (kind == PlayableKindV1::Sound &&
+            (hint == ChildTimingHintKindV2::Unknown || hint == ChildTimingHintKindV2::InlineSound))
+            return Visit(child.playable, Mode::StaticSchedule, fresh);
+        if ((kind == PlayableKindV1::Track || kind == PlayableKindV1::Segment) && hint == ChildTimingHintKindV2::ScheduleReference) {
+            const auto& key = child.timingHint.payload.schedule;
+            if (key.kind != kind || key.stableId != child.playable.stableId) return Failure(Status::FingerprintMismatch);
+            const auto* track = kind == PlayableKindV1::Track ? content_.Track(child.playable) : nullptr;
+            const auto* segment = kind == PlayableKindV1::Segment ? content_.Segment(child.playable) : nullptr;
+            if (track == nullptr && segment == nullptr) return Failure(Status::MissingContent);
+            const auto fingerprint = track != nullptr ? track->scheduleSemanticFingerprint : segment->scheduleSemanticFingerprint;
+            if (key.scheduleSemanticFingerprint != fingerprint) return Failure(Status::FingerprintMismatch);
+            return Visit(child.playable, Mode::StaticSchedule, fresh);
+        }
+        if (kind == PlayableKindV1::Container && hint == ChildTimingHintKindV2::Unknown) {
+            if constexpr (Content::kDirectNestedContainer) return Visit(child.playable, Mode::DirectNested, fresh);
+            else return Omitted(ExistingDirectRefusal);
+        }
+        if (kind != PlayableKindV1::Sound && kind != PlayableKindV1::Track &&
+            kind != PlayableKindV1::Segment && kind != PlayableKindV1::Container) return Failure(Status::UnsupportedKind);
+        return Omitted(ExistingDirectRefusal);
+    }
+
+    Result QueueResetShape(const ContainerChildProgramViewV2& child) noexcept {
+        const auto depth = content_.QueueResetScheduleDepth();
+        if (depth == 0 || depth > kPathCapacity) return {};
+        const Budget fresh{kPathCapacity, depth, kPathCapacity - 1u, 0, Domain::DirectFuture};
+        if (child.playable.kind == PlayableKindV1::Container) {
+            if constexpr (Content::kDirectNestedContainer) return Visit(child.playable, Mode::DirectNested, fresh);
+            else return {};
+        }
+        return Visit(child.playable, Mode::StaticSchedule, fresh);
+    }
+
+    Result Queue(const ContainerProgramViewV3& program, Budget budget) noexcept {
+        if (program.queueCycle != QueueCycleV1::Once && program.queueCycle != QueueCycleV1::Loop)
+            return Failure(Status::UnsupportedMode);
+        Result result{};
+        std::uint32_t currentCapacity = 0;
+        std::uint32_t targetCapacity = 0;
+        for (std::uint32_t i = 0; i < program.childCount; ++i) {
+            auto current = Visit(program.children[i].playable, Mode::Frontier, budget);
+            if (!current) return current;
+            currentCapacity = std::max(currentCapacity, current.profile.current);
+            current.profile.Q = SaturatingAdd(current.profile.Q, 1, limits_.queueRoleCapacity, current.flags);
+            std::uint32_t capacity = 0;
+            std::uint32_t futureReferences = 0;
+            std::uint32_t futureInstances = 0;
+            std::uint32_t futureTrees = 0;
+            std::uint32_t futureTransitions = 0;
+            std::uint32_t futureControls = 0;
+            std::uint32_t futureQueueRows = 0;
+            std::uint32_t futureScheduleBanks = 0;
+            std::uint32_t futureConditionalRows = 0;
+            decltype(Profile::completionWidths) futureCompletions{};
+            std::uint64_t futureEmbeddedGroups = 0, futureEmbeddedMembers = 0;
+            bool canTransition = false;
+            for (std::uint32_t j = 0; j < program.childCount; ++j) {
+                const bool possible = program.mode == ContainerModeV1::SequenceQueue
+                    ? j > i || (j == 0 && CanWrap(program)) : j != i || CanWrap(program);
+                if (!possible) continue;
+                const auto next = DirectFuture(program.children[j]);
+                if (!next) return next;
+                canTransition |= program.transitionProgramIndex != UINT32_MAX || current.profile.mayExposeMusic;
+                futureTransitions = std::max(futureTransitions, next.profile.transitionRows);
+                futureControls = std::max(futureControls, next.profile.variableControls);
+                futureQueueRows = std::max(futureQueueRows, next.profile.queueRows);
+                current.profile.queue.Include(next.profile.queue);
+                futureScheduleBanks = std::max(futureScheduleBanks, next.profile.scheduleBankRows);
+                futureConditionalRows = std::max(futureConditionalRows, next.profile.conditionalRows);
+                futureEmbeddedGroups = std::max(futureEmbeddedGroups, next.profile.embeddedArmGroups);
+                futureEmbeddedMembers = std::max(futureEmbeddedMembers, next.profile.embeddedArmMembers);
+                for (std::uint32_t t = 1; t <= kLeafCapacity; ++t) {
+                    const auto own = next.profile.current > 1 && next.profile.current >= t ? 1u : 0u;
+                    futureCompletions[t] = std::max(futureCompletions[t],
+                        SaturatingAdd(next.profile.completionWidths[t], own, UINT32_MAX, current.flags));
+                }
+                capacity = std::max(capacity, next.profile.current);
+                futureInstances = std::max(futureInstances, next.profile.instanceRows);
+                if (limits_.includeDynamicInstanceRows)
+                    futureTrees = std::max(futureTrees, std::max(1u, next.profile.preparationTrees));
+                futureReferences = std::max(futureReferences, SaturatingAdd(next.profile.referenceRows,
+                    next.profile.current, UINT32_MAX, current.flags));
+                current.flags |= next.flags;
+            }
+            current.profile.queueRows = SaturatingAdd(current.profile.queueRows, 1u, UINT32_MAX, current.flags);
+            // The initial and following continuations can hold distinct conditional records.
+            const bool wraps = CanWrap(program);
+            const auto conditions = wraps || program.childCount > 2 ? 2u : program.childCount - 1u;
+            current.profile.conditionalRows = SaturatingAdd(current.profile.conditionalRows, conditions, UINT32_MAX, current.flags);
+            for (std::uint32_t t = 1; t <= kLeafCapacity; ++t) {
+                const auto own = current.profile.current > 1 && current.profile.current >= t ? 1u : 0u;
+                auto& count = current.profile.completionWidths[t];
+                count = SaturatingAdd(count, own, UINT32_MAX, current.flags);
+                count = SaturatingAdd(count, futureCompletions[t], UINT32_MAX, current.flags);
+            }
+            targetCapacity = std::max(targetCapacity, capacity);
+            AddFuture(current, capacity, limits_);
+            current.profile.variableControls = SaturatingAdd(current.profile.variableControls, futureControls, UINT32_MAX, current.flags);
+            current.profile.queueRows = SaturatingAdd(current.profile.queueRows, futureQueueRows, UINT32_MAX, current.flags);
+            current.profile.scheduleBankRows = SaturatingAdd(current.profile.scheduleBankRows, futureScheduleBanks, UINT32_MAX, current.flags);
+            current.profile.conditionalRows = SaturatingAdd(current.profile.conditionalRows, futureConditionalRows, UINT32_MAX, current.flags);
+            current.profile.embeddedArmGroups = std::min<std::uint64_t>(UINT32_MAX + 1ull, current.profile.embeddedArmGroups + futureEmbeddedGroups);
+            current.profile.embeddedArmMembers = std::min<std::uint64_t>(UINT32_MAX + 1ull, current.profile.embeddedArmMembers + futureEmbeddedMembers);
+            current.profile.transitionRows = SaturatingAdd(current.profile.transitionRows, futureTransitions, UINT32_MAX, current.flags);
+            // Current and following chains can overlap their replacements.
+            if (canTransition) current.profile.transitionRows = SaturatingAdd(current.profile.transitionRows, 4u, UINT32_MAX, current.flags);
+            current.profile.preparationTrees = SaturatingAdd(current.profile.preparationTrees, futureTrees,
+                UINT32_MAX, current.flags);
+            current.profile.instanceRows = SaturatingAdd(current.profile.instanceRows, futureInstances, UINT32_MAX, current.flags);
+            current.profile.referenceRows = SaturatingAdd(current.profile.referenceRows,
+                futureReferences, UINT32_MAX, current.flags);
+            Alternative(result, current);
+            if (!result) return result;
+        }
+        for (std::uint32_t i = 0; i < program.childCount; ++i) {
+            const auto reset = QueueResetShape(program.children[i]);
+            if (reset.status == Status::WorkspaceExhausted) return reset;
+            if (reset) targetCapacity = std::max(targetCapacity, reset.profile.current);
+        }
+        currentCapacity = std::max(currentCapacity, targetCapacity);
+        const auto programs = currentCapacity + targetCapacity;
+        result.profile.queue.Include({programs, 2u * programs});
+        return result;
+    }
+
+    const Content& content_;
+    Limits limits_{};
+    MemoWorkspace& memo_;
+};
+
+} // namespace harken::native_backing
+#endif

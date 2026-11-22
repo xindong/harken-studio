@@ -7,7 +7,7 @@
 #include <QList>
 #include <QPair>
 
-namespace VNX {
+namespace harken::studio {
 
 struct CleanupResult
 {

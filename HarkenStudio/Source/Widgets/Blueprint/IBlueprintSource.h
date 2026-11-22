@@ -17,7 +17,7 @@
 class QMenu;
 class QPoint;
 
-namespace VNX {
+namespace harken::studio {
 
 enum class BlueprintNodeKind : uint8_t {
     ProjectItem = 0,

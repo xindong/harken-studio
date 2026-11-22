@@ -56,9 +56,9 @@ inline QJsonObject baseManifestPayload()
     payload[QStringLiteral("version")] = QStringLiteral("1.4.0");
     payload[QStringLiteral("buildId")] = QStringLiteral("run12.abcd1234");
     payload[QStringLiteral("channel")] = QStringLiteral("stable");
-    payload[QStringLiteral("platform")] = VNH::ManifestVerifier::hostPlatform();
+    payload[QStringLiteral("platform")] = harken::hub::ManifestVerifier::hostPlatform();
     payload[QStringLiteral("architecture")] =
-        VNH::ManifestVerifier::hostArchitecture();
+        harken::hub::ManifestVerifier::hostArchitecture();
     payload[QStringLiteral("packageSize")] = 13000;
     payload[QStringLiteral("sha256")] = QString(64, QLatin1Char('a'));
     payload[QStringLiteral("releaseSequence")] = 7;
@@ -76,13 +76,13 @@ inline QByteArray latestResponseJson(const QByteArray& envelope)
     entry[QStringLiteral("version")] = QStringLiteral("1.4.0");
     entry[QStringLiteral("file")] =
         QStringLiteral("release/harken/%1/1.4.0/run12-abcd1234-20261008T100000Z/Harken.zip")
-            .arg(VNH::ServerEndpoints::hostChannel());
+            .arg(harken::hub::ServerEndpoints::hostChannel());
     entry[QStringLiteral("integrity")] = integrity;
     QJsonArray versions;
     if (!envelope.isEmpty())
         versions.append(entry);
     QJsonObject channels;
-    channels[VNH::ServerEndpoints::hostChannel()] = versions;
+    channels[harken::hub::ServerEndpoints::hostChannel()] = versions;
     QJsonObject response;
     response[QStringLiteral("schema_version")] = 1;
     response[QStringLiteral("channels")] = channels;

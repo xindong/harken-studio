@@ -137,8 +137,9 @@ def validate(off_build: Path, all_build: Path) -> dict:
         all_build / "lib" / "Release" /
         "harken_core_rt_qualification.lib"
     )
-    all_shipping = all_build / "lib" / "Release" / "HarkenCore.lib"
-    all_shared = all_build / "bin" / "Release" / "HarkenCore.dll"
+    all_development = all_build / "lib" / "Release" / "HarkenCore.lib"
+    all_shared = all_build / "bin" / "Release" / "HarkenEngine.dll"
+    instruction_sources = ("DeviceBackend", "MixerLoop", "RenderWorkerPool")
 
     require_probe_absent(
         "all-Off qualification library",
@@ -149,24 +150,29 @@ def validate(off_build: Path, all_build: Path) -> dict:
         run_dumpbin(dumpbin, "/symbols", all_qualification),
     )
     require_probe_absent(
-        "all-On shipping static library",
-        run_dumpbin(dumpbin, "/symbols", all_shipping),
+        "all-On development static library",
+        run_dumpbin(dumpbin, "/symbols", all_development),
     )
+    for source in instruction_sources:
+        require_probe_absent(
+            f"all-On shipping {source} object",
+            run_dumpbin(dumpbin, "/symbols", object_path(all_build, "harken_engine_release", source)),
+        )
     require_probe_absent(
         "all-On shipping shared exports",
         run_dumpbin(dumpbin, "/exports", all_shared),
     )
 
-    all_shipping_project = project_text(all_build, "harken_core")
-    all_shared_project = project_text(all_build, "harken_core_shared")
+    all_development_project = project_text(all_build, "harken_core")
+    all_shared_project = project_text(all_build, "harken_engine_release")
     all_qualification_project = project_text(
         all_build, "harken_core_rt_qualification"
     )
     off_qualification_project = project_text(
         off_build, "harken_core_rt_qualification"
     )
-    require_probe_absent("all-On shipping static project",
-                         all_shipping_project)
+    require_probe_absent("all-On development static project",
+                         all_development_project)
     require_probe_absent("all-On shipping shared project",
                          all_shared_project)
     require_probe_present("all-On qualification project",
@@ -174,38 +180,19 @@ def validate(off_build: Path, all_build: Path) -> dict:
     require_probe_absent("all-Off qualification project",
                          off_qualification_project)
 
+    def disassembly(build: Path, target: str, source: str) -> str:
+        return normalize_disassembly(
+            run_dumpbin(dumpbin, "/disasm:nobytes", object_path(build, target, source)))
+
     compared: list[str] = []
-    for source in ("DeviceBackend", "MixerLoop", "RenderWorkerPool"):
-        shipping_off = normalize_disassembly(
-            run_dumpbin(
-                dumpbin,
-                "/disasm:nobytes",
-                object_path(off_build, "harken_core", source),
-            )
-        )
-        qualification_off = normalize_disassembly(
-            run_dumpbin(
-                dumpbin,
-                "/disasm:nobytes",
-                object_path(
-                    off_build,
-                    "harken_core_rt_qualification",
-                    source,
-                ),
-            )
-        )
-        shipping_all = normalize_disassembly(
-            run_dumpbin(
-                dumpbin,
-                "/disasm:nobytes",
-                object_path(all_build, "harken_core", source),
-            )
-        )
-        if shipping_off != qualification_off:
+    for source in instruction_sources:
+        if disassembly(off_build, "harken_core", source) != disassembly(
+                off_build, "harken_core_rt_qualification", source):
             raise CompileoutError(
-                f"{source} all-Off qualification code differs from shipping"
+                f"{source} all-Off qualification code differs from the development edition"
             )
-        if shipping_off != shipping_all:
+        if disassembly(off_build, "harken_engine_release", source) != disassembly(
+                all_build, "harken_engine_release", source):
             raise CompileoutError(
                 f"{source} shipping code changes in the all-On build tree"
             )
@@ -216,8 +203,9 @@ def validate(off_build: Path, all_build: Path) -> dict:
         "status": "passed",
         "git": git_identity(repo),
         "claim": (
-            "private qualification probes are absent from shipping targets "
-            "and all-Off qualification code is instruction-identical"
+            "private qualification probes are absent from the shipping edition, "
+            "shipping code is instruction-identical across probe settings, and "
+            "all-Off qualification code is instruction-identical to the development edition"
         ),
         "dumpbin": str(dumpbin),
         "offBuild": str(off_build.resolve()),

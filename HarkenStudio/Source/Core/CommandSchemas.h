@@ -3,7 +3,7 @@
 #include <QJsonObject>
 #include <QString>
 
-namespace VNX {
+namespace harken::studio {
 
 QJsonObject commandInputSchema(const QString& name);
 bool commandIsReadOnly(const QString& name);

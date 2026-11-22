@@ -86,8 +86,6 @@ Hub 和 Studio 更新下载失败后会清除内存中的清单缓存标记，�
 
 请求使用无上传请求体的 GET，遵循与 DF-2 一致的来源切换、受限重定向与签名验证。返回结果用于界面展示或匹配本地包，包下载继续走同一下载器。
 
-用户点击还原当前 Unity 集成包时，`HarkenHub/Source/Integrations/OfficialUnitySource.cpp` 查询官方目录中的确切构建，并从相同分发源获取签名绑定的独立文件清单。本地候选文件的路径、大小和哈希只在本机比较，不上传工程文件、安装路径或比较结果；候选不完整或旧发布没有独立清单时，再下载完整发布包。清单及完整包按发布包哈希缓存在用户数据目录，每次使用前重新核验；临时还原来源使用独立暂存目录。
-
 `HarkenHub/Source/ReleaseNotes/VersionReleaseNotes.cpp` 在已安装版本列表刷新、用户打开版本菜单或服务器版本列表时，按正式 Studio 版本请求对象存储的 `document/<version>/manifest.json`，默认基址及 `HARKEN_CONTENT_BASE_URL` 覆盖规则沿用 DF-2。本地构建不触发此请求。请求是无上传请求体的 GET，不附带工程、安装路径、账号或设备标识，不自动跟随重定向；清单按 `studioReleaseNotesPageId` 和 `unityIntegrationReleaseNotesPageId` 分别提取 Studio、Unity 集成包的更新日志页面链接，不参与软件安装或包校验。中英文链接仅缓存在当前 Hub 版本页对象的内存中，不写入本机文件；缺失、无效或请求失败时禁用入口。
 
 ## DF-4：系统浏览器访问
@@ -102,9 +100,9 @@ Hub 的版本菜单及服务器版本列表在用户点击 Studio 或 Unity 集�
 
 ## DF-5：Remote 游戏联调
 
-2026-09-14 新增的 `HarkenEngine/Source/Runtime/remote/` 随正式 Engine 静态库和共享库交付，Debug、RelWithDebInfo 和 Release 均可用。Unity Integration 默认随音频初始化启动通信；Unity `Project Settings > Harken` 中的 `Enable Communication in Builds` 默认开启，关闭后打包游戏不启动通信，编辑器内运行不受此开关影响。加载 Engine 的进程监听 IPv4 TCP，并可按配置接收 UDP 发现请求，无需独立 host 程序。直接使用原生 C ABI 或托管 API 的自定义宿主由集成方显式管理通信生命周期。
+远程通信服务位于 `HarkenEngine/Source/Development/remote/`，只编入开发版 `HarkenEngineDev`，正式版 `HarkenEngine` 不含远程服务端，Debug、RelWithDebInfo 和 Release 构建配置均如此。Unity Integration 在编辑器和 Development Build 中使用开发版并默认随音频初始化启动通信，正式构建使用正式版，不含通信代码；Unity `Project Settings > Harken` 中的 `Enable Communication in Builds` 默认开启，只影响使用开发版的打包游戏，关闭后不启动通信，编辑器内运行不受此开关影响。加载 Engine 的进程监听 IPv4 TCP，并可按配置接收 UDP 发现请求，无需独立 host 程序。直接使用原生 C ABI 或托管 API 的自定义宿主由集成方显式管理通信生命周期。
 
-- Unity 项目配置保存为游戏项目内的 `Assets/Harken/Resources/HarkenProjectSettings.asset`，通过 Unity Resources 随包交付。配置在本地保存，不上传。
+- Unity 项目配置默认保存为游戏项目内的 `Assets/Resources/HarkenProjectSettings.asset`，通过 Unity Resources 随包交付。配置在本地保存，不上传。
 
 - 默认 TCP 端口由系统分配；Engine 的 TCP 与 UDP 监听地址均固定为 `127.0.0.1`。发现使用 UDP 端口 `37840`，只在回环接口加入组播地址 `239.255.37.84`，只向本机发现请求返回单播响应。`Vn_RemoteStart` 仅接受空地址或 `127.0.0.1`；其他显式地址（含 `0.0.0.0`）在创建套接字前返回 `VN_INVALID_ARG`，不做旧配置兼容或迁移。Unity Integration 默认地址为 `127.0.0.1`，项目设置界面不允许修改绑定地址；原通配地址绑定代码以注释保留，恢复局域网能力需要修改源码并重新构建。
 - `HarkenStudio/Source/RuntimeBridge/RemoteConnection.h` 的编译期常量 `kLocalConnectionsOnly` 固定为 `true`，当前 Studio 无界面、配置或环境变量可开启局域网 Remote。局域网实现仅保留在源码中，恢复能力需要修改源码并重新构建。

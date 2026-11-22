@@ -17,7 +17,7 @@ class QWidget;
 class QMimeData;
 class QEvent;
 
-namespace VNX {
+namespace harken::studio {
 
 class DragDropOverlay;
 

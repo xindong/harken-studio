@@ -4,7 +4,7 @@
 
 #include <QString>
 
-namespace VNH {
+namespace harken::hub {
 
 enum class EngineTargetHealth
 {
@@ -20,7 +20,6 @@ enum class IntegrationContentState
 {
     NotChecked,
     MatchesInstallation,
-    OptionalFilesMissing,
     Modified,
     Missing,
     ModifiedAndMissing,
@@ -43,6 +42,7 @@ struct EngineTargetObservation
     bool canChangeIntegration = false;
     bool canMoveIntegration = false;
     bool canRemoveIntegration = false;
+    bool canRestorePrevious = false;
 };
 
 class EngineTargetProbe

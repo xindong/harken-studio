@@ -3,7 +3,6 @@
 #include "Platform/PlatformPaths.h"
 #include "Transactions/InstallIndex.h"
 #include "Versions/LocalBuildRegistry.h"
-#include "Versions/StudioCapabilities.h"
 
 #include <QDir>
 #include <QCoreApplication>
@@ -13,7 +12,7 @@
 
 #include <algorithm>
 
-namespace VNH {
+namespace harken::hub {
 
 namespace {
 
@@ -71,20 +70,6 @@ InstallationIssue readVersion(const QString& path, InstalledVersion* version, QS
                     text("The package manifest has an invalid Studio identity."), error);
     version->buildId = buildId;
     version->semanticVersion = semanticVersion;
-    QJsonObject capabilities;
-    issue = readJsonObject(QDir(path).filePath(QStringLiteral("capabilities.json")),
-                           capabilities, error);
-    if (issue != InstallationIssue::None)
-        return issue;
-    const QString capabilitiesBuildId = capabilities.value(QStringLiteral("buildId")).toString();
-    const QString capabilitiesStudioVersion = capabilities.value(QStringLiteral("studioVersion")).toString();
-    if ((!capabilitiesBuildId.isEmpty() && capabilitiesBuildId != buildId)
-        || (!capabilitiesStudioVersion.isEmpty() && capabilitiesStudioVersion != semanticVersion))
-        return fail(InstallationIssue::IdentityMismatch,
-                    text("The installed version identity does not match its installation record."), error);
-    int protocol = 0;
-    if (!validateStudioCapabilities(capabilities, semanticVersion, buildId, error, &protocol))
-        return InstallationIssue::InvalidMetadata;
     const QString executable = QDir(path).filePath(studioBinaryRelativePath());
     if (!QFileInfo(executable).isFile())
         return fail(InstallationIssue::Missing,
@@ -94,7 +79,6 @@ InstallationIssue readVersion(const QString& path, InstalledVersion* version, QS
     version->executablePath = executable;
     version->channel = manifest.value(QStringLiteral("channel")).toString();
     version->releaseSequence = manifest.value(QStringLiteral("releaseSequence")).toInteger();
-    version->capabilitiesVersion = protocol;
     return InstallationIssue::None;
 }
 
@@ -177,7 +161,6 @@ std::vector<InstalledVersion> VersionScanner::scanLocalBuilds()
         version.executableFingerprint = record.executableFingerprint;
         version.semanticVersion = record.semanticVersion;
         version.channel = record.channel;
-        version.capabilitiesVersion = record.capabilitiesVersion;
         version.releaseSequence = record.releaseSequence;
         version.source = VersionSource::LocalBuild;
         const bool exists = executable.exists() && executable.isFile();

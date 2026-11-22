@@ -14,8 +14,8 @@
 #include <thread>
 #endif
 
-using VNH::InstalledVersionRecord;
-using VNH::InstallIndex;
+using harken::hub::InstalledVersionRecord;
+using harken::hub::InstallIndex;
 
 namespace {
 

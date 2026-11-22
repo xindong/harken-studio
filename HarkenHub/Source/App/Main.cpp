@@ -9,12 +9,14 @@
 #include <QStyleFactory>
 #include <QStyleHints>
 
+#include "HubVersion.h"
 #include "harken_buildinfo.h"
 
 #include <QCoreApplication>
 #include <QDateTime>
 
 #include "App/FileLog.h"
+#include "Cli/HubCli.h"
 #include "App/SingleInstanceGuard.h"
 #include "Launch/ProjectOpenFlow.h"
 #include "Legal/ConsentStore.h"
@@ -25,6 +27,7 @@
 #include "Platform/AclHardening.h"
 #include "Platform/LoginLaunch.h"
 #include "Platform/PlatformPaths.h"
+#include "Platform/ProcessScan.h"
 #include "Platform/UpdateBridgeDeployment.h"
 #include "Platform/UpdateBridgeTask.h"
 #include "Projects/ProjectStore.h"
@@ -40,6 +43,7 @@
 #include "UI/ConsentDialog.h"
 #include "UI/HubWindow.h"
 #include "UI/HubIcons.h"
+#include "UI/HubTheme.h"
 #include "Update/BridgeDispatcher.h"
 #include "Update/HubSelfUpdate.h"
 #include "Update/SelfUpdateHealthCheck.h"
@@ -52,6 +56,7 @@
 #include "Versions/VersionScanner.h"
 
 #include <QFileSystemWatcher>
+#include <QEventLoop>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLocalSocket>
@@ -71,248 +76,6 @@
 #endif
 
 namespace {
-
-const char kStyleSheet[] = R"(
-QWidget {
-    background-color: #0D111A;
-    color: #E0E0E0;
-    font-family: "Inter", "Segoe UI", sans-serif;
-    font-size: 12px;
-    selection-background-color: #00F0FF;
-    selection-color: #000000;
-}
-QMainWindow { background-color: #06080D; }
-#sidebarPanel { background-color: #06080D; }
-#sidebarSeparator { background-color: #313848; }
-#sidebar { background-color: #06080D; border: none; outline: none; }
-#sidebar::item {
-    margin: 0;
-    padding: 12px 22px;
-    border: none;
-    background-color: #171C28;
-    color: #AAAAAA;
-}
-#sidebar::item:hover { background-color: #222836; color: #CCCCCC; }
-#sidebar::item:selected {
-    background-color: #143C48;
-    border: none;
-    border-left: 2px solid #00F0FF;
-    padding-left: 20px;
-    color: #00F0FF;
-}
-  #pageTitle { font-size: 16px; font-weight: 600; color: #00F0FF; background: transparent; }
-  #pageSubtitle { color: #888888; background: transparent; }
-  #sidebarProduct { color: #00F0FF; background: transparent; font-size: 24px; font-weight: 700; }
-#sidebarNote { color: #6B7488; background: transparent; font-size: 11px; }
-#sidebarLinks { background: transparent; font-size: 11px; }
-  #tablePanel { background-color: #0D111A; border: 1px solid #272E3C; border-radius: 0; }
-  #newProjectPanel { background-color: #0D111A; border: 1px solid #3B4658; border-radius: 0; }
-  QLineEdit#newProjectField, QComboBox#newProjectVersion {
-      background-color: #080C14;
-      border: 1px solid #465268;
-      border-radius: 0;
-      color: #E0E0E0;
-      padding: 3px 7px;
-  }
-  QLineEdit#newProjectField:hover, QComboBox#newProjectVersion:hover { border-color: #627089; }
-  QLineEdit#newProjectField:focus, QComboBox#newProjectVersion:focus { border-color: #00F0FF; }
-  QComboBox#newProjectVersion::drop-down { border-left: 1px solid #465268; width: 24px; }
-  QPushButton#newProjectBrowse, QPushButton#newProjectAddTemplate { border-color: #536078; padding: 4px 16px; }
-  QPushButton#newProjectBrowse:hover, QPushButton#newProjectAddTemplate:hover { border-color: #71809A; }
-  QTreeWidget#templatePreviewTree {
-      background-color: #080C14;
-      border: 1px solid #3F4A5E;
-      border-radius: 0;
-      outline: none;
-  }
-  QTreeWidget#templatePreviewTree::item { border: none; padding: 1px 4px; }
-  QTreeWidget#templatePreviewTree QHeaderView::section {
-      background-color: #1A2130;
-      border: none;
-      border-bottom: 1px solid #4A566A;
-      color: #AAB3C2;
-      padding: 6px 9px;
-  }
-QPushButton {
-    background-color: #2A3140;
-    border: 1px solid #3D4554;
-    padding: 8px 16px;
-    border-radius: 0;
-    color: #E0E0E0;
-    font-weight: 500;
-}
-QPushButton:hover { background-color: #333B4D; border-color: #4D5668; }
-QPushButton:pressed { background-color: #00F0FF; color: #000000; }
-QPushButton:disabled { background-color: #171C28; color: #555555; border-color: #272D3A; }
-QPushButton#rowLaunchButton, QPushButton#newProjectButton, QPushButton#createProjectButton, QPushButton#getFromServerButton[updateAvailable="true"] {
-    background-color: #00F0FF;
-    border: 1px solid #00F0FF;
-    color: #000000;
-    font-weight: 600;
-}
-QPushButton#rowLaunchButton:hover, QPushButton#newProjectButton:hover, QPushButton#createProjectButton:hover, QPushButton#getFromServerButton[updateAvailable="true"]:hover { background-color: #5CF6FF; border-color: #5CF6FF; }
-QPushButton#rowLaunchButton:pressed, QPushButton#newProjectButton:pressed, QPushButton#createProjectButton:pressed, QPushButton#getFromServerButton[updateAvailable="true"]:pressed { background-color: #00B0BC; border-color: #00B0BC; color: #000000; }
-QPushButton#rowLaunchButton:disabled, QPushButton#newProjectButton:disabled, QPushButton#createProjectButton:disabled, QPushButton#getFromServerButton[updateAvailable="true"]:disabled { background-color: #171C28; color: #555555; border-color: #272D3A; }
-QPushButton#rowLaunchButton { padding: 4px 12px; }
-QPushButton#addIntegrationButton { padding: 0; font-size: 18px; }
-QToolButton {
-    background-color: transparent;
-    border: 1px solid transparent;
-    border-radius: 0;
-    padding: 4px;
-}
-QToolButton:hover { background-color: #2A3140; border-color: #3D4554; }
-QToolButton:pressed { background-color: #00F0FF; color: #000000; }
-QToolButton:disabled { color: #555555; }
-QToolButton#rowMenuButton {
-    background-color: #2A3140;
-    border: 1px solid #3D4554;
-    color: #AAAAAA;
-    font-size: 10px;
-}
-QToolButton#rowMenuButton:hover { background-color: #333B4D; border-color: #4D5668; color: #E0E0E0; }
-QToolButton#settingsButton {
-    background-color: transparent;
-    border: none;
-    padding: 5px;
-}
-QToolButton#settingsButton:hover { background-color: #1B2230; border: none; }
-QToolButton#settingsButton:pressed,
-QToolButton#settingsButton:checked { background-color: #242C3A; border: none; }
-QToolButton#settingsButton::menu-indicator { image: none; }
-QTableWidget {
-    background-color: transparent;
-    border: none;
-    outline: none;
-    selection-background-color: #2A3140;
-    selection-color: #E0E0E0;
-}
-QTableWidget::item { padding: 4px 10px; border-bottom: 1px solid #1A2030; background: transparent; }
-QTableWidget::item:hover { background-color: #222836; }
-QTableWidget::item:selected { background-color: #2A3140; color: #E0E0E0; }
-QHeaderView::section {
-    background-color: #171C28;
-    color: #888888;
-    padding: 8px 10px;
-    border: none;
-    border-bottom: 1px solid #313848;
-    font-weight: 600;
-    font-size: 10px;
-}
-QTableCornerButton::section { background-color: #171C28; border: none; }
-QSplitter#resultsSplitter::handle:vertical {
-    background-color: #171C28;
-    border-top: 1px solid #4A566A;
-    border-bottom: 1px solid #1A2030;
-}
-QMenu {
-    background-color: #1D2330;
-    border: 1px solid #3D4554;
-    border-radius: 0;
-    padding: 6px 0;
-}
-QMenu::item { padding: 6px 32px 6px 24px; min-width: 150px; background: transparent; }
-QMenu#versionSelectMenu::item { padding: 6px 32px 6px 36px; }
-QMenu#versionSelectMenu::icon { left: 10px; }
-QMenu::item:selected { background-color: #00F0FF; color: #000000; }
-QMenu::item:disabled { color: #555B66; }
-QMenu::item:disabled:selected { background-color: transparent; color: #555B66; }
-QMenu::separator { height: 1px; background-color: #3D4554; margin: 4px 12px; }
-#destructiveMenu::item { color: #FF0055; }
-#destructiveMenu::item:selected { background-color: #FF0055; color: #000000; }
-#destructiveMenu::item:disabled { color: #802B48; }
-#destructiveMenu::item:disabled:selected { background-color: transparent; color: #802B48; }
-QToolTip { background-color: #1D2330; color: #E0E0E0; border: 1px solid #3D4554; }
-QScrollBar:vertical { background-color: transparent; width: 10px; margin: 0; }
-QScrollBar::handle:vertical { background-color: #3A4250; min-height: 20px; border-radius: 0; margin: 2px; }
-QScrollBar::handle:vertical:hover { background-color: #4D5668; }
-QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
-QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: none; }
-QScrollBar:horizontal { background-color: transparent; height: 10px; margin: 0; }
-QScrollBar::handle:horizontal { background-color: #3A4250; min-width: 20px; border-radius: 0; margin: 2px; }
-QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; }
-QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal { background: none; }
-#TitleBarWidget {
-    background-color: #171C28;
-    border-bottom: 1px solid #313848;
-}
-#titleBarLogo { background-color: transparent; }
-#titleBarLabel {
-    background-color: transparent;
-    color: #E0E0E0;
-    font-size: 13px;
-    font-weight: 500;
-}
-#titleBarMin,
-#titleBarMax,
-#titleBarClose {
-    background: transparent;
-    border: none;
-    border-radius: 0;
-    color: #AAB0BA;
-    font-weight: 400;
-    margin: 0;
-    padding: 0;
-    min-width: 46px;
-    max-width: 46px;
-    min-height: 36px;
-    max-height: 36px;
-}
-#titleBarMin:hover,
-#titleBarMax:hover {
-    background-color: #2A3140;
-    color: #FFFFFF;
-}
-#titleBarMin:pressed,
-#titleBarMax:pressed {
-    background-color: #222836;
-}
-#titleBarClose:hover {
-    background-color: #E81123;
-    color: #FFFFFF;
-}
-#titleBarClose:pressed {
-    background-color: #F1707A;
-    color: #FFFFFF;
-}
-#releaseNotesScroll { background-color: transparent; }
-#releaseNotesScroll > QWidget > QWidget { background-color: transparent; }
-#currentReleaseVersion {
-    color: #FFFFFF;
-    font-size: 17px;
-    font-weight: 600;
-    padding: 4px 0;
-}
-#releaseNotesSeparator {
-    color: #3D4554;
-    background-color: #3D4554;
-    max-height: 1px;
-    margin: 8px 0;
-}
-#releaseNotesVersion {
-    background-color: #171C28;
-    border: 1px solid #313848;
-    color: #E0E0E0;
-    font-size: 13px;
-    font-weight: 600;
-    padding: 9px 12px;
-    text-align: left;
-}
-#releaseNotesVersion:hover { background-color: #222836; border-color: #465268; }
-#releaseNotesVersion:checked { border-color: #536078; }
-#releaseNotesChange { color: #C8CDD6; padding-left: 8px; }
-#releaseNotesContributors { color: #8F98A8; padding: 6px 0 2px 8px; }
-#releaseNotesCategory_added,
-#releaseNotesCategory_improved,
-#releaseNotesCategory_removed {
-    font-size: 12px;
-    font-weight: 600;
-    margin-top: 5px;
-}
-#releaseNotesCategory_added { color: #00F0FF; }
-#releaseNotesCategory_improved { color: #8BB8FF; }
-#releaseNotesCategory_removed { color: #AAB0BA; }
-)";
 
 QString projectArgumentIn(const QStringList& arguments)
 {
@@ -386,7 +149,7 @@ void confirmHubReady(const QStringList& arguments)
     if (confirmedEvents.contains(eventName))
         return;
     QString error;
-    if (!VNH::UserSessionReady::signal(eventName, &error)) {
+    if (!harken::hub::UserSessionReady::signal(eventName, &error)) {
         qWarning().noquote() << "Hub startup confirmation failed:" << error;
     } else {
         confirmedEvents.insert(eventName);
@@ -399,7 +162,7 @@ void confirmHubReady(const QStringList& arguments)
 
 void confirmConsentReady(const QStringList& arguments)
 {
-    auto* dialog = qobject_cast<VNH::ConsentDialog*>(QApplication::activeModalWidget());
+    auto* dialog = qobject_cast<harken::hub::ConsentDialog*>(QApplication::activeModalWidget());
     if (dialog && dialog->isVisible()) {
         dialog->raise();
         dialog->activateWindow();
@@ -414,7 +177,7 @@ int main(int argc, char* argv[])
 #ifdef Q_OS_WIN
     if (argc == 2 && qstrcmp(argv[1], "--launch-after-setup") == 0) {
         QCoreApplication app(argc, argv);
-        return VNH::launchInDesktopUserSession(QCoreApplication::applicationFilePath()) ? 0 : 1;
+        return harken::hub::launchInDesktopUserSession(QCoreApplication::applicationFilePath()) ? 0 : 1;
     }
 #endif
     QString logRole = QStringLiteral("gui");
@@ -431,9 +194,26 @@ int main(int argc, char* argv[])
     }
     QCoreApplication::setOrganizationName(QStringLiteral("HarkenSound"));
     QCoreApplication::setApplicationName(QStringLiteral("HarkenHub"));
-    VNH::FileLog::install(logRole);
-    QFile::remove(VNH::userDataDir() + QStringLiteral("/auth-token.bin"));
-    QFile::remove(VNH::userDataDir() + QStringLiteral("/auth-state.json"));
+    for (int i = 1; i < argc; ++i) {
+        if (qstrcmp(argv[i], "--cli") != 0) continue;
+        QCoreApplication app(argc, argv);
+        app.setApplicationVersion(QString::fromUtf8(harken::hub::HubVersion.data(), int(harken::hub::HubVersion.size())));
+#ifdef Q_OS_WIN
+        const auto outputHandle = GetStdHandle(STD_OUTPUT_HANDLE);
+        const bool hasOutput = outputHandle && outputHandle != INVALID_HANDLE_VALUE;
+        const auto errorHandle = GetStdHandle(STD_ERROR_HANDLE);
+        const bool hasError = errorHandle && errorHandle != INVALID_HANDLE_VALUE;
+        if (AttachConsole(ATTACH_PARENT_PROCESS)) {
+            FILE* stream = nullptr;
+            if (!hasOutput) freopen_s(&stream, "CONOUT$", "w", stdout);
+            if (!hasError) freopen_s(&stream, "CONOUT$", "w", stderr);
+        }
+#endif
+        return harken::hub::Cli::run(app.arguments());
+    }
+    harken::hub::FileLog::install(logRole);
+    QFile::remove(harken::hub::userDataDir() + QStringLiteral("/auth-token.bin"));
+    QFile::remove(harken::hub::userDataDir() + QStringLiteral("/auth-state.json"));
 
     for (int i = 1; i < argc; ++i) {
         if (qstrcmp(argv[i], "--check-updates") == 0) {
@@ -455,23 +235,22 @@ int main(int argc, char* argv[])
             }
 
             const QUrl serverBaseUrl =
-                VNH::ServerEndpoints::resolvedBaseUrl();
+                harken::hub::ServerEndpoints::resolvedBaseUrl();
 
-            VNH::UpdateChecker checker;
-            VNH::UpdateChecker::Options options;
-            QList<QUrl> manifestUrls = VNH::ServerEndpoints::manifestUrls(
-                serverBaseUrl, product,
-                VNH::ServerEndpoints::hostChannel());
+            harken::hub::UpdateChecker checker;
+            harken::hub::UpdateChecker::Options options;
+            QList<QUrl> manifestUrls = harken::hub::ServerEndpoints::manifestUrls(
+                serverBaseUrl, product);
             options.latestUrl = manifestUrls.takeFirst();
             options.fallbackUrls = manifestUrls;
             options.trustedHttpOrigin = serverBaseUrl;
             options.product = product;
-            options.channel = VNH::ServerEndpoints::hostChannel();
-            options.manifestPublicKey = VNH::TrustAnchors::manifestPublicKey();
+            options.channel = harken::hub::ServerEndpoints::hostChannel();
+            options.manifestPublicKey = harken::hub::TrustAnchors::manifestPublicKey();
             int exitCode = 2;
             QObject::connect(
-                &checker, &VNH::UpdateChecker::checkFinished, &app,
-                [&exitCode, &app, &product](const VNH::UpdateCheckResult& result) {
+                &checker, &harken::hub::UpdateChecker::checkFinished, &app,
+                [&exitCode, &app, &product](const harken::hub::UpdateCheckResult& result) {
                     qInfo().noquote() << "Update product:" << product;
                     if (!result.ok) {
                         qCritical().noquote()
@@ -514,14 +293,20 @@ int main(int argc, char* argv[])
         if (qstrcmp(argv[i], "--install-package") == 0) {
             QCoreApplication app(argc, argv);
             bool explicitInstall = false;
+            QString reviewedDestination;
+            QString reviewedIndexHash;
+            QString reviewedManifestHash;
             for (int j = 1; j < argc; ++j) {
+                if (j + 1 < argc && qstrcmp(argv[j], "--reviewed-destination") == 0) reviewedDestination = app.arguments().value(j + 1);
+                if (j + 1 < argc && qstrcmp(argv[j], "--reviewed-index") == 0) reviewedIndexHash = QString::fromLatin1(argv[j + 1]);
+                if (j + 1 < argc && qstrcmp(argv[j], "--reviewed-manifest") == 0) reviewedManifestHash = QString::fromLatin1(argv[j + 1]);
                 if (qstrcmp(argv[j], "--explicit-install") == 0)
                     explicitInstall = true;
             }
-            const auto outcome = VNH::InstallExecutor::run(
+            const auto outcome = harken::hub::InstallExecutor::run(
                 QString::fromLatin1(argv[i + 1]),
-                VNH::TrustAnchors::manifestPublicKey(),
-                QDateTime::currentDateTimeUtc(), explicitInstall);
+                harken::hub::TrustAnchors::manifestPublicKey(),
+                QDateTime::currentDateTimeUtc(), explicitInstall, reviewedDestination, reviewedIndexHash, reviewedManifestHash);
             if (!outcome.ok) {
                 qCritical().noquote()
                     << "Install failed:" << outcome.failureCode << outcome.error;
@@ -532,9 +317,12 @@ int main(int argc, char* argv[])
         }
         if (qstrcmp(argv[i], "--uninstall-version") == 0) {
             QCoreApplication app(argc, argv);
-            const auto outcome = VNH::UninstallExecutor::run(
+            QString reviewedSnapshot;
+            for (int j = 1; j + 1 < argc; ++j)
+                if (qstrcmp(argv[j], "--reviewed-snapshot") == 0) reviewedSnapshot = QString::fromLatin1(argv[j + 1]);
+            const auto outcome = harken::hub::UninstallExecutor::run(
                 QString::fromLatin1(argv[i + 1]),
-                QDateTime::currentDateTimeUtc());
+                QDateTime::currentDateTimeUtc(), reviewedSnapshot);
             if (!outcome.ok) {
                 qCritical().noquote() << "Uninstall failed:"
                                       << outcome.failureCode << outcome.error;
@@ -546,13 +334,17 @@ int main(int argc, char* argv[])
         if (qstrcmp(argv[i], "--repair-version") == 0) {
             QCoreApplication app(argc, argv);
             QString transactionId;
+            QString reviewedSnapshot;
+            QString reviewedManifestHash;
             for (int j = 1; j + 1 < argc; ++j) {
+                if (qstrcmp(argv[j], "--reviewed-snapshot") == 0) reviewedSnapshot = QString::fromLatin1(argv[j + 1]);
+                if (qstrcmp(argv[j], "--reviewed-manifest") == 0) reviewedManifestHash = QString::fromLatin1(argv[j + 1]);
                 if (qstrcmp(argv[j], "--transaction-id") == 0)
                     transactionId = QString::fromLatin1(argv[j + 1]);
             }
-            const auto outcome = VNH::RepairExecutor::run(
+            const auto outcome = harken::hub::RepairExecutor::run(
                 QString::fromLatin1(argv[i + 1]),
-                QDateTime::currentDateTimeUtc(), transactionId);
+                QDateTime::currentDateTimeUtc(), transactionId, reviewedSnapshot, reviewedManifestHash);
             if (!outcome.ok) {
                 qCritical().noquote() << "Repair failed:"
                                       << outcome.failureCode << outcome.error;
@@ -564,7 +356,7 @@ int main(int argc, char* argv[])
         if (qstrcmp(argv[i], "--export-logs") == 0) {
             QCoreApplication app(argc, argv);
             QString error;
-            if (!VNH::LogExporter::exportDiagnostics(
+            if (!harken::hub::LogExporter::exportDiagnostics(
                     QString::fromLocal8Bit(argv[i + 1]), &error)) {
                 qCritical().noquote() << "Log export failed:" << error;
                 return 2;
@@ -585,8 +377,8 @@ int main(int argc, char* argv[])
             report[QStringLiteral("product")] = QStringLiteral("HarkenHub");
             report[QStringLiteral("healthy")] = true;
             report[QStringLiteral("version")] = QString::fromUtf8(
-                Harken::BuildInfo::HubVersion.data(),
-                static_cast<int>(Harken::BuildInfo::HubVersion.size()));
+                harken::hub::HubVersion.data(),
+                static_cast<int>(harken::hub::HubVersion.size()));
             report[QStringLiteral("buildId")] = QString::fromUtf8(
                 Harken::BuildInfo::BuildId.data(),
                 static_cast<int>(Harken::BuildInfo::BuildId.size()));
@@ -603,10 +395,10 @@ int main(int argc, char* argv[])
     for (int i = 1; i < argc; ++i) {
         if (qstrcmp(argv[i], "--consume-update-queue") == 0) {
             QCoreApplication app(argc, argv);
-            const auto report = VNH::UpdateBridgeConsumer::run(
-                VNH::TrustAnchors::manifestPublicKey(),
+            const auto report = harken::hub::UpdateBridgeConsumer::run(
+                harken::hub::TrustAnchors::manifestPublicKey(),
                 QDateTime::currentDateTimeUtc(),
-                VNH::UpdateBridgeConsumer::defaultHooks());
+                harken::hub::UpdateBridgeConsumer::defaultHooks());
             for (const QString& detail : report.details)
                 qInfo().noquote() << detail;
             qInfo().noquote()
@@ -621,7 +413,7 @@ int main(int argc, char* argv[])
 #ifdef Q_OS_WIN
         if (qstrcmp(argv[i], "--migrate-shell-shortcuts") == 0) {
             QCoreApplication app(argc, argv);
-            VNH::migrateShellShortcuts();
+            harken::hub::migrateShellShortcuts();
             return 0;
         }
 #endif
@@ -630,14 +422,14 @@ int main(int argc, char* argv[])
             QString bridgeExePath = QCoreApplication::applicationFilePath();
 #ifdef Q_OS_WIN
             QString deployError;
-            const QString deployed = VNH::deployUpdateBridgePayload(
+            const QString deployed = harken::hub::deployUpdateBridgePayload(
                 QCoreApplication::applicationDirPath() +
                     QStringLiteral("/Updater"),
-                VNH::machineDataDir() + QStringLiteral("/Updater"),
+                harken::hub::machineDataDir() + QStringLiteral("/Updater"),
                 QString::fromUtf8(
                     Harken::BuildInfo::BuildId.data(),
                     static_cast<int>(Harken::BuildInfo::BuildId.size())),
-                VNH::updaterAclSddl(), &deployError);
+                harken::hub::updaterAclSddl(), &deployError);
             if (deployed.isEmpty()) {
                 qCritical().noquote()
                     << "Update bridge deployment failed:" << deployError;
@@ -646,31 +438,31 @@ int main(int argc, char* argv[])
             bridgeExePath = deployed;
 #endif
             QString error;
-            if (!VNH::registerUpdateBridgeTask(bridgeExePath, &error)) {
+            if (!harken::hub::registerUpdateBridgeTask(bridgeExePath, &error)) {
                 qCritical().noquote()
                     << "Update bridge registration failed:" << error;
                 return 2;
             }
 #ifdef Q_OS_WIN
-            VNH::pruneUpdateBridgePayloads(
-                VNH::machineDataDir() + QStringLiteral("/Updater"),
+            harken::hub::pruneUpdateBridgePayloads(
+                harken::hub::machineDataDir() + QStringLiteral("/Updater"),
                 bridgeExePath);
 #endif
             qInfo().noquote() << "Update bridge registered:"
-                              << VNH::updateBridgeTaskName() << "->"
+                              << harken::hub::updateBridgeTaskName() << "->"
                               << QDir::toNativeSeparators(bridgeExePath);
             return 0;
         }
         if (qstrcmp(argv[i], "--unregister-update-bridge") == 0) {
             QCoreApplication app(argc, argv);
             QString error;
-            if (!VNH::unregisterUpdateBridgeTask(&error)) {
+            if (!harken::hub::unregisterUpdateBridgeTask(&error)) {
                 qCritical().noquote()
                     << "Update bridge removal failed:" << error;
                 return 2;
             }
 #ifdef Q_OS_WIN
-            QDir(VNH::machineDataDir() + QStringLiteral("/Updater"))
+            QDir(harken::hub::machineDataDir() + QStringLiteral("/Updater"))
                 .removeRecursively();
 #endif
             qInfo().noquote() << "Update bridge unregistered";
@@ -678,7 +470,7 @@ int main(int argc, char* argv[])
         }
         if (qstrcmp(argv[i], "--await-health-handshake") == 0) {
             QCoreApplication app(argc, argv);
-            const auto report = VNH::SelfUpdateHealthCheck::runInstalledCheck(
+            const auto report = harken::hub::SelfUpdateHealthCheck::runInstalledCheck(
                 QCoreApplication::applicationFilePath(), 30000);
             if (!report.ok) {
                 qCritical().noquote()
@@ -686,8 +478,8 @@ int main(int argc, char* argv[])
                 return 2;
             }
             const QString ownVersion = QString::fromUtf8(
-                Harken::BuildInfo::HubVersion.data(),
-                static_cast<int>(Harken::BuildInfo::HubVersion.size()));
+                harken::hub::HubVersion.data(),
+                static_cast<int>(harken::hub::HubVersion.size()));
             if (report.version != ownVersion) {
                 qCritical().noquote()
                     << "Health handshake reported version" << report.version
@@ -700,20 +492,34 @@ int main(int argc, char* argv[])
         }
         if (qstrcmp(argv[i], "--diagnose-transactions") == 0) {
             QCoreApplication app(argc, argv);
-            const auto summaries = VNH::TransactionDiagnostics::summarize();
+            const auto summaries = harken::hub::TransactionDiagnostics::summarize();
             const QJsonDocument doc(
-                VNH::TransactionDiagnostics::toJson(summaries));
+                harken::hub::TransactionDiagnostics::toJson(summaries));
             fputs(doc.toJson(QJsonDocument::Indented).constData(), stdout);
             return 0;
         }
         if (qstrcmp(argv[i], "--background") == 0) {
             QApplication app(argc, argv);
-            VNH::HubIcons::ApplicationIcon iconTheme;
-            VNH::HubLocalization::install(&app);
+            harken::hub::HubIcons::installApplicationIcon(app);
+            harken::hub::HubLocalization::install(&app);
             app.setQuitOnLastWindowClosed(false);
 
-            VNH::SingleInstanceGuard guard(
-                VNH::SingleInstanceGuard::backgroundServerName());
+            const int resumeIndex = app.arguments().indexOf(QStringLiteral("--resume-after-pid"));
+            if (resumeIndex >= 0) {
+                const qint64 previousPid = app.arguments().value(resumeIndex + 1).toLongLong();
+                if (previousPid <= 0 || previousPid == QCoreApplication::applicationPid()) return 2;
+                if (harken::hub::isProcessRunning(previousPid)) {
+                    QEventLoop waiting;
+                    QTimer poll;
+                    QObject::connect(&poll, &QTimer::timeout, &waiting, [&] {
+                        if (!harken::hub::isProcessRunning(previousPid)) waiting.quit();
+                    });
+                    poll.start(250);
+                    waiting.exec();
+                }
+            }
+            harken::hub::SingleInstanceGuard guard(
+                harken::hub::SingleInstanceGuard::backgroundServerName());
             if (!guard.isPrimary()) {
                 guard.notifyPrimary(app.arguments());
                 return 0;
@@ -722,31 +528,31 @@ int main(int argc, char* argv[])
             QTimer::singleShot(0, &app, [] {
                 QSettings settings;
                 if (settings.value(QStringLiteral("registerBackgroundOnLogin"), true).toBool() &&
-                    !VNH::isBackgroundOnLoginRegistered())
-                    VNH::registerBackgroundOnLogin();
-                QThreadPool::globalInstance()->start(&VNH::refreshShellIconsIfChanged);
+                    !harken::hub::isBackgroundOnLoginRegistered())
+                    harken::hub::registerBackgroundOnLogin();
+                QThreadPool::globalInstance()->start(&harken::hub::refreshShellIconsIfChanged);
             });
 #endif
 
             const QString currentVersion = QString::fromUtf8(
-                Harken::BuildInfo::HubVersion.data(),
-                static_cast<int>(Harken::BuildInfo::HubVersion.size()));
+                harken::hub::HubVersion.data(),
+                static_cast<int>(harken::hub::HubVersion.size()));
             const bool selfUpdateFinalized =
-                VNH::HubSelfUpdate::finalizeAfterRestart(currentVersion);
+                harken::hub::HubSelfUpdate::finalizeAfterRestart(currentVersion);
             if (selfUpdateFinalized) {
-                VNH::HubSettings::setPendingUpdateNotesVersion(currentVersion);
+                harken::hub::HubSettings::setPendingUpdateNotesVersion(currentVersion);
                 qInfo().noquote()
                     << "Hub self-update to" << currentVersion
                     << "completed";
             }
-            if (VNH::HubSelfUpdate::recoverStaleElevation(
+            if (harken::hub::HubSelfUpdate::recoverStaleElevation(
                     currentVersion, QDateTime::currentDateTimeUtc()))
                 qInfo().noquote()
                     << "Recovered a stale hub update elevation request";
-            VNH::HubSelfUpdate::reconcileLandingStateAtStartup(
+            harken::hub::HubSelfUpdate::reconcileLandingStateAtStartup(
                 QDateTime::currentDateTimeUtc());
 
-            const auto reclaim = VNH::TransactionReclaimer::reclaimAtStartup(
+            const auto reclaim = harken::hub::TransactionReclaimer::reclaimAtStartup(
                 QDateTime::currentDateTimeUtc());
             for (const QString& error : reclaim.installRecoveryErrors)
                 qWarning().noquote() << "Install recovery failed:" << error;
@@ -755,10 +561,10 @@ int main(int argc, char* argv[])
                     << "Reclaimed unfinished install transaction"
                     << transactionId;
 
-            VNH::CacheCleanOptions cleanOptions;
+            harken::hub::CacheCleanOptions cleanOptions;
             for (const QString& product : {QStringLiteral("HarkenStudio"),
                                            QStringLiteral("HarkenHub")}) {
-                const auto update = VNH::UpdateStateStore::load(product);
+                const auto update = harken::hub::UpdateStateStore::load(product);
                 if (!update.downloadPath.isEmpty()) {
                     cleanOptions.protectedFiles << update.downloadPath
                         << update.downloadPath + QStringLiteral(".part")
@@ -767,26 +573,26 @@ int main(int argc, char* argv[])
                 if (!update.manifestEnvelopePath.isEmpty())
                     cleanOptions.protectedFiles << update.manifestEnvelopePath;
             }
-            VNH::CacheManager::clean(VNH::userDataDir(), cleanOptions,
+            harken::hub::CacheManager::clean(harken::hub::userDataDir(), cleanOptions,
                                      QDateTime::currentDateTimeUtc());
 
             {
-                VNH::ProjectStore pinStore;
-                if (pinStore.open(VNH::userDataDir() +
+                harken::hub::ProjectStore pinStore;
+                if (pinStore.open(harken::hub::userDataDir() +
                                   QStringLiteral("/projects.db"))) {
                     QString pinError;
-                    if (!VNH::BuildPinRegistry::refreshFromProjects(pinStore,
+                    if (!harken::hub::BuildPinRegistry::refreshFromProjects(pinStore,
                                                                     &pinError))
                         qWarning().noquote()
                             << "Build pin refresh failed:" << pinError;
                 }
             }
 
-            if (VNH::UpdateQueue::hasPendingHubUpdate() &&
-                !VNH::SingleInstanceGuard::isServerActive(
-                    VNH::SingleInstanceGuard::guiServerName())) {
+            if (harken::hub::UpdateQueue::hasPendingHubUpdate() &&
+                !harken::hub::SingleInstanceGuard::isServerActive(
+                    harken::hub::SingleInstanceGuard::guiServerName())) {
                 QString dispatchError;
-                if (!VNH::BridgeDispatcher::dispatch(&dispatchError)) {
+                if (!harken::hub::BridgeDispatcher::dispatch(&dispatchError)) {
                     qWarning().noquote()
                         << "Update bridge dispatch failed:" << dispatchError;
                 } else {
@@ -797,12 +603,11 @@ int main(int argc, char* argv[])
                 }
             }
 
-            VNH::UpdateCoordinator coordinator;
-            VNH::HubSelfUpdate selfUpdate;
-            VNH::UpdateNotifier notifier;
-            notifier.setTrayIcon(iconTheme.systemIcon());
-            QObject::connect(&iconTheme, &VNH::HubIcons::ApplicationIcon::changed,
-                             &notifier, &VNH::UpdateNotifier::setTrayIcon);
+            harken::hub::UpdateCoordinator coordinator;
+            harken::hub::HubSelfUpdate selfUpdate;
+            harken::hub::UpdateNotifier notifier;
+            notifier.setTrayIcon(app.windowIcon());
+
             notifier.attach(&coordinator);
             notifier.attach(&selfUpdate);
 
@@ -810,15 +615,15 @@ int main(int argc, char* argv[])
             hubUpdateLandingTimer.setInterval(1000);
             const auto landHubUpdate =
                 [&app, &selfUpdate,
-                 &hubUpdateLandingTimer](const VNH::UpdateStateRecord& record) {
+                 &hubUpdateLandingTimer](const harken::hub::UpdateStateRecord& record) {
                     if (record.product != QStringLiteral("HarkenHub") ||
                         record.state != QStringLiteral("AwaitingRestart") ||
-                        !VNH::HubSettings::autoSilentlyUpdateHub()) {
+                        !harken::hub::HubSettings::autoSilentlyUpdateHub()) {
                         hubUpdateLandingTimer.stop();
                         return;
                     }
-                    if (VNH::SingleInstanceGuard::isServerActive(
-                            VNH::SingleInstanceGuard::guiServerName())) {
+                    if (harken::hub::SingleInstanceGuard::isServerActive(
+                            harken::hub::SingleInstanceGuard::guiServerName())) {
                         if (!hubUpdateLandingTimer.isActive())
                             hubUpdateLandingTimer.start();
                         return;
@@ -838,7 +643,7 @@ int main(int argc, char* argv[])
                     }
                 };
             QObject::connect(&selfUpdate,
-                             &VNH::HubSelfUpdate::stateChanged, &app,
+                             &harken::hub::HubSelfUpdate::stateChanged, &app,
                              landHubUpdate);
             QObject::connect(
                 &hubUpdateLandingTimer, &QTimer::timeout, &app,
@@ -846,7 +651,7 @@ int main(int argc, char* argv[])
                     landHubUpdate(selfUpdate.currentState());
                 });
             QObject::connect(
-                &guard, &VNH::SingleInstanceGuard::activationRequested, &app,
+                &guard, &harken::hub::SingleInstanceGuard::activationRequested, &app,
                 [&app, &coordinator, &selfUpdate, &notifier,
                  &landHubUpdate](const QStringList& arguments) {
                     if (arguments.contains(QStringLiteral("--quit"))) {
@@ -855,12 +660,12 @@ int main(int argc, char* argv[])
                     }
                     if (arguments.contains(
                             QStringLiteral("--settings-changed"))) {
-                        VNH::HubLocalization::install(&app);
+                        harken::hub::HubLocalization::install(&app);
                         notifier.retranslateTray();
                         coordinator.setAutomaticDownloadEnabled(
-                            VNH::HubSettings::autoDownloadStudio());
+                            harken::hub::HubSettings::autoDownloadStudio());
                         selfUpdate.setAutomaticUpdateEnabled(
-                            VNH::HubSettings::autoSilentlyUpdateHub());
+                            harken::hub::HubSettings::autoSilentlyUpdateHub());
                         landHubUpdate(selfUpdate.currentState());
                     }
                     if (arguments.contains(QStringLiteral("--check-now"))) {
@@ -876,25 +681,25 @@ int main(int argc, char* argv[])
             bool anyStarted = false;
 
             const QUrl serverBaseUrl =
-                VNH::ServerEndpoints::resolvedBaseUrl();
+                harken::hub::ServerEndpoints::resolvedBaseUrl();
 
-            VNH::UpdateCoordinator::Options options;
+            harken::hub::UpdateCoordinator::Options options;
             options.serverBaseUrl = serverBaseUrl;
             options.manifestPublicKey =
-                VNH::TrustAnchors::manifestPublicKey();
+                harken::hub::TrustAnchors::manifestPublicKey();
             options.automaticDownloadEnabled =
-                VNH::HubSettings::autoDownloadStudio();
+                harken::hub::HubSettings::autoDownloadStudio();
             anyStarted = coordinator.start(options) || anyStarted;
 
-            VNH::HubSelfUpdate::Options hubOptions;
+            harken::hub::HubSelfUpdate::Options hubOptions;
             hubOptions.serverBaseUrl = serverBaseUrl;
             hubOptions.automaticUpdateEnabled =
-                VNH::HubSettings::autoSilentlyUpdateHub();
+                harken::hub::HubSettings::autoSilentlyUpdateHub();
             hubOptions.manifestPublicKey =
-                VNH::TrustAnchors::manifestPublicKey();
+                harken::hub::TrustAnchors::manifestPublicKey();
             hubOptions.currentVersion = QString::fromUtf8(
-                Harken::BuildInfo::HubVersion.data(),
-                static_cast<int>(Harken::BuildInfo::HubVersion.size()));
+                harken::hub::HubVersion.data(),
+                static_cast<int>(harken::hub::HubVersion.size()));
             anyStarted = selfUpdate.start(hubOptions) || anyStarted;
 
             if (app.arguments().contains(QStringLiteral("--check-now"))) {
@@ -910,12 +715,12 @@ int main(int argc, char* argv[])
             }
 
             QFileSystemWatcher handoffWatcher;
-            if (QDir(VNH::HandoffArea::rootDir()).exists())
-                handoffWatcher.addPath(VNH::HandoffArea::rootDir());
+            if (QDir(harken::hub::HandoffArea::rootDir()).exists())
+                handoffWatcher.addPath(harken::hub::HandoffArea::rootDir());
             QObject::connect(
                 &handoffWatcher, &QFileSystemWatcher::directoryChanged, &app,
                 [&app]() {
-                    if (VNH::UpdateQueue::hasPendingHubUpdate()) {
+                    if (harken::hub::UpdateQueue::hasPendingHubUpdate()) {
                         qInfo().noquote()
                             << "A hub update is queued; the background "
                                "service exits so the update bridge can land it";
@@ -937,21 +742,20 @@ int main(int argc, char* argv[])
     }
 
     QApplication app(argc, argv);
-    VNH::HubIcons::ApplicationIcon iconTheme;
-    VNH::HubLocalization::install(&app);
-    app.styleHints()->setColorScheme(Qt::ColorScheme::Dark);
+    harken::hub::HubIcons::installApplicationIcon(app);
+    harken::hub::HubLocalization::install(&app);
     if (QStyle* fusion = QStyleFactory::create(QStringLiteral("Fusion")))
         QApplication::setStyle(fusion);
     app.setOrganizationDomain(QStringLiteral("harkensound.com"));
     app.setApplicationVersion(
-        QString::fromUtf8(Harken::BuildInfo::HubVersion.data(),
-                          static_cast<int>(Harken::BuildInfo::HubVersion.size())));
+        QString::fromUtf8(harken::hub::HubVersion.data(),
+                          static_cast<int>(harken::hub::HubVersion.size())));
 
     qInfo().noquote() << "Harken Hub"
                       << QString::fromUtf8(Harken::BuildInfo::Label.data(),
                                            static_cast<int>(Harken::BuildInfo::Label.size()));
 
-    VNH::SingleInstanceGuard guard(VNH::SingleInstanceGuard::guiServerName());
+    harken::hub::SingleInstanceGuard guard(harken::hub::SingleInstanceGuard::guiServerName());
     if (!guard.isPrimary()) {
 #ifdef Q_OS_WIN
         const qint64 primaryProcessId = guard.primaryProcessId();
@@ -961,7 +765,7 @@ int main(int argc, char* argv[])
         if (guard.notifyPrimary(app.arguments()))
             return 0;
         if (!guard.retryPrimary()) {
-            VNH::MessageDialog::critical(
+            harken::hub::MessageDialog::critical(
                 nullptr, hubTr("Harken Hub"),
                 hubTr("Another Harken Hub instance is running but not "
                       "responding. Please close it and try again."));
@@ -971,13 +775,13 @@ int main(int argc, char* argv[])
 
 #ifdef Q_OS_WIN
     QTimer::singleShot(0, &app, [] {
-        QThreadPool::globalInstance()->start(&VNH::refreshShellIconsIfChanged);
+        QThreadPool::globalInstance()->start(&harken::hub::refreshShellIconsIfChanged);
     });
 #endif
 
     QList<QStringList> pendingActivations;
     const auto startupConnection = QObject::connect(
-        &guard, &VNH::SingleInstanceGuard::activationRequested,
+        &guard, &harken::hub::SingleInstanceGuard::activationRequested,
         &app, [&pendingActivations](const QStringList& arguments) {
             if (arguments.contains(QStringLiteral("--quit"))) {
                 qInfo() << "Hub received a quit request during startup";
@@ -1009,39 +813,39 @@ int main(int argc, char* argv[])
     }
 
     app.setApplicationDisplayName(QStringLiteral("Harken Hub"));
-    app.setStyleSheet(QString::fromLatin1(kStyleSheet));
+    harken::hub::HubTheme::initialize();
 
     QTimer::singleShot(0, &app, [&app]() {
         confirmConsentReady(app.arguments());
     });
-    if (!VNH::ConsentDialog::requestConsent(
-            nullptr, VNH::ConsentDialog::hubDocumentId()))
+    if (!harken::hub::ConsentDialog::requestConsent(
+            nullptr, harken::hub::ConsentDialog::hubDocumentId()))
         return 0;
 
     const bool selfUpdateFinalized =
-        VNH::HubSelfUpdate::finalizeAfterRestart(app.applicationVersion());
+        harken::hub::HubSelfUpdate::finalizeAfterRestart(app.applicationVersion());
     if (selfUpdateFinalized) {
-        VNH::HubSettings::setPendingUpdateNotesVersion(
+        harken::hub::HubSettings::setPendingUpdateNotesVersion(
             app.applicationVersion());
         qInfo().noquote() << "Hub self-update to"
                           << app.applicationVersion() << "completed";
     }
     const bool updateNotesPending =
-        VNH::HubSettings::pendingUpdateNotesVersion() ==
+        harken::hub::HubSettings::pendingUpdateNotesVersion() ==
         app.applicationVersion();
-    if (VNH::HubSelfUpdate::recoverStaleElevation(
+    if (harken::hub::HubSelfUpdate::recoverStaleElevation(
             app.applicationVersion(), QDateTime::currentDateTimeUtc()))
         qInfo().noquote()
             << "Recovered a stale hub update elevation request";
-    VNH::HubSelfUpdate::reconcileLandingStateAtStartup(
+    harken::hub::HubSelfUpdate::reconcileLandingStateAtStartup(
         QDateTime::currentDateTimeUtc());
 
     {
         QSettings settings;
         if (settings.value(QStringLiteral("registerBackgroundOnLogin"), true)
                 .toBool()) {
-            if (!VNH::isBackgroundOnLoginRegistered())
-                VNH::registerBackgroundOnLogin();
+            if (!harken::hub::isBackgroundOnLoginRegistered())
+                harken::hub::registerBackgroundOnLogin();
             QProcess::startDetached(QCoreApplication::applicationFilePath(),
                                     {QStringLiteral("--background")});
         }
@@ -1051,8 +855,8 @@ int main(int argc, char* argv[])
     if (QCoreApplication::applicationDirPath().startsWith(
             QStringLiteral("/Applications/"))) {
         QString bridgeError;
-        if (!VNH::updateBridgeTaskAvailable() &&
-            !VNH::registerUpdateBridgeTask(
+        if (!harken::hub::updateBridgeTaskAvailable() &&
+            !harken::hub::registerUpdateBridgeTask(
                 QCoreApplication::applicationFilePath(), &bridgeError))
             qWarning().noquote()
                 << "Update bridge registration failed:" << bridgeError;
@@ -1060,7 +864,7 @@ int main(int argc, char* argv[])
 #endif
 
     const auto reclaim =
-        VNH::TransactionReclaimer::reclaimAtStartup(QDateTime::currentDateTimeUtc());
+        harken::hub::TransactionReclaimer::reclaimAtStartup(QDateTime::currentDateTimeUtc());
     for (const QString& error : reclaim.installRecoveryErrors)
         qWarning().noquote() << "Install recovery failed:" << error;
     for (const QString& transactionId : reclaim.reclaimedTransactionIds)
@@ -1070,18 +874,18 @@ int main(int argc, char* argv[])
         qWarning().noquote()
             << "Reclaimed transaction could not be journaled" << transactionId;
 
-    VNH::ProjectStore store;
+    harken::hub::ProjectStore store;
     const QString databasePath =
-        VNH::userDataDir() + QStringLiteral("/projects.db");
+        harken::hub::userDataDir() + QStringLiteral("/projects.db");
     if (!store.open(databasePath))
         qWarning().noquote() << "ProjectStore:" << store.lastError();
     else {
         QString pinError;
-        if (!VNH::BuildPinRegistry::refreshFromProjects(store, &pinError))
+        if (!harken::hub::BuildPinRegistry::refreshFromProjects(store, &pinError))
             qWarning().noquote() << "Build pin refresh failed:" << pinError;
     }
 
-    const auto activateHubWindow = [](VNH::HubWindow& window,
+    const auto activateHubWindow = [](harken::hub::HubWindow& window,
                                       const QStringList& arguments) {
         window.setWindowState(window.windowState() & ~Qt::WindowMinimized);
         window.show();
@@ -1118,10 +922,10 @@ int main(int argc, char* argv[])
     const auto runHubWindow = [&app, &guard, &store, activateHubWindow,
                                updateNotesPending, startupConnection,
                                &pendingActivations](bool showVersions) -> int {
-        VNH::HubWindow window(&store);
+        harken::hub::HubWindow window(&store);
 
         QObject::disconnect(startupConnection);
-        QObject::connect(&guard, &VNH::SingleInstanceGuard::activationRequested, &window,
+        QObject::connect(&guard, &harken::hub::SingleInstanceGuard::activationRequested, &window,
                          [&window, activateHubWindow](const QStringList& arguments) {
                              if (arguments.contains(QStringLiteral("--quit"))) {
                                  qInfo() << "Hub GUI received a quit request";
@@ -1157,11 +961,11 @@ int main(int argc, char* argv[])
             app.arguments().contains(QStringLiteral("--after-update"))) {
             window.restoreAfterUpdate();
             QTimer::singleShot(300, &window,
-                               &VNH::HubWindow::restoreAfterUpdate);
+                               &harken::hub::HubWindow::restoreAfterUpdate);
         }
         if (updateNotesPending) {
             QTimer::singleShot(450, &window,
-                               &VNH::HubWindow::showReleaseNotesAfterUpdate);
+                               &harken::hub::HubWindow::showReleaseNotesAfterUpdate);
         }
         for (const QStringList& arguments : std::as_const(pendingActivations))
             activateHubWindow(window, arguments);

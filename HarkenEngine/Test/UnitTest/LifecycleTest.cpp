@@ -6,6 +6,7 @@
 #include "Common/TestUtil.h"
 #include "UnitTest/AllocationProbe.h"
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 
 #include "Engine.h"
 #include "harken/core/AllocGuard.h"
@@ -185,6 +186,7 @@ TEST(MiniaudioStopHandoff,
     EXPECT_EQ(2u, injection.callCount.load(std::memory_order_acquire));
 }
 
+#if HARKEN_ENGINE_DEV
 TEST(MonitorSelectionPool, CaptureCopiesCauseForkAndCancellationDoNotAllocate) {
     harken::VoiceLedger ledger(1, 1, 3);
     harken::VoiceLedger::MonitorSelectionBacking monitorBacking;
@@ -217,6 +219,7 @@ TEST(MonitorSelectionPool, CaptureCopiesCauseForkAndCancellationDoNotAllocate) {
     EXPECT_TRUE(forked);
     EXPECT_EQ(before, allocation_probe::count);
 }
+#endif
 
 TEST(NullBackendLifecycle, InitRenderBlocksTerm) {
     const VnConfig config = MakeNullConfig();

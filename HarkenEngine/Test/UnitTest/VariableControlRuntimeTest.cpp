@@ -96,7 +96,7 @@ struct FrontierSideHarness {
         config.maxScheduledTransactions = config.maxIngressTransactionsPerQuantum = 4;
         config.maxTransactionSpanFrames = 256;
         config.maxFrameBatchesPerQuantum = config.maxEventsPerQuantum = config.maxTransactionEvents = 8;
-        config.maxCurrentSlicesPerQuantum = config.maxPlan03GroupHeadersPerPage = config.maxArmsPerGroup = 2;
+        config.maxCurrentSlicesPerQuantum = config.maxScheduleGroupHeadersPerPage = config.maxArmsPerGroup = 2;
         ASSERT_TRUE(pool.Reset(config, 0, 1));
         if (initial != nullptr) {
             harken::PreparedVariableControlInstance original;
@@ -113,10 +113,10 @@ struct FrontierSideHarness {
             ASSERT_EQ(harken::VariableControlInstanceStatus::Ok,
                 instances.PrepareSide(instance, side, decision, bank));
         }
-        harken::Plan03GroupSliceInput input{};
+        harken::ScheduleGroupSliceInput input{};
         input.decision = decision;
-        ASSERT_EQ(harken::Plan03GroupReserveStatus::Committed, pool.ReservePlan03GroupSlice(input, arms));
-        ASSERT_EQ(1u, pool.CaptureLivePlan03Groups(&group, 1));
+        ASSERT_EQ(harken::ScheduleGroupReserveStatus::Committed, pool.ReserveScheduleGroupSlice(input, arms));
+        ASSERT_EQ(1u, pool.CaptureLiveScheduleGroups(&group, 1));
         harken::FrontierGroupBinding binding{};
         binding.role = harken::FrontierGroupRole::Future;
         binding.entry = {{0, 1}, 1, {1, 1, 0, 0, 1, 1, 0, 1}};
@@ -127,11 +127,11 @@ struct FrontierSideHarness {
         binding.operation.world = binding.operation.transport = 1;
         binding.variableSide = {instance.slot, instance.generation, static_cast<std::uint8_t>(side),
             2, bank.slot, bank.generation};
-        ASSERT_TRUE(pool.BindPlan03GroupFrontier(group.identity, binding));
-        ASSERT_TRUE(pool.ResolvePlan03GroupSliceProducer(group.identity, &group));
+        ASSERT_TRUE(pool.BindScheduleGroupFrontier(group.identity, binding));
+        ASSERT_TRUE(pool.ResolveScheduleGroupSliceProducer(group.identity, &group));
         ASSERT_TRUE(instances.BindFrontierSide(instance, *group.frontier, pool));
         pool.Publish(64, nullptr, nullptr, &arms);
-        ASSERT_TRUE(pool.NotePlan03GroupReadRt(group.identity, 1));
+        ASSERT_TRUE(pool.NoteScheduleGroupReadRt(group.identity, 1));
     }
     static bool Validate(void*) noexcept { return true; }
     static void AfterClaim(void* opaque) noexcept {
@@ -153,7 +153,7 @@ struct FrontierSideHarness {
     harken::VariableControlSide selected{};
     harken::DecisionToken decision{3, 4};
     harken::BankVersionToken bank{2, 3};
-    harken::Plan03PageGroupView group{};
+    harken::SchedulePageGroupView group{};
     harken::VariableControlInstanceTable::FrontierSideProof proof;
 };
 
@@ -173,8 +173,8 @@ TEST(VariableControlInstance, FrontierActualSideClaimDefersCancelAndRetainsOrigi
         EXPECT_EQ(harken::VariableControlSideState::Committed, actual.state);
         EXPECT_EQ(h.bank.generation, actual.lastApplied.generation);
         EXPECT_FALSE(h.instances.Release(h.instance));
-        EXPECT_FALSE(h.pool.DetachPlan03GroupFrontier(h.group.identity, 1));
-        ASSERT_TRUE(h.pool.DetachPlan03GroupFrontier(h.group.identity, 2));
+        EXPECT_FALSE(h.pool.DetachScheduleGroupFrontier(h.group.identity, 1));
+        ASSERT_TRUE(h.pool.DetachScheduleGroupFrontier(h.group.identity, 2));
         EXPECT_TRUE(h.instances.Release(h.instance));
     }
 }

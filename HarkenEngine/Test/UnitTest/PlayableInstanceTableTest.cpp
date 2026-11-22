@@ -385,6 +385,7 @@ TEST(PlayableInstanceTable, WithdrawUnpublishedParentLinkPreservesIdentityAndSib
     EXPECT_EQ(after, table.NextSibling(before));
 }
 
+#if HARKEN_ENGINE_DEV
 TEST(PlayableInstanceTable, StartedObservationIsOncePerCommittedSoundGeneration) {
     PlayableInstanceTable table(1);
     EXPECT_FALSE(table.HasPendingStartedObservations());
@@ -425,7 +426,9 @@ TEST(PlayableInstanceTable, StartedObservationIsOncePerCommittedSoundGeneration)
     EXPECT_FALSE(table.HasPendingStartedObservations());
     RetireFully(table, container);
 }
+#endif
 
+#if HARKEN_ENGINE_DEV
 TEST(PlayableInstanceTable, PreparedProvenanceIsNotPublishedAndClearsOnRollbackReuse) {
     PlayableInstanceTable table(1);
     harken::PreparedPlayableInstance prepared;
@@ -456,7 +459,9 @@ TEST(PlayableInstanceTable, PreparedProvenanceIsNotPublishedAndClearsOnRollbackR
     EXPECT_EQ(0u, facts.playableProvenance.knownFlags);
     RetireFully(table, next);
 }
+#endif
 
+#if HARKEN_ENGINE_DEV
 TEST(PlayableInstanceTable, PendingStartedObservationsFollowActualRollbackAndRecommit) {
     PlayableInstanceTable table(3);
     harken::PreparedPlayableInstance prepared;
@@ -498,7 +503,9 @@ TEST(PlayableInstanceTable, PendingStartedObservationsFollowActualRollbackAndRec
     RetireFully(table, direct);
     EXPECT_FALSE(table.HasPendingStartedObservations());
 }
+#endif
 
+#if HARKEN_ENGINE_DEV
 TEST(PlayableInstanceTable, PendingPlaybackEndsAreOncePerCommittedSoundGeneration) {
     PlayableInstanceTable table(2);
     harken::PreparedPlayableInstance prepared;
@@ -531,7 +538,9 @@ TEST(PlayableInstanceTable, PendingPlaybackEndsAreOncePerCommittedSoundGeneratio
     EXPECT_FALSE(table.HasPendingPlaybackEndObservations());
     RetireFully(table, container);
 }
+#endif
 
+#if HARKEN_ENGINE_DEV
 TEST(PlayableInstanceTable, PendingPlaybackEndsFollowSuccessfulRollbackAndRecommit) {
     PlayableInstanceTable table(1);
     harken::PreparedPlayableInstance prepared;
@@ -555,7 +564,9 @@ TEST(PlayableInstanceTable, PendingPlaybackEndsFollowSuccessfulRollbackAndRecomm
     RetireFully(table, handle);
     EXPECT_FALSE(table.HasPendingPlaybackEndObservations());
 }
+#endif
 
+#if HARKEN_ENGINE_DEV
 TEST(PlayableInstanceTable, PendingPlaybackEndsRetireAndCancelWithoutSurvivingReuse) {
     PlayableInstanceTable table(2);
     harken::PreparedPlayableInstance prepared;
@@ -576,6 +587,7 @@ TEST(PlayableInstanceTable, PendingPlaybackEndsRetireAndCancelWithoutSurvivingRe
     RetireFully(table, next);
     EXPECT_FALSE(table.HasPendingPlaybackEndObservations());
 }
+#endif
 
 TEST(PlayableInstanceTable, AcquiredInstanceReportsItsKindAndParent)
 {
@@ -2761,6 +2773,7 @@ TEST(PlayableInstanceTable, PreparedChildLinksOnlyOnCommit)
     RetireFully(table, parent);
 }
 
+#if HARKEN_ENGINE_DEV
 TEST(PlayableInstanceTable, PreparedCommitHeldFreezesActualInputsAliasesAndSourceOwnership) {
     PlayableInstanceTable table(3);
     harken::PreparedPlayableInstance root, child;
@@ -2869,6 +2882,7 @@ TEST(PlayableInstanceTable, PreparedCommitHeldFreezesActualInputsAliasesAndSourc
     EXPECT_EQ(0u, table.LiveCount());
     EXPECT_EQ(0u, table.ConstructedEntryCount() - table.FreeCount());
 }
+#endif
 
 TEST(PlayableInstanceTable, PreparedCommitAcceptsRealRetiredReuseButConsumedGrantDoesNotReawaken) {
     PlayableInstanceTable table(1);

@@ -5,7 +5,7 @@
 #include "ThemeAssetCatalog.h"
 #include "ThemeManager.h"
 
-namespace VNX {
+namespace harken::studio {
 
 QIcon iconForItemType(ProjectItem::Type type)
 {

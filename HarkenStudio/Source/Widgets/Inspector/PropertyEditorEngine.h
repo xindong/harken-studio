@@ -24,7 +24,7 @@
 class QStackedWidget;
 class QCheckBox;
 
-namespace VNX {
+namespace harken::studio {
 
 struct ProjectItem;
 class IComponent;
@@ -53,6 +53,7 @@ public:
     void releasePage();
 
     void bindItem(ProjectItem* item);
+    void setConversionSelection(const QList<ProjectItem*>& items);
 
     QJsonObject buildSetItemPropertyArgs(
         const QString& field,
@@ -155,7 +156,7 @@ private:
     void setGroupFieldWidgetValue(const FieldBinding& binding, const QVariant& value);
     QVariant groupFieldValue(const QString& field, const FieldGroupInspectorView* preview = nullptr) const;
     bool groupReferenceSelectable(const QString& field, uint32_t candidate,
-                                  harkenprojectschema::SendMode mode = harkenprojectschema::SendMode::Mix) const;
+                                  harken::studio::project_schema::SendMode mode = harken::studio::project_schema::SendMode::Mix) const;
     bool canEditField(const FieldBinding& binding) const;
     bool groupContextMatches(const FieldGroupInspectorView& view, quint64 revision) const;
     void commitFieldChange(const QString& field, const QVariant& value,
@@ -177,6 +178,8 @@ private:
     std::vector<SectionBinding> sectionBindings_;
     std::map<FieldGroupId, GroupBinding> groupBindings_;
     std::map<QUuid, DefinitionFieldGroups> groupPreviews_;
+    QVector<QUuid> conversionSelection_;
+    std::vector<FieldGroupInspectorView> conversionViews_;
     quint64 groupEditRevision_ = 0;
     ProjectItem* currentItem_ = nullptr;
     bool updating_ = false;

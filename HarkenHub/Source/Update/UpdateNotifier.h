@@ -14,7 +14,7 @@ class QMenu;
 class QSystemTrayIcon;
 class QTimer;
 
-namespace VNH {
+namespace harken::hub {
 
 class HubSelfUpdate;
 class UpdateCoordinator;

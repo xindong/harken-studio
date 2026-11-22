@@ -19,7 +19,7 @@
 
 #include <algorithm>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 
@@ -102,7 +102,7 @@ const ParameterBindingDef* findBinding(const ProjectItem* host,
 {
     const auto* mix = BindingEditing::ledgerHost(host, selection.address);
     if (!mix) return nullptr;
-    if (selection.bindingStableId != harkenstudio::ObjectId{})
+    if (selection.bindingStableId != harken::studio::types::ObjectId{})
         return mix->bindings.find(selection.bindingStableId);
     return mix->bindings.findFirst(selection.address);
 }

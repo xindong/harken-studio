@@ -18,23 +18,23 @@
 #include <utility>
 #include <vector>
 
-using VNX::ProjectItem;
+using harken::studio::ProjectItem;
 
 namespace {
 
-const std::vector<std::pair<ProjectItem::Type, const VNX::PropertySchema*>>& itemTypeSchemas()
+const std::vector<std::pair<ProjectItem::Type, const harken::studio::PropertySchema*>>& itemTypeSchemas()
 {
-    static const std::vector<std::pair<ProjectItem::Type, const VNX::PropertySchema*>> rows = {
-        {ProjectItem::Type::Sound, &VNX::soundInspectorSchema()},
-        {ProjectItem::Type::Container, &VNX::containerInspectorSchema()},
-        {ProjectItem::Type::Track, &VNX::trackInspectorSchema()},
-        {ProjectItem::Type::Segment, &VNX::segmentInspectorSchema()},
-        {ProjectItem::Type::Layer, &VNX::layerInspectorSchema()},
-        {ProjectItem::Type::Bus, &VNX::busInspectorSchema()},
-        {ProjectItem::Type::Action, &VNX::actionInspectorSchema()},
-        {ProjectItem::Type::Variable, &VNX::variableInspectorSchema()},
-        {ProjectItem::Type::Attenuation, &VNX::attenuationInspectorSchema()},
-        {ProjectItem::Type::Effect, &VNX::effectInspectorSchema()},
+    static const std::vector<std::pair<ProjectItem::Type, const harken::studio::PropertySchema*>> rows = {
+        {ProjectItem::Type::Sound, &harken::studio::soundInspectorSchema()},
+        {ProjectItem::Type::Container, &harken::studio::containerInspectorSchema()},
+        {ProjectItem::Type::Track, &harken::studio::trackInspectorSchema()},
+        {ProjectItem::Type::Segment, &harken::studio::segmentInspectorSchema()},
+        {ProjectItem::Type::Layer, &harken::studio::layerInspectorSchema()},
+        {ProjectItem::Type::Bus, &harken::studio::busInspectorSchema()},
+        {ProjectItem::Type::Action, &harken::studio::actionInspectorSchema()},
+        {ProjectItem::Type::Variable, &harken::studio::variableInspectorSchema()},
+        {ProjectItem::Type::Attenuation, &harken::studio::attenuationInspectorSchema()},
+        {ProjectItem::Type::Effect, &harken::studio::effectInspectorSchema()},
     };
     return rows;
 }
@@ -44,15 +44,15 @@ const std::vector<std::pair<ProjectItem::Type, const VNX::PropertySchema*>>& ite
 TEST(InspectorRowSetGold, EveryRootFieldHasOneRegisteredSectionAndAUniqueIdentity)
 {
     for (const auto& row : itemTypeSchemas()) {
-        SCOPED_TRACE(VNX::ItemTypeCatalog::canonicalName(row.first).toStdString());
-        EXPECT_NO_THROW(VNX::validateInspectorSchema(*row.second));
+        SCOPED_TRACE(harken::studio::ItemTypeCatalog::canonicalName(row.first).toStdString());
+        EXPECT_NO_THROW(harken::studio::validateInspectorSchema(*row.second));
     }
 
-    auto invalid = VNX::soundInspectorSchema();
-    invalid.front().section = VNX::PropertySection::None;
-    EXPECT_THROW(VNX::validateInspectorSchema(invalid), std::invalid_argument);
+    auto invalid = harken::studio::soundInspectorSchema();
+    invalid.front().section = harken::studio::PropertySection::None;
+    EXPECT_THROW(harken::studio::validateInspectorSchema(invalid), std::invalid_argument);
 
-    invalid = VNX::soundInspectorSchema();
+    invalid = harken::studio::soundInspectorSchema();
     invalid.push_back(invalid.front());
-    EXPECT_THROW(VNX::validateInspectorSchema(invalid), std::invalid_argument);
+    EXPECT_THROW(harken::studio::validateInspectorSchema(invalid), std::invalid_argument);
 }

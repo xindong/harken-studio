@@ -10,7 +10,7 @@
 #include <QListWidget>
 #include <QPushButton>
 
-namespace VNX {
+namespace harken::studio {
 
 ProjectPlatformDialog::ProjectPlatformDialog(QWidget* parent)
     : BaseDialog(parent)
@@ -49,7 +49,6 @@ ProjectPlatformDialog::ProjectPlatformDialog(QWidget* parent)
         platform_ = {};
         platform_.basePlatform = static_cast<BasePlatform>(platforms->item(row)->data(Qt::UserRole).toInt());
         platform_.name = ProjectPlatformSemantics::basePlatformName(platform_.basePlatform);
-        platform_.profile = ProjectPlatformProfile::fromBasePlatform(platform_.basePlatform);
         preview->setPlatform(platform_);
     });
     platforms->setCurrentRow(0);

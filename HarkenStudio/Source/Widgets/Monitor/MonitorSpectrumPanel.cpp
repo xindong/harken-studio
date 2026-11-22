@@ -6,7 +6,7 @@
 #include <QLabel>
 #include <QVBoxLayout>
 
-namespace VNX {
+namespace harken::studio {
 
 MonitorSpectrumPanel::MonitorSpectrumPanel(QWidget* parent)
     : QWidget(parent)
@@ -108,4 +108,4 @@ void MonitorSpectrumPanel::onSharedCursor(const MonitorCursorSnapshot&)
     refreshFace();
 }
 
-} // namespace VNX
+} // namespace harken::studio

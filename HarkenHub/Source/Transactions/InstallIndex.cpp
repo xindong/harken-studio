@@ -12,7 +12,7 @@
 
 #include <algorithm>
 
-namespace VNH {
+namespace harken::hub {
 
 namespace {
 
@@ -51,7 +51,6 @@ InstallIndexSnapshot parseIndex(const QJsonObject& root)
             {"installPath", &InstalledVersionRecord::installPath, false},
             {"packageHash", &InstalledVersionRecord::packageHash, false},
             {"packageManifestHash", &InstalledVersionRecord::packageManifestHash, true},
-            {"capabilitiesHash", &InstalledVersionRecord::capabilitiesHash, true},
             {"installedAt", &InstalledVersionRecord::installedAt, false},
             {"healthState", &InstalledVersionRecord::healthState, false},
         };
@@ -128,7 +127,6 @@ bool saveIndex(const InstallIndexSnapshot& data, QString* error)
         object[QStringLiteral("packageHash")] = record.packageHash;
         object[QStringLiteral("packageManifestHash")] =
             record.packageManifestHash;
-        object[QStringLiteral("capabilitiesHash")] = record.capabilitiesHash;
         object[QStringLiteral("installedAt")] = record.installedAt;
         object[QStringLiteral("healthState")] = record.healthState;
         installed.append(object);

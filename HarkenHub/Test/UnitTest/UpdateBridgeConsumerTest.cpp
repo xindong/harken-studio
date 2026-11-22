@@ -24,11 +24,11 @@
 
 #include <memory>
 
-using VNH::HandoffArea;
-using VNH::InstallIndex;
-using VNH::PackageReader;
-using VNH::UpdateBridgeConsumer;
-using VNH::UpdateQueue;
+using harken::hub::HandoffArea;
+using harken::hub::InstallIndex;
+using harken::hub::PackageReader;
+using harken::hub::UpdateBridgeConsumer;
+using harken::hub::UpdateQueue;
 using HarkenHubTest::baseManifestPayload;
 using HarkenHubTest::makeKeypair;
 using HarkenHubTest::signEnvelope;
@@ -66,7 +66,7 @@ QString buildStudioPackage(const QString& path)
 
     QJsonArray files;
     QJsonObject binaryRecord;
-    binaryRecord[QStringLiteral("path")] = VNH::studioBinaryRelativePath();
+    binaryRecord[QStringLiteral("path")] = harken::hub::studioBinaryRelativePath();
     binaryRecord[QStringLiteral("size")] = binary.size();
     binaryRecord[QStringLiteral("sha256")] =
         QString::fromLatin1(sha256Hex(binary));
@@ -85,7 +85,7 @@ QString buildStudioPackage(const QString& path)
     capabilities[QStringLiteral("capabilitiesVersion")] = 2;
 
     const std::vector<TestEntry> entries = {
-        {VNH::studioBinaryRelativePath().toUtf8(), binary},
+        {harken::hub::studioBinaryRelativePath().toUtf8(), binary},
         {QByteArrayLiteral("package-manifest.json"),
          QJsonDocument(manifest).toJson(QJsonDocument::Compact)},
         {QByteArrayLiteral("capabilities.json"),
@@ -201,7 +201,7 @@ protected:
 TEST_F(UpdateBridgeConsumerTest, ConsumesQueuedStudioInstall)
 {
     const QString transactionId = queueStudioTransaction();
-    ASSERT_TRUE(QDir().mkpath(VNH::TransactionJournal::filePath()));
+    ASSERT_TRUE(QDir().mkpath(harken::hub::TransactionJournal::filePath()));
 
     const auto report =
         UpdateBridgeConsumer::run(keys.publicKey, kNow, hooks);
@@ -228,7 +228,7 @@ TEST_F(UpdateBridgeConsumerTest, StudioInstallCannotReclaimAnActiveHubInstaller)
     hooks.runHubInstaller = [&](const QString& installerPath, const QString&) {
         EXPECT_TRUE(QFileInfo::exists(installerPath));
         const QByteArray originalHash = PackageReader::fileSha256Hex(installerPath).toUtf8();
-        const auto installed = VNH::InstallExecutor::run(queueStudioTransaction(), keys.publicKey, kNow);
+        const auto installed = harken::hub::InstallExecutor::run(queueStudioTransaction(), keys.publicKey, kNow);
         studioInstalled = installed.ok;
         EXPECT_TRUE(installed.ok) << installed.error.toStdString();
         EXPECT_TRUE(QFileInfo::exists(installerPath));
@@ -243,7 +243,7 @@ TEST_F(UpdateBridgeConsumerTest, StudioInstallCannotReclaimAnActiveHubInstaller)
 
 TEST_F(UpdateBridgeConsumerTest, RetriesUnpublishedResultsWithoutRepeatingTheInstallation)
 {
-    ASSERT_TRUE(QDir().mkpath(VNH::TransactionJournal::filePath()));
+    ASSERT_TRUE(QDir().mkpath(harken::hub::TransactionJournal::filePath()));
     for (const bool damaged : {true, false}) {
         const auto transaction = queueStudioTransaction();
         if (damaged) {
@@ -298,7 +298,7 @@ TEST_F(UpdateBridgeConsumerTest, DiscardsOrphanedQueueMarker)
 TEST_F(UpdateBridgeConsumerTest, PersistsHubInstallLogWithRotation)
 {
     const QString logsDir =
-        VNH::machineDataDir() + QStringLiteral("/logs");
+        harken::hub::machineDataDir() + QStringLiteral("/logs");
     ASSERT_TRUE(QDir().mkpath(logsDir));
     for (int index = 0; index < 6; ++index) {
         QFile seed(logsDir +
@@ -327,8 +327,8 @@ TEST_F(UpdateBridgeConsumerTest, PersistsHubInstallLogWithRotation)
 
 TEST_F(UpdateBridgeConsumerTest, FallsBackToStagingLogWhenLogsDirUnavailable)
 {
-    ASSERT_TRUE(QDir().mkpath(VNH::machineDataDir()));
-    QFile blocker(VNH::machineDataDir() + QStringLiteral("/logs"));
+    ASSERT_TRUE(QDir().mkpath(harken::hub::machineDataDir()));
+    QFile blocker(harken::hub::machineDataDir() + QStringLiteral("/logs"));
     ASSERT_TRUE(blocker.open(QIODevice::WriteOnly));
     blocker.write(QByteArrayLiteral("x"));
     blocker.close();
@@ -363,7 +363,7 @@ TEST_F(UpdateBridgeConsumerTest, InstallsQueuedHubUpdateAndRestartsGui)
 
     EXPECT_FALSE(QFile::exists(HandoffArea::packagePath(transactionId)));
     EXPECT_FALSE(QFile::exists(HandoffArea::queuePath(transactionId)));
-    QFile journal(VNH::TransactionJournal::filePath());
+    QFile journal(harken::hub::TransactionJournal::filePath());
     ASSERT_TRUE(journal.open(QIODevice::ReadOnly));
     EXPECT_TRUE(journal.readAll().contains(QByteArrayLiteral("\"Installed\"")));
 }
@@ -416,7 +416,7 @@ TEST_F(UpdateBridgeConsumerTest, RejectsTamperedHubInstaller)
     EXPECT_TRUE(installerRuns.isEmpty());
     EXPECT_TRUE(restartRequests.isEmpty());
     EXPECT_FALSE(QFile::exists(HandoffArea::packagePath(transactionId)));
-    QFile journal(VNH::TransactionJournal::filePath());
+    QFile journal(harken::hub::TransactionJournal::filePath());
     ASSERT_TRUE(journal.open(QIODevice::ReadOnly));
     EXPECT_TRUE(
         journal.readAll().contains(QByteArrayLiteral("PackageRejected")));
@@ -439,7 +439,7 @@ TEST_F(UpdateBridgeConsumerTest, RetriesRestartAndJournalsPersistentFailure)
     EXPECT_EQ(report.installed, 1);
     EXPECT_EQ(restartAttempts, 3);
     EXPECT_EQ(report.failed, 1);
-    QFile journal(VNH::TransactionJournal::filePath());
+    QFile journal(harken::hub::TransactionJournal::filePath());
     ASSERT_TRUE(journal.open(QIODevice::ReadOnly));
     const QByteArray entries = journal.readAll();
     EXPECT_TRUE(entries.contains(QByteArrayLiteral("RestartFailed")));
@@ -460,7 +460,7 @@ TEST_F(UpdateBridgeConsumerTest, RetriesUntilStartupIsConfirmed)
     EXPECT_EQ(attempts, 2);
     EXPECT_EQ(report.installed, 1);
     EXPECT_EQ(report.failed, 0);
-    QFile journal(VNH::TransactionJournal::filePath());
+    QFile journal(harken::hub::TransactionJournal::filePath());
     ASSERT_TRUE(journal.open(QIODevice::ReadOnly));
     const QByteArray entries = journal.readAll();
     EXPECT_TRUE(entries.contains(QByteArrayLiteral("\"Installed\"")));
@@ -476,7 +476,7 @@ TEST_F(UpdateBridgeConsumerTest, ReportsInstallerFailureWithoutRestart)
         UpdateBridgeConsumer::run(keys.publicKey, kNow, hooks);
     EXPECT_EQ(report.failed, 1);
     EXPECT_TRUE(restartRequests.isEmpty());
-    QFile journal(VNH::TransactionJournal::filePath());
+    QFile journal(harken::hub::TransactionJournal::filePath());
     ASSERT_TRUE(journal.open(QIODevice::ReadOnly));
     EXPECT_TRUE(
         journal.readAll().contains(QByteArrayLiteral("BridgeInstallFailed")));
@@ -492,7 +492,7 @@ TEST_F(UpdateBridgeConsumerTest, TreatsRebootRequiredInstallAsSuccess)
     EXPECT_EQ(report.installed, 1);
     EXPECT_EQ(report.failed, 0);
     ASSERT_EQ(restartRequests.size(), 1);
-    QFile journal(VNH::TransactionJournal::filePath());
+    QFile journal(harken::hub::TransactionJournal::filePath());
     ASSERT_TRUE(journal.open(QIODevice::ReadOnly));
     const QByteArray entries = journal.readAll();
     EXPECT_TRUE(entries.contains(QByteArrayLiteral("\"Installed\"")));

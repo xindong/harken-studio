@@ -11,7 +11,7 @@
 #include <QJsonObject>
 #include <QTemporaryDir>
 
-using VNH::ConsentStore;
+using harken::hub::ConsentStore;
 
 namespace {
 

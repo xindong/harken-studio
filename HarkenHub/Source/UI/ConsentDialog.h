@@ -4,7 +4,7 @@
 #include <QString>
 #include <QStringList>
 
-namespace VNH {
+namespace harken::hub {
 
 class ConsentDialog : public QDialog
 {

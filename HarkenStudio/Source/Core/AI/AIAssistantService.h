@@ -19,7 +19,7 @@
 #include <memory>
 #include <optional>
 
-namespace VNX {
+namespace harken::studio {
 
 class IAIConversationStore;
 class AIDurableMemoryService;
@@ -31,7 +31,6 @@ class AIAssistantService : public QObject
 public:
     using SecretLoader = std::function<QString(const QString&, const QString&)>;
     using SettingsValueLoader = AIAgentConfigStore::ValueLoader;
-    using Clock = std::function<qint64()>;
 
     explicit AIAssistantService(IPCServer* ipc, QObject* parent = nullptr);
     ~AIAssistantService() override;
@@ -40,8 +39,6 @@ public:
     bool unrestrictedMode() const;
     void setSecretLoader(SecretLoader loader);
     void setSettingsValueLoaderForTesting(SettingsValueLoader loader);
-    void setClockForTesting(Clock clock);
-    void setExecutionLimitsForTesting(int maxToolExecutions, int maxModelRounds);
     void setConversationStore(std::shared_ptr<IAIConversationStore> store);
     void setConversationSessionStore(
         std::shared_ptr<IAIConversationSessionStore> store);
@@ -146,7 +143,6 @@ private:
     IPCServer::IPCDispatchContext makeAIDispatchContext(
         const QString& requestId, const QString& permissionProfile) const;
     void resetTurnRuntime(TurnState nextState);
-    qint64 nowMs() const;
     void emitStepEvent(AIStepPhase phase, const QString& command = QString(),
                        const QString& requestId = QString());
 
@@ -159,7 +155,6 @@ private:
     std::shared_ptr<IAIConversationSessionStore> conversationSessionStore_;
     std::shared_ptr<AIDurableMemoryService> durableMemoryService_;
     std::shared_ptr<IAIDurableMemoryRetriever> durableMemoryRetriever_;
-    Clock clock_;
     quint64 nextRequestNumber_ = 1;
     TurnState turnState_ = TurnState::Idle;
     bool unrestrictedMode_ = true;
@@ -188,11 +183,6 @@ private:
     int activeHistoryMessageCount_ = 0;
     int toolExecutions_ = 0;
     int modelRounds_ = 0;
-    // Per-turn work budget. Large enough that ordinary multi-step tasks finish,
-    // while still capping runaway loops; the repeated-read and whole-turn-deadline
-    // guards remain the primary brakes. Overridable in tests.
-    int maxToolExecutions_ = 100;
-    int maxModelRounds_ = 100;
     int aggregateResultBytes_ = 0;
     qint64 turnDeadlineMs_ = 0;
     qint64 confirmationWaitStartedMs_ = 0;

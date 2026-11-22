@@ -6,6 +6,7 @@
 // both the snapshot counter and the log callback, the poisoned-commit
 // drop counter, and a concurrent pump/capture stress that any torn read
 // would break.
+#include <harken/HarkenDevelopment.h>
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/TestUtil.h"
 

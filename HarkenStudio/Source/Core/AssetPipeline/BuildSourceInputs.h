@@ -6,7 +6,7 @@
 
 class QTemporaryDir;
 
-namespace VNX {
+namespace harken::studio {
 
 class BuildSourceInput
 {

@@ -3,7 +3,7 @@
 #include <QString>
 #include <QIcon>
 
-namespace VNH {
+namespace harken::hub {
 
 inline constexpr wchar_t hubAppUserModelId[] = L"HarkenSound.HarkenHub";
 

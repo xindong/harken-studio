@@ -13,6 +13,7 @@ namespace Harken
     /// A refused Begin preserves caller ownership and allows another attempt.
     /// Use a distinct lease object when sharing an underlying resource.
     /// </summary>
+    [Obsolete("Studio does not export streaming resources. StreamSources will be removed in the next version.")]
     public abstract class StreamByteSource : IDisposable
     {
         int claimed;
@@ -29,6 +30,7 @@ namespace Harken
     /// one ReadAt only. Retained managed views report cancellation after return
     /// and cannot call the expired native context, even from another thread.
     /// </summary>
+    [Obsolete("Studio does not export streaming resources. StreamSources will be removed in the next version.")]
     public sealed class StreamReadCancellation
     {
         readonly object gate = new object();
@@ -59,6 +61,7 @@ namespace Harken
     /// abandons the request, never frees a provider root or unregisters an
     /// already committed source. Copies and old-engine values become stale.
     /// </summary>
+    [Obsolete("Studio does not export streaming resources. StreamSources will be removed in the next version.")]
     public readonly struct StreamSourceRequest : IDisposable
     {
         public readonly ulong Handle;
@@ -82,6 +85,7 @@ namespace Harken
     /// drain. Dispose can run on the native cleanup thread; Term waits for it.
     /// Provider waits must be bounded and poll their per-call cancellation.
     /// </summary>
+    [Obsolete("Studio does not export streaming resources. StreamSources will be removed in the next version.")]
     public static class StreamSources
     {
         static readonly VnByteSourceReadAtFn ReadDelegate = ReadThunk;

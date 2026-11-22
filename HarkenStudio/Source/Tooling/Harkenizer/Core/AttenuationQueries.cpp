@@ -2,7 +2,7 @@
 #include "Core/Components/VAttenuation.h"
 #include "Core/ProjectTypes.h"
 
-namespace VNX {
+namespace harken::studio {
 
 std::vector<const VAttenuation*> AttenuationStore::all(const ProjectData& project)
 {
@@ -19,7 +19,7 @@ std::vector<const VAttenuation*> AttenuationStore::all(const ProjectData& projec
     return out;
 }
 
-harkenstudio::ObjectId AttenuationStore::runtimeId(const ProjectData& project, const VAttenuation& attenuation)
+harken::studio::types::ObjectId AttenuationStore::runtimeId(const ProjectData& project, const VAttenuation& attenuation)
 {
     for (const auto& binding : project.attenuationItems)
     {

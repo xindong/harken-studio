@@ -8,7 +8,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 
 struct ProjectData;
 struct ProjectItem;
@@ -16,8 +16,8 @@ class VVariable;
 
 struct BindingRuntimeProgram
 {
-    harkenstudio::ObjectId bindingId = {};
-    harkenstudio::ObjectId variableId = {};
+    harken::studio::types::ObjectId bindingId = {};
+    harken::studio::types::ObjectId variableId = {};
     uint32_t targetScopeKind = 0;
     uint32_t targetId = 0;
     uint32_t transitionMs = 0;
@@ -27,9 +27,9 @@ struct BindingRuntimeProgram
 
 struct BindingRuntimeAttachment
 {
-    harkenstudio::ObjectId bindingId = {};
+    harken::studio::types::ObjectId bindingId = {};
     uint32_t scopeKind = 0;
-    harkenstudio::ObjectId objectId = {};
+    harken::studio::types::ObjectId objectId = {};
 };
 
 enum class BindingLowerStatus : uint8_t
@@ -49,7 +49,7 @@ struct BindingRuntimeLowering
 
 struct PreviewBindingSyncState
 {
-    std::vector<harkenstudio::ObjectId> ids;
+    std::vector<harken::studio::types::ObjectId> ids;
     std::vector<BindingRuntimeAttachment> attachments;
 };
 
@@ -65,7 +65,7 @@ void collectAncestorBindings(
     BindingHostClass hostClass,
     std::vector<const ParameterBindingDef*>* out);
 const VVariable* variableOf(const ProjectData& project, const QUuid& variableId);
-harkenstudio::ObjectId attachmentObjectId(const ProjectItem& host);
+harken::studio::types::ObjectId attachmentObjectId(const ProjectItem& host);
 
 BindingLowerStatus appendLoweredBinding(const ProjectData& project,
                                         const ProjectItem& host,
@@ -80,7 +80,7 @@ bool sameAttachment(const BindingRuntimeAttachment& a,
 PreviewBindingSyncState reconcilePreviewSync(
     const BindingRuntimeLowering& desired,
     const PreviewBindingSyncState& previous,
-    const std::vector<harkenstudio::ObjectId>& registeredOk,
+    const std::vector<harken::studio::types::ObjectId>& registeredOk,
     const std::vector<BindingRuntimeAttachment>& attachedOk);
 
 }

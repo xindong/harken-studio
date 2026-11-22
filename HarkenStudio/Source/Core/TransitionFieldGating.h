@@ -8,7 +8,7 @@
 #include <optional>
 #include <utility>
 
-namespace VNX {
+namespace harken::studio {
 
 class PlacementContext;
 struct ProjectItem;

@@ -7,7 +7,7 @@
 #include <QScopeGuard>
 #include <QTranslator>
 
-using VNH::ReleaseNotesCatalog;
+using harken::hub::ReleaseNotesCatalog;
 
 TEST(ReleaseNotesCatalogTest, EveryPublishedChangeHasAChineseTranslation)
 {

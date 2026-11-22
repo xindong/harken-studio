@@ -45,7 +45,7 @@
 #include <QToolButton>
 #include <QWidget>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 
@@ -129,10 +129,12 @@ void paintVisual(QPainter* painter, QRect rect, const ControlVisual& visual,
     const bool rounded = std::any_of(radii.begin(), radii.end(), [](const QSizeF& radius) { return !radius.isNull(); });
     painter->setRenderHint(QPainter::Antialiasing, rounded);
     const QPainterPath outer = roundedPath(bounds, radii);
-    if (visual.background.isValid()) {
+    if (visual.background.isValid() || visual.backgroundOverlay.isValid()) {
         const QMarginsF inset(visual.borders.left() / 2.0, visual.borders.top() / 2.0,
                               visual.borders.right() / 2.0, visual.borders.bottom() / 2.0);
-        painter->fillPath(rounded ? roundedPath(bounds, radii, inset) : outer, visual.background);
+        const auto fill = rounded ? roundedPath(bounds, radii, inset) : outer;
+        if (visual.background.isValid()) painter->fillPath(fill, visual.background);
+        if (visual.backgroundOverlay.isValid()) painter->fillPath(fill, visual.backgroundOverlay);
     }
     if (!visual.borders.isNull()) {
         painter->setRenderHint(QPainter::Antialiasing);
@@ -576,6 +578,13 @@ int HarkenStyle::styleHint(StyleHint hint, const QStyleOption* option,
 int HarkenStyle::pixelMetric(PixelMetric metric, const QStyleOption* option,
                             const QWidget* widget) const
 {
+    if ((metric == PM_IndicatorWidth || metric == PM_IndicatorHeight) && qobject_cast<const QAbstractItemView*>(widget)) {
+        const auto indicator = theme().widgetAppearance().visual(widget, option ? option->state : widgetState(widget), u"indicator");
+        if (indicator.size.isValid()) {
+            const QSize size = indicator.size.grownBy(indicator.margin + indicator.borders + indicator.padding);
+            return metric == PM_IndicatorWidth ? size.width() : size.height();
+        }
+    }
     if (metric == PM_DefaultFrameWidth && widget) {
         const auto visual = theme().widgetAppearance().visual(widget, option ? option->state : widgetState(widget));
         if (visual.borderSpecified) return 0;
@@ -862,13 +871,20 @@ void HarkenStyle::drawPrimitive(PrimitiveElement element,
             break;
         case PE_PanelItemViewItem:
         case PE_PanelItemViewRow: {
-            const auto visual = theme().widgetAppearance().visual(widget, option->state, u"item", appearanceStates(option));
-            if (visual.background.isValid()) paintVisual(painter, option->rect, visual);
-            else if (const auto* item = qstyleoption_cast<const QStyleOptionViewItem*>(option)) {
-                if (item->state & State_Selected) painter->fillRect(item->rect, item->palette.brush(QPalette::Highlight));
-                else if (item->backgroundBrush.style() != Qt::NoBrush) painter->fillRect(item->rect, item->backgroundBrush);
-                else if (item->features & QStyleOptionViewItem::Alternate) painter->fillRect(item->rect, item->palette.brush(QPalette::AlternateBase));
+            auto visual = theme().widgetAppearance().visual(widget, option->state, u"item", appearanceStates(option));
+            if (const auto* item = qstyleoption_cast<const QStyleOptionViewItem*>(option)) {
+                if (element == PE_PanelItemViewRow && visual.backgroundOverlay.isValid()) {
+                    const auto* tree = qobject_cast<const QTreeView*>(widget);
+                    if (!tree || tree->visualRect(tree->indexAt(item->rect.center())).intersects(item->rect))
+                        visual.backgroundOverlay = QColor();
+                }
+                if (!visual.background.isValid()) {
+                    if (item->state & State_Selected) painter->fillRect(item->rect, item->palette.brush(QPalette::Highlight));
+                    else if (item->backgroundBrush.style() != Qt::NoBrush) painter->fillRect(item->rect, item->backgroundBrush);
+                    else if (item->features & QStyleOptionViewItem::Alternate) painter->fillRect(item->rect, item->palette.brush(QPalette::AlternateBase));
+                }
             }
+            if (visual.background.isValid() || visual.backgroundOverlay.isValid()) paintVisual(painter, option->rect, visual);
             return;
         }
         default:

@@ -2,7 +2,7 @@
 
 #include <QtGlobal>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 struct Scale
@@ -16,7 +16,7 @@ struct Scale
     qreal len(qreal value) const { return value * factor; }
 };
 
-void deriveUiMetrics(ThemeMetrics& m, const Scale& s)
+void deriveUiMetrics(ThemeMetrics& m, const ThemeMetrics& base, const Scale& s)
 {
     const int compact = m.spacingCompact;
     const int xSmall = m.spacingXSmall;
@@ -84,6 +84,8 @@ void deriveUiMetrics(ThemeMetrics& m, const Scale& s)
     form.valueColumnShare = 7;
 
     auto& chrome = m.chrome;
+    chrome.mainWindowMenuBarHeight = s.px(qMax(base.controlHeight, base.control.largeHeight - base.spacingCompact));
+    chrome.mainWindowToolBarHeight = s.px(base.control.largeHeight + base.spacingXSmall);
     chrome.titleBarHeight = largeHeight + xSmall;
     chrome.windowButtonWidth = largeHeight + large;
     chrome.windowMinimumWidth = 800;
@@ -360,12 +362,12 @@ void deriveThemeMetrics(ThemeSnapshot& theme)
     deriveThemeMetrics(theme, theme.ui.metrics);
 }
 
-void deriveThemeMetrics(ThemeSnapshot& theme, const ThemeMetrics& worldTokens)
+void deriveThemeMetrics(ThemeSnapshot& theme, const ThemeMetrics& baseMetrics)
 {
     const Scale scale{theme.uiScale};
     auto& metrics = theme.ui.metrics;
-    deriveUiMetrics(metrics, scale);
-    deriveNodeMetrics(metrics.node, worldTokens, scale);
+    deriveUiMetrics(metrics, baseMetrics, scale);
+    deriveNodeMetrics(metrics.node, baseMetrics, scale);
     deriveCurveMetrics(theme.domains.curve.metrics, metrics, scale);
     deriveMeterMetrics(theme.domains.meter, metrics, scale);
     deriveWaveformMetrics(theme.domains.waveform, metrics, scale);

@@ -1,0 +1,198 @@
+#ifndef HARKEN_RUNTIME_API_HARKEN_API_INTERNAL_H
+#define HARKEN_RUNTIME_API_HARKEN_API_INTERNAL_H
+
+#include <harken/Harken.h>
+#if HARKEN_ENGINE_DEV
+#include <harken/HarkenDevelopment.h>
+#endif
+
+#include <cstddef>
+#include "harken/core/LogicAllocCheckpoint.h"
+
+#include "PlayableRuntime.h"
+#include "TraceSeam.h"
+#include "harken/media/PackTable.h"
+#include "harken/core/QueueRuntime.h"
+#include "harken/core/PlayablePropertyCut.h"
+#include "harken/core/TimelineProgram.h"
+#include "harken/core/TimelineVoiceInstallInput.h"
+#include "harken/core/CapturedTimelineVoiceInstall.h"
+
+namespace harken {
+
+struct Engine;
+class PreparedQueueReplacementOrder;
+struct PackPartitionLease;
+class TopologyPlanPool;
+void FillLiveSignalTopology(Engine& engine, std::uint32_t planIndex);
+struct ProspectiveTopologyView;
+
+void FillLiveOrPreparedPlan(Engine& engine, TopologyPlanPool& plans,
+                            std::uint32_t planIndex,
+                            const ProspectiveTopologyView* prospective = nullptr);
+bool ProspectiveTopologyIsAcyclic(
+    Engine& engine, const ProspectiveTopologyView* prospective);
+bool AdmitSingleLiveCommand(Engine& engine);
+bool AdmitLiveCommandBatch(const Engine& engine, std::uint32_t count);
+bool LiveCommandBatchFitsCapacities(const Engine& engine, std::uint32_t count);
+void ClearPairedInstallAckIdentity(Engine& engine, std::uint32_t planIndex);
+void UpdateSendHighWater(Engine& engine) noexcept;
+void ResetBusLogicSlot(Engine& engine, std::uint32_t busIndex,
+                       std::uint32_t retiringGeneration,
+                       std::uint32_t newGeneration) noexcept;
+
+VnResult AcquireCanonicalBytes(const VnPackLoadDesc& desc,
+                               PackTable::AlignedBuffer* owned,
+                               VnPackByteSpan* span, bool* releaseSpan,
+                               std::uint64_t maxBytes = UINT64_MAX);
+void ReleaseCanonicalBytes(const VnPackLoadDesc& desc, VnPackByteSpan span,
+                           bool releaseSpan);
+
+struct CanonicalByteSpanGuard {
+    const VnPackLoadDesc& load;
+    VnPackByteSpan span{};
+    bool release = false;
+    ~CanonicalByteSpanGuard() { ReleaseCanonicalBytes(load, span, release); }
+};
+
+#if HARKEN_ENGINE_DEV
+void NoteCaptureTruncated(Engine& engine, std::uint64_t surface,
+                          std::uint64_t required);
+VnResult CaptureEffectCapabilities(Engine& engine, VnEffectCapability* out,
+                                   std::uint32_t capacity,
+                                   std::uint32_t* requiredCount);
+VnResult CaptureEffectParameterCapabilities(
+    Engine& engine, VnEffectParameterCapability* out,
+    std::uint32_t capacity, std::uint32_t* requiredCount);
+VnResult CaptureEffectDynamicCapabilities(
+    Engine& engine, VnEffectDynamicCapability* out,
+    std::uint32_t capacity, std::uint32_t* requiredCount);
+VnResult CaptureEffectDynamicParameterCapabilities(
+    Engine& engine, VnEffectDynamicParameterCapability* out,
+    std::uint32_t capacity, std::uint32_t* requiredCount);
+VnResult CaptureCompressorRuntimeInfo(
+    Engine& engine, VnCompressorRuntimeInfo* out,
+    std::uint32_t capacity, std::uint32_t* requiredCount);
+VnResult CapturePropertyTargets(Engine& engine, VnPropertyTargetInfo* out,
+                                std::uint32_t capacity,
+                                std::uint32_t* requiredCount);
+VnResult CapturePropertyBindings(Engine& engine, VnPropertyBindingInfo* out,
+                                 std::uint32_t capacity,
+                                 std::uint32_t* requiredCount);
+#endif
+
+}
+
+namespace harken::test {
+
+struct TimelineVoiceInstallResult {
+    VnResult status = VN_INVALID_ARG;
+    VnVoiceHandle renderHandle = 0;
+    bool emptySource = false;
+};
+
+PlayableStartStatus BuildTimelineVoiceInstallFromCut(
+    Engine& engine, const ResolvedPlayablePropertyCutViewV1& cut,
+    TimelineVoiceInstallDesc* out,
+    const PackPartitionLease* leaseOrNull = nullptr) noexcept;
+
+PlayableStartStatus CaptureTimelineVoiceInstallFromCut(
+    Engine& engine, const ResolvedPlayablePropertyCutViewV1& cut,
+    TimelineSemanticTarget finalTarget, CapturedTimelineVoiceInstall* out,
+    const PackPartitionLease* leaseOrNull = nullptr) noexcept;
+
+TimelineVoiceInstallDesc ProjectTimelineVoiceInstall(
+    const CapturedTimelineVoiceInstall& captured);
+
+VnResult PreflightTimelineVoiceStart(
+    const Engine& engine, const TimelineVoiceInstallDesc& install) noexcept;
+
+VnResult PreflightTimelineVoiceStart(
+    const Engine& engine, const TimelineVoiceInstallInput& input) noexcept;
+
+TimelineVoiceInstallResult InstallTimelineVoiceStart(
+    Engine& engine, const TimelineVoiceInstallDesc& install, ProgramGeneration programGeneration = 0,
+    PlayableInstanceHandle parentInstance = 0, PlayableInstanceHandle playableRoot = 0);
+
+TimelineVoiceInstallResult InstallTimelineVoiceStart(
+    Engine& engine, const TimelineVoiceInstallInput& input, ProgramGeneration programGeneration = 0,
+    PlayableInstanceHandle parentInstance = 0, PlayableInstanceHandle playableRoot = 0,
+    bool publishOnInstallation = false, std::uint64_t startFrame = 0);
+
+#if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
+bool PrepareNativeQueueResetResourcesForTest(Engine& engine, std::uint32_t serviceSlot,
+    std::uint32_t scratchSlot, const QueueInstanceTable::PreparedCatalogResetScope& scope,
+    const PreparedQueueReplacementOrder& order) noexcept;
+bool CancelNativeQueueResetResourcesForTest(Engine& engine, std::uint32_t scratchSlot) noexcept;
+void AbandonNativeQueueResetResourcesForTest(Engine& engine, std::uint32_t count) noexcept;
+bool StageInitialQueueSuccessorMirrorsForTest(Engine& engine, VnActionFiringHandle firing,
+    std::size_t programCount) noexcept;
+#endif
+
+bool CollectInitialQueueTimingMembersForTest(
+    Engine& engine, VnActionFiringHandle firing,
+    std::uint64_t finalEntryFrame, std::size_t* memberCount,
+    std::size_t* programCount, std::size_t* eventCount,
+    std::size_t* leafCount, std::size_t* groupCount,
+    std::size_t* holderCount) noexcept;
+
+}
+
+namespace harken::monitor { class RequestObservation; }
+
+namespace harken::detail {
+
+extern Engine* g_engine;
+
+// One call owns its allocation evidence and the preexisting fault snapshot.
+class ApiCallScope final : public LogicAllocCallScope {
+public:
+    ApiCallScope() noexcept;
+    ~ApiCallScope();
+    const Engine* faultedAtEntry = nullptr;
+    std::uint64_t faultedInstanceAtEntry = 0;
+private:
+    ApiCallScope* previous_;
+};
+
+// Pure selection shared by return values, reports and captured observations.
+VnResult NormalizeApiResult(VnResult result) noexcept;
+VnResult ResolveApiResult(VnResult result, const LogicAllocFailure& failure) noexcept;
+
+template<class Operation>
+VnResult InvokeApi(Operation&& operation) noexcept {
+    ApiCallScope scope;
+    VnResult result;
+    try { result = operation(); }
+    catch (const PackDecodeCapacity&) { result = VN_PACK_RESIDENT_CAPACITY; }
+    catch (const std::bad_alloc& failure) {
+        RecordLogicAllocFailure(failure, LogicAllocSite::ApiEntry);
+        result = VN_DEVICE_ERROR;
+    } catch (...) { result = VN_DEVICE_ERROR; }
+    return ResolveApiResult(result, scope.Failure());
+}
+
+bool CanonicalSetMutationBlocked() noexcept;
+
+MonitorRequestContext BeginMonitorRequest(
+    MonitorRequestOrigin origin, std::uint32_t operation) noexcept;
+
+VnResult PlayVoiceRaw(const VnPlayDesc* desc,
+                      VnVoiceHandle* outHandle) noexcept;
+VnResult PlayVoiceRaw(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
+                     const MonitorRequestContext& request, monitor::RequestObservation* observation = nullptr) noexcept;
+#if HARKEN_ENGINE_DEV
+void CaptureMonitorAcceptedRequest(monitor::RequestObservation& observation,
+    std::uint32_t subject, std::uint64_t handle) noexcept;
+#endif
+bool DirectWorldHasActionProgram(VnActionId actionId) noexcept;
+
+TraceCallScribe TraceQuery(Engine* engine, std::uint16_t callId) noexcept;
+void FinishCaptureTrace(TraceCallScribe& trace, VnResult result,
+                        const std::uint32_t* requiredCount) noexcept;
+bool BusEffectivelyAudible(const Engine& engine, std::uint32_t busIndex);
+std::uint64_t PinnedGenerationCount(Engine& engine);
+
+}
+
+#endif

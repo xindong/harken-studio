@@ -3,10 +3,10 @@
 #include "../ActionManager.h"
 #include "RuntimeBridge/PlaybackBridge.h"
 
-namespace VNX::AdvancedActionDetail {
+namespace harken::studio::AdvancedActionDetail {
 
 ActionResult fromEngineResult(
-    bool engineInitialized, HarkenEditor::Bridge::EngineResult result,
+    bool engineInitialized, harken::studio::bridge::EngineResult result,
     QJsonObject successData, const QString& operation);
 
 }

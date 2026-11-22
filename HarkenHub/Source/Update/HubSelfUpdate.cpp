@@ -28,7 +28,7 @@
 #include <QUuid>
 #include <QVariant>
 
-namespace VNH {
+namespace harken::hub {
 
 namespace {
 
@@ -123,7 +123,7 @@ bool HubSelfUpdate::start(const Options& options)
 
     UpdateChecker::Options checkerOptions;
     QList<QUrl> manifestUrls = ServerEndpoints::manifestUrls(
-        options_.serverBaseUrl, kServerProduct, ServerEndpoints::hostChannel());
+        options_.serverBaseUrl, kServerProduct);
     checkerOptions.latestUrl = manifestUrls.takeFirst();
     checkerOptions.fallbackUrls = manifestUrls;
     checkerOptions.trustedHttpOrigin = options_.serverBaseUrl;
@@ -445,7 +445,6 @@ bool HubSelfUpdate::backupUserData(const QDateTime& now, QString* error)
         QStringLiteral("projects.db"),
         QStringLiteral("update-state.json"),
         QStringLiteral("consents.json"),
-        QStringLiteral("launch-diagnostics.json"),
     };
     for (const QString& name : candidates) {
         const QString sourcePath = source.filePath(name);
@@ -541,9 +540,14 @@ bool HubSelfUpdate::approve(QString* error, const QDateTime& now)
 }
 
 bool HubSelfUpdate::approveViaBridge(const QString& restartMode,
-                                          QString* error, const QDateTime& now)
+                                          QString* error, const QDateTime& now,
+                                          const UpdateStateRecord* reviewedState)
 {
     UpdateStateRecord record = UpdateStateStore::load(kProduct);
+    if (reviewedState && record != *reviewedState) {
+        *error = QStringLiteral("The update state changed; review the update again");
+        return false;
+    }
     const auto expected = record;
     if (!record.found ||
         (record.state != QStringLiteral("AwaitingRestart") &&

@@ -10,7 +10,7 @@ class QFrame;
 class QPushButton;
 class QToolButton;
 
-namespace VNX {
+namespace harken::studio {
 
 class SplitButton final : public QWidget
 {

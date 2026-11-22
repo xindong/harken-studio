@@ -2,18 +2,27 @@
 #include "Monitor/MonitorTypes.h"
 
 #include "MonitorDecoder.h"
+#include "harken_buildinfo.h"
 
+#include <algorithm>
+#include <chrono>
+#include <cstring>
 #include <fstream>
 #include <limits>
 #include <new>
 #include <utility>
 
-namespace VNX {
+namespace harken::studio {
 namespace Monitor {
 namespace {
 
-// The packed file header is a disk-only size; it is not a public ABI constant.
-constexpr uint64_t kFileHeaderBytes = 64u;
+// Studio owns the session file format; only the Studio version that wrote a
+// file reads it back.
+constexpr uint64_t kFileHeaderBytes = 128u;
+constexpr size_t kVersionTextBytes = 32u;
+constexpr size_t kStudioVersionOffset = 56u;
+constexpr size_t kEngineVersionOffset = 88u;
+constexpr size_t kHeaderCrcOffset = 124u;
 constexpr uint64_t kChunkHeaderBytes = kMonitorSessionChunkHeaderBytes;
 constexpr uint64_t kFooterBytes = kMonitorSessionCommitFooterBytes;
 constexpr uint64_t kRecordEnvelopeBytes = kMonitorRecordEnvelopePackedBytes;
@@ -36,6 +45,35 @@ uint64_t readU64(const uint8_t* p)
 {
     return static_cast<uint64_t>(readU32(p)) |
            (static_cast<uint64_t>(readU32(p + 4)) << 32);
+}
+
+std::string versionText(const uint8_t* p)
+{
+    const auto* text = reinterpret_cast<const char*>(p);
+    return std::string(text, strnlen(text, kVersionTextBytes));
+}
+
+void writeU16(uint8_t* p, uint16_t value)
+{
+    p[0] = static_cast<uint8_t>(value);
+    p[1] = static_cast<uint8_t>(value >> 8);
+}
+
+void writeU32(uint8_t* p, uint32_t value)
+{
+    for (int i = 0; i < 4; ++i)
+        p[i] = static_cast<uint8_t>(value >> (8 * i));
+}
+
+void writeU64(uint8_t* p, uint64_t value)
+{
+    writeU32(p, static_cast<uint32_t>(value));
+    writeU32(p + 4, static_cast<uint32_t>(value >> 32));
+}
+
+void writeVersionText(uint8_t* p, std::string_view text)
+{
+    std::memcpy(p, text.data(), std::min(text.size(), kVersionTextBytes - 1));
 }
 
 bool addOverflow(uint64_t a, uint64_t b, uint64_t* out)
@@ -221,7 +259,7 @@ MonitorSessionFileResult MonitorSessionFile::restore(const std::string& path,
     const uint32_t reserved0 = readU32(fileHeader.data() + 8);
     const uint64_t magic = readU64(fileHeader.data() + 12);
     const uint64_t headerBytes = readU64(fileHeader.data() + 20);
-    const uint32_t storedHeaderCrc = readU32(fileHeader.data() + 60);
+    const uint32_t storedHeaderCrc = readU32(fileHeader.data() + kHeaderCrcOffset);
     if (major != kMonitorSessionFormatMajor ||
         minor != kMonitorSessionFormatMinor || reserved0 != 0 ||
         magic != kMonitorSessionFileMagic || headerBytes != kFileHeaderBytes)
@@ -230,18 +268,23 @@ MonitorSessionFileResult MonitorSessionFile::restore(const std::string& path,
         return result;
     }
     std::vector<uint8_t> crcHeader = fileHeader;
-    crcHeader[60] = 0;
-    crcHeader[61] = 0;
-    crcHeader[62] = 0;
-    crcHeader[63] = 0;
+    std::fill_n(crcHeader.begin() + kHeaderCrcOffset, 4, uint8_t {0});
     if (crc32c(crcHeader.data(), crcHeader.size()) != storedHeaderCrc)
     {
         result.status = kMonitorIncompatible;
         return result;
     }
     result.fileMagic = magic;
-    result.engineMonitorInstanceId = readU64(fileHeader.data() + 36);
-    result.capabilityFingerprint = readU64(fileHeader.data() + 52);
+    result.engineMonitorInstanceId = readU64(fileHeader.data() + 28);
+    result.capabilityFingerprint = readU64(fileHeader.data() + 44);
+    result.remoteProtocolMajor = readU32(fileHeader.data() + 52);
+    result.studioVersion = versionText(fileHeader.data() + kStudioVersionOffset);
+    result.engineVersion = versionText(fileHeader.data() + kEngineVersionOffset);
+    if (result.studioVersion != Harken::BuildInfo::Version)
+    {
+        result.status = kMonitorIncompatible;
+        return result;
+    }
 
     uint64_t offset = kFileHeaderBytes;
     uint64_t lastSequence = 0;
@@ -579,5 +622,85 @@ MonitorSessionFileResult MonitorSessionFile::restore(const std::string& path,
     return result;
 }
 
+bool MonitorSessionWriter::open(const std::string& path, const MonitorSessionSource& source,
+                                uint64_t fileByteBudget)
+{
+    close();
+    status_ = {};
+    sequence_ = 0;
+    budget_ = fileByteBudget;
+    output_.open(path, std::ios::binary | std::ios::out | std::ios::trunc);
+    if (!output_)
+        return fail();
+    uint8_t header[kFileHeaderBytes] {};
+    writeU32(header, kMonitorSessionFormatMajor);
+    writeU32(header + 4, kMonitorSessionFormatMinor);
+    writeU64(header + 12, kMonitorSessionFileMagic);
+    writeU64(header + 20, kFileHeaderBytes);
+    writeU64(header + 28, source.engineMonitorInstanceId);
+    writeU64(header + 36, static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count()));
+    writeU64(header + 44, source.capabilityFingerprint);
+    writeU32(header + 52, source.remoteProtocolMajor);
+    writeVersionText(header + kStudioVersionOffset, Harken::BuildInfo::Version);
+    writeVersionText(header + kEngineVersionOffset, source.engineVersion);
+    writeU32(header + kHeaderCrcOffset, crc32c(header, sizeof(header)));
+    output_.write(reinterpret_cast<const char*>(header), sizeof(header));
+    if (!output_)
+        return fail();
+    status_.state = kMonitorRecordingStateActive;
+    status_.fileBytes = sizeof(header);
+    return true;
+}
+
+bool MonitorSessionWriter::append(const uint8_t* packedRecords, uint64_t bytes)
+{
+    if (!output_.is_open() || bytes == 0)
+        return output_.is_open();
+    const uint64_t chunkBytes = kChunkHeaderBytes + bytes + kFooterBytes;
+    if (budget_ != 0 && status_.fileBytes + chunkBytes > budget_)
+        return fail();
+    const uint64_t sequence = ++sequence_;
+    uint8_t header[kChunkHeaderBytes] {};
+    writeU16(header, static_cast<uint16_t>(kMonitorChunkEvents));
+    writeU16(header + 2, static_cast<uint16_t>(kMonitorChunkRequired));
+    writeU16(header + 4, 1);
+    writeU16(header + 6, static_cast<uint16_t>(kChunkHeaderBytes));
+    writeU64(header + 8, bytes);
+    writeU64(header + 16, sequence);
+    writeU32(header + 24, crc32c(packedRecords, static_cast<size_t>(bytes)));
+    writeU32(header + 28, crc32c(header, 28));
+    uint8_t footer[kFooterBytes] {};
+    writeU64(footer, kMonitorSessionCommitMagic);
+    writeU64(footer + 8, sequence);
+    writeU64(footer + 16, bytes);
+    output_.write(reinterpret_cast<const char*>(header), sizeof(header));
+    output_.write(reinterpret_cast<const char*>(packedRecords), static_cast<std::streamsize>(bytes));
+    output_.write(reinterpret_cast<const char*>(footer), sizeof(footer));
+    output_.flush();
+    if (!output_)
+        return fail();
+    status_.fileBytes += chunkBytes;
+    status_.lastCommittedChunk = sequence;
+    return true;
+}
+
+void MonitorSessionWriter::close()
+{
+    if (!output_.is_open())
+        return;
+    output_.close();
+    if (status_.state == kMonitorRecordingStateActive)
+        status_.state = kMonitorRecordingStateStopped;
+}
+
+bool MonitorSessionWriter::fail()
+{
+    if (output_.is_open())
+        output_.close();
+    status_.state = kMonitorRecordingStateFailed;
+    return false;
+}
+
 } // namespace Monitor
-} // namespace VNX
+} // namespace harken::studio

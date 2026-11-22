@@ -1,10 +1,12 @@
 #pragma once
 
+#include "ProjectDocument.h"
+
 #include <QJsonValue>
 #include <QString>
 #include <QStringList>
 
-namespace VNX {
+namespace harken::studio {
 
 class ProjectSchemaValidator
 {
@@ -15,8 +17,9 @@ public:
     static QStringList validateProjectDocument(int version,
                                                const QString& documentType,
                                                const QJsonValue& document,
-                                               const QString& relativePath);
-    static QStringList validatePackManifest(int version,
+                                               const QString& relativePath,
+                                               ProjectDocumentContract contract = ProjectDocumentContract::VersionedSchema);
+    static QStringList validatePackMetadata(int version,
                                             const QJsonValue& document,
                                             const QString& relativePath);
 };

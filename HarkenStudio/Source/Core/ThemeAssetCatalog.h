@@ -5,7 +5,7 @@
 #include <QString>
 #include <QVector>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace ThemeAssetIds {
 inline constexpr char AppIcon[] = "app.icon";
@@ -33,13 +33,13 @@ inline constexpr char AuditionPause[] = "audition.pause";
 inline constexpr char AuditionStop[] = "audition.stop";
 inline constexpr char AuditionReset[] = "audition.reset";
 inline constexpr char AuditionLoop[] = "audition.loop";
-inline constexpr char CurveSCurve[] = "curve.preset.s";
-inline constexpr char CurveLog3[] = "curve.preset.log3";
-inline constexpr char CurveConvex[] = "curve.preset.convex";
+inline constexpr char CurveBezierSCurve[] = "curve.preset.s";
+inline constexpr char CurveCubicEaseOut[] = "curve.preset.cubicEaseOut";
+inline constexpr char CurveQuadraticEaseOut[] = "curve.preset.quadraticEaseOut";
 inline constexpr char CurveLinear[] = "curve.preset.linear";
-inline constexpr char CurveConcave[] = "curve.preset.concave";
-inline constexpr char CurveExp3[] = "curve.preset.exp3";
-inline constexpr char CurveInverseSCurve[] = "curve.preset.inverseS";
+inline constexpr char CurveQuadraticEaseIn[] = "curve.preset.quadraticEaseIn";
+inline constexpr char CurveCubicEaseIn[] = "curve.preset.cubicEaseIn";
+inline constexpr char CurveInverseBezierSCurve[] = "curve.preset.inverseS";
 inline constexpr char BlueprintSelect[] = "blueprint.select";
 inline constexpr char BlueprintPan[] = "blueprint.pan";
 inline constexpr char BlueprintGridSnap[] = "blueprint.gridSnap";
@@ -91,6 +91,7 @@ inline constexpr char ProjectItemVariableSmooth[] = "projectItem.variable.smooth
 inline constexpr char ProjectItemVariableStep[] = "projectItem.variable.step";
 inline constexpr char ProjectItemAttenuation[] = "projectItem.attenuation";
 inline constexpr char ProjectItemEffect[] = "projectItem.effect";
+inline constexpr char ProjectItemConversion[] = "projectItem.conversion";
 inline constexpr char MeterPeakCap[] = "meter.peak.cap";
 }
 

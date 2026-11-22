@@ -13,6 +13,7 @@
 // used where the only arithmetic is on exactly representable operands; the
 // gain-staging cases compute the expected gain with the same pow() the engine
 // uses and compare at a tight tolerance.
+#include <harken/HarkenDevelopment.h>
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/TestUtil.h"
 

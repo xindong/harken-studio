@@ -5,7 +5,7 @@
 #include <QCoreApplication>
 #include <QtGlobal>
 
-namespace VNX::ProjectUpgradeMessages {
+namespace harken::studio::ProjectUpgradeMessages {
 
 namespace {
 

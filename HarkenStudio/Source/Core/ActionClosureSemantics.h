@@ -11,7 +11,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace EditorUtils {
 class ActionTargetLookup;
@@ -52,19 +52,19 @@ enum class ActionClosureDiagnosticCode : uint8_t
 
 struct ActionClosureMember
 {
-    harkenstudio::ObjectId stableId = {};
+    harken::studio::types::ObjectId stableId = {};
     uint32_t objectId = 0;
     QUuid guid;
     ProjectItem::Type type = ProjectItem::Type::None;
     QString name;
-    std::vector<harkenstudio::ObjectId> referencePath;
+    std::vector<harken::studio::types::ObjectId> referencePath;
 
     QJsonObject toJson() const;
 };
 
 struct ActionClosureMedia
 {
-    harkenstudio::ObjectId soundStableId = {};
+    harken::studio::types::ObjectId soundStableId = {};
     QUuid sourceEntryId;
     uint32_t authoringSourceId = 0;
     QString platform;
@@ -76,11 +76,11 @@ struct ActionClosureMedia
 
 struct ActionClosureEdge
 {
-    harkenstudio::ObjectId fromStableId = {};
-    harkenstudio::ObjectId toStableId = {};
+    harken::studio::types::ObjectId fromStableId = {};
+    harken::studio::types::ObjectId toStableId = {};
     ActionClosureEdgeReason reason = ActionClosureEdgeReason::ActionStep;
     QString field;
-    std::vector<harkenstudio::ObjectId> referencePath;
+    std::vector<harken::studio::types::ObjectId> referencePath;
 
     QJsonObject toJson() const;
 };
@@ -89,11 +89,11 @@ struct ActionClosureDiagnostic
 {
     ActionClosureDiagnosticCode code = ActionClosureDiagnosticCode::DanglingReference;
     QString message;
-    harkenstudio::ObjectId actionStableId = {};
+    harken::studio::types::ObjectId actionStableId = {};
     int stepIndex = -1;
-    harkenstudio::ObjectId objectStableId = {};
+    harken::studio::types::ObjectId objectStableId = {};
     QString field;
-    std::vector<harkenstudio::ObjectId> referencePath;
+    std::vector<harken::studio::types::ObjectId> referencePath;
 
     QJsonObject toJson() const;
 };
@@ -102,7 +102,7 @@ struct ActionClosureCapabilityRequirement
 {
     RuntimeCapabilityFeature feature = RuntimeCapabilityFeature::ContentClosure;
     RuntimeCapabilityState state = RuntimeCapabilityState::Ready;
-    harkenstudio::ObjectId objectStableId = {};
+    harken::studio::types::ObjectId objectStableId = {};
     QString field;
 
     QJsonObject toJson() const;
@@ -111,7 +111,7 @@ struct ActionClosureCapabilityRequirement
 struct ActionClosurePlan
 {
     BuildVariant variant;
-    harkenstudio::ObjectId rootActionStableId = {};
+    harken::studio::types::ObjectId rootActionStableId = {};
     std::vector<ActionClosureMember> actions;
     std::vector<ActionClosureMember> objects;
     std::vector<ActionClosureMedia> media;
@@ -130,10 +130,10 @@ class ActionClosureBuildContext
 public:
     explicit ActionClosureBuildContext(const ProjectData& project);
     ~ActionClosureBuildContext();
-    ActionClosurePlan build(harkenstudio::ObjectId actionStableId,
+    ActionClosurePlan build(harken::studio::types::ObjectId actionStableId,
                             const BuildVariant& variant,
                             const RuntimeCapabilityContext& context) const;
-    ActionClosurePlan contentReferences(harkenstudio::ObjectId actionStableId) const;
+    ActionClosurePlan contentReferences(harken::studio::types::ObjectId actionStableId) const;
     const ProjectItem* findObject(uint32_t objectId) const;
     const EditorUtils::ActionTargetLookup& targetLookup() const;
 
@@ -145,15 +145,17 @@ private:
 namespace ActionClosureSemantics {
 
 ActionClosurePlan build(const ProjectData& project,
-                        harkenstudio::ObjectId actionStableId,
+                        harken::studio::types::ObjectId actionStableId,
                         const BuildVariant& variant = {});
 ActionClosurePlan buildForContext(const ProjectData& project,
-                                  harkenstudio::ObjectId actionStableId,
+                                  harken::studio::types::ObjectId actionStableId,
                                   const BuildVariant& variant,
                                   const RuntimeCapabilityContext& context,
                                   const ActionClosureBuildContext* buildContext = nullptr);
 ActionClosurePlan contentReferences(const ProjectData& project,
-                                    harkenstudio::ObjectId actionStableId);
+                                    harken::studio::types::ObjectId actionStableId);
+ActionClosurePlan playbackContentReferences(const ProjectData& project,
+    harken::studio::types::ObjectId rootStableId, ProjectPlatformId platform);
 QString edgeReasonName(ActionClosureEdgeReason reason);
 QString diagnosticCodeName(ActionClosureDiagnosticCode code);
 

@@ -10,7 +10,7 @@
 #include <QDateTime>
 #include <algorithm>
 
-namespace VNX {
+namespace harken::studio {
 
 QJsonObject deprecateCommand(QJsonObject response, const char* replacement);
 

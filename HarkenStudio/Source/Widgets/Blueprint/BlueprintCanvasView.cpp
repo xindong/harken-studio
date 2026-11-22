@@ -20,7 +20,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace VNX {
+namespace harken::studio {
 
 BlueprintCanvasView::BlueprintCanvasView(QWidget* parent)
     : QGraphicsView(parent)

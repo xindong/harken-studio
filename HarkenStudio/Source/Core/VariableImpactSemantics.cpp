@@ -12,7 +12,7 @@
 #include <cmath>
 #include <set>
 
-namespace VNX {
+namespace harken::studio {
 namespace VariableImpactSemantics {
 
 namespace {
@@ -49,7 +49,7 @@ const ProjectItem* findItem(const ProjectData* project, const QUuid& guid)
     return nullptr;
 }
 
-harkenstudio::ObjectId itemStableId(const ProjectItem& item)
+harken::studio::types::ObjectId itemStableId(const ProjectItem& item)
 {
     return item.runtimeId();
 }
@@ -68,24 +68,24 @@ std::vector<std::int32_t> discreteAnchorsOf(VariableKind kind,
     return anchors;
 }
 
-bool computeExecutionFingerprint(harkenstudio::ObjectId variableId,
+bool computeExecutionFingerprint(harken::studio::types::ObjectId variableId,
                                  const VariableImpactProposed& proposed,
                                  std::uint64_t* outFingerprint)
 {
     const auto anchors = discreteAnchorsOf(proposed.kind,
         VariableSemantics::effectiveLabels(proposed.labels, proposed.rangeMin, proposed.rangeMax));
     const std::int32_t* pointer = anchors.empty() ? nullptr : anchors.data();
-    return harkenstudiobuild::ComputeVariableExecutionFingerprintV1(
+    return harken::studio::build::ComputeVariableExecutionFingerprintV1(
         variableId, static_cast<std::uint8_t>(proposed.kind),
         1, proposed.writers,
         proposed.rangeMin, proposed.rangeMax, proposed.defaultValue, pointer,
         static_cast<std::uint32_t>(anchors.size()), outFingerprint);
 }
 
-harkenprojectschema::VariableCatalogBlockV1 catalogBlock(
+harken::studio::project_schema::VariableCatalogBlockV1 catalogBlock(
     const VariableImpactProposed& proposed, const QString& name)
 {
-    harkenprojectschema::VariableCatalogBlockV1 catalog;
+    harken::studio::project_schema::VariableCatalogBlockV1 catalog;
     catalog.codeName = name.toStdString();
     catalog.displayName = name.toStdString();
     catalog.description = proposed.description.toStdString();
@@ -99,8 +99,8 @@ harkenprojectschema::VariableCatalogBlockV1 catalogBlock(
             {label.anchor, label.name.toStdString(), runtimeObjectId(label.id)});
     }
     std::sort(catalog.labels.begin(), catalog.labels.end(),
-              [](const harkenprojectschema::VariableCatalogLabelV1& a,
-                 const harkenprojectschema::VariableCatalogLabelV1& b) {
+              [](const harken::studio::project_schema::VariableCatalogLabelV1& a,
+                 const harken::studio::project_schema::VariableCatalogLabelV1& b) {
                   return a.anchor < b.anchor;
               });
     return catalog;
@@ -153,7 +153,7 @@ VariableImpactReport analyzeChange(const ProjectData* project,
         VariableConsumerSemantics::consumersOf(project, variableId);
 
     const VariableImpactProposed current = snapshotOf(*item);
-    const harkenstudio::ObjectId variableStableId = itemStableId(*item);
+    const harken::studio::types::ObjectId variableStableId = itemStableId(*item);
     const QString currentName = item->name;
     const QString proposedName = proposed.name.value_or(currentName);
 
@@ -170,18 +170,18 @@ VariableImpactReport analyzeChange(const ProjectData* project,
         report.currentExecutionFingerprint != report.proposedExecutionFingerprint;
 
     report.currentCatalogFingerprint =
-        harkenprojectschema::ComputeVariableCatalogFingerprintV1(
+        harken::studio::project_schema::ComputeVariableCatalogFingerprintV1(
             variableStableId, catalogBlock(current, currentName));
     report.proposedCatalogFingerprint =
-        harkenprojectschema::ComputeVariableCatalogFingerprintV1(
+        harken::studio::project_schema::ComputeVariableCatalogFingerprintV1(
             variableStableId, catalogBlock(proposed, proposedName));
     report.catalogFingerprintChanged =
         report.currentCatalogFingerprint != report.proposedCatalogFingerprint;
 
     report.labelMappingChanged =
-        harkenstudiobuild::ComputeVariableLabelMappingFingerprintV1(
+        harken::studio::build::ComputeVariableLabelMappingFingerprintV1(
             variableStableId, catalogBlock(current, currentName).labels) !=
-        harkenstudiobuild::ComputeVariableLabelMappingFingerprintV1(
+        harken::studio::build::ComputeVariableLabelMappingFingerprintV1(
             variableStableId, catalogBlock(proposed, proposedName).labels);
 
     report.liveBankResets = report.executionFingerprintChanged;

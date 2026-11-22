@@ -4,7 +4,7 @@
 #include <QPersistentModelIndex>
 #include <QTreeWidget>
 
-namespace VNX::TreeExpansion {
+namespace harken::studio::TreeExpansion {
 
 inline void setExpanded(QTreeWidgetItem* item, bool expanded, bool recursive = false)
 {

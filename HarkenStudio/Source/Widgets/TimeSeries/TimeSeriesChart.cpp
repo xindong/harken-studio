@@ -10,7 +10,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 
@@ -318,4 +318,4 @@ std::int64_t TimeSeriesChart::xFromLogical(int logicalX) const
     return columnSampleX(start, end, width(), clamped);
 }
 
-} // namespace VNX
+} // namespace harken::studio

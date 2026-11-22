@@ -16,6 +16,7 @@
 // 2 = SILENT verdict (the run never moved the master bus above the
 // silence floor); 3 = engine call failure.
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 
 #include "Att03KeepProbe.h"
 #include "Att04NearFarProbe.h"
@@ -26,10 +27,9 @@
 #include "RemoteServe.h"
 #include "SchedulingMeasure.h"
 #include "TraceReplay.h"
-#include "ResourceCompiler.h"
-#include "JsonWriter.h"
+#include "StreamImage.h"
 #include "harken/core/AllocGuard.h"
-#include "harken/media/StreamFormat.h"
+#include "harken/media/PackFormatV2.h"
 #include "Engine.h" // internal: --null mode drives blocks via the pump
 #include "HarkenApiInternal.h"
 #include "WavLoader.h" // the host's wav loading path (miniaudio decode)
@@ -77,7 +77,7 @@ struct Options {
     enum class Mode {
         Demo,
         StreamEndurance,
-        M2Scene,
+        SceneMix,
         M6Scene,
         M7S7Render,
         VariableWorldRun
@@ -89,7 +89,6 @@ struct Options {
     double seconds = 6.0;
     bool nullMode = false;
     bool synth = false;
-    std::string packcPath;
     std::string outDir = ".temp/m7-s7-listen";
     std::uint32_t chunkFrames = 4096;
 };
@@ -100,9 +99,9 @@ void PrintUsage() {
         "usage: harken_host demo --wav <fileA> --wav <fileB> [--seconds N] "
         "[--null]\n"
         "       harken_host demo --synth [--seconds N] [--null]\n"
-        "       harken_host stream-endurance [--seconds N] [--packc <exe>] "
+        "       harken_host stream-endurance [--seconds N] "
         "[--chunk-frames N] [--null]\n"
-        "       harken_host m2-scene [--seconds N] [--packc <exe>] "
+        "       harken_host scene-mix [--seconds N] "
         "[--chunk-frames N] [--music <wav>] [--ambience <wav>] "
         "[--oneshot <wav>] [--null]\n"
         "       harken_host m6-scene [--seconds N] [--null]\n"
@@ -115,8 +114,8 @@ void PrintUsage() {
         "[--null]\n"
         "       harken_host trace-replay <file> [--null] "
         "[--capture <raw-f32-out>]\n"
-        "       harken_host pack-play --root <platform-dir> --action-name <name> "
-        "[--language NAME] [--seconds N] [--repeats N] "
+        "       harken_host pack-play --init-pack <file> --content-pack <file> --action-id <guid> "
+        "[--seconds N] [--repeats N] "
         "[--start-delay-ms N] "
         "[--capture-ready-gate <path> --capture-ready-timeout-ms N] "
         "[--caller-seed N] "
@@ -127,8 +126,8 @@ void PrintUsage() {
         "variable-discrete|variable-continuous|variable-dual|track|segment]\n"
         "       harken_host att03-keep --init <Init.pack> --content <Content.pack> "
         "--bad <missing-or-bad.pack> --action <stableId-low>\n"
-        "       harken_host att04-nearfar --root <platform-dir> --action-name <name> "
-        "--distance <meters> [--language NAME] [--seconds N] --null\n"
+        "       harken_host att04-nearfar --init-pack <file> --content-pack <file> --action-id <guid> "
+        "--distance <meters> [--seconds N] --null\n"
         "\n"
         "  --wav <file>   a wav source; given exactly twice. The first\n"
         "                 plays as the 2D voice, the second as the moving\n"
@@ -143,13 +142,13 @@ void PrintUsage() {
         "                 by an internal clock - no audio hardware.\n");
     std::fprintf(stderr,
                  "\nstream-endurance writes a low-level source under .temp/,\n"
-                 "compiles it through Harkenizer's resource compiler, streams it, polls\n"
+                 "writes it as a .stream container, streams it, polls\n"
                  "Vn_CaptureSnapshot, and exits on the ended notification.\n");
     std::fprintf(stderr,
-                 "\nm2-scene plays a streamed music sound, an in-memory\n"
+                 "\nscene-mix plays a streamed music sound, an in-memory\n"
                  "looping ambience sound, and a delayed one-shot together;\n"
                  "the three wav arguments override the synthesized defaults.\n"
-                 "m2-scene --seconds defaults to 40 and accepts [8, 300].\n"
+                 "scene-mix --seconds defaults to 40 and accepts [8, 300].\n"
                  "Override wavs play as authored with no normalization; hot\n"
                  "content can clip. --music must cover the one-shot trigger\n"
                  "(45%% of --seconds plus 0.10 s) and end by --seconds + 6 s.\n");
@@ -183,20 +182,20 @@ void PrintUsage() {
     harkenhost::PrintAtt04NearFarProbeUsage();
 }
 
-bool ModeUsesPackc(Options::Mode mode) {
+bool ModeUsesStream(Options::Mode mode) {
     return mode == Options::Mode::StreamEndurance ||
-           mode == Options::Mode::M2Scene;
+           mode == Options::Mode::SceneMix;
 }
 
 bool ParseChunkFrames(const char* text, std::uint32_t* out) {
     char* end = nullptr;
     const unsigned long value = std::strtoul(text, &end, 10);
     if (end == text || *end != '\0' || value == 0 ||
-        value > harken::kMaxStreamChunkFrames) {
+        value > HK_PACK_STREAM_FILE_MAX_CHUNK_FRAMES) {
         std::fprintf(stderr,
                      "error: --chunk-frames must be an integer in "
                      "[1, %u]\n",
-                     harken::kMaxStreamChunkFrames);
+                     HK_PACK_STREAM_FILE_MAX_CHUNK_FRAMES);
         return false;
     }
     *out = static_cast<std::uint32_t>(value);
@@ -213,8 +212,8 @@ bool ParseOptions(int argc, char** argv, Options* out) {
     } else if (std::strcmp(argv[1], "stream-endurance") == 0) {
         out->mode = Options::Mode::StreamEndurance;
         out->seconds = 600.0;
-    } else if (std::strcmp(argv[1], "m2-scene") == 0) {
-        out->mode = Options::Mode::M2Scene;
+    } else if (std::strcmp(argv[1], "scene-mix") == 0) {
+        out->mode = Options::Mode::SceneMix;
         out->seconds = 40.0;
     } else if (std::strcmp(argv[1], "m6-scene") == 0) {
         out->mode = Options::Mode::M6Scene;
@@ -252,21 +251,18 @@ bool ParseOptions(int argc, char** argv, Options* out) {
             out->outDir = argv[++i];
         } else if (out->mode == Options::Mode::Demo && arg == "--synth") {
             out->synth = true;
-        } else if (ModeUsesPackc(out->mode) && arg == "--packc" &&
-                   i + 1 < argc) {
-            out->packcPath = argv[++i];
-        } else if (ModeUsesPackc(out->mode) && arg == "--chunk-frames" &&
+        } else if (ModeUsesStream(out->mode) && arg == "--chunk-frames" &&
                    i + 1 < argc) {
             if (!ParseChunkFrames(argv[++i], &out->chunkFrames)) {
                 return false;
             }
-        } else if (out->mode == Options::Mode::M2Scene &&
+        } else if (out->mode == Options::Mode::SceneMix &&
                    arg == "--music" && i + 1 < argc) {
             out->musicPath = argv[++i];
-        } else if (out->mode == Options::Mode::M2Scene &&
+        } else if (out->mode == Options::Mode::SceneMix &&
                    arg == "--ambience" && i + 1 < argc) {
             out->ambiencePath = argv[++i];
-        } else if (out->mode == Options::Mode::M2Scene &&
+        } else if (out->mode == Options::Mode::SceneMix &&
                    arg == "--oneshot" && i + 1 < argc) {
             out->oneshotPath = argv[++i];
         } else {
@@ -290,7 +286,7 @@ bool ParseOptions(int argc, char** argv, Options* out) {
     if (out->mode == Options::Mode::VariableWorldRun) {
         return out->seconds > 0.0 && out->seconds <= kSceneMaxSeconds;
     }
-    if (out->mode == Options::Mode::M2Scene ||
+    if (out->mode == Options::Mode::SceneMix ||
         out->mode == Options::Mode::M6Scene) {
         if (out->seconds < kSceneMinSeconds ||
             out->seconds > kSceneMaxSeconds) {
@@ -893,65 +889,23 @@ std::string JsonEscape(const std::filesystem::path& path) {
     return out;
 }
 
-bool WriteTextFile(const std::filesystem::path& path,
-                   const std::string& text) {
-    std::ofstream out(path, std::ios::binary | std::ios::trunc);
-    if (!out) {
+bool WriteStreamFromWav(VnObjectId sound, const std::filesystem::path& source,
+    const std::filesystem::path& output, std::uint32_t chunkFrames) {
+    LoadedWav wav;
+    if (!LoadWav(source.string(), &wav)) {
         return false;
     }
-    out.write(text.data(), static_cast<std::streamsize>(text.size()));
+    harkenhost::StreamSpec spec;
+    spec.soundId = sound;
+    spec.sampleRate = wav.sampleRate;
+    spec.channelCount = static_cast<std::uint16_t>(wav.channels);
+    spec.chunkFrames = chunkFrames;
+    const std::vector<std::uint8_t> bytes = harkenhost::BuildStreamBytes(
+        spec, harkenhost::DeinterleaveFrames(wav.samples, wav.channels));
+    std::ofstream out(output, std::ios::binary | std::ios::trunc);
+    out.write(reinterpret_cast<const char*>(bytes.data()),
+              static_cast<std::streamsize>(bytes.size()));
     return out.good();
-}
-
-std::string QuoteArg(const std::filesystem::path& path) {
-    return "\"" + path.string() + "\"";
-}
-
-bool CompileStream(const Options& options,
-                       const std::filesystem::path& manifest) {
-    if (options.packcPath.empty()) {
-        harkenizer::resourcecompiler::Request request;
-        const auto path = manifest.u8string();
-        request.manifestPaths.emplace_back(path.begin(), path.end());
-        request.container = harkenizer::resourcecompiler::Container::Stream;
-        const auto result = harkenizer::resourcecompiler::compile(request);
-        std::fputs(result.outputLog.c_str(), stdout);
-        std::fputs(result.diagnosticLog.c_str(), stderr);
-        return result.success;
-    }
-    const std::string command = QuoteArg(options.packcPath) + " --stream " +
-                                QuoteArg(manifest);
-#if defined(_WIN32)
-    // cmd.exe strips the first and last quote character from the string it
-    // receives unless the whole command line is wrapped in one extra pair,
-    // so the quoted executable path would lose its opening quote.
-    return std::system(("\"" + command + "\"").c_str()) == 0;
-#else
-    return std::system(command.c_str()) == 0;
-#endif
-}
-
-std::string StreamManifest(VnObjectId sound, const std::filesystem::path& source,
-    const std::filesystem::path& output, std::uint32_t chunkFrames) {
-    harkenhost::JsonWriter json;
-    json.BeginObject();
-    json.Key("manifestVersion");
-    json.ValueU64(3);
-    json.Key("output");
-    json.ValueString(std::filesystem::absolute(output).generic_string());
-    json.Key("chunkFrames");
-    json.ValueU64(chunkFrames);
-    json.Key("entries");
-    json.BeginArray();
-    json.BeginObject();
-    json.Key("path");
-    json.ValueString(std::filesystem::absolute(source).generic_string());
-    json.Key("id");
-    json.ValueString(harken::ObjectIdString(sound));
-    json.EndObject();
-    json.EndArray();
-    json.EndObject();
-    return json.Finish();
 }
 
 bool WriteEnduranceWav16(const std::filesystem::path& path,
@@ -1187,21 +1141,14 @@ int RunStreamEndurance(const Options& options, char** argv) {
     constexpr VnSoundId kStreamId{0x76656e7573686f73, 8001};
     const std::filesystem::path wavPath =
         ".temp/harken_host_stream_endurance.wav";
-    const std::filesystem::path manifestPath =
-        ".temp/harken_host_stream_endurance_manifest.json";
     const std::filesystem::path streamPath =
         ".temp/harken_host_stream_endurance.stream";
     if (!WriteEnduranceWav16(wavPath, options.seconds)) {
         std::fprintf(stderr, "error: cannot write endurance wav\n");
         return 1;
     }
-    const std::string manifest = StreamManifest(kStreamId, wavPath, streamPath, options.chunkFrames);
-    if (!WriteTextFile(manifestPath, manifest)) {
-        std::fprintf(stderr, "error: cannot write endurance manifest\n");
-        return 1;
-    }
-    if (!CompileStream(options, manifestPath)) {
-        std::fprintf(stderr, "error: stream resource compilation failed\n");
+    if (!WriteStreamFromWav(kStreamId, wavPath, streamPath, options.chunkFrames)) {
+        std::fprintf(stderr, "error: cannot write endurance stream\n");
         return 1;
     }
 
@@ -2092,7 +2039,7 @@ int RunM6Scene(const Options& options) {
     return 0;
 }
 
-int RunM2Scene(const Options& options, char** argv) {
+int RunSceneMix(const Options& options, char** argv) {
     std::error_code ec;
     std::filesystem::create_directories(".temp", ec);
     if (ec) {
@@ -2106,12 +2053,10 @@ int RunM2Scene(const Options& options, char** argv) {
     constexpr VnSoundId kOneShotId{0x76656e7573686f73, 8103};
     const std::filesystem::path musicWavPath =
         options.musicPath.empty()
-            ? std::filesystem::path(".temp/harken_host_m2_music.wav")
+            ? std::filesystem::path(".temp/harken_host_scene_mix_music.wav")
             : std::filesystem::path(options.musicPath);
-    const std::filesystem::path manifestPath =
-        ".temp/harken_host_m2_scene_manifest.json";
     const std::filesystem::path streamPath =
-        ".temp/harken_host_m2_scene.stream";
+        ".temp/harken_host_scene_mix.stream";
     const double oneShotStartSeconds =
         options.seconds * kSceneOneShotStartRatio;
     const double minMusicSeconds =
@@ -2155,13 +2100,8 @@ int RunM2Scene(const Options& options, char** argv) {
                     expectedMusicSeconds);
     }
 
-    const std::string manifest = StreamManifest(kMusicId, musicWavPath, streamPath, options.chunkFrames);
-    if (!WriteTextFile(manifestPath, manifest)) {
-        std::fprintf(stderr, "error: cannot write m2-scene manifest\n");
-        return 1;
-    }
-    if (!CompileStream(options, manifestPath)) {
-        std::fprintf(stderr, "error: stream resource compilation failed\n");
+    if (!WriteStreamFromWav(kMusicId, musicWavPath, streamPath, options.chunkFrames)) {
+        std::fprintf(stderr, "error: cannot write scene-mix stream\n");
         return 1;
     }
 
@@ -2286,7 +2226,7 @@ int RunM2Scene(const Options& options, char** argv) {
         static_cast<int>((options.seconds + kSceneMusicMaxTailSeconds) /
                          kTickSeconds);
 
-    std::printf("m2-scene: %.2fs, one-shot at %.2fs, ambience fade %.2fs\n",
+    std::printf("scene-mix: %.2fs, one-shot at %.2fs, ambience fade %.2fs\n",
                 options.seconds, oneShotTick * kTickSeconds,
                 ambienceFadeTick * kTickSeconds);
 
@@ -2315,7 +2255,7 @@ int RunM2Scene(const Options& options, char** argv) {
                 break;
             }
             oneShotStarted = true;
-            std::printf("[m2 %.2fs] delayed one-shot triggered\n",
+            std::printf("[scene-mix %.2fs] delayed one-shot triggered\n",
                         tick * kTickSeconds);
         }
         if (tick == ambienceFadeTick) {
@@ -2325,7 +2265,7 @@ int RunM2Scene(const Options& options, char** argv) {
                 break;
             }
             ambienceFadeStarted = true;
-            std::printf("[m2 %.2fs] ambience fade-stop started\n",
+            std::printf("[scene-mix %.2fs] ambience fade-stop started\n",
                         tick * kTickSeconds);
         }
         notifications.currentTick = tick;
@@ -2368,7 +2308,7 @@ int RunM2Scene(const Options& options, char** argv) {
                 }
             }
             if (tick % kPrintEveryTicks == 0) {
-                std::printf("[m2 %.2fs] voices=%u peak=%.5f "
+                std::printf("[scene-mix %.2fs] voices=%u peak=%.5f "
                             "streamHW=%llu starved=%llu\n",
                             tick * kTickSeconds,
                             snapshot.activeVoiceCount,
@@ -2397,7 +2337,7 @@ int RunM2Scene(const Options& options, char** argv) {
 
     const std::uint64_t roundedRingFrames =
         RoundUpPow2Host(kStreamRingFrames);
-    std::printf("m2-scene summary: musicEnded=%s oneShotEnded=%s "
+    std::printf("scene-mix summary: musicEnded=%s oneShotEnded=%s "
                 "ambienceFadeDone=%s fadeStarted=%s "
                 "musicEndTick=%d musicEndElapsed=%.2f "
                 "concurrentSnapshots=%d maxPeak=%.5f maxConcurrentPeak=%.5f "
@@ -2424,7 +2364,7 @@ int RunM2Scene(const Options& options, char** argv) {
     }
     if (maxPeak < kSilenceFloor) {
         std::fprintf(stderr,
-                     "SILENT: m2-scene master peak stayed below %g "
+                     "SILENT: scene-mix master peak stayed below %g "
                      "(max %.6g)\n",
                      static_cast<double>(kSilenceFloor),
                      static_cast<double>(maxPeak));
@@ -2432,7 +2372,7 @@ int RunM2Scene(const Options& options, char** argv) {
     }
     if (concurrentSnapshots < 3) {
         std::fprintf(stderr,
-                     "error: m2-scene observed only %d concurrent snapshots "
+                     "error: scene-mix observed only %d concurrent snapshots "
                      "with streamed music, looping ambience, and one-shot "
                      "voices live\n",
                      concurrentSnapshots);
@@ -2440,7 +2380,7 @@ int RunM2Scene(const Options& options, char** argv) {
     }
     if (maxConcurrentPeak < kSilenceFloor) {
         std::fprintf(stderr,
-                     "SILENT: m2-scene concurrent-window peak stayed below "
+                     "SILENT: scene-mix concurrent-window peak stayed below "
                      "%g (max %.6g)\n",
                      static_cast<double>(kSilenceFloor),
                      static_cast<double>(maxConcurrentPeak));
@@ -2487,7 +2427,7 @@ int RunM2Scene(const Options& options, char** argv) {
     if (!notifications.musicEnded || !notifications.oneShotEnded ||
         !notifications.ambienceStoppedByFade) {
         std::fprintf(stderr,
-                     "error: m2-scene did not complete naturally "
+                     "error: scene-mix did not complete naturally "
                      "(musicEnded=%s oneShotEnded=%s ambienceFadeDone=%s)\n",
                      notifications.musicEnded ? "yes" : "no",
                      notifications.oneShotEnded ? "yes" : "no",
@@ -2527,7 +2467,7 @@ int RunM2Scene(const Options& options, char** argv) {
         snapshot.voiceStarvedCount != 0 || notifications.starved != 0 ||
         guardHits != 0) {
         std::fprintf(stderr,
-                     "error: m2-scene self-check counters failed "
+                     "error: scene-mix self-check counters failed "
                      "(streamHW=%llu ringHW=%llu voiceStarved=%llu "
                      "eventStarved=%llu memguardHits=%llu)\n",
                      static_cast<unsigned long long>(
@@ -2963,8 +2903,8 @@ int main(int argc, char** argv) {
     if (options.mode == Options::Mode::StreamEndurance) {
         return RunStreamEndurance(options, argv);
     }
-    if (options.mode == Options::Mode::M2Scene) {
-        return RunM2Scene(options, argv);
+    if (options.mode == Options::Mode::SceneMix) {
+        return RunSceneMix(options, argv);
     }
     if (options.mode == Options::Mode::M6Scene) {
         return RunM6Scene(options);

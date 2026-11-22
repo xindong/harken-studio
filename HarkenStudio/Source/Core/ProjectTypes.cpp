@@ -20,7 +20,7 @@
 #include <map>
 #include <set>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 
@@ -96,7 +96,8 @@ std::vector<ProjectItem*> ProjectData::findItemsBySelector(
     const auto visit = [&](auto&& self, ProjectItem* item, qsizetype depth, bool parentMatches) -> void {
         if (!item) return;
         const auto sensitivity = (item->type == ProjectItem::Type::Attenuation
-            || item->type == ProjectItem::Type::Effect) ? Qt::CaseInsensitive : Qt::CaseSensitive;
+            || item->type == ProjectItem::Type::Effect
+            || item->type == ProjectItem::Type::Conversion) ? Qt::CaseInsensitive : Qt::CaseSensitive;
         const QString name = item->name.normalized(QString::NormalizationForm_C);
         const bool pathMatches = parentMatches && depth < segments.size()
             && name.compare(segments[depth], sensitivity) == 0;
@@ -415,7 +416,7 @@ bool validateProjectObjectIdentities(const ProjectData& project, QString* error)
     QSet<QUuid> identities;
     QSet<const ProjectItem*> visited;
     auto claim = [&](const QUuid& guid) {
-        if (runtimeObjectId(guid) == harkenstudio::kMasterBusObjectId) {
+        if (runtimeObjectId(guid) == harken::studio::types::kMasterBusObjectId) {
             if (error) *error = QStringLiteral("The Runtime output root UUID is reserved");
             return false;
         }

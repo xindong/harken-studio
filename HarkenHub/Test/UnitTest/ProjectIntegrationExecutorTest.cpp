@@ -54,7 +54,7 @@ TEST(IntegrationDirectoryTest, ExistingDestinationIsNeverReplaced)
     ASSERT_TRUE(writeFile(source + "/new.txt", "new"));
     ASSERT_TRUE(writeFile(target + "/existing.txt", "existing"));
     QString error;
-    EXPECT_FALSE(VNH::renameIntegrationDirectory(source, target, &error));
+    EXPECT_FALSE(harken::hub::renameIntegrationDirectory(source, target, &error));
     EXPECT_TRUE(error.contains(source));
     EXPECT_TRUE(error.contains(target));
     EXPECT_TRUE(QFileInfo::exists(source + "/new.txt"));
@@ -71,7 +71,7 @@ TEST(IntegrationDirectoryTest, ChecksCreationAndRenamePermissionsWithoutChanging
     const QString installed = parent + "/SDK";
     ASSERT_TRUE(writeFile(installed + "/payload.txt", "original"));
     QString error;
-    EXPECT_TRUE(VNH::checkIntegrationDirectoryChanges({parent + "/nested/new"}, {installed}, &error));
+    EXPECT_TRUE(harken::hub::checkIntegrationDirectoryChanges({parent + "/nested/new"}, {installed}, &error));
 #ifdef Q_OS_WIN
     HANDLE token = nullptr;
     ASSERT_TRUE(OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token));
@@ -95,8 +95,8 @@ TEST(IntegrationDirectoryTest, ChecksCreationAndRenamePermissionsWithoutChanging
     const auto restore = qScopeGuard([&]() { QFile::setPermissions(parent, permissions); });
     ASSERT_TRUE(QFile::setPermissions(parent, permissions & ~(QFile::WriteOwner | QFile::WriteGroup | QFile::WriteOther | QFile::WriteUser)));
 #endif
-    EXPECT_TRUE(VNH::checkIntegrationFilesWritable({installed + "/payload.txt"}, &error));
-    const bool canCreate = VNH::checkIntegrationDirectoryChanges({parent + "/nested/new"}, {}, &error);
+    EXPECT_TRUE(harken::hub::checkIntegrationFilesWritable({installed + "/payload.txt"}, &error));
+    const bool canCreate = harken::hub::checkIntegrationDirectoryChanges({parent + "/nested/new"}, {}, &error);
     EXPECT_FALSE(QFileInfo::exists(parent + "/nested"));
     const bool created = QDir().mkpath(parent + "/nested/new");
     EXPECT_EQ(canCreate, created) << error.toStdString();
@@ -107,11 +107,11 @@ TEST(IntegrationDirectoryTest, ChecksCreationAndRenamePermissionsWithoutChanging
     ASSERT_EQ(QProcess::execute("icacls", {parent, "/deny", account + ":(DC)"}), 0);
     ASSERT_EQ(QProcess::execute("icacls", {installed, "/deny", account + ":(D)"}), 0);
 #endif
-    const bool canRename = VNH::checkIntegrationDirectoryChanges({}, {installed}, &error);
+    const bool canRename = harken::hub::checkIntegrationDirectoryChanges({}, {installed}, &error);
     QString renameError;
-    const bool renamed = VNH::renameIntegrationDirectory(installed, parent + "/Moved", &renameError);
+    const bool renamed = harken::hub::renameIntegrationDirectory(installed, parent + "/Moved", &renameError);
     EXPECT_EQ(canRename, renamed) << error.toStdString() << '\n' << renameError.toStdString();
-    if (renamed) ASSERT_TRUE(VNH::renameIntegrationDirectory(parent + "/Moved", installed));
+    if (renamed) ASSERT_TRUE(harken::hub::renameIntegrationDirectory(parent + "/Moved", installed));
     EXPECT_FALSE(QFileInfo::exists(parent + "/nested"));
     QFile payload(installed + "/payload.txt");
     ASSERT_TRUE(payload.open(QIODevice::ReadOnly));
@@ -133,7 +133,7 @@ TEST(IntegrationFileWriteTest, TransientLockAllowsAtomicReplacementAfterRelease)
         CloseHandle(handle);
     });
     QString error;
-    EXPECT_TRUE(VNH::writeIntegrationFile(path, "new report", &error)) << error.toStdString();
+    EXPECT_TRUE(harken::hub::writeIntegrationFile(path, "new report", &error)) << error.toStdString();
     QFile report(path);
     ASSERT_TRUE(report.open(QIODevice::ReadOnly));
     EXPECT_EQ(report.readAll(), "new report");
@@ -151,14 +151,14 @@ TEST(IntegrationFileWriteTest, PersistentLockKeepsPreviousContentsAndReportsFail
     {
         const auto close = qScopeGuard([handle]() { CloseHandle(handle); });
         QString error;
-        EXPECT_FALSE(VNH::writeIntegrationFile(path, "new report", &error));
+        EXPECT_FALSE(harken::hub::writeIntegrationFile(path, "new report", &error));
         EXPECT_FALSE(error.isEmpty());
         QFile report(path);
         ASSERT_TRUE(report.open(QIODevice::ReadOnly));
         EXPECT_EQ(report.readAll(), "previous report");
     }
     QString error;
-    EXPECT_TRUE(VNH::writeIntegrationFile(path, "new report", &error)) << error.toStdString();
+    EXPECT_TRUE(harken::hub::writeIntegrationFile(path, "new report", &error)) << error.toStdString();
     QFile report(path);
     ASSERT_TRUE(report.open(QIODevice::ReadOnly));
     EXPECT_EQ(report.readAll(), "new report");
@@ -179,14 +179,14 @@ TEST(IntegrationFileWriteTest, WritePreflightReportsReadOnlyAndLockedFilesWithou
         FILE_SHARE_READ | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
     ASSERT_NE(handle, INVALID_HANDLE_VALUE);
     QString error;
-    EXPECT_FALSE(VNH::checkIntegrationFilesWritable({readOnly, locked}, &error));
+    EXPECT_FALSE(harken::hub::checkIntegrationFilesWritable({readOnly, locked}, &error));
     CloseHandle(handle);
     EXPECT_TRUE(error.contains("Read-only files:"));
     EXPECT_TRUE(error.contains("Files that could not be opened for writing:"));
     EXPECT_TRUE(error.contains(QDir::toNativeSeparators(readOnly)));
     EXPECT_TRUE(error.contains(QDir::toNativeSeparators(locked)));
     ASSERT_TRUE(QFile::setPermissions(readOnly, permissions));
-    EXPECT_TRUE(VNH::checkIntegrationFilesWritable({readOnly, locked}, &error));
+    EXPECT_TRUE(harken::hub::checkIntegrationFilesWritable({readOnly, locked}, &error));
     EXPECT_TRUE(error.isEmpty());
     QFile original(readOnly);
     ASSERT_TRUE(original.open(QIODevice::ReadOnly));
@@ -211,7 +211,7 @@ TEST(IntegrationDirectoryTest, TransientFileLockAllowsAtomicRenameAfterRelease)
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
         CloseHandle(handle);
     });
-    EXPECT_TRUE(VNH::renameIntegrationDirectory(source, target));
+    EXPECT_TRUE(harken::hub::renameIntegrationDirectory(source, target));
     EXPECT_FALSE(QFileInfo::exists(source));
     QFile installed(target + "/payload.txt");
     ASSERT_TRUE(installed.open(QIODevice::ReadOnly));
@@ -232,7 +232,7 @@ TEST(IntegrationDirectoryTest, PersistentFileLockPreservesSourceAndAllowsLaterRe
     {
         const auto close = qScopeGuard([handle]() { CloseHandle(handle); });
         QString error;
-        EXPECT_FALSE(VNH::renameIntegrationDirectory(source, target, &error));
+        EXPECT_FALSE(harken::hub::renameIntegrationDirectory(source, target, &error));
         EXPECT_TRUE(error.contains(source));
         EXPECT_TRUE(error.contains(target));
         EXPECT_TRUE(error.contains("system error"));
@@ -241,7 +241,7 @@ TEST(IntegrationDirectoryTest, PersistentFileLockPreservesSourceAndAllowsLaterRe
         ASSERT_TRUE(preserved.open(QIODevice::ReadOnly));
         EXPECT_EQ(preserved.readAll(), "payload");
     }
-    EXPECT_TRUE(VNH::renameIntegrationDirectory(source, target));
+    EXPECT_TRUE(harken::hub::renameIntegrationDirectory(source, target));
     EXPECT_TRUE(QFileInfo::exists(target + "/payload.txt"));
 }
 #endif
@@ -249,10 +249,10 @@ TEST(IntegrationDirectoryTest, PersistentFileLockPreservesSourceAndAllowsLaterRe
 class UnrealMigrationTest : public ::testing::Test
 {
 protected:
-    using Executor = VNH::ProjectIntegrationExecutor;
-    using Operation = VNH::IntegrationOperation;
+    using Executor = harken::hub::ProjectIntegrationExecutor;
+    using Operation = harken::hub::IntegrationOperation;
     QTemporaryDir directory{QDir::current().filePath(".temp/unreal-migration-XXXXXX")};
-    VNH::EngineTargetRecord target;
+    harken::hub::EngineTargetRecord target;
     QString source;
     QString original;
     QString destination;
@@ -268,7 +268,7 @@ protected:
         ASSERT_TRUE(writeFile(QDir(source).filePath("Harken.uplugin"), R"({"VersionName":"1.0"})"));
         ASSERT_TRUE(writeFile(QDir(source).filePath("Runtime.bin"), "runtime"));
         ASSERT_TRUE(writeUnrealRuntimeFiles(source));
-        ASSERT_TRUE(VNH::EngineTargetProbe::resolve(root, &target));
+        ASSERT_TRUE(harken::hub::EngineTargetProbe::resolve(root, &target));
         const auto install = Executor::planUnreal(target, source, Operation::Install);
         ASSERT_TRUE(install.valid) << install.error.toStdString();
         ASSERT_TRUE(Executor::executeUnreal(target, install, Operation::Install, true).success);
@@ -281,7 +281,7 @@ protected:
         return file.readAll();
     }
 
-    void restoreJournal(const VNH::IntegrationMigrationPlan& plan)
+    void restoreJournal(const harken::hub::IntegrationMigrationPlan& plan)
     {
         ASSERT_TRUE(writeFile(Executor::unrealMigrationJournalPath(target),
             read(QDir(QFileInfo(plan.backupRoot).absolutePath()).filePath("migration.json"))));
@@ -349,10 +349,10 @@ TEST_F(UnrealMigrationTest, IncompleteSourcesCannotModifyNewOrInstalledProjects)
         const QByteArray ownership = read(QDir(original).filePath(".harken-integration-state.json"));
         const QString custom = QDir(original).filePath("custom.txt");
         ASSERT_TRUE(writeFile(custom, "keep"));
-        VNH::EngineTargetRecord freshTarget;
+        harken::hub::EngineTargetRecord freshTarget;
         const QString freshRoot = directory.filePath("NewGame");
         ASSERT_TRUE(writeFile(QDir(freshRoot).filePath("NewGame.uproject"), "{}"));
-        ASSERT_TRUE(VNH::EngineTargetProbe::resolve(freshRoot, &freshTarget));
+        ASSERT_TRUE(harken::hub::EngineTargetProbe::resolve(freshRoot, &freshTarget));
 
         for (const bool empty : {false, true}) {
             const auto approvedInstall = Executor::planUnreal(freshTarget, source, Operation::Install);
@@ -416,7 +416,7 @@ TEST_F(UnrealMigrationTest, PreservesEntireInstallationAndMaintainsItAtTheNewLoc
     EXPECT_EQ(read(QDir(destination).filePath(".harken-integration-state.json")), ownership);
     EXPECT_EQ(read(target.descriptorPath), "{}");
     EXPECT_EQ(moved.installedPath, "Plugins/Audio/Harken");
-    const auto observation = VNH::EngineTargetProbe::observe(target);
+    const auto observation = harken::hub::EngineTargetProbe::observe(target);
     EXPECT_EQ(observation.integrationInstallPath, moved.installedPath);
     EXPECT_TRUE(observation.canChangeIntegration && observation.canMoveIntegration && observation.canRemoveIntegration);
     auto inspection = Executor::inspectUnreal(target);
@@ -461,7 +461,7 @@ TEST_F(UnrealMigrationTest, RejectsUnsafeDestinationsDuplicatesAndStaleApproval)
     EXPECT_FALSE(Executor::inspectUnreal(target).valid);
     EXPECT_FALSE(Executor::planUnreal(target, source, Operation::Update).valid);
     EXPECT_FALSE(Executor::planUnrealMigration(target, "Plugins/Elsewhere").valid);
-    const auto observation = VNH::EngineTargetProbe::observe(target);
+    const auto observation = harken::hub::EngineTargetProbe::observe(target);
     EXPECT_FALSE(observation.canChangeIntegration || observation.canMoveIntegration || observation.canRemoveIntegration);
     EXPECT_TRUE(observation.error.contains("Multiple Harken plugins"));
 }
@@ -474,7 +474,7 @@ TEST_F(UnrealMigrationTest, RecoversBeforeAndAfterRenameAndFromVerifiedBackup)
     restoreJournal(plan);
     EXPECT_FALSE(Executor::planUnreal(target, source, Operation::Update).valid);
     EXPECT_FALSE(Executor::planUnreal(target, {}, Operation::Remove).valid);
-    const auto blocked = VNH::EngineTargetProbe::observe(target);
+    const auto blocked = harken::hub::EngineTargetProbe::observe(target);
     EXPECT_TRUE(blocked.canMoveIntegration);
     EXPECT_FALSE(blocked.canChangeIntegration || blocked.canRemoveIntegration);
     auto recover = Executor::planUnrealMigration(target, {}, true);
@@ -536,8 +536,8 @@ TEST_F(UnrealMigrationTest, ChecksProjectLockAndAllowsStoppingReadOnlyScans)
     lock.unlock();
     std::atomic<quint64> inspected{0};
     std::atomic<bool> cancelled{true};
-    VNH::IntegrationProgress progress(inspected, cancelled);
-    EXPECT_THROW(Executor::planUnrealMigration(target, destination), VNH::IntegrationScanStopped);
+    harken::hub::IntegrationProgress progress(inspected, cancelled);
+    EXPECT_THROW(Executor::planUnrealMigration(target, destination), harken::hub::IntegrationScanStopped);
     EXPECT_FALSE(Executor::hasPendingUnrealMigration(target));
     EXPECT_TRUE(QFileInfo::exists(original));
 }
@@ -611,17 +611,17 @@ TEST(ProjectIntegrationExecutorTest, UpdatesOnlyChangedFilesAndPreservesTargetOn
         QDir(sourceRoot).filePath(QStringLiteral("Binaries/runtime.bin")),
         QByteArrayLiteral("one")));
 
-    VNH::EngineTargetRecord target;
-    target.engineKind = VNH::EngineKind::Unreal;
+    harken::hub::EngineTargetRecord target;
+    target.engineKind = harken::hub::EngineKind::Unreal;
     target.canonicalRoot = projectRoot;
     target.descriptorPath = descriptor;
 
-    const VNH::IntegrationPlan install =
-        VNH::ProjectIntegrationExecutor::planUnreal(
-            target, sourceRoot, VNH::IntegrationOperation::Install);
+    const harken::hub::IntegrationPlan install =
+        harken::hub::ProjectIntegrationExecutor::planUnreal(
+            target, sourceRoot, harken::hub::IntegrationOperation::Install);
     ASSERT_TRUE(install.valid) << install.error.toStdString();
-    ASSERT_TRUE(VNH::ProjectIntegrationExecutor::executeUnreal(
-                    target, install, VNH::IntegrationOperation::Install, true)
+    ASSERT_TRUE(harken::hub::ProjectIntegrationExecutor::executeUnreal(
+                    target, install, harken::hub::IntegrationOperation::Install, true)
                     .success);
     EXPECT_TRUE(QFileInfo::exists(QDir(install.targetRoot).filePath(
         QStringLiteral(".harken-integration-state.json"))));
@@ -649,18 +649,18 @@ TEST(ProjectIntegrationExecutorTest, UpdatesOnlyChangedFilesAndPreservesTargetOn
 #endif
     ASSERT_TRUE(QFileInfo(hiddenFile).isHidden());
     ASSERT_TRUE(QFileInfo(hiddenDirectory).isHidden());
-    const VNH::IntegrationPlan current =
-        VNH::ProjectIntegrationExecutor::planUnreal(
-            target, sourceRoot, VNH::IntegrationOperation::Update);
+    const harken::hub::IntegrationPlan current =
+        harken::hub::ProjectIntegrationExecutor::planUnreal(
+            target, sourceRoot, harken::hub::IntegrationOperation::Update);
     ASSERT_TRUE(current.valid) << current.error.toStdString();
     EXPECT_TRUE(current.changes.empty());
 
     ASSERT_TRUE(writeFile(
         QDir(sourceRoot).filePath(QStringLiteral("Binaries/runtime.bin")),
         QByteArrayLiteral("two")));
-    const VNH::IntegrationPlan update =
-        VNH::ProjectIntegrationExecutor::planUnreal(
-            target, sourceRoot, VNH::IntegrationOperation::Update);
+    const harken::hub::IntegrationPlan update =
+        harken::hub::ProjectIntegrationExecutor::planUnreal(
+            target, sourceRoot, harken::hub::IntegrationOperation::Update);
     ASSERT_TRUE(update.valid) << update.error.toStdString();
     ASSERT_EQ(update.changes.size(), 1u);
     EXPECT_EQ(update.changes.front().action, QStringLiteral("replace"));
@@ -671,40 +671,40 @@ TEST(ProjectIntegrationExecutorTest, UpdatesOnlyChangedFilesAndPreservesTargetOn
     const QString lateTargetOnly = QDir(projectRoot).filePath(
         QStringLiteral("Plugins/Harken/Source/Late.Build.cs"));
     ASSERT_TRUE(writeFile(lateTargetOnly, QByteArrayLiteral("late")));
-    EXPECT_FALSE(VNH::ProjectIntegrationExecutor::executeUnreal(
-                    target, update, VNH::IntegrationOperation::Update, true)
+    EXPECT_FALSE(harken::hub::ProjectIntegrationExecutor::executeUnreal(
+                    target, update, harken::hub::IntegrationOperation::Update, true)
                     .success);
-    const auto rechecked = VNH::ProjectIntegrationExecutor::planUnreal(
-        target, sourceRoot, VNH::IntegrationOperation::Update);
+    const auto rechecked = harken::hub::ProjectIntegrationExecutor::planUnreal(
+        target, sourceRoot, harken::hub::IntegrationOperation::Update);
     ASSERT_TRUE(rechecked.valid);
-    ASSERT_TRUE(VNH::ProjectIntegrationExecutor::executeUnreal(
-                    target, rechecked, VNH::IntegrationOperation::Update, true).success);
+    ASSERT_TRUE(harken::hub::ProjectIntegrationExecutor::executeUnreal(
+                    target, rechecked, harken::hub::IntegrationOperation::Update, true).success);
     for (const QString& path : {targetOnly, hiddenFile, nestedFile}) {
         QFile file(path);
         ASSERT_TRUE(file.open(QIODevice::ReadOnly)) << path.toStdString();
         EXPECT_EQ(file.readAll(), QByteArrayLiteral("custom"));
     }
     EXPECT_TRUE(QFileInfo::exists(lateTargetOnly));
-    const auto inspected = VNH::ProjectIntegrationExecutor::inspectUnreal(target);
+    const auto inspected = harken::hub::ProjectIntegrationExecutor::inspectUnreal(target);
     ASSERT_TRUE(inspected.valid);
     EXPECT_TRUE(inspected.modifiedManagedFiles.isEmpty());
-    const auto removal = VNH::ProjectIntegrationExecutor::planUnreal(
-        target, {}, VNH::IntegrationOperation::Remove);
+    const auto removal = harken::hub::ProjectIntegrationExecutor::planUnreal(
+        target, {}, harken::hub::IntegrationOperation::Remove);
     ASSERT_TRUE(removal.valid);
-    const auto removed = VNH::ProjectIntegrationExecutor::executeUnreal(
-        target, removal, VNH::IntegrationOperation::Remove, true);
+    const auto removed = harken::hub::ProjectIntegrationExecutor::executeUnreal(
+        target, removal, harken::hub::IntegrationOperation::Remove, true);
     ASSERT_TRUE(removed.success) << removed.error.toStdString();
     EXPECT_TRUE(QFileInfo::exists(QDir(removed.backupPath).filePath("Harken.uplugin")));
     EXPECT_FALSE(removed.backupPath.contains("Plugins/"));
     EXPECT_FALSE(QFileInfo::exists(QDir(install.targetRoot).filePath("Harken.uplugin")));
     for (const QString& path : {targetOnly, hiddenFile, nestedFile, lateTargetOnly})
         EXPECT_TRUE(QFileInfo::exists(path));
-    EXPECT_EQ(VNH::EngineTargetProbe::observe(target).health, VNH::EngineTargetHealth::NotInstalled);
-    const auto reinstall = VNH::ProjectIntegrationExecutor::planUnreal(
-        target, sourceRoot, VNH::IntegrationOperation::Install);
+    EXPECT_EQ(harken::hub::EngineTargetProbe::observe(target).health, harken::hub::EngineTargetHealth::NotInstalled);
+    const auto reinstall = harken::hub::ProjectIntegrationExecutor::planUnreal(
+        target, sourceRoot, harken::hub::IntegrationOperation::Install);
     ASSERT_TRUE(reinstall.valid) << reinstall.error.toStdString();
-    EXPECT_TRUE(VNH::ProjectIntegrationExecutor::executeUnreal(
-        target, reinstall, VNH::IntegrationOperation::Install, true).success);
+    EXPECT_TRUE(harken::hub::ProjectIntegrationExecutor::executeUnreal(
+        target, reinstall, harken::hub::IntegrationOperation::Install, true).success);
 }
 
 TEST(ProjectIntegrationExecutorTest, RequiresConfirmationToOverwriteModifiedManagedFiles)
@@ -729,33 +729,33 @@ TEST(ProjectIntegrationExecutorTest, RequiresConfirmationToOverwriteModifiedMana
     ASSERT_TRUE(writeUnrealRuntimeFiles(sourceRoot));
     ASSERT_TRUE(writeFile(sourceRuntime, QByteArrayLiteral("one")));
 
-    VNH::EngineTargetRecord target;
-    target.engineKind = VNH::EngineKind::Unreal;
+    harken::hub::EngineTargetRecord target;
+    target.engineKind = harken::hub::EngineKind::Unreal;
     target.canonicalRoot = projectRoot;
     target.descriptorPath = descriptor;
 
-    const VNH::IntegrationPlan install =
-        VNH::ProjectIntegrationExecutor::planUnreal(
-            target, sourceRoot, VNH::IntegrationOperation::Install);
+    const harken::hub::IntegrationPlan install =
+        harken::hub::ProjectIntegrationExecutor::planUnreal(
+            target, sourceRoot, harken::hub::IntegrationOperation::Install);
     ASSERT_TRUE(install.valid) << install.error.toStdString();
-    ASSERT_TRUE(VNH::ProjectIntegrationExecutor::executeUnreal(
-                    target, install, VNH::IntegrationOperation::Install, true)
+    ASSERT_TRUE(harken::hub::ProjectIntegrationExecutor::executeUnreal(
+                    target, install, harken::hub::IntegrationOperation::Install, true)
                     .success);
 
     ASSERT_TRUE(writeFile(installedRuntime, QByteArrayLiteral("local")));
     ASSERT_TRUE(writeFile(sourceRuntime, QByteArrayLiteral("two")));
-    const VNH::IntegrationPlan update =
-        VNH::ProjectIntegrationExecutor::planUnreal(
-            target, sourceRoot, VNH::IntegrationOperation::Update);
+    const harken::hub::IntegrationPlan update =
+        harken::hub::ProjectIntegrationExecutor::planUnreal(
+            target, sourceRoot, harken::hub::IntegrationOperation::Update);
     ASSERT_TRUE(update.valid) << update.error.toStdString();
     EXPECT_TRUE(update.confirmationRequired);
     EXPECT_TRUE(update.modifiedManagedFiles.contains(
         QStringLiteral("Binaries/runtime.bin")));
-    EXPECT_FALSE(VNH::ProjectIntegrationExecutor::executeUnreal(
-                     target, update, VNH::IntegrationOperation::Update, false)
+    EXPECT_FALSE(harken::hub::ProjectIntegrationExecutor::executeUnreal(
+                     target, update, harken::hub::IntegrationOperation::Update, false)
                      .success);
-    EXPECT_TRUE(VNH::ProjectIntegrationExecutor::executeUnreal(
-                    target, update, VNH::IntegrationOperation::Update, true)
+    EXPECT_TRUE(harken::hub::ProjectIntegrationExecutor::executeUnreal(
+                    target, update, harken::hub::IntegrationOperation::Update, true)
                     .success);
 
     QFile installed(installedRuntime);
@@ -768,26 +768,26 @@ TEST(ProjectIntegrationExecutorTest, DetectsProjectKindsAndRejectsAmbiguousFolde
     QTemporaryDir directory(QDir::current().filePath(".temp/engine-probe-XXXXXX"));
     ASSERT_TRUE(directory.isValid());
     const QString root = directory.filePath("Game");
-    VNH::EngineTargetRecord target;
+    harken::hub::EngineTargetRecord target;
     QString error;
-    EXPECT_FALSE(VNH::EngineTargetProbe::resolve(root, &target, &error));
+    EXPECT_FALSE(harken::hub::EngineTargetProbe::resolve(root, &target, &error));
     for (const auto* folder : {"Assets", "Packages", "ProjectSettings"})
         ASSERT_TRUE(QDir().mkpath(QDir(root).filePath(folder)));
-    ASSERT_TRUE(VNH::EngineTargetProbe::resolve(root, &target, &error));
-    EXPECT_EQ(target.engineKind, VNH::EngineKind::Unity);
+    ASSERT_TRUE(harken::hub::EngineTargetProbe::resolve(root, &target, &error));
+    EXPECT_EQ(target.engineKind, harken::hub::EngineKind::Unity);
     const QString descriptor = QDir(root).filePath("Game.uproject");
     ASSERT_TRUE(writeFile(descriptor, "{}"));
-    EXPECT_FALSE(VNH::EngineTargetProbe::resolve(root, &target, &error));
-    ASSERT_TRUE(VNH::EngineTargetProbe::resolve(descriptor, &target, &error));
-    EXPECT_EQ(target.engineKind, VNH::EngineKind::Unreal);
+    EXPECT_FALSE(harken::hub::EngineTargetProbe::resolve(root, &target, &error));
+    ASSERT_TRUE(harken::hub::EngineTargetProbe::resolve(descriptor, &target, &error));
+    EXPECT_EQ(target.engineKind, harken::hub::EngineKind::Unreal);
     const QString bundle = directory.filePath("SDK/Unreal/Harken");
     ASSERT_TRUE(writeFile(QDir(bundle).filePath("Harken.uplugin"), R"({"VersionName":"1.0"})"));
     for (const QString& input : {directory.filePath("SDK"), directory.filePath("SDK/Unreal"), bundle})
-        EXPECT_EQ(VNH::ProjectIntegrationExecutor::locateUnrealSource(input), bundle);
-    EXPECT_TRUE(VNH::ProjectIntegrationExecutor::locateUnrealSource(root).isEmpty());
+        EXPECT_EQ(harken::hub::ProjectIntegrationExecutor::locateUnrealSource(input), bundle);
+    EXPECT_TRUE(harken::hub::ProjectIntegrationExecutor::locateUnrealSource(root).isEmpty());
     ASSERT_TRUE(QDir(QDir(root).filePath("Assets")).removeRecursively());
-    ASSERT_TRUE(VNH::EngineTargetProbe::resolve(root, &target, &error));
-    EXPECT_EQ(target.engineKind, VNH::EngineKind::Unreal);
+    ASSERT_TRUE(harken::hub::EngineTargetProbe::resolve(root, &target, &error));
+    EXPECT_EQ(target.engineKind, harken::hub::EngineKind::Unreal);
 }
 
 TEST(ProjectIntegrationExecutorTest, RejectsSourceChangesAndInvalidOwnershipWithoutTouchingProject)
@@ -800,65 +800,65 @@ TEST(ProjectIntegrationExecutorTest, RejectsSourceChangesAndInvalidOwnershipWith
     ASSERT_TRUE(writeFile(QDir(source).filePath("Harken.uplugin"), R"({"VersionName":"1.0"})"));
     ASSERT_TRUE(writeFile(QDir(source).filePath("Runtime.bin"), "one"));
     ASSERT_TRUE(writeUnrealRuntimeFiles(source));
-    VNH::EngineTargetRecord target;
-    ASSERT_TRUE(VNH::EngineTargetProbe::resolve(root, &target));
-    const auto plan = VNH::ProjectIntegrationExecutor::planUnreal(target, source, VNH::IntegrationOperation::Install);
+    harken::hub::EngineTargetRecord target;
+    ASSERT_TRUE(harken::hub::EngineTargetProbe::resolve(root, &target));
+    const auto plan = harken::hub::ProjectIntegrationExecutor::planUnreal(target, source, harken::hub::IntegrationOperation::Install);
     ASSERT_TRUE(plan.valid) << plan.error.toStdString();
     ASSERT_TRUE(writeFile(QDir(source).filePath("Runtime.bin"), "two"));
-    EXPECT_FALSE(VNH::ProjectIntegrationExecutor::executeUnreal(target, plan, VNH::IntegrationOperation::Install, true).success);
+    EXPECT_FALSE(harken::hub::ProjectIntegrationExecutor::executeUnreal(target, plan, harken::hub::IntegrationOperation::Install, true).success);
     EXPECT_FALSE(QDir(plan.targetRoot).exists());
-    const auto fresh = VNH::ProjectIntegrationExecutor::planUnreal(target, source, VNH::IntegrationOperation::Install);
-    ASSERT_TRUE(VNH::ProjectIntegrationExecutor::executeUnreal(target, fresh, VNH::IntegrationOperation::Install, true).success);
+    const auto fresh = harken::hub::ProjectIntegrationExecutor::planUnreal(target, source, harken::hub::IntegrationOperation::Install);
+    ASSERT_TRUE(harken::hub::ProjectIntegrationExecutor::executeUnreal(target, fresh, harken::hub::IntegrationOperation::Install, true).success);
     ASSERT_TRUE(writeFile(QDir(plan.targetRoot).filePath("Runtime.bin"), "modified"));
-    const auto inspection = VNH::ProjectIntegrationExecutor::inspectUnreal(target);
+    const auto inspection = harken::hub::ProjectIntegrationExecutor::inspectUnreal(target);
     EXPECT_TRUE(inspection.valid);
     EXPECT_EQ(inspection.modifiedManagedFiles, QStringList{"Runtime.bin"});
     const QString recordPath = QDir(plan.targetRoot).filePath(".harken-integration-state.json");
-    const auto changed = VNH::EngineTargetProbe::observe(target, true);
-    EXPECT_EQ(changed.integrationContentState, VNH::IntegrationContentState::Modified);
+    const auto changed = harken::hub::EngineTargetProbe::observe(target, true);
+    EXPECT_EQ(changed.integrationContentState, harken::hub::IntegrationContentState::Modified);
     EXPECT_TRUE(changed.integrationContentDetails.contains("Runtime.bin"));
     EXPECT_TRUE(changed.canChangeIntegration);
     const QString requiredFile = "Source/HarkenCore/Include/harken/ObjectId.h";
     const QString requiredPath = QDir(plan.targetRoot).filePath(requiredFile);
     ASSERT_TRUE(QFile::remove(requiredPath));
-    const auto incomplete = VNH::ProjectIntegrationExecutor::inspectUnreal(target);
+    const auto incomplete = harken::hub::ProjectIntegrationExecutor::inspectUnreal(target);
     EXPECT_FALSE(incomplete.valid);
     EXPECT_EQ(incomplete.missingManagedFiles, QStringList{requiredFile});
     EXPECT_TRUE(incomplete.modifiedManagedFiles.contains(requiredFile));
-    const auto repair = VNH::ProjectIntegrationExecutor::planUnreal(target, source, VNH::IntegrationOperation::Update);
+    const auto repair = harken::hub::ProjectIntegrationExecutor::planUnreal(target, source, harken::hub::IntegrationOperation::Update);
     ASSERT_TRUE(repair.valid) << repair.error.toStdString();
     EXPECT_EQ(repair.missingManagedFiles, QStringList{requiredFile});
     EXPECT_TRUE(repair.unreadableManagedFiles.isEmpty());
-    const auto both = VNH::EngineTargetProbe::observe(target, true);
-    EXPECT_EQ(both.integrationContentState, VNH::IntegrationContentState::ModifiedAndMissing);
+    const auto both = harken::hub::EngineTargetProbe::observe(target, true);
+    EXPECT_EQ(both.integrationContentState, harken::hub::IntegrationContentState::ModifiedAndMissing);
     EXPECT_TRUE(both.integrationContentDetails.contains(requiredFile));
     EXPECT_TRUE(both.integrationContentDetails.contains("Runtime.bin"));
     ASSERT_TRUE(writeFile(QDir(plan.targetRoot).filePath("Runtime.bin"), "two"));
-    EXPECT_EQ(VNH::EngineTargetProbe::observe(target, true).integrationContentState,
-              VNH::IntegrationContentState::Missing);
+    EXPECT_EQ(harken::hub::EngineTargetProbe::observe(target, true).integrationContentState,
+              harken::hub::IntegrationContentState::Missing);
     EXPECT_FALSE(QFileInfo::exists(requiredPath));
     ASSERT_TRUE(QFile::copy(QDir(source).filePath(requiredFile), requiredPath));
-    EXPECT_EQ(VNH::EngineTargetProbe::observe(target, true).integrationContentState,
-              VNH::IntegrationContentState::MatchesInstallation);
+    EXPECT_EQ(harken::hub::EngineTargetProbe::observe(target, true).integrationContentState,
+              harken::hub::IntegrationContentState::MatchesInstallation);
     const QString runtimePath = QDir(plan.targetRoot).filePath("Runtime.bin");
     ASSERT_TRUE(QFile::remove(runtimePath));
     ASSERT_TRUE(QDir().mkpath(runtimePath));
-    const auto unreadable = VNH::ProjectIntegrationExecutor::inspectUnreal(target);
+    const auto unreadable = harken::hub::ProjectIntegrationExecutor::inspectUnreal(target);
     EXPECT_EQ(unreadable.unreadableManagedFiles, QStringList{"Runtime.bin"});
     EXPECT_EQ(unreadable.modifiedManagedFiles, QStringList{"Runtime.bin"});
     EXPECT_TRUE(unreadable.missingManagedFiles.isEmpty());
-    const auto unreadablePlan = VNH::ProjectIntegrationExecutor::planUnreal(target, source, VNH::IntegrationOperation::Update);
+    const auto unreadablePlan = harken::hub::ProjectIntegrationExecutor::planUnreal(target, source, harken::hub::IntegrationOperation::Update);
     EXPECT_FALSE(unreadablePlan.valid);
     EXPECT_EQ(unreadablePlan.unreadableManagedFiles, QStringList{"Runtime.bin"});
-    EXPECT_EQ(VNH::EngineTargetProbe::observe(target, true).integrationContentState,
-              VNH::IntegrationContentState::Unverified);
+    EXPECT_EQ(harken::hub::EngineTargetProbe::observe(target, true).integrationContentState,
+              harken::hub::IntegrationContentState::Unverified);
     ASSERT_TRUE(QDir().rmdir(runtimePath));
     ASSERT_TRUE(writeFile(runtimePath, "modified"));
     ASSERT_TRUE(writeFile(recordPath, R"({"schema_version":1,"engine":"unreal","sdk_version":"1.0","managed_files":{"../outside.txt":"bad"}})"));
-    EXPECT_FALSE(VNH::ProjectIntegrationExecutor::inspectUnreal(target).valid);
-    EXPECT_EQ(VNH::EngineTargetProbe::observe(target, true).integrationContentState,
-              VNH::IntegrationContentState::Unverified);
-    EXPECT_FALSE(VNH::ProjectIntegrationExecutor::planUnreal(target, {}, VNH::IntegrationOperation::Remove).valid);
+    EXPECT_FALSE(harken::hub::ProjectIntegrationExecutor::inspectUnreal(target).valid);
+    EXPECT_EQ(harken::hub::EngineTargetProbe::observe(target, true).integrationContentState,
+              harken::hub::IntegrationContentState::Unverified);
+    EXPECT_FALSE(harken::hub::ProjectIntegrationExecutor::planUnreal(target, {}, harken::hub::IntegrationOperation::Remove).valid);
     EXPECT_TRUE(QFileInfo::exists(QDir(plan.targetRoot).filePath("Runtime.bin")));
 }
 
@@ -873,9 +873,9 @@ TEST(ProjectIntegrationExecutorTest, BlocksOnlyTheRunningTargetAndRechecksBefore
     ASSERT_TRUE(writeFile(descriptor, "{}"));
     ASSERT_TRUE(writeFile(QDir(source).filePath("Harken.uplugin"), R"({"VersionName":"1.0"})"));
     ASSERT_TRUE(writeUnrealRuntimeFiles(source));
-    VNH::EngineTargetRecord target;
-    ASSERT_TRUE(VNH::EngineTargetProbe::resolve(root, &target));
-    const auto plan = VNH::ProjectIntegrationExecutor::planUnreal(target, source, VNH::IntegrationOperation::Install);
+    harken::hub::EngineTargetRecord target;
+    ASSERT_TRUE(harken::hub::EngineTargetProbe::resolve(root, &target));
+    const auto plan = harken::hub::ProjectIntegrationExecutor::planUnreal(target, source, harken::hub::IntegrationOperation::Install);
     ASSERT_TRUE(plan.valid) << plan.error.toStdString();
     const QString editor = directory.filePath("UnrealEditor.exe");
     ASSERT_TRUE(QFile::copy(qEnvironmentVariable("COMSPEC"), editor));
@@ -885,27 +885,27 @@ TEST(ProjectIntegrationExecutorTest, BlocksOnlyTheRunningTargetAndRechecksBefore
     ASSERT_TRUE(process.waitForStarted());
     QString error;
     bool isOpen = false;
-    EXPECT_FALSE(VNH::ProjectIntegrationExecutor::checkUnrealClosed(target, &error, &isOpen));
+    EXPECT_FALSE(harken::hub::ProjectIntegrationExecutor::checkUnrealClosed(target, &error, &isOpen));
     EXPECT_TRUE(isOpen);
     EXPECT_TRUE(error.contains("This Unreal project is open")) << error.toStdString();
     auto other = target;
     other.canonicalRoot = directory.filePath("OtherGame");
     other.descriptorPath = QDir(other.canonicalRoot).filePath("Game.uproject");
-    EXPECT_TRUE(VNH::ProjectIntegrationExecutor::checkUnrealClosed(other, &error, &isOpen));
+    EXPECT_TRUE(harken::hub::ProjectIntegrationExecutor::checkUnrealClosed(other, &error, &isOpen));
     EXPECT_FALSE(isOpen);
-    EXPECT_FALSE(VNH::ProjectIntegrationExecutor::executeUnreal(target, plan, VNH::IntegrationOperation::Install, true).success);
+    EXPECT_FALSE(harken::hub::ProjectIntegrationExecutor::executeUnreal(target, plan, harken::hub::IntegrationOperation::Install, true).success);
     EXPECT_FALSE(QDir(plan.targetRoot).exists());
     process.kill();
     ASSERT_TRUE(process.waitForFinished());
-    EXPECT_TRUE(VNH::ProjectIntegrationExecutor::checkUnrealClosed(target, &error));
-    EXPECT_TRUE(VNH::ProjectIntegrationExecutor::executeUnreal(target, plan, VNH::IntegrationOperation::Install, true).success);
+    EXPECT_TRUE(harken::hub::ProjectIntegrationExecutor::checkUnrealClosed(target, &error));
+    EXPECT_TRUE(harken::hub::ProjectIntegrationExecutor::executeUnreal(target, plan, harken::hub::IntegrationOperation::Install, true).success);
     process.start(editor, {"/d", "/q", "/k", "rem", "Game.uproject"});
     ASSERT_TRUE(process.waitForStarted());
-    EXPECT_FALSE(VNH::ProjectIntegrationExecutor::checkUnrealClosed(target, &error, &isOpen));
+    EXPECT_FALSE(harken::hub::ProjectIntegrationExecutor::checkUnrealClosed(target, &error, &isOpen));
     EXPECT_FALSE(isOpen);
     EXPECT_TRUE(error.contains("relative project path")) << error.toStdString();
     other.descriptorPath = QDir(other.canonicalRoot).filePath("Other.uproject");
-    EXPECT_TRUE(VNH::ProjectIntegrationExecutor::checkUnrealClosed(other, &error));
+    EXPECT_TRUE(harken::hub::ProjectIntegrationExecutor::checkUnrealClosed(other, &error));
     process.kill();
     ASSERT_TRUE(process.waitForFinished());
     for (const QString& argument : {QStringLiteral("Other.uproject"),
@@ -913,18 +913,18 @@ TEST(ProjectIntegrationExecutorTest, BlocksOnlyTheRunningTargetAndRechecksBefore
                                     QStringLiteral("-project=Other")}) {
         process.start(editor, {"/d", "/q", "/k", "rem", argument});
         ASSERT_TRUE(process.waitForStarted());
-        EXPECT_TRUE(VNH::ProjectIntegrationExecutor::checkUnrealClosed(target, &error))
+        EXPECT_TRUE(harken::hub::ProjectIntegrationExecutor::checkUnrealClosed(target, &error))
             << argument.toStdString() << ": " << error.toStdString();
-        EXPECT_TRUE(VNH::ProjectIntegrationExecutor::planUnreal(
-            target, source, VNH::IntegrationOperation::Update).valid);
-        EXPECT_TRUE(VNH::ProjectIntegrationExecutor::planUnreal(
-            target, {}, VNH::IntegrationOperation::Remove).valid);
+        EXPECT_TRUE(harken::hub::ProjectIntegrationExecutor::planUnreal(
+            target, source, harken::hub::IntegrationOperation::Update).valid);
+        EXPECT_TRUE(harken::hub::ProjectIntegrationExecutor::planUnreal(
+            target, {}, harken::hub::IntegrationOperation::Remove).valid);
         process.kill();
         ASSERT_TRUE(process.waitForFinished());
     }
     process.start(editor, {"/d", "/q", "/k", "rem", "-project=Game"});
     ASSERT_TRUE(process.waitForStarted());
-    EXPECT_FALSE(VNH::ProjectIntegrationExecutor::checkUnrealClosed(target, &error));
+    EXPECT_FALSE(harken::hub::ProjectIntegrationExecutor::checkUnrealClosed(target, &error));
     EXPECT_TRUE(error.contains("relative project path")) << error.toStdString();
 }
 #endif

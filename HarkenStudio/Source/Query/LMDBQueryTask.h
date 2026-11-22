@@ -12,7 +12,7 @@
 
 #include "LMDBQueryPipeline.h"
 
-namespace VNX {
+namespace harken::studio {
 
 class LMDBService;
 
@@ -32,7 +32,7 @@ public:
     void setResultCallback(ResultCallback cb) { callback_ = std::move(cb); }
 
 signals:
-    void searchCompleted(const std::vector<VNX::SearchResult>& results);
+    void searchCompleted(const std::vector<harken::studio::SearchResult>& results);
     void searchCancelled();
     void searchError(const QString& message);
     void progressChanged(int stage, const QString& stageName);

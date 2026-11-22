@@ -5,7 +5,7 @@
 #include <map>
 #include <utility>
 
-namespace VNX {
+namespace harken::studio {
 namespace Monitor {
 namespace {
 
@@ -22,7 +22,6 @@ bool knownStage(uint32_t stage)
 {
     return stage == kMonitorDropSourceProducer ||
            stage == kMonitorDropHubFanout ||
-           stage == kMonitorDropRecorderQueue ||
            stage == kMonitorDropRemoteTransport ||
            stage == kMonitorDropDerivedInput;
 }
@@ -140,4 +139,4 @@ MonitorDropProjection projectDrop(
 }
 
 } // namespace Monitor
-} // namespace VNX
+} // namespace harken::studio

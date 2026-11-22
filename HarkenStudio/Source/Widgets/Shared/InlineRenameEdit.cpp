@@ -11,7 +11,7 @@
 
 #include <utility>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 class RenameValidator final : public QValidator

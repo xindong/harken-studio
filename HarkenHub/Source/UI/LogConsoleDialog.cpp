@@ -1,5 +1,6 @@
 #include "UI/LogConsoleDialog.h"
 #include "UI/DialogLayout.h"
+#include "UI/HubTheme.h"
 
 #include "App/FileLog.h"
 #include "Transactions/TransactionDiagnostics.h"
@@ -12,10 +13,12 @@
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QScrollBar>
+#include <QTextBlock>
+#include <QTextCursor>
 #include <QUrl>
 #include <QVBoxLayout>
 
-namespace VNH {
+namespace harken::hub {
 
 namespace {
 
@@ -261,6 +264,16 @@ LogConsoleDialog::LogConsoleDialog(QWidget* parent)
                       FileLog::filePathFor(QStringLiteral("gui"))});
     connect(&tailer_, &LogTailer::appended, this,
             &LogConsoleDialog::appendText);
+    HubTheme::observe(this, [this] {
+        for (auto block = view_->document()->begin(); block.isValid(); block = block.next()) {
+            QTextCursor cursor(block);
+            cursor.select(QTextCursor::BlockUnderCursor);
+            QTextCharFormat format;
+            const auto tone = block.userState() < 0 ? HubTheme::Tone::Text : static_cast<HubTheme::Tone>(block.userState());
+            format.setForeground(HubTheme::color(tone));
+            cursor.mergeCharFormat(format);
+        }
+    });
 }
 
 void LogConsoleDialog::appendText(const QString& text)
@@ -272,15 +285,16 @@ void LogConsoleDialog::appendText(const QString& text)
     for (const QString& rawLine : lines) {
         if (FileLog::isIgnorableFrameworkMessage(rawLine))
             continue;
-        QString color = QStringLiteral("#C8CDD6");
+        auto tone = HubTheme::Tone::Text;
         if (rawLine.contains(QStringLiteral("[ERROR]")) ||
             rawLine.contains(QStringLiteral("[FATAL]")))
-            color = QStringLiteral("#F1707A");
+            tone = HubTheme::Tone::Error;
         else if (rawLine.contains(QStringLiteral("[WARN]")))
-            color = QStringLiteral("#E0C060");
+            tone = HubTheme::Tone::Warning;
         const QString line = localizeLine(rawLine);
         view_->appendHtml(QStringLiteral("<span style=\"color:%1;\">%2</span>")
-                              .arg(color, line.toHtmlEscaped()));
+                              .arg(HubTheme::color(tone).name(), line.toHtmlEscaped()));
+        view_->document()->lastBlock().setUserState(static_cast<int>(tone));
     }
 
     if (follow)

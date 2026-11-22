@@ -4,7 +4,7 @@
 
 #include <QString>
 
-using VNX::AIMarkdownRenderer::renderToHtml;
+using harken::studio::AIMarkdownRenderer::renderToHtml;
 
 TEST(AIMarkdownRendererTest, ScriptTagIsEscapedNeverLive)
 {

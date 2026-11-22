@@ -6,7 +6,7 @@
 
 #include <memory>
 
-using namespace VNX;
+using namespace harken::studio;
 
 namespace {
 
@@ -15,7 +15,7 @@ void ensureApp()
     if (qApp)
         return;
     static int argc = 1;
-    static char arg0[] = "harken_editor_tests";
+    static char arg0[] = "harken_studio_tests";
     static char* argv[] = {arg0, nullptr};
     static QApplication app(argc, argv);
 }

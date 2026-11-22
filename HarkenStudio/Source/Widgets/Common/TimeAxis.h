@@ -12,7 +12,7 @@
 class QFontMetrics;
 class QPainter;
 
-namespace VNX {
+namespace harken::studio {
 
 struct NanosecondPosition
 {

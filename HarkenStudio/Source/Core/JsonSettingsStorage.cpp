@@ -6,7 +6,7 @@
 #include <QStandardPaths>
 #include <QJsonArray>
 
-namespace VNX {
+namespace harken::studio {
 
 JsonSettingsStorage::JsonSettingsStorage(const QString& organization, const QString& application)
 {

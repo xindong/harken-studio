@@ -9,7 +9,7 @@
 class QTreeWidget;
 class QTreeWidgetItem;
 
-namespace VNX {
+namespace harken::studio {
 
 struct AssetInfo;
 class PaneSection;
@@ -23,14 +23,14 @@ public:
     ~ProjectExplorer() override;
 
     void addAction(const QString& packName, const QString& actionName);
-    bool pingSource(uint32_t sourceId);
+    bool pingResource(uint32_t sourceId);
 
-    QTreeWidget* sourcesTree() const { return sourcesTree_; }
+    QTreeWidget* resourcesTree() const { return resourcesTree_; }
     PaneSection* assetsSection() const { return assetsSection_; }
-    PaneSection* sourcesSection() const { return sourcesSection_; }
+    PaneSection* resourcesSection() const { return resourcesSection_; }
 
 signals:
-    void sourceEditorRequested(uint32_t sourceId);
+    void fileViewerRequested(uint32_t sourceId);
 
 protected:
     void setupPanelChrome() override;
@@ -39,15 +39,15 @@ protected:
 
 private:
     QIcon iconWithColorChip(const QIcon& base, uint32_t color) const;
-    void rebuildSourcesTree();
-    void applySourcesVisibility();
-    void updateSourceRow(QTreeWidgetItem* row, const AssetInfo& asset);
-    QTreeWidgetItem* ensureSourcesFolder(const QString& path);
+    void rebuildResourcesTree();
+    void applyResourcesVisibility();
+    void updateResourceRow(QTreeWidgetItem* row, const AssetInfo& asset);
+    QTreeWidgetItem* ensureResourceFolder(const QString& path);
     PaneSection* assetsSection_ = nullptr;
-    PaneSection* sourcesSection_ = nullptr;
-    QTreeWidget* sourcesTree_ = nullptr;
-    QHash<uint32_t, QTreeWidgetItem*> sourceRows_;
-    QHash<QString, QTreeWidgetItem*> sourceFolders_;
+    PaneSection* resourcesSection_ = nullptr;
+    QTreeWidget* resourcesTree_ = nullptr;
+    QHash<uint32_t, QTreeWidgetItem*> resourceRows_;
+    QHash<QString, QTreeWidgetItem*> resourceFolders_;
 };
 
 }

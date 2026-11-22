@@ -24,7 +24,7 @@
 #include "TraceRecorder.h" // HashFileContents
 #include "harken/core/Utf8Path.h" // non-throwing UTF-8 path construction
 #include "harken/media/PackFormat.h" // Fnv1a64 for the render capture hash
-#include "harken_preview/PreviewAbi.h"
+#include <harken/HarkenDevelopment.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -359,44 +359,6 @@ VnResult ReplayPackBytes(void* context, std::uint64_t, const char*, std::uint32_
 
 void ReleaseReplayPackBytes(void*, std::uint64_t, VnPackByteSpan) {}
 
-struct ReplayPackNames {
-    VnPackNamesV1 value{};
-    std::string root, language;
-    std::vector<VnPackVariableNameV1> variables;
-    std::vector<VnPackLabelNameV1> labels;
-    std::vector<std::string> variableNames, labelNames;
-
-    bool Read(ByteReader& reader) {
-        value.structSize = sizeof(value);
-        value.projectId = reader.ObjectId();
-        value.rootActionId = reader.ObjectId();
-        if (!reader.Str(&root) || !reader.Str(&language)) return false;
-        value.variableCount = reader.U32();
-        value.labelCount = reader.U32();
-        if (reader.failed || value.variableCount > reader.Remaining() / 20 ||
-            value.labelCount > reader.Remaining() / 36) return false;
-        variables.resize(value.variableCount);
-        variableNames.resize(value.variableCount);
-        labels.resize(value.labelCount);
-        labelNames.resize(value.labelCount);
-        for (std::uint32_t i = 0; i < value.variableCount; ++i) {
-            variables[i].variableId = reader.ObjectId();
-            if (!reader.Str(&variableNames[i])) return false;
-            variables[i].utf8Name = variableNames[i].c_str();
-        }
-        for (std::uint32_t i = 0; i < value.labelCount; ++i) {
-            labels[i].variableId = reader.ObjectId();
-            labels[i].labelId = reader.ObjectId();
-            if (!reader.Str(&labelNames[i])) return false;
-            labels[i].utf8Name = labelNames[i].c_str();
-        }
-        value.utf8RootName = root.c_str();
-        value.utf8Language = language.c_str();
-        value.variables = variables.data();
-        value.labels = labels.data();
-        return !reader.failed;
-    }
-};
 using ActionFiringHandleMap = std::vector<
     std::pair<VnActionFiringHandle, VnActionFiringHandle>>;
 using ActionSeekTicketMap = std::vector<
@@ -1828,23 +1790,6 @@ int ExecuteCall(std::uint16_t callId, ByteReader& r, BlobStore& blobs,
         }
         break;
     }
-    case harken::kTraceCallSetGameplayCatalog: {
-        const VnPackHandle recorded = r.U64();
-        const std::uint64_t count = r.U64();
-        if (r.failed || count > 1048576) return 1;
-        const auto* bytes = r.Bytes(static_cast<std::size_t>(count));
-        if (r.failed || r.Remaining() != 0) return 1;
-        const auto found = std::find_if(packHandles.begin(), packHandles.end(),
-            [recorded](const auto& entry) { return entry.first == recorded; });
-        if (found == packHandles.end()) return 1;
-        VnPackByteSpan catalog{};
-        catalog.structSize = sizeof(catalog);
-        catalog.bytes = bytes;
-        catalog.byteCount = count;
-        result = Vn_SetGameplayCatalog(found->second, &catalog);
-        if (result != VN_OK) return 1;
-        break;
-    }
     case harken::kTraceCallActivateCanonicalPackSetV2: {
         const auto vintage = r.U32();
         const auto recordedInit = r.U64();
@@ -1854,7 +1799,6 @@ int ExecuteCall(std::uint16_t callId, ByteReader& r, BlobStore& blobs,
         if (r.failed || vintage != 1 || count == 0 || r.Remaining() < 40 ||
             count > (r.Remaining() - 40) / 32) return 1;
         std::vector<VnCanonicalPackSetMemberV2> members(count);
-        std::vector<ReplayPackNames> names(count);
         std::vector<VnPackByteSpan> spans(count);
         std::vector<VnCanonicalPackSetMemberResultV1> outputs(count), expected(count);
         for (std::uint32_t i = 0; i < count; ++i) {
@@ -1866,12 +1810,10 @@ int ExecuteCall(std::uint16_t callId, ByteReader& r, BlobStore& blobs,
             member.source.expectedHandle = RemapPackHandle(packHandles, r.U64());
             member.source.packKind = r.U32();
             const auto resource = r.U64();
-            if (r.failed || member.operation > VN_PACK_MEMBER_NAME_ONLY || resource > blobs.packs.size()) return 1;
+            if (r.failed || member.operation > VN_PACK_MEMBER_CONTENT || resource > blobs.packs.size()) return 1;
             if (member.operation == VN_PACK_MEMBER_KEEP) {
                 if (resource != 0) return 1;
             } else {
-                if (!names[i].Read(r)) return 1;
-                member.names = &names[i].value;
                 if (resource != 0) spans[i] = blobs.packs[resource - 1];
                 member.source.flags = VN_CANONICAL_PACK_SET_MEMBER_PROVIDER;
                 member.source.providerUserData = &spans[i];
@@ -1939,7 +1881,7 @@ int ExecuteCall(std::uint16_t callId, ByteReader& r, BlobStore& blobs,
         break;
     }
     case harken::kTraceCallUnloadCanonicalPackSet:
-    case harken::kTraceCallUnloadCompanionPack: {
+    case harken::kTraceCallUnloadPackV2: {
         const auto vintage = r.U32();
         const auto handle = RemapPackHandle(packHandles, r.U64());
         VnCanonicalPackSetUnloadDescV1 desc{};
@@ -2533,6 +2475,11 @@ int ExecuteCall(std::uint16_t callId, ByteReader& r, BlobStore& blobs,
     case harken::kTraceCallReservedLegacyActionTriggerEx:
     case harken::kTraceCallReservedLegacyActionStop:
     case harken::kTraceCallReservedLegacyActionInstanceState:
+    case harken::kTraceCallReservedPostActionByName:
+    case harken::kTraceCallReservedResolveActionByName:
+    case harken::kTraceCallReservedPostActionPinned:
+    case harken::kTraceCallReservedPostActionResolved:
+    case harken::kTraceCallReservedSetGameplayCatalog:
         return 1;
     case harken::kTraceCallPostAction: {
         const auto version = r.U32();
@@ -2556,188 +2503,6 @@ int ExecuteCall(std::uint16_t callId, ByteReader& r, BlobStore& blobs,
         }
         VnActionFiringHandle replayedFiring = 0;
         result = Vn_PostAction(&desc, &replayedFiring);
-        if (result != expected) {
-            return 1;
-        }
-        if (result == VN_OK) {
-            if (version == 2 && !RememberActionCommitIdentity(r, engine, worldGenerations, logicTickets))
-                return 1;
-            if (!RememberActionFiringHandle(actionFiringHandles,
-                                            recordedFiring,
-                                            replayedFiring)) {
-                return 1;
-            }
-        } else if (recordedFiring != 0 || replayedFiring != 0) {
-            return 1;
-        }
-        break;
-    }
-    case harken::kTraceCallPostActionByName: {
-        const auto version = r.U32();
-        if (version != 2) {
-            return 1;
-        }
-        VnPostActionByNameDesc desc{};
-        desc.structSize = r.U32();
-        desc.flags = r.U32();
-        std::string name;
-        const bool nameValid = r.Str(&name);
-        const std::uint8_t* projectGuid = r.Bytes(16);
-        if (projectGuid == nullptr) {
-            return 1;
-        }
-        std::memcpy(desc.projectGuid, projectGuid, 16);
-        desc.emitter = RemapEmitterHandle(emitterHandles, r.U64());
-        desc.callerSeed = r.U64();
-        desc.reserved0 = r.U64();
-        desc.utf8Name = nameValid ? name.c_str() : nullptr;
-        const VnResult expected = static_cast<VnResult>(
-            static_cast<std::int32_t>(r.U32()));
-        const VnActionFiringHandle recordedFiring = r.U64();
-        if (r.failed || desc.structSize != sizeof(desc) || desc.flags != 0 ||
-            desc.reserved0 != 0) {
-            return 1;
-        }
-        VnActionFiringHandle replayedFiring = 0;
-        result = Vn_PostActionByName(&desc, &replayedFiring);
-        if (result != expected) {
-            return 1;
-        }
-        if (result == VN_OK) {
-            if (version == 2 && !RememberActionCommitIdentity(r, engine, worldGenerations, logicTickets))
-                return 1;
-            if (!RememberActionFiringHandle(actionFiringHandles,
-                                            recordedFiring,
-                                            replayedFiring)) {
-                return 1;
-            }
-        } else if (recordedFiring != 0 || replayedFiring != 0) {
-            return 1;
-        }
-        break;
-    }
-    case harken::kTraceCallResolveActionByName: {
-        if (r.U32() != 1) {
-            return 1;
-        }
-        VnPostActionByNameDesc desc{};
-        desc.structSize = r.U32();
-        desc.flags = r.U32();
-        std::string name;
-        const bool nameValid = r.Str(&name);
-        const std::uint8_t* projectGuid = r.Bytes(16);
-        if (projectGuid == nullptr) {
-            return 1;
-        }
-        std::memcpy(desc.projectGuid, projectGuid, 16);
-        desc.emitter = RemapEmitterHandle(emitterHandles, r.U64());
-        desc.callerSeed = r.U64();
-        desc.reserved0 = r.U64();
-        desc.utf8Name = nameValid ? name.c_str() : nullptr;
-        const VnResult expected = static_cast<VnResult>(
-            static_cast<std::int32_t>(r.U32()));
-        if (r.failed || desc.structSize != sizeof(desc) || desc.flags != 0 ||
-            desc.reserved0 != 0) {
-            return 1;
-        }
-        VnActionResolved resolved{};
-        resolved.structSize = sizeof(resolved);
-        result = Vn_ResolveActionByName(&desc, &resolved);
-        if (result != expected) {
-            return 1;
-        }
-        if (expected == VN_OK) {
-            const VnObjectId recordedActionId = r.ObjectId();
-            if (r.failed || resolved.actionId != recordedActionId) {
-                return 1;
-            }
-        }
-        break;
-    }
-    case harken::kTraceCallPostActionPinned: {
-        const auto version = r.U32();
-        if (version != 2) {
-            return 1;
-        }
-        VnActionPinnedDesc desc{};
-        desc.structSize = r.U32();
-        desc.flags = r.U32();
-        const std::uint8_t* projectGuid = r.Bytes(16);
-        if (projectGuid == nullptr) {
-            return 1;
-        }
-        std::memcpy(desc.projectGuid, projectGuid, 16);
-        desc.actionId = r.ObjectId();
-        std::string name;
-        const bool nameValid = r.Str(&name);
-        desc.nameBindingRevision = r.U64();
-        desc.callableFingerprint = r.U64();
-        desc.emitter = RemapEmitterHandle(emitterHandles, r.U64());
-        desc.callerSeed = r.U64();
-        desc.reserved0 = r.U64();
-        desc.utf8ExpectedName = nameValid ? name.c_str() : nullptr;
-        const VnResult expected = static_cast<VnResult>(
-            static_cast<std::int32_t>(r.U32()));
-        const VnActionFiringHandle recordedFiring = r.U64();
-        if (r.failed || desc.structSize != sizeof(desc) || desc.flags != 0 ||
-            desc.reserved0 != 0 || harken::IsNull(desc.actionId)) {
-            return 1;
-        }
-        VnActionFiringHandle replayedFiring = 0;
-        result = Vn_PostActionPinned(&desc, &replayedFiring);
-        if (result != expected) {
-            return 1;
-        }
-        if (result == VN_OK) {
-            if (version == 2 && !RememberActionCommitIdentity(r, engine, worldGenerations, logicTickets))
-                return 1;
-            if (!RememberActionFiringHandle(actionFiringHandles,
-                                            recordedFiring,
-                                            replayedFiring)) {
-                return 1;
-            }
-        } else if (recordedFiring != 0 || replayedFiring != 0) {
-            return 1;
-        }
-        break;
-    }
-    case harken::kTraceCallPostActionResolved: {
-        const std::uint32_t version = r.U32();
-        if (version != 2) {
-            return 1;
-        }
-        VnActionResolved resolved{};
-        resolved.structSize = r.U32();
-        resolved.reserved0 = r.U32();
-        resolved.actionId = r.ObjectId();
-        resolved.nameBindingRevision = r.U64();
-        resolved.callableFingerprint = r.U64();
-        resolved.publicationGeneration = r.U64();
-        const std::uint8_t* projectGuid = r.Bytes(16);
-        if (projectGuid == nullptr) {
-            return 1;
-        }
-        std::memcpy(resolved.projectGuid, projectGuid, 16);
-        const VnEmitterHandle emitter =
-            RemapEmitterHandle(emitterHandles, r.U64());
-        const std::uint64_t callerSeed = r.U64();
-        if (version == 2) {
-            const std::uint64_t recordedGeneration = r.U64();
-            // Preserve whether the token was current, independently of earlier sessions.
-            resolved.publicationGeneration = recordedGeneration != 0 &&
-                    resolved.publicationGeneration == recordedGeneration
-                ? engine.packComposition.CompositeGeneration() : 0;
-        }
-        const VnResult expected = static_cast<VnResult>(
-            static_cast<std::int32_t>(r.U32()));
-        const VnActionFiringHandle recordedFiring = r.U64();
-        if (r.failed || resolved.structSize != sizeof(resolved) ||
-            resolved.reserved0 != 0 || harken::IsNull(resolved.actionId)) {
-            return 1;
-        }
-        VnActionFiringHandle replayedFiring = 0;
-        result = Vn_PostActionResolved(&resolved, emitter, callerSeed,
-                                       &replayedFiring);
         if (result != expected) {
             return 1;
         }
@@ -3777,7 +3542,7 @@ int RunTraceReplay(int argc, char** argv) {
             }
             if (((callId >= harken::kTraceCallPostAction &&
                   callId <= harken::kTraceCallReleaseActionFiring) ||
-                 (callId >= harken::kTraceCallPostActionByName &&
+                 (callId >= harken::kTraceCallSeekActionFiring &&
                   callId <= harken::kTraceCallReleaseActionSeek)) &&
                 reserved != 0) {
                 std::fprintf(stderr,

@@ -22,7 +22,7 @@
 #include <bit>
 #include <cmath>
 
-namespace VNX {
+namespace harken::studio {
 
 
 
@@ -856,7 +856,7 @@ void NodeItem::paint(QPainter* painter, const QStyleOptionGraphicsItem* option, 
         QColor borderColor = ngn.borderNormal;
         if (isSelected()) borderColor = theme->ui.colors.accent;
         else if (hovered_) borderColor = blendColors(ngn.borderNormal, ngn.borderHoverMix, 0.35f);
-        painter->setBrush(isSelected() ? ngn.bodySelected : ngn.bodyNormal);
+        painter->setBrush(ngn.bodyNormal);
         painter->setPen(QPen(borderColor, lineWidth * (isSelected() ? 2.0 : 1.0),
             Qt::SolidLine, Qt::SquareCap, Qt::MiterJoin));
         painter->drawRect(QRectF(0, 0, width_, height_));
@@ -866,19 +866,31 @@ void NodeItem::paint(QPainter* painter, const QStyleOptionGraphicsItem* option, 
                 Qt::SolidLine, Qt::SquareCap, Qt::MiterJoin));
             painter->drawRect(QRectF(inset, inset, width_ - inset * 2, height_ - inset * 2));
         }
+        const qreal padding = nodeMetrics().bodyPadding;
+        const QColor titleColor = titleColor_.isValid() ? titleColor_ : ngn.titleText;
+        QFont nameFont = FontManager::instance().getFont(FontRole::Body, FontEmphasis::Strong);
+        nameFont.setItalic(titleDirty_);
+        const qreal titleScale = std::min(2.0, (height_ - padding * 2.0)
+            / std::max(qreal(metrics.iconExtent), QFontMetricsF(nameFont).height()));
+        nameFont.setPointSizeF(nameFont.pointSizeF() * titleScale);
+        qreal textX = padding;
         if (itemType_) {
-            const qreal side = std::min<qreal>({metrics.control.largeIconExtent * 2.0,
-                width_ - nodeMetrics().bodyPadding * 2.0, height_ - nodeMetrics().bodyPadding});
-            const QRectF iconRect((width_ - side) * 0.5, (height_ - side) * 0.5, side, side);
-            const QColor color = titleColor_.isValid() ? titleColor_ : ngn.titleText;
+            const qreal side = metrics.iconExtent * titleScale;
+            const QRectF iconRect(padding, (height_ - side) * 0.5, side, side);
             const qreal dpr = painter->device() ? painter->device()->devicePixelRatioF() : 1.0;
-            const QPixmap icon = iconForItemType(*itemType_, color)
+            const QPixmap icon = iconForItemType(*itemType_, titleColor)
                 .pixmap(iconRect.size().toSize(), scale * dpr);
             const bool smooth = painter->testRenderHint(QPainter::SmoothPixmapTransform);
             painter->setRenderHint(QPainter::SmoothPixmapTransform, true);
             painter->drawPixmap(iconRect, icon, QRectF(icon.rect()));
             painter->setRenderHint(QPainter::SmoothPixmapTransform, smooth);
+            textX += side + metrics.spacingSmall * titleScale;
         }
+        const qreal textWidth = width_ - textX - padding;
+        const QString elidedName = QFontMetricsF(nameFont).elidedText(displayTitle(), Qt::ElideMiddle, textWidth);
+        painter->setFont(nameFont);
+        painter->setPen(titleColor);
+        painter->drawText(QRectF(textX, 0.0, textWidth, height_), Qt::AlignVCenter | Qt::AlignLeft, elidedName);
         painter->setPen(QPen(theme->domains.blueprint.canvasBackground, metrics.accentBorderWidth));
         if (sandboxBypassed_) {
             painter->setBrush(ngn.sandboxBadgeBg);
@@ -899,7 +911,7 @@ void NodeItem::paint(QPainter* painter, const QStyleOptionGraphicsItem* option, 
         QColor borderColor = ngn.borderNormal;
         if (isSelected()) borderColor = theme->ui.colors.accent;
         else if (hovered_) borderColor = blendColors(ngn.borderNormal, ngn.borderHoverMix, 0.35f);
-        painter->setBrush(isSelected() ? ngn.bodySelected : ngn.bodyNormal);
+        painter->setBrush(ngn.bodyNormal);
         painter->setPen(QPen(borderColor, isSelected() ? metrics.accentBorderWidth : metrics.borderWidth,
             Qt::SolidLine, Qt::SquareCap, Qt::MiterJoin));
         painter->drawPath(routeGainShape(0.0));
@@ -924,8 +936,7 @@ void NodeItem::paint(QPainter* painter, const QStyleOptionGraphicsItem* option, 
                                  width_ + pad * 2.0, height_ + pad * 2.0));
     }
 
-    QColor bodyColor = isSelected() ? ngn.bodySelected : ngn.bodyNormal;
-    painter->setBrush(bodyColor);
+    painter->setBrush(ngn.bodyNormal);
 
     QColor borderColor = ngn.borderNormal;
     qreal  borderWidth = metrics.borderWidth;
@@ -1120,7 +1131,7 @@ void NodeItem::paintContentBody(QPainter* painter, float bodyTop) const
         y += contentPresentation_->size.height();
     } else {
         const auto decibels = [](float value) {
-            return value <= -96.0f ? QStringLiteral("-inf") : formatDecimal(value, 1);
+            return value <= -96.0f ? kNegativeInfinityText : formatDecimal(value, 1);
         };
         if (fields.testFlag(NodeContentField::Volume))
             drawParamRow(QObject::tr("Volume"), decibels(*contentInfo_.volume));
@@ -1130,7 +1141,7 @@ void NodeItem::paintContentBody(QPainter* painter, float bodyTop) const
             drawParamRow(QObject::tr("Offset of Start"), formatDecimal(*contentInfo_.offsetOfStart, 3));
         if (fields.testFlag(NodeContentField::Loop)) {
             const auto count = *contentInfo_.loopCount;
-            drawParamRow(QObject::tr("Loop"), count == 0 ? QString(QChar(0x221E)) : QString::number(count));
+            drawParamRow(QObject::tr("Loop"), count == 0 ? kPositiveInfinityText : QString::number(count));
         }
         if (fields.testFlag(NodeContentField::OutputVolume))
             drawParamRow(routeGainMode_ ? QObject::tr("Volume") : QObject::tr("Output Volume"),

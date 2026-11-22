@@ -40,7 +40,7 @@
 
 #include <memory>
 
-using namespace VNX;
+using namespace harken::studio;
 
 TEST(EditorWorkspaceWindowContract, DescriptorsHaveUniqueIds)
 {

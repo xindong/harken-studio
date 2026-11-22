@@ -5,7 +5,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace VNX {
+namespace harken::studio {
 namespace Blueprint {
 
 QString commonPrefix(const QStringList& filePaths)

@@ -6,6 +6,7 @@
 // bound that moved, fails here and nowhere else.
 #include "Common/ObjectIdTestSupport.h"
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 
 #include "Common/TestUtil.h"
 #include "AllocationProbe.h"
@@ -1377,6 +1378,7 @@ TEST(CapacityContract, PlayableStorageUsesSevenCheckedFamilies) {
         std::bad_alloc);
 }
 
+#if HARKEN_ENGINE_DEV
 TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
     harkentest::EngineSession session(harkentest::MakeNullConfig(2, 256, 48000));
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -1392,7 +1394,7 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
     testing::Test::RecordProperty("removed_prebuilt_queue_timing_bytes", std::to_string(
         static_cast<std::uint64_t>(engine->initialQueueTimingEventsScratch.Capacity()) * sizeof(harken::EngineInitialQueueTimingEvent) +
         static_cast<std::uint64_t>(engine->initialQueueTimingProgramsScratch.Capacity()) * sizeof(harken::EngineInitialQueueTimingProgram) +
-        static_cast<std::uint64_t>(engine->initialQueueTimingGroupsScratch.Capacity()) * sizeof(harken::Plan03GroupSliceInput)));
+        static_cast<std::uint64_t>(engine->initialQueueTimingGroupsScratch.Capacity()) * sizeof(harken::ScheduleGroupSliceInput)));
     testing::Test::RecordProperty("removed_prebuilt_private_entry_result_bytes", std::to_string(
         static_cast<std::uint64_t>(engine->playableServices.Capacity()) *
         engine->immediateActionLane.EventsPerAttempt() * sizeof(harken::ImmediateLanePrivateEntryResultCell)));
@@ -1548,7 +1550,7 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
     EXPECT_EQ(0u, engine->originalQueueGroupHolders.size());
     testing::Test::RecordProperty("removed_prebuilt_lane_companion_bytes", std::to_string(
         static_cast<std::uint64_t>(engine->originalQueueGroupCapacity) *
-        (sizeof(harken::Plan03PageGroupView) + sizeof(harken::Plan03ImmediateLaneGroupDescriptor) +
+        (sizeof(harken::SchedulePageGroupView) + sizeof(harken::ScheduleImmediateLaneGroupDescriptor) +
             sizeof(harken::OriginalQueueFutureGroupRegistration))));
     recordStableRows("immediate_entry_rows", engine->immediateEntryAttempts.RequestedBytes(),
         engine->immediateEntryAttempts.CommittedBytes(), engine->immediateEntryAttempts.ReservedBytes());
@@ -1800,6 +1802,7 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
     newConsumer.Discard();
     finishLaneWork();
 }
+#endif
 
 TEST(CapacityContract, CompositeActionCapacityGrowthMatchesBothBlockProfiles) {
     VnConfig config = MakeNullConfig();
@@ -1843,7 +1846,7 @@ TEST(CapacityContract, CompositeActionCapacityGrowthMatchesBothBlockProfiles) {
             profileResolved.scheduleHorizonFrames /
             profileResolved.blockFrames;
         const std::uint64_t pageMemberIncrease =
-            pageCount * profileResolved.maxPlan03GroupHeadersPerPage *
+            pageCount * profileResolved.maxScheduleGroupHeadersPerPage *
             (profileResolved.maxArmsPerGroup - kPreviousArmsPerGroup) *
             sizeof(harken::TimelineArmToken);
         const std::uint64_t frameBatchIncrease =

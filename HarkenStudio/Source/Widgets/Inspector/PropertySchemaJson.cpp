@@ -19,7 +19,7 @@
 #include <QSet>
 #include <stdexcept>
 
-namespace VNX {
+namespace harken::studio {
 
 QString inspectorCategoryTitle(PropertyCategory category)
 {
@@ -52,6 +52,7 @@ const std::vector<InspectorSectionInfo>& inspectorSections()
         {PropertySection::Receive, PropertyCategory::Route, "receive", "Receive"},
         {PropertySection::Rating, PropertyCategory::Spatial, "rating", "Rating"},
         {PropertySection::PlaybackPriority, PropertyCategory::Limitation, "playback_priority", "Playback Priority"},
+        {PropertySection::Conversion, PropertyCategory::Limitation, "conversion", "Conversion"},
         {PropertySection::FilterLowPass, PropertyCategory::Basic, "filter_low_pass", "Low Pass"},
         {PropertySection::FilterHighPass, PropertyCategory::Basic, "filter_high_pass", "High Pass"},
         {PropertySection::FilterLowShelf, PropertyCategory::Basic, "filter_low_shelf", "Low Shelf"},

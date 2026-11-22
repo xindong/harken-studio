@@ -7,7 +7,7 @@
 
 #include <algorithm>
 
-namespace VNX {
+namespace harken::studio {
 
 PaneSectionStack::PaneSectionStack(const QString& settingsGroup, QWidget* parent)
     : QFrame(parent)

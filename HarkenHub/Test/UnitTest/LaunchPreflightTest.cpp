@@ -16,13 +16,13 @@
 #include <QTemporaryDir>
 #include <QScopeGuard>
 
-using VNH::InstalledVersion;
-using VNH::InstalledVersionRecord;
-using VNH::InstallIndexSnapshot;
-using VNH::LaunchPreflight;
-using VNH::LaunchVerdict;
-using VNH::ProjectRecord;
-using VNH::VersionSource;
+using harken::hub::InstalledVersion;
+using harken::hub::InstalledVersionRecord;
+using harken::hub::InstallIndexSnapshot;
+using harken::hub::LaunchPreflight;
+using harken::hub::LaunchVerdict;
+using harken::hub::ProjectRecord;
+using harken::hub::VersionSource;
 
 namespace {
 
@@ -60,7 +60,6 @@ protected:
         writeFile(projectPath, QJsonDocument(root).toJson());
         record.canonicalPath = QFileInfo(projectPath).canonicalFilePath();
         record.displayName = QStringLiteral("Demo");
-        record.detectedSchema = 5;
         index.ok = true;
     }
 
@@ -71,12 +70,11 @@ protected:
         version.buildId = buildId;
         version.semanticVersion = softwareVersion;
         version.installPath = dir.filePath(buildId);
-        version.capabilitiesVersion = 2;
         const QByteArray binary = QByteArrayLiteral("stub");
         writeFile(version.installPath + QStringLiteral("/")
-                      + VNH::studioBinaryRelativePath(), binary);
+                      + harken::hub::studioBinaryRelativePath(), binary);
         QJsonObject fileRecord{
-            {QStringLiteral("path"), VNH::studioBinaryRelativePath()},
+            {QStringLiteral("path"), harken::hub::studioBinaryRelativePath()},
             {QStringLiteral("size"), binary.size()},
             {QStringLiteral("sha256"),
              QString::fromLatin1(QCryptographicHash::hash(
@@ -119,10 +117,9 @@ TEST_F(LaunchPreflightTest, LocalBuildDoesNotRequirePackageMetadata)
     version.installPath = dir.filePath(QStringLiteral("local-build"));
     version.executablePath = QDir(version.installPath).filePath(
         QStringLiteral("custom/StudioUnderTest.exe"));
-    version.capabilitiesVersion = 2;
     version.source = VersionSource::LocalBuild;
     writeFile(version.executablePath, QByteArrayLiteral("stub"));
-    version.executableFingerprint = VNH::LocalBuildRegistry::fileFingerprint(version.executablePath);
+    version.executableFingerprint = harken::hub::LocalBuildRegistry::fileFingerprint(version.executablePath);
     record.preferredStudioBuildId = version.buildId;
     const auto decision = LaunchPreflight::evaluate(record, {version}, index);
     EXPECT_EQ(decision.verdict, LaunchVerdict::Ready);
@@ -131,21 +128,20 @@ TEST_F(LaunchPreflightTest, LocalBuildDoesNotRequirePackageMetadata)
 
 TEST_F(LaunchPreflightTest, SameSizeReplacementWithPreservedTimestampRequiresRecheck)
 {
-    VNH::LocalBuildRecord local;
+    harken::hub::LocalBuildRecord local;
     local.executablePath = dir.filePath("local/HarkenStudio.exe");
     local.reportedBuildId = "local.aaaa1111";
     local.semanticVersion = "1.4.0";
-    local.capabilitiesVersion = 2;
     writeFile(local.executablePath, "first build");
     const auto modified = QFileInfo(local.executablePath).lastModified();
     local.executableSize = QFileInfo(local.executablePath).size();
     local.executableModifiedMs = modified.toMSecsSinceEpoch();
-    local.executableFingerprint = VNH::LocalBuildRegistry::fileFingerprint(local.executablePath);
+    local.executableFingerprint = harken::hub::LocalBuildRegistry::fileFingerprint(local.executablePath);
     qputenv("HARKEN_HUB_USER_ROOT", dir.filePath("user").toUtf8());
     const auto cleanup = qScopeGuard([]() { qunsetenv("HARKEN_HUB_USER_ROOT"); });
     QString error;
-    ASSERT_TRUE(VNH::LocalBuildRegistry::upsert(local, &error));
-    const auto versions = VNH::VersionScanner::scanLocalBuilds();
+    ASSERT_TRUE(harken::hub::LocalBuildRegistry::upsert(local, &error));
+    const auto versions = harken::hub::VersionScanner::scanLocalBuilds();
     ASSERT_EQ(versions.size(), 1u);
     EXPECT_EQ(versions.front().executableFingerprint, local.executableFingerprint);
     EXPECT_EQ(LaunchPreflight::evaluate(record, versions, index).verdict, LaunchVerdict::Ready);
@@ -213,7 +209,7 @@ TEST_F(LaunchPreflightTest, BlocksTamperedVersion)
     auto version = makeVersion(QStringLiteral("run2.bbbb2222"));
     record.preferredStudioBuildId = version.buildId;
     writeFile(version.installPath + QStringLiteral("/")
-                  + VNH::studioBinaryRelativePath(), QByteArrayLiteral("evil"));
+                  + harken::hub::studioBinaryRelativePath(), QByteArrayLiteral("evil"));
     const auto decision = LaunchPreflight::evaluate(record, {version}, index);
     EXPECT_EQ(decision.blockCode, QStringLiteral("VersionNeedsRepair"));
 }
@@ -243,27 +239,6 @@ TEST_F(LaunchPreflightTest, BlocksNeedsRepairVersion)
     index.records.push_back(broken);
     const auto decision = LaunchPreflight::evaluate(record, {version}, index);
     EXPECT_EQ(decision.blockCode, QStringLiteral("VersionNeedsRepair"));
-}
-
-TEST_F(LaunchPreflightTest, BlocksIdentityChange)
-{
-    const QString projectId =
-        QStringLiteral("22222222-2222-2222-2222-222222222222");
-    QJsonObject root{
-        {QStringLiteral("harkenDocument"), QJsonObject{
-            {QStringLiteral("type"), QStringLiteral("project.root")},
-            {QStringLiteral("id"), projectId},
-            {QStringLiteral("projectId"), projectId},
-            {QStringLiteral("schemaVersion"), 5},
-            {QStringLiteral("savedStudioVersion"), QStringLiteral("1.4.0")},
-        }},
-        {QStringLiteral("content"), QJsonObject{}},
-    };
-    writeFile(projectPath, QJsonDocument(root).toJson());
-    record.projectId = QStringLiteral("11111111-1111-1111-1111-111111111111");
-    const auto version = makeVersion(QStringLiteral("run1.aaaa1111"));
-    const auto decision = LaunchPreflight::evaluate(record, {version}, index);
-    EXPECT_EQ(decision.blockCode, QStringLiteral("IdentityMismatch"));
 }
 
 TEST_F(LaunchPreflightTest, ExplicitChoiceOverridesTheSavedSoftwareVersion)

@@ -1,3 +1,6 @@
+#if HARKEN_NATIVE_DEVELOPMENT || (!HARKEN_NATIVE_RELEASE && (UNITY_EDITOR || DEVELOPMENT_BUILD))
+#define HARKEN_ENGINE_DEV
+#endif
 using System;
 using System.Runtime.InteropServices;
 
@@ -10,6 +13,27 @@ namespace Harken.Unity.Editor
             internal VnMonitorRecordHeader Header;
             internal VnMonitorExecutionFactV3 Fact;
         }
+
+#if HARKEN_ENGINE_DEV
+        private static VnResult OpenMonitorSession(in VnMonitorSessionDescV2 desc, out ulong handle)
+            => HarkenNative.Vn_MonitorOpenEventSessionV2(in desc, out handle);
+        private static VnResult MonitorSessionStatus(ulong handle, ref VnMonitorEventSessionStatusV2 status)
+            => HarkenNative.Vn_MonitorGetEventSessionStatusV2(handle, ref status);
+        private static VnResult PollMonitor(ulong handle, in VnMonitorPollDesc desc, ref VnMonitorPollResult result)
+            => HarkenNative.Vn_MonitorPoll(handle, in desc, ref result);
+        private static VnResult CloseMonitorSession(ulong handle) => HarkenNative.Vn_MonitorCloseSession(handle);
+#else
+        private static VnResult OpenMonitorSession(in VnMonitorSessionDescV2 desc, out ulong handle)
+        {
+            handle = 0;
+            return VnResult.VN_CAPABILITY_UNAVAILABLE;
+        }
+        private static VnResult MonitorSessionStatus(ulong handle, ref VnMonitorEventSessionStatusV2 status)
+            => VnResult.VN_CAPABILITY_UNAVAILABLE;
+        private static VnResult PollMonitor(ulong handle, in VnMonitorPollDesc desc, ref VnMonitorPollResult result)
+            => VnResult.VN_CAPABILITY_UNAVAILABLE;
+        private static VnResult CloseMonitorSession(ulong handle) => VnResult.VN_CAPABILITY_UNAVAILABLE;
+#endif
 
         private ulong observationSession, observationEpoch, observationEngine, observationDelivery;
         private readonly byte[] observationBuffer = new byte[64 * 1024];
@@ -26,7 +50,7 @@ namespace Harken.Unity.Editor
                 requestedPermissionMask = (uint)VnMonitorPermissionMask.VN_MONITOR_PERM_OBSERVE_EVENTS,
                 consumerQueueBytes = 256 * 1024
             };
-            if (HarkenNative.Vn_MonitorOpenEventSessionV2(in desc, out observationSession) != VnResult.VN_OK)
+            if (OpenMonitorSession(in desc, out observationSession) != VnResult.VN_OK)
             { observationFailed = true; return; }
             CheckObservation();
         }
@@ -35,7 +59,7 @@ namespace Harken.Unity.Editor
         {
             if (observationFailed || observationSession == 0) return false;
             var status = new VnMonitorEventSessionStatusV2 { structSize = (uint)Marshal.SizeOf<VnMonitorEventSessionStatusV2>() };
-            if (HarkenNative.Vn_MonitorGetEventSessionStatusV2(observationSession, ref status) != VnResult.VN_OK ||
+            if (MonitorSessionStatus(observationSession, ref status) != VnResult.VN_OK ||
                 status.acceptedExecutionFactVersion != 3 || status.sourceDroppedRecords != 0 ||
                 status.deliveryDroppedRecords != 0 || status.identityUnavailableCount != 0 ||
                 (observationEpoch != 0 && observationEpoch != status.monitorSessionEpoch))
@@ -63,7 +87,7 @@ namespace Harken.Unity.Editor
                     {
                         var desc = new VnMonitorPollDesc { structSize = (uint)Marshal.SizeOf<VnMonitorPollDesc>(),
                             buffer = pinned.AddrOfPinnedObject(), bufferBytes = (ulong)observationBuffer.Length };
-                        if (HarkenNative.Vn_MonitorPoll(observationSession, in desc, ref result) != VnResult.VN_OK)
+                        if (PollMonitor(observationSession, in desc, ref result) != VnResult.VN_OK)
                         { InvalidateObservation(); return; }
                     }
                     if (result.bytesWritten > (ulong)observationBuffer.Length) throw new FormatException();
@@ -134,7 +158,7 @@ namespace Harken.Unity.Editor
 
         private void CloseObservation()
         {
-            if (observationSession != 0) HarkenNative.Vn_MonitorCloseSession(observationSession);
+            if (observationSession != 0) CloseMonitorSession(observationSession);
             observationSession = observationEpoch = observationEngine = observationDelivery = 0;
             observationFailed = false;
             foreach (var owner in firings.Values) owner.Sounds.Clear();
@@ -148,7 +172,7 @@ namespace Harken.Unity.Editor
             {
                 waveform = null;
                 diagnostic = "No unambiguous started source is available for this firing.";
-                if (disposed || !IsPrepared || catalog == null || !ReferenceEquals(catalog.PreparedPacks, source) ||
+                if (disposed || !IsPrepared || catalog == null || !ReferenceEquals(catalog.PreviewContent, source) ||
                     !ReferenceEquals(preview.session, capturedSession) || preview.observationFailed ||
                     !preview.firings.TryGetValue(firing.Handle, out FiringOwner owner) || !ReferenceEquals(owner.Owner, this) ||
                     owner.StopRequested || owner.SelectionInvalid || owner.Sounds.Count != 1 ||
@@ -157,7 +181,7 @@ namespace Harken.Unity.Editor
                 if (result != VnResult.VN_OK) return result;
                 SelectedSound selected = null;
                 foreach (var sound in owner.Sounds.Values) selected = sound;
-                if (selected.Fact.fact.projectId != VnObjectId.Parse(catalog.Publication.ProjectId)) return VnResult.VN_GAMEPLAY_WRONG_PROJECT;
+                if (selected.Fact.fact.projectId != VnObjectId.Parse(catalog.Catalog.ProjectId)) return VnResult.VN_GAMEPLAY_WRONG_PROJECT;
                 var actual = selected.Fact.playable;
                 HarkenActionPreviewCandidate match = null;
                 foreach (var candidate in candidates.Candidates)

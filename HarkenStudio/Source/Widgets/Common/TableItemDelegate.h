@@ -2,7 +2,7 @@
 
 #include <QStyledItemDelegate>
 
-namespace VNX {
+namespace harken::studio {
 
 class ThemeManager;
 

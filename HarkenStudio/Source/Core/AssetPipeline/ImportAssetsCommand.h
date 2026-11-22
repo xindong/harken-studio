@@ -12,7 +12,7 @@
 #include <cstdint>
 #include <memory>
 
-namespace VNX {
+namespace harken::studio {
 
 struct ProjectFileBinding;
 struct ImportResult;
@@ -47,9 +47,9 @@ public:
     // Same chokepoint for root-level imports (no target binding/parent).
     static ImportAssetsCommand* pushImportAtRoot(const QStringList& externalPaths,
                                                 const QUuid& outputBusGuid = {});
-    static ImportAssetsCommand* pushImportSources(const QStringList& externalPaths,
-                                                const QString& sourceFolder = {},
-                                                const QMap<QString, QString>& replacements = {});
+    static ImportAssetsCommand* pushImportResources(const QStringList& externalPaths,
+                                                    const QString& resourceFolder = {},
+                                                    const QMap<QString, QString>& replacements = {});
 
     QList<uint32_t> importedIDs() const;
     QList<QUuid> importedItemGuids() const;
@@ -89,8 +89,8 @@ private:
     uint32_t targetParentObjectID_ = 0;
     bool rootMode_ = false;
     QUuid rootOutputBusGuid_;
-    QString sourceFolder_;
-    bool sourceMode_ = false;
+    QString resourceFolder_;
+    bool resourcesOnly_ = false;
     QSet<QString> replacedPaths_;
     QList<std::shared_ptr<TransactionalUndoCommand>> fileChanges_;
 

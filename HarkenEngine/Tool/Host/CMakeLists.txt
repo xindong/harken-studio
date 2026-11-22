@@ -16,8 +16,8 @@ add_executable(harken_host
     TraceReplay.cpp
 )
 harken_attach_version_resource(harken_host "Harken Host" "harken_host.exe")
-target_link_libraries(harken_host PRIVATE harken_core harken_remote harken_buildinfo
-                      harken_preview harkenizer_resource_compiler)
+target_link_libraries(harken_host PRIVATE harken_core harken_host_control harken_buildinfo
+                      harken_preview)
 # The demo scenes' per-voice-tap silence verdicts branch on the stage-tap
 # gating macro and must agree with the library about whether measurement
 # is live (the master-bus verdicts need no gate — the bus output scan is
@@ -30,30 +30,32 @@ add_executable(harken_host_selection_copy_test
     ${CMAKE_SOURCE_DIR}/HarkenEngine/Test/UnitTest/PackPlaySelectionTest.cpp
 )
 target_include_directories(harken_host_selection_copy_test PRIVATE
-    ${HARKEN_RUNTIME_DIR}/api/src
-    ${HARKEN_RUNTIME_DIR}/core/include
-    ${HARKEN_RUNTIME_DIR}/core/contract/include
-    ${HARKEN_RUNTIME_DIR}/dsp/include
-    ${HARKEN_RUNTIME_DIR}/media/include
-    ${HARKEN_RUNTIME_DIR}/param/include
-    ${HARKEN_RUNTIME_DIR}/render/include
+    ${HARKEN_CORE_DIR}/api/src
+    ${HARKEN_DEVELOPMENT_PRIVATE_INCLUDES}
+    ${HARKEN_CORE_DIR}/core/include
+    ${HARKEN_CORE_DIR}/dsp/include
+    ${HARKEN_CORE_DIR}/media/include
+    ${HARKEN_PACK_FORMAT_INCLUDE_DIR}
+    ${HARKEN_CORE_DIR}/param/include
+    ${HARKEN_CORE_DIR}/render/include
     ${HARKEN_THIRD_PARTY_DIR}/miniaudio
     ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Tooling/Common
+    ${CMAKE_SOURCE_DIR}/HarkenEngine/Tool/Common
 )
 target_link_libraries(harken_host_selection_copy_test PRIVATE harken_core harken_buildinfo)
 
 target_include_directories(harken_host PRIVATE
-    ${HARKEN_RUNTIME_DIR}/api/src
-    ${HARKEN_RUNTIME_DIR}/core/include
-    ${HARKEN_RUNTIME_DIR}/core/contract/include
-    ${HARKEN_RUNTIME_DIR}/dsp/include
-    ${HARKEN_RUNTIME_DIR}/media/include
-    ${HARKEN_RUNTIME_DIR}/param/include
-    ${HARKEN_RUNTIME_DIR}/render/include
+    ${HARKEN_CORE_DIR}/api/src
+    ${HARKEN_DEVELOPMENT_PRIVATE_INCLUDES}
+    ${HARKEN_CORE_DIR}/core/include
+    ${HARKEN_CORE_DIR}/dsp/include
+    ${HARKEN_CORE_DIR}/media/include
+    ${HARKEN_PACK_FORMAT_INCLUDE_DIR}
+    ${HARKEN_CORE_DIR}/param/include
+    ${HARKEN_CORE_DIR}/render/include
     ${HARKEN_THIRD_PARTY_DIR}/miniaudio
     ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Tooling/Common
+    ${CMAKE_SOURCE_DIR}/HarkenEngine/Tool/Common
 )
 
 if(WIN32)

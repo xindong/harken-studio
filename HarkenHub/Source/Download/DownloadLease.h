@@ -5,7 +5,7 @@
 
 #include <memory>
 
-namespace VNH {
+namespace harken::hub {
 
 class DownloadLease
 {

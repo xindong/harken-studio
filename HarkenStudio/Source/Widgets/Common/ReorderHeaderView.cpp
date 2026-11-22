@@ -13,7 +13,7 @@
 #include <QStyle>
 #include <QStyleOptionHeaderV2>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 

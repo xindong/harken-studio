@@ -9,7 +9,7 @@
 
 #include <algorithm>
 
-namespace VNX {
+namespace harken::studio {
 
 AudioImportTarget resolveAudioImportTarget(ProjectItem* target)
 {

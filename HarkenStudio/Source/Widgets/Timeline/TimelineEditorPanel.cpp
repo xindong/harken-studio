@@ -80,7 +80,7 @@
 #include <functional>
 #include <limits>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 

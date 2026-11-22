@@ -3,7 +3,7 @@
 #include <harken_studio/AudioValues.h>
 #include <cstdint>
 
-namespace harkenstudiobuild {
+namespace harken::studio::build {
 enum class VariableKindV1 : std::uint8_t { Step = 0, Smooth = 1 };
 enum class VariableScopeV1 : std::uint8_t { Global = 0, Emitter = 1 };
 
@@ -19,7 +19,7 @@ struct StaticImpactSummary {
 };
 
 struct VariableDefinitionV1 {
-    harkenstudio::ObjectId variableId{};
+    harken::studio::types::ObjectId variableId{};
     VariableKindV1 kind = VariableKindV1::Smooth;
     float rangeMin = 0.0f;
     float rangeMax = 0.0f;

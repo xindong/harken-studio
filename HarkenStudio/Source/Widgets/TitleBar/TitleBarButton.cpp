@@ -9,7 +9,7 @@
 #include <QStyle>
 #include <QStyleOptionButton>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 
@@ -31,15 +31,10 @@ QString iconId(TitleBarButtonKind kind)
 }
 
 TitleBarButton::TitleBarButton(TitleBarButtonKind kind, QWidget* parent)
-    : QPushButton(parent)
+    : QAbstractButton(parent)
     , kind_(kind)
 {
-    setText(QString());
     setProperty("flatIconButton", true);
-    ThemeManager::instance().bindMetrics(this, [this](const ThemeMetrics& metrics) {
-        setFixedSize(metrics.chrome.windowButtonWidth, metrics.chrome.titleBarHeight);
-    });
-    setFlat(true);
     setFocusPolicy(Qt::NoFocus);
     setCursor(Qt::ArrowCursor);
     setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
@@ -69,9 +64,10 @@ void TitleBarButton::paintEvent(QPaintEvent* event)
     Q_UNUSED(event);
 
     QStyleOptionButton option;
-    initStyleOption(&option);
-    option.text.clear();
-    option.icon = QIcon();
+    option.initFrom(this);
+    option.features = QStyleOptionButton::Flat;
+    if (isDown())
+        option.state |= QStyle::State_Sunken;
 
     QPainter painter(this);
     style()->drawControl(QStyle::CE_PushButton, &option, &painter, this);

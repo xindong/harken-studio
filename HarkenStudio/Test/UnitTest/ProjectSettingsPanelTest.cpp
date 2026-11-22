@@ -4,6 +4,7 @@
 #include "ProjectPlatformActivity.h"
 #include "ProjectTypes.h"
 #include "UndoCommands.h"
+#include "Widgets/Selector/ObjectRefWidget.h"
 
 #include "Support/AITestSupport.h"
 #include "Support/ProjectPlatformTestUtils.h"
@@ -17,7 +18,7 @@
 #include <QTemporaryDir>
 #include <QToolButton>
 
-using namespace VNX;
+using namespace harken::studio;
 
 namespace {
 
@@ -69,9 +70,18 @@ TEST_F(ProjectSettingsPanelTest, CompletedEditsUseProjectHistoryAndExternalChang
     auto* name = panel.findChild<QLineEdit*>("projectPlatformName");
     auto* output = panel.findChild<QLineEdit*>("packBuildOutputDirEdit");
     auto* exported = panel.findChild<QCheckBox*>("buildExportProjectDataCheckBox");
+    auto* conversion = panel.findChild<ObjectRefWidget*>("projectDefaultConversion");
     ASSERT_NE(name, nullptr);
     ASSERT_NE(output, nullptr);
     ASSERT_NE(exported, nullptr);
+    ASSERT_NE(conversion, nullptr);
+    auto* project = ProjectManager::instance().currentProject();
+    const auto platform = project->platforms.first().id;
+    EXPECT_TRUE(project->defaultConversionFor(platform).isNull());
+    EXPECT_EQ(conversion->currentObjectID(), 0u);
+    ASSERT_FALSE(project->conversionItems.empty());
+    const auto* preset = project->conversionItems.front().rootItem.get();
+    ASSERT_NE(preset, nullptr);
     const QString originalName = ProjectManager::instance().currentProject()->platforms.first().name;
 
     editText(name, QStringLiteral("Desktop"));
@@ -93,6 +103,18 @@ TEST_F(ProjectSettingsPanelTest, CompletedEditsUseProjectHistoryAndExternalChang
     UndoRedoManager::instance().undo();
     EXPECT_FALSE(exported->isChecked());
     EXPECT_EQ(UndoRedoManager::instance().undoStack()->count(), 3);
+    emit conversion->objectChanged(preset->objectID);
+    EXPECT_EQ(project->defaultConversionFor(platform), preset->guid);
+    EXPECT_EQ(conversion->currentObjectID(), preset->objectID);
+    UndoRedoManager::instance().undo();
+    EXPECT_EQ(conversion->currentObjectID(), 0u);
+    UndoRedoManager::instance().redo();
+    EXPECT_EQ(conversion->currentObjectID(), preset->objectID);
+    ASSERT_TRUE(ProjectManager::instance().setDefaultConversion(platform, QUuid{}));
+    EXPECT_EQ(conversion->currentObjectID(), 0u);
+    UndoRedoManager::instance().undo();
+    EXPECT_EQ(conversion->currentObjectID(), preset->objectID);
+    EXPECT_EQ(UndoRedoManager::instance().undoStack()->count(), 4);
 }
 
 TEST_F(ProjectSettingsPanelTest, ConcurrentChangesCannotBeOverwrittenByUnfinishedFields)

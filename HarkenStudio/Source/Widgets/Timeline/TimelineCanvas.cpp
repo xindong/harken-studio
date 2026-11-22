@@ -51,7 +51,7 @@
 #include <cmath>
 #include <limits>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 int64_t saturatingAdd(int64_t left, int64_t right)

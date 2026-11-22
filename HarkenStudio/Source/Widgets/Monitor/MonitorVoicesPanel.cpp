@@ -15,7 +15,7 @@
 
 #include <limits>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 bool parseObjectId(const QString& text, std::uint64_t* out)
@@ -164,14 +164,6 @@ MonitorCursorReject MonitorVoicesPanel::lockCurrentRow()
     return lockRow(current.row());
 }
 
-MonitorCursorReject MonitorVoicesPanel::lockExecuteFrameForTest(
-    std::optional<qint64> executeFrame)
-{
-    if (!executeFrame.has_value())
-        return MonitorCursorReject::HistoryUnavailable;
-    return cursorModel().lockTo(*executeFrame);
-}
-
 int MonitorVoicesPanel::visibleRowCount() const
 {
     return model_ ? model_->rowCount() : 0;
@@ -225,10 +217,10 @@ void MonitorVoicesPanel::syncCursorRetainedWindow()
     std::optional<std::int64_t> maxFrame;
     for (const auto& rec : snapshot_->records)
     {
-        if (rec.header.entityKind != VNX::Monitor::kMonitorEntityVoice)
+        if (rec.header.entityKind != harken::studio::Monitor::kMonitorEntityVoice)
             continue;
-        if (rec.header.recordKind != VNX::Monitor::kMonitorRecordStateUpsert
-            && rec.header.recordKind != VNX::Monitor::kMonitorRecordStateTombstone)
+        if (rec.header.recordKind != harken::studio::Monitor::kMonitorRecordStateUpsert
+            && rec.header.recordKind != harken::studio::Monitor::kMonitorRecordStateTombstone)
             continue;
         if (rec.header.executeFrame > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()))
             continue;
@@ -311,4 +303,4 @@ void MonitorVoicesPanel::onSharedCursor(const MonitorCursorSnapshot&)
     rebuildVisibleRows();
 }
 
-} // namespace VNX
+} // namespace harken::studio

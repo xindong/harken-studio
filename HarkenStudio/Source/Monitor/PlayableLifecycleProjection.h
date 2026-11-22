@@ -7,7 +7,7 @@
 #include <cstdint>
 #include <memory>
 
-namespace VNX {
+namespace harken::studio {
 namespace Monitor {
 
 enum class PlayableLifecycleCell
@@ -41,4 +41,4 @@ MonitorPlayablesProjection projectPlayablesFace(
     const std::shared_ptr<const MonitorStoreSnapshot>& snapshot);
 
 } // namespace Monitor
-} // namespace VNX
+} // namespace harken::studio

@@ -17,9 +17,8 @@
 #include <QPlainTextEdit>
 #include <algorithm>
 
-namespace VNX {
+namespace harken::studio {
 
-namespace Bridge = HarkenEditor::Bridge;
 
 void IPCServer::registerDesktopEditorHandlers()
 {

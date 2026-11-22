@@ -42,7 +42,7 @@ void ensureApp()
     if (qApp)
         return;
     static int argc = 1;
-    static char arg0[] = "harken_editor_tests";
+    static char arg0[] = "harken_studio_tests";
     static char* argv[] = {arg0, nullptr};
     static QApplication app(argc, argv);
 }
@@ -77,11 +77,11 @@ bool selectColor(QTreeWidget& colors, const QString& key)
     return false;
 }
 
-VNX::ColorEditorDialog* openColorEditor(QWidget& page, QTreeWidget& colors)
+harken::studio::ColorEditorDialog* openColorEditor(QWidget& page, QTreeWidget& colors)
 {
     if (!colors.currentItem()) return nullptr;
     colors.itemDoubleClicked(colors.currentItem(), 1);
-    return page.findChild<VNX::ColorEditorDialog*>(QStringLiteral("appearanceColorDialog"));
+    return page.findChild<harken::studio::ColorEditorDialog*>(QStringLiteral("appearanceColorDialog"));
 }
 
 bool finishColorEdit(QWidget& page, QTreeWidget& colors, const QColor& color)
@@ -94,14 +94,14 @@ bool finishColorEdit(QWidget& page, QTreeWidget& colors, const QColor& color)
     return true;
 }
 
-bool waitForPreview(VNX::ThemeManager& manager, const QColor& color)
+bool waitForPreview(harken::studio::ThemeManager& manager, const QColor& color)
 {
     if (manager.snapshot()->ui.colors.textPrimary == color) return true;
     QEventLoop loop;
     QTimer timeout;
     timeout.setSingleShot(true);
     QObject::connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
-    QObject::connect(&manager, &VNX::ThemeManager::appearanceChanged, &loop, [&] {
+    QObject::connect(&manager, &harken::studio::ThemeManager::appearanceChanged, &loop, [&] {
         if (manager.snapshot()->ui.colors.textPrimary == color) loop.quit();
     });
     timeout.start(1000);
@@ -116,7 +116,7 @@ void settlePreviewEvents()
     loop.exec();
 }
 
-QVariantMap storedValues(const VNX::ISettingsStorage& storage)
+QVariantMap storedValues(const harken::studio::ISettingsStorage& storage)
 {
     QVariantMap values;
     for (const QString& key : storage.allKeys())
@@ -124,7 +124,7 @@ QVariantMap storedValues(const VNX::ISettingsStorage& storage)
     return values;
 }
 
-class WritableSettingsStorage : public VNX::MemorySettingsStorage
+class WritableSettingsStorage : public harken::studio::MemorySettingsStorage
 {
 public:
     bool isWritable() const override { return writable; }
@@ -133,7 +133,7 @@ public:
 
 }
 
-namespace VNX {
+namespace harken::studio {
 
 class SettingsApplyContractTest : public ::testing::Test
 {

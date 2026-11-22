@@ -12,7 +12,7 @@
 #include <utility>
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 
 struct ProjectData;
 
@@ -41,7 +41,7 @@ enum class EffectMode { Custom, Preset };
 struct EffectEntry
 {
     QUuid guid;
-    harkenstudio::ObjectId runtimeId() const { return runtimeObjectId(guid); }
+    harken::studio::types::ObjectId runtimeId() const { return runtimeObjectId(guid); }
     EffectMode mode = EffectMode::Preset;
     EffectDefinition custom;
     QUuid effectGuid;
@@ -57,8 +57,8 @@ struct EffectEntry
 class EffectChainLedger
 {
 public:
-    static constexpr size_t kCapacity = harkenstudiobuild::kMaxVoiceFxSlots;
-    static_assert(kCapacity == harkenstudiobuild::kMaxFxSlotsPerBus);
+    static constexpr size_t kCapacity = harken::studio::build::kMaxVoiceFxSlots;
+    static_assert(kCapacity == harken::studio::build::kMaxFxSlotsPerBus);
 
     bool isEmpty() const { return entries_.empty(); }
     size_t size() const { return entries_.size(); }

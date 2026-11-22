@@ -8,7 +8,7 @@
 
 #include <optional>
 
-namespace VNX {
+namespace harken::studio {
 
 struct TimeSeriesRenderColumn
 {
@@ -44,7 +44,6 @@ public:
 
     QSize bufferPixelSize() const;
     qreal devicePixelRatioUsed() const { return dpr_; }
-    std::int64_t xFromLogicalForTest(int logicalX) const { return xFromLogical(logicalX); }
 
 protected:
     void paintEvent(QPaintEvent* event) override;
@@ -70,4 +69,4 @@ private:
     std::int64_t dragWindowStart_ = 0;
 };
 
-} // namespace VNX
+} // namespace harken::studio

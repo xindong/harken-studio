@@ -36,7 +36,7 @@
 
 #include <optional>
 
-namespace VNX {
+namespace harken::studio {
 
 SelectionRouter::SelectionRouter(MainWindow* host)
     : QObject(host)
@@ -104,7 +104,7 @@ void SelectionRouter::routeSelection(ProjectItem* item, bool reveal, const QObje
                    item ? QList<ProjectItem*>{item} : QList<ProjectItem*>{}, source);
 }
 
-bool SelectionRouter::revealProjectObject(harkenstudio::ObjectId id)
+bool SelectionRouter::revealProjectObject(harken::studio::types::ObjectId id)
 {
     auto& manager = ProjectManager::instance();
     const auto index = ProjectObjectIndex::fromProject(manager.currentProject());
@@ -178,6 +178,7 @@ void SelectionRouter::routeSelection(ProjectItem* item, bool reveal,
             if (ip) {
                 if (placement) ip->showItemInspector(item, *placement);
                 else ip->showItemInspector(item);
+                ip->setConversionSelection(items);
             }
 
             for (GridEditorPanel* panel : host_->allGridEditorPanels()) {
@@ -193,6 +194,7 @@ void SelectionRouter::routeSelection(ProjectItem* item, bool reveal,
                 case ProjectItem::Type::Action:
                 case ProjectItem::Type::Attenuation:
                 case ProjectItem::Type::Effect:
+                case ProjectItem::Type::Conversion:
                 case ProjectItem::Type::Variable:
                 {
                     if (ip) ip->showItemInspector(item);
@@ -249,7 +251,7 @@ void SelectionRouter::selectCurve(const CurveSelection& selection)
         ProjectItem* host = ProjectManager::instance().findItemByGuid(selection.hostGuid);
         const auto* mix = BindingEditing::ledgerHost(host, selection.address);
         const ParameterBindingDef* binding = mix
-            ? (!harkenstudio::IsNull(selection.bindingStableId)
+            ? (!harken::studio::types::IsNull(selection.bindingStableId)
                    ? mix->bindings.find(selection.bindingStableId)
                    : mix->bindings.findFirst(selection.address))
             : nullptr;
@@ -316,6 +318,8 @@ void SelectionRouter::activateItem(ProjectItem* item, const PlacementContext* pl
         host_->openStandaloneEditor(QStringLiteral("TimelineEditor"), item);
     if (GridEditorPanel::acceptsItem(item))
         host_->openStandaloneEditor(QStringLiteral("GridEditor"), item);
+    if (item->type == ProjectItem::Type::Conversion)
+        host_->openStandaloneEditor(QStringLiteral("ConversionEditor"), item);
     auto* inspector = host_->openOrFocusInspectorForItem(item, placement);
     if (inspector && item->type == ProjectItem::Type::Effect)
         inspector->showEmbeddedEffectEditor();

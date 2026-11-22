@@ -4,8 +4,8 @@
 
 #include <QTemporaryDir>
 
-using VNH::ProjectRecord;
-using VNH::ProjectStore;
+using harken::hub::ProjectRecord;
+using harken::hub::ProjectStore;
 
 namespace {
 
@@ -14,7 +14,6 @@ ProjectRecord makeRecord(const QString& path, const QString& name)
     ProjectRecord record;
     record.canonicalPath = path;
     record.displayName = name;
-    record.detectedSchema = 5;
     return record;
 }
 
@@ -48,7 +47,6 @@ TEST(ProjectStore, AddListRemove)
     ASSERT_EQ(records.size(), 2u);
     EXPECT_EQ(records[0].displayName, QStringLiteral("Alpha"));
     EXPECT_EQ(records[1].displayName, QStringLiteral("Beta"));
-    EXPECT_EQ(records[0].detectedSchema, 5);
 
     EXPECT_TRUE(store.contains(QStringLiteral("C:/a/A.hsp")));
     EXPECT_TRUE(store.removeProject(QStringLiteral("C:/a/A.hsp")));

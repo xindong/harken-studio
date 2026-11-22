@@ -10,7 +10,7 @@
 #include <algorithm>
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 namespace TransitionSemantics {
 namespace {
 

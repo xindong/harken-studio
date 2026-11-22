@@ -9,7 +9,7 @@
 #include <QPainter>
 #include <QStyle>
 
-namespace VNX {
+namespace harken::studio {
 
 HeaderResizeHighlight::HeaderResizeHighlight(QHeaderView* header, ThemeManager* theme)
     : QWidget(header->viewport()), header_(header), theme_(theme)

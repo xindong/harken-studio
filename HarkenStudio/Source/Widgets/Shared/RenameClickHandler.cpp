@@ -6,7 +6,7 @@
 
 #include <utility>
 
-namespace VNX {
+namespace harken::studio {
 
 RenameClickHandler::RenameClickHandler(QWidget* focusScope, QWidget* mouseArea,
                                        TargetAt targetAt, QObject* parent)

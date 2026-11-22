@@ -4,15 +4,15 @@
 
 #include <gtest/gtest.h>
 
-using VNH::ManifestVerifier;
-using VNH::ServerEndpoints;
+using harken::hub::ManifestVerifier;
+using harken::hub::ServerEndpoints;
 
 TEST(ServerEndpointsTest, DefaultSourcesMatchPublishedProducts)
 {
     const QUrl base = ServerEndpoints::defaultBaseUrl();
     for (const QString& product : {QStringLiteral("hub"), QStringLiteral("harken")}) {
         const auto urls = ServerEndpoints::manifestUrls(
-            base, product, QStringLiteral("windows-x64"));
+            base, product);
         ASSERT_EQ(urls.size(), 2);
         EXPECT_EQ(urls[0].toString(),
                   QStringLiteral("https://github.com/xindong/harken-studio/"
@@ -50,13 +50,7 @@ TEST(ServerEndpointsTest, HostChannelMatchesPlatformAndArchitecture)
 TEST(ServerEndpointsTest, UrlsComposeUnderBasePath)
 {
     const QUrl base(QStringLiteral("https://updates.example/harken/"));
-    EXPECT_EQ(ServerEndpoints::latestUrl(base, QStringLiteral("harken"),
-                                         QStringLiteral("windows-x64"))
-                  .toString(),
-              QStringLiteral("https://updates.example/harken/release/harken/"
-                             "manifest.json"));
-    EXPECT_EQ(ServerEndpoints::versionsUrl(base, QStringLiteral("harken"),
-                                           QStringLiteral("windows-x64"))
+    EXPECT_EQ(ServerEndpoints::latestUrl(base, QStringLiteral("harken"))
                   .toString(),
               QStringLiteral("https://updates.example/harken/release/harken/"
                              "manifest.json"));
@@ -75,7 +69,7 @@ TEST(ServerEndpointsTest, GitHubIsPrimaryAndCosIsFallback)
 {
     const QUrl cos(QStringLiteral("https://updates.example/harken/"));
     const QList<QUrl> manifests = ServerEndpoints::manifestUrls(
-        cos, QStringLiteral("hub"), QStringLiteral("windows-x64"));
+        cos, QStringLiteral("hub"));
     ASSERT_EQ(manifests.size(), 2);
     EXPECT_EQ(manifests[0].toString(),
               QStringLiteral("https://github.com/xindong/harken-studio/"

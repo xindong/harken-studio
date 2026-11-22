@@ -21,7 +21,7 @@
 #include <limits>
 #include <type_traits>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 
@@ -808,6 +808,7 @@ auto tokenColorSlot(const QString& key, Snapshot& theme)
     COLOR_SLOT("palette.categorical5", ui.colors.categoricalPalette[5]);
     COLOR_SLOT("palette.categorical6", ui.colors.categoricalPalette[6]);
     COLOR_SLOT("background.hover", ui.colors.bgHover);
+    COLOR_SLOT("background.hoverOverlay", ui.colors.hoverOverlay);
     COLOR_SLOT("background.selected", ui.colors.bgSelected);
     COLOR_SLOT("background.dropTarget", ui.colors.bgDropTarget);
     COLOR_SLOT("border.primary", ui.colors.borderPrimary);

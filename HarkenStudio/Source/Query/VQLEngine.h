@@ -17,7 +17,7 @@
 #include "LMDBQueryTask.h"
 #endif
 
-namespace VNX {
+namespace harken::studio {
 
 struct ProjectData;
 struct ProjectItem;

@@ -15,7 +15,7 @@ void ensureApp()
     if (qApp)
         return;
     static int argc = 1;
-    static char arg0[] = "harken_editor_tests";
+    static char arg0[] = "harken_studio_tests";
     static char* argv[] = {arg0, nullptr};
     static QApplication app(argc, argv);
 }
@@ -26,33 +26,33 @@ protected:
     void SetUp() override
     {
         ensureApp();
-        VNX::AudioEngine::instance().shutdown();
+        harken::studio::AudioEngine::instance().shutdown();
         QCoreApplication::processEvents();
-        VNX::ActionManager::instance().clearAllForTesting();
-        VNX::UndoRedoManager::instance().clear();
+        harken::studio::ActionManager::instance().clearAllForTesting();
+        harken::studio::UndoRedoManager::instance().clear();
     }
 
     void TearDown() override
     {
-        VNX::UndoRedoManager::instance().clear();
-        VNX::ActionManager::instance().clearAllForTesting();
-        VNX::AudioEngine::instance().shutdown();
+        harken::studio::UndoRedoManager::instance().clear();
+        harken::studio::ActionManager::instance().clearAllForTesting();
+        harken::studio::AudioEngine::instance().shutdown();
         QCoreApplication::processEvents();
     }
 };
 
 TEST_F(AdvancedActionResultTest, DecimalStringPreservesFullWidthRuntimeIdentity)
 {
-    VNX::registerAdvancedActions(
-        VNX::ActionManager::instance(), &VNX::AudioEngine::instance());
+    harken::studio::registerAdvancedActions(
+        harken::studio::ActionManager::instance(), &harken::studio::AudioEngine::instance());
     const QJsonObject args{
         {QStringLiteral("action_handle"),
          QStringLiteral("18446744073709551615")},
         {QStringLiteral("position"), 0.5},
     };
 
-    const auto result = VNX::ActionManager::instance().execute(
-        QStringLiteral("seek_action"), args, VNX::ActionSource::IPC);
+    const auto result = harken::studio::ActionManager::instance().execute(
+        QStringLiteral("seek_action"), args, harken::studio::ActionSource::IPC);
 
     EXPECT_EQ(result.data.value(QStringLiteral("action_handle")).toString(),
               QStringLiteral("18446744073709551615"));
@@ -60,17 +60,17 @@ TEST_F(AdvancedActionResultTest, DecimalStringPreservesFullWidthRuntimeIdentity)
 
 TEST_F(AdvancedActionResultTest, AuthoringWriteScopeSurvivesReplayAndKeepsUnknownTransactionsConservative)
 {
-    auto& actions = VNX::ActionManager::instance();
-    auto& undo = VNX::UndoRedoManager::instance();
+    auto& actions = harken::studio::ActionManager::instance();
+    auto& undo = harken::studio::UndoRedoManager::instance();
     const QSet<QUuid> writes{QUuid::createUuid()};
     int value = 0;
-    VNX::ActionDef def;
+    harken::studio::ActionDef def;
     def.id = QStringLiteral("write_scope_contract");
     def.displayName = def.id;
     def.handler = [&](const QJsonObject&) {
         const int before = value;
         ++value;
-        VNX::ActionResult result;
+        harken::studio::ActionResult result;
         result.success = true;
         result.undoFn = [&value, before] { value = before; };
         result.redoFn = [&value, after = value] { value = after; };
@@ -80,7 +80,7 @@ TEST_F(AdvancedActionResultTest, AuthoringWriteScopeSurvivesReplayAndKeepsUnknow
     actions.registerAction(def);
     QObject observer;
     QList<std::optional<QSet<QUuid>>> observed;
-    QObject::connect(&undo, &VNX::UndoRedoManager::indexChanged, &observer, [&] {
+    QObject::connect(&undo, &harken::studio::UndoRedoManager::indexChanged, &observer, [&] {
         const auto* current = undo.currentAuthoringWriteSet();
         observed.append(current ? std::optional<QSet<QUuid>>(*current) : std::nullopt);
     });
@@ -106,7 +106,7 @@ TEST_F(AdvancedActionResultTest, AuthoringWriteScopeSurvivesReplayAndKeepsUnknow
     check(false);
     undo.beginMacro(QStringLiteral("Mixed transaction"));
     EXPECT_TRUE(actions.execute(def.id, {}).success);
-    undo.push(new VNX::UndoCommand(QStringLiteral("Unknown authoring changes")));
+    undo.push(new harken::studio::UndoCommand(QStringLiteral("Unknown authoring changes")));
     undo.endMacro();
     check(false);
     EXPECT_TRUE(undo.undo());
@@ -119,18 +119,18 @@ TEST_F(AdvancedActionResultTest, AuthoringWriteScopeSurvivesReplayAndKeepsUnknow
 
 TEST_F(AdvancedActionResultTest, AuthoringWriteScopeComposesAcrossMergingAndNestedMacros)
 {
-    auto& undo = VNX::UndoRedoManager::instance();
+    auto& undo = harken::studio::UndoRedoManager::instance();
     const QUuid first = QUuid::createUuid();
     const QUuid second = QUuid::createUuid();
     const QSet<QUuid> combined{first, second};
     QObject observer;
     std::optional<QSet<QUuid>> observed;
-    QObject::connect(&undo, &VNX::UndoRedoManager::indexChanged, &observer, [&] {
+    QObject::connect(&undo, &harken::studio::UndoRedoManager::indexChanged, &observer, [&] {
         const auto* current = undo.currentAuthoringWriteSet();
         observed = current ? std::optional<QSet<QUuid>>(*current) : std::nullopt;
     });
     const auto push = [&](const QUuid& guid, int mergeId = 0) {
-        undo.push(new VNX::RuntimeActionCommand(
+        undo.push(new harken::studio::RuntimeActionCommand(
             QStringLiteral("Tracked write"), [] {}, [] {}, mergeId, nullptr, {}, QSet<QUuid>{guid}));
     };
     push(first, 17);

@@ -14,8 +14,8 @@ namespace {
 
 constexpr std::uint32_t kCeiling = 8;
 
-bool PlacementAncestor(void*, harkenstudio::ObjectId subjectId,
-                       std::uint32_t, harkenstudio::ObjectId* outObjectId)
+bool PlacementAncestor(void*, harken::studio::types::ObjectId subjectId,
+                       std::uint32_t, harken::studio::types::ObjectId* outObjectId)
 {
     *outObjectId = subjectId;
     return true;

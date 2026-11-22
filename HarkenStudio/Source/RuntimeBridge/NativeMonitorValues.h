@@ -3,11 +3,12 @@
 #include "NativeValues.h"
 #include "Monitor/MonitorTypes.h"
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 #include <algorithm>
 
-namespace HarkenEditor::Bridge {
+namespace harken::studio::bridge {
 
-inline VnMonitorSessionDescV2 toNative(const VNX::Monitor::MonitorSessionDesc& value)
+inline VnMonitorSessionDescV2 toNative(const harken::studio::Monitor::MonitorSessionDesc& value)
 {
     VnMonitorSessionDescV2 out{};
     out.structSize = value.requestedExecutionFactVersion ? sizeof(out) : sizeof(VnMonitorSessionDesc);
@@ -20,7 +21,7 @@ inline VnMonitorSessionDescV2 toNative(const VNX::Monitor::MonitorSessionDesc& v
     return out;
 }
 
-inline VnMonitorPollDesc toNative(const VNX::Monitor::MonitorPollDesc& value)
+inline VnMonitorPollDesc toNative(const harken::studio::Monitor::MonitorPollDesc& value)
 {
     VnMonitorPollDesc out{};
     out.structSize = sizeof(out);
@@ -28,48 +29,7 @@ inline VnMonitorPollDesc toNative(const VNX::Monitor::MonitorPollDesc& value)
     return out;
 }
 
-inline VnMonitorRecordingDesc toNative(const VNX::Monitor::MonitorRecordingDesc& value)
-{
-    VnMonitorRecordingDesc out{};
-    out.structSize = sizeof(out);
-    out.fileByteBudget = value.fileByteBudget;
-    return out;
-}
-
-inline VnMonitorSessionCompareView toNative(const VNX::Monitor::MonitorSessionCompareView& value)
-{
-    VnMonitorSessionCompareView out{};
-    out.structSize = sizeof(out);
-    out.status = value.status;
-    out.recoveryNeeded = value.recoveryNeeded;
-    out.droppedRequired = value.droppedRequired;
-    out.requiredUnknown = value.requiredUnknown;
-    out.crcFailedRequired = value.crcFailedRequired;
-    out.truncatedAfterCommit = value.truncatedAfterCommit;
-    out.hasCompleteFooter = value.hasCompleteFooter;
-    out.hasTraceCorrelation = value.hasTraceCorrelation;
-    out.hasOptionalSymbols = value.hasOptionalSymbols;
-    out.lastCompleteChunkSequence = value.lastCompleteChunkSequence;
-    out.fileBytes = value.fileBytes;
-    out.bytesConsumed = value.bytesConsumed;
-    out.capabilityFingerprint = value.capabilityFingerprint;
-    out.programSemanticFingerprint = value.programSemanticFingerprint;
-    out.runtimeLineageFingerprint = value.runtimeLineageFingerprint;
-    out.tapDescriptorId = value.tapDescriptorId;
-    out.measurementSegmentGeneration = value.measurementSegmentGeneration;
-    out.sampleRate = value.sampleRate;
-    out.algorithmId = value.algorithmId;
-    out.algorithmVersion = value.algorithmVersion;
-    out.unitId = value.unitId;
-    out.targetStreamKindMask = value.targetStreamKindMask;
-    out.presentStreamKindMask = value.presentStreamKindMask;
-    out.rangeBegin = value.rangeBegin;
-    out.rangeEnd = value.rangeEnd;
-    out.gapInvalidWarmup = value.gapInvalidWarmup;
-    return out;
-}
-
-inline VnMonitorTapDescriptor toNative(const VNX::Monitor::MonitorTapDescriptor& value)
+inline VnMonitorTapDescriptor toNative(const harken::studio::Monitor::MonitorTapDescriptor& value)
 {
     VnMonitorTapDescriptor out{};
     out.structSize = sizeof(out);
@@ -94,7 +54,7 @@ inline VnMonitorTapDescriptor toNative(const VNX::Monitor::MonitorTapDescriptor&
     return out;
 }
 
-inline VnMonitorMeasurementRequest toNative(const VNX::Monitor::MonitorMeasurementRequest& value)
+inline VnMonitorMeasurementRequest toNative(const harken::studio::Monitor::MonitorMeasurementRequest& value)
 {
     VnMonitorMeasurementRequest out{};
     out.structSize = sizeof(out);
@@ -115,7 +75,7 @@ inline VnMonitorMeasurementRequest toNative(const VNX::Monitor::MonitorMeasureme
     return out;
 }
 
-inline VnMonitorCapturePlan toNative(const VNX::Monitor::MonitorCapturePlan& value)
+inline VnMonitorCapturePlan toNative(const harken::studio::Monitor::MonitorCapturePlan& value)
 {
     VnMonitorCapturePlan out{};
     out.structSize = sizeof(out);
@@ -132,9 +92,9 @@ inline VnMonitorCapturePlan toNative(const VNX::Monitor::MonitorCapturePlan& val
     return out;
 }
 
-inline VNX::Monitor::MonitorEventSessionStatus fromNative(const VnMonitorEventSessionStatusV2& value)
+inline harken::studio::Monitor::MonitorEventSessionStatus fromNative(const VnMonitorEventSessionStatusV2& value)
 {
-    VNX::Monitor::MonitorEventSessionStatus out{};
+    harken::studio::Monitor::MonitorEventSessionStatus out{};
     out.state = value.state;
     out.monitorSessionEpoch = value.monitorSessionEpoch;
     out.startedTimestampNs = value.startedTimestampNs;
@@ -156,9 +116,9 @@ inline VNX::Monitor::MonitorEventSessionStatus fromNative(const VnMonitorEventSe
     return out;
 }
 
-inline VNX::Monitor::MonitorCapabilities fromNative(const VnMonitorCapabilities& value)
+inline harken::studio::Monitor::MonitorCapabilities fromNative(const VnMonitorCapabilities& value)
 {
-    VNX::Monitor::MonitorCapabilities out{};
+    harken::studio::Monitor::MonitorCapabilities out{};
     out.consumerQueueBudgetAvailable = value.structSize >=
         offsetof(VnMonitorCapabilities, hardConsumerQueueBytes) + sizeof(value.hardConsumerQueueBytes);
     out.monitorImplemented = value.monitorImplemented;
@@ -186,8 +146,6 @@ inline VNX::Monitor::MonitorCapabilities fromNative(const VnMonitorCapabilities&
     out.hardConsumerQueueBytes = value.hardConsumerQueueBytes;
     out.resolvedDerivedWorkItems = value.resolvedDerivedWorkItems;
     out.hardDerivedWorkItems = value.hardDerivedWorkItems;
-    out.resolvedRecorderQueueBytes = value.resolvedRecorderQueueBytes;
-    out.hardRecorderQueueBytes = value.hardRecorderQueueBytes;
     out.resolvedRemoteQueueBytes = value.resolvedRemoteQueueBytes;
     out.hardRemoteQueueBytes = value.hardRemoteQueueBytes;
     out.resolvedCaptureByteRate = value.resolvedCaptureByteRate;
@@ -197,9 +155,9 @@ inline VNX::Monitor::MonitorCapabilities fromNative(const VnMonitorCapabilities&
     return out;
 }
 
-inline VNX::Monitor::MonitorCaptureControlStatus fromNative(const VnMonitorCaptureControlStatus& value)
+inline harken::studio::Monitor::MonitorCaptureControlStatus fromNative(const VnMonitorCaptureControlStatus& value)
 {
-    VNX::Monitor::MonitorCaptureControlStatus out{};
+    harken::studio::Monitor::MonitorCaptureControlStatus out{};
     out.leaseGeneration = value.leaseGeneration;
     out.principalHash = value.principalHash;
     out.permissions = value.permissions;
@@ -209,9 +167,9 @@ inline VNX::Monitor::MonitorCaptureControlStatus fromNative(const VnMonitorCaptu
     return out;
 }
 
-inline VNX::Monitor::MonitorPollResult fromNative(const VnMonitorPollResult& value)
+inline harken::studio::Monitor::MonitorPollResult fromNative(const VnMonitorPollResult& value)
 {
-    VNX::Monitor::MonitorPollResult out{};
+    harken::studio::Monitor::MonitorPollResult out{};
     out.recordsWritten = value.recordsWritten;
     out.bytesWritten = value.bytesWritten;
     out.nextRecordBytes = value.nextRecordBytes;
@@ -221,21 +179,9 @@ inline VNX::Monitor::MonitorPollResult fromNative(const VnMonitorPollResult& val
     return out;
 }
 
-inline VNX::Monitor::MonitorRecordingStatus fromNative(const VnMonitorRecordingStatus& value)
+inline harken::studio::Monitor::MonitorStreamBaseline fromNative(const VnMonitorStreamBaseline& value)
 {
-    VNX::Monitor::MonitorRecordingStatus out{};
-    out.state = value.state;
-    out.fileBytes = value.fileBytes;
-    out.lastCommittedChunk = value.lastCommittedChunk;
-    out.queueBytes = value.queueBytes;
-    out.recoveryNeeded = value.recoveryNeeded;
-    out.errorReason = value.errorReason;
-    return out;
-}
-
-inline VNX::Monitor::MonitorStreamBaseline fromNative(const VnMonitorStreamBaseline& value)
-{
-    VNX::Monitor::MonitorStreamBaseline out{};
+    harken::studio::Monitor::MonitorStreamBaseline out{};
     out.structSize = sizeof(out);
     out.streamId = value.streamId;
     out.firstExpectedSourceSequence = value.firstExpectedSourceSequence;
@@ -243,9 +189,9 @@ inline VNX::Monitor::MonitorStreamBaseline fromNative(const VnMonitorStreamBasel
     return out;
 }
 
-inline VNX::Monitor::MonitorDropSummary fromNative(const VnMonitorDropSummary& value)
+inline harken::studio::Monitor::MonitorDropSummary fromNative(const VnMonitorDropSummary& value)
 {
-    VNX::Monitor::MonitorDropSummary out{};
+    harken::studio::Monitor::MonitorDropSummary out{};
     out.structSize = sizeof(out);
     out.stage = value.stage;
     out.streamId = value.streamId;
@@ -257,9 +203,9 @@ inline VNX::Monitor::MonitorDropSummary fromNative(const VnMonitorDropSummary& v
     return out;
 }
 
-inline VNX::Monitor::MonitorSubscriptionStatus fromNative(const VnMonitorSubscriptionStatus& value)
+inline harken::studio::Monitor::MonitorSubscriptionStatus fromNative(const VnMonitorSubscriptionStatus& value)
 {
-    VNX::Monitor::MonitorSubscriptionStatus out{};
+    harken::studio::Monitor::MonitorSubscriptionStatus out{};
     out.requestedStreamKindMask = value.requestedStreamKindMask;
     out.resolvedStreamKindMask = value.resolvedStreamKindMask;
     out.subscriptionGeneration = value.subscriptionGeneration;
@@ -275,9 +221,9 @@ inline VNX::Monitor::MonitorSubscriptionStatus fromNative(const VnMonitorSubscri
     return out;
 }
 
-inline VNX::Monitor::MonitorCapturePlan fromNative(const VnMonitorCapturePlan& value)
+inline harken::studio::Monitor::MonitorCapturePlan fromNative(const VnMonitorCapturePlan& value)
 {
-    VNX::Monitor::MonitorCapturePlan out{};
+    harken::studio::Monitor::MonitorCapturePlan out{};
     out.streamKindMask = value.streamKindMask;
     out.tapCount = value.tapCount;
     out.measurementCount = value.measurementCount;
@@ -291,21 +237,14 @@ inline VNX::Monitor::MonitorCapturePlan fromNative(const VnMonitorCapturePlan& v
     return out;
 }
 
-inline VNX::Monitor::MonitorEffectiveCapturePlan fromNative(const VnMonitorEffectiveCapturePlan& value)
+inline harken::studio::Monitor::MonitorEffectiveCapturePlan fromNative(const VnMonitorEffectiveCapturePlan& value)
 {
-    VNX::Monitor::MonitorEffectiveCapturePlan out{};
+    harken::studio::Monitor::MonitorEffectiveCapturePlan out{};
     out.activationState = value.activationState;
     out.capturePlanGeneration = value.capturePlanGeneration;
     out.previousGeneration = value.previousGeneration;
     out.effectiveFromExecuteFrame = value.effectiveFromExecuteFrame;
     out.accepted = fromNative(value.accepted);
-    return out;
-}
-
-inline VNX::Monitor::MonitorCompareResult fromNative(const VnMonitorCompareResult& value)
-{
-    VNX::Monitor::MonitorCompareResult out{};
-    out.result = value.result;
     return out;
 }
 

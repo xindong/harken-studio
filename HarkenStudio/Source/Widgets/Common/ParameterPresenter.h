@@ -8,7 +8,7 @@ class QDoubleSpinBox;
 class QComboBox;
 class QSlider;
 
-namespace VNX {
+namespace harken::studio {
 
 class ParameterPresenter : public QWidget
 {

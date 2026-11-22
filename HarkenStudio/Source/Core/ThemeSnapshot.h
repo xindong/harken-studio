@@ -13,7 +13,7 @@
 #include <array>
 #include <memory>
 
-namespace VNX {
+namespace harken::studio {
 
 enum class ThemeColorScheme
 {
@@ -54,6 +54,7 @@ struct ThemeColors
     QColor bgSecondary;
     QColor bgTertiary;
     QColor bgHover;
+    QColor hoverOverlay;
     QColor bgSelected;
     QColor bgDropTarget;
 
@@ -189,6 +190,8 @@ struct ThemeMetrics
     } form;
 
     struct Chrome {
+        int mainWindowMenuBarHeight = 0;
+        int mainWindowToolBarHeight = 0;
         int titleBarHeight = 0;
         int windowButtonWidth = 0;
         int windowMinimumWidth = 0;
@@ -893,4 +896,4 @@ using ThemeSnapshotPtr = std::shared_ptr<const ThemeSnapshot>;
 
 }
 
-Q_DECLARE_METATYPE(VNX::ThemeSnapshotPtr)
+Q_DECLARE_METATYPE(harken::studio::ThemeSnapshotPtr)

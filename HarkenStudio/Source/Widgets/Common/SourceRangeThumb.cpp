@@ -12,7 +12,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 
@@ -27,10 +27,11 @@ int frameX(uint64_t frame, uint64_t total, const QRectF& r)
 
 }
 
-SourceRangeThumb::SourceRangeThumb(QWidget* parent)
+SourceRangeThumb::SourceRangeThumb(QWidget* parent, Mode mode)
     : PreviewField(parent)
 {
     setObjectName(QStringLiteral("sourceRangeThumb"));
+    setAttribute(Qt::WA_TransparentForMouseEvents, mode == Mode::ReadOnly);
     setEnabled(false);
     connect(&MediaPool::instance(), &MediaPool::waveformReady, this, [this](uint32_t sourceID) {
         if (source_.sourceId == sourceID)
@@ -45,7 +46,8 @@ void SourceRangeThumb::setSource(const SoundSourceDef& source, const AssetInfo* 
     asset_ = asset ? std::optional<AssetInfo>{*asset} : std::nullopt;
     sourceMissing_ = !AssetRegistry::instance().sourceFileExists(source.sourceId);
     setEnabled(!sourceMissing_);
-    setCursor(sourceMissing_ ? Qt::ArrowCursor : Qt::PointingHandCursor);
+    setCursor(!sourceMissing_ && !testAttribute(Qt::WA_TransparentForMouseEvents)
+        ? Qt::PointingHandCursor : Qt::ArrowCursor);
     peaks_ = !sourceMissing_ && asset && !asset->absolutePath.isEmpty()
         ? WaveformCache::loadShared(asset->absolutePath) : nullptr;
     const auto range = SoundSourceSemantics::effectiveRange(source_, asset);

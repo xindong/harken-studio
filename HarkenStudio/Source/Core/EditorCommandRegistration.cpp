@@ -1,7 +1,7 @@
 #include "EditorCommandRegistration.h"
 #include "IPC/IPCServer.h"
 
-namespace VNX {
+namespace harken::studio {
 
 void registerTemplateActions(ActionManager& manager, ProjectManager* project);
 
@@ -22,6 +22,7 @@ void registerEditorCommands(const EditorCommandContext& context)
     registerAssetActions(manager, context.engine, context.project);
     registerSystemActions(manager, context.engine, context.audition,
                           context.dispatcher->activePlaybacksMap());
+    registerRemoteActions(manager);
     registerReadonlyActions(manager, context.dispatcher);
 }
 

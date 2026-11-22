@@ -12,7 +12,7 @@
 #include <optional>
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 
 struct ProjectItem;
 enum class SelectionMode : uint8_t;

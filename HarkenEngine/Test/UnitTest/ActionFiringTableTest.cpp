@@ -1221,6 +1221,7 @@ TEST(ActionFiringTable, DeferredOwnershipBlocksTerminalFinalizationAndRelease) {
     ASSERT_TRUE(table.ReleaseRoot(handle));
 }
 
+#if HARKEN_ENGINE_DEV
 TEST(ActionFiringTable, RequestAndFirstControlCauseSurviveTerminalRetentionAndClearOnReuse) {
     harken::ActionFiringTable table;
     ASSERT_TRUE(table.Reset());
@@ -1261,3 +1262,4 @@ TEST(ActionFiringTable, RequestAndFirstControlCauseSurviveTerminalRetentionAndCl
     EXPECT_EQ(harken::MonitorEmitterKind::Unknown, reused.emitterOrigin.kind);
     EXPECT_FALSE(reused.controlCause.request.key.Valid());
 }
+#endif
