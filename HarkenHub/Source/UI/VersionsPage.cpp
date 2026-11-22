@@ -1110,8 +1110,7 @@ void VersionsPage::fetchManifestForPackage(const QString& packagePath)
     installStatusLabel_->setText(
         QCoreApplication::translate("HarkenHub", "Fetching the release manifest from the server..."));
     if (!catalog_->fetch(ServerEndpoints::manifestUrls(
-            ServerEndpoints::resolvedBaseUrl(), QStringLiteral("harken"),
-            ServerEndpoints::hostChannel()), QStringLiteral("harken"),
+            ServerEndpoints::resolvedBaseUrl(), QStringLiteral("harken")), QStringLiteral("harken"),
             ServerEndpoints::hostChannel())) {
         pendingManifestPackagePath_.clear();
         pendingManifestBuildId_.clear();

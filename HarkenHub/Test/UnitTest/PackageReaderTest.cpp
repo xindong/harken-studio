@@ -50,7 +50,7 @@ TEST(PackageReader, RoundtripExtractsFilesIntact)
 
     const QString out = dir.filePath(QStringLiteral("out"));
     QString error;
-    ASSERT_TRUE(PackageReader::extractAll(archive, out, &error))
+    ASSERT_TRUE(PackageReader::extractAllVerified(archive, out, {}, &error))
         << error.toStdString();
     EXPECT_EQ(readFile(out + QStringLiteral("/HarkenStudio.exe")),
               QByteArrayLiteral("binary-stub"));
@@ -90,7 +90,7 @@ TEST(PackageReader, RestoresUnixPermissionsOnExtract)
 
     const QString out = dir.filePath(QStringLiteral("out"));
     QString error;
-    ASSERT_TRUE(PackageReader::extractAll(archive, out, &error))
+    ASSERT_TRUE(PackageReader::extractAllVerified(archive, out, {}, &error))
         << error.toStdString();
 
     struct stat toolInfo = {};
@@ -138,7 +138,7 @@ TEST(PackageReader, RejectsPathTraversal)
 
     const QString out = dir.filePath(QStringLiteral("out"));
     QString error;
-    EXPECT_FALSE(PackageReader::extractAll(archive, out, &error));
+    EXPECT_FALSE(PackageReader::extractAllVerified(archive, out, {}, &error));
     EXPECT_FALSE(QFile::exists(dir.filePath(QStringLiteral("evil.txt"))));
 }
 

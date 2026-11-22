@@ -327,7 +327,7 @@ TEST_F(ProjectIntakeConsumerTest, RecordedLocalInstallationRemainsSpecificAfterR
     local.buildId = "local-user-path-id";
     local.runtimeBuildId = managed.buildId;
     local.source = VNH::VersionSource::LocalBuild;
-    ASSERT_TRUE(store.setLastKnownGood(path, local.buildId, "2026-09-08T10:00:00.000Z"));
+    ASSERT_TRUE(store.recordSuccessfulOpen(path, "SpecificBuild", local.buildId, "2026-09-08T10:00:00.000Z"));
     const auto records = store.listProjects();
     ASSERT_EQ(records.size(), 1u);
     const auto selection = VNH::ProjectVersionSelection::resolve(

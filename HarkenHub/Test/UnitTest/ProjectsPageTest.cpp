@@ -183,8 +183,8 @@ TEST_F(ProjectsPageSelectionTest, SelectionSurvivesReorderingAndMetadataRefresh)
     page->setVersionsProvider([=]() { return std::vector<VNH::InstalledVersion>{newer, older}; });
     ASSERT_TRUE(store.setPreferredBuild(paths[0], newer.buildId));
     ASSERT_TRUE(store.setPreferredBuild(paths[1], older.buildId));
-    ASSERT_TRUE(store.setLastOpened(paths[0], "2026-10-21T10:00:00+08:00"));
-    ASSERT_TRUE(store.setLastOpened(paths[1], "2026-10-21T03:00:00Z"));
+    ASSERT_TRUE(store.recordSuccessfulOpen(paths[0], "Alpha", newer.buildId, "2026-10-21T10:00:00+08:00"));
+    ASSERT_TRUE(store.recordSuccessfulOpen(paths[1], "Bravo", older.buildId, "2026-10-21T03:00:00Z"));
     clickRow(0);
     clickRow(1, Qt::LeftButton, Qt::ShiftModifier);
     const auto selected = selectedPaths();

@@ -37,13 +37,10 @@ public:
     bool removeProject(const QString& canonicalPath);
     bool contains(const QString& canonicalPath) const;
     bool setPreferredBuild(const QString& canonicalPath, const QString& buildId);
-    bool setLastKnownGood(const QString& canonicalPath, const QString& buildId,
-                          const QString& at);
     bool recordSuccessfulOpen(const QString& canonicalPath,
                               const QString& displayName,
                               const QString& buildId,
                               const QString& at);
-    bool setLastOpened(const QString& canonicalPath, const QString& at);
     bool setLastPreflight(const QString& canonicalPath, const QString& at);
     std::vector<ProjectRecord> listProjects() const;
 

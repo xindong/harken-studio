@@ -40,8 +40,6 @@ class ServerVersionCatalog : public QObject
 public:
     explicit ServerVersionCatalog(QObject* parent = nullptr);
 
-    bool fetch(const QUrl& versionsUrl, const QString& product,
-               const QString& channel);
     bool fetch(const QList<QUrl>& versionsUrls, const QString& product,
                const QString& channel);
     bool isFetching() const;

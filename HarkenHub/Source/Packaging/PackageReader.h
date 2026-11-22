@@ -28,8 +28,6 @@ public:
     static PackageListResult listEntries(const QString& archivePath);
     static bool readEntry(const QString& archivePath, const QString& entryPath,
                           QByteArray* out, QString* errorOut);
-    static bool extractAll(const QString& archivePath, const QString& targetDir,
-                           QString* errorOut);
     static bool extractAllVerified(const QString& archivePath, const QString& targetDir,
                                    const QHash<QString, QString>& expectedSha256ByPath,
                                    QString* errorOut);

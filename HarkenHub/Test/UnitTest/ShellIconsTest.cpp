@@ -22,38 +22,36 @@ TEST(ShellIconsTest, ShellReadableImagesPreserveEverySourceSizeAndPixel)
 {
     QTemporaryDir directory;
     ASSERT_TRUE(directory.isValid());
-    for (const QColor color : {QColor(Qt::black), QColor(Qt::white)}) {
-        const QString path = VNH::saveShellIcon(VNH::HubIcons::applicationIcon(color), directory.path());
-        ASSERT_FALSE(path.isEmpty());
-        const auto nativePath = QDir::toNativeSeparators(path).toStdWString();
-        QImageReader original(QStringLiteral(":/Resources/icons/HubIcon.ico"));
-        QImageReader persisted(path);
-        ASSERT_GT(original.imageCount(), 0);
-        ASSERT_EQ(persisted.imageCount(), original.imageCount());
-        for (int frame = 0; frame < original.imageCount(); ++frame) {
-            ASSERT_TRUE(original.jumpToImage(frame));
-            ASSERT_TRUE(persisted.jumpToImage(frame));
-            const QImage source = original.read().convertToFormat(QImage::Format_ARGB32);
-            const QImage stored = persisted.read().convertToFormat(QImage::Format_ARGB32);
-            ASSERT_FALSE(source.isNull());
-            ASSERT_EQ(stored.size(), source.size());
-            HICON handle = nullptr;
-            UINT iconId = 0;
-            ASSERT_EQ(PrivateExtractIconsW(nativePath.c_str(), 0, source.width(), source.height(),
-                                          &handle, &iconId, 1, 0), 1u);
-            ASSERT_NE(handle, nullptr);
-            const auto destroy = qScopeGuard([handle] { DestroyIcon(handle); });
-            const QImage shell = QImage::fromHICON(handle).convertToFormat(QImage::Format_ARGB32);
-            ASSERT_EQ(shell.size(), source.size());
-            for (int y = 0; y < source.height(); ++y) {
-                for (int x = 0; x < source.width(); ++x) {
-                    const int alpha = qAlpha(source.pixel(x, y));
-                    ASSERT_EQ(qAlpha(stored.pixel(x, y)), alpha);
-                    ASSERT_EQ(qAlpha(shell.pixel(x, y)), alpha);
-                    if (alpha) {
-                        ASSERT_EQ(stored.pixelColor(x, y).rgb(), source.pixelColor(x, y).rgb());
-                        ASSERT_EQ(shell.pixelColor(x, y).rgb(), source.pixelColor(x, y).rgb());
-                    }
+    const QString path = VNH::saveShellIcon(VNH::HubIcons::applicationIcon(), directory.path());
+    ASSERT_FALSE(path.isEmpty());
+    const auto nativePath = QDir::toNativeSeparators(path).toStdWString();
+    QImageReader original(QStringLiteral(":/Resources/icons/HubIcon.ico"));
+    QImageReader persisted(path);
+    ASSERT_GT(original.imageCount(), 0);
+    ASSERT_EQ(persisted.imageCount(), original.imageCount());
+    for (int frame = 0; frame < original.imageCount(); ++frame) {
+        ASSERT_TRUE(original.jumpToImage(frame));
+        ASSERT_TRUE(persisted.jumpToImage(frame));
+        const QImage source = original.read().convertToFormat(QImage::Format_ARGB32);
+        const QImage stored = persisted.read().convertToFormat(QImage::Format_ARGB32);
+        ASSERT_FALSE(source.isNull());
+        ASSERT_EQ(stored.size(), source.size());
+        HICON handle = nullptr;
+        UINT iconId = 0;
+        ASSERT_EQ(PrivateExtractIconsW(nativePath.c_str(), 0, source.width(), source.height(),
+                                      &handle, &iconId, 1, 0), 1u);
+        ASSERT_NE(handle, nullptr);
+        const auto destroy = qScopeGuard([handle] { DestroyIcon(handle); });
+        const QImage shell = QImage::fromHICON(handle).convertToFormat(QImage::Format_ARGB32);
+        ASSERT_EQ(shell.size(), source.size());
+        for (int y = 0; y < source.height(); ++y) {
+            for (int x = 0; x < source.width(); ++x) {
+                const int alpha = qAlpha(source.pixel(x, y));
+                ASSERT_EQ(qAlpha(stored.pixel(x, y)), alpha);
+                ASSERT_EQ(qAlpha(shell.pixel(x, y)), alpha);
+                if (alpha) {
+                    ASSERT_EQ(stored.pixelColor(x, y).rgb(), source.pixelColor(x, y).rgb());
+                    ASSERT_EQ(shell.pixelColor(x, y).rgb(), source.pixelColor(x, y).rgb());
                 }
             }
         }
@@ -157,30 +155,28 @@ TEST_F(ShellShortcutTest, MigrationPreservesUserChoicesAndIsIdempotent)
     ASSERT_TRUE(desktopLink.open(QIODevice::ReadOnly));
     const auto desktopBytes = desktopLink.readAll();
     desktopLink.close();
-    for (const QColor color : {QColor(Qt::black), QColor(Qt::white), QColor(Qt::black)}) {
-        const QString path = VNH::saveShellIcon(VNH::HubIcons::applicationIcon(color), directory.filePath(QStringLiteral("shell-icons")));
-        ASSERT_FALSE(path.isEmpty());
-        ASSERT_EQ(VNH::migrateShellShortcuts(path), VNH::ShortcutMigrationResult::Complete);
-        EXPECT_EQ(read(pinned), (QStringList{executable, path, arguments}));
-        EXPECT_EQ(read(custom), (QStringList{executable, customIcon, arguments}));
-        EXPECT_EQ(read(desktop), (QStringList{executable, executable, arguments}));
-        ASSERT_TRUE(desktopLink.open(QIODevice::ReadOnly));
-        EXPECT_EQ(desktopLink.readAll(), desktopBytes);
-        desktopLink.close();
-        ASSERT_TRUE(otherLink.open(QIODevice::ReadOnly));
-        EXPECT_EQ(otherLink.readAll(), otherBytes);
-        otherLink.close();
-        QFile migrated(pinned);
-        ASSERT_TRUE(migrated.open(QIODevice::ReadOnly));
-        const auto bytes = migrated.readAll();
-        migrated.close();
-        ASSERT_EQ(VNH::migrateShellShortcuts(path), VNH::ShortcutMigrationResult::Complete);
-        ASSERT_TRUE(migrated.open(QIODevice::ReadOnly));
-        EXPECT_EQ(migrated.readAll(), bytes);
-    }
+    const QString path = VNH::saveShellIcon(VNH::HubIcons::applicationIcon(), directory.filePath(QStringLiteral("shell-icons")));
+    ASSERT_FALSE(path.isEmpty());
+    ASSERT_EQ(VNH::migrateShellShortcuts(path), VNH::ShortcutMigrationResult::Complete);
+    EXPECT_EQ(read(pinned), (QStringList{executable, path, arguments}));
+    EXPECT_EQ(read(custom), (QStringList{executable, customIcon, arguments}));
+    EXPECT_EQ(read(desktop), (QStringList{executable, executable, arguments}));
+    ASSERT_TRUE(desktopLink.open(QIODevice::ReadOnly));
+    EXPECT_EQ(desktopLink.readAll(), desktopBytes);
+    desktopLink.close();
+    ASSERT_TRUE(otherLink.open(QIODevice::ReadOnly));
+    EXPECT_EQ(otherLink.readAll(), otherBytes);
+    otherLink.close();
+    QFile migrated(pinned);
+    ASSERT_TRUE(migrated.open(QIODevice::ReadOnly));
+    const auto bytes = migrated.readAll();
+    migrated.close();
+    ASSERT_EQ(VNH::migrateShellShortcuts(path), VNH::ShortcutMigrationResult::Complete);
+    ASSERT_TRUE(migrated.open(QIODevice::ReadOnly));
+    EXPECT_EQ(migrated.readAll(), bytes);
 }
 
-TEST_F(ShellShortcutTest, ThemeChangeCompletesAfterConcurrentMigrationReleasesLock)
+TEST_F(ShellShortcutTest, AppliesIconAfterConcurrentMigrationReleasesLock)
 {
     const QString executable = QCoreApplication::applicationDirPath() + QStringLiteral("/HarkenHub.exe");
     const QString pinned = pinnedRoot + QStringLiteral("/Harken Hub.lnk");
@@ -210,12 +206,11 @@ TEST_F(ShellShortcutTest, ThemeChangeCompletesAfterConcurrentMigrationReleasesLo
     });
     ASSERT_TRUE(acquired.get_future().get());
     VNH::TaskbarIcon taskbar;
-    taskbar.setIcon(VNH::HubIcons::applicationIcon(Qt::white));
-    taskbar.setIcon(VNH::HubIcons::applicationIcon(Qt::black));
+    taskbar.setIcon(VNH::HubIcons::applicationIcon());
     ASSERT_EQ(read(pinned).value(1), executable);
     release.set_value();
     unlocked = true;
-    const QString expected = VNH::saveShellIcon(VNH::HubIcons::applicationIcon(Qt::black), directory.filePath(QStringLiteral("shell-icons")));
+    const QString expected = VNH::saveShellIcon(VNH::HubIcons::applicationIcon(), directory.filePath(QStringLiteral("shell-icons")));
     for (int attempt = 0; attempt < 40 && read(pinned).value(1) != expected; ++attempt)
         QTest::qWait(50);
     EXPECT_EQ(read(pinned), (QStringList{executable, expected, QStringLiteral("--show-versions")}));

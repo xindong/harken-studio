@@ -8,7 +8,6 @@
 #include <QSvgRenderer>
 
 #ifdef Q_OS_WIN
-#include "Platform/Windows/SystemTheme.h"
 #include "Platform/Windows/TaskbarIcon.h"
 #endif
 
@@ -77,38 +76,19 @@ private:
 
 }
 
-QIcon applicationIcon(const QColor& color)
+QIcon applicationIcon()
 {
-    Q_UNUSED(color);
     return QIcon(QStringLiteral(":/Resources/icons/HubIcon.ico"));
 }
 
-ApplicationIcon::ApplicationIcon(QObject* parent)
-    : QObject(parent)
+void installApplicationIcon(QApplication& app)
 {
-    QApplication::setWindowIcon(applicationIcon(Qt::white));
+    const QIcon icon = applicationIcon();
+    app.setWindowIcon(icon);
 #ifdef Q_OS_WIN
-    taskbar_ = new TaskbarIcon(this);
-    auto* theme = new SystemTheme(this);
-    connect(theme, &SystemTheme::iconColorChanged, this, &ApplicationIcon::applyColor);
-    applyColor(theme->iconColor());
-#else
-    applyColor(Qt::white);
+    auto* taskbar = new TaskbarIcon(&app);
+    taskbar->setIcon(icon);
 #endif
-}
-
-QIcon ApplicationIcon::systemIcon() const
-{
-    return systemIcon_;
-}
-
-void ApplicationIcon::applyColor(const QColor& color)
-{
-    systemIcon_ = applicationIcon(color);
-#ifdef Q_OS_WIN
-    taskbar_->setIcon(systemIcon_);
-#endif
-    emit changed(systemIcon_);
 }
 
 QIcon settingsIcon(qreal devicePixelRatio)

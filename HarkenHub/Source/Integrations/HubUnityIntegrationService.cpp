@@ -187,19 +187,6 @@ QStringList localizeUnityTexts(const QStringList& texts)
     return localized;
 }
 
-UnityIntegrationStepStatus convertStatus(Service::StepStatus status)
-{
-    switch (status) {
-    case Service::StepStatus::Pending:   return UnityIntegrationStepStatus::Pending;
-    case Service::StepStatus::Running:   return UnityIntegrationStepStatus::Running;
-    case Service::StepStatus::Succeeded: return UnityIntegrationStepStatus::Succeeded;
-    case Service::StepStatus::Warning:   return UnityIntegrationStepStatus::Warning;
-    case Service::StepStatus::Failed:    return UnityIntegrationStepStatus::Failed;
-    case Service::StepStatus::Skipped:   return UnityIntegrationStepStatus::Skipped;
-    }
-    return UnityIntegrationStepStatus::Failed;
-}
-
 }
 
 UnityIntegrationResult HubUnityIntegrationService::run(const UnityIntegrationRequest& request)
@@ -212,38 +199,13 @@ UnityIntegrationResult HubUnityIntegrationService::run(const UnityIntegrationReq
     serviceRequest.removeIntegration = request.removeIntegration;
     serviceRequest.restorePrevious = request.restorePrevious;
     Service service;
-    const auto source = request.inspectOnly ? inspectInstalled(request) : service.run(serviceRequest);
-    UnityIntegrationResult result;
-    result.success = source.success;
-    result.hasWarnings = source.hasWarnings;
-    result.targetInstalled = source.targetInstalled;
-    result.targetCurrent = source.targetCurrent;
-    result.integrationFound = source.targetInstalled;
-    result.integrationRemoved = source.integrationRemoved;
-    result.previousRestored = source.previousRestored;
-    result.previousVersionAvailable = source.previousVersionAvailable;
-    result.unityProjectPath = source.unityProjectPath;
-    result.integrationSourcePath = source.integrationSourcePath;
-    result.integrationInstallPath = source.integrationInstallPath;
-    result.installedVersion = source.installedVersion;
-    result.sourceVersion = source.sourceVersion;
-    result.backupPath = source.backupPath;
-    result.jsonReportPath = source.jsonReportPath;
-    result.textReportPath = source.textReportPath;
-    result.integrationFilesCopied = source.integrationFilesCopied;
-    result.steps.reserve(source.steps.size());
-    for (const auto& step : source.steps) {
-        result.steps.push_back({
-            step.id,
-            localizeUnityText(step.title),
-            convertStatus(step.status),
-            localizeUnityText(step.summary),
-            localizeUnityText(step.cause),
-            localizeUnityText(step.remediation),
-            localizeUnityTexts(step.details),
-            step.artifacts,
-            step.elapsedMs,
-        });
+    UnityIntegrationResult result{request.inspectOnly ? inspectInstalled(request) : service.run(serviceRequest)};
+    for (auto& step : result.steps) {
+        step.title = localizeUnityText(step.title);
+        step.summary = localizeUnityText(step.summary);
+        step.cause = localizeUnityText(step.cause);
+        step.remediation = localizeUnityText(step.remediation);
+        step.details = localizeUnityTexts(step.details);
     }
     return result;
 }

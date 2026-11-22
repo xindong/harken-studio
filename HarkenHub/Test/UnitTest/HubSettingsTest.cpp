@@ -69,7 +69,7 @@ TEST_F(HubSettingsTest, PersistsLanguagePreference)
 TEST_F(HubSettingsTest, PersistsWindowSize)
 {
     EXPECT_FALSE(HubSettings::windowSize().isValid());
-    ASSERT_TRUE(HubSettings::setWindowSize(QSize(1440, 900)));
+    ASSERT_TRUE(HubSettings::setWindowGeometry(QRect(0, 0, 1440, 900)));
     EXPECT_EQ(HubSettings::windowSize(), QSize(1440, 900));
 
     QFile file(HubSettings::filePath());
@@ -84,15 +84,15 @@ TEST_F(HubSettingsTest, PersistsWindowSize)
 TEST_F(HubSettingsTest, PersistsWindowPositionIncludingOrigin)
 {
     EXPECT_FALSE(HubSettings::windowPosition().has_value());
-    ASSERT_TRUE(HubSettings::setWindowPosition(QPoint(80, 80)));
+    ASSERT_TRUE(HubSettings::setWindowGeometry(QRect(80, 80, 1280, 720)));
     EXPECT_EQ(HubSettings::windowPosition(), QPoint(80, 80));
-    ASSERT_TRUE(HubSettings::setWindowPosition(QPoint(0, 0)));
+    ASSERT_TRUE(HubSettings::setWindowGeometry(QRect(0, 0, 1280, 720)));
     EXPECT_EQ(HubSettings::windowPosition(), QPoint(0, 0));
 }
 
 TEST_F(HubSettingsTest, IgnoresCorruptWindowPosition)
 {
-    ASSERT_TRUE(HubSettings::setWindowPosition(QPoint(80, 80)));
+    ASSERT_TRUE(HubSettings::setWindowGeometry(QRect(80, 80, 1280, 720)));
     QFile file(HubSettings::filePath());
     ASSERT_TRUE(file.open(QIODevice::ReadOnly));
     QJsonObject root = QJsonDocument::fromJson(file.readAll()).object();
@@ -125,8 +125,8 @@ TEST_F(HubSettingsTest, PersistsAndConditionallyClearsPendingUpdateNotesVersion)
 
 TEST_F(HubSettingsTest, InvalidWindowSizeDoesNotReplaceSavedValue)
 {
-    ASSERT_TRUE(HubSettings::setWindowSize(QSize(1280, 720)));
-    EXPECT_FALSE(HubSettings::setWindowSize(QSize()));
+    ASSERT_TRUE(HubSettings::setWindowGeometry(QRect(0, 0, 1280, 720)));
+    EXPECT_FALSE(HubSettings::setWindowGeometry(QRect()));
     EXPECT_EQ(HubSettings::windowSize(), QSize(1280, 720));
 }
 

@@ -27,13 +27,6 @@ bool ServerVersionCatalog::isFetching() const
     return reply_ != nullptr;
 }
 
-bool ServerVersionCatalog::fetch(const QUrl& versionsUrl,
-                                 const QString& product,
-                                 const QString& channel)
-{
-    return fetch(QList<QUrl>{versionsUrl}, product, channel);
-}
-
 bool ServerVersionCatalog::fetch(const QList<QUrl>& versionsUrls,
                                  const QString& product,
                                  const QString& channel)

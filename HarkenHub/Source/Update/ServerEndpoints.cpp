@@ -44,10 +44,8 @@ QString ServerEndpoints::hostChannel()
     return prefix + QStringLiteral("-") + ManifestVerifier::hostArchitecture();
 }
 
-QUrl ServerEndpoints::latestUrl(const QUrl& baseUrl, const QString& product,
-                                const QString& channel)
+QUrl ServerEndpoints::latestUrl(const QUrl& baseUrl, const QString& product)
 {
-    Q_UNUSED(channel)
     return withClientPath(baseUrl,
                           QStringLiteral("/release/%1/manifest.json")
                               .arg(product));
@@ -70,21 +68,14 @@ QUrl ServerEndpoints::githubLatestUrl(const QString& product)
 }
 
 QList<QUrl> ServerEndpoints::manifestUrls(const QUrl& fallbackBaseUrl,
-                                          const QString& product,
-                                          const QString& channel)
+                                          const QString& product)
 {
     QList<QUrl> result;
     const QUrl github = githubLatestUrl(product);
     if (!github.isEmpty())
         result.append(github);
-    result.append(latestUrl(fallbackBaseUrl, product, channel));
+    result.append(latestUrl(fallbackBaseUrl, product));
     return result;
-}
-
-QUrl ServerEndpoints::versionsUrl(const QUrl& baseUrl, const QString& product,
-                                  const QString& channel)
-{
-    return latestUrl(baseUrl, product, channel);
 }
 
 bool ServerEndpoints::isReleaseObjectPath(const QString& objectPath,

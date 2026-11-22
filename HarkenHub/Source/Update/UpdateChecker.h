@@ -58,8 +58,10 @@ public:
     void setAutomaticCheckingEnabled(bool enabled);
     bool checkNow(bool manual = true);
     void invalidateCache();
+#ifdef HARKEN_HUB_TEST_OVERRIDES
     bool isChecking() const;
     qint64 effectiveIntervalMs() const;
+#endif
 
 signals:
     void checkFinished(const VNH::UpdateCheckResult& result);

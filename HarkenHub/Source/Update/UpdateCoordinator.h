@@ -36,7 +36,9 @@ public:
     void stop();
     bool checkNow(bool manual = true);
     void setAutomaticDownloadEnabled(bool enabled);
+#ifdef HARKEN_HUB_TEST_OVERRIDES
     bool isDownloading() const;
+#endif
     UpdateStateRecord currentState() const;
     static void reconcileElevation(const QDateTime& now);
 

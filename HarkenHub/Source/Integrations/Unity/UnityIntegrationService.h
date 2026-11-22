@@ -1,17 +1,13 @@
 #pragma once
 
-#include <QObject>
-#include <QJsonObject>
 #include <QString>
 #include <QStringList>
 #include <QVector>
 
 namespace VNX {
 
-class UnityIntegrationService final : public QObject
+class UnityIntegrationService final
 {
-    Q_OBJECT
-
 public:
     enum class StepStatus
     {
@@ -67,22 +63,16 @@ public:
         int integrationFilesCopied = 0;
     };
 
-    explicit UnityIntegrationService(QObject* parent = nullptr);
-
     Result run(const Request& request);
 
     static QString locateIntegrationSource(const QString& preferredPath = QString());
     static QString previousVersionBackup(const QString& unityProjectPath);
     static QString statusName(StepStatus status);
 
-signals:
-    void stepUpdated(int index, const VNX::UnityIntegrationService::StepResult& step);
-
 private:
     Result install(const Request& request);
     Result remove(const Request& request);
     Result restorePrevious(const Request& request);
-    static QJsonObject stepToJson(const StepResult& step);
 };
 
 } // namespace VNX

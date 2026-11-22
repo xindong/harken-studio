@@ -123,7 +123,7 @@ bool HubSelfUpdate::start(const Options& options)
 
     UpdateChecker::Options checkerOptions;
     QList<QUrl> manifestUrls = ServerEndpoints::manifestUrls(
-        options_.serverBaseUrl, kServerProduct, ServerEndpoints::hostChannel());
+        options_.serverBaseUrl, kServerProduct);
     checkerOptions.latestUrl = manifestUrls.takeFirst();
     checkerOptions.fallbackUrls = manifestUrls;
     checkerOptions.trustedHttpOrigin = options_.serverBaseUrl;

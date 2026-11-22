@@ -240,8 +240,7 @@ int main(int argc, char* argv[])
             VNH::UpdateChecker checker;
             VNH::UpdateChecker::Options options;
             QList<QUrl> manifestUrls = VNH::ServerEndpoints::manifestUrls(
-                serverBaseUrl, product,
-                VNH::ServerEndpoints::hostChannel());
+                serverBaseUrl, product);
             options.latestUrl = manifestUrls.takeFirst();
             options.fallbackUrls = manifestUrls;
             options.trustedHttpOrigin = serverBaseUrl;
@@ -501,7 +500,7 @@ int main(int argc, char* argv[])
         }
         if (qstrcmp(argv[i], "--background") == 0) {
             QApplication app(argc, argv);
-            VNH::HubIcons::ApplicationIcon iconTheme;
+            VNH::HubIcons::installApplicationIcon(app);
             VNH::HubLocalization::install(&app);
             app.setQuitOnLastWindowClosed(false);
 
@@ -607,9 +606,8 @@ int main(int argc, char* argv[])
             VNH::UpdateCoordinator coordinator;
             VNH::HubSelfUpdate selfUpdate;
             VNH::UpdateNotifier notifier;
-            notifier.setTrayIcon(iconTheme.systemIcon());
-            QObject::connect(&iconTheme, &VNH::HubIcons::ApplicationIcon::changed,
-                             &notifier, &VNH::UpdateNotifier::setTrayIcon);
+            notifier.setTrayIcon(app.windowIcon());
+
             notifier.attach(&coordinator);
             notifier.attach(&selfUpdate);
 
@@ -744,7 +742,7 @@ int main(int argc, char* argv[])
     }
 
     QApplication app(argc, argv);
-    VNH::HubIcons::ApplicationIcon iconTheme;
+    VNH::HubIcons::installApplicationIcon(app);
     VNH::HubLocalization::install(&app);
     if (QStyle* fusion = QStyleFactory::create(QStringLiteral("Fusion")))
         QApplication::setStyle(fusion);

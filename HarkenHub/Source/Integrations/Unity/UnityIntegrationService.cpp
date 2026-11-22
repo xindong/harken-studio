@@ -15,6 +15,7 @@
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QJsonObject>
 #include <QLockFile>
 #include <QSaveFile>
 #include <QThread>
@@ -300,8 +301,8 @@ bool createBackup(const QString& project, const QString& target, const QString& 
 class StepRunner
 {
 public:
-    StepRunner(Service::Result& result, std::function<void(int)> publish, std::initializer_list<StepSpec> specs)
-        : result_(result), publish_(std::move(publish))
+    StepRunner(Service::Result& result, std::initializer_list<StepSpec> specs)
+        : result_(result)
     {
         for (const StepSpec& spec : specs) {
             StepResult step;
@@ -315,19 +316,17 @@ public:
 
     void run(const std::function<void(StepResult&)>& body, bool runWhenBlocked = false)
     {
-        StepResult& step = result_.steps[next_];
+        StepResult& step = result_.steps[next_++];
         if (blocked_ && !runWhenBlocked) {
             step.status = StepStatus::Skipped;
             step.summary = QStringLiteral("Not run because %1 failed.").arg(blockingTitle_);
             step.cause = QStringLiteral("A required earlier step did not complete.");
             step.remediation = QStringLiteral("Fix the first failed step, then run integration again.");
-            publish_(next_++);
             return;
         }
         QElapsedTimer timer;
         timer.start();
         step.status = StepStatus::Running;
-        publish_(next_);
         body(step);
         step.elapsedMs = timer.elapsed();
         if (step.status == StepStatus::Running) step.status = StepStatus::Succeeded;
@@ -335,7 +334,6 @@ public:
             blocked_ = true;
             blockingTitle_ = step.title;
         }
-        publish_(next_++);
     }
 
     void finish()
@@ -349,7 +347,6 @@ public:
 
 private:
     Service::Result& result_;
-    std::function<void(int)> publish_;
     int next_ = 0;
     bool blocked_ = false;
     QString blockingTitle_;
@@ -448,11 +445,6 @@ void writeReport(Service::Result& result, const QString& kind, bool checkOnly, S
 
 } // namespace
 
-UnityIntegrationService::UnityIntegrationService(QObject* parent)
-    : QObject(parent)
-{
-}
-
 QString UnityIntegrationService::statusName(StepStatus status)
 {
     switch (status) {
@@ -517,21 +509,6 @@ QString UnityIntegrationService::previousVersionBackup(const QString& unityProje
     return !backupRoot.isEmpty() && backupReady(backupRoot) ? backupRoot : QString();
 }
 
-QJsonObject UnityIntegrationService::stepToJson(const StepResult& step)
-{
-    QJsonObject object;
-    object[QStringLiteral("id")] = step.id;
-    object[QStringLiteral("title")] = step.title;
-    object[QStringLiteral("status")] = statusName(step.status);
-    object[QStringLiteral("summary")] = step.summary;
-    object[QStringLiteral("cause")] = step.cause;
-    object[QStringLiteral("remediation")] = step.remediation;
-    object[QStringLiteral("elapsed_ms")] = step.elapsedMs;
-    object[QStringLiteral("details")] = QJsonArray::fromStringList(step.details);
-    object[QStringLiteral("artifacts")] = QJsonArray::fromStringList(step.artifacts);
-    return object;
-}
-
 UnityIntegrationService::Result UnityIntegrationService::run(const Request& request)
 {
     if (request.restorePrevious) return restorePrevious(request);
@@ -543,8 +520,7 @@ UnityIntegrationService::Result UnityIntegrationService::install(const Request& 
 {
     Result result;
     result.unityProjectPath = cleanAbsolutePath(request.unityProjectPath);
-    StepRunner runner(result, [&](int index) { emit stepUpdated(index, result.steps[index]); },
-        {{"unity_preflight", "Validate Unity project"},
+    StepRunner runner(result, {{"unity_preflight", "Validate Unity project"},
          {"sdk_preflight", "Validate Harken Unity Integration Package source"},
          {"compare_sdk", "Compare installed Unity Integration Package"},
          {"install_sdk", "Install or update Unity Integration Package"},
@@ -715,8 +691,7 @@ UnityIntegrationService::Result UnityIntegrationService::remove(const Request& r
 {
     Result result;
     result.unityProjectPath = cleanAbsolutePath(request.unityProjectPath);
-    StepRunner runner(result, [&](int index) { emit stepUpdated(index, result.steps[index]); },
-        {{"unity_preflight", "Validate Unity project"},
+    StepRunner runner(result, {{"unity_preflight", "Validate Unity project"},
          {"inspect_installation", "Review installed Harken Integration Package"},
          {"remove_integration", "Remove Harken Integration Package"},
          {"removal_report", "Write removal report"}});
@@ -824,8 +799,7 @@ UnityIntegrationService::Result UnityIntegrationService::restorePrevious(const R
 {
     Result result;
     result.unityProjectPath = cleanAbsolutePath(request.unityProjectPath);
-    StepRunner runner(result, [&](int index) { emit stepUpdated(index, result.steps[index]); },
-        {{"unity_preflight", "Validate Unity project"},
+    StepRunner runner(result, {{"unity_preflight", "Validate Unity project"},
          {"restore_previous", "Restore previous Integration Package"},
          {"report", "Write integration report"}});
     QString backupRoot;
