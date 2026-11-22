@@ -336,8 +336,16 @@ namespace Harken.Unity
                 }
             }
             slots[slot].Source = source;
-            VnResult result = owner.PrepareActions(new[] { actionName }, projectId, out ActionPreparation resources);
-            slots[slot].Resources = resources;
+            VnResult result;
+            try
+            {
+                result = owner.PrepareActions(new[] { actionName }, projectId, out slots[slot].Resources);
+            }
+            catch (OutOfMemoryException)
+            {
+                ReleaseManagedResources(slots, slot);
+                return ObserveResult(operation, VnResult.VN_OUT_OF_MEMORY);
+            }
             if (!owner.IsActive || !ReferenceEquals(owner, session))
                 return ObserveResult(operation, VnResult.VN_NOT_INITIALIZED);
             if (!IsReady || shuttingDown || !IsPreparationComplete)
