@@ -285,7 +285,7 @@
         "native:Vn_StopActionFiring",
         "native:Vn_StopAll",
         "native:Vn_StopEmitter",
-        "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenAudioSystem.cs/Harken.Unity.HarkenAudioSystem::[ DefaultExecutionOrder ( - 10000 ) ] public partial class HarkenAudioSystem : MonoBehaviour [ordered-members:762d04dca90590372679887d448d925e50a4c50717b14623358ce6544d6a78b8]"
+        "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenAudioSystem.cs/Harken.Unity.HarkenAudioSystem::[ DefaultExecutionOrder ( - 10000 ) ] public partial class HarkenAudioSystem : MonoBehaviour [ordered-members:64c6291878ffe51e2f33e805d8028d1b9516ab3d5855a836fd8da67258c5bb0a]"
       ]
     },
     "host": {
@@ -873,6 +873,7 @@
         "assembly:HarkenIntegration/Unity/Harken/Runtime/Unity/Harken.Unity.asmdef::{\"allowUnsafeCode\":false,\"autoReferenced\":true,\"defineConstraints\":[],\"excludePlatforms\":[],\"includePlatforms\":[],\"name\":\"Harken.Unity\",\"noEngineReferences\":false,\"overrideReferences\":false,\"precompiledReferences\":[],\"references\":[\"Harken.Core\"],\"rootNamespace\":\"Harken.Unity\",\"versionDefines\":[]}",
         "context:managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenNative.g.cs::preprocessor-order:0a86fe33b9b9c578cc509ac616a634710e49562de4a03ed65762f1f613fe5324",
         "context:managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/MonoPInvokeCallbackShim.cs::preprocessor-order:3dd7f828968b38e825cfcfcaa09cf11a23bbdc2a2233647f077e854a94f6992e",
+        "context:managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenAudioSystem.cs::preprocessor-order:6c0da532c2ae3d25cf95c63d841998909b91f6fbf03bbb57f0037a9ed888f690",
         "context:managed:Harken.Unity.Editor/HarkenIntegration/Unity/Harken/Editor/HarkenEditorLifecycle.cs::preprocessor-order:5c4e6d9b7c90b076252b8a057916c1111eec8da17c957499406c790840ed601b",
         "context:managed:Harken.Unity.Editor/HarkenIntegration/Unity/Harken/Editor/HarkenPluginImporterSetup.cs::preprocessor-order:0090e58abfe0bd086a049719f7744589923ff35b7375f9608858367b2cd1f555",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenAbi.g.cs/<global>::using System",
