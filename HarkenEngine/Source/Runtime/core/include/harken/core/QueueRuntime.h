@@ -287,13 +287,20 @@ public:
 
 private:
     struct Row {
+        std::uint32_t previous = UINT32_MAX;
+        std::uint32_t next = UINT32_MAX;
         bool live = false;
         bool resetReserved = false;
         QueueCheckpointKey key{};
         QueueCheckpointImage image{};
     };
 
+    void Remove(std::uint32_t slot) noexcept;
     GrowingRowStorage<Row> rows_;
+    std::uint32_t first_ = UINT32_MAX;
+    std::uint32_t firstFree_ = 0;
+    std::uint32_t occupied_ = 0;
+    std::uint32_t live_ = 0;
 };
 
 struct QueueInstanceCreateRequest {

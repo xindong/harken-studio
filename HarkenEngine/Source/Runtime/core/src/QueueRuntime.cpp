@@ -142,10 +142,7 @@ bool QueueInstanceTable::ValidateProjection(const ConditionalQueuePrepareRequest
 }
 
 bool QueueCheckpointTable::PrepareBacking(std::uint32_t count, BackingPreparation* out) noexcept {
-    const auto occupied = std::count_if(rows_.begin(), rows_.end(), [](const Row& row) {
-        return row.live || row.resetReserved;
-    });
-    return rows_.PrepareBacking(count, static_cast<std::uint32_t>(occupied), out);
+    return rows_.PrepareBacking(count, occupied_, out);
 }
 
 QueueInstanceTable::~QueueInstanceTable() {
@@ -231,9 +228,18 @@ void QueueInstanceTable::ConsumeOriginalLifetimePinAfterReclaim(
 }
 
 std::uint32_t QueueCheckpointTable::LiveCount() const noexcept {
-    std::uint32_t count = 0;
-    for (const auto& row : rows_) count += row.live ? 1u : 0u;
-    return count;
+    return live_;
+}
+
+void QueueCheckpointTable::Remove(std::uint32_t slot) noexcept {
+    auto& row = rows_[slot];
+    if (row.previous == UINT32_MAX) first_ = row.next;
+    else rows_[row.previous].next = row.next;
+    if (row.next != UINT32_MAX) rows_[row.next].previous = row.previous;
+    if (row.live) --live_;
+    --occupied_;
+    firstFree_ = std::min(firstFree_, slot);
+    row = {};
 }
 
 bool QueueCheckpointTable::Store(
@@ -243,22 +249,26 @@ bool QueueCheckpointTable::Store(
         !image.replayCurrent) {
         return false;
     }
-    Row* freeRow = nullptr;
-    std::uint32_t occupied = 0;
-    for (auto& row : rows_) {
+    for (auto slot = first_; slot != UINT32_MAX; slot = rows_[slot].next) {
+        auto& row = rows_[slot];
         if (row.live && SameCheckpointKey(row.key, key)) {
             if (row.resetReserved) return false;
             row.image = image;
             return true;
         }
-        if (row.live || row.resetReserved) ++occupied;
-        else if (freeRow == nullptr) freeRow = &row;
     }
-    if (occupied == UINT32_MAX || !rows_.ConstructThrough(occupied + 1u)) return false;
-    if (freeRow == nullptr) freeRow = &rows_[occupied];
-    freeRow->key = key;
-    freeRow->image = image;
-    freeRow->live = true;
+    if (occupied_ == UINT32_MAX || !rows_.ConstructThrough(occupied_ + 1u)) return false;
+    while (rows_[firstFree_].live || rows_[firstFree_].resetReserved) ++firstFree_;
+    const auto slot = firstFree_++;
+    auto& row = rows_[slot];
+    row.key = key;
+    row.image = image;
+    row.live = true;
+    row.next = first_;
+    if (first_ != UINT32_MAX) rows_[first_].previous = slot;
+    first_ = slot;
+    ++occupied_;
+    ++live_;
     return true;
 }
 
@@ -266,7 +276,8 @@ bool QueueCheckpointTable::Load(
     const QueueCheckpointKey& key,
     QueueCheckpointImage* out) const noexcept {
     if (out == nullptr || !ValidCheckpointKey(key)) return false;
-    for (const auto& row : rows_) {
+    for (auto slot = first_; slot != UINT32_MAX; slot = rows_[slot].next) {
+        const auto& row = rows_[slot];
         if (row.live && SameCheckpointKey(row.key, key)) {
             *out = row.image;
             return true;
@@ -278,10 +289,11 @@ bool QueueCheckpointTable::Load(
 bool QueueCheckpointTable::Clear(
     const QueueCheckpointKey& key) noexcept {
     if (!ValidCheckpointKey(key)) return false;
-    for (auto& row : rows_) {
+    for (auto slot = first_; slot != UINT32_MAX; slot = rows_[slot].next) {
+        auto& row = rows_[slot];
         if (row.live && SameCheckpointKey(row.key, key)) {
             if (row.resetReserved) return false;
-            row = {};
+            Remove(slot);
             return true;
         }
     }
@@ -294,12 +306,13 @@ QueueResetStatusV1 QueueCheckpointTable::PrepareReset(
     if (out == nullptr || out->Valid() || !ValidCheckpointKey(key)) {
         return QueueResetStatusV1::InvalidInput;
     }
-    for (auto& row : rows_) {
+    for (auto slot = first_; slot != UINT32_MAX; slot = rows_[slot].next) {
+        auto& row = rows_[slot];
         if (!row.live || !SameCheckpointKey(row.key, key)) continue;
         if (row.resetReserved) return QueueResetStatusV1::Backpressure;
         row.resetReserved = true;
         out->owner_ = this;
-        out->slot_ = rows_.IndexOf(&row);
+        out->slot_ = slot;
         out->prepared_ = true;
         return QueueResetStatusV1::Ok;
     }
@@ -327,7 +340,7 @@ QueueResetStatusV1 QueueCheckpointTable::CommitPreparedReset(
     if (!row.resetReserved) {
         return QueueResetStatusV1::NotFound;
     }
-    row = {};
+    Remove(prepared->slot_);
     prepared->owner_ = nullptr;
     prepared->slot_ = UINT32_MAX;
     prepared->prepared_ = false;
@@ -352,6 +365,7 @@ QueueResetStatusV1 QueueCheckpointTable::CancelPreparedReset(
         return QueueResetStatusV1::NotFound;
     }
     row.resetReserved = false;
+    if (!row.live) Remove(prepared->slot_);
     prepared->owner_ = nullptr;
     prepared->slot_ = UINT32_MAX;
     prepared->prepared_ = false;
@@ -360,23 +374,32 @@ QueueResetStatusV1 QueueCheckpointTable::CancelPreparedReset(
 
 void QueueCheckpointTable::RetireEmitter(std::uint32_t slot, std::uint32_t generation) noexcept {
     if (slot == UINT32_MAX || generation == 0) return;
-    for (auto& row : rows_) {
+    for (auto index = first_; index != UINT32_MAX;) {
+        auto& row = rows_[index];
+        const auto next = row.next;
         if (row.live && row.key.emitterSlot == slot && row.key.emitterGeneration == generation) {
-            // A pending reset still owns its slot until commit or cancellation.
-            row.live = false;
+            if (row.resetReserved) {
+                row.live = false;
+                --live_;
+            } else {
+                Remove(index);
+            }
         }
+        index = next;
     }
 }
 
 void QueueCheckpointTable::ClearWorld(WorldGeneration world) noexcept {
     if (world == 0) return;
-    for (auto& row : rows_) {
-        if (row.live && row.key.world == world) row = {};
+    for (auto slot = first_; slot != UINT32_MAX;) {
+        const auto next = rows_[slot].next;
+        if (rows_[slot].live && rows_[slot].key.world == world) Remove(slot);
+        slot = next;
     }
 }
 
 void QueueCheckpointTable::ClearAll() noexcept {
-    for (auto& row : rows_) row = {};
+    while (first_ != UINT32_MAX) Remove(first_);
 }
 
 namespace {

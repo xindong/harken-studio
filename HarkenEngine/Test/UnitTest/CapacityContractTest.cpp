@@ -186,6 +186,28 @@ TEST(EngineQueueScheduleStorage, PreparedSupplySurvivesOwnerReleaseAndRetiredBor
     EXPECT_EQ(0u, storage.StorageBytes());
 }
 
+TEST(EngineQueueScheduleStorage, EachReservationCanOnlyBorrowItsOwnShare) {
+    using Storage = harken::EngineQueueScheduleStorage;
+    Storage storage;
+    Storage::Preparation first, second;
+    ASSERT_TRUE(storage.Prepare({1, 1}, 1, &first));
+    ASSERT_TRUE(storage.Prepare({1, 1}, 1, &second));
+    harken::EngineQueueScheduleColumns a, b;
+    Storage::Loan loanA, loanB;
+    const auto noGrowth = [] { return false; };
+    auto firstUse = first.Use();
+    ASSERT_TRUE(storage.Acquire(a, {1, 1}, &loanA, noGrowth));
+    EXPECT_FALSE(storage.Acquire(b, {1, 1}, &loanB, noGrowth));
+    if (loanB.Valid()) loanB.Reset();
+    {
+        auto secondUse = second.Use();
+        ASSERT_TRUE(storage.Acquire(b, {1, 1}, &loanB, noGrowth));
+        loanA.Reset();
+        EXPECT_FALSE(storage.Acquire(a, {1, 1}, &loanA, noGrowth));
+    }
+    ASSERT_TRUE(storage.Acquire(a, {1, 1}, &loanA, noGrowth));
+}
+
 TEST(EngineQueueScheduleStorage, FailedShapeRaisePreservesExistingSupplyAndPointers) {
     using Storage = harken::EngineQueueScheduleStorage;
     Storage storage;
