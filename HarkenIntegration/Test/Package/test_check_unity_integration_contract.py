@@ -76,6 +76,15 @@ class UnityIntegrationContractTest(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 MODULE.verify(integration, False)
 
+    def test_native_binary_in_ignored_folder_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            integration = self.copy_integration(directory)
+            binary = integration / "Tools~/unexpected.dll"
+            binary.parent.mkdir(parents=True, exist_ok=True)
+            binary.write_bytes(b"runtime")
+            with self.assertRaises(SystemExit):
+                MODULE.verify(integration, False)
+
     def test_csharp_source_without_meta_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             integration = self.copy_integration(directory)

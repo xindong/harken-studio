@@ -193,16 +193,16 @@ def verify_layout(
     for path in integration.rglob("*"):
         relative = path.relative_to(integration).as_posix()
         suffix = path.suffix.lower()
+        if path.is_file() and suffix in FORBIDDEN_UNITY_ROOT_SUFFIXES:
+            errors.append(f"Non-Unity source remains in Harken Integration Package: {relative}")
+        if path.is_file() and suffix in NATIVE_SUFFIXES:
+            native_files.add(relative)
         asset = path.with_name(path.name[:-len(".meta")]) if suffix == ".meta" else path
         if any(part.endswith("~") or part.startswith(".")
                for part in asset.relative_to(integration).parts):
             if suffix == ".meta":
                 errors.append(f"Unity ignores this asset; remove its .meta file: {relative}")
             continue
-        if path.is_file() and suffix in FORBIDDEN_UNITY_ROOT_SUFFIXES:
-            errors.append(f"Non-Unity source remains in Harken Integration Package: {relative}")
-        if path.is_file() and suffix in NATIVE_SUFFIXES:
-            native_files.add(relative)
         if suffix == ".meta":
             if not asset.exists():
                 errors.append(f"Unity .meta file has no matching asset: {relative}")
