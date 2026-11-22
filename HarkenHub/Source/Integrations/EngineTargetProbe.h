@@ -30,7 +30,6 @@ struct EngineTargetObservation
 {
     bool validTarget = false;
     EngineTargetHealth health = EngineTargetHealth::Unreadable;
-    QString engineVersion;
     QString integrationVersion;
     QString integrationInstallPath;
     QString error;

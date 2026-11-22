@@ -148,14 +148,6 @@ EngineTargetObservation observeLayout(const EngineTargetRecord& record)
             result.remediation = hubTranslate(QStringLiteral("Select the Unity project root containing Assets, Packages, and ProjectSettings."));
             return result;
         }
-        const QString versionPath = root.filePath(
-            QStringLiteral("ProjectSettings/ProjectVersion.txt"));
-        QFile versionFile(versionPath);
-        if (versionFile.open(QIODevice::ReadOnly)) {
-            const QString text = QString::fromUtf8(versionFile.readAll()).trimmed();
-            result.engineVersion = text.section(QStringLiteral("m_EditorVersion:"),
-                                                1).trimmed();
-        }
         auto discovery = harken::hub::unity::UnityInstallation::discover(record.canonicalRoot);
         if (discovery.installations.size() == 1)
             result.integrationInstallPath = root.relativeFilePath(discovery.installations.front().path);
@@ -229,8 +221,7 @@ EngineTargetObservation observeLayout(const EngineTargetRecord& record)
         return result;
     }
     bool projectOk = false;
-    const QJsonObject project = jsonObject(descriptor.absoluteFilePath(),
-                                           &projectOk);
+    jsonObject(descriptor.absoluteFilePath(), &projectOk);
     if (!projectOk) {
         result.validTarget = false;
         result.health = EngineTargetHealth::Unreadable;
@@ -238,8 +229,6 @@ EngineTargetObservation observeLayout(const EngineTargetRecord& record)
         result.remediation = hubTranslate(QStringLiteral("Restore or repair the .uproject file, then check again."));
         return result;
     }
-    result.engineVersion = project.value(QStringLiteral("EngineAssociation"))
-                               .toString();
     if (ProjectIntegrationExecutor::hasPendingUnrealMigration(record)) {
         result.health = EngineTargetHealth::Incomplete;
         result.status = hubTranslate(QStringLiteral("Migration unfinished"));

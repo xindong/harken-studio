@@ -296,7 +296,6 @@ Discovery discover(const QString& projectRoot)
             if (value.startsWith(QStringLiteral("file:"))) {
                 const QString path = QDir::cleanPath(QDir(base).absoluteFilePath(local));
                 references.push_back({it.key(), path});
-                result.localPackagePaths << path;
             } else if (integrationName(it.key())) {
                 references.push_back({it.key(), {}});
             }
@@ -385,7 +384,6 @@ Discovery discover(const QString& projectRoot)
     if (!budget.error.isEmpty()) result.errors << budget.error;
     result.errors.removeDuplicates();
     result.integrationReferences.removeDuplicates();
-    result.localPackagePaths.removeDuplicates();
     return result;
 }
 

@@ -16,7 +16,6 @@ struct Discovery
     QVector<Installation> installations;
     QStringList errors;
     QStringList integrationReferences;
-    QStringList localPackagePaths;
 };
 
 QString defaultRelativePath();
