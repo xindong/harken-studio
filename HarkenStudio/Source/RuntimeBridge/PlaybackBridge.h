@@ -23,8 +23,11 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
+
+namespace harken::studio::SoundSourceDerivative { struct MaterializedArtifact; }
 
 namespace harken::studio {
 namespace bridge {
@@ -64,6 +67,17 @@ inline constexpr EngineResult kEngineRuntimeRecreateRequired =
     static_cast<EngineResult>(-328);
 inline constexpr EngineResult kEngineDeviceError =
     static_cast<EngineResult>(-400);
+
+struct PreparedPreviewMedia
+{
+    std::shared_ptr<const harken::studio::SoundSourceDerivative::MaterializedArtifact> artifact;
+    std::shared_ptr<const std::vector<float>> samples;
+    uint64_t contentRevision = 0;
+};
+
+std::optional<PreparedPreviewMedia> preparePreviewMedia(
+    const harken::studio::SoundSourceDerivative::MaterializedArtifact& artifact, QString* error = nullptr);
+EngineResult registerPreviewMedia(harken::studio::types::ObjectId soundId, const PreparedPreviewMedia& media);
 
 //==============================================================================
 // Editor-owned mirror structs.

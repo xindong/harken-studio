@@ -21,6 +21,33 @@ namespace HarkenCrossProduct
         private const int TickLimit = 400;
 
         [Test]
+        public void RefusedPreviewLeavesExternalPlaybackActive()
+        {
+            LogAssert.ignoreFailingMessages = true;
+            var inputs = JsonUtility.FromJson<Inputs>(File.ReadAllText(
+                Path.Combine(Application.streamingAssetsPath, "HarkenCrossProduct", "inputs.json")));
+            string directory = Path.Combine(Application.streamingAssetsPath, inputs.main);
+            VnConfig config = HarkenEngine.DefaultConfig();
+            config.deviceMode = (uint)VnDeviceMode.VN_DEVICE_NULL;
+            Assert.That(PackBootstrap.StartDirectory(directory, null, ref config, out PackBootstrapSession external),
+                Is.EqualTo(VnResult.VN_OK));
+            using (external)
+            {
+                Assert.That(external.PrepareActions(new[] { inputs.toneAction }, external.ProjectId, out _), Is.EqualTo(VnResult.VN_OK));
+                Assert.That(Actions.Resolve(inputs.toneAction, external.ProjectId, out ActionResolved action), Is.EqualTo(VnResult.VN_OK));
+                Assert.That(Actions.Post(in action, Emitter.None, 0, out ActionFiring retained), Is.EqualTo(VnResult.VN_OK));
+                using (var preview = new HarkenEditorPreview())
+                {
+                    Assert.That(preview.Prepare(directory, null, Array.Empty<ulong>(), true), Is.EqualTo(VnResult.VN_ALREADY_INITIALIZED));
+                    Assert.That(preview.Shutdown(), Is.EqualTo(VnResult.VN_OK));
+                }
+                Assert.That(external.IsActive, Is.True);
+                Assert.That(retained.Query(out _), Is.EqualTo(VnResult.VN_OK));
+                Assert.That(HarkenEngine.Update(), Is.EqualTo(VnResult.VN_OK));
+            }
+        }
+
+        [Test]
         public void EditorPreviewPlaysAndStops()
         {
             LogAssert.ignoreFailingMessages = true;

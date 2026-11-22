@@ -39,6 +39,7 @@
     <Compile Include="RemoteCommunicationContract.cs" />
     <Compile Include="ExportedPackContract.cs" />
     <Compile Include="PackMetadataVersionContract.cs" />
+    <Compile Include="ArchivePublicationContract.cs" />
   </ItemGroup>
 
 </Project>

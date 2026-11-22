@@ -198,7 +198,13 @@
       "VnRemoteClientSnapshot": "tool-types",
       "VnRemoteClientTarget": "tool-types",
       "VnRemoteClientVoice": "tool-types",
-      "VnRemoteOperation": "tool-types"
+      "VnRemoteOperation": "tool-types",
+      "VnResidentPackVisitDescV1": "required-types",
+      "VnResidentDirectoryMemberV1": "required-types",
+      "VnResidentDirectoryActivationV1": "required-types",
+      "VnResidentPackRowV1": "tool-types",
+      "VnResidentPackVisitorFn": "required-types",
+      "VnNamedResidentPostV1": "required-types"
     },
     "constants": {
       "VN_ATTENUATION_MAX_CURVE_POINTS": "tool-types",

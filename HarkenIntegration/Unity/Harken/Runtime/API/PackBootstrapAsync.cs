@@ -9,7 +9,9 @@ namespace Harken
     {
         public VnResult Result { get; }
         public PackBootstrapSession Session { get; }
-        internal PackStartupResult(VnResult result, PackBootstrapSession session = null) { Result = result; Session = session; }
+        public ActionPreparation Preparation { get; }
+        internal PackStartupResult(VnResult result, PackBootstrapSession session = null, ActionPreparation preparation = null)
+        { Result = result; Session = session; Preparation = preparation; }
     }
 
     public readonly struct ActionPreparationResult
@@ -24,6 +26,96 @@ namespace Harken
     {
         private readonly Dictionary<string, PendingCapture> packReads = new Dictionary<string, PendingCapture>(StringComparer.Ordinal);
         private readonly AsyncLocal<bool> inPackReadCallback = new AsyncLocal<bool>();
+
+        private CancellationTokenSource languageSwitchCancellation;
+        internal bool LanguageSwitchPending => languageSwitchCancellation != null;
+
+        /// <summary>
+        /// Atomically selects a language for loaded Actions and future preparation. Existing firings
+        /// retain their old content. Concurrent preparation or switching returns VN_IN_USE.
+        /// Frozen catalog sources cannot select another language; directory and reader sources can.
+        /// </summary>
+        public async Task<VnResult> SetLanguageAsync(string language, CancellationToken cancellation = default)
+        {
+            cancellation.ThrowIfCancellationRequested();
+            VnResult allowed = PackMutationAllowed();
+            if (allowed != VnResult.VN_OK) return allowed;
+            if (!PackDirectorySource.ValidLanguage(language)) return VnResult.VN_INVALID_ARG;
+            language = language ?? string.Empty;
+            if (language == Language) return VnResult.VN_OK;
+            if (packSource == null) return VnResult.VN_CAPABILITY_UNAVAILABLE;
+            if (packReads.Count != 0) return VnResult.VN_IN_USE;
+            if (packSource.IsAsync && !PackSource.HasControlContext) return VnResult.VN_INVALID_ARG;
+            CancellationTokenSource operation = null;
+            try
+            {
+                PackSource source = packSource.ForLanguage(language);
+                if (source == null) return VnResult.VN_CAPABILITY_UNAVAILABLE;
+                operation = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+                languageSwitchCancellation = operation;
+                CancellationToken operationToken = operation.Token;
+                EnsureOwnerIndexes();
+                var nextPacks = new Dictionary<ulong, SharedPack>(packs);
+                var nextNames = new Dictionary<string, SharedPack>(metadataNames, StringComparer.Ordinal);
+                var changes = new Dictionary<SharedPack, PackMetadataInput>();
+                var captures = new List<PackMetadataInput>();
+                SharedPack[] owners = packOwners;
+                byte[] init = initBytes;
+                VnObjectId project = VnObjectId.Parse(ProjectId);
+                foreach (SharedPack owner in owners)
+                {
+                    if (!owner.Handle.IsValid) continue;
+                    PackMetadataCapture captured = await source.CaptureAsync(owner.Names.Name, project,
+                        init, operationToken, SetReadCallbackPhase);
+                    if (RequireOwnerThread() != VnResult.VN_OK) return VnResult.VN_INVALID_ARG;
+                    if (!active) return VnResult.VN_NOT_INITIALIZED;
+                    if (captured.Result != VnResult.VN_OK) return captured.Result;
+                    PackMetadataInput input = captured.Input;
+                    if (input.Names.RootId != owner.Names.RootId) return VnResult.VN_PACK_STALE_REVISION;
+                    captures.Add(input);
+                    // A missing localized variant keeps an already loaded generic Pack unchanged.
+                    if (owner.Names.Language.Length == 0 && input.Names.Language.Length == 0) continue;
+                    nextPacks.Remove(owner.StableId);
+                    if (nextPacks.TryGetValue(input.Facts.packStableId, out SharedPack collision) &&
+                        !ReferenceEquals(collision, owner)) return VnResult.VN_BAD_PACK;
+                    nextPacks[input.Facts.packStableId] = owner;
+                    changes.Add(owner, input);
+                }
+                foreach (PackMetadataInput input in captures)
+                {
+                    VnResult valid = source.Validate(input);
+                    if (!active) return VnResult.VN_NOT_INITIALIZED;
+                    if (valid != VnResult.VN_OK) return valid;
+                }
+                operationToken.ThrowIfCancellationRequested();
+                VnResult locked = source.LockPublication(initSelection, captures, out var guards);
+                if (locked != VnResult.VN_OK) return locked;
+                using var held = guards;
+                if (changes.Count != 0)
+                {
+                    VnResult result = CommitActionPacks(nextPacks, nextNames, changes);
+                    if (result != VnResult.VN_OK) return result;
+                }
+                // Publication is irreversible for this call; cancellation after it cannot discard ownership.
+                packSource = source;
+                Language = language;
+                return VnResult.VN_OK;
+            }
+            catch (OutOfMemoryException) { return VnResult.VN_DEVICE_ERROR; }
+            finally
+            {
+                // A broken host context is reclaimed by owner-thread Shutdown.
+                if (RequireOwnerThread() == VnResult.VN_OK)
+                {
+                    if (ReferenceEquals(languageSwitchCancellation, operation))
+                    {
+                        languageSwitchCancellation = null;
+                        mutationPhase = MutationPhase.Idle;
+                    }
+                    operation?.Dispose();
+                }
+            }
+        }
 
         private sealed class PendingCapture
         {
@@ -49,17 +141,11 @@ namespace Harken
             cancellation.ThrowIfCancellationRequested();
             VnResult allowed = PackMutationAllowed();
             if (allowed != VnResult.VN_OK) return new ActionPreparationResult(allowed);
-            if (names == null || !Guid.TryParseExact(projectId, "D", out Guid project) || project == Guid.Empty)
-                return new ActionPreparationResult(VnResult.VN_INVALID_ARG);
-            if (project.ToString("D") != ProjectId) return new ActionPreparationResult(VnResult.VN_GAMEPLAY_WRONG_PROJECT);
-            var unique = new HashSet<string>(StringComparer.Ordinal);
-            var requested = new List<string>(names.Length);
-            foreach (string name in names)
-            {
-                if (!PackMetadata.IsName(name) || name == "Init") return new ActionPreparationResult(VnResult.VN_INVALID_ARG);
-                if (unique.Add(name)) requested.Add(name);
-            }
-            var preparation = new ActionPreparation(this, requested.ToArray(), refresh);
+            VnResult valid = ValidateRequestProject(names, projectId);
+            if (valid != VnResult.VN_OK) return new ActionPreparationResult(valid);
+            string[] requested = UniqueNames(names);
+            if (requested == null) return new ActionPreparationResult(VnResult.VN_INVALID_ARG);
+            var preparation = new ActionPreparation(this, requested, refresh);
             VnResult result = await preparation.PrepareAsync(cancellation);
             return new ActionPreparationResult(result, preparation);
         }
@@ -181,6 +267,15 @@ namespace Harken
         {
             try { await pending.Task; } catch { }
             finally { pending.Cancellation.Dispose(); }
+        }
+
+        private void CancelLanguageSwitch()
+        {
+            CancellationTokenSource pending = languageSwitchCancellation;
+            languageSwitchCancellation = null;
+            if (pending == null) return;
+            try { pending.Cancel(); } catch { }
+            pending.Dispose();
         }
 
         private void CancelPackReads()

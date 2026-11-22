@@ -152,9 +152,9 @@ QVector<WorkspaceWindowDescriptor> defaultWorkspaceWindowDescriptors()
             AvailabilityPolicy::Always
         },
         {
-            QStringLiteral("SourceEditor"),
-            QStringLiteral("Source Viewer"),
-            QStringLiteral("SourceEditorDock"),
+            QStringLiteral("FileViewer"),
+            QStringLiteral("File Viewer"),
+            QStringLiteral("FileViewerDock"),
             WindowKind::MultiInstance,
             {DefaultDockArea::Floating, QString(), false},
             MaterializationPolicy::OnDemand,
@@ -411,6 +411,8 @@ WorkspaceWindowInstanceSpec workspaceWindowInstanceSpecFromJson(const QJsonObjec
         obj.value(QLatin1String("type")).toString());
     if (spec.typeId == QLatin1String("CurveEditor"))
         spec.typeId = QStringLiteral("ExternalEditor");
+    else if (spec.typeId == QLatin1String("SourceEditor"))
+        spec.typeId = QStringLiteral("FileViewer");
     spec.instanceId = obj.value(QLatin1String("instanceId")).toInt(
         obj.value(QLatin1String("id")).toInt(0));
     spec.deleteOnClose = obj.value(QLatin1String("deleteOnClose")).toBool(true);

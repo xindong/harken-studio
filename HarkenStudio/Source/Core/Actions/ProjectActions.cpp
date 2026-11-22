@@ -2085,6 +2085,7 @@ void registerProjectActions(ActionManager& mgr,
 {
     registerProjectPlatformActions(mgr, projectManager);
     registerFieldGroupActions(mgr, projectManager);
+    registerConversionActions(mgr, projectManager);
     {
         ActionDef def;
         def.id = "save_project";

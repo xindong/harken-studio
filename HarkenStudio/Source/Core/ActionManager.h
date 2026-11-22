@@ -153,6 +153,7 @@ void registerMixerActions(ActionManager& mgr,
                           ProjectManager* projectManager,
                           MainWindow* mainWindow);
 void registerFieldGroupActions(ActionManager& mgr, ProjectManager* projectManager);
+void registerConversionActions(ActionManager& mgr, ProjectManager* projectManager);
 void registerProjectActions(ActionManager& mgr,
                            ProjectManager* projectManager,
                            std::function<bool(PhysicalFolder*)> selectFolder = {});

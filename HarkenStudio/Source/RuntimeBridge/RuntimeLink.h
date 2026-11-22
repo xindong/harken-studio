@@ -58,6 +58,9 @@ void runtimeRegisterSoundName(const QString& name, harken::studio::types::Object
                               harken::studio::types::ObjectId attenuationId);
 bool runtimePrepareMedia(uint32_t sourceId);
 uint64_t runtimeRegisteredSoundRevision(harken::studio::types::ObjectId soundId);
+std::optional<PreparedPreviewMedia> runtimePreparePreviewMedia(
+    const harken::studio::SoundSourceDerivative::MaterializedArtifact& artifact, QString* error);
+VnResult runtimeRegisterPreviewMedia(harken::studio::types::ObjectId soundId, const PreparedPreviewMedia& media);
 VnResult runtimeRegisterSoundPcm(harken::studio::types::ObjectId soundId, const std::vector<float>& samples,
                                   uint32_t channels, uint32_t sampleRate,
                                   uint64_t loopStartFrame, uint64_t loopEndFrame);

@@ -1,7 +1,6 @@
 
 #include "AssetRegistry.h"
 #include "AssetImporter.h"
-#include "PlatformProfile.h"
 #include "PathUtils.h"
 #include "../ProjectDataPolicy.h"
 #include "../ProjectLocator.h"
@@ -51,9 +50,7 @@ void AssetRegistry::setProjectRoot(const QString& root)
 
     qDebug() << "[AssetRegistry] Setting project root:" << root;
     QMutexLocker lock(&mutex_);
-    session_ = QUuid::createUuid();
     platforms_.clear();
-    platformRevisions_.clear();
     projectRoot_ = root;
 
     QString AudioSourcesDir = PathUtils::getAudioSourcesDir(projectRoot_);
@@ -76,9 +73,7 @@ void AssetRegistry::setProjectRoot(const QString& root)
 void AssetRegistry::clear()
 {
     QMutexLocker lock(&mutex_);
-    session_ = QUuid::createUuid();
     platforms_.clear();
-    platformRevisions_.clear();
     assets_.clear();
     pathToID_.clear();
     uncommittedIDs_.clear();
@@ -381,22 +376,7 @@ QString AssetRegistry::projectRoot() const
 void AssetRegistry::setPlatforms(const QVector<ProjectPlatform>& platforms)
 {
     QMutexLocker lock(&mutex_);
-    QHash<ProjectPlatformId, QUuid> revisions;
-    for (const auto& platform : platforms) {
-        const auto* previous = ProjectPlatformSemantics::find(platforms_, platform.id);
-        const bool unchanged = previous && previous->basePlatform == platform.basePlatform
-            && previous->profile.toJson() == platform.profile.toJson();
-        revisions.insert(platform.id, unchanged ? platformRevisions_.value(platform.id)
-                                               : QUuid::createUuid());
-    }
     platforms_ = platforms;
-    platformRevisions_ = revisions;
-    for (auto& asset : assets_) {
-        for (auto it = asset.platformCaches.begin(); it != asset.platformCaches.end();) {
-            if (!revisions.contains(it.key())) it = asset.platformCaches.erase(it);
-            else ++it;
-        }
-    }
 }
 
 MediaBuildSnapshot AssetRegistry::buildSnapshot(bool resolveMissingHashes) const
@@ -417,16 +397,15 @@ MediaBuildSnapshot AssetRegistry::buildSnapshot(
     MediaBuildSnapshot result;
     result.projectRoot = root;
     result.platforms = platforms;
+    bool live = false;
     {
         QMutexLocker lock(&mutex_);
         if (QDir::cleanPath(root) == QDir::cleanPath(projectRoot_)) {
-            result.registrySession = session_;
-            result.platformRevisions = platformRevisions_;
+            live = true;
             result.assets = assets_;
-            result.fileOverrides = PlatformProfileManager::instance().fileOverrides();
         }
     }
-    if (result.registrySession.isNull()) {
+    if (!live) {
         QList<AssetInfo> assets;
         loadSnapshotFromFile(root, assets);
         const auto location = ProjectLocator::locate(root);
@@ -448,106 +427,6 @@ MediaBuildSnapshot AssetRegistry::buildSnapshot(
     }
     return result;
 }
-
-std::optional<MediaConversionRequest> AssetRegistry::conversionRequest(
-    uint32_t sourceID, ProjectPlatformId platform, QString* error) const
-{
-    QMutexLocker lock(&mutex_);
-    const auto* definition = ProjectPlatformSemantics::find(platforms_, platform);
-    if (!definition) {
-        if (error) *error = QStringLiteral("Platform ID does not belong to the current project");
-        return std::nullopt;
-    }
-    const auto asset = assets_.constFind(sourceID);
-    if (asset == assets_.cend()) {
-        if (error) *error = QStringLiteral("Asset not found in the current project");
-        return std::nullopt;
-    }
-    MediaConversionRequest request{projectRoot_, session_, platformRevisions_.value(platform),
-        *definition, *asset, PlatformProfileManager::effectiveSettingsForAsset(
-            *asset, *definition, PlatformProfileManager::instance().getFileOverride(sourceID)), {}};
-    lock.unlock();
-    if (request.asset.contentHash.isEmpty())
-        request.asset.contentHash = AssetImporter::computeContentHash(request.asset.absolutePath);
-    return request;
-}
-
-bool AssetRegistry::accepts(const MediaConversionRequest& request) const
-{
-    const auto current = conversionRequest(request.asset.sourceID, request.platform.id);
-    return current && !request.registrySession.isNull() && !request.platformRevision.isNull()
-        && current->registrySession == request.registrySession
-        && current->platformRevision == request.platformRevision
-        && current->asset.absolutePath == request.asset.absolutePath
-        && current->fingerprint() == request.fingerprint();
-}
-
-bool AssetRegistry::isCacheValid(uint32_t sourceID, ProjectPlatformId platform) const
-{
-    const auto request = conversionRequest(sourceID, platform);
-    return request && request->cacheValid();
-}
-
-bool AssetRegistry::updateCache(const MediaConversionRequest& request, const CacheEntry& entry)
-{
-    if (!accepts(request)) return false;
-    QMutexLocker lock(&mutex_);
-    auto it = assets_.find(request.asset.sourceID);
-    if (it == assets_.end()) return false;
-    it->platformCaches[request.platform.id] = entry;
-    lock.unlock();
-    emit assetModified(request.asset.sourceID);
-    return true;
-}
-
-void AssetRegistry::touchCache(uint32_t sourceID, ProjectPlatformId platform)
-{
-    QMutexLocker lock(&mutex_);
-    auto it = assets_.find(sourceID);
-    if (it == assets_.end()) {
-        return;
-    }
-
-    auto cacheIt = it.value().platformCaches.find(platform);
-    if (cacheIt != it.value().platformCaches.end()) {
-        cacheIt->lastAccessTime = QDateTime::currentSecsSinceEpoch();
-    }
-}
-
-void AssetRegistry::invalidateCache(const QString& cachePath)
-{
-    QMutexLocker lock(&mutex_);
-    const QString normalized = PathUtils::normalizeToUnix(QDir::isAbsolutePath(cachePath)
-        ? QDir(PathUtils::getCacheDir(projectRoot_)).relativeFilePath(cachePath) : cachePath);
-    QList<QPair<uint32_t, ProjectPlatformId>> invalidated;
-    for (auto& info : assets_) {
-        for (auto it = info.platformCaches.begin(); it != info.platformCaches.end(); ++it) {
-            if (it->cachePath == normalized) {
-                it->valid = false;
-                invalidated.append({info.sourceID, it.key()});
-            }
-        }
-    }
-    lock.unlock();
-    for (const auto& [sourceID, platform] : invalidated)
-        emit cacheInvalidated(sourceID, platform);
-}
-
-void AssetRegistry::invalidateAllCaches(uint32_t sourceID)
-{
-    QMutexLocker lock(&mutex_);
-    auto it = assets_.find(sourceID);
-    if (it == assets_.end()) {
-        return;
-    }
-
-    for (auto cacheIt = it->platformCaches.begin();
-         cacheIt != it->platformCaches.end(); ++cacheIt) {
-        cacheIt->valid = false;
-        emit cacheInvalidated(sourceID, cacheIt.key());
-    }
-}
-
 
 QString AssetRegistry::assetsFilePath() const
 {
@@ -731,6 +610,10 @@ bool AssetRegistry::reconcileSnapshot(const QString& projectRoot,
         AssetInfo info;
         if (found != cached.cend() && found->relativePath == it.value()) {
             info = *found;
+            if (info.metadata.codec.isEmpty() && QFileInfo(info.absolutePath).isFile()) {
+                info.metadata.codec = importer.readMetadata(info.absolutePath).codec;
+                if (!info.metadata.codec.isEmpty()) rebuilt = true;
+            }
         } else {
             rebuilt = true;
             info.sourceID = it.key();
@@ -759,7 +642,6 @@ void AssetRegistry::replaceSnapshot(const QString& projectRoot,
                                     const QList<AssetInfo>& assets)
 {
     QMutexLocker lock(&mutex_);
-    session_ = QUuid::createUuid();
     projectRoot_ = projectRoot;
     assets_.clear();
     pathToID_.clear();
@@ -841,26 +723,6 @@ void AssetRegistry::markAllCommitted()
     uncommittedIDs_.clear();
 }
 
-void AssetRegistry::discardUncommittedCaches()
-{
-    QMutexLocker lock(&mutex_);
-    for (uint32_t id : uncommittedIDs_) {
-        const auto it = assets_.constFind(id);
-        if (it == assets_.cend())
-            continue;
-        const AssetInfo& info = it.value();
-        for (auto cacheIt = info.platformCaches.constBegin();
-             cacheIt != info.platformCaches.constEnd(); ++cacheIt) {
-            QString cachePath = PathUtils::toAbsolutePath(
-                cacheIt->cachePath, PathUtils::getCacheDir(projectRoot_));
-            QFile cache(cachePath);
-            if (cache.exists() && !cache.remove())
-                qWarning() << "[AssetRegistry] Cannot remove uncommitted cache:"
-                           << cachePath << cache.errorString();
-        }
-    }
-}
-
 void AssetRegistry::cleanupOrphaned(const QList<QString>& files)
 {
     // Holds mutex_ for the whole pass; look up assets_ / pathToID_ directly
@@ -879,18 +741,6 @@ void AssetRegistry::cleanupOrphaned(const QList<QString>& files)
             const uint32_t sourceID = pathIt.value();
             auto assetIt = assets_.find(sourceID);
             if (assetIt != assets_.end()) {
-                const AssetInfo& info = assetIt.value();
-                for (auto it = info.platformCaches.begin();
-                     it != info.platformCaches.end(); ++it) {
-                    QString cachePath = PathUtils::toAbsolutePath(
-                        it->cachePath,
-                        PathUtils::getCacheDir(projectRoot_)
-                    );
-                    if (QFile::exists(cachePath)) {
-                        QFile::remove(cachePath);
-                    }
-                }
-
                 assets_.erase(assetIt);
             }
             pathToID_.erase(pathIt);

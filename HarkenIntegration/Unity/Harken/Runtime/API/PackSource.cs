@@ -17,17 +17,20 @@ namespace Harken
         private readonly Func<string, CancellationToken, Task<byte[]>> asyncReader;
         private readonly Func<ulong> revision;
         private readonly PackDirectorySource directory;
+        private readonly PackArchive archive;
         private readonly Func<string, VnObjectId, byte[], PackMetadataCapture> snapshot;
         private readonly Func<PackMetadataInput, VnResult> snapshotValidation;
         public string Language { get; }
         public bool IsAsync => asyncReader != null;
-        internal string Root => directory?.Root ?? string.Empty;
+        internal bool IsDirectory => directory != null;
+        internal bool IsResidentDirectory => directory?.IsResidentDirectory == true;
+        internal string Root => directory?.Root ?? archive?.Root ?? string.Empty;
 
         private PackSource(string language, Func<string, byte[]> reader = null,
             Func<string, CancellationToken, Task<byte[]>> asyncReader = null,
             Func<ulong> revision = null, PackDirectorySource directory = null,
             Func<string, VnObjectId, byte[], PackMetadataCapture> snapshot = null,
-            Func<PackMetadataInput, VnResult> snapshotValidation = null)
+            Func<PackMetadataInput, VnResult> snapshotValidation = null, PackArchive archive = null)
         {
             if (!PackDirectorySource.ValidLanguage(language)) throw new ArgumentException("Invalid Pack language.", nameof(language));
             Language = language ?? string.Empty;
@@ -35,9 +38,13 @@ namespace Harken
             this.asyncReader = asyncReader;
             this.revision = revision;
             this.directory = directory;
+            this.archive = archive;
             this.snapshot = snapshot;
             this.snapshotValidation = snapshotValidation;
         }
+
+        internal static PackSource FromArchive(PackArchive archive, string language)
+            => new PackSource(language, archive: archive);
 
         internal static PackSource FromSnapshot(string language,
             Func<string, VnObjectId, byte[], PackMetadataCapture> capture, Func<PackMetadataInput, VnResult> validate)
@@ -54,6 +61,13 @@ namespace Harken
         public static PackSource FromAsyncReader(Func<string, CancellationToken, Task<byte[]>> reader,
             string language = null, Func<ulong> revision = null)
             => new PackSource(language, asyncReader: reader ?? throw new ArgumentNullException(nameof(reader)), revision: revision);
+
+        internal PackSource ForLanguage(string language)
+        {
+            if (snapshot != null) return null;
+            return new PackSource(language, reader, asyncReader, revision,
+                directory?.ForLanguage(language), archive: archive);
+        }
 
         internal static bool HasControlContext => SynchronizationContext.Current != null &&
             SynchronizationContext.Current.GetType() != typeof(SynchronizationContext);
@@ -73,6 +87,13 @@ namespace Harken
             var captured = CaptureAsync(name, project, init, CancellationToken.None).GetAwaiter().GetResult();
             input = captured.Input;
             return captured.Result;
+        }
+
+        internal VnResult LockPublication(PackDirectorySource.ResidentSelection init, System.Collections.Generic.ICollection<PackMetadataInput> changes,
+            out PackDirectorySource.ResidentGuards guards)
+        {
+            guards = null;
+            return directory != null ? directory.LockPublication(init, changes, out guards) : VnResult.VN_OK;
         }
 
         internal VnResult Validate(PackMetadataInput input)
@@ -96,6 +117,7 @@ namespace Harken
         private async Task<byte[]> Read(string path, CancellationToken cancellation, Action<bool> readPhase)
         {
             cancellation.ThrowIfCancellationRequested();
+            if (archive != null) return archive.Read(path);
             Task<byte[]> pending = null;
             byte[] bytes = null;
             readPhase?.Invoke(true);
@@ -107,7 +129,9 @@ namespace Harken
             finally { readPhase?.Invoke(false); }
             if (asyncReader != null) bytes = await AwaitRead(pending, cancellation);
             cancellation.ThrowIfCancellationRequested();
-            return bytes == null ? null : (byte[])bytes.Clone();
+            if (bytes == null) return null;
+            return path.EndsWith(".bytes", StringComparison.Ordinal)
+                ? PackStorage.CaptureBinary(bytes) : (byte[])bytes.Clone();
         }
 
         private static async Task<byte[]> AwaitRead(Task<byte[]> pending, CancellationToken cancellation)
@@ -173,6 +197,7 @@ namespace Harken
                 });
             }
             catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { throw; }
+            catch (PackStorage.InvalidMember) { return new PackMetadataCapture(VnResult.VN_BAD_PACK); }
             catch (OutOfMemoryException) { return new PackMetadataCapture(VnResult.VN_DEVICE_ERROR); }
             catch { return new PackMetadataCapture(VnResult.VN_PACK_PROVIDER_FAILED); }
         }

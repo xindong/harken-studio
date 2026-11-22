@@ -4,6 +4,7 @@
 #include "BusTopologySync.h"
 #include "DiagnosticsBridge.h"
 #include "MediaRegistry.h"
+#include "Tooling/Harkenizer/Core/SoundSourceDerivative.h"
 #include "RuntimeLink.h"
 
 #include <harken/Harken.h>
@@ -451,6 +452,17 @@ bool EngineSession::prepareMedia(uint32_t sourceId, const QString& absolutePath,
 {
     mediaRegistryRegister(sourceId, absolutePath, fileSize);
     return Detail::runtimePrepareMedia(sourceId);
+}
+
+std::optional<PreparedPreviewMedia> preparePreviewMedia(
+    const harken::studio::SoundSourceDerivative::MaterializedArtifact& artifact, QString* error)
+{
+    return Detail::runtimePreparePreviewMedia(artifact, error);
+}
+
+EngineResult registerPreviewMedia(harken::studio::types::ObjectId soundId, const PreparedPreviewMedia& media)
+{
+    return static_cast<EngineResult>(Detail::runtimeRegisterPreviewMedia(soundId, media));
 }
 
 bool EngineSession::swapMedia(uint32_t sourceId, const QString& newPath, uint64_t fileSize)

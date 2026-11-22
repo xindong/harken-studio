@@ -481,8 +481,11 @@ namespace Harken.Unity
         private bool MatchesConfiguredInit(string selectedPath)
             => initPack == selectedPath;
 
-        private bool TryBeginStartup(out VnResult rejection)
+        private bool TryBeginStartup(out VnResult rejection) => TryBeginStartup(out rejection, out _);
+
+        private bool TryBeginStartup(out VnResult rejection, out HarkenProjectSettings settings)
         {
+            settings = null;
             rejection = VnResult.VN_ALREADY_INITIALIZED;
             // A nested request must not recursively publish the same failed event or acquire a second session.
             if (starting || publishingStartupResult || shuttingDown || hasPendingShutdown ||
@@ -498,13 +501,13 @@ namespace Harken.Unity
             starting = true;
             State = HarkenRuntimeState.Starting;
             LastStartupError = string.Empty;
-            ApplyProjectStartupPolicy();
+            settings = HarkenProjectSettings.ActiveForStartup();
+            ApplyProjectStartupPolicy(settings);
             return true;
         }
 
-        private void ApplyProjectStartupPolicy()
+        private void ApplyProjectStartupPolicy(HarkenProjectSettings settings)
         {
-            HarkenProjectSettings settings = HarkenProjectSettings.ActiveForStartup();
             if (!lifecycleConfigured)
                 suppressUnityAudio = settings.SuppressUnityAudio;
             if (!languageConfigured)
@@ -515,27 +518,27 @@ namespace Harken.Unity
                 initPack = settings.InitPack;
         }
 
-        private VnResult StartFromProjectPackDirectory()
+        private VnResult StartFromProjectPackDirectory(ulong outputTicket)
         {
-            if (!TryBeginStartup(out VnResult rejection)) return rejection;
+            if (!TryBeginStartup(out VnResult rejection, out var settings)) return rejection;
             try
             {
-                if (!HarkenProjectSettings.TryResolvePackDirectory(out string directory, out string error))
+                if (!HarkenProjectSettings.TryResolvePackDirectory(out string directory, out string error, settings))
                 {
                     LastStartupError = error ?? string.Empty;
                     return CompleteSessionStartup(VnResult.VN_INVALID_ARG, string.Empty);
                 }
-#if !UNITY_EDITOR
                 string platformRoot = ResolvePlatformRoot(directory);
                 if (string.IsNullOrEmpty(platformRoot))
                     return CompleteSessionStartup(VnResult.VN_INVALID_ARG, string.Empty);
-                if (!HarkenProjectSettings.PlayerIncludesExport(platformRoot, out string exportError))
+#if !UNITY_EDITOR
+                if (!HarkenProjectSettings.PlayerIncludesExport(platformRoot, out string exportError, settings))
                 {
                     LastStartupError = exportError ?? string.Empty;
                     return CompleteSessionStartup(VnResult.VN_INVALID_ARG, string.Empty);
                 }
 #endif
-                return StartResolvedDirectory(directory);
+                return StartPackDirectory(platformRoot, settings, outputTicket);
             }
             finally { starting = false; }
         }
@@ -548,7 +551,8 @@ namespace Harken.Unity
             return StartPackDirectory(platformRoot);
         }
 
-        private VnResult StartPackDirectory(string platformRoot)
+        private VnResult StartPackDirectory(string platformRoot, HarkenProjectSettings settings = null,
+            ulong outputTicket = 0)
         {
             if (!MatchesConfiguredInit("Init.bytes"))
             {
@@ -560,9 +564,9 @@ namespace Harken.Unity
                 LastStartupError = "A Pack directory starts with Init only. Preload Actions by name with Session.PrepareActions.";
                 return CompleteSessionStartup(VnResult.VN_INVALID_ARG, string.Empty);
             }
-            VnResult result = CreateStartupConfig(out VnConfig config);
+            VnResult result = CreateStartupConfig(out VnConfig config, settings);
             if (result != VnResult.VN_OK) return CompleteSessionStartup(result, platformRoot);
-            result = PackBootstrap.StartDirectory(platformRoot, language, ref config, out session);
+            result = PackBootstrap.StartDirectory(platformRoot, language, ref config, out session, outputTicket);
             if (result == VnResult.VN_CONTENT_NOT_LOADED && session == null)
                 LastStartupError = "The selected directory requires the current Init.bytes and Init.json pair. Re-export Packs with the current Studio.";
             else if (result == VnResult.VN_BAD_PACK || result == VnResult.VN_PACK_INCOMPATIBLE)
@@ -570,16 +574,22 @@ namespace Harken.Unity
             return CompleteSessionStartup(result, platformRoot);
         }
 
-        private VnResult CreateStartupConfig(out VnConfig config)
+        private VnConfig CreateOutputConfig()
         {
-            config = HarkenEngine.DefaultConfig();
+            var config = HarkenEngine.DefaultConfig();
             config.sampleRate = 48000;
             config.mixChannelLayout = (uint)VnChannelLayout.VN_CHANNEL_LAYOUT_STEREO;
             config.deviceChannelLayout = (uint)VnChannelLayout.VN_CHANNEL_LAYOUT_STEREO;
             config.deviceMode = nullDevice
                 ? (uint)VnDeviceMode.VN_DEVICE_NULL
                 : (uint)VnDeviceMode.VN_DEVICE_REAL;
-            HarkenProjectSettings.ApplyStartupCapacity(ref config);
+            return config;
+        }
+
+        private VnResult CreateStartupConfig(out VnConfig config, HarkenProjectSettings settings = null)
+        {
+            config = CreateOutputConfig();
+            HarkenProjectSettings.ApplyStartupCapacity(ref config, settings);
             try
             {
                 // Bootstrap recommendations do not change firing capacity. Allocate before native startup.
@@ -679,6 +689,18 @@ namespace Harken.Unity
                 return;
             }
             Instance = this;
+            ulong outputTicket = 0;
+#if UNITY_STANDALONE_WIN && !UNITY_EDITOR
+            if (autoInitialize && isActiveAndEnabled && !nullDevice && configuredPackSource == null &&
+                preparedPackSource == null && preparedPacks == null)
+                outputTicket = HarkenEngine.BeginOutputPreparation(CreateOutputConfig());
+#endif
+            try { InitializeOwnedComponent(outputTicket); }
+            finally { HarkenEngine.CancelOutputPreparation(outputTicket); }
+        }
+
+        private void InitializeOwnedComponent(ulong outputTicket)
+        {
             HarkenSpatialUpdate spatialUpdate = GetComponent<HarkenSpatialUpdate>();
             if (spatialUpdate == null) spatialUpdate = gameObject.AddComponent<HarkenSpatialUpdate>();
             spatialUpdate.hideFlags = HideFlags.HideInInspector;
@@ -708,7 +730,7 @@ namespace Harken.Unity
             }
             finally { starting = false; }
 #else
-            StartFromProjectPackDirectory();
+            StartFromProjectPackDirectory(outputTicket);
 #endif
         }
 
@@ -720,7 +742,9 @@ namespace Harken.Unity
         private string ResolvePlatformRoot(string exportRoot)
         {
             if (string.IsNullOrEmpty(exportRoot)) return null;
-            if (File.Exists(Path.Combine(exportRoot, "Init.json"))) return SelectPlatformDirectory(exportRoot);
+            if (File.Exists(Path.Combine(exportRoot, "Init.json")) || File.Exists(Path.Combine(exportRoot, "Packs.zip")) ||
+                File.Exists(Path.Combine(exportRoot, "Init.hrp")))
+                return SelectPlatformDirectory(exportRoot);
             if (!string.IsNullOrEmpty(packPlatform) && PackPaths.IsPlatformName(packPlatform))
             {
                 string selected = Path.Combine(exportRoot, packPlatform);

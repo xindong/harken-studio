@@ -371,6 +371,8 @@ VnResult VoicePool::Play(const PCMView& view, float volumeDb,
         return VN_NO_VOICE;
     }
 
+    MediaDecoder* decoder = view.encoded ? view.encoded->Acquire() : nullptr;
+    if (view.encoded && !decoder) { ++m_noVoiceRefusals; return VN_NO_VOICE; }
     Slot& slot = m_slots[slotIndex];
     ResetOriginalSourceBodyForReuse(slot);
     // Relaxed is enough for the claim: the audio thread acts on this slot
@@ -395,6 +397,7 @@ VnResult VoicePool::Play(const PCMView& view, float volumeDb,
     slot.render.biquadTrig = m_biquadTrig;
     slot.render.engineSampleRate = m_sampleRate;
     slot.render.pcm = view;
+    slot.render.mediaDecoder = decoder;
     slot.sourceChannels.store(view.channelCount, std::memory_order_release);
 #if HARKEN_ENGINE_DEV
     BindMonitorPreChainBacking(slotIndex);
@@ -1104,6 +1107,7 @@ void VoicePool::FinalizeTimelineQuantum(std::uint64_t quantumIndex) noexcept {
 
 void VoicePool::ReturnTimelineCallbackStorage() noexcept {
     for (auto& slot : m_slots) {
+        if (slot.state.load(std::memory_order_acquire) != SlotState::TimelineCallbackHeld) continue;
         auto expected = SlotState::TimelineCallbackHeld;
         (void)slot.state.compare_exchange_strong(expected, SlotState::Rendering,
             std::memory_order_acq_rel, std::memory_order_acquire);
@@ -2809,6 +2813,10 @@ bool VoicePool::CancelPreparedVoice(VnVoiceHandle handle) noexcept {
         slot->state.load(std::memory_order_acquire) != SlotState::Prepared) {
         return false;
     }
+    if (slot->render.mediaDecoder != nullptr) {
+        slot->render.mediaDecoder->Retire();
+        slot->render.mediaDecoder = nullptr;
+    }
     if (slot->render.pcm.useCount != nullptr) {
         slot->render.pcm.useCount->fetch_sub(1, std::memory_order_release);
     }
@@ -2848,6 +2856,10 @@ bool VoicePool::CancelOriginalPreparedVoice(const OriginalVoiceOwner& owner) noe
         slot->releaseSequence.load(std::memory_order_acquire) != owner.releaseTarget_ - 1u) {
         slot->state.store(SlotState::Prepared, std::memory_order_release);
         return OriginalVoiceReleased(owner);
+    }
+    if (slot->render.mediaDecoder != nullptr) {
+        slot->render.mediaDecoder->Retire();
+        slot->render.mediaDecoder = nullptr;
     }
     if (slot->render.pcm.useCount != nullptr) {
         slot->render.pcm.useCount->fetch_sub(1, std::memory_order_release);
@@ -3868,7 +3880,8 @@ void VoicePool::BeginAudioBlock(std::uint64_t blockIndex) {
 }
 
 void VoicePool::EndAudioBlock() noexcept {
-    for (std::size_t index = 0; index < m_originalCallbackStorage.size(); ++index) {
+    const auto constructed = m_slots.ConstructedCount();
+    for (std::size_t index = 0; index < constructed; ++index) {
         auto& lease = m_originalCallbackStorage[index];
         if (!lease.storageHeld) continue;
         auto& slot = m_slots[index];
@@ -5178,6 +5191,7 @@ void VoicePool::RunCascadeJob(std::uint32_t jobIndex) {
         return;
     }
     VoiceRenderContext& ctx = slot.render;
+    ctx.mediaRenderThread = RenderWorkerPool::CurrentRenderThread();
     if (ctx.timelineEvents.eventCount != 0 &&
         (ctx.timelineEvents.renderGeneration != m_jobGenerations[jobIndex] ||
          ctx.timelineEvents.quantumIndex != m_jobQuantumIndex)) {
@@ -5728,6 +5742,10 @@ void VoicePool::ReleaseSlot(Slot& slot, ReleaseThread thread) {
 #if HARKEN_ENGINE_DEV
     slot.monitorPublicHandle.store(0, std::memory_order_relaxed);
 #endif
+    if (slot.render.mediaDecoder != nullptr) {
+        slot.render.mediaDecoder->Retire();
+        slot.render.mediaDecoder = nullptr;
+    }
     if (slot.render.pcm.useCount != nullptr) {
         slot.render.pcm.useCount->fetch_sub(1, std::memory_order_release);
     }

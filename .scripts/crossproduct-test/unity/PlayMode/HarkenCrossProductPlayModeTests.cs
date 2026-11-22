@@ -67,7 +67,7 @@ namespace HarkenCrossProduct
 
         public static void Enable() => Assert.That(VnPreview_EnableChannelPeakMetering(), Is.EqualTo(VnResult.VN_OK));
 
-        public static float[] Pump(MeterLayout layout, uint blocks)
+        public static float[] Pump(MeterLayout layout, uint blocks, bool updateRuntime = false)
         {
             var channels = new float[2];
             IntPtr buffer = Marshal.AllocHGlobal(layout.size);
@@ -75,6 +75,7 @@ namespace HarkenCrossProduct
             {
                 for (uint i = 0; i < blocks; ++i)
                 {
+                    if (updateRuntime) Assert.That(HarkenEngine.Update(), Is.EqualTo(VnResult.VN_OK));
                     VnPreview_PumpNullMixer(1);
                     for (int b = 0; b < layout.size; ++b) Marshal.WriteByte(buffer, b, 0);
                     Marshal.WriteInt32(buffer, 0, layout.size);
@@ -335,6 +336,29 @@ namespace HarkenCrossProduct
                 Assert.That(DevelopmentMeter.Peak(peaks), Is.GreaterThan(Audible), language);
                 yield return TearDown();
             }
+            string before = inputs.languages[0];
+            string after = inputs.languages[1];
+            yield return StartFrom(PackSource.FromDirectory(Main, before), before);
+            AssertReady();
+            ActionPreparation preparation = Prepare(inputs.localizedAction);
+            Assert.That(Actions.Resolve(inputs.localizedAction, out ActionResolved original), Is.EqualTo(VnResult.VN_OK));
+            Assert.That(Actions.Post(in original, Emitter.None, 0, out ActionFiring playing), Is.EqualTo(VnResult.VN_OK));
+            DevelopmentMeter.Enable();
+            Assert.That(DevelopmentMeter.Peak(DevelopmentMeter.Pump(inputs.meter, PlayBlocks, updateRuntime: true)),
+                Is.GreaterThan(Audible));
+            var switching = runtime.Session.SetLanguageAsync(after);
+            yield return Await(switching);
+            Assert.That(switching.GetAwaiter().GetResult(), Is.EqualTo(VnResult.VN_OK));
+            Assert.That(runtime.Language, Is.EqualTo(after));
+            Assert.That(preparation.IsPrepared, Is.True);
+            Assert.That(playing.Query(out _), Is.EqualTo(VnResult.VN_OK));
+            Assert.That(DevelopmentMeter.Peak(DevelopmentMeter.Pump(inputs.meter, 2, updateRuntime: true)), Is.GreaterThan(Audible),
+                "the previous firing remains audible across the switch");
+            Assert.That(Actions.Post(in original, Emitter.None, 0, out _), Is.EqualTo(VnResult.VN_STALE_HANDLE));
+            Assert.That(runtime.PlayAction(inputs.localizedAction, inputs.projectId, out _), Is.EqualTo(VnResult.VN_OK));
+            Assert.That(preparation.Release(), Is.EqualTo(VnResult.VN_OK));
+            yield return TearDown();
+
             yield return StartFrom(PackSource.FromDirectory(Main, "NoSuchLanguage"), "NoSuchLanguage");
             AssertReady();
             Assert.That(runtime.PlayAction(inputs.localizedAction, inputs.projectId, out _), Is.Not.EqualTo(VnResult.VN_OK),

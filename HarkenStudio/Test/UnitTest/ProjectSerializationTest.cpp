@@ -213,7 +213,7 @@ TEST(ProjectSerialization, AssetSavedStateIgnoresCacheRepresentationAndTracksCon
     EXPECT_EQ(projectFileBytes(projectRoot), committedFiles);
     loadedAsset = registry.getAsset(asset.sourceID);
     ASSERT_NE(loadedAsset, nullptr);
-    loadedAsset->settings.targetSampleRate = 44100;
+    loadedAsset->metadata.sampleRate = 44100;
     EXPECT_TRUE(manager.hasUnsavedChanges());
     ASSERT_TRUE(manager.saveProject());
     EXPECT_FALSE(manager.hasUnsavedChanges());
@@ -222,7 +222,7 @@ TEST(ProjectSerialization, AssetSavedStateIgnoresCacheRepresentationAndTracksCon
     EXPECT_FALSE(manager.hasUnsavedChanges());
     loadedAsset = registry.getAsset(asset.sourceID);
     ASSERT_NE(loadedAsset, nullptr);
-    EXPECT_EQ(loadedAsset->settings.targetSampleRate, 44100u);
+    EXPECT_EQ(loadedAsset->metadata.sampleRate, 44100u);
 }
 
 TEST(ProjectSerialization, DuplicateTransitionEndpointsRejectItemLoad)

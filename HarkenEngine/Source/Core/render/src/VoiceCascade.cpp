@@ -242,13 +242,24 @@ bool FeedResampler(VoiceRenderContext& ctx) {
         const std::uint64_t limit =
             wrapAtLimit ? ctx.loopEndFrame : ctx.pcm.frames;
         const std::uint64_t remaining = limit - ctx.srcCursor;
-        const std::uint32_t chunk = static_cast<std::uint32_t>(
+        std::uint32_t chunk = static_cast<std::uint32_t>(
             std::min<std::uint64_t>(kResampleChunkFrames,
                 std::min<std::uint64_t>(remaining, rs.FreeFrames())));
         if (chunk == 0) {
             return false;
         }
-        rs.PushPCM(ctx.pcm, ctx.srcCursor, chunk);
+        if (ctx.mediaDecoder) {
+            PCMView decoded;
+            if (!ctx.mediaDecoder->Read(ctx.srcCursor, chunk, ctx.mediaRenderThread, decoded) ||
+                decoded.frames == 0 || decoded.frames > chunk) {
+                ctx.mediaDecodeFailed = true;
+                return false;
+            }
+            chunk = static_cast<std::uint32_t>(decoded.frames);
+            rs.PushPCM(decoded, 0, chunk);
+        } else {
+            rs.PushPCM(ctx.pcm, ctx.srcCursor, chunk);
+        }
         ctx.srcCursor += chunk;
         if (ctx.srcCursor == limit) {
             if (wrapAtLimit) {
@@ -579,7 +590,7 @@ bool PreparePlainPcm(const VoiceRenderContext& ctx, std::uint32_t blockFrames,
     const auto& rs = ctx.resampler;
     if (ctx.fxChainTransition != nullptr || offset >= blockFrames || ctx.pcm.channelCount == 0 ||
         ctx.pcm.channelCount > kMaxChannels || ctx.phase != SourcePhase::Active ||
-        ctx.streamParkActive ||
+        ctx.streamParkActive || ctx.mediaDecodeFailed ||
         ctx.voiceSendActiveCount != 0 || ctx.dynamicVoiceTapActive ||
         ctx.tailStarted || ctx.tailRemaining != 0 ||
         ctx.tailRearmPosition != kNoTailRearmPosition ||
@@ -631,6 +642,17 @@ bool PreparePlainPcm(const VoiceRenderContext& ctx, std::uint32_t blockFrames,
     }
     const std::uint64_t limit = ctx.loopInfinite || ctx.loopPassesRemaining > 1
         ? ctx.loopEndFrame : ctx.pcm.frames;
+    if (ctx.mediaDecoder != nullptr) {
+        // Packet boundaries can shorten each feed. Reserve the final full
+        // request and let the regular path handle source boundaries.
+        const auto upper = needed == 0 ? 0 : needed + kResampleChunkFrames - 1;
+        if (rs.phaseHigh != 0 || rs.phaseLow != 0 ||
+            frames > UINT64_MAX - rs.readIndex || upper > rs.FreeFrames() ||
+            upper > UINT64_MAX - rs.writeIndex || ctx.srcCursor >= limit ||
+            upper >= limit - ctx.srcCursor) return false;
+        feedFrames = static_cast<std::uint32_t>(needed);
+        return true;
+    }
     // Every feed stays a complete chunk, matching the interleaved source pass.
     if (frames > UINT64_MAX - rs.readIndex || extra > rs.FreeFrames() ||
         extra > UINT64_MAX - rs.writeIndex || ctx.srcCursor >= limit ||
@@ -663,6 +685,15 @@ bool RunPlainPcm(VoiceRenderContext& ctx, std::uint32_t frames) {
                 const bool supplied = FeedResamplerFromStream(ctx);
                 assert(supplied);
                 (void)supplied;
+            }
+        } else if (ctx.mediaDecoder != nullptr) {
+            while (ctx.resampler.writeIndex - ctx.resampler.readIndex <= frames) {
+                if (!FeedResampler(ctx)) {
+                    // Match the consumption of the interleaved path before
+                    // terminal cleanup discards output from a failed read.
+                    ctx.resampler.Produce(ctx.cascade.scratch, 0, frames);
+                    return false;
+                }
             }
         } else {
             // Preparation proved that every complete chunk fits before the next
@@ -1215,7 +1246,7 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
             std::fill_n(scratch[ch] + offset, silent, 0.0f);
         produced = silent;
     }
-    while (!ctx.resyncLatched && produced < sourceTarget) {
+    while (!ctx.resyncLatched && !ctx.mediaDecodeFailed && produced < sourceTarget) {
         produced += ctx.resampler.Produce(scratch, offset + produced,
                                           sourceTarget - produced);
         if (produced >= sourceTarget) {
@@ -1227,6 +1258,11 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
         if (!fed) {
             break;
         }
+    }
+    if (ctx.mediaDecodeFailed) {
+        for (std::uint32_t channel = 0; channel < channels; ++channel)
+            std::fill_n(scratch[channel] + offset, sourceTarget, 0.0f);
+        produced = 0;
     }
     ctx.logicalSourceOutputFramesThisBlock = produced;
     if (ctx.resyncFadeOutTotal != 0 && !ctx.resyncLatched &&
@@ -1316,7 +1352,7 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
         produced = sourceTarget;
     }
     const auto sourceBoundary = offset + produced;
-    const bool sourceEnded = sourceExhausted || authoredDeadlineReached || resyncEnded || resyncFailed;
+    const bool sourceEnded = sourceExhausted || authoredDeadlineReached || resyncEnded || resyncFailed || ctx.mediaDecodeFailed;
     auto sourceResult = SourceTerminalKind::None;
     if (sourceEnded) {
         sourceResult = SourceTerminalKind::Natural;
@@ -1335,6 +1371,7 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
             }
         }
     }
+    if (ctx.mediaDecodeFailed) sourceResult = SourceTerminalKind::IntegrityAbort;
     std::uint32_t stopCutoff = UINT32_MAX;
 
 #if HARKEN_STAGE_TAPS_ACTIVE

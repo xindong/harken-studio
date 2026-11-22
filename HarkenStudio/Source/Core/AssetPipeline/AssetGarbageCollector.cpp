@@ -17,8 +17,21 @@ namespace harken::studio {
 
 namespace {
 
-bool isCurrentMediaCacheFile(const QFileInfo& info)
+QString packMediaCacheDir(const QString& projectRoot)
 {
+    return QDir(PathUtils::getDotCacheDir(projectRoot)).absoluteFilePath(QStringLiteral("pack/media"));
+}
+
+bool isCurrentMediaCacheFile(const QFileInfo& info, const QString& packMediaDir)
+{
+    if (info.absolutePath() == packMediaDir) {
+        const auto key = info.completeBaseName();
+        return (info.suffix() == QStringLiteral("pcm") || info.suffix() == QStringLiteral("vcm"))
+            && key.size() == 64 && std::all_of(key.cbegin(), key.cend(), [](QChar c) {
+                return (c >= QLatin1Char('0') && c <= QLatin1Char('9'))
+                    || (c >= QLatin1Char('a') && c <= QLatin1Char('f'));
+            });
+    }
     if (info.suffix().compare(QStringLiteral("wav"), Qt::CaseInsensitive) != 0)
         return false;
     if (!ProjectPlatformSemantics::parseId(info.dir().dirName())) return false;
@@ -166,13 +179,13 @@ CleanupResult AssetGarbageCollector::cleanupLRU(int maxAgeDays, uint64_t maxCach
 
 uint64_t AssetGarbageCollector::getCacheSize() const
 {
-    QString cacheDir = PathUtils::getCacheDir(projectRoot_);
     uint64_t total = 0;
-
-    QDirIterator it(cacheDir, QDir::Files, QDirIterator::Subdirectories);
-    while (it.hasNext()) {
-        it.next();
-        total += it.fileInfo().size();
+    for (const auto& cacheDir : {PathUtils::getCacheDir(projectRoot_), packMediaCacheDir(projectRoot_)}) {
+        QDirIterator it(cacheDir, QDir::Files, QDirIterator::Subdirectories);
+        while (it.hasNext()) {
+            it.next();
+            total += it.fileInfo().size();
+        }
     }
 
     return total;
@@ -252,14 +265,14 @@ int AssetGarbageCollector::purgeTrash(int maxAgeDays)
 QList<QString> AssetGarbageCollector::scanForStaleCaches()
 {
     QList<QString> stale;
-    QString cacheDir = PathUtils::getCacheDir(projectRoot_);
-
-    QDirIterator it(cacheDir, QDir::Files, QDirIterator::Subdirectories);
-
-    while (it.hasNext()) {
-        it.next();
-        if (!isCurrentMediaCacheFile(it.fileInfo())) {
-            stale.append(it.filePath());
+    const auto packMediaDir = packMediaCacheDir(projectRoot_);
+    for (const auto& cacheDir : {PathUtils::getCacheDir(projectRoot_), packMediaDir}) {
+        QDirIterator it(cacheDir, QDir::Files, QDirIterator::Subdirectories);
+        while (it.hasNext()) {
+            it.next();
+            if (!isCurrentMediaCacheFile(it.fileInfo(), packMediaDir)) {
+                stale.append(it.filePath());
+            }
         }
     }
 
@@ -269,17 +282,17 @@ QList<QString> AssetGarbageCollector::scanForStaleCaches()
 QList<QPair<QString, uint64_t>> AssetGarbageCollector::collectCacheFiles() const
 {
     QList<QPair<QString, uint64_t>> files;
-    QString cacheDir = PathUtils::getCacheDir(projectRoot_);
-
-    QDirIterator it(cacheDir, QDir::Files, QDirIterator::Subdirectories);
-
-    while (it.hasNext()) {
-        it.next();
-        if (!isCurrentMediaCacheFile(it.fileInfo()))
-            continue;
-        QString filePath = it.filePath();
-        uint64_t accessTime = getFileAccessTime(filePath);
-        files.append(qMakePair(filePath, accessTime));
+    const auto packMediaDir = packMediaCacheDir(projectRoot_);
+    for (const auto& cacheDir : {PathUtils::getCacheDir(projectRoot_), packMediaDir}) {
+        QDirIterator it(cacheDir, QDir::Files, QDirIterator::Subdirectories);
+        while (it.hasNext()) {
+            it.next();
+            if (!isCurrentMediaCacheFile(it.fileInfo(), packMediaDir))
+                continue;
+            QString filePath = it.filePath();
+            uint64_t accessTime = getFileAccessTime(filePath);
+            files.append(qMakePair(filePath, accessTime));
+        }
     }
 
     return files;
@@ -299,32 +312,12 @@ uint64_t AssetGarbageCollector::deleteFile(const QString& path)
         return 0;
     }
 
-    AssetRegistry::instance().invalidateCache(path);
 
     return size;
 }
 
 uint64_t AssetGarbageCollector::getFileAccessTime(const QString& cachePath) const
 {
-    QString relativePath = PathUtils::toRelativePath(cachePath, PathUtils::getCacheDir(projectRoot_));
-
-    QFileInfo info(relativePath);
-    QString platformName = info.dir().dirName();
-    QString fileName = info.completeBaseName().section(QLatin1Char('_'), 0, 0);
-
-    bool ok;
-    uint32_t sourceID = fileName.toUInt(&ok);
-    if (ok) {
-        const auto platform = QUuid::fromString(platformName);
-        const AssetInfo* asset = AssetRegistry::instance().getAsset(sourceID);
-        if (asset) {
-            auto cacheIt = asset->platformCaches.find(platform);
-            if (cacheIt != asset->platformCaches.end() && cacheIt->cachePath == relativePath) {
-                return cacheIt->lastAccessTime;
-            }
-        }
-    }
-
     QFileInfo fileInfo(cachePath);
     return fileInfo.lastRead().toSecsSinceEpoch();
 }

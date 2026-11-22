@@ -1,6 +1,6 @@
 # HarkenStudio 命令接口
 
-快照日期：2026-11-13。Studio 与独立 [HarkenStudioCLI](studioCLI-commands.md) 共享工程、创作、资源处理、撤销、保存及打包命令；Studio 额外提供窗口、选择、布局与控件命令。
+快照日期：2026-11-17。Studio 与独立 [HarkenStudioCLI](studioCLI-commands.md) 共享工程、创作、资源处理、撤销、保存及打包命令；Studio 额外提供窗口、选择、布局与控件命令。
 
 ## 产品边界
 
@@ -105,7 +105,7 @@ HarkenStudioCLI --instance <id> exec list_ui_windows --json
 | 播放与重置就绪 | AudioEngine 对对象试听、Action 播放和容器重置统一检查当前创作版本；GUI 试听在同步期间排队，完成后校验项目、运行时与目标身份。`post_action/post_action_3d/audition_play/audition_reset` 在共享分发器复用检查，未就绪返回 `RUNTIME_SYNC_PENDING` 且不提交操作；三种 CLI 会话等待，工程改变时拒绝继续原请求。GUI 重置未就绪时明确拒绝；已有实例的停止、定位与原始音频试听不受该等待限制 |
 | 试听定位 | `audition_set_position` 返回同一请求的异步完成协议；`audition_get_seek_status(audition_seek_request_id)` 查询最终 `applied/failed`。CLI 等待终态后才响应 |
 | 试听停止 | `audition_stop` 停止指定实例，省略 ID 时停止所有非 RawFile 试听。返回 `state: stopping/stopped/stop_failed`，请求被接受不代表淡出完成；`audition_get_state` 逐实例返回 `stop_state: none/pending/stopping/failed` 和 `stop_result`，真正结束后移除实例。同名 Action 的实例分别列出。背压会有限重试，失败保留实例供再次停止；重复请求不重启淡出 |
-| 音频转码 | `transcode_asset`、`batch_convert_media` 共享转码作业、结果查询和取消协议；不以入队冒充完成 |
+| 音频转换 | Conversion 预设按源文件大小匹配一行采样率、格式和质量。`convert` 同步生成其引用 Source 的转换缓存，`get_conversion_results` 只读现有结果 |
 | 保存与打包 | `save_project`、`export_pack`；与桌面使用相同工程格式、校验和 `ProjectPackBuildService` |
 | 文件比较 | `compare_files(reference_path, candidate_path)` 按字节比较，不解码音频；返回 `identical`、`compared_bytes`、`different_bytes`、`length_match` |
 | 执行错误 | `get_exec_errors` 只读；清空使用 `clear_exec_errors`，可指定 domain |
@@ -114,6 +114,28 @@ HarkenStudioCLI --instance <id> exec list_ui_windows --json
 试听定位查询保留全部进行中的请求和最近 128 条完成记录，超出保留范围返回 `NOT_FOUND`。引擎关闭或原生定位失败也生成可查询的失败终态。附加 CLI 超时/中断只停止等待，定位仍可能完成；应使用返回的请求身份查询结果，不能把 `accepted` 当作已应用或直接重发。
 
 `close_project` 成功表示关闭已被接受，`closing` 表示运行时退场是否仍在进行；IPC 可查询 `get_project_info`，CLI 在关闭完成并释放锁后才执行下一条。
+
+## Conversion 预设
+
+Studio、CLI、IPC 与 AI 使用同一组命令、参数校验和创作入口：
+
+| 命令 | 参数与结果 | 撤销 |
+|---|---|---|
+| `create_conversion` | 必填 `name`；可选 `folder` 指向 Conversions 桶中已有目录。新预设为 Vorbis 质量 4、Original；返回预设 GUID、名称、路径与配置 | 是 |
+| `set_conversion_fields` | `conversion` 和完整的 `rules` 数组 | 是 |
+| `set_object_conversion` | `object`、`inherit`，可选 `settings` 指定预设或 `null`，可选 `platform_id` 改写该平台覆写（缺省为 Shared，写入 Shared 引用同时清除各平台覆写）；省略 `settings` 沿用字段组的本地历史，`inherit:true` 不接受 `settings` | 是 |
+| `set_default_conversion` | `platform_id` 与 `conversion`：指定该平台的默认预设，`null` 清空 | 是 |
+| `get_effective_conversion` | `object`，可选 `platform_id`；返回生效预设、来源对象、平台，以及 Sound 当前语言 Source 的最终采样率 | 只读 |
+| `get_conversion_results` | `conversion`，可选 `platform_id`；列出实际引用该预设的各语言有效 Source、原始属性及已有转换产物 | 只读 |
+| `convert` | `conversion`，可选 `platform_id`；转换相同范围的 Source，返回 `conversion_result` 计数、错误与 `sources` 结果 | 否 |
+
+对象和预设选择器接受 GUID、无歧义工程路径或名称。查询与转换命令的可选 `platform_id` 缺省为当前主平台。预设只保存一份配置；平台差异由对象的 Conversion 字段组平台覆写承担，与其他字段组一致。
+
+`rules` 按源文件字节数匹配第一条包含该大小的规则。每行包含 `max_bytes`、`sample_rate` 和 `format`，Vorbis 行还需要 0–10 的整数 `quality`，PCM 行省略该字段。有限上限严格递增，末行使用 `null`（`Inf`）。采样率可选 `0/8000/11025/16000/22050/24000/32000/44100/48000`；`0` 保留原始采样率，目标不低于原始采样率时也保持原样，不升采样。
+
+`get_item_info` 对可播放定义返回 `conversion` 与 `fieldGroups.shared.conversion`；预设配置位于 `components.conversion`。`get_project_info.default_conversion` 返回默认预设 GUID 或 `null`。`get_conversion_results` 不触发编码，尚未生成的 `converted` 为 `null`。`convert` 等待本次转换结束，成功缓存可复用；失败返回 `CONVERSION_FAILED` 并保留逐项错误和已有结果，不使用旧转码作业身份或状态/取消命令。
+
+Part A 已提供 PCM / Vorbis 转换缓存和 Converted 试听；Vorbis 试听使用 Studio 过渡解码。PCM Pack 可导出，Vorbis Pack 写入仍明确报错 `Vorbis Pack writing is not integrated`。原生 Engine Vorbis 解码、Pack 接入与采样率解耦属于 Part B。
 
 ## 桌面扩展
 
@@ -168,11 +190,10 @@ HarkenStudioCLI --instance <id> exec list_ui_windows --json
 | `get_node_graph` / `set_nodegraph_layer` / `get_nodegraph_layers` | `get_blueprint` / `set_blueprint_layer` / `get_blueprint_layers` |
 | `switch_view` / `get_current_view` | `switch_layout` / `get_current_layout`；`view` → `layout`，包括 `reset_layout` |
 | `get_exec_errors(clear:true)` | `clear_exec_errors`；查询不再携带清空副作用 |
-| `get_transcode_status(platform_id,source_id)` | 使用转码响应的 `operation_id`，取消同样按作业身份执行 |
-| `batch_convert_media(sourceIDs)` | 使用 `source_ids`，重复及非法身份在开始前统一拒绝 |
+| `transcode_asset` / `batch_convert_media` / `get_transcode_status` / `cancel_transcode` | 已删除；使用 `convert` 同步生成预设所引用 Source 的缓存，`get_conversion_results` 只读查询 |
 | `batch_replace_media(items[].sourceID/new_path)` | 使用 `source_id/path`；无效、溢出及重复身份在替换前拒绝 |
 | `set_container_property` 的空间属性、`string_value/object_value` | 标量入口只接受 `volume/pitch` 和 `value`；空间属性使用字段组命令 |
-| `set_conversion_settings` 的未知 codec | 明确接受 `PCM_Float/ADPCM/Vorbis`，不再静默落到默认编码 |
+| `set_conversion_settings` | 已删除；使用 `create_conversion`、`set_conversion_fields`、`set_object_conversion` 与 `set_default_conversion`；格式仅支持 `PCM/Vorbis` |
 | `key_press(widget)` / `get_ui_tree(root)` | 使用统一的 `name` 或 `widget_id`；可用 `scope_widget_id` 限定作用域 |
 | `trigger_menu_action(emit_context)` | 使用 `open_context_menu`；原 `pos_x/pos_y` 改为 `x/y` |
 | `trigger_menu_action(button)` | 使用统一控件目标 `name` 或 `widget_id` |

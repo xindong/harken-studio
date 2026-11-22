@@ -33,7 +33,7 @@ void PreviewField::paintEvent(QPaintEvent*)
 
 void PreviewField::mousePressEvent(QMouseEvent* event)
 {
-    if (event->button() == Qt::LeftButton) emit clicked();
+    if (event->button() == Qt::LeftButton && !testAttribute(Qt::WA_TransparentForMouseEvents)) emit clicked();
     else QWidget::mousePressEvent(event);
 }
 

@@ -78,7 +78,7 @@
     },
     "audio.loopCount": {
       "title": "Loop",
-      "body": "Total playback passes: 1 plays once; Infinite repeats until stopped. Set this on the object that should repeat.",
+      "body": "Total playback passes: 1 plays once. Inf repeats until stopped. Set this on the object that should repeat.",
       "byType": {
         "Container": "For a Random or Sequence Queue, each pass is one complete round."
       }
@@ -145,7 +145,7 @@
     },
     "selection.selections": {
       "title": "Selections",
-      "body": "Random uses Frequency to control draw chance (0 excludes an entry), or Order to bias shuffle order; Sequence follows list order. Match uses Variable conditions to choose one row.\n\nIn Blend, each mixing row gives its children independent 0–100% gain curves, without normalization; gain is 0% outside a curve's span, and a row without a Variable contributes 100%. All members play together, including at 0%; a child used in several rows shares one playback, with the row gains multiplied."
+      "body": "Active Source shows the source a child Sound uses for the current platform and language.\n\nRandom uses Frequency to control draw chance (0 excludes an entry), or Order to bias shuffle order; Sequence follows list order. Match uses Variable conditions to choose one row.\n\nIn Blend, each mixing row gives its children independent 0–100% gain curves, without normalization; gain is 0% outside a curve's span, and a row without a Variable contributes 100%. All members play together, including at 0%; a child used in several rows shares one playback, with the row gains multiplied."
     },
     "selection.behavior": {
       "title": "Behavior",
@@ -157,7 +157,7 @@
     },
     "sound.sources": {
       "title": "Sources",
-      "body": "Import or drop audio files here; click a waveform to edit that source's trim and loop region. Active selects the source to play for the current platform. Setting Active with all platforms selected replaces the shared choice and clears platform overrides."
+      "body": "Import or drop audio files here. Click the waveform in the Source column to edit its trim and loop region. Original selects the audio file from Resources. Active selects the source to play for the current platform. Setting Active with all platforms selected replaces the shared choice and clears platform overrides."
     },
     "action.steps": {
       "title": "Steps",
@@ -307,7 +307,7 @@
     },
     "Explorer": {
       "title": "Explorer",
-      "body": "Browse and organize project objects and source files; select an object to inspect its properties."
+      "body": "Browse project objects in Assets and organize original audio files in Resources. Select an object to inspect its properties."
     },
     "Inspector": {
       "title": "Inspector",

@@ -55,7 +55,7 @@
 | 曲线 | 曲线点；删除与剪切仍受可编辑点限制，粘贴受数据与点数限制 |
 | 曲线预设 | Attenuation、Binding、Mixing、Transition 与 Source Fade 共用七种 SVG 图标与名称预设，上升段顺序为 S-Curve、Cubic Ease-Out、Quadratic Ease-Out、Linear、Quadratic Ease-In、Cubic Ease-In、Inverse S-Curve，由公共 QMenu 样式统一勾选列、图标列、文字、边距和状态着色；仅修改所选点与右侧下一点之间的曲线，最右点没有右邻段时不可应用；下降段沿时间方向镜像图标与曲线，Ease-In / Ease-Out 名称随实际进度函数对调 |
 | Timeline | 按焦点删除所选标记或本地多选片段；普通单击片段不切换全局对象或试听目标 |
-| Play/Stop：焦点在 Source Editor | 切换源片段试听；绑定 Sound Source 时应用其淡入淡出，素材库文件使用原音频；处理失败也不转向对象试听 |
+| Play/Stop：焦点在 File Viewer | 切换源文件试听，始终播放原音频；处理失败也不转向对象试听 |
 | Play/Stop：其他焦点 | 存在非原始文件试听时停止；否则播放当前试听目标 |
 | 试听目标 | 由主动对象选择或 Selection Editor 的 Child 行指定；仅切换焦点不改目标，不从其他树保留高亮推断 |
 | 不可播放情况 | 模拟模式、无目标或对象不可播放时拒绝执行 |

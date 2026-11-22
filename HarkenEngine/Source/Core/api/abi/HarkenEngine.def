@@ -8,12 +8,16 @@
 EXPORTS
     Vn_ActivateCanonicalPackSetV1
     Vn_ActivateCanonicalPackSetV2
+    Vn_ActivateNamedResidentDirectoryV1
+    Vn_ActivateResidentPackDirectoryV1
     Vn_ApplyBusTopology
     Vn_ApplyVoiceBinding
     Vn_AttachBinding
+    Vn_BeginOutputPreparation
     Vn_BeginStreamFile
     Vn_BeginStreamSource
     Vn_BindVoiceAttenuation
+    Vn_CancelOutputPreparation
     Vn_CancelStreamSource
     Vn_ClearBusEffect
     Vn_ClearBusEffectDynamicRoute
@@ -31,11 +35,13 @@ EXPORTS
     Vn_DetachBinding
     Vn_DisconnectBusSend
     Vn_Init
+    Vn_InitWithOutputPreparation
     Vn_InspectCanonicalPackV1
     Vn_InspectInitPack
     Vn_LoadCurrentWorld
     Vn_LoadPack
     Vn_PostAction
+    Vn_PostNamedResidentActionV1
     Vn_QueryAbiVersion
     Vn_QueryActionFiring
     Vn_QueryActionPlaybackReadiness
@@ -117,3 +123,4 @@ EXPORTS
     Vn_UnregisterPCM
     Vn_UnregisterStreamFile
     Vn_Update
+    Vn_VisitResidentPackDirectoryV1

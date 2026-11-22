@@ -117,6 +117,7 @@ public:
         QStringList globalWarnings;
         int     mediaCacheHits = 0;
         int     mediaConversions = 0;
+        QJsonArray media;
         uint64_t currentWorldSemanticFingerprint = 0;
         std::map<harken::studio::types::ObjectId, uint64_t> soundContentRevisions;
         QString resourceFingerprint;
@@ -276,6 +277,7 @@ private:
         std::map<harken::studio::types::ObjectId, uint64_t> soundContentRevisions;
         int cacheHits = 0;
         int conversions = 0;
+        QJsonArray media;
         QStringList warnings;
     };
 

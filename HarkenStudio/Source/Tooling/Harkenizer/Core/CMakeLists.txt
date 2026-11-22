@@ -12,7 +12,6 @@ add_library(harkenizer_core STATIC
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/AssetPipeline/SourceFileState.cpp
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/AssetPipeline/MediaBuildSnapshot.cpp
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/AssetPipeline/PathUtils.cpp
-    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/AssetPipeline/PlatformProfile.cpp
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/AssetPipeline/WaveformCache.cpp
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/BindingContract.cpp
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/BindingRuntimeLowering.cpp
@@ -22,10 +21,14 @@ add_library(harkenizer_core STATIC
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/CompileTargetProfileCatalog.cpp
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ComponentCatalog.cpp
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/Components/VAttenuation.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/Components/VConversion.cpp
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/Components/VEffect.cpp
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/Components/VSelection.cpp
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/Components/VSound.cpp
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ContainerBehaviorSemantics.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ConversionDefaults.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ConversionResolution.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ConversionMigration.cpp
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/CurveSemantics.cpp
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/EffectChainSemantics.cpp
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/FieldGroupDerivedView.cpp
@@ -95,6 +98,7 @@ add_library(harkenizer_core STATIC
     ${CMAKE_CURRENT_SOURCE_DIR}/ProjectPackBuildService.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/ProjectPackExporter.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/SoundSourceDerivative.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/VorbisEncoder.cpp
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ActionClosureSemantics.h
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ActionStepEditing.h
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ActionStepUtils.h
@@ -107,7 +111,6 @@ add_library(harkenizer_core STATIC
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/AssetPipeline/SourceFileState.h
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/AssetPipeline/MediaBuildSnapshot.h
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/AssetPipeline/PathUtils.h
-    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/AssetPipeline/PlatformProfile.h
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/AssetPipeline/WaveformCache.h
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/BindingContract.h
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/BindingRuntimeLowering.h
@@ -117,10 +120,14 @@ add_library(harkenizer_core STATIC
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/CompileTargetProfileCatalog.h
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ComponentCatalog.h
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/Components/VAttenuation.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/Components/VConversion.h
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/Components/VEffect.h
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/Components/VSelection.h
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/Components/VSound.h
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ContainerBehaviorSemantics.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ConversionDefaults.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ConversionResolution.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ConversionMigration.h
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/CurveSemantics.h
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/EffectChainSemantics.h
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/FieldGroupDerivedView.h
@@ -184,6 +191,7 @@ add_library(harkenizer_core STATIC
     ${CMAKE_CURRENT_SOURCE_DIR}/ProjectPackBuildService.h
     ${CMAKE_CURRENT_SOURCE_DIR}/ProjectPackExporter.h
     ${CMAKE_CURRENT_SOURCE_DIR}/SoundSourceDerivative.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/VorbisEncoder.h
     ${HARKEN_SCHEMA_GENERATED_PROJECT_HEADER}
     ${HARKEN_SCHEMA_GENERATED_BUILD_HEADER}
     ${HARKEN_SCHEMA_GENERATED_VALIDATOR_SOURCE}

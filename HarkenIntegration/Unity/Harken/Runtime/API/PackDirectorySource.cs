@@ -9,20 +9,26 @@ namespace Harken
         internal byte[] Json;
         internal PackMetadata Names;
         internal VnPackInspectReportV1 Facts;
+        internal int ByteCount => Bytes.Length;
         internal ulong SourceRevision;
+        internal PackDirectorySource.ResidentSelection Selection;
     }
 
     // Only this source knows about filesystem publication. Sessions consume owned snapshots.
-    internal sealed class PackDirectorySource
+    internal sealed partial class PackDirectorySource
     {
         internal readonly string Root;
         internal readonly string Language;
+        internal bool IsResidentDirectory => resident;
 
-        internal PackDirectorySource(string root, string language)
+        internal PackDirectorySource(string root, string language, bool? residentLayout = null)
         {
             Root = Path.GetFullPath(root);
             Language = language ?? string.Empty;
+            resident = residentLayout ?? File.Exists(Path.Combine(Root, "Init.hrp"));
         }
+
+        internal PackDirectorySource ForLanguage(string language) => new PackDirectorySource(Root, language, resident);
 
         internal static bool ValidLanguage(string value)
         {
@@ -40,6 +46,7 @@ namespace Harken
                 return VnResult.VN_INVALID_ARG;
             try
             {
+                if (resident) return CaptureResident(name, project, init, out input);
                 string scope = name == null ? string.Empty : Language;
                 VnResult result = CapturePair(name ?? "Init", scope, out byte[] bytes, out byte[] json);
                 bool fallback = name != null && scope.Length != 0 && result == VnResult.VN_CONTENT_NOT_LOADED;
@@ -60,6 +67,7 @@ namespace Harken
                 return VnResult.VN_OK;
             }
             catch (OutOfMemoryException) { return VnResult.VN_DEVICE_ERROR; }
+            catch (PackStorage.InvalidMember) { return VnResult.VN_BAD_PACK; }
             catch (IOException) { return VnResult.VN_PACK_PROVIDER_FAILED; }
             catch (UnauthorizedAccessException) { return VnResult.VN_PACK_PROVIDER_FAILED; }
             catch (ArgumentException) { return VnResult.VN_INVALID_ARG; }
@@ -109,24 +117,10 @@ namespace Harken
             {
                 if (binary == null && metadata == null) return VnResult.VN_CONTENT_NOT_LOADED;
                 if (binary == null || metadata == null) return VnResult.VN_BAD_PACK;
-                bytes = Read(binary);
-                json = Read(metadata);
+                bytes = PackStorage.ReadBinary(binary);
+                json = PackStorage.ReadPlain(metadata);
             }
             return VnResult.VN_OK;
-        }
-
-        private static byte[] Read(FileStream stream)
-        {
-            if (stream.Length > int.MaxValue) throw new IOException("Pack input exceeds the managed byte limit.");
-            var bytes = new byte[(int)stream.Length];
-            int offset = 0;
-            while (offset < bytes.Length)
-            {
-                int count = stream.Read(bytes, offset, bytes.Length - offset);
-                if (count == 0) throw new EndOfStreamException();
-                offset += count;
-            }
-            return bytes;
         }
     }
 }

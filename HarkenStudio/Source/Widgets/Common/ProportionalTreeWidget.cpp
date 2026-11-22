@@ -27,7 +27,6 @@ ProportionalTreeWidget::ProportionalTreeWidget(const QList<int>& columnWeights, 
       themeManager_(themeManager ? themeManager : &ThemeManager::instance())
 {
     Q_ASSERT(!columnWeights.isEmpty());
-    for (int weight : columnWeights) Q_ASSERT(weight > 0);
     setColumnCount(columnWeights.size());
     setSelectionBehavior(QAbstractItemView::SelectRows);
     setAlternatingRowColors(false);
@@ -39,6 +38,8 @@ ProportionalTreeWidget::ProportionalTreeWidget(const QList<int>& columnWeights, 
     header()->setDefaultAlignment(Qt::AlignLeft | Qt::AlignVCenter);
     header()->setStretchLastSection(false);
     header()->setSectionResizeMode(QHeaderView::Interactive);
+    for (int column = 0; column < columnWeights.size(); ++column)
+        if (columnWeights[column] == 0) header()->setSectionResizeMode(column, QHeaderView::Fixed);
     setItemDelegate(new TableItemDelegate(this, themeManager_));
     header()->viewport()->installEventFilter(this);
     new HeaderResizeHighlight(header(), themeManager_);
@@ -356,7 +357,7 @@ bool ProportionalTreeWidget::eventFilter(QObject* watched, QEvent* event)
         const int x = static_cast<QMouseEvent*>(event)->position().toPoint().x();
         const int radius = themeManager_->metrics().table.resizeHandleRadius;
         for (int i = 0; i < columnCount(); ++i) {
-            if (isColumnHidden(i)) continue;
+            if (isColumnHidden(i) || header()->sectionResizeMode(i) != QHeaderView::Interactive) continue;
             const int edge = header()->sectionViewportPosition(i) + header()->sectionSize(i);
             if (std::abs(x - edge) <= radius) {
                 columnLayout_.reset();
@@ -368,13 +369,21 @@ bool ProportionalTreeWidget::eventFilter(QObject* watched, QEvent* event)
     return QTreeWidget::eventFilter(watched, event);
 }
 
+QList<int> ProportionalTreeWidget::columnMinimums() const
+{
+    const auto& metrics = themeManager_->metrics().table;
+    QList<int> minimums(columnCount(), metrics.minimumColumnWidth);
+    for (int column = 0; column < columnCount(); ++column)
+        if (header()->sectionResizeMode(column) == QHeaderView::Fixed) minimums[column] = metrics.compactColumnWidth;
+    return minimums;
+}
+
 void ProportionalTreeWidget::applyColumnWidths()
 {
     if (applyingColumnWidths_ || viewport()->width() <= 0) return;
-    QList<int> minimums(columnCount(), themeManager_->metrics().table.minimumColumnWidth);
     QList<bool> hidden;
     for (int i = 0; i < columnCount(); ++i) hidden.append(isColumnHidden(i));
-    columnWidths_ = columnLayout_.widths(viewport()->width(), minimums, hidden, columnsFitToWidth_);
+    columnWidths_ = columnLayout_.widths(viewport()->width(), columnMinimums(), hidden, columnsFitToWidth_);
     const QScopedValueRollback guard(applyingColumnWidths_, true);
     for (int i = 0; i < columnCount(); ++i)
         if (!isColumnHidden(i)) setColumnWidth(i, columnWidths_[i]);
@@ -383,10 +392,9 @@ void ProportionalTreeWidget::applyColumnWidths()
 void ProportionalTreeWidget::rebalanceColumnWeight(int column, int newSize)
 {
     if (columnWidths_.size() != columnCount()) return;
-    QList<int> minimums(columnCount(), themeManager_->metrics().table.minimumColumnWidth);
     QList<int> order;
     for (int i = 0; i < columnCount(); ++i) order.append(header()->logicalIndex(i));
-    columnLayout_.resizeColumn(column, newSize, columnWidths_, minimums, order);
+    columnLayout_.resizeColumn(column, newSize, columnWidths_, columnMinimums(), order);
     applyColumnWidths();
 }
 

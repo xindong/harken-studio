@@ -34,6 +34,8 @@ namespace harkenizer::resourcecompiler {
 class MediaCache;
 }
 
+namespace harken::studio::VorbisEncoder { struct EncodedMedia; }
+
 namespace harken::studio {
 namespace bridge {
 
@@ -47,8 +49,6 @@ namespace bridge {
 //==============================================================================
 
 QString packArtifactExtension();     // pack file extension, dot included
-QString packVorbisCodecName();       // retired codec identifier (unavailable in .pack)
-QString packOpusCodecName();         // retired codec identifier (unavailable in .pack)
 uint32_t legacyPackContainerMagic(); // legacy .vp container magic
 
 //==============================================================================
@@ -75,6 +75,7 @@ bool decodeAudioFileInterleaved(const QString& filePath,
 struct AudioFileInfoData
 {
     bool valid = false;
+    QString codec;
     int channels = 0;
     int sampleRate = 0;
     int bitDepth = 0;
@@ -208,6 +209,7 @@ struct PackMediaDesc
     uint32_t authoringSourceId = 0; // editor source row, for diagnostics/UI only
     QString sourcePath;
     std::shared_ptr<const std::vector<float>> interleavedSamples;
+    std::shared_ptr<const harken::studio::VorbisEncoder::EncodedMedia> encodedMedia;
     QString contentHash;
     bool downmixToMono = false;
     bool loopable = false;

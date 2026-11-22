@@ -385,6 +385,15 @@ class ReleaseLifecycleTest(unittest.TestCase):
         self.root = Path(self.directory.name)
         shutil.copytree(REPO_ROOT / "HarkenStudio" / "Schema", self.root / "HarkenStudio" / "Schema")
         shutil.copytree(REPO_ROOT / MODULE.PACK_BINARY_ROOT_PATH, self.root / MODULE.PACK_BINARY_ROOT_PATH)
+        source = self.root / "HarkenStudio" / "Schema"
+        editor = MODULE.schema_archive.load_tree("Editor", source)
+        manifest = editor["manifest"]
+        if manifest.pop("developmentVersion", None) is not None:
+            manifest["published"].append(editor["currentVersion"])
+            path = source / f"Project/{editor['currentVersion']}/ProjectSerializedSchema.json"
+            path.parent.mkdir()
+            path.write_bytes(MODULE.schema_archive.canonical_bytes(editor["current"]))
+            (source / "Project/manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
         (self.root / ".scripts").mkdir()
         shutil.copy2(REPO_ROOT / MODULE.RELEASE_SCOPE_CONFIG_PATH, self.root / MODULE.RELEASE_SCOPE_CONFIG_PATH)
         (self.root / "VERSION").write_text("1.0.0", encoding="utf-8")

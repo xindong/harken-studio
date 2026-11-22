@@ -19,6 +19,7 @@ std::shared_ptr<const ProjectBuildSnapshot> ProjectBuildSnapshot::capture(
     snapshot->mediaCache = std::make_shared<harkenizer::resourcecompiler::MediaCache>();
     snapshot->media = AssetRegistry::instance().buildSnapshot(
         QFileInfo(source.projectPath).absolutePath(), source.platforms, false);
+    if (!snapshot->media.captureConversions(source, error)) return {};
     for (const auto& sourceAsset : source.audioSources) {
         if (snapshot->media.assets.contains(sourceAsset.sourceID)) continue;
         AssetInfo asset;

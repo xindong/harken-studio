@@ -4,6 +4,7 @@
 #include <QObject>
 #include <QMap>
 #include <QVector>
+#include <QSet>
 #include <QString>
 #include <QJsonObject>
 #include <QTimer>
@@ -42,6 +43,7 @@ struct AuditionInfo
     bool     revisionPending = false;
     uint32_t previewPlayableKind = 0;
     harken::studio::types::ObjectId runtimeStableId = {};
+    QSet<harken::studio::types::ObjectId> previewSounds;
     uint64_t requiredRevision = 0;
     uint64_t projectSessionId = 0;
     uint64_t runtimeEpoch = 0;

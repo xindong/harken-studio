@@ -41,6 +41,7 @@ private:
     QToolButton* allButton_ = nullptr;
     QComboBox* platformCombo_ = nullptr;
     QComboBox* languageCombo_ = nullptr;
+    QComboBox* previewModeCombo_ = nullptr;
     bool updating_ = false;
 };
 

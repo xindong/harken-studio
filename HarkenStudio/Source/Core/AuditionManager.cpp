@@ -145,6 +145,19 @@ AuditionManager::AuditionManager(harken::studio::AudioEngine* engine, QObject* p
     connect(&previewRevisionTimeoutTimer_, &QTimer::timeout,
             this, &AuditionManager::expirePendingRevisionStarts);
 
+    const auto invalidateMedia = [this](const QUuid& soundGuid) {
+        const auto active = getActiveAuditions();
+        for (const auto& audition : active)
+            if (audition.previewSounds.contains(harken::studio::runtimeObjectId(soundGuid)))
+                stop(audition.playingId);
+    };
+    connect(&harken::studio::ProjectManager::instance(), &harken::studio::ProjectManager::previewMediaInvalidated,
+            this, invalidateMedia);
+    connect(&harken::studio::ProjectManager::instance(), &harken::studio::ProjectManager::itemPropertyChanged,
+            this, [invalidateMedia](harken::studio::ProjectItem* item, const QString& property) {
+        if (item && property == QStringLiteral("sources")) invalidateMedia(item->guid);
+    });
+
     if (engine_) {
         connect(engine_, &harken::studio::AudioEngine::playbackStarted,
                 this, &AuditionManager::onEnginePlaybackStarted);
@@ -457,6 +470,7 @@ uint32_t AuditionManager::playAuthoredPreview(
         return 0;
     }
 
+    const auto previewSounds = harken::studio::ProjectManager::instance().prepareRuntimePreview(item);
     const auto barrier = engine_->currentWorldPlaybackBarrier();
     const auto kind = previewKind(item.type);
     AuditionInfo info;
@@ -465,6 +479,7 @@ uint32_t AuditionManager::playAuthoredPreview(
     info.mode = kind ? AuditionMode::Preview : AuditionMode::NamedPlayback;
     info.previewPlayableKind = kind.value_or(0);
     info.runtimeStableId = item.runtimeId();
+    info.previewSounds = previewSounds;
     info.gameObjId = gameObjectId;
     info.projectSessionId = barrier.projectSessionId;
     info.runtimeEpoch = barrier.runtimeEpoch;

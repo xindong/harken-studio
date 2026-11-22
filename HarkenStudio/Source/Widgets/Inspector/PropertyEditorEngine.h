@@ -53,6 +53,7 @@ public:
     void releasePage();
 
     void bindItem(ProjectItem* item);
+    void setConversionSelection(const QList<ProjectItem*>& items);
 
     QJsonObject buildSetItemPropertyArgs(
         const QString& field,
@@ -177,6 +178,8 @@ private:
     std::vector<SectionBinding> sectionBindings_;
     std::map<FieldGroupId, GroupBinding> groupBindings_;
     std::map<QUuid, DefinitionFieldGroups> groupPreviews_;
+    QVector<QUuid> conversionSelection_;
+    std::vector<FieldGroupInspectorView> conversionViews_;
     quint64 groupEditRevision_ = 0;
     ProjectItem* currentItem_ = nullptr;
     bool updating_ = false;

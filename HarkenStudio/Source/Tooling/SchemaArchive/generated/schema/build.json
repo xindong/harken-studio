@@ -1,6 +1,11 @@
 {
   "files": [
     {
+      "path": "Editor/10/ProjectSerializedSchema.json",
+      "sha256": "c4de356a58ae882cabc6a8d746bbffb197fa6ed7737cec2bdb5446772e2d4eeb",
+      "size": 88052
+    },
+    {
       "path": "Editor/7/ProjectSerializedSchema.json",
       "sha256": "40ca6a6b2cb60269afe4d2c3389117a6fa7ba84ef491ecdf1217c3821e171d91",
       "size": 78325
@@ -12,8 +17,8 @@
     },
     {
       "path": "Editor/9/ProjectSerializedSchema.json",
-      "sha256": "70cbf17d19974d211f7c80afdc433603d24a6bb432f0fd34d7605cad11310c26",
-      "size": 82943
+      "sha256": "c3db29fc7df178751e8126a17011adfc2f5a679926324bc22ecc616187ee873d",
+      "size": 78240
     },
     {
       "path": "Pack/3/PackMetadataSchema.json",
@@ -29,18 +34,18 @@
   "generated": [
     {
       "path": "ProjectSchemaGenerated.h",
-      "sha256": "7e29eea25cafd002d4fe8b256bd4898ba6639b0de78cd8598e0cd6813f09c375",
-      "size": 195
+      "sha256": "4960eaaa70df05021f1efcc8f2440b1de1ff302a193187357ba429ff781223da",
+      "size": 199
     },
     {
       "path": "ProjectSchemaValidator.generated.cpp",
-      "sha256": "5d7f55a7c29932c65f8d0ca5c4d46d9df9e4234a7b38a007aa781a173fa8ca8c",
-      "size": 1030895
+      "sha256": "5a3f9425ab3c2d2abad5c75ba0c9bdd17888114a03e4e2a3feb833a6ecdc90d0",
+      "size": 1722687
     },
     {
       "path": "ProjectSchemaValidator.generated.h",
-      "sha256": "0462a66bddfce2b5f286b080c3553e8bca73c8dd59cc92858a66c2cfc88e3e4a",
-      "size": 868
+      "sha256": "4bb5a249638f41310a7a1a320c656903ef0ecd81d4cd4267b9462632e96afe0c",
+      "size": 1234
     }
   ],
   "inputs": [
@@ -55,14 +60,24 @@
       "size": 77870
     },
     {
+      "path": "Editor/9/ProjectSerializedSchema.json",
+      "sha256": "c3db29fc7df178751e8126a17011adfc2f5a679926324bc22ecc616187ee873d",
+      "size": 78240
+    },
+    {
       "path": "Editor/current/ProjectSerializedSchema.json",
-      "sha256": "70cbf17d19974d211f7c80afdc433603d24a6bb432f0fd34d7605cad11310c26",
-      "size": 82943
+      "sha256": "c4de356a58ae882cabc6a8d746bbffb197fa6ed7737cec2bdb5446772e2d4eeb",
+      "size": 88052
     },
     {
       "path": "Editor/manifest.json",
-      "sha256": "1f632a681570f5d688a095abc1c38ab911e72e4958440d8bbf267b476501e997",
-      "size": 134
+      "sha256": "f96897ea5cccba828893b2e7d2561c87acd29a90563bc18228c473fccab5c00a",
+      "size": 169
+    },
+    {
+      "path": "Editor/migration-inputs/development-9/ProjectSerializedSchema.json",
+      "sha256": "edd381625eafdc75ac1ffde5aacecab3dcc6f418623254a99c8a2f0d63034cd3",
+      "size": 82724
     },
     {
       "path": "Pack/3/PackMetadataSchema.json",
@@ -81,14 +96,15 @@
     }
   ],
   "manifestVersion": 1,
-  "snapshotHash": "c616079c14ed5eb121e40441f67f062c764f298cd804668cc81514471aea88b2",
+  "snapshotHash": "11e08cc8932a5277be5f01c6b097dbf60d624814cdf3ed0028b8c1635bf94bfb",
   "trees": {
     "Editor": {
-      "currentVersion": 9,
+      "currentVersion": 10,
       "supportedVersions": [
         7,
         8,
-        9
+        9,
+        10
       ]
     },
     "Pack": {

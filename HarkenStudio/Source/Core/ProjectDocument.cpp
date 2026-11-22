@@ -161,7 +161,8 @@ QJsonObject ProjectDocument::create(const QString& type,
 bool ProjectDocument::parse(const QJsonObject& document,
                             const QString& expectedType,
                             ProjectDocumentData* data,
-                            QString* error)
+                            QString* error,
+                            ProjectDocumentContract contract)
 {
     const auto fail = [error](const QString& message) {
         if (error) *error = message;
@@ -193,15 +194,22 @@ bool ProjectDocument::parse(const QJsonObject& document,
         return fail(QStringLiteral("Project Schema version is invalid"));
     }
     parsed.schemaVersion = version.toInt();
+    const bool developmentV9 = contract == ProjectDocumentContract::DevelopmentV9;
+    if (developmentV9 && parsed.schemaVersion != 9)
+        return fail(QStringLiteral("Development input requires Project Schema 9"));
+    const bool currentHeader = parsed.schemaVersion == ProjectSchema::kProjectSchemaVersion
+        || developmentV9;
+    const bool historicalHeader = parsed.schemaVersion < ProjectSchema::kProjectSchemaVersion
+        && !developmentV9;
     const bool projectRoot = parsed.type == QStringLiteral("project.root");
-    if (projectRoot || parsed.schemaVersion < ProjectSchema::kProjectSchemaVersion) {
-        parsed.studioVersion = header.value(parsed.schemaVersion < ProjectSchema::kProjectSchemaVersion
+    if (projectRoot || historicalHeader) {
+        parsed.studioVersion = header.value(historicalHeader
             ? QStringLiteral("savedStudioVersion") : QStringLiteral("studioVersion")).toString();
         if (parsed.schemaVersion >= ProjectSchema::kProjectSchemaVersions[0]
             && parsed.studioVersion.isEmpty())
             return fail(QStringLiteral("Project document header is malformed"));
     }
-    if (parsed.schemaVersion == ProjectSchema::kProjectSchemaVersion) {
+    if (currentHeader) {
         if (header.contains(QStringLiteral("propertyModel"))
             || header.contains(QStringLiteral("savedStudioVersion")))
             return fail(QStringLiteral("Project document header contains retired metadata"));

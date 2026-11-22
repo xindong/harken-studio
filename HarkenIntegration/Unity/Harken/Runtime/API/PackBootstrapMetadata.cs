@@ -10,11 +10,13 @@ namespace Harken
     {
         internal IReadOnlyDictionary<ulong, string> packLocators;
         private PackSource packSource;
+        internal PackArchive ownedArchive;
         private SharedPack[] packOwners = Array.Empty<SharedPack>();
         private VnCanonicalPackSetMemberV2[] packKeepMembers = Array.Empty<VnCanonicalPackSetMemberV2>();
         private VnCanonicalPackSetMemberResultV1[] packKeepResults = Array.Empty<VnCanonicalPackSetMemberResultV1>();
         private Dictionary<string, SharedPack> metadataNames = new Dictionary<string, SharedPack>(StringComparer.Ordinal);
-        private PackMetadata initNames;
+        private NameTable.Table initNames;
+        internal PackDirectorySource.ResidentSelection initSelection;
         private ulong nameRevision;
         private Dictionary<(ulong Id, ulong Handle), RawPackLease> rawPackLeases =
             new Dictionary<(ulong, ulong), RawPackLease>();
@@ -26,10 +28,10 @@ namespace Harken
             internal RawPackLease(SharedPack owner, int count) { Owner = owner; Count = count; }
         }
 
-        internal void BindPackSource(PackSource source, string project, PackMetadata names)
+        internal void BindPackSource(PackSource source, NameTable.Table names)
         {
             packSource = source;
-            ProjectId = project;
+            ProjectId = names.Project.ToString();
             initNames = names;
         }
 
@@ -44,7 +46,7 @@ namespace Harken
         private NameTable.Table PrepareNames(Dictionary<string, SharedPack> names,
             Dictionary<SharedPack, PackMetadataInput> changes, ulong revision)
         {
-            var actions = new List<KeyValuePair<string, NameTable.Action>>(names.Count);
+            var table = NameTable.PrepareActions(initNames, names.Count);
             foreach (var row in names)
             {
                 SharedPack owner = row.Value;
@@ -55,9 +57,9 @@ namespace Harken
                 else
                     action = new NameTable.Action(owner.Names.RootId, owner.NameRevision,
                         owner.CallableFingerprint, owner);
-                actions.Add(new KeyValuePair<string, NameTable.Action>(row.Key, action));
+                table.Actions.Add(row.Key, action);
             }
-            return NameTable.Prepare(VnObjectId.Parse(ProjectId), initNames, actions);
+            return table;
         }
 
         /// <summary>
@@ -77,19 +79,13 @@ namespace Harken
             preparation = null;
             VnResult allowed = PackMutationAllowed();
             if (allowed != VnResult.VN_OK) return allowed;
-            if (names == null || !Guid.TryParseExact(project, "D", out Guid projectGuid) || projectGuid == Guid.Empty)
-                return VnResult.VN_INVALID_ARG;
-            if (projectGuid.ToString("D") != ProjectId) return VnResult.VN_GAMEPLAY_WRONG_PROJECT;
+            VnResult valid = ValidateRequestProject(names, project);
+            if (valid != VnResult.VN_OK) return valid;
             try
             {
-                var unique = new HashSet<string>(StringComparer.Ordinal);
-                var requested = new List<string>(names.Length);
-                foreach (string name in names)
-                {
-                    if (!PackMetadata.IsName(name) || name == "Init") return VnResult.VN_INVALID_ARG;
-                    if (unique.Add(name)) requested.Add(name);
-                }
-                var candidate = new ActionPreparation(this, requested.ToArray(), refresh);
+                string[] requested = UniqueNames(names);
+                if (requested == null) return VnResult.VN_INVALID_ARG;
+                var candidate = new ActionPreparation(this, requested, refresh);
                 VnResult result = candidate.Prepare();
                 preparation = candidate;
                 return result;
@@ -97,12 +93,84 @@ namespace Harken
             catch (OutOfMemoryException) { return VnResult.VN_DEVICE_ERROR; }
         }
 
+        private const int SmallBatchLimit = 32;
+        private int KnownOwnerCount => packs?.Count ?? packOwners.Length;
+
+        private bool FindOwner(ulong stableId, out SharedPack owner)
+        {
+            if (packs != null) return packs.TryGetValue(stableId, out owner);
+            foreach (var candidate in packOwners)
+                if (candidate.StableId == stableId) { owner = candidate; return true; }
+            owner = null;
+            return false;
+        }
+
+        private bool FindOwner(string name, out SharedPack owner)
+        {
+            if (metadataNames != null) return metadataNames.TryGetValue(name, out owner);
+            foreach (var candidate in packOwners)
+                if (candidate.Names.Name == name) { owner = candidate; return true; }
+            owner = null;
+            return false;
+        }
+
+        private void EnsureOwnerIndexes()
+        {
+            ExpandDirectoryLease();
+            if (packs != null) return;
+            var byId = new Dictionary<ulong, SharedPack>(packOwners.Length);
+            var byName = new Dictionary<string, SharedPack>(packOwners.Length, StringComparer.Ordinal);
+            foreach (var owner in packOwners)
+            {
+                byId.Add(owner.StableId, owner);
+                byName.Add(owner.Names.Name, owner);
+            }
+            packs = byId;
+            metadataNames = byName;
+        }
+
+        private VnResult ValidateRequestProject(string[] names, string project)
+        {
+            if (names == null) return VnResult.VN_INVALID_ARG;
+            if (string.Equals(project, ProjectId, StringComparison.Ordinal)) return VnResult.VN_OK;
+            if (!Guid.TryParseExact(project, "D", out Guid id) || id == Guid.Empty) return VnResult.VN_INVALID_ARG;
+            return id.ToString("D") == ProjectId ? VnResult.VN_OK : VnResult.VN_GAMEPLAY_WRONG_PROJECT;
+        }
+
+        private static string[] UniqueNames(string[] names)
+        {
+            if (names.Length > SmallBatchLimit) return UniqueLargeRequest(names);
+            var result = new string[names.Length];
+            int count = 0;
+            foreach (string name in names)
+            {
+                if (!PackMetadata.IsName(name) || name == "Init") return null;
+                int index = 0;
+                while (index < count && result[index] != name) ++index;
+                if (index == count) result[count++] = name;
+            }
+            if (count != result.Length) Array.Resize(ref result, count);
+            return result;
+        }
+
+        private static string[] UniqueLargeRequest(string[] names)
+        {
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            var ordered = new List<string>(names.Length);
+            foreach (string name in names)
+            {
+                if (!PackMetadata.IsName(name) || name == "Init") return null;
+                if (seen.Add(name)) ordered.Add(name);
+            }
+            return ordered.ToArray();
+        }
+
         private VnResult PackMutationAllowed()
         {
             if (!active) return VnResult.VN_NOT_INITIALIZED;
             VnResult thread = RequireOwnerThread();
             if (thread != VnResult.VN_OK) return thread;
-            return mutationPhase == MutationPhase.Idle && !inPackReadCallback.Value
+            return mutationPhase == MutationPhase.Idle && !LanguageSwitchPending && !inPackReadCallback.Value
                 ? VnResult.VN_OK : VnResult.VN_IN_USE;
         }
 
@@ -111,6 +179,40 @@ namespace Harken
 
         private VnResult AcquireActionPacks(string[] names, SharedPack[] acquired, bool refresh, ulong expectedId,
             Dictionary<string, PackMetadataInput> captured, CancellationToken cancellation = default)
+        {
+            VnResult allowed = PackMutationAllowed();
+            if (allowed != VnResult.VN_OK) return allowed;
+            bool resident = captured == null && initSelection != null && Language.Length == 0 && expectedId == 0 &&
+                !refresh && names.Length != 0;
+            if (resident && HarkenEngine.NativeAbiMinor >= 2 && !directEntryMissing && !cancellation.CanBeCanceled &&
+                names.Length <= SmallBatchLimit && (directoryLease == null ? KnownOwnerCount == 0 :
+                    directoryLease.Scope == null && directoryLease.Names.Length == names.Length))
+            {
+                var direct = ActivateSmallResidentSet(names, acquired);
+                if (direct != VnResult.VN_CAPABILITY_UNAVAILABLE) return direct;
+            }
+            try { ExpandDirectoryLease(); }
+            catch (OutOfMemoryException) { return VnResult.VN_DEVICE_ERROR; }
+            if (resident && (KnownOwnerCount == 0 || KnownOwnerCount == names.Length))
+            {
+                bool empty = true;
+                foreach (SharedPack owner in packOwners) if (owner.Handle.IsValid) { empty = false; break; }
+                if (empty)
+                {
+                    VnResult batch = VisitBatch(names, acquired, cancellation, out bool consumed);
+                    // ABI 1.1 reports BAD_PACK for an HRP2 envelope before visiting its contents.
+                    // The managed reader validates the whole set again under its publication guards.
+                    bool legacyReadFailure = !consumed && batch == VnResult.VN_BAD_PACK &&
+                        HarkenEngine.NativeAbiMinor < 2 && HasBlockEnvelope(names);
+                    if (!legacyReadFailure && (consumed || batch != VnResult.VN_CAPABILITY_UNAVAILABLE)) return batch;
+                }
+            }
+            return AcquirePackInputs(names, acquired, refresh, expectedId, captured, cancellation);
+        }
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private VnResult AcquirePackInputs(string[] names, SharedPack[] acquired, bool refresh, ulong expectedId,
+            Dictionary<string, PackMetadataInput> captured, CancellationToken cancellation)
         {
             VnResult allowed = PackMutationAllowed();
             if (allowed != VnResult.VN_OK) return allowed;
@@ -127,7 +229,7 @@ namespace Harken
                 bool warm = !refresh;
                 for (int i = 0; warm && i < names.Length; ++i)
                 {
-                    warm = metadataNames.TryGetValue(names[i], out SharedPack known) && known.Handle.IsValid;
+                    warm = FindOwner(names[i], out SharedPack known) && known.Handle.IsValid;
                     if (warm)
                     {
                         if (known.Requests == int.MaxValue) return VnResult.VN_BACKPRESSURE;
@@ -140,10 +242,11 @@ namespace Harken
                     foreach (SharedPack owner in acquired) ++owner.Requests;
                     return VnResult.VN_OK;
                 }
+                EnsureOwnerIndexes();
                 var nextPacks = new Dictionary<ulong, SharedPack>(packs);
                 var nextNames = new Dictionary<string, SharedPack>(metadataNames, StringComparer.Ordinal);
                 var changes = new Dictionary<SharedPack, PackMetadataInput>();
-                VnObjectId project = VnObjectId.Parse(ProjectId);
+                VnObjectId project = initNames.Project;
                 for (int i = 0; i < names.Length; ++i)
                 {
                     string name = names[i];
@@ -198,6 +301,9 @@ namespace Harken
                         if (current != VnResult.VN_OK) return current;
                     }
                     cancellation.ThrowIfCancellationRequested();
+                    VnResult locked = packSource.LockPublication(initSelection, changes.Values, out var guards);
+                    if (locked != VnResult.VN_OK) return locked;
+                    using var held = guards;
                     VnResult result = CommitActionPacks(nextPacks, nextNames, changes);
                     if (result != VnResult.VN_OK) return result;
                 }
@@ -227,21 +333,14 @@ namespace Harken
                 if (changes.TryGetValue(owner, out PackMetadataInput input))
                 {
                     uint operation = expected.IsValid && owner.ContentHash == input.Facts.contentHash &&
-                        owner.ByteCount == input.Bytes.Length
+                        owner.ByteCount == input.ByteCount
                         ? VnConstants.VN_PACK_MEMBER_KEEP : VnConstants.VN_PACK_MEMBER_CONTENT;
                     members[i + 1] = new PackMetadataMember(ids[i], VnConstants.VN_CANONICAL_PACK_SET_MEMBER_CONTENT,
                         expected, operation, input.Bytes, input.Names);
                 }
                 else members[i + 1] = new PackMetadataMember(ids[i], VnConstants.VN_CANONICAL_PACK_SET_MEMBER_CONTENT, expected);
             }
-            // Reserve release buffers before publication so firing retirement never allocates.
-            if (packKeepMembers.Length < members.Length)
-            {
-                var keepMembers = new VnCanonicalPackSetMemberV2[members.Length];
-                var keepResults = new VnCanonicalPackSetMemberResultV1[members.Length];
-                packKeepMembers = keepMembers;
-                packKeepResults = keepResults;
-            }
+            ReserveKeepBuffers(members.Length);
             NameTable.Table names = PrepareNames(nextNames, changes, nameRevision);
             mutationPhase = MutationPhase.ApplyingNative;
             VnResult result = PackMetadataNative.Activate(members, InitPack, SetRevision, out var report, out var rows);
@@ -253,7 +352,7 @@ namespace Harken
                 if (changes.TryGetValue(owners[i], out PackMetadataInput input))
                 {
                     owners[i].ContentHash = input.Facts.contentHash;
-                    owners[i].ByteCount = input.Bytes.Length;
+                    owners[i].ByteCount = input.ByteCount;
                     owners[i].Names = input.Names;
                 }
             }
@@ -273,12 +372,51 @@ namespace Harken
             return VnResult.VN_OK;
         }
 
+        private void ReserveKeepBuffers(int count)
+        {
+            if (packKeepMembers.Length >= count) return;
+            var members = new VnCanonicalPackSetMemberV2[count];
+            var results = new VnCanonicalPackSetMemberResultV1[count];
+            packKeepMembers = members;
+            packKeepResults = results;
+        }
+
+        internal bool TryReleaseWholeSet(SharedPack[] owners, int count)
+        {
+            if (count != packOwners.Length || PackMutationAllowed() != VnResult.VN_OK) return false;
+            // A request is counted for every acquired occurrence. A count of one rules out aliases.
+            for (int i = 0; i < count; ++i)
+            {
+                var owner = owners[i];
+                if (owner == null || owner.Requests != 1 || !owner.Handle.IsValid ||
+                    !FindOwner(owner.StableId, out var current) || !ReferenceEquals(owner, current))
+                    return false;
+            }
+            try
+            {
+                SetKeepMember(0, Inspection.PackStableId, VnConstants.VN_CANONICAL_PACK_SET_MEMBER_INIT, InitPack);
+                mutationPhase = MutationPhase.ApplyingNative;
+                if (PackMetadataNative.ActivatePrepared(packKeepMembers, packKeepResults, 1, InitPack,
+                    SetRevision, out var report) != VnResult.VN_OK) return false;
+                for (int i = 0; i < count; ++i)
+                {
+                    owners[i].Handle = default;
+                    owners[i].Requests = 0;
+                }
+                InitPack = new Pack(report.initHandle);
+                SetRevision = report.resultSetRevision;
+                return true;
+            }
+            catch (OutOfMemoryException) { return false; }
+            finally { mutationPhase = MutationPhase.Idle; }
+        }
+
         internal unsafe VnResult ReleaseActionPack(SharedPack owner)
         {
             VnResult allowed = PackMutationAllowed();
             if (allowed != VnResult.VN_OK) return allowed;
             if (owner == null || !owner.Handle.IsValid || owner.Requests == 0 ||
-                !packs.TryGetValue(owner.StableId, out SharedPack current) || !ReferenceEquals(owner, current))
+                !FindOwner(owner.StableId, out SharedPack current) || !ReferenceEquals(owner, current))
                 return VnResult.VN_STALE_HANDLE;
             if (owner.Requests > 1) { --owner.Requests; return VnResult.VN_OK; }
             try
@@ -295,7 +433,8 @@ namespace Harken
                 for (int i = 1; i < count; ++i)
                 {
                     ref VnCanonicalPackSetMemberResultV1 row = ref packKeepResults[i];
-                    packs[row.packStableId].Handle = new Pack(row.handle);
+                    FindOwner(row.packStableId, out var retained);
+                    retained.Handle = new Pack(row.handle);
                 }
                 owner.Handle = default;
                 --owner.Requests;
@@ -328,7 +467,9 @@ namespace Harken
             pack = default;
             VnResult allowed = PackMutationAllowed();
             if (allowed != VnResult.VN_OK) return allowed;
-            if (!packs.TryGetValue(id, out SharedPack owner))
+            try { ExpandDirectoryLease(); }
+            catch (OutOfMemoryException) { return VnResult.VN_DEVICE_ERROR; }
+            if (!FindOwner(id, out SharedPack owner))
             {
                 if (packLocators == null || !packLocators.TryGetValue(id, out string name))
                     return VnResult.VN_CAPABILITY_UNAVAILABLE;
@@ -406,17 +547,57 @@ namespace Harken
         /// <summary>Starts from one explicit platform directory containing Init.bytes and Init.json.</summary>
         public static VnResult StartDirectory(string platformDirectory, string language, ref VnConfig config,
             out PackBootstrapSession session)
+            => StartDirectory(platformDirectory, language, ref config, out session, 0);
+
+        internal static VnResult StartDirectory(string platformDirectory, string language, ref VnConfig config,
+            out PackBootstrapSession session, ulong outputTicket)
         {
             session = null;
             if (string.IsNullOrWhiteSpace(platformDirectory) || !PackDirectorySource.ValidLanguage(language))
                 return VnResult.VN_INVALID_ARG;
             try
             {
-                return Start(PackSource.FromDirectory(platformDirectory, language), ref config, out session);
+                return StartLocal(PackSource.FromDirectory(platformDirectory, language), ref config,
+                    out session, CancellationToken.None, outputTicket);
             }
             catch (OutOfMemoryException) { return VnResult.VN_DEVICE_ERROR; }
             catch (ArgumentException) { return VnResult.VN_INVALID_ARG; }
             catch (IOException) { return VnResult.VN_PACK_PROVIDER_FAILED; }
+        }
+
+        /// <summary>Starts from a published platform ZIP. The session owns the open archive.</summary>
+        public static VnResult StartArchive(string archivePath, string language, ref VnConfig config,
+            out PackBootstrapSession session)
+            => StartArchive(archivePath, language, ref config, out session, CancellationToken.None);
+
+        private static VnResult StartArchive(string archivePath, string language, ref VnConfig config,
+            out PackBootstrapSession session, CancellationToken cancellation, ulong outputTicket = 0)
+        {
+            session = null;
+            cancellation.ThrowIfCancellationRequested();
+            if (string.IsNullOrWhiteSpace(archivePath) || !PackDirectorySource.ValidLanguage(language))
+                return VnResult.VN_INVALID_ARG;
+            PackArchive archive = null;
+            try
+            {
+                archive = new PackArchive(archivePath);
+                VnResult result = CaptureAndStart(PackSource.FromArchive(archive, language), ref config,
+                    out session, cancellation, outputTicket);
+                if (session != null)
+                {
+                    session.ownedArchive = archive;
+                    archive = null;
+                }
+                return result;
+            }
+            catch (InvalidDataException) { return VnResult.VN_BAD_PACK; }
+            catch (FileNotFoundException) { return VnResult.VN_CONTENT_NOT_LOADED; }
+            catch (DirectoryNotFoundException) { return VnResult.VN_CONTENT_NOT_LOADED; }
+            catch (UnauthorizedAccessException) { return VnResult.VN_PACK_PROVIDER_FAILED; }
+            catch (IOException) { return VnResult.VN_PACK_PROVIDER_FAILED; }
+            catch (OutOfMemoryException) { return VnResult.VN_DEVICE_ERROR; }
+            catch (ArgumentException) { return VnResult.VN_INVALID_ARG; }
+            finally { archive?.Dispose(); }
         }
 
         /// <summary>Starts an explicitly selected Pack source with Init only.</summary>
@@ -424,8 +605,39 @@ namespace Harken
         {
             session = null;
             if (source == null) return VnResult.VN_INVALID_ARG;
+            return source.IsDirectory ? StartLocal(source, ref config, out session, CancellationToken.None)
+                : CaptureAndStart(source, ref config, out session, CancellationToken.None);
+        }
+
+        internal static VnResult StartLocal(PackSource source, ref VnConfig config,
+            out PackBootstrapSession session, CancellationToken cancellation, ulong outputTicket = 0)
+        {
+            session = null;
+            cancellation.ThrowIfCancellationRequested();
+            ulong ownedTicket = outputTicket == 0 && config.deviceMode == (uint)VnDeviceMode.VN_DEVICE_REAL
+                ? HarkenEngine.BeginOutputPreparation(config) : 0;
+            try
+            {
+                if (ownedTicket != 0) outputTicket = ownedTicket;
+                string archive = Path.Combine(source.Root, PackArchive.FileName);
+                if (File.Exists(archive) && !File.Exists(Path.Combine(source.Root, "Init.hrp")) && !File.Exists(Path.Combine(source.Root, "Init.bytes")) &&
+                    !File.Exists(Path.Combine(source.Root, "Init.json")))
+                {
+                    return StartArchive(archive, source.Language, ref config, out session, cancellation, outputTicket);
+                }
+                return CaptureAndStart(source, ref config, out session, cancellation, outputTicket);
+            }
+            finally { HarkenEngine.CancelOutputPreparation(ownedTicket); }
+        }
+
+        private static VnResult CaptureAndStart(PackSource source, ref VnConfig config,
+            out PackBootstrapSession session, CancellationToken cancellation, ulong outputTicket = 0)
+        {
+            session = null;
             VnResult result = source.Capture(null, default, null, out PackMetadataInput init);
-            return result == VnResult.VN_OK ? StartCaptured(source, init, ref config, out session) : result;
+            cancellation.ThrowIfCancellationRequested();
+            return result == VnResult.VN_OK ? StartCaptured(source, init, ref config, out session,
+                cancellation, outputTicket: outputTicket) : result;
         }
 
         public static async Task<PackStartupResult> StartAsync(PackSource source, VnConfig config,
@@ -433,6 +645,10 @@ namespace Harken
         {
             if (source == null || (source.IsAsync && !PackSource.HasControlContext))
                 return new PackStartupResult(VnResult.VN_INVALID_ARG);
+            if (source.IsDirectory)
+            {
+                return await StartDirectoryLevelAsync(source, config, null, cancellation, null);
+            }
             int thread = Environment.CurrentManagedThreadId;
             PackMetadataCapture captured = await source.CaptureAsync(null, default, null, cancellation);
             cancellation.ThrowIfCancellationRequested();
@@ -442,9 +658,72 @@ namespace Harken
             return new PackStartupResult(result, session);
         }
 
+        /// <summary>Opens output and prepares the first level. On success the session can play
+        /// immediately. Release Preparation when the level unloads. An optional onPrepared
+        /// callback can set up emitters and post the opening cue before the output is ready.
+        /// The session is borrowed during this callback; a failed callback rolls back startup.</summary>
+        public static Task<PackStartupResult> StartLevelAsync(PackSource source, VnConfig config,
+            string[] actionNames, CancellationToken cancellation = default,
+            Func<PackBootstrapSession, VnResult> onPrepared = null)
+        {
+            if (source == null || !source.IsDirectory || actionNames == null || actionNames.Length == 0)
+                return Task.FromResult(new PackStartupResult(VnResult.VN_INVALID_ARG));
+            return StartDirectoryLevelAsync(source, config, actionNames, cancellation, onPrepared);
+        }
+
+        private static async Task<PackStartupResult> StartDirectoryLevelAsync(PackSource source, VnConfig config,
+            string[] names, CancellationToken cancellation, Func<PackBootstrapSession, VnResult> onPrepared)
+        {
+            cancellation.ThrowIfCancellationRequested();
+            bool background = config.deviceMode == (uint)VnDeviceMode.VN_DEVICE_REAL_BACKGROUND;
+#if UNITY_STANDALONE_WIN || UNITY_EDITOR_WIN
+            if (config.deviceMode == (uint)VnDeviceMode.VN_DEVICE_REAL && PackSource.HasControlContext)
+            {
+                if (HarkenEngine.TryGetAbi(out var abi) && abi.minor >= 4)
+                {
+                    config.deviceMode = (uint)VnDeviceMode.VN_DEVICE_REAL_BACKGROUND;
+                    background = true;
+                }
+            }
+#endif
+            VnResult result = StartLocal(source, ref config, out var session, cancellation);
+            if (result != VnResult.VN_OK) return new PackStartupResult(result);
+            ActionPreparation preparation = null;
+            try
+            {
+                if (names != null) result = session.PrepareActions(names, session.ProjectId, out preparation);
+                if (result == VnResult.VN_OK && onPrepared != null)
+                {
+                    cancellation.ThrowIfCancellationRequested();
+                    result = onPrepared(session);
+                    if (!session.IsActive) return new PackStartupResult(VnResult.VN_NOT_INITIALIZED);
+                    if (result == VnResult.VN_OK) result = HarkenEngine.Update();
+                    if (!session.IsActive) return new PackStartupResult(VnResult.VN_NOT_INITIALIZED);
+                }
+                if (result == VnResult.VN_OK && background)
+                {
+                    while ((result = HarkenEngine.Resume()) == VnResult.VN_IN_USE)
+                    {
+                        if (PackSource.HasControlContext) await Task.Yield();
+                        else Thread.Sleep(1);
+                        cancellation.ThrowIfCancellationRequested();
+                    }
+                }
+                cancellation.ThrowIfCancellationRequested();
+                if (result != VnResult.VN_OK) return new PackStartupResult(result);
+                var ready = new PackStartupResult(result, session, preparation);
+                session = null;
+                return ready;
+            }
+            finally
+            {
+                if (session != null) { preparation?.Release(); session.Shutdown(); }
+            }
+        }
+
         internal static VnResult StartCaptured(PackSource source, PackMetadataInput init, ref VnConfig config,
             out PackBootstrapSession session, CancellationToken cancellation = default,
-            ulong[] startupIds = null, IReadOnlyDictionary<ulong, string> locators = null)
+            ulong[] startupIds = null, IReadOnlyDictionary<ulong, string> locators = null, ulong outputTicket = 0)
         {
             session = null;
             try
@@ -457,15 +736,19 @@ namespace Harken
                 var candidate = new PackBootstrapSession(default, startupIds ?? Array.Empty<ulong>(), inspection,
                     source.Root, source.Language, initBytes: init.Bytes);
                 candidate.packLocators = locators;
-                candidate.BindPackSource(source, init.Facts.projectId.ToString(), init.Names);
-                NameTable.Table names = NameTable.Prepare(init.Facts.projectId, init.Names,
-                    Array.Empty<KeyValuePair<string, NameTable.Action>>());
+                candidate.initSelection = init.Selection;
+                candidate.inputBudget = config.maxPackDecodeStagingBytes;
+                NameTable.Table names = NameTable.PrepareInit(init.Facts.projectId, init.Names);
+                candidate.BindPackSource(source, names);
                 var members = new[] { new PackMetadataMember(init.Facts.packStableId,
                     VnConstants.VN_CANONICAL_PACK_SET_MEMBER_INIT, default, VnConstants.VN_PACK_MEMBER_CONTENT, init.Bytes, init.Names) };
                 result = source.Validate(init);
                 if (result != VnResult.VN_OK) return result;
                 cancellation.ThrowIfCancellationRequested();
-                result = HarkenEngine.Init(config);
+                result = source.LockPublication(init.Selection, null, out var guards);
+                if (result != VnResult.VN_OK) return result;
+                using var initGuard = guards;
+                result = HarkenEngine.Init(config, outputTicket);
                 if (result != VnResult.VN_OK) return result;
                 result = PackMetadataNative.Activate(members, default, 0, out var report, out _);
                 if (result != VnResult.VN_OK)

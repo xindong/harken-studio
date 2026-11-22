@@ -102,14 +102,14 @@ ImportAssetsCommand* ImportAssetsCommand::pushImportAtRoot(const QStringList& ex
     return pushCollected(std::move(command));
 }
 
-ImportAssetsCommand* ImportAssetsCommand::pushImportSources(const QStringList& externalPaths,
-                                                          const QString& sourceFolder,
-                                                          const QMap<QString, QString>& replacements)
+ImportAssetsCommand* ImportAssetsCommand::pushImportResources(const QStringList& externalPaths,
+                                                              const QString& resourceFolder,
+                                                              const QMap<QString, QString>& replacements)
 {
     auto command = std::make_unique<ImportAssetsCommand>(
         externalPaths, static_cast<ProjectFileBinding*>(nullptr));
-    command->sourceFolder_ = sourceFolder;
-    command->sourceMode_ = true;
+    command->resourceFolder_ = resourceFolder;
+    command->resourcesOnly_ = true;
     QString recoveryError;
     if (!SourceFileSystem::recoverDiscard(&recoveryError)) {
         command->failCount_ = externalPaths.size();
@@ -118,8 +118,8 @@ ImportAssetsCommand* ImportAssetsCommand::pushImportSources(const QStringList& e
     }
     QMap<QString, QString> fileChanges = replacements;
     for (const QString& path : externalPaths) {
-        const QString relative = sourceFolder.isEmpty() ? QFileInfo(path).fileName()
-            : sourceFolder + QLatin1Char('/') + QFileInfo(path).fileName();
+        const QString relative = resourceFolder.isEmpty() ? QFileInfo(path).fileName()
+            : resourceFolder + QLatin1Char('/') + QFileInfo(path).fileName();
         const QString destination = SourceFileSystem::absolutePath(relative);
         if (!fileChanges.contains(relative) && QFileInfo(destination).isFile()
             && !AssetRegistry::instance().findAssetByPath(destination)) {
@@ -226,7 +226,7 @@ void ImportAssetsCommand::collectParentEntries()
             }
         }
 
-        ImportResult result = importer.importFile(path, targetBinding_, sourceFolder_, !sourceMode_);
+        ImportResult result = importer.importFile(path, targetBinding_, resourceFolder_, !resourcesOnly_);
 
         if (!result.success) {
             ++failCount_;
@@ -234,7 +234,7 @@ void ImportAssetsCommand::collectParentEntries()
             continue;
         }
 
-        if (sourceMode_ && result.deduplicated && !result.fileChange
+        if (resourcesOnly_ && result.deduplicated && !result.fileChange
             && !replacedPaths_.contains(result.relativePath)) {
             ++duplicateCount_;
             continue;
@@ -280,7 +280,7 @@ void ImportAssetsCommand::collectParentEntries()
         ++successCount_;
         if (result.deduplicated && result.fileChange) {
             LogService::logInfo(LogCategory::Import, QString("Restored: %1").arg(result.absolutePath));
-        } else if (sourceMode_ && replacedPaths_.contains(result.relativePath)) {
+        } else if (resourcesOnly_ && replacedPaths_.contains(result.relativePath)) {
             LogService::logInfo(LogCategory::Import, QString("Replaced: %1").arg(result.absolutePath));
         } else if (result.deduplicated) {
             ++duplicateCount_;

@@ -118,19 +118,16 @@ namespace Harken
 
     public static class Actions
     {
-        private static readonly uint PostDescSize =
-            (uint)Marshal.SizeOf<VnPostActionDesc>();
-
         public static VnResult Post(VnObjectId actionId, Emitter emitter,
                                     out ActionFiring firing)
             => Post(actionId, emitter, 0, out firing);
 
-        public static VnResult Post(VnObjectId actionId, Emitter emitter,
+        public static unsafe VnResult Post(VnObjectId actionId, Emitter emitter,
                                     ulong callerSeed,
                                     out ActionFiring firing)
         {
             VnPostActionDesc desc = default;
-            desc.structSize = PostDescSize;
+            desc.structSize = (uint)sizeof(VnPostActionDesc);
             desc.actionId = actionId;
             desc.emitter = emitter.Handle;
             desc.callerSeed = callerSeed;
@@ -148,9 +145,34 @@ namespace Harken
                                     out ActionFiring firing)
         {
             firing = default;
-            VnResult result = Resolve(actionName, default(VnObjectId), out ActionResolved resolved);
-            return result == VnResult.VN_OK
-                ? Post(resolved.ActionId, emitter, callerSeed, out firing) : result;
+            if (!PackMetadata.IsName(actionName)) return VnResult.VN_INVALID_ARG;
+            var directory = NameTable.ActiveDirectory;
+            var nameKeys = directory?.Keys;
+            if (nameKeys != null)
+            {
+                if (directory.Scope == null) return VnResult.VN_UNKNOWN_ID;
+                fixed (byte* keys = nameKeys)
+                fixed (char* name = actionName)
+                fixed (VnResidentDirectoryMemberV1* rows = directory.Rows)
+                {
+                    var desc = new VnNamedResidentPostV1
+                    {
+                        structSize = (uint)sizeof(VnNamedResidentPostV1), name = (IntPtr)name,
+                        nameUnits = (uint)actionName.Length, keys = (IntPtr)keys, keyCapacity = (uint)nameKeys.Length,
+                        rows = (IntPtr)rows, rowCount = (uint)directory.Rows.Length, initHandle = directory.InitHandle,
+                        setRevision = directory.SetRevision, emitter = emitter.Handle, callerSeed = callerSeed
+                    };
+                    try
+                    {
+                        var posted = HarkenNative.Vn_PostNamedResidentActionV1(desc, out ulong handle);
+                        firing = new ActionFiring(handle);
+                        return posted;
+                    }
+                    catch (EntryPointNotFoundException) { directory.Keys = null; }
+                }
+            }
+            VnResult result = NameTable.FindAction(actionName, default, out NameTable.Action action);
+            return result == VnResult.VN_OK ? Post(action.Id, emitter, callerSeed, out firing) : result;
         }
 
         public static unsafe VnResult Post(in ActionReference pinned,

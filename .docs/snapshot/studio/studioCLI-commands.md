@@ -1,6 +1,6 @@
 # HarkenStudioCLI 命令用法
 
-快照日期：2026-11-13。独立无窗口程序 `HarkenStudioCLI.exe`（macOS 为 `HarkenStudioCLI`）与 [Studio 本体](studio-commands.md) 共享工程核心命令、创作模型、资源处理和打包服务。
+快照日期：2026-11-17。独立无窗口程序 `HarkenStudioCLI.exe`（macOS 为 `HarkenStudioCLI`）与 [Studio 本体](studio-commands.md) 共享工程核心命令、创作模型、资源处理和打包服务。
 
 ## 入口组织
 
@@ -143,7 +143,7 @@ harken> help exit
 
 Studio 的对象试听、Action 播放与容器重置统一使用 AudioEngine 的当前创作版本就绪检查。GUI 对象与 Action 试听在同步期间排队，完成后重新校验项目、运行时和目标身份再播放；取消、目标删除、同步失败或等待超时会结束请求。GUI 重置在未就绪时明确拒绝执行。
 
-独立 CLI、实例 CLI 与 Studio `--shell` 在共享分发器复用同一检查，再执行 `post_action/post_action_3d/audition_play/audition_reset`。只有明确尚未提交操作的 `RUNTIME_SYNC_PENDING` 会等待后重试；超时、中断、同步失败或等待期间切换工程都返回失败。已有旧世界不能放行新操作。已有播放实例的停止、定位和 Source Editor 原始音频试听不等待当前创作版本。
+独立 CLI、实例 CLI 与 Studio `--shell` 在共享分发器复用同一检查，再执行 `post_action/post_action_3d/audition_play/audition_reset`。只有明确尚未提交操作的 `RUNTIME_SYNC_PENDING` 会等待后重试；超时、中断、同步失败或等待期间切换工程都返回失败。已有旧世界不能放行新操作。已有播放实例的停止、定位和 File Viewer 原始音频试听不等待当前创作版本。
 
 试听定位复用共享异步作业协议，成功接收与实际应用区分。完成查询保留全部进行中的请求及最近 128 条完成记录；已过期的身份返回 `NOT_FOUND`，引擎关闭或原生定位失败返回可查询的失败终态。附加会话超时/中断只停止等待，应按返回的 `operation.status_command/status_args` 查询结果后再决定下一步。
 
@@ -151,15 +151,39 @@ Studio 的对象试听、Action 播放与容器重置统一使用 AudioEngine �
 
 `apply_template_from_data` 的旧入口只合并部分模板内容，已从公开命令移除；需要模板工程时使用 `create_project` 的模板输入。桌面 `batch` 的中止选项改为 `stop_on_error`（默认 true），不再用 `atomic` 暗示事务；与 CLI `run` 一样，执行前校验全部请求，运行时失败会让父响应失败，且不回滚先前的外部写入。CLI 会话不公开桌面 `batch`，顺序脚本使用顶层 `run`。
 
-## 转码与异步结果
+## Conversion 创作与转换
 
-单条 `transcode_asset` 使用 `source_id`，批量 `batch_convert_media` 使用非空 `source_ids` 数组；二者均要求工程 `platform_id`。批量先校验全部身份及重复项，再创建共享作业，不在 CLI 内另行实现转换。
+Conversion 是 Conversions 桶内的独立预设，按源文件大小为每条规则保存采样率、格式和适用于 Vorbis 的质量。对象的 Conversion 字段组在 Shared 或平台覆写中引用预设或继承父级，各平台默认值由 `set_default_conversion` 设置。共享命令同时供独立 CLI、Studio shell、IPC 与 AI 使用。
 
-接受响应的 `result` 包含 `async: true`、`operation_id` 和 `operation`。IPC 客户端按 `operation.status_command/status_args` 查询 `get_transcode_status`，按 `cancel_command/cancel_args` 调用 `cancel_transcode`；两个入口都使用 `operation_id`，不再用资源/平台猜测作业身份。
+| 命令 | 参数 |
+|---|---|
+| `create_conversion` | `name`；可选 `folder`，为桶内已有相对目录或 `Conversions/` 开头的路径 |
+| `set_conversion_fields` | `conversion` 和完整的 `rules` 数组 |
+| `set_object_conversion` | `object`、`inherit`；可选 `settings` 为预设选择器或 `null`；可选 `platform_id` 改写该平台覆写，缺省为 Shared（写入 Shared 引用同时清除各平台覆写） |
+| `set_default_conversion` | `platform_id`；`conversion` 为预设选择器或 `null` |
+| `get_effective_conversion` | `object`；可选 `platform_id` |
+| `get_conversion_results` / `convert` | `conversion`；可选 `platform_id` |
 
-CLI 自动等待同一作业的最终结果。单条结果含实际 `cache_path/output_size`；批量结果含逐项响应与 `completed/total/succeeded/failed`。任一转换失败令整体失败；取消保留已完成缓存，当前文件结束后不再开始余项。超时/中断会请求取消并等待后台释放资源，随后才继续 shell 或退出。
+对象与预设选择器接受 GUID、无歧义路径或名称。查询与转换命令省略 `platform_id` 时使用当前主平台。`set_conversion_fields` 的 `rules` 完整替换规则表。每项包含 `max_bytes`、`sample_rate` 和 `format`。Vorbis 行还需要 `quality`（0–10 的整数，默认档位为 4），PCM 行省略质量。有限字节上限严格递增，最后一行的上限为 `null`（`Inf`）。每个 Source 按原始文件大小匹配首个包含该大小的上限，取该行的全部设置。格式和质量一致的预设也接受旧命令参数 `format/quality/sample_rate_tiers`。采样率为 `0/8000/11025/16000/22050/24000/32000/44100/48000`，`0` 或不低于原始采样率的目标保留原始采样率。
 
-转码期间 IPC 写操作（包括工程切换）被拒绝，查询和取消仍可调用；从 GUI 关闭工程会取消余项，陈旧工程的结果不写回新工程。`get_pack_build_status/cancel_pack_build` 为导出对应的完成/取消入口。一般异步协议以响应中的 `result.operation` 为准，成功接收请求不等于任务完成。
+`set_object_conversion` 的 `inherit:true` 不接受 `settings`；`inherit:false,settings:null` 明确选择不转换，省略 `settings` 沿用字段组本地历史。四个创作命令接入同一撤销栈；`convert` 只产生缓存，不进入撤销历史。以下流程在已导入 Sound 的工程会话执行，将 `<Sound selector>` 替换为目标对象身份：
+
+```text
+harken> create_conversion {"name":"PreviewPCM"}
+harken> set_conversion_fields {"conversion":"PreviewPCM","rules":[{"max_bytes":1048576,"sample_rate":0,"format":"PCM"},{"max_bytes":null,"sample_rate":24000,"format":"Vorbis","quality":4}]}
+harken> set_object_conversion {"object":"<Sound selector>","inherit":false,"settings":"PreviewPCM"}
+harken> set_default_conversion {"platform_id":"<Platform ID>","conversion":"PreviewPCM"}
+harken> get_effective_conversion {"object":"<Sound selector>"}
+harken> get_conversion_results {"conversion":"PreviewPCM"}
+harken> convert {"conversion":"PreviewPCM"}
+harken> save_project
+```
+
+`get_effective_conversion` 返回预设、来源对象与平台；Sound 另返回当前语言有效 Source 的身份、最终采样率、格式以及适用于 Vorbis 的质量。`get_item_info` 对可播放定义返回 `conversion` 与 `fieldGroups.shared.conversion`，预设在 `components.conversion` 读回原生配置；`get_project_info.default_conversions` 以平台 ID 为键列出各平台默认预设 GUID，无默认值的平台不出现。
+
+`get_conversion_results` 仅检查现有缓存，不触发编码。返回 `sources`，每行包含 Sound、Source、语言、`original` 和 `converted`；未转换时 `converted:null`，已有结果带格式、采样率、声道、帧数、字节数、时长和路径。`convert` 使用相同范围，覆盖该平台各工程语言下实际引用预设的有效 Source，同步等待完成后返回 `conversion_result`（`converted/cached/canceled/errors`）与 `sources`。失败返回 `CONVERSION_FAILED`，成功生成的缓存保留。该同步命令不使用旧作业协议：独立 CLI 进程内执行不受异步作业等待期限约束；`--instance` 附加模式仍受 `--timeout` 的传输等待期限约束，等待超时不会取消 Studio 侧正在执行的同步转换。旧 `set_conversion_settings/transcode_asset/batch_convert_media/get_transcode_status/cancel_transcode` 已移除。
+
+Part A 支持 PCM Pack 导出；Vorbis 转换缓存和 Converted 试听通过 Studio 过渡解码可用，但导出仍明确返回 `Vorbis Pack writing is not integrated`。原生 Engine 解码、Vorbis Pack 接入和采样率解耦属于 Part B。
 
 ## 两种打包输入
 
@@ -173,6 +197,8 @@ CLI 自动等待同一作业的最终结果。单条结果含实际 `cache_path/
 | 共同服务 | 同一工程格式、包体格式、校验与 `ProjectPackBuildService` | 同左 |
 
 `export_pack` 的单个平台与平台数组互斥，平台数组须非空且无重复；`all:true/self_clean:true` 不能与非空 `action_name` 同用。支持 `output_path/language/force`。两种构建均会写出包体、缓存及临时锁；只读指创作文件。已被 Studio 或其他进程占用的工程返回 `PROJECT_IN_USE`。
+
+`export_pack` 继续使用共享异步作业协议：IPC 按响应中的 `operation.status_command/status_args` 查询 `get_pack_build_status`，按 `cancel_command/cancel_args` 调用 `cancel_pack_build`。CLI 自动等待终态；成功接收请求不等于构建完成。
 
 未打开工程的运行时会话可 `load_pack/unload_pack`：先 Init 再内容包，卸载 Init 卸载集合；与工程 Current World 互斥。CLI 等待短暂背压消退，运行时错误、超时或中断才失败。
 

@@ -21,6 +21,7 @@ namespace Harken
     public static class HarkenEngine
     {
         private static int updateDepth;
+        internal static uint NativeAbiMinor { get; private set; }
         internal static bool IsUpdating => updateDepth != 0;
         internal static event Action OutermostUpdateReturned;
         internal static event Action Initialized;
@@ -40,21 +41,62 @@ namespace Harken
             return c;
         }
 
-        public static VnResult Init(in VnConfig config)
+        internal static bool TryGetAbi(out VnAbiVersionInfo abi)
         {
-            VnAbiVersionInfo abi = default;
+            abi = default;
             abi.structSize = (uint)Marshal.SizeOf<VnAbiVersionInfo>();
             try
             {
-                if (HarkenNative.Vn_QueryAbiVersion(ref abi) != VnResult.VN_OK ||
-                    abi.major != VnConstants.VN_ABI_VERSION_MAJOR)
-                    return VnResult.VN_CAPABILITY_UNAVAILABLE;
+                return HarkenNative.Vn_QueryAbiVersion(ref abi) == VnResult.VN_OK &&
+                    abi.major == VnConstants.VN_ABI_VERSION_MAJOR;
             }
-            catch (EntryPointNotFoundException) { return VnResult.VN_CAPABILITY_UNAVAILABLE; }
+            catch (EntryPointNotFoundException) { return false; }
+        }
+
+        internal static ulong BeginOutputPreparation(in VnConfig config)
+        {
+#if UNITY_STANDALONE_WIN && !UNITY_EDITOR
+            try
+            {
+                if (TryGetAbi(out var abi) && abi.minor >= 5 &&
+                    HarkenNative.Vn_BeginOutputPreparation(config, out ulong ticket) == VnResult.VN_OK)
+                    return ticket;
+            }
+            catch (DllNotFoundException) { }
+            catch (EntryPointNotFoundException) { }
+            catch (BadImageFormatException) { }
+#endif
+            return 0;
+        }
+
+        internal static void CancelOutputPreparation(ulong ticket)
+        {
+#if UNITY_STANDALONE_WIN && !UNITY_EDITOR
+            if (ticket != 0) HarkenNative.Vn_CancelOutputPreparation(ticket);
+#endif
+        }
+
+        public static VnResult Init(in VnConfig config) => Init(config, 0);
+
+        internal static VnResult Init(in VnConfig config, ulong ticket)
+        {
+            if (!TryGetAbi(out var abi)) return VnResult.VN_CAPABILITY_UNAVAILABLE;
             VnResult support = Emitter.CheckStateOnlySupport();
             if (support != VnResult.VN_OK) return support;
-            VnResult result = HarkenNative.Vn_Init(config);
+            VnResult result;
+#if UNITY_STANDALONE_WIN && !UNITY_EDITOR
+            if (ticket != 0)
+            {
+                result = HarkenNative.Vn_InitWithOutputPreparation(config, ticket);
+                if (result == VnResult.VN_INVALID_CONFIG &&
+                    HarkenNative.Vn_CancelOutputPreparation(ticket) == VnResult.VN_OK)
+                    result = HarkenNative.Vn_Init(config);
+            }
+            else
+#endif
+                result = HarkenNative.Vn_Init(config);
             if (result != VnResult.VN_OK) return result;
+            NativeAbiMinor = abi.minor;
             VariableGameplay.NotifySessionChanged();
             Initialized?.Invoke();
             return result;

@@ -21,7 +21,8 @@ enum class FieldGroupId : std::uint8_t {
     Output,
     Send,
     SpatialRating,
-    Effect
+    Effect,
+    Conversion
 };
 
 enum class FieldGroupMode : std::uint8_t {
@@ -80,6 +81,22 @@ struct EffectFieldGroup {
     bool operator==(const EffectFieldGroup&) const = default;
 };
 
+enum class ConversionFieldId : std::uint8_t {
+    Settings
+};
+
+constexpr std::uint64_t FieldGroupFieldMask(ConversionFieldId)
+{
+    return UINT64_C(1);
+}
+
+struct ConversionFieldGroup {
+    static constexpr auto groupId = FieldGroupId::Conversion;
+    harken::studio::project_schema::AuthoringGuid settingsRef{};
+
+    bool operator==(const ConversionFieldGroup&) const = default;
+};
+
 template <typename Payload>
 struct GroupState {
     FieldGroupMode mode = FieldGroupMode::Inherit;
@@ -114,6 +131,8 @@ void VisitFieldGroupFields(Payload& payload, Visitor&& visit)
         visit(Property::SpatialAttenuationDistanceScaling, "spatialAttenuationDistanceScaling", payload.spatialAttenuationDistanceScaling);
     } else if constexpr (std::is_same_v<Type, EffectFieldGroup>) {
         visit(Property::SignalGraph, "effects", payload.effects);
+    } else if constexpr (std::is_same_v<Type, ConversionFieldGroup>) {
+        visit(ConversionFieldId::Settings, "settingsRef", payload.settingsRef);
     }
 }
 
@@ -169,6 +188,7 @@ struct DefinitionFieldGroups {
     AuthoredGroup<SendFieldGroup> send;
     AuthoredGroup<SpatialRatingFieldGroup> spatialRating;
     AuthoredGroup<EffectFieldGroup> effects;
+    AuthoredGroup<ConversionFieldGroup> conversion;
 
     bool operator==(const DefinitionFieldGroups&) const = default;
 };
@@ -195,7 +215,8 @@ inline std::uint64_t FieldGroupOverrideMask(const DefinitionFieldGroups& groups,
 }
 
 using FieldGroupPayload = std::variant<
-    OutputFieldGroup, SendFieldGroup, SpatialRatingFieldGroup, EffectFieldGroup>;
+    OutputFieldGroup, SendFieldGroup, SpatialRatingFieldGroup, EffectFieldGroup,
+    ConversionFieldGroup>;
 
 enum class FieldGroupDiagnosticCode : std::uint8_t {
     InvalidDefinitionGuid,
@@ -263,6 +284,7 @@ enum class FieldGroupReferenceKind : std::uint8_t {
     Bus,
     Attenuation,
     Effect,
+    Conversion,
     Other
 };
 

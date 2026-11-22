@@ -418,7 +418,8 @@ VnResult ReplacePackV2(Engine& engine, VnPackHandle handle,
 VnResult LoadCanonicalPack(Engine& engine, const VnPackLoadDesc* desc,
                            VnPackHandle* outHandle);
 VnResult LoadProvisionalCanonicalContentForTests(
-    Engine& engine, const VnPackLoadDesc* desc, VnPackHandle* outHandle);
+    Engine& engine, const VnPackLoadDesc* desc, VnPackHandle* outHandle,
+    std::vector<PCMRegistry::PreparedPackSamples>* samples = nullptr);
 VnResult UnloadCanonicalPack(Engine& engine, VnPackHandle handle,
                              std::uint32_t flags);
 VnResult ReplaceCanonicalPack(Engine& engine, VnPackHandle handle,

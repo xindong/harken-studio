@@ -215,6 +215,7 @@ QJsonObject runSavedProjectBuild(const QCommandLineParser& parser,
             {QStringLiteral("removed_pack_count"), result.removedPackCount},
             {QStringLiteral("media_cache_hits"), result.mediaCacheHits},
             {QStringLiteral("media_conversions"), result.mediaConversions},
+            {QStringLiteral("media"), result.media},
             {QStringLiteral("outputs"), result.outputs},
             {QStringLiteral("records"), records}});
         if (!result.success && firstError.isEmpty()) firstError = result.error;

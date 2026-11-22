@@ -74,16 +74,6 @@ private:
 
     QString detectFormat(const QString& path);
 
-    AudioMetadata readWavMetadata(const QString& path);
-
-    AudioMetadata readMp3Metadata(const QString& path);
-
-    AudioMetadata readFlacMetadata(const QString& path);
-
-    AudioMetadata readOggMetadata(const QString& path);
-
-    AudioMetadata readAiffMetadata(const QString& path);
-
     QString projectRoot_;
 };
 

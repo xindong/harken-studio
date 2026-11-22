@@ -11,10 +11,15 @@
 #include <QDataStream>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QMutexLocker>
+#include <QScopeGuard>
+
+#include <vorbis/codec.h>
 
 #include <algorithm>
 #include <cmath>
+#include <future>
 #include <limits>
 
 namespace harken::studio::SoundSourceDerivative {
@@ -24,6 +29,11 @@ constexpr quint32 kArtifactMagic = 0x4d435048;
 constexpr quint32 kArtifactVersion = 3;
 constexpr qint64 kHeaderBytes = 40;
 constexpr qint64 kDigestBytes = 32;
+
+float encoderQuality(int level)
+{
+    return static_cast<float>(level) / kMaxVorbisQuality;
+}
 
 void fail(QString* error, const QString& message)
 {
@@ -48,14 +58,17 @@ std::optional<uint64_t> scheduleFrames(double seconds, uint32_t sampleRate)
 }
 
 QByteArray requestKey(const QString& inputFingerprint, const SoundSourceDef& source,
-                      double scheduleOffsetSec, const ConversionSettings& settings,
+                      double scheduleOffsetSec, const std::optional<ResolvedConversion>& conversion,
                       const AudioMetadata& metadata)
 {
-    if (inputFingerprint.isEmpty() || !std::isfinite(scheduleOffsetSec) || scheduleOffsetSec < 0.0
-        || (settings.performResample && settings.targetSampleRate == 0))
+    if (inputFingerprint.isEmpty() || !std::isfinite(scheduleOffsetSec) || scheduleOffsetSec < 0.0)
         return {};
+    const auto format = conversion ? conversion->format : ConversionFormat::PCM;
+    if (format != ConversionFormat::PCM && format != ConversionFormat::Vorbis) return {};
+    if (format == ConversionFormat::Vorbis && (!conversion->vorbisQuality || !validVorbisQuality(*conversion->vorbisQuality))) return {};
     const auto range = mapFrameRange(source, metadata.totalSamples);
-    const auto outputRate = settings.performResample ? settings.targetSampleRate : metadata.sampleRate;
+    const auto targetSampleRateHz = conversion ? conversion->sampleRate : 0;
+    const auto outputRate = targetSampleRateHz != 0 ? targetSampleRateHz : metadata.sampleRate;
     const auto offset = scheduleFrames(scheduleOffsetSec, outputRate);
     if (!range || outputRate == 0 || !offset) return {};
     const auto loop = loopRange(source, *range);
@@ -66,7 +79,12 @@ QByteArray requestKey(const QString& inputFingerprint, const SoundSourceDef& sou
            << inputFingerprint << static_cast<quint64>(range->start) << static_cast<quint64>(range->end)
            << static_cast<quint64>(loop ? loop->start : 0) << static_cast<quint64>(loop ? loop->end : 0)
            << static_cast<quint64>(*offset)
+           << static_cast<quint8>(format)
            << static_cast<quint32>(outputRate == metadata.sampleRate ? 0 : outputRate);
+    if (format == ConversionFormat::Vorbis)
+        stream << encoderQuality(*conversion->vorbisQuality) << QString::fromUtf8(vorbis_version_string())
+               << static_cast<quint32>(kVorbisSeekGrainFrames)
+               << static_cast<quint32>(VorbisEncoder::kFormatVersion);
     const auto canonicalSource = SoundSourceSemantics::canonicalized(source, metadata.totalSamples);
     for (const auto* fade : {&canonicalSource.fadeIn, &canonicalSource.fadeOut}) {
         stream << static_cast<quint64>(fade->durationFrames);
@@ -100,53 +118,139 @@ QByteArray artifactDigest(const QByteArray& header, const std::vector<float>& sa
     return hash.result();
 }
 
-std::optional<MaterializedArtifact> loadArtifact(const QString& outputDir, const QByteArray& key)
+QString artifactPath(const QString& outputDir, const QString& key, ConversionFormat format)
 {
-    if (outputDir.isEmpty()) return std::nullopt;
-    MaterializedArtifact artifact;
-    artifact.cacheKey = QString::fromLatin1(key);
-    artifact.path = QDir(outputDir).filePath(artifact.cacheKey + QStringLiteral(".pcm"));
-    QFile file(artifact.path);
-    if (!file.open(QIODevice::ReadOnly)) return std::nullopt;
-    const auto header = file.read(kHeaderBytes);
-    const auto digest = file.read(kDigestBytes);
-    if (header.size() != kHeaderBytes || digest.size() != kDigestBytes) return std::nullopt;
+    return QDir(outputDir).filePath(key
+        + (format == ConversionFormat::Vorbis ? QStringLiteral(".vcm") : QStringLiteral(".pcm")));
+}
+
+bool readPcmHeader(const QByteArray& header, qint64 fileSize, MaterializedArtifact& artifact)
+{
     QDataStream stream(header);
     stream.setByteOrder(QDataStream::LittleEndian);
     quint32 magic = 0, version = 0, sampleRate = 0, channels = 0;
     quint64 loopStart = 0, loopEnd = 0, revision = 0;
     stream >> magic >> version >> sampleRate >> channels >> loopStart >> loopEnd >> revision;
-    const auto payloadBytes = file.size() - kHeaderBytes - kDigestBytes;
+    const auto payloadBytes = fileSize - kHeaderBytes - kDigestBytes;
     if (stream.status() != QDataStream::Ok || magic != kArtifactMagic || version != kArtifactVersion
         || sampleRate == 0 || channels == 0 || channels > 8 || payloadBytes <= 0
         || payloadBytes % (channels * sizeof(float)) != 0)
-        return std::nullopt;
+        return false;
     const auto frames = static_cast<quint64>(payloadBytes / (channels * sizeof(float)));
     if (loopEnd == 0 ? loopStart != 0 : loopStart >= loopEnd || loopEnd > frames)
-        return std::nullopt;
-    auto samples = std::make_shared<std::vector<float>>(payloadBytes / sizeof(float));
-    if (file.read(reinterpret_cast<char*>(samples->data()), payloadBytes) != payloadBytes
-        || artifactDigest(header, *samples) != digest)
-        return std::nullopt;
+        return false;
     artifact.sampleRate = sampleRate;
     artifact.channels = static_cast<uint16_t>(channels);
     artifact.loopStartFrame = loopStart;
     artifact.loopEndFrame = loopEnd;
     artifact.loopable = loopEnd != 0;
+    artifact.revision = revision;
+    artifact.outputBytes = static_cast<uint64_t>(payloadBytes);
+    return true;
+}
+
+std::optional<MaterializedArtifact> loadArtifact(const QString& outputDir, const QByteArray& key,
+                                                ConversionFormat format)
+{
+    if (outputDir.isEmpty()) return std::nullopt;
+    MaterializedArtifact artifact;
+    artifact.format = format;
+    artifact.cacheKey = QString::fromLatin1(key);
+    artifact.path = artifactPath(outputDir, artifact.cacheKey, format);
+    if (format == ConversionFormat::Vorbis) {
+        auto encoded = std::make_shared<VorbisEncoder::EncodedMedia>();
+        if (!readVorbisCacheArtifact(artifact.path, *encoded, artifact.revision,
+                                    &artifact.contentHash, nullptr, &artifact.outputBytes))
+            return std::nullopt;
+        artifact.sampleRate = encoded->sampleRate;
+        artifact.channels = encoded->channels;
+        artifact.loopStartFrame = encoded->loopStartFrame;
+        artifact.loopEndFrame = encoded->loopEndFrame;
+        artifact.loopable = encoded->loopEndFrame != 0;
+        artifact.cacheHit = true;
+        artifact.encodedMedia = std::move(encoded);
+        return artifact;
+    }
+    QFile file(artifact.path);
+    if (!file.open(QIODevice::ReadOnly)) return std::nullopt;
+    const auto header = file.read(kHeaderBytes);
+    const auto digest = file.read(kDigestBytes);
+    if (header.size() != kHeaderBytes || digest.size() != kDigestBytes) return std::nullopt;
+    if (!readPcmHeader(header, file.size(), artifact)) return std::nullopt;
+    const auto payloadBytes = static_cast<qint64>(artifact.outputBytes);
+    auto samples = std::make_shared<std::vector<float>>(payloadBytes / sizeof(float));
+    if (file.read(reinterpret_cast<char*>(samples->data()), payloadBytes) != payloadBytes
+        || artifactDigest(header, *samples) != digest)
+        return std::nullopt;
     artifact.cacheHit = true;
     artifact.contentHash = QString::fromLatin1(digest.toHex());
     artifact.samples = std::move(samples);
-    artifact.revision = revision;
     return artifact;
 }
 
+bool publishArtifact(MaterializedArtifact& artifact, const QString& outputDir, QString* error)
+{
+    if (outputDir.isEmpty()) {
+        artifact.path.clear();
+        return true;
+    }
+    const auto path = artifactPath(outputDir, artifact.cacheKey, artifact.format);
+    if (artifact.path == path && QFileInfo(path).isFile()) return true;
+    bool written = false;
+    if (artifact.format == ConversionFormat::Vorbis) {
+        if (artifact.cacheImage.isEmpty())
+            artifact.cacheImage = encodeVorbisCacheArtifact(*artifact.encodedMedia,
+                artifact.revision, &artifact.contentHash, error, &artifact.outputBytes);
+        if (artifact.cacheImage.isEmpty()) return false;
+        written = writeCacheArtifact(path, [&](QIODevice& file) {
+            return file.write(artifact.cacheImage) == artifact.cacheImage.size();
+        });
+    } else {
+        const auto header = artifactHeader(artifact);
+        const auto digest = QByteArray::fromHex(artifact.contentHash.toLatin1());
+        const auto payloadBytes = static_cast<qint64>(artifact.samples->size() * sizeof(float));
+        written = writeCacheArtifact(path, [&](QIODevice& file) {
+            return file.write(header) == header.size() && file.write(digest) == digest.size()
+                && file.write(reinterpret_cast<const char*>(artifact.samples->data()), payloadBytes) == payloadBytes;
+        });
+    }
+    if (!written) {
+        fail(error, QStringLiteral("Failed to write converted media cache: %1").arg(path));
+        return false;
+    }
+    artifact.path = path;
+    emit MaterializationEvents::instance().artifactReady(path);
+    return true;
+}
+
+}
+
+MaterializationEvents& MaterializationEvents::instance()
+{
+    static MaterializationEvents events;
+    return events;
+}
+
+std::optional<CachedMediaProperties> inspectCachedArtifact(const QString& key,
+    const QString& outputDir, ConversionFormat format)
+{
+    if (key.isEmpty() || outputDir.isEmpty()) return std::nullopt;
+    const auto path = artifactPath(outputDir, key, format);
+    if (format == ConversionFormat::Vorbis) return inspectVorbisCacheArtifact(path);
+    QFile file(path);
+    MaterializedArtifact metadata;
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Unbuffered)
+        || !readPcmHeader(file.read(kHeaderBytes), file.size(), metadata))
+        return std::nullopt;
+    return CachedMediaProperties{path, metadata.sampleRate, metadata.channels,
+        metadata.outputBytes / sizeof(float) / metadata.channels, metadata.outputBytes};
 }
 
 QString cacheKey(const QString& inputFingerprint, const SoundSourceDef& source,
-                 double scheduleOffsetSec, const ConversionSettings& settings,
+                 double scheduleOffsetSec, const std::optional<ResolvedConversion>& conversion,
                  const AudioMetadata& metadata)
 {
-    return QString::fromLatin1(requestKey(inputFingerprint, source, scheduleOffsetSec, settings, metadata));
+    return QString::fromLatin1(requestKey(inputFingerprint, source, scheduleOffsetSec, conversion, metadata));
 }
 
 std::optional<MaterializedArtifact> MaterializationCache::find(const QByteArray& request)
@@ -163,6 +267,68 @@ void MaterializationCache::insert(const QByteArray& request, const MaterializedA
     artifacts_.insert(request, artifact);
 }
 
+std::optional<MaterializedArtifact> MaterializationCache::getOrCreate(const QByteArray& request,
+    const std::function<std::optional<MaterializedArtifact>(QString*)>& create, QString* error,
+    const QString& outputDir)
+{
+    struct Result
+    {
+        std::optional<MaterializedArtifact> artifact;
+        QString error;
+    };
+    struct Task
+    {
+        std::shared_future<Result> result;
+        size_t clients = 0;
+    };
+    static QMutex pendingMutex;
+    static QHash<QByteArray, std::shared_ptr<Task>> pending;
+    std::promise<Result> promise;
+    std::shared_ptr<Task> task;
+    bool producer = false;
+    {
+        QMutexLocker lock(&pendingMutex);
+        const auto found = pending.constFind(request);
+        if (found != pending.cend()) {
+            task = *found;
+        } else {
+            task = std::make_shared<Task>();
+            task->result = promise.get_future().share();
+            pending.insert(request, task);
+            producer = true;
+        }
+        ++task->clients;
+    }
+    const auto release = qScopeGuard([&] {
+        QMutexLocker lock(&pendingMutex);
+        if (--task->clients == 0) pending.remove(request);
+    });
+    if (producer) {
+        try {
+            Result result;
+            result.artifact = find(request);
+            if (result.artifact) result.artifact->cacheHit = true;
+            else result.artifact = create(&result.error);
+            if (result.artifact) insert(request, *result.artifact);
+            promise.set_value(std::move(result));
+        } catch (...) {
+            promise.set_exception(std::current_exception());
+        }
+    }
+    const auto& result = task->result.get();
+    if (error && !result.artifact) *error = result.error;
+    auto artifact = result.artifact;
+    if (artifact && !producer) {
+        artifact->cacheHit = true;
+        insert(request, *artifact);
+    }
+    if (artifact) {
+        if (!publishArtifact(*artifact, outputDir, error)) return std::nullopt;
+        insert(request, *artifact);
+    }
+    return artifact;
+}
+
 void MaterializationCache::clear()
 {
     QMutexLocker lock(&mutex_);
@@ -171,7 +337,8 @@ void MaterializationCache::clear()
 
 std::optional<uint64_t> MaterializationCache::contentRevision(const MaterializedArtifact& artifact)
 {
-    return artifact.samples ? std::optional<uint64_t>(artifact.revision) : std::nullopt;
+    return artifact.samples || artifact.encodedMedia
+        ? std::optional<uint64_t>(artifact.revision) : std::nullopt;
 }
 
 std::optional<FrameRange> mapFrameRange(const SoundSourceDef& source, uint64_t totalFrames)
@@ -183,32 +350,17 @@ std::optional<FrameRange> mapFrameRange(const SoundSourceDef& source, uint64_t t
     return FrameRange{start, end};
 }
 
-static std::optional<MaterializedArtifact> findCached(const QByteArray& key,
-                                                     const QString& outputDir,
-                                                     MaterializationCache* cache)
-{
-    if (key.isEmpty()) return std::nullopt;
-    if (cache) {
-        auto artifact = cache->find(key);
-        if (artifact) {
-            artifact->cacheHit = true;
-            return artifact;
-        }
-    }
-    auto artifact = loadArtifact(outputDir, key);
-    if (artifact) {
-        artifact->cacheHit = true;
-        if (cache) cache->insert(key, *artifact);
-    }
-    return artifact;
-}
-
 std::optional<PreparedMedia> prepare(const QString& inputPath,
                                      const SoundSourceDef& source,
                                      double scheduleOffsetSec,
-                                     const ConversionSettings& settings,
+                                     const std::optional<ResolvedConversion>& conversion,
                                      QString* error)
 {
+    if (conversion && conversion->format != ConversionFormat::PCM
+        && conversion->format != ConversionFormat::Vorbis) {
+        fail(error, QStringLiteral("Conversion format is invalid"));
+        return std::nullopt;
+    }
     if (!std::isfinite(scheduleOffsetSec) || scheduleOffsetSec < 0.0) {
         fail(error, QStringLiteral("Schedule offset is invalid"));
         return std::nullopt;
@@ -246,8 +398,9 @@ std::optional<PreparedMedia> prepare(const QString& inputPath,
         loop.loopStart = region->start;
         loop.loopEnd = region->end - 1;
     }
-    if (settings.performResample && settings.targetSampleRate != static_cast<uint32_t>(sampleRate)) {
-        if (!AssetConverter::processSamples(trimmed, sampleRate, channels, settings, loop, error))
+    const auto targetSampleRateHz = conversion ? conversion->sampleRate : 0;
+    if (targetSampleRateHz != 0 && targetSampleRateHz != static_cast<uint32_t>(sampleRate)) {
+        if (!AssetConverter::processSamples(trimmed, sampleRate, channels, targetSampleRateHz, loop, error))
             return std::nullopt;
     } else if (loop.enabled) {
         ++loop.loopEnd;
@@ -279,13 +432,18 @@ std::optional<MaterializedArtifact> materialize(const QString& inputPath,
                                                 double scheduleOffsetSec,
                                                 ProjectPlatformId platform,
                                                 const QString& outputDir,
-                                                const ConversionSettings& settings,
+                                                const std::optional<ResolvedConversion>& conversion,
                                                 QString* error,
                                                 MaterializationCache* cache,
                                                 const BuildSourceInput* input,
                                                 const std::function<std::shared_ptr<const BuildSourceInput>(QString*)>&
                                                     captureSource)
 {
+    if (conversion && conversion->format != ConversionFormat::PCM
+        && conversion->format != ConversionFormat::Vorbis) {
+        fail(error, QStringLiteral("Conversion format is invalid"));
+        return std::nullopt;
+    }
     if (platform.isNull()) {
         fail(error, QStringLiteral("Platform ID is required for derivative media"));
         return std::nullopt;
@@ -302,56 +460,67 @@ std::optional<MaterializedArtifact> materialize(const QString& inputPath,
     }
     const QString inputRevision = input->contentHash;
     const auto metadata = input->metadata;
-    const auto key = requestKey(inputRevision, source, scheduleOffsetSec, settings, metadata);
-    if (auto cached = findCached(key, outputDir, cache))
-        return cached;
-    std::shared_ptr<const BuildSourceInput> captured;
-    if (captureSource) {
-        captured = captureSource(error);
-        if (!captured) return std::nullopt;
-        input = captured.get();
-    }
-    auto media = prepare(input->inputPath, source, scheduleOffsetSec, settings, error);
-    if (!media) return std::nullopt;
+    const auto key = requestKey(inputRevision, source, scheduleOffsetSec, conversion, metadata);
     if (key.isEmpty()) {
         fail(error, QStringLiteral("Cannot identify converted media input"));
         return std::nullopt;
     }
-    MaterializedArtifact artifact;
-    artifact.cacheKey = QString::fromLatin1(key);
-    if (!outputDir.isEmpty())
-        artifact.path = QDir(outputDir).filePath(artifact.cacheKey + QStringLiteral(".pcm"));
-    artifact.sampleRate = media->sampleRate;
-    artifact.channels = media->channels;
-    artifact.loopStartFrame = media->loopStartFrame;
-    artifact.loopEndFrame = media->loopEndFrame;
-    artifact.loopable = media->loopEndFrame != 0;
-    artifact.samples = std::make_shared<const std::vector<float>>(std::move(media->samples));
-    harken::studio::bridge::PackMediaDesc description;
-    description.interleavedSamples = artifact.samples;
-    description.sampleRate = artifact.sampleRate;
-    description.channels = artifact.channels;
-    description.format = harken::studio::bridge::PackMediaFormat::PcmFloat;
-    description.loopable = artifact.loopable;
-    description.loopStartFrame = artifact.loopStartFrame;
-    description.loopEndFrame = artifact.loopEndFrame;
-    if (!harken::studio::bridge::computePackMediaContentRevision(description, &artifact.revision)) {
-        fail(error, QStringLiteral("Cannot compute converted media revision"));
-        return std::nullopt;
-    }
-    const auto header = artifactHeader(artifact);
-    const auto digest = artifactDigest(header, *artifact.samples);
-    artifact.contentHash = QString::fromLatin1(digest.toHex());
-    const auto payloadBytes = static_cast<qint64>(artifact.samples->size() * sizeof(float));
-    if (!outputDir.isEmpty() && !writeCacheArtifact(artifact.path, [&](QIODevice& file) {
-            return file.write(header) == header.size() && file.write(digest) == digest.size()
-                && file.write(reinterpret_cast<const char*>(artifact.samples->data()), payloadBytes) == payloadBytes;
-        })) {
-        fail(error, QStringLiteral("failed to write derivative media"));
-        return std::nullopt;
-    }
-    if (cache) cache->insert(key, artifact);
-    return artifact;
+    const auto format = conversion ? conversion->format : ConversionFormat::PCM;
+    const auto create = [&](QString* creationError) -> std::optional<MaterializedArtifact> {
+        if (auto cached = loadArtifact(outputDir, key, format)) return cached;
+        std::shared_ptr<const BuildSourceInput> captured;
+        if (captureSource) {
+            captured = captureSource(creationError);
+            if (!captured) return std::nullopt;
+            if (requestKey(captured->contentHash, source, scheduleOffsetSec, conversion,
+                           captured->metadata) != key) {
+                fail(creationError, QStringLiteral("Source changed during media conversion"));
+                return std::nullopt;
+            }
+            input = captured.get();
+        }
+        auto media = prepare(input->inputPath, source, scheduleOffsetSec, conversion, creationError);
+        if (!media) return std::nullopt;
+        MaterializedArtifact artifact;
+        artifact.format = format;
+        artifact.cacheKey = QString::fromLatin1(key);
+        artifact.sampleRate = media->sampleRate;
+        artifact.channels = media->channels;
+        artifact.loopStartFrame = media->loopStartFrame;
+        artifact.loopEndFrame = media->loopEndFrame;
+        artifact.loopable = media->loopEndFrame != 0;
+        if (format == ConversionFormat::Vorbis) {
+            auto encoded = VorbisEncoder::encode(media->samples, media->sampleRate, media->channels,
+                encoderQuality(*conversion->vorbisQuality), media->loopStartFrame, media->loopEndFrame, creationError);
+            if (!encoded) return std::nullopt;
+            artifact.revision = key.left(16).toULongLong(nullptr, 16);
+            artifact.cacheImage = encodeVorbisCacheArtifact(*encoded, artifact.revision,
+                &artifact.contentHash, creationError, &artifact.outputBytes);
+            if (artifact.cacheImage.isEmpty()) return std::nullopt;
+            artifact.encodedMedia = std::make_shared<const VorbisEncoder::EncodedMedia>(std::move(*encoded));
+        } else {
+            artifact.samples = std::make_shared<const std::vector<float>>(std::move(media->samples));
+            artifact.outputBytes = static_cast<uint64_t>(artifact.samples->size()) * sizeof(float);
+            harken::studio::bridge::PackMediaDesc description;
+            description.interleavedSamples = artifact.samples;
+            description.sampleRate = artifact.sampleRate;
+            description.channels = artifact.channels;
+            description.format = harken::studio::bridge::PackMediaFormat::PcmFloat;
+            description.loopable = artifact.loopable;
+            description.loopStartFrame = artifact.loopStartFrame;
+            description.loopEndFrame = artifact.loopEndFrame;
+            if (!harken::studio::bridge::computePackMediaContentRevision(description, &artifact.revision)) {
+                fail(creationError, QStringLiteral("Cannot compute converted media revision"));
+                return std::nullopt;
+            }
+            const auto header = artifactHeader(artifact);
+            const auto digest = artifactDigest(header, *artifact.samples);
+            artifact.contentHash = QString::fromLatin1(digest.toHex());
+        }
+        return artifact;
+    };
+    MaterializationCache localCache;
+    return (cache ? *cache : localCache).getOrCreate(key, create, error, outputDir);
 }
 
 }

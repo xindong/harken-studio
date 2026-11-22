@@ -5,16 +5,16 @@
 | 统计项 | 当前数量与范围 |
 |---|---|
 | 覆盖界面 | Explorer 的 Assets 对象树与 Hierarchy：对象行、工程 Folder、分类根、树内空白、键盘菜单及对应快捷键 |
-| 范围外 | Sources 文件树、主窗口菜单栏、Blueprint、Inspector、Timeline 等其他编辑面 |
+| 范围外 | Resources 文件树、主窗口菜单栏、Blueprint、Inspector、Timeline 等其他编辑面 |
 | 顶级入口 | 15 个定义，其中 Set Color... 隐藏；分隔线不计数 |
 | 顶级子菜单 | 4 个：Create / New Child、New Parent、New Action、Operation |
 | 顶级直接命令 | 11 个定义，其中 Set Color... 隐藏 |
-| 创建类型 | 10 类：Folder、Sound、Container、Track、Segment、Layer、Bus、Action、Variable、Attenuation |
+| 创建类型 | 12 类：Folder、Sound、Container、Track、Segment、Layer、Bus、Action、Variable、Attenuation、Effect、Conversion |
 | Container 创建模式 | 4 个：Random、Sequence、Match、Blend |
 | New Action 动作 | 4 个：Play、Stop、Set Variable、Trigger Action |
 | Operation 命令 | 2 个：Expand All、Collapse All |
 | 树内快捷键 | 5 个：Cut、Copy、Paste、Delete、Duplicate；作用于焦点所在树及其子控件 |
-| 分类标题 | Layer、Bus、Action、Variable、Attenuation |
+| 分类标题 | Layer、Bus、Action、Variable、Attenuation、Effect、Conversion |
 
 表注：Folder 是工程分类内可嵌套的物理目录，不充当混音对象的业务父级。菜单无 tooltip 或禁用原因说明行；不提供 Replace Source File...。快捷键见[快捷键快照](shortcuts.md)。
 
@@ -46,7 +46,7 @@
 
 | 上下文 | 顶级显示范围 |
 |---|---|
-| Layers / Actions / Variables / Attenuations 分类根 | Create、Paste、Operation |
+| Layers / Actions / Variables / Attenuations / Effects / Conversions 分类根 | Create、Paste、Operation |
 | Busses 分类根 | Create、Operation |
 | Folder 单选 | New Child、Rename、Delete、Operation |
 | 空白处 | Operation，禁用 |
@@ -101,7 +101,8 @@
 | Variables 分类根及其 Folder | Folder、Variable |
 | Attenuations 分类根及其 Folder | Folder、Attenuation |
 | Effect 分类根及其 Folder | Folder、Effect > Limiter |
-| Sound、Action、Variable、Attenuation、Effect、空白 | 无候选 |
+| Conversion 分类根及其 Folder | Folder、Conversion |
+| Sound、Action、Variable、Attenuation、Effect、Conversion、空白 | 无候选 |
 
 表注：分类根标题为 Create，其他位置为 New Child。Container 提供 Random、Sequence、Match、Blend；Random／Sequence 默认 Play Type = Single，可改为 Queue，Queue 不是独立创建模式。多选显示候选并集，入口禁用。
 
@@ -113,9 +114,11 @@
 | Track | Container、Segment、Layer |
 | Layer | Layer |
 | Bus | Bus |
-| Folder、Action、Variable、Attenuation、Effect | 无候选 |
+| Folder、Action、Variable、Attenuation、Effect、Conversion | 无候选 |
 
 表注：多选候选取并集，仍须全部为同父级兄弟并满足结构约束，不通过剔除后代改变分组。
+
+Conversion 预设沿用资源的创建、改名、移动、复制和删除入口；双击打开独立 Conversion Editor。删除预设同时清空所有对象（含休眠本地历史）和各平台 Default Conversion 引用，撤销恢复预设及这些引用。
 
 ### New Action
 

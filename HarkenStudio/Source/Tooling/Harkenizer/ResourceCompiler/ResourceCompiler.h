@@ -12,6 +12,8 @@
 #include <unordered_map>
 #include <vector>
 
+namespace harken::studio::VorbisEncoder { struct EncodedMedia; }
+
 namespace harkenizer::resourcecompiler {
 
 struct MediaInput {
@@ -19,10 +21,12 @@ struct MediaInput {
     std::string sourcePath;
     std::string contentHash;
     std::shared_ptr<const std::vector<float>> samplesOwner;
+    std::shared_ptr<const harken::studio::VorbisEncoder::EncodedMedia> encodedMedia;
     const float* interleavedSamples = nullptr;
     std::size_t sampleCount = 0;
     std::uint32_t sampleRate = 0;
     std::uint16_t channels = 0;
+    std::uint64_t frameCount = 0;
     bool downmixToMono = false;
     bool loopable = false;
     std::uint64_t loopStartFrame = 0;

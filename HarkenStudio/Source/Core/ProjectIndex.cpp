@@ -71,6 +71,7 @@ QString nameKey(ProjectItem::Type type, const QString& name)
 {
     const QString normalized = name.normalized(QString::NormalizationForm_C);
     return type == ProjectItem::Type::Attenuation || type == ProjectItem::Type::Effect
+        || type == ProjectItem::Type::Conversion
         ? normalized.toCaseFolded() : normalized;
 }
 
@@ -94,6 +95,7 @@ QString documentTypeForPath(const QString& relativePath)
     if (folder == QLatin1String("Variables")) return QStringLiteral("project.variable");
     if (folder == QLatin1String("Attenuations")) return QStringLiteral("project.attenuation");
     if (folder == QLatin1String("Effects")) return QStringLiteral("project.effect");
+    if (folder == QLatin1String("Conversions")) return QStringLiteral("project.conversion");
     return {};
 }
 

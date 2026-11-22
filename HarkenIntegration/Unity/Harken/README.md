@@ -10,6 +10,10 @@ Documentation: ONLINE_DOCUMENTATION_URL_PENDING
 
 Harken is a game-audio middleware. Sound designers author sounds and playback logic in Harken Studio and export them as Packs; this package loads those Packs in a Unity game and plays them through the Harken engine, so game code triggers sounds by name instead of handling audio files directly.
 
+## Prepare first-level audio on Windows
+
+Games that own the audio session can call `await PackBootstrap.StartLevelAsync(source, config, actionNames, cancellation)` on the Unity main thread. Create the source from the platform Pack directory and pass the Action names needed for the first level. Supported Windows runtimes open the output while preparing these sounds. To play an opening cue immediately, create its emitter and post the Action in `onPrepared`, returning the post result. Playback starts at the beginning of the cue on the real output. On `VN_OK` both the level and the device are ready. Call `Preparation.Release()` when leaving the level and `Session.Shutdown()` when ending the session. Scenes using the default audio component let that component own startup and shutdown.
+
 ## Features
 
 - Start the engine from Project Settings with a selected Pack directory, or from code with directory, byte or custom sources.
@@ -40,3 +44,19 @@ Harken is a game-audio middleware. Sound designers author sounds and playback lo
 ## License
 
 See [LICENSE.md](LICENSE.md) and [NOTICE.md](NOTICE.md).
+
+### Compact Unity Pack releases
+
+With Python 3.9+ and the Studio CLI installed, run the SDK publishing tool on the saved project and a target platform UUID. Choose a new output directory for each release.
+
+```sh
+python Tools~/publish_packs.py --studio-cli /path/to/HarkenStudioCLI --project GameAudio.hsp --platform-id <uuid> --output release-042
+```
+
+Use the resulting platform directory with the normal Unity Pack startup, directory, or reader source. The tool performs a fresh Studio export and copies the complete publication. Each canonical Pack of up to 16 MiB is stored as a single independent gzip member if that saves space. Larger or incompressible Packs, companion JSON and auxiliary files keep their original bytes. The SDK retains the normal names and validates the expanded canonical Pack before loading it. A directory load streams the compressed member into one bounded output array on the load path. A reader supplying bytes also retains its input until expansion ends. The native loader and gameplay use the canonical bytes.
+
+For direct native file loads or earlier Unity SDKs, use the ordinary Studio CLI build directory. When another delivery layer already compresses files, compare its final archive sizes before enabling compact publication.
+
+To publish resident sounds for a Windows game on a Windows build machine, add `--format windows-resident`. Ship the resulting platform directory with the game. `PackBootstrap.StartDirectory` recognizes its `Init.hrp`. On level entry, pass the level's Action names together to `Session.PrepareActions`. Once it succeeds, those Actions can play by name. Each Action has its own `.hrp` file, so an update to one sound in the same project with a compatible Init can ship just the changed file.
+
+Add `--format zip` to publish a standard archive at `<output>/<platform>/Packs.zip`. Archive entries start at the platform root and retain the exact Studio Pack, companion JSON and auxiliary file contents. Entries up to 16 MiB use DEFLATE when it reduces their size. Larger entries and entries that would grow use ZIP storage without compression. A standard ZIP extractor can restore the platform directory for the ordinary file loader.

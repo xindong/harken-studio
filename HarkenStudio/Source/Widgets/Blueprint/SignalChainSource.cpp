@@ -7,6 +7,7 @@
 #include "Core/Components/VBus.h"
 #include "Core/Components/VMixNode.h"
 #include "Core/ItemTypeCatalog.h"
+#include "Core/NumericFormat.h"
 #include "Core/PlayablePropertyAuthoringV1.h"
 #include "Core/ProjectManager.h"
 #include "Core/ProjectTypes.h"
@@ -275,10 +276,9 @@ bool busInChain(const SignalChainView& view, uint32_t busID)
 
 QString incomingLevelText(float linearLevel)
 {
-    if (linearLevel <= 0.0f) return QStringLiteral("-inf dB");
-    const float db = 20.0f * std::log10(linearLevel);
-    if (db <= -96.0f) return QStringLiteral("-inf dB");
-    return QString::number(db, 'f', 1) + QStringLiteral(" dB");
+    const float db = VMixNode::linearToDb(linearLevel);
+    const QString level = db <= -96.0f ? kNegativeInfinityText : formatDecimal(db, 1);
+    return level + QStringLiteral(" dB");
 }
 
 std::vector<BlueprintNodeDesc>

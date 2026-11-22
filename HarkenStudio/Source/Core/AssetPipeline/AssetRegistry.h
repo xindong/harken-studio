@@ -32,7 +32,6 @@ public:
     MediaBuildSnapshot buildSnapshot(const QString& projectRoot,
                                      const QVector<ProjectPlatform>& platforms,
                                      bool resolveMissingHashes = true) const;
-    bool accepts(const MediaConversionRequest& request) const;
 
     void clear();
 
@@ -78,19 +77,6 @@ public:
     void relocateSourcePaths(const QString& oldPath, const QString& newPath);
 
 
-    std::optional<MediaConversionRequest> conversionRequest(
-        uint32_t sourceID, ProjectPlatformId platform, QString* error = nullptr) const;
-    bool isCacheValid(uint32_t sourceID, ProjectPlatformId platform) const;
-
-    bool updateCache(const MediaConversionRequest& request, const CacheEntry& entry);
-
-    void touchCache(uint32_t sourceID, ProjectPlatformId platform);
-
-    void invalidateCache(const QString& cachePath);
-
-    void invalidateAllCaches(uint32_t sourceID);
-
-
     bool saveToFile(const QString& path = QString());
     QJsonObject toJson() const;
 
@@ -113,7 +99,6 @@ public:
                                   const QHash<uint32_t, AssetInfo>& changed);
 
 
-    void discardUncommittedCaches();
 
     bool isUncommitted(uint32_t sourceID) const;
 
@@ -130,7 +115,6 @@ signals:
 
     void assetModified(uint32_t sourceID);
 
-    void cacheInvalidated(uint32_t sourceID, harken::studio::ProjectPlatformId platform);
 
 private:
     explicit AssetRegistry(QObject* parent = nullptr);
@@ -146,9 +130,7 @@ private:
     void updatePathIndex(const AssetInfo& info);
 
     QString projectRoot_;
-    QUuid session_ = QUuid::createUuid();
     QVector<ProjectPlatform> platforms_;
-    QHash<ProjectPlatformId, QUuid> platformRevisions_;
     QHash<uint32_t, AssetInfo> assets_;
     QHash<QString, uint32_t> pathToID_;
     QSet<uint32_t> uncommittedIDs_;

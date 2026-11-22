@@ -6,6 +6,7 @@
 #include "ProjectDataPolicy.h"
 #include "ProjectSchemaRules.h"
 #include "ProjectSchemaValidator.h"
+#include "ProjectSchemaValidator.generated.h"
 
 #include <QDir>
 #include <QDirIterator>
@@ -26,6 +27,26 @@
 namespace harken::studio {
 
 namespace {
+
+ProjectDocumentContract documentContract(const QJsonObject& root)
+{
+    const auto header = root.value(QStringLiteral("harkenDocument")).toObject();
+    if (header.value(QStringLiteral("schemaVersion")).toInt() == 9
+        && (header.contains(QStringLiteral("studioVersion"))
+            || header.contains(QStringLiteral("packSchemaVersion"))))
+        return ProjectDocumentContract::DevelopmentV9;
+    return ProjectDocumentContract::VersionedSchema;
+}
+
+bool validateProjectRules(int schemaVersion, ProjectDocumentContract contract,
+                          ProjectSchemaRuleExecutor& executor, QStringList& errors)
+{
+    if (contract == ProjectDocumentContract::DevelopmentV9) {
+        GeneratedSchemaRegistry::validateDevelopmentProjectV9Rules(executor);
+        return true;
+    }
+    return GeneratedSchemaRegistry::validateProjectRules(schemaVersion, executor, errors);
+}
 
 class ContractRuleExecutor final : public ProjectSchemaRuleExecutor
 {
@@ -76,7 +97,8 @@ QStringList managedPackDirectories()
 {
     return {QStringLiteral("Actions"), QStringLiteral("Attenuations"),
             QStringLiteral("Busses"), QStringLiteral("Layers"),
-            QStringLiteral("Variables"), QStringLiteral("Effects")};
+            QStringLiteral("Variables"), QStringLiteral("Effects"),
+            QStringLiteral("Conversions")};
 }
 
 QString domainForFolder(const QString& folder)
@@ -93,6 +115,8 @@ QString domainForFolder(const QString& folder)
         return QStringLiteral("pack.attenuation");
     if (folder.compare(QStringLiteral("Effects"), Qt::CaseInsensitive) == 0)
         return QStringLiteral("pack.effect");
+    if (folder.compare(QStringLiteral("Conversions"), Qt::CaseInsensitive) == 0)
+        return QStringLiteral("pack.conversion");
     return {};
 }
 
@@ -110,6 +134,8 @@ QString documentTypeForFolder(const QString& folder)
         return QStringLiteral("project.attenuation");
     if (folder.compare(QStringLiteral("Effects"), Qt::CaseInsensitive) == 0)
         return QStringLiteral("project.effect");
+    if (folder.compare(QStringLiteral("Conversions"), Qt::CaseInsensitive) == 0)
+        return QStringLiteral("project.conversion");
     return {};
 }
 
@@ -134,6 +160,8 @@ QString packDomain(const QJsonObject& object, int schemaVersion)
         return QStringLiteral("pack.attenuation");
     if (type.compare(QStringLiteral("Effect"), Qt::CaseInsensitive) == 0)
         return QStringLiteral("pack.effect");
+    if (type.compare(QStringLiteral("Conversion"), Qt::CaseInsensitive) == 0)
+        return QStringLiteral("pack.conversion");
     return {};
 }
 
@@ -197,6 +225,7 @@ QList<LocatedValue> locatedValues(const QJsonObject& root,
 }
 
 QJsonArray documentSemanticProjection(const QJsonObject& document, int schemaVersion,
+                                      ProjectDocumentContract contract,
                                       QList<ProjectSchemaReferenceRule>* referenceRules = nullptr)
 {
     const QJsonObject header = document.value(QStringLiteral("harkenDocument")).toObject();
@@ -246,13 +275,14 @@ QJsonArray documentSemanticProjection(const QJsonObject& document, int schemaVer
         result.append(header.value(QStringLiteral("schemaVersion")));
     };
     QStringList errors;
-    if (!GeneratedSchemaRegistry::validateProjectRules(schemaVersion, executor, errors)
+    if (!validateProjectRules(schemaVersion, contract, executor, errors)
         || !errors.isEmpty())
         return {};
     return result;
 }
 
 QSet<QString> referencedDocumentPaths(const QJsonObject& document, int schemaVersion,
+                                     ProjectDocumentContract contract,
                                      const QHash<QString, QString>& pathsByGuid,
                                      const QString& rootBusPath)
 {
@@ -266,7 +296,7 @@ QSet<QString> referencedDocumentPaths(const QJsonObject& document, int schemaVer
     };
     const QJsonObject content = document.value(QStringLiteral("content")).toObject();
     QList<ProjectSchemaReferenceRule> referenceRules;
-    documentSemanticProjection(document, schemaVersion, &referenceRules);
+    documentSemanticProjection(document, schemaVersion, contract, &referenceRules);
     for (const auto& rule : referenceRules)
         for (const auto& value : locatedValues(content, rule.path, {}))
             addReference(value.value);
@@ -330,7 +360,8 @@ QSet<QString> inheritedDocumentPaths(const QSet<QString>& references)
     for (const QString& path : references) {
         const QString domain = domainForFolder(path.section(QLatin1Char('/'), 0, 0));
         if (domain == QLatin1String("pack.bus") || domain == QLatin1String("pack.attenuation")
-            || domain == QLatin1String("pack.variable") || domain == QLatin1String("pack.effect"))
+            || domain == QLatin1String("pack.variable") || domain == QLatin1String("pack.effect")
+            || domain == QLatin1String("pack.conversion"))
             result.insert(path);
     }
     return result;
@@ -409,31 +440,33 @@ bool ProjectContractRegistry::readJsonObject(
 QStringList ProjectContractRegistry::validateDocument(
     int schemaVersion, const QString& documentType,
     const QJsonObject& document, const QString& relativePath,
-    ProjectContractReadContext* context)
+    ProjectContractReadContext* context, ProjectDocumentContract contract)
 {
     if (context) {
         const auto previous = context->validated_.constFind(relativePath);
         if (previous != context->validated_.cend()
             && previous->schemaVersion == schemaVersion
+            && previous->contract == contract
             && previous->documentType == documentType
             && previous->object == document)
             return previous->errors;
     }
     QStringList errors = ProjectSchemaValidator::validateProjectDocument(
-        schemaVersion, documentType, document, relativePath);
+        schemaVersion, documentType, document, relativePath, contract);
     if (context)
-        context->validated_.insert(relativePath, {schemaVersion, documentType, document, errors});
+        context->validated_.insert(relativePath, {schemaVersion, documentType, document, errors, contract});
     return errors;
 }
 
 bool ProjectContractRegistry::decodeDocument(
     const QJsonObject& document, const QString& documentType,
     const QString& relativePath, ProjectDocumentData* data, QString* error,
-    ProjectContractReadContext* context)
+    ProjectContractReadContext* context, ProjectDocumentContract contract)
 {
     if (context) {
         const auto previous = context->decoded_.constFind(relativePath);
         if (previous != context->decoded_.cend()
+            && previous->contract == contract
             && previous->documentType == documentType && previous->object == document) {
             if (data) *data = previous->data;
             if (error) *error = previous->error;
@@ -442,11 +475,11 @@ bool ProjectContractRegistry::decodeDocument(
     }
     ProjectDocumentData parsed;
     QString detail;
-    const bool ok = ProjectDocument::parse(document, documentType, &parsed, &detail);
+    const bool ok = ProjectDocument::parse(document, documentType, &parsed, &detail, contract);
     if (data) *data = parsed;
     if (error) *error = detail;
     if (context)
-        context->decoded_.insert(relativePath, {documentType, document, parsed, detail, ok});
+        context->decoded_.insert(relativePath, {documentType, document, parsed, detail, ok, contract});
     return ok;
 }
 
@@ -474,10 +507,11 @@ ProjectContractProbe ProjectContractRegistry::probe(
         return result;
     }
 
+    const auto contract = documentContract(rootDocument);
     ProjectDocumentData document;
     QString documentError;
     if (!ProjectDocument::parse(rootDocument, QStringLiteral("project.root"),
-                                &document, &documentError)) {
+                                &document, &documentError, contract)) {
         result.issue = ProjectIssue::ProjectFileDamaged;
         result.detail = documentError;
         result.blockingErrors.append(projectIssueCode(result.issue) + QChar(':') + result.detail);
@@ -510,6 +544,16 @@ ProjectContractProbe ProjectContractRegistry::probe(
         }
     }
     const QDir directory(QFileInfo(projectFilePath).absolutePath());
+    if (contract == ProjectDocumentContract::DevelopmentV9) {
+        result.blockingErrors = validateDocument(result.schemaVersion,
+            QStringLiteral("project.root"), rootDocument, QFileInfo(projectFilePath).fileName(),
+            context, contract);
+        if (!result.blockingErrors.isEmpty()) {
+            result.issue = ProjectIssue::ProjectFileDamaged;
+            result.detail = result.blockingErrors.first();
+            return result;
+        }
+    }
     for (const QString& folder : managedPackDirectories()) {
         QDirIterator files(directory.filePath(folder), {QStringLiteral("*.vp")},
                            QDir::Files, QDirIterator::Subdirectories);
@@ -519,11 +563,20 @@ ProjectContractProbe ProjectContractRegistry::probe(
             ProjectDocumentData parsed;
             QString detail;
             if (!readJsonObject(path, &pack, &detail, context)
-                || !ProjectDocument::parse(pack, documentTypeForFolder(folder), &parsed, &detail)) {
+                || !ProjectDocument::parse(pack, documentTypeForFolder(folder), &parsed, &detail, contract)) {
                 result.issue = ProjectIssue::ProjectFileDamaged;
                 result.detail = QStringLiteral("%1: %2").arg(directory.relativeFilePath(path), detail);
                 result.blockingErrors.append(result.detail);
                 return result;
+            }
+            if (contract == ProjectDocumentContract::DevelopmentV9) {
+                result.blockingErrors = validateDocument(result.schemaVersion,
+                    documentTypeForFolder(folder), pack, directory.relativeFilePath(path), context, contract);
+                if (!result.blockingErrors.isEmpty()) {
+                    result.issue = ProjectIssue::ProjectFileDamaged;
+                    result.detail = result.blockingErrors.first();
+                    return result;
+                }
             }
         }
     }
@@ -589,7 +642,8 @@ QStringList ProjectContractRegistry::validateIncrementalSnapshot(
         validatePath(document.key());
         if (!reuseGlobalValidation) continue;
         const auto previous = baseline.semanticProjections_.constFind(document.key());
-        const QJsonArray projection = documentSemanticProjection(document.value(), baseline.schemaVersion_);
+        const QJsonArray projection = documentSemanticProjection(
+            document.value(), baseline.schemaVersion_, baseline.contract_);
         if (previous == baseline.semanticProjections_.cend()
             || projection.isEmpty() || previous.value() != projection)
             reuseGlobalValidation = false;
@@ -650,10 +704,11 @@ QStringList ProjectContractRegistry::validateTreeImpl(
         rootRelativePath = projectFiles.isEmpty()
             ? directory.dirName() + QStringLiteral(".hsp") : projectFiles.first();
     }
+    const auto contract = documentContract(projectRootDocument);
     ProjectDocumentData rootDocument;
     QString rootDocumentError;
     if (!decodeDocument(projectRootDocument, QStringLiteral("project.root"),
-                         rootRelativePath, &rootDocument, &rootDocumentError, context)) {
+                         rootRelativePath, &rootDocument, &rootDocumentError, context, contract)) {
         errors.append(rootDocumentError);
         if (includeVirtualDocuments && context) context->clear();
         if (baseline) baseline->clear();
@@ -664,7 +719,7 @@ QStringList ProjectContractRegistry::validateTreeImpl(
     const QJsonObject projectRoot = rootDocument.content;
     errors.append(validateDocument(
         schemaVersion, QStringLiteral("project.root"), projectRootDocument,
-        rootRelativePath, context));
+        rootRelativePath, context, contract));
 
     struct NodeRecord {
         QString domain;
@@ -699,6 +754,9 @@ QStringList ProjectContractRegistry::validateTreeImpl(
         }
         const QJsonObject components = object.value(QStringLiteral("components"))
                                             .toObject();
+        if (object.value(QStringLiteral("type")) == QStringLiteral("Conversion")
+            && !components.value(QStringLiteral("conversion")).isObject())
+            errors.append(QStringLiteral("Conversion component is missing in %1").arg(path));
         for (auto it = components.constBegin(); it != components.constEnd(); ++it) {
             if (!ComponentCatalog::parseComponentName(it.key()).has_value()
                 && !(schemaVersion < kCurrentProjectSchemaVersion
@@ -830,11 +888,11 @@ QStringList ProjectContractRegistry::validateTreeImpl(
             const QString documentType = documentTypeForFolder(folder);
             validatedPaths.insert(path);
             errors.append(validateDocument(
-                schemaVersion, documentType, packDocument, path, context));
+                schemaVersion, documentType, packDocument, path, context, contract));
             ProjectDocumentData document;
             QString documentError;
             if (!decodeDocument(packDocument, documentType, path,
-                                 &document, &documentError, context)) {
+                                 &document, &documentError, context, contract)) {
                 errors.append(QStringLiteral("%1: %2").arg(path, documentError));
                 continue;
             }
@@ -1032,6 +1090,10 @@ QStringList ProjectContractRegistry::validateTreeImpl(
     };
     executor.referencesResolveCheck = [&](const QList<ProjectSchemaReferenceRule>& references) {
         for (const ProjectSchemaReferenceRule& reference : references) {
+            if (reference.kind == ProjectSchemaReferenceKind::Object) {
+                for (const auto& located : locatedValues(projectRoot, reference.path, rootRelativePath))
+                    validateReference(located.value, located.path, reference.targetTypes, reference.allowNull);
+            }
             for (const PackRecord& pack : packs) {
                 const QList<LocatedValue> values =
                     locatedValues(pack.object, reference.path, pack.path);
@@ -1054,6 +1116,7 @@ QStringList ProjectContractRegistry::validateTreeImpl(
                         else if (kind == QLatin1String("item"))
                             types = {QStringLiteral("Sound"), QStringLiteral("Container"),
                                      QStringLiteral("Track"), schemaVersion < kCurrentProjectSchemaVersion
+                                         && contract != ProjectDocumentContract::DevelopmentV9
                                          ? QStringLiteral("Piece") : QStringLiteral("Segment"),
                                      QStringLiteral("Layer")};
                         validateReference(located.value, located.path, types);
@@ -1065,6 +1128,9 @@ QStringList ProjectContractRegistry::validateTreeImpl(
                             located.parent.value(reference.selectorField).toString());
                     }
                     if (reference.kind == ProjectSchemaReferenceKind::Guid) {
+                        if (reference.allowNull && located.value.isString()
+                            && located.value.toString() == QStringLiteral("00000000-0000-0000-0000-000000000000"))
+                            continue;
                         const QString playbackKind = reference.path.contains(QStringLiteral("selections"))
                             && reference.path.back() == QLatin1String("childGuid")
                             ? QStringLiteral("Selection occurrence")
@@ -1160,8 +1226,7 @@ QStringList ProjectContractRegistry::validateTreeImpl(
 
     if (!reuseGlobalValidation) {
         QStringList ruleDispatchErrors;
-        GeneratedSchemaRegistry::validateProjectRules(schemaVersion, executor,
-                                                      ruleDispatchErrors);
+        validateProjectRules(schemaVersion, contract, executor, ruleDispatchErrors);
         errors.append(ruleDispatchErrors);
 
         QDirIterator allEntries(projectDirectory,
@@ -1210,6 +1275,7 @@ QStringList ProjectContractRegistry::validateTreeImpl(
         nextBaseline.valid_ = true;
         nextBaseline.requireCurrentSchema_ = requireCurrentSchema;
         nextBaseline.schemaVersion_ = schemaVersion;
+        nextBaseline.contract_ = contract;
         nextBaseline.rootRelativePath_ = rootRelativePath;
         nextBaseline.rootDocument_ = projectRootDocument;
         nextBaseline.documents_ = std::move(validatedDocuments);
@@ -1219,7 +1285,7 @@ QStringList ProjectContractRegistry::validateTreeImpl(
                 .toString(QUuid::WithoutBraces);
             nextBaseline.pathsByGuid_.insert(guid, document.key());
             nextBaseline.semanticProjections_.insert(document.key(),
-                documentSemanticProjection(document.value(), schemaVersion));
+                documentSemanticProjection(document.value(), schemaVersion, contract));
         }
         QString rootBusPath;
         for (const auto& pack : packs)
@@ -1228,7 +1294,7 @@ QStringList ProjectContractRegistry::validateTreeImpl(
                     .value(QStringLiteral("kind")).toString() == QLatin1String("root"))
                 rootBusPath = pack.path;
         for (auto document = nextBaseline.documents_.cbegin(); document != nextBaseline.documents_.cend(); ++document) {
-            const auto dependencies = referencedDocumentPaths(document.value(), schemaVersion,
+            const auto dependencies = referencedDocumentPaths(document.value(), schemaVersion, contract,
                 nextBaseline.pathsByGuid_, rootBusPath);
             nextBaseline.dependencies_.insert(document.key(), dependencies);
             nextBaseline.inheritedDependencies_.insert(document.key(), inheritedDocumentPaths(dependencies));

@@ -1,6 +1,7 @@
 #include "PaneSection.h"
 
 #include "Core/ThemeAssetCatalog.h"
+#include "Core/ThemeLayout.h"
 #include "Core/ThemeManager.h"
 
 #include <QHBoxLayout>
@@ -88,6 +89,14 @@ PaneSection::PaneSection(const QString& title, const QString& settingsId, QWidge
             ? ThemeAssetIds::NavigationChevronDown : ThemeAssetIds::NavigationChevronRight)).icon);
     });
     updateHeader();
+}
+
+void PaneSection::setContentWidget(QWidget* widget)
+{
+    auto* layout = new QVBoxLayout(content_);
+    ThemeLayout::margins(layout, ThemeLayout::Space::Panel);
+    layout->setSpacing(0);
+    layout->addWidget(widget, 1);
 }
 
 bool PaneSection::isExpanded() const

@@ -3,11 +3,16 @@
 #include "Core/ActionManager.h"
 #include "Core/ActionStepEditing.h"
 #include "Core/EffectChainSemantics.h"
+#include "Core/Components/VConversion.h"
+#include "Core/FieldGroupProjectAdapter.h"
+#include "Core/NameValidator.h"
+#include "Core/SoundSourceSemantics.h"
 #include "Core/Components/VBus.h"
 #include "Core/Components/VMixNode.h"
 #include "Core/Components/VSegment.h"
 #include "Core/ProjectManager.h"
 #include "Core/ProjectContract.h"
+#include "Core/ProjectOpenProtocol.h"
 #include "Core/ProjectSerializer.h"
 #include "Core/ProjectTypes.h"
 #include "Core/ProjectUpgradeManager.h"
@@ -18,6 +23,7 @@
 
 #include <QApplication>
 #include <QDateTime>
+#include <QDataStream>
 #include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
@@ -32,6 +38,7 @@
 #endif
 
 #include <algorithm>
+#include <array>
 #include <utility>
 
 namespace {
@@ -75,6 +82,70 @@ QMap<QString, QString> documentPathsById(const QString& projectDirectory)
         paths.insert(id, path);
     }
     return paths;
+}
+
+QJsonObject legacyConversionParameters(int rate)
+{
+    return {{QStringLiteral("format"), 1}, {QStringLiteral("targetSampleRate"), rate},
+        {QStringLiteral("vorbisAverageBitrate"), 0}, {QStringLiteral("vorbisEncodeMode"), 0},
+        {QStringLiteral("vorbisMaxBitrate"), 0}, {QStringLiteral("vorbisMinBitrate"), 0},
+        {QStringLiteral("vorbisQuality"), 0.6}};
+}
+
+QJsonObject legacyProfile(bool resample, const QJsonArray& policies = {})
+{
+    return {{QStringLiteral("performResample"), resample},
+        {QStringLiteral("sizePolicies"), policies.isEmpty() ? QJsonArray{QJsonObject{
+            {QStringLiteral("maxBytes"), QJsonValue::Null},
+            {QStringLiteral("config"), legacyConversionParameters(48000)}}} : policies}};
+}
+
+void writeMigrationSource(const QString& path, int rate, int frames)
+{
+    QFile file(path);
+    ASSERT_TRUE(file.open(QIODevice::WriteOnly));
+    QDataStream stream(&file);
+    stream.setByteOrder(QDataStream::LittleEndian);
+    stream.writeRawData("RIFF", 4);
+    stream << quint32(36 + frames * 2);
+    stream.writeRawData("WAVEfmt ", 8);
+    stream << quint32(16) << quint16(1) << quint16(1) << quint32(rate)
+           << quint32(rate * 2) << quint16(2) << quint16(16);
+    stream.writeRawData("data", 4);
+    stream << quint32(frames * 2);
+    for (int frame = 0; frame < frames; ++frame) stream << qint16(frame % 100);
+    ASSERT_EQ(stream.status(), QDataStream::Ok);
+}
+
+void removeConversionGroup(QJsonObject& content)
+{
+    if (content.value(QStringLiteral("fieldGroups")).isObject()) {
+        auto groups = content.value(QStringLiteral("fieldGroups")).toObject();
+        auto shared = groups.value(QStringLiteral("shared")).toObject();
+        shared.remove(QStringLiteral("conversion"));
+        groups.insert(QStringLiteral("shared"), shared);
+        if (groups.value(QStringLiteral("platforms")).isObject()) {
+            auto platforms = groups.value(QStringLiteral("platforms")).toObject();
+            for (const auto& key : platforms.keys()) {
+                auto platform = platforms.value(key).toObject();
+                platform.remove(QStringLiteral("conversion"));
+                if (platform.isEmpty()) platforms.remove(key);
+                else platforms.insert(key, platform);
+            }
+            if (platforms.isEmpty()) groups.remove(QStringLiteral("platforms"));
+            else groups.insert(QStringLiteral("platforms"), platforms);
+        }
+        content.insert(QStringLiteral("fieldGroups"), groups);
+    }
+    if (content.value(QStringLiteral("children")).isArray()) {
+        auto children = content.value(QStringLiteral("children")).toArray();
+        for (qsizetype index = 0; index < children.size(); ++index) {
+            auto child = children[index].toObject();
+            removeConversionGroup(child);
+            children[index] = child;
+        }
+        content.insert(QStringLiteral("children"), children);
+    }
 }
 
 QJsonObject extensionMetadata(const QString& id)
@@ -266,6 +337,13 @@ protected:
 TEST_F(ProjectDocumentRoundTripTest, AllDocumentMetadataSurvivesEditingSavingAndReopening)
 {
     auto& manager = ProjectManager::instance();
+    auto& actions = ActionManager::instance();
+    actions.clearAllForTesting();
+    const auto cleanup = qScopeGuard([&] {
+        UndoRedoManager::instance().clearHistory();
+        actions.clearAllForTesting();
+    });
+    registerProjectPlatformActions(actions, &manager);
     ASSERT_TRUE(manager.loadProject(projectPath_));
     ProjectData& project = *manager.currentProject();
     expectModelMetadata(project);
@@ -275,7 +353,16 @@ TEST_F(ProjectDocumentRoundTripTest, AllDocumentMetadataSurvivesEditingSavingAnd
     project.name = QStringLiteral("Edited by the baseline reader");
     project.sampleRate = 44100;
     project.channelConfig = AudioChannelConfig::Surround_5_1;
-    project.platforms = HarkenTest::platforms({"Windows", "Android"});
+    QJsonArray editedPlatforms;
+    for (const auto& platform : project.platforms) {
+        if (platform.basePlatform == BasePlatform::Windows || platform.basePlatform == BasePlatform::Android)
+            editedPlatforms.append(platform.toJson());
+    }
+    ASSERT_EQ(editedPlatforms.size(), 2);
+    const auto platformEdit = actions.execute(QStringLiteral("apply_project_platforms"), {
+        {QStringLiteral("expected_platforms"), ProjectPlatformSemantics::platformsToJson(project.platforms)},
+        {QStringLiteral("platforms"), editedPlatforms}});
+    ASSERT_TRUE(platformEdit.success) << platformEdit.errorMessage.toStdString();
     ASSERT_TRUE(manager.addProjectLanguage(QStringLiteral("English")));
     ASSERT_TRUE(manager.addProjectLanguage(QStringLiteral("Japanese")));
     for (auto it = documentsById_.cbegin(); it != documentsById_.cend(); ++it) {
@@ -297,7 +384,7 @@ TEST_F(ProjectDocumentRoundTripTest, AllDocumentMetadataSurvivesEditingSavingAnd
     EXPECT_EQ(reopened.sampleRate, 44100);
     EXPECT_EQ(reopened.channelConfig, AudioChannelConfig::Surround_5_1);
     EXPECT_EQ(ProjectPlatformSemantics::platformsToJson(reopened.platforms),
-              ProjectPlatformSemantics::platformsToJson(HarkenTest::platforms({"Windows", "Android"})));
+              editedPlatforms);
     EXPECT_EQ(reopened.projectLanguages, (QStringList{"English", "Japanese"}));
     const auto savedPaths = documentPathsById(projectDirectory_);
     EXPECT_EQ(savedPaths.keys(), documentsById_.keys());
@@ -322,15 +409,25 @@ class ProjectDocumentVersionRoundTripTest : public ProjectDocumentRoundTripTest,
 protected:
     void SetUp() override
     {
-        includeEffectDocuments_ = GetParam() >= ProjectSchema::kProjectSchemaVersion;
+        includeEffectDocuments_ = GetParam() == -9 || GetParam() >= ProjectSchema::kProjectSchemaVersion;
         ProjectDocumentRoundTripTest::SetUp();
+        if (GetParam() >= ProjectSchema::kProjectSchemaVersion) return;
+        for (const auto& id : documentsById_.keys()) {
+            if (HarkenTest::projectHeader(documentsById_.value(id)).value(QStringLiteral("type"))
+                != QStringLiteral("project.conversion")) continue;
+            ASSERT_TRUE(QFile::remove(pathsById_.value(id)));
+            pathsById_.remove(id);
+            documentsById_.remove(id);
+        }
+
     }
 };
 
 TEST_P(ProjectDocumentVersionRoundTripTest, SupportedDocumentVersionsPreserveContentThroughOpenSave)
 {
     auto& manager = ProjectManager::instance();
-    const int version = GetParam();
+    const bool developmentV9 = GetParam() == -9;
+    const int version = developmentV9 ? 9 : GetParam();
     SCOPED_TRACE(version);
     QMap<QString, QByteArray> beforeOpen;
     QMap<QString, QJsonObject> expectedProperties;
@@ -341,19 +438,137 @@ TEST_P(ProjectDocumentVersionRoundTripTest, SupportedDocumentVersionsPreserveCon
     ASSERT_FALSE(platforms.isEmpty());
     const auto platformId = platforms.first().toObject().value(QStringLiteral("id"));
     ASSERT_TRUE(platformId.isString());
+    QMap<QString, QMap<quint32, int>> expectedRates;
+    QMap<QString, QMap<quint32, int>> previousRates;
+    QMap<quint32, QPair<int, qint64>> sourceMetadata;
+    QString registryPath;
+    if (version == 9) {
+        QJsonObject templateDocument;
+        QString rootId;
+        for (auto document = documentsById_.cbegin(); document != documentsById_.cend(); ++document) {
+            if (HarkenTest::projectContent(document.value()).value(QStringLiteral("type")) == QStringLiteral("Sound"))
+                templateDocument = document.value();
+            if (HarkenTest::projectHeader(document.value()).value(QStringLiteral("type")) == QStringLiteral("project.root"))
+                rootId = document.key();
+        }
+        ASSERT_FALSE(templateDocument.isEmpty());
+        auto rootDocument = documentsById_.value(rootId);
+        auto rootContent = HarkenTest::projectContent(rootDocument);
+        QJsonObject sourcePaths;
+        QJsonObject assets;
+        QJsonObject overrides;
+        quint32 nextSource = 1;
+        const auto addSound = [&](const QString& name, const QVector<std::array<int, 4>>& inputs,
+                                  const QVector<int>& before, const QVector<int>& after,
+                                  bool localized = false) {
+            auto document = templateDocument;
+            auto header = HarkenTest::projectHeader(document);
+            auto content = HarkenTest::projectContent(document);
+            const QUuid guid = QUuid::createUuid();
+            const QString id = guid.toString(QUuid::WithoutBraces);
+            header.insert(QStringLiteral("id"), id);
+            content.insert(QStringLiteral("guid"), id);
+            content.insert(QStringLiteral("name"), name);
+            SoundSources sources;
+            for (qsizetype index = 0; index < inputs.size(); ++index) {
+                const auto input = inputs[index];
+                const quint32 source = nextSource++;
+                const QString key = QString::number(source);
+                const QString filename = key + QStringLiteral(".wav");
+                const QString path = QDir(projectDirectory_).filePath(QStringLiteral("AudioSources/") + filename);
+                writeMigrationSource(path, input[0], input[1]);
+                const auto bytes = QFileInfo(path).size();
+                sourceMetadata.insert(source, {input[0], bytes});
+                sourcePaths.insert(key, filename);
+                auto settings = legacyConversionParameters(input[2] > 0 ? input[2] : 48000);
+                settings.insert(QStringLiteral("performResample"), input[2] > 0);
+                assets.insert(key, QJsonObject{{QStringLiteral("sourceID"), static_cast<qint64>(source)},
+                    {QStringLiteral("relativePath"), filename},
+                    {QStringLiteral("metadata"), QJsonObject{{QStringLiteral("sampleRate"), input[0]},
+                        {QStringLiteral("fileSize"), bytes}}}, {QStringLiteral("settings"), settings},
+                    {QStringLiteral("platformCaches"), QJsonObject{}}});
+                if (name == QStringLiteral("Tiered") && index == 1) {
+                    auto stale = assets.value(key).toObject();
+                    stale.insert(QStringLiteral("metadata"), QJsonObject{{QStringLiteral("sampleRate"), 96000},
+                        {QStringLiteral("fileSize"), 1}});
+                    assets.insert(key, stale);
+                }
+                if (input[3] >= 0) {
+                    auto override = legacyConversionParameters(input[3] > 0 ? input[3] : 48000);
+                    override.insert(QStringLiteral("performResample"), input[3] > 0);
+                    overrides.insert(key, override);
+                }
+                SoundSourceDef entry;
+                entry.entryId = QUuid::createUuid();
+                entry.sourceId = source;
+                auto& set = localized ? sources.localized[index == 0 ? QStringLiteral("English") : QStringLiteral("Japanese")]
+                                      : sources.plain;
+                set.entries.push_back(entry);
+                if (set.active.isNull()) set.active = entry.entryId;
+                previousRates[id].insert(source, before[index]);
+                expectedRates[id].insert(source, after[index]);
+            }
+            auto components = content.value(QStringLiteral("components")).toObject();
+            auto sound = components.value(QStringLiteral("sound")).toObject();
+            sound.insert(QStringLiteral("sources"), SoundSourceSemantics::toJson(sources));
+            sound.insert(QStringLiteral("distinguishLanguage"), localized);
+            components.insert(QStringLiteral("sound"), sound);
+            content.insert(QStringLiteral("components"), components);
+            document.insert(QStringLiteral("harkenDocument"), header);
+            document.insert(QStringLiteral("content"), content);
+            const QString path = QDir(projectDirectory_).filePath(QStringLiteral("Layers/") + NameValidator::objectFileName(name, guid));
+            documentsById_.insert(id, document);
+            pathsById_.insert(id, path);
+        };
+        addSound(QStringLiteral("Tiered"), {{48000, 64, -1, -1}, {48000, 256, -1, -1}}, {32000, 22050}, {32000, 22050});
+        addSound(QStringLiteral("DisabledOverride"), {{48000, 64, 16000, 0}}, {48000}, {48000});
+        addSound(QStringLiteral("AssetOverride"), {{48000, 64, 16000, -1}}, {16000}, {16000});
+        addSound(QStringLiteral("ExplicitOverride"), {{48000, 64, 16000, 8000}}, {8000}, {8000});
+        addSound(QStringLiteral("Upsampled"), {{22050, 64, -1, 48000}}, {48000}, {22050});
+        addSound(QStringLiteral("OutsideList"), {{48000, 64, -1, 30000}}, {30000}, {24000});
+        addSound(QStringLiteral("LocalizedConflict"), {{48000, 64, 16000, -1}, {48000, 64, 22050, -1}},
+                 {16000, 22050}, {22050, 22050}, true);
+        rootContent.insert(QStringLiteral("sourceAssets"), sourcePaths);
+        rootContent.insert(QStringLiteral("defaultLanguage"), QStringLiteral("Japanese"));
+        rootContent.insert(QStringLiteral("deployLanguages"), QJsonArray{QStringLiteral("English"), QStringLiteral("Japanese")});
+        rootDocument.insert(QStringLiteral("content"), rootContent);
+        documentsById_.insert(rootId, rootDocument);
+        registryPath = QDir(projectDirectory_).filePath(QStringLiteral(".cache/asset_registry/assets.json"));
+        ASSERT_TRUE(QDir().mkpath(QFileInfo(registryPath).absolutePath()));
+        writeObject(registryPath, QJsonObject{{QStringLiteral("version"), 1},
+            {QStringLiteral("assets"), assets}, {QStringLiteral("fileOverrides"), overrides}});
+    }
     for (auto it = documentsById_.cbegin(); it != documentsById_.cend(); ++it) {
         auto document = it.value();
         auto header = HarkenTest::projectHeader(document);
         header.insert(QStringLiteral("schemaVersion"), version);
-        if (version < ProjectSchema::kProjectSchemaVersion) {
+        if (version < ProjectSchema::kProjectSchemaVersion && !developmentV9) {
             header.insert(QStringLiteral("savedStudioVersion"), QStringLiteral("1.0.0"));
             header.insert(QStringLiteral("propertyModel"), QStringLiteral("fieldGroupsV1"));
             header.remove(QStringLiteral("studioVersion"));
         }
         document.insert(QStringLiteral("harkenDocument"), header);
         auto content = HarkenTest::projectContent(document);
+        if (version < ProjectSchema::kProjectSchemaVersion) {
+            removeConversionGroup(content);
+            if (header.value(QStringLiteral("type")) == QStringLiteral("project.root")) {
+                auto audio = content.value(QStringLiteral("audio")).toObject();
+                audio.remove(QStringLiteral("defaultConversions"));
+                content.insert(QStringLiteral("audio"), audio);
+                auto legacyPlatforms = content.value(QStringLiteral("deployPlatforms")).toArray();
+                for (qsizetype index = 0; index < legacyPlatforms.size(); ++index) {
+                    auto platform = legacyPlatforms[index].toObject();
+                    const QJsonArray tiers{
+                        QJsonObject{{QStringLiteral("maxBytes"), 300}, {QStringLiteral("config"), legacyConversionParameters(32000)}},
+                        QJsonObject{{QStringLiteral("maxBytes"), QJsonValue::Null}, {QStringLiteral("config"), legacyConversionParameters(22050)}}};
+                    platform.insert(QStringLiteral("profile"), legacyProfile(version == 9 && index == 0, tiers));
+                    legacyPlatforms[index] = platform;
+                }
+                content.insert(QStringLiteral("deployPlatforms"), legacyPlatforms);
+            }
+        }
         auto authoredComponents = content.value(QStringLiteral("components")).toObject();
-        if (content.value(QStringLiteral("playableProperties")).isObject()) {
+        if (!developmentV9 && content.value(QStringLiteral("playableProperties")).isObject()) {
             auto properties = content.value(QStringLiteral("playableProperties")).toObject();
             ASSERT_TRUE(properties.value(QStringLiteral("platformOverrides")).toArray().isEmpty());
             QJsonObject overlay{{QStringLiteral("platformId"), platformId},
@@ -377,7 +592,7 @@ TEST_P(ProjectDocumentVersionRoundTripTest, SupportedDocumentVersionsPreserveCon
             authoredComponents.insert(QStringLiteral("mixnode"), mix);
             content.insert(QStringLiteral("components"), authoredComponents);
         }
-        if (version < ProjectSchema::kProjectSchemaVersion) {
+        if (version < ProjectSchema::kProjectSchemaVersion && !developmentV9) {
             if (authoredComponents.contains(QStringLiteral("mixnode"))) {
                 auto mix = authoredComponents.value(QStringLiteral("mixnode")).toObject();
                 mix.remove(QStringLiteral("filter"));
@@ -414,6 +629,7 @@ TEST_P(ProjectDocumentVersionRoundTripTest, SupportedDocumentVersionsPreserveCon
             if (content.value(QStringLiteral("fieldGroups")).isObject()) {
                 auto groups = content.value(QStringLiteral("fieldGroups")).toObject();
                 auto shared = groups.value(QStringLiteral("shared")).toObject();
+                shared.remove(QStringLiteral("conversion"));
                 shared.insert(QStringLiteral("effect"), QJsonObject{
                     {QStringLiteral("inherit"), false},
                     {QStringLiteral("values"), QJsonObject{{QStringLiteral("effects"), effects}}}});
@@ -489,7 +705,7 @@ TEST_P(ProjectDocumentVersionRoundTripTest, SupportedDocumentVersionsPreserveCon
             content.insert(QStringLiteral("packExportCurrentPlatformId"), platform);
             content.insert(QStringLiteral("packExportSelectedPlatformIds"), QJsonArray{platform});
         }
-        if (content.value(QStringLiteral("type")) == QStringLiteral("Segment")) {
+        if (!developmentV9 && content.value(QStringLiteral("type")) == QStringLiteral("Segment")) {
             content.insert(QStringLiteral("type"), QStringLiteral("Piece"));
             auto components = content.value(QStringLiteral("components")).toObject();
             auto timeline = components.take(QStringLiteral("segmenttimeline")).toObject();
@@ -509,21 +725,92 @@ TEST_P(ProjectDocumentVersionRoundTripTest, SupportedDocumentVersionsPreserveCon
         ASSERT_TRUE(errors.isEmpty()) << errors.join(QLatin1Char('\n')).toStdString();
     }
     ProjectUpgradeManager upgrades;
-    const auto analysis = upgrades.analyze(projectPath_);
+    const auto analysis = upgrades.analyzeForProjectOpen(projectPath_);
     ASSERT_TRUE(analysis.ok) << analysis.blockingErrors.join(QLatin1Char('\n')).toStdString();
     EXPECT_EQ(analysis.upgradeRequired, version < ProjectSchema::kProjectSchemaVersion);
     for (auto it = beforeOpen.cbegin(); it != beforeOpen.cend(); ++it)
         EXPECT_EQ(readFile(it.key()), it.value());
-    if (analysis.upgradeRequired) {
-        auto result = upgrades.execute(analysis);
-        ASSERT_TRUE(result.ok) << result.error.toStdString();
-        QString error;
-        ASSERT_TRUE(upgrades.finalize(result, &error)) << error.toStdString();
+    if (version == 9) {
+        const auto registryBefore = readFile(registryPath);
+        auto trial = upgrades.execute(analysis);
+        ASSERT_TRUE(trial.ok) << trial.error.toStdString();
+        QString rollbackError;
+        ASSERT_TRUE(upgrades.rollback(trial, &rollbackError)) << rollbackError.toStdString();
+        EXPECT_EQ(readFile(registryPath), registryBefore);
+        EXPECT_EQ(savedDocumentContent(), beforeOpen);
+        for (const auto& path : analysis.migrationPlan.writeSet) {
+            const auto absolute = QDir(projectDirectory_).filePath(path);
+            if (beforeOpen.contains(absolute) || absolute == registryPath) continue;
+            EXPECT_FALSE(QFileInfo::exists(absolute));
+        }
     }
-    QString error;
-    ASSERT_TRUE(manager.loadProject(projectPath_, false, &error)) << error.toStdString();
+    if (analysis.upgradeRequired) {
+        const auto requestId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        const auto digest = projectOpenApprovalDigest(analysis, requestId);
+        auto prepared = ProjectManager::prepareProject(projectPath_, true, {},
+            [&](const ProjectUpgradeAnalysis& current) {
+                return current.ok && current.upgradeRequired
+                    && projectOpenApprovalDigest(current, requestId) == digest;
+            });
+        ASSERT_TRUE(prepared.project) << prepared.error.toStdString();
+        ASSERT_TRUE(manager.commitPreparedProject(std::move(prepared)));
+    } else {
+        QString error;
+        ASSERT_TRUE(manager.loadProject(projectPath_, false, &error)) << error.toStdString();
+    }
     UndoRedoManager::instance().clearHistory();
     expectModelMetadata(*manager.currentProject());
+    if (version == 9) {
+        const auto snapshot = buildFieldGroupEffectiveSnapshot(*manager.currentProject(),
+            toFieldGroupGuid(QUuid(platformId.toString())));
+        ASSERT_TRUE(snapshot.ok());
+        QSet<QString> expectedDifferences;
+        for (auto sound = expectedRates.cbegin(); sound != expectedRates.cend(); ++sound) {
+            const auto effective = snapshot.definitions.find(toFieldGroupGuid(QUuid(sound.key())));
+            ASSERT_NE(effective, snapshot.definitions.end());
+            std::vector<ConversionRule> tiers;
+            if (!harken::studio::project_schema::IsNull(effective->second.conversion.settingsRef)) {
+                const auto preset = snapshot.objects.find(effective->second.conversion.settingsRef);
+                ASSERT_NE(preset, snapshot.objects.end());
+                const auto* conversion = preset->second->comp<VConversion>();
+                ASSERT_NE(conversion, nullptr);
+                tiers = conversion->config.rules;
+            }
+            for (auto source = sound->cbegin(); source != sound->cend(); ++source) {
+                const auto metadata = sourceMetadata.value(source.key());
+                quint32 rate = metadata.first;
+                for (const auto& tier : tiers) {
+                    if (tier.maxBytes && static_cast<quint64>(metadata.second) > *tier.maxBytes) continue;
+                    if (tier.sampleRate != 0) rate = (std::min)(rate, tier.sampleRate);
+                    break;
+                }
+                EXPECT_EQ(rate, source.value());
+                if (previousRates.value(sound.key()).value(source.key()) != source.value())
+                    expectedDifferences.insert(sound.key() + QLatin1Char(':') + QString::number(source.key()));
+            }
+        }
+        QSet<QString> reportedDifferences;
+        const auto report = readObject(QDir(projectDirectory_).filePath(QStringLiteral("conversion-migration-9-to-10.json")));
+        const auto differences = report.value(QStringLiteral("differences")).toArray();
+        EXPECT_EQ(differences.size(), expectedDifferences.size());
+        for (const auto& value : differences) {
+            const auto difference = value.toObject();
+            EXPECT_EQ(difference.value(QStringLiteral("platform")).toObject().value(QStringLiteral("id")), platformId);
+            const auto sound = difference.value(QStringLiteral("sound")).toObject().value(QStringLiteral("id")).toString();
+            const auto source = difference.value(QStringLiteral("source")).toObject().value(QStringLiteral("sourceId")).toString().toUInt();
+            EXPECT_EQ(difference.value(QStringLiteral("oldResult")).toObject().value(QStringLiteral("sampleRate")).toInt(), previousRates.value(sound).value(source));
+            EXPECT_EQ(difference.value(QStringLiteral("newResult")).toObject().value(QStringLiteral("sampleRate")).toInt(), expectedRates.value(sound).value(source));
+            EXPECT_FALSE(difference.value(QStringLiteral("reasons")).toArray().isEmpty());
+            reportedDifferences.insert(sound + QLatin1Char(':') + QString::number(source));
+        }
+        EXPECT_EQ(reportedDifferences, expectedDifferences);
+        const auto registry = readObject(registryPath);
+        EXPECT_FALSE(registry.contains(QStringLiteral("fileOverrides")));
+        for (const auto& value : registry.value(QStringLiteral("assets")).toObject()) {
+            EXPECT_FALSE(value.toObject().contains(QStringLiteral("settings")));
+            EXPECT_FALSE(value.toObject().contains(QStringLiteral("platformCaches")));
+        }
+    }
     auto* segment = manager.findItemByGuid(segmentGuid_);
     ASSERT_NE(segment, nullptr);
     EXPECT_EQ(segment->type, ProjectItem::Type::Segment);
@@ -544,16 +831,30 @@ TEST_P(ProjectDocumentVersionRoundTripTest, SupportedDocumentVersionsPreserveCon
             EXPECT_EQ(readFile(it.key()), it.value());
     ASSERT_TRUE(manager.saveProject());
     ASSERT_TRUE(manager.closeProject());
-    const auto savedPaths = documentPathsById(projectDirectory_);
+    const auto allSavedPaths = documentPathsById(projectDirectory_);
+    auto savedPaths = allSavedPaths;
+    if (analysis.upgradeRequired) {
+        for (const auto& id : savedPaths.keys())
+            if (HarkenTest::projectHeader(readObject(savedPaths.value(id)))
+                    .value(QStringLiteral("type")) == QStringLiteral("project.conversion"))
+                savedPaths.remove(id);
+    }
     EXPECT_EQ(savedPaths.keys(), documentsById_.keys());
+    if (version != 9)
+        EXPECT_EQ(allSavedPaths.size(), documentsById_.size());
+    else
+        EXPECT_GT(allSavedPaths.size(), documentsById_.size());
     for (auto it = savedPaths.cbegin(); it != savedPaths.cend(); ++it) {
         const auto document = readObject(it.value());
         EXPECT_EQ(HarkenTest::projectHeader(document).value(QStringLiteral("schemaVersion")),
                   ProjectSchema::kProjectSchemaVersion);
         const auto content = HarkenTest::projectContent(document);
         const auto original = HarkenTest::projectContent(documentsById_.value(it.key()));
-        if (expectedGroups.contains(it.key()))
-            EXPECT_EQ(content.value(QStringLiteral("fieldGroups")), expectedGroups.value(it.key()));
+        if (expectedGroups.contains(it.key())) {
+            auto stripped = content;
+            removeConversionGroup(stripped);
+            EXPECT_EQ(stripped.value(QStringLiteral("fieldGroups")).toObject(), expectedGroups.value(it.key()));
+        }
         if (expectedProperties.contains(it.key())) {
             EXPECT_EQ(content.value(QStringLiteral("playableProperties")),
                       expectedProperties.value(it.key()));
@@ -570,9 +871,19 @@ TEST_P(ProjectDocumentVersionRoundTripTest, SupportedDocumentVersionsPreserveCon
         }
         for (const auto* key : {"type", "name", "guid", "parentRef"})
             EXPECT_EQ(content.value(QLatin1String(key)), original.value(QLatin1String(key)));
-        if (HarkenTest::projectHeader(document).value(QStringLiteral("type")) == QStringLiteral("project.root"))
-            for (const auto* key : {"metadata", "audio", "deployPlatforms", "deployLanguages"})
+        if (HarkenTest::projectHeader(document).value(QStringLiteral("type")) == QStringLiteral("project.root")) {
+            for (const auto* key : {"metadata", "deployPlatforms", "deployLanguages"})
                 EXPECT_EQ(content.value(QLatin1String(key)), original.value(QLatin1String(key)));
+            auto actualAudio = content.value(QStringLiteral("audio")).toObject();
+            auto expectedAudio = original.value(QStringLiteral("audio")).toObject();
+            for (const auto& reference : actualAudio.value(QStringLiteral("defaultConversions")).toObject())
+                EXPECT_TRUE(allSavedPaths.contains(reference.toObject().value(QStringLiteral("id")).toString()));
+            if (analysis.upgradeRequired) {
+                actualAudio.remove(QStringLiteral("defaultConversions"));
+                expectedAudio.remove(QStringLiteral("defaultConversions"));
+            }
+            EXPECT_EQ(actualAudio, expectedAudio);
+        }
         if (it.key() == segmentGuid_.toString(QUuid::WithoutBraces))
             EXPECT_EQ(content.value(QStringLiteral("components")),
                       original.value(QStringLiteral("components")));
@@ -589,7 +900,10 @@ INSTANTIATE_TEST_SUITE_P(Current, ProjectDocumentVersionRoundTripTest,
                          ::testing::Values(ProjectSchema::kProjectSchemaVersion));
 
 INSTANTIATE_TEST_SUITE_P(Historical, ProjectDocumentVersionRoundTripTest,
-                         ::testing::Values(7, 8));
+                         ::testing::Values(7, 8, 9));
+
+INSTANTIATE_TEST_SUITE_P(Development, ProjectDocumentVersionRoundTripTest,
+                         ::testing::Values(-9));
 
 TEST_F(ProjectDocumentRoundTripTest, RenamingAnAncestorDoesNotRewriteDescendantDocuments)
 {

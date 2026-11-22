@@ -37,21 +37,25 @@ AudioMetadata AssetImporter::analyzeFile(const QString& path)
 
 AudioMetadata AssetImporter::readMetadata(const QString& path)
 {
-    QString format = detectFormat(path);
+    const QString format = detectFormat(path);
+    AudioMetadata meta;
+    if (format.isEmpty()) return meta;
 
-    if (format == "WAV") {
-        return readWavMetadata(path);
-    } else if (format == "MP3") {
-        return readMp3Metadata(path);
-    } else if (format == "FLAC") {
-        return readFlacMetadata(path);
-    } else if (format == "OGG") {
-        return readOggMetadata(path);
-    } else if (format == "AIFF") {
-        return readAiffMetadata(path);
+    const auto info = harken::studio::bridge::audioFileInfo(path);
+    if (!info.valid) {
+        qWarning() << "[AssetImporter] Failed to read" << format << "metadata:" << path;
+        if (format == "WAV") return meta;
     }
-
-    return AudioMetadata();
+    meta.originalFormat = format;
+    meta.fileSize = QFileInfo(path).size();
+    meta.codec = info.codec;
+    meta.sampleRate = static_cast<uint32_t>(info.sampleRate);
+    meta.channels = static_cast<uint16_t>(info.channels);
+    meta.bitDepth = static_cast<uint16_t>(info.bitDepth);
+    meta.totalSamples = static_cast<uint64_t>(info.frameCount);
+    meta.durationSec = info.durationSeconds;
+    if (format == "WAV") meta.loopInfo = readWavLoopInfo(path);
+    return meta;
 }
 
 static drwav_uint64 smplChunkCallback(void* pChunkUserData, drwav_read_proc onRead,
@@ -281,123 +285,6 @@ QString AssetImporter::detectFormat(const QString& path)
     if (ext == "aiff" || ext == "aif") return "AIFF";
 
     return QString();
-}
-
-AudioMetadata AssetImporter::readWavMetadata(const QString& path)
-{
-    AudioMetadata meta;
-
-    drwav wav;
-    AudioFileReader file(path);
-    if (!file.initWav(wav)) {
-        qWarning() << "Failed to open WAV file:" << path;
-        return meta;
-    }
-
-    meta.sampleRate = wav.sampleRate;
-    meta.channels = static_cast<uint16_t>(wav.channels);
-    meta.bitDepth = static_cast<uint16_t>(wav.bitsPerSample);
-    meta.totalSamples = wav.totalPCMFrameCount;
-    meta.durationSec = static_cast<double>(wav.totalPCMFrameCount) / wav.sampleRate;
-    meta.fileSize = QFileInfo(path).size();
-    meta.originalFormat = "WAV";
-
-    meta.loopInfo = readWavLoopInfo(path);
-
-    drwav_uninit(&wav);
-    return meta;
-}
-
-AudioMetadata AssetImporter::readMp3Metadata(const QString& path)
-{
-    AudioMetadata meta;
-    meta.originalFormat = "MP3";
-    meta.fileSize = QFileInfo(path).size();
-
-    const auto info = harken::studio::bridge::audioFileInfo(path);
-    if (info.valid)
-    {
-        meta.sampleRate = static_cast<uint32_t>(info.sampleRate);
-        meta.channels = static_cast<uint16_t>(info.channels);
-        meta.bitDepth = static_cast<uint16_t>(info.bitDepth);
-        meta.totalSamples = static_cast<uint64_t>(info.frameCount);
-        meta.durationSec = info.durationSeconds;
-    }
-    else
-    {
-        qWarning() << "[AssetImporter] Failed to read MP3 metadata:" << path;
-    }
-
-    return meta;
-}
-
-AudioMetadata AssetImporter::readFlacMetadata(const QString& path)
-{
-    AudioMetadata meta;
-    meta.originalFormat = "FLAC";
-    meta.fileSize = QFileInfo(path).size();
-
-    const auto info = harken::studio::bridge::audioFileInfo(path);
-    if (info.valid)
-    {
-        meta.sampleRate = static_cast<uint32_t>(info.sampleRate);
-        meta.channels = static_cast<uint16_t>(info.channels);
-        meta.bitDepth = static_cast<uint16_t>(info.bitDepth);
-        meta.totalSamples = static_cast<uint64_t>(info.frameCount);
-        meta.durationSec = info.durationSeconds;
-    }
-    else
-    {
-        qWarning() << "[AssetImporter] Failed to read FLAC metadata:" << path;
-    }
-
-    return meta;
-}
-
-AudioMetadata AssetImporter::readOggMetadata(const QString& path)
-{
-    AudioMetadata meta;
-    meta.originalFormat = "OGG";
-    meta.fileSize = QFileInfo(path).size();
-
-    const auto info = harken::studio::bridge::audioFileInfo(path);
-    if (info.valid)
-    {
-        meta.sampleRate = static_cast<uint32_t>(info.sampleRate);
-        meta.channels = static_cast<uint16_t>(info.channels);
-        meta.bitDepth = static_cast<uint16_t>(info.bitDepth);
-        meta.totalSamples = static_cast<uint64_t>(info.frameCount);
-        meta.durationSec = info.durationSeconds;
-    }
-    else
-    {
-        qWarning() << "[AssetImporter] Failed to read OGG metadata:" << path;
-    }
-
-    return meta;
-}
-
-AudioMetadata AssetImporter::readAiffMetadata(const QString& path)
-{
-    AudioMetadata meta;
-    meta.originalFormat = "AIFF";
-    meta.fileSize = QFileInfo(path).size();
-
-    const auto info = harken::studio::bridge::audioFileInfo(path);
-    if (info.valid)
-    {
-        meta.sampleRate = static_cast<uint32_t>(info.sampleRate);
-        meta.channels = static_cast<uint16_t>(info.channels);
-        meta.bitDepth = static_cast<uint16_t>(info.bitDepth);
-        meta.totalSamples = static_cast<uint64_t>(info.frameCount);
-        meta.durationSec = info.durationSeconds;
-    }
-    else
-    {
-        qWarning() << "[AssetImporter] Failed to read AIFF metadata:" << path;
-    }
-
-    return meta;
 }
 
 }

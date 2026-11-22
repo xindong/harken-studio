@@ -137,6 +137,39 @@ bool ImmediateLaneTimelineFinalizer::Capture(std::uint64_t quantum) noexcept {
         if (bucket != nullptr)
             state.receipts[state.receiptCount++] = {slot, bucket, true, false, false};
     }
+    std::uint64_t demand = 0;
+    for (std::uint32_t i = 0; i < state.receiptCount; ++i)
+        demand += state.receipts[i].bucket->eventCount;
+    if (demand > state.lane->MaxEventsPerQuantum()) {
+        // Keep all hard deadlines, then serve ready relative starts in their original order.
+        auto* first = state.receipts.get();
+        std::sort(first, first + state.receiptCount, [&](const auto& left, const auto& right) {
+            if (left.bucket->elasticSoundStart != right.bucket->elasticSoundStart)
+                return !left.bucket->elasticSoundStart;
+            if (!left.bucket->elasticSoundStart) return left.slot < right.slot;
+            if (left.bucket->quantum != right.bucket->quantum) return left.bucket->quantum < right.bucket->quantum;
+            const auto* a = state.lane->Events(left.slot, left.bucket);
+            const auto* b = state.lane->Events(right.slot, right.bucket);
+            return a->event.logicCommitSequence < b->event.logicCommitSequence;
+        });
+        std::uint64_t assigned = 0;
+        std::uint32_t kept = 0;
+        for (std::uint32_t i = 0; i < state.receiptCount; ++i) {
+            const auto receipt = first[i];
+            if (receipt.bucket->elasticSoundStart) {
+                const auto* event = state.lane->Events(receipt.slot, receipt.bucket);
+                TimelineArmObservation observed{};
+                if (assigned >= state.lane->MaxEventsPerQuantum() ||
+                    (arms_.Observe(event->event.armToken, &observed) && observed.state == ArmState::PendingApply)) {
+                    (void)state.lane->ReleaseCapture(receipt.slot, receipt.bucket);
+                    continue;
+                }
+            }
+            assigned += receipt.bucket->eventCount;
+            first[kept++] = receipt;
+        }
+        state.receiptCount = kept;
+    }
     return state.receiptCount != 0;
 }
 
@@ -389,6 +422,13 @@ void ImmediateLaneTimelineFinalizer::Apply(std::uint64_t quantum) noexcept {
                     sources = timing;
             }
             if (program->role != TimelineProgramRole::Voice || payload->kind != TimelineEventKind::Start) continue;
+            if (bucket->elasticSoundStart) {
+                TimelineArmObservation observed{};
+                if (arms_.Observe(event.armToken, &observed) && observed.state == ArmState::PendingApply) {
+                    sources = VariableReadCutStatus::Waiting;
+                    continue;
+                }
+            }
             bool waitForPublication = false;
             auto status = state.frontier != nullptr ? state.frontier->StartSourcesStatus(event)
                 : voices_.TimelineStartSourcesStatus(event.armToken.renderSlot, event.armToken.renderGeneration);
@@ -682,7 +722,8 @@ void ImmediateLaneTimelineFinalizer::Apply(std::uint64_t quantum) noexcept {
             } else if (valid && !control) {
                 valid = arms_.ProveLaneStart(event.armToken,
                     event.executeFrame, quantum + 1u, &scratch.armProof,
-                    events[i].armProgramGeneration, &payload->target);
+                    events[i].armProgramGeneration, &payload->target,
+                    bucket->elasticSoundStart ? &sourcesWaiting : nullptr);
             }
             if (valid && !control)
                 valid = voices_.ProveTimelineVariableInitializer(event.armToken.renderSlot,

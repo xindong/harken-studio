@@ -74,9 +74,10 @@
 #include "Widgets/Inspector/InspectorPanel.h"
 #include "Widgets/Inspector/InspectorCustomizationBootstrap.h"
 #include "Widgets/Inspector/EditorLaunchMap.h"
-#include "Widgets/SourceEditor/SourceEditorPanel.h"
+#include "Widgets/FileViewer/FileViewerPanel.h"
 #include "Widgets/ExternalEditor/ExternalEditorPanel.h"
 #include "Widgets/EffectEditor/EffectEditorPanel.h"
+#include "Widgets/ConversionEditor/ConversionEditorPanel.h"
 #include "Widgets/GridEditor/GridEditorPanel.h"
 #include "Widgets/GridEditor/GridEditorWidget.h"
 #include "Widgets/Timeline/TimelineEditorPanel.h"
@@ -435,7 +436,7 @@ void MainWindow::initializeStructure(
                 if (projectExplorer_ && projectExplorerDock_
                     && AssetRegistry::instance().contains(id)) {
                     revealDock(projectExplorerDock_);
-                    projectExplorer_->pingSource(id);
+                    projectExplorer_->pingResource(id);
                 }
                 break;
             }
@@ -444,11 +445,14 @@ void MainWindow::initializeStructure(
         [this](RefDomain domain, uint32_t id) {
             switch (domain) {
             case RefDomain::ProjectObject:
-                if (auto* item = ProjectManager::instance().findItemByObjectID(id))
+                if (auto* item = ProjectManager::instance().findItemByObjectID(id)) {
                     selectionRouter_->selectItem(item, true);
+                    if (item->type == ProjectItem::Type::Conversion)
+                        openStandaloneEditor(QStringLiteral("ConversionEditor"), item);
+                }
                 break;
             case RefDomain::AudioAsset:
-                openSourceEditor(id);
+                openFileViewer(id);
                 break;
             }
         });
@@ -496,32 +500,32 @@ void MainWindow::initializeStructure(
     }
     {
         StandaloneEditorTypeInfo info;
-        info.label = tr("Source Viewer");
-        info.dockObjectPrefix = SourceEditorPanel::dockObjectPrefix();
+        info.label = tr("File Viewer");
+        info.dockObjectPrefix = FileViewerPanel::dockObjectPrefix();
         info.createConfigured = [this](int id) -> QWidget* {
-            auto* editor = new SourceEditorPanel(this);
+            auto* editor = new FileViewerPanel(this);
             editor->setPanelId(id);
             editor->setAuditionManager(auditionManager_);
-            connect(editor, &SourceEditorPanel::panelFocused, this, [this](int panelId) {
-                panelRegistry_->setLastFocusedPanelId(SourceEditorPanel::typeId(), panelId);
+            connect(editor, &FileViewerPanel::panelFocused, this, [this](int panelId) {
+                panelRegistry_->setLastFocusedPanelId(FileViewerPanel::typeId(), panelId);
             });
             wireStandaloneEditorPin(editor);
             return editor;
         };
         info.isPinned = [](QWidget* widget) {
-            auto* editor = qobject_cast<SourceEditorPanel*>(widget);
+            auto* editor = qobject_cast<FileViewerPanel*>(widget);
             return editor && editor->isPinned();
         };
         info.setPinned = [](QWidget* widget, bool pinned) {
-            if (auto* editor = qobject_cast<SourceEditorPanel*>(widget))
+            if (auto* editor = qobject_cast<FileViewerPanel*>(widget))
                 editor->setPinned(pinned);
         };
         info.snapshotParams = [](QWidget* widget) -> QVariantMap {
-            auto* editor = qobject_cast<SourceEditorPanel*>(widget);
+            auto* editor = qobject_cast<FileViewerPanel*>(widget);
             return editor ? editor->snapshotState() : QVariantMap{};
         };
         info.restoreParams = [](QWidget* widget, const QVariantMap& params) {
-            auto* editor = qobject_cast<SourceEditorPanel*>(widget);
+            auto* editor = qobject_cast<FileViewerPanel*>(widget);
             if (!editor)
                 return;
             const uint32_t sourceId = params.value(QStringLiteral("sourceId")).toUInt();
@@ -530,7 +534,7 @@ void MainWindow::initializeStructure(
             else
                 editor->clearEditor();
         };
-        registerStandaloneEditorType(SourceEditorPanel::typeId(), std::move(info));
+        registerStandaloneEditorType(FileViewerPanel::typeId(), std::move(info));
     }
     {
         StandaloneEditorTypeInfo info;
@@ -624,6 +628,62 @@ void MainWindow::initializeStructure(
                 editor->restoreState(params);
         };
         registerStandaloneEditorType(QStringLiteral("EffectEditor"), std::move(info));
+    }
+    {
+        StandaloneEditorTypeInfo info;
+        info.label = tr("Conversion Editor");
+        info.openBelowCentralArea = true;
+        info.clearOnUnrelatedSelection = false;
+        info.dockObjectPrefix = QStringLiteral("ConversionEditorDock");
+        info.createConfigured = [this](int id) -> QWidget* {
+            auto* editor = new ConversionEditorPanel(this);
+            editor->setPanelId(id);
+            connect(editor, &ConversionEditorPanel::panelFocused, this, [this](int panelId) {
+                panelRegistry_->setLastFocusedPanelId(QStringLiteral("ConversionEditor"), panelId);
+            });
+            connect(editor, &ConversionEditorPanel::navigateRequested, this, [this](const QUuid& guid) {
+                if (auto* item = ProjectManager::instance().findItemByGuid(guid))
+                    selectionRouter_->selectItem(item, true);
+            });
+            connect(editor, &QWidget::windowTitleChanged, this, [this, editor](const QString& title) {
+                if (auto* dock = dockOfPanel(editor))
+                    dock->setWindowTitle(title);
+            });
+            wireStandaloneEditorPin(editor);
+            return editor;
+        };
+        info.bind = [](QWidget* widget, ProjectItem* item) {
+            if (auto* editor = qobject_cast<ConversionEditorPanel*>(widget))
+                editor->bindItem(item);
+        };
+        info.boundItem = [](QWidget* widget) -> ProjectItem* {
+            auto* editor = qobject_cast<ConversionEditorPanel*>(widget);
+            return editor ? editor->boundItem() : nullptr;
+        };
+        info.accepts = [](const ProjectItem* item) {
+            return item && item->type == ProjectItem::Type::Conversion;
+        };
+        info.isPinned = [](QWidget* widget) {
+            auto* editor = qobject_cast<ConversionEditorPanel*>(widget);
+            return editor && editor->isPinned();
+        };
+        info.setPinned = [](QWidget* widget, bool pinned) {
+            if (auto* editor = qobject_cast<ConversionEditorPanel*>(widget))
+                editor->setPinned(pinned);
+        };
+        info.clear = [](QWidget* widget) {
+            if (auto* editor = qobject_cast<ConversionEditorPanel*>(widget))
+                editor->clearEditor();
+        };
+        info.snapshotParams = [](QWidget* widget) -> QVariantMap {
+            auto* editor = qobject_cast<ConversionEditorPanel*>(widget);
+            return editor ? editor->snapshotState() : QVariantMap{};
+        };
+        info.restoreParams = [](QWidget* widget, const QVariantMap& params) {
+            if (auto* editor = qobject_cast<ConversionEditorPanel*>(widget))
+                editor->restoreState(params);
+        };
+        registerStandaloneEditorType(QStringLiteral("ConversionEditor"), std::move(info));
     }
     {
         StandaloneEditorTypeInfo info;
@@ -2355,8 +2415,8 @@ void MainWindow::connectWorkspaceWindowSignals()
     });
     connect(auditionManager_, &harken::studio::AuditionManager::allAuditionsStopped,
             playbackControls_, [this] { playbackControls_->setPlaying(false); });
-    for (QWidget* widget : panelRegistry_->allPanels(SourceEditorPanel::typeId())) {
-        if (auto* editor = qobject_cast<SourceEditorPanel*>(widget))
+    for (QWidget* widget : panelRegistry_->allPanels(FileViewerPanel::typeId())) {
+        if (auto* editor = qobject_cast<FileViewerPanel*>(widget))
             editor->setAuditionManager(auditionManager_);
     }
     connect(auditionManager_, &harken::studio::AuditionManager::auditionStarted,
@@ -2879,7 +2939,7 @@ QWidget* MainWindow::createStandaloneEditorPanelWithId(const QString& type, int 
             }
         }
         layoutController_->setPlacementHint(dockObjectName, PreferredOpenArea::RestoreSaved);
-    } else if (type == SourceEditorPanel::typeId()) {
+    } else if (type == FileViewerPanel::typeId()) {
         layoutController_->setPlacementHint(dockObjectName, PreferredOpenArea::Float);
     } else {
         inspectorArea = anyInspectorDockArea();
@@ -3466,12 +3526,14 @@ void MainWindow::wireStandaloneEditorPin(QWidget* editor)
         pushSelectionToStandaloneEditors(currentStandaloneEditorSelection(),
                                          StandaloneEditorPushReason::PinToggled);
     };
-    if (auto* source = qobject_cast<SourceEditorPanel*>(editor))
-        connect(source, &SourceEditorPanel::pinToggled, this, onPinToggled);
+    if (auto* source = qobject_cast<FileViewerPanel*>(editor))
+        connect(source, &FileViewerPanel::pinToggled, this, onPinToggled);
     else if (auto* curve = qobject_cast<ExternalEditorPanel*>(editor))
         connect(curve, &ExternalEditorPanel::pinToggled, this, onPinToggled);
     else if (auto* effect = qobject_cast<EffectEditorPanel*>(editor))
         connect(effect, &EffectEditorPanel::pinToggled, this, onPinToggled);
+    else if (auto* conversion = qobject_cast<ConversionEditorPanel*>(editor))
+        connect(conversion, &ConversionEditorPanel::pinToggled, this, onPinToggled);
     else if (auto* grid = qobject_cast<GridEditorPanel*>(editor))
         connect(grid, &GridEditorPanel::pinToggled, this, onPinToggled);
     else if (auto* timeline = qobject_cast<TimelineEditorPanel*>(editor))
@@ -3783,9 +3845,9 @@ void MainWindow::connectSignals()
             this, [this](ProjectItem* item) {
         selectionRouter_->revealItemSourceInExplorer(item);
     });
-    connect(projectExplorer_, &ProjectExplorer::sourceEditorRequested,
+    connect(projectExplorer_, &ProjectExplorer::fileViewerRequested,
             this, [this](uint32_t sourceId) {
-        openSourceEditor(sourceId);
+        openFileViewer(sourceId);
     });
 
     connect(&ProjectManager::instance(), &ProjectManager::projectClosed,
@@ -4780,16 +4842,16 @@ void MainWindow::onAbout()
     dialog.exec();
 }
 
-SourceEditorPanel* MainWindow::openSourceEditor(uint32_t sourceId)
+FileViewerPanel* MainWindow::openFileViewer(uint32_t sourceId)
 {
     if (sourceId == 0)
         return nullptr;
 
-    SourceEditorPanel* editor = nullptr;
+    FileViewerPanel* editor = nullptr;
     int editorId = 0;
     for (const QPair<int, QWidget*>& instance :
-         panelRegistry_->instances(SourceEditorPanel::typeId())) {
-        auto* candidate = qobject_cast<SourceEditorPanel*>(instance.second);
+         panelRegistry_->instances(FileViewerPanel::typeId())) {
+        auto* candidate = qobject_cast<FileViewerPanel*>(instance.second);
         if (!candidate || candidate->isPinned() || candidate->sourceId() != sourceId)
             continue;
         editor = candidate;
@@ -4798,15 +4860,15 @@ SourceEditorPanel* MainWindow::openSourceEditor(uint32_t sourceId)
     }
 
     if (!editor) {
-        editor = qobject_cast<SourceEditorPanel*>(
-            activeStandaloneEditorPanel(SourceEditorPanel::typeId()));
+        editor = qobject_cast<FileViewerPanel*>(
+            activeStandaloneEditorPanel(FileViewerPanel::typeId()));
         if (editor)
             editorId = editor->panelId();
     }
 
     if (!editor) {
-        editor = qobject_cast<SourceEditorPanel*>(
-            createStandaloneEditorPanel(SourceEditorPanel::typeId()));
+        editor = qobject_cast<FileViewerPanel*>(
+            createStandaloneEditorPanel(FileViewerPanel::typeId()));
         if (editor)
             editorId = editor->panelId();
     }
@@ -4816,7 +4878,7 @@ SourceEditorPanel* MainWindow::openSourceEditor(uint32_t sourceId)
 
     editor->bindSource(sourceId);
     if (editorId > 0)
-        panelRegistry_->setLastFocusedPanelId(SourceEditorPanel::typeId(), editorId);
+        panelRegistry_->setLastFocusedPanelId(FileViewerPanel::typeId(), editorId);
     if (ads::CDockWidget* dock = dockOfPanel(editor))
         revealDock(dock);
     editor->setFocus(Qt::OtherFocusReason);
@@ -4951,15 +5013,15 @@ bool MainWindow::resetCurrentLayout()
 }
 
 
-SourceEditorPanel* MainWindow::focusedSourceEditorPanel() const
+FileViewerPanel* MainWindow::focusedFileViewerPanel() const
 {
-    if (SourceEditorPanel* panel = SourceEditorPanel::panelContaining(QApplication::focusWidget()))
+    if (FileViewerPanel* panel = FileViewerPanel::panelContaining(QApplication::focusWidget()))
         return panel;
     QWidget* focus = QApplication::focusWidget();
     if (!focus || !panelRegistry_)
         return nullptr;
-    for (QWidget* widget : panelRegistry_->allPanels(SourceEditorPanel::typeId())) {
-        auto* panel = qobject_cast<SourceEditorPanel*>(widget);
+    for (QWidget* widget : panelRegistry_->allPanels(FileViewerPanel::typeId())) {
+        auto* panel = qobject_cast<FileViewerPanel*>(widget);
         if (!panel)
             continue;
         if (ads::CDockWidget* dock = dockOfPanel(panel)) {
@@ -4972,7 +5034,7 @@ SourceEditorPanel* MainWindow::focusedSourceEditorPanel() const
 
 void MainWindow::onPlayPressed()
 {
-    if (SourceEditorPanel* editor = focusedSourceEditorPanel()) {
+    if (FileViewerPanel* editor = focusedFileViewerPanel()) {
         const bool wasPlaying = editor->isPreviewPlayheadActive();
         if (editor->handlePlayStopShortcut()) {
             setStatusMessage(wasPlaying

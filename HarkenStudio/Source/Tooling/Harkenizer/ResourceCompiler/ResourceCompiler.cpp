@@ -33,6 +33,7 @@ using harken::studio::pack::ManifestVoiceRecipe;
 
 struct PackEntry {
     std::string path;
+    std::shared_ptr<const harken::studio::VorbisEncoder::EncodedMedia> encodedMedia;
     std::uint32_t sampleRate = 0;
     std::uint16_t channelCount = 0;
     std::uint64_t frameCount = 0;
@@ -202,6 +203,8 @@ bool SerializeEntryPayload(const Manifest& manifest,
     switch (placement.kind) {
     case HK_PACK_ENTRY_KIND_MEDIA: {
         const PackEntry& entry = entries[placement.index];
+        if (entry.encodedMedia)
+            return Fail(diag, "Vorbis Pack writing is not integrated");
         const std::uint64_t blobBytes =
             entry.frameCount * entry.channelCount * sizeof(float);
         harken::studio::build::PackTocEntry toc;
@@ -582,9 +585,14 @@ bool compileEntries(const std::string& logicSections, bool resident,
         entry.loopable = input.loopable;
         entry.loopStartFrame = input.loopStartFrame;
         entry.loopEndFrame = input.loopEndFrame;
-        if (!PrepareAudioLayout(&entry, input.interleavedSamples, input.sampleCount,
-                                input.channels, input.sampleRate, &diag)
-            || !ValidateLoopPoints(entry, i, &diag)) return refuse();
+        if (input.encodedMedia) {
+            entry.encodedMedia = input.encodedMedia;
+            entry.sampleRate = input.sampleRate;
+            entry.channelCount = input.channels;
+            entry.frameCount = input.frameCount;
+        } else if (!PrepareAudioLayout(&entry, input.interleavedSamples, input.sampleCount,
+                                      input.channels, input.sampleRate, &diag)) return refuse();
+        if (!ValidateLoopPoints(entry, i, &diag)) return refuse();
         manifest.entries.push_back({input.id, input.sourcePath});
         prepared.push_back(std::move(entry));
 
@@ -597,7 +605,7 @@ bool compileEntries(const std::string& logicSections, bool resident,
         resource.kind = placement.kind;
         resource.vintage = harken::studio::build::PackEntryVintage(placement.kind);
         resource.id = placement.id;
-        const auto audio = mediaCache->prepare(input);
+        const auto audio = input.encodedMedia ? PreparedMediaBlob{} : mediaCache->prepare(input);
         resource.media = audio.samples;
         resource.payload.resize(static_cast<std::size_t>(placement.size));
         if (!SerializeEntryPayload(manifest, prepared, placement, resource.payload.data(), &diag,

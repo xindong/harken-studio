@@ -374,7 +374,7 @@ QString unrestrictedSystemPrompt()
         "bind_attenuation_to_object, set_game_object_position), container "
         "(content selection and children: add_child_to_container, "
         "remove_child_from_container, "
-        "set_container_property), asset (import_audio, set_conversion_settings, "
+        "set_container_property), asset (import_audio, "
         "batch_replace_media), editor (derived Blueprint routing and overrides: "
         "connect_nodes, disconnect_nodes, set_node_override). Prefer create_item "
         "with type Action for canonical Action creation; create_action remains a "

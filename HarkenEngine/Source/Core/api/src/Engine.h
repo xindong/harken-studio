@@ -7,6 +7,7 @@
 
 #include <harken/ObjectId.h>
 #include "DeviceBackend.h"
+#include "GameOutputStartup.h"
 #include "EngineFrontierOwnerLedger.h"
 #include "EnginePendingSelectionBatch.h"
 #include "EngineNativeVoiceSide.h"
@@ -90,6 +91,7 @@
 #include "harken/render/NullBackend.h"
 #include "harken/render/TopologyPlan.h"
 #include "harken/render/VoicePool.h"
+#include "harken/media/VorbisDecoder.h"
 #include "harken/render/VoiceTimelineSink.h"
 
 #include <algorithm>
@@ -7062,9 +7064,14 @@ public:
 
     explicit Engine(const EngineConfig& resolved, std::uint64_t packGenerationFloor = 0,
                     std::uint32_t originalConditionalCapacity = 0,
-                    const EngineHandleGenerationFloors& handleFloors = {})
+                    const EngineHandleGenerationFloors& handleFloors = {},
+                    GameOutputResources* openingOutput = nullptr)
         : config(resolved),
           playableStorage(resolved),
+          vorbis(resolved.renderWorkerCount,
+                 resolved.maxPackResourceBytes != 0 ||
+                 resolved.maxPackDecodeStagingBytes < EngineConfig::kDefaultPackDecodeStagingBytes),
+          registry(vorbis),
           logicPacks(resolved.maxPacks),
           packComposition(PackIdentityLeaseCapacity(resolved) -
                               resolved.maxPlayableInstances,
@@ -7238,7 +7245,9 @@ public:
                 static_cast<std::uint32_t>(
                     projectGenerationInstallAckSideTable.size()),
                 &projectGenerationInstallAckRing, &originalSourceSubmissions),
-           nullBackend(mixer, resolved) {
+           nullBackend(mixer, resolved),
+           device((openingOutput ? *openingOutput : localOutput).device),
+           gameOutputStartup((openingOutput ? *openingOutput : localOutput).startup) {
 #if HARKEN_ENGINE_DEV
         monitorPlaybackEvents.reserve(static_cast<std::size_t>(timelineArms.Capacity()) +
             playableInstances.Capacity());
@@ -8520,7 +8529,11 @@ public:
         }
         const bool inheritPackDuty = parentOriginal != nullptr && parentOriginal->packDutyOwner_ != nullptr &&
             (preparingStorage == nullptr || OriginalPreparingPackOwner(*preparingStorage) == nullptr);
-        if (inheritPackDuty && !MatchesOriginalPlayableServicePackDuty(*parentOriginal)) return false;
+        const bool inheritWorldDuty = parentOriginal != nullptr && parentOriginal->HasOriginalWorldNoPackDuty() &&
+            (preparingStorage == nullptr || (!HasOriginalWorldNoPackPreparation(*preparingStorage) &&
+                OriginalPreparingPackOwner(*preparingStorage) == nullptr));
+        if ((inheritPackDuty || inheritWorldDuty) &&
+            !MatchesOriginalPlayableServicePackDuty(*parentOriginal)) return false;
         auto& original = originalPlayableServiceLifetimeHolders[row.identity.slot];
         if (original.engine_ != nullptr || original.baseline_.Valid()) return false;
         if (!playableServiceWork.Prepare({row.identity.generation, row.identity.slot, 0}))
@@ -8596,7 +8609,9 @@ public:
             original.worldNoPackProject_ = duty.project_;
             original.worldNoPackFingerprint_ = duty.worldFingerprint_;
             original.worldNoPackTarget_ = duty.target_;
-        } else if (preparingStorage == nullptr && parentOriginal != nullptr && parentOriginal->HasOriginalWorldNoPackDuty()) {
+        } else if (inheritWorldDuty) {
+            // Continuation scratch may have no new authority. It inherits the
+            // parent's frozen world, just as a child inherits a Pack lease.
             original.packDuty_ = OriginalPlayableServicePackDuty::WorldNoPack;
             original.worldNoPackGeneration_ = parentOriginal->worldNoPackGeneration_;
             original.worldNoPackProject_ = parentOriginal->worldNoPackProject_;
@@ -10700,6 +10715,7 @@ public:
         // order alone cannot make teardown safe. Keep this as an idempotent
         // final guard for constructor rollback and direct internal deletion;
         // normal API teardown performs the same sequence before trace cleanup.
+        gameOutputStartup.Stop();
         device.RevokeRenderAdmission();
         voices.DisableRenderWorkers();
         (void)device.StopCallback();
@@ -13805,6 +13821,7 @@ public:
     ResampleTables tables;
     MultirateResampleTables multirateTables;
     BiquadTrigTable biquadTrig;
+    VorbisCodec vorbis;
     PCMRegistry registry;
     // Logic-pack ledger (section 19): applied entries + dependency edges
     // per loaded v2 pack, keyed by the pack handle. Declared before
@@ -15381,7 +15398,9 @@ public:
     // Declared last on purpose: destruction runs in reverse order, so the
     // device callback stops before any render state it drives is torn
     // down. Idle in null mode; Vn_Init starts it for VN_DEVICE_REAL.
-    DeviceBackend device;
+    GameOutputResources localOutput;
+    DeviceBackend& device;
+    GameOutputStartup& gameOutputStartup;
 
     // Resolved parameter commits consumed as non-finite at the wire
     // boundary (poisoned math never retries). Logic thread only.

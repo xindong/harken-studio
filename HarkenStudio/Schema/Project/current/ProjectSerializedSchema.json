@@ -391,6 +391,9 @@
         },
         "variable": {
           "$ref": "#/$defs/variableComponent"
+        },
+        "conversion": {
+          "$ref": "#/$defs/conversionComponent"
         }
       },
       "type": "object"
@@ -987,56 +990,6 @@
       },
       "type": "object"
     },
-    "platformConversionSettings": {
-      "additionalProperties": false,
-      "properties": {
-        "format": {
-          "maximum": 5,
-          "minimum": 0,
-          "type": "integer"
-        },
-        "targetSampleRate": {
-          "maximum": 4294967295,
-          "minimum": 1,
-          "type": "integer"
-        },
-        "vorbisAverageBitrate": {
-          "maximum": 4294967295,
-          "minimum": 0,
-          "type": "integer"
-        },
-        "vorbisEncodeMode": {
-          "maximum": 1,
-          "minimum": 0,
-          "type": "integer"
-        },
-        "vorbisMaxBitrate": {
-          "maximum": 4294967295,
-          "minimum": 0,
-          "type": "integer"
-        },
-        "vorbisMinBitrate": {
-          "maximum": 4294967295,
-          "minimum": 0,
-          "type": "integer"
-        },
-        "vorbisQuality": {
-          "maximum": 1.0,
-          "minimum": -0.1,
-          "type": "number"
-        }
-      },
-      "required": [
-        "format",
-        "targetSampleRate",
-        "vorbisAverageBitrate",
-        "vorbisEncodeMode",
-        "vorbisMaxBitrate",
-        "vorbisMinBitrate",
-        "vorbisQuality"
-      ],
-      "type": "object"
-    },
     "playableOverrideRow": {
       "additionalProperties": false,
       "properties": {
@@ -1165,6 +1118,12 @@
         },
         "renderSampleRate": {
           "type": "integer"
+        },
+        "defaultConversions": {
+          "additionalProperties": {
+            "$ref": "#/$defs/objectReference"
+          },
+          "type": "object"
         }
       },
       "type": "object"
@@ -1198,60 +1157,18 @@
           "maxLength": 120,
           "minLength": 1,
           "type": "string"
-        },
-        "profile": {
-          "$ref": "#/$defs/projectPlatformProfile"
         }
       },
       "required": [
         "id",
         "name",
-        "basePlatform",
-        "profile"
+        "basePlatform"
       ],
       "type": "object"
     },
     "projectPlatformId": {
       "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
       "type": "string"
-    },
-    "projectPlatformProfile": {
-      "additionalProperties": false,
-      "properties": {
-        "performResample": {
-          "type": "boolean"
-        },
-        "sizePolicies": {
-          "items": {
-            "additionalProperties": false,
-            "properties": {
-              "config": {
-                "$ref": "#/$defs/platformConversionSettings"
-              },
-              "maxBytes": {
-                "maximum": 9223372036854775807,
-                "minimum": 0,
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              }
-            },
-            "required": [
-              "config",
-              "maxBytes"
-            ],
-            "type": "object"
-          },
-          "minItems": 1,
-          "type": "array"
-        }
-      },
-      "required": [
-        "performResample",
-        "sizePolicies"
-      ],
-      "type": "object"
     },
     "s3Pack": {
       "additionalProperties": false,
@@ -1280,7 +1197,8 @@
           "enum": [
             "Variable",
             "Attenuation",
-            "Effect"
+            "Effect",
+            "Conversion"
           ]
         }
       },
@@ -1348,6 +1266,9 @@
         },
         "effect": {
           "$ref": "#/$defs/fieldGroupPlatformEffect"
+        },
+        "conversion": {
+          "$ref": "#/$defs/fieldGroupPlatformConversion"
         }
       },
       "required": [],
@@ -1447,13 +1368,17 @@
         },
         "effect": {
           "$ref": "#/$defs/fieldGroupSharedEffect"
+        },
+        "conversion": {
+          "$ref": "#/$defs/fieldGroupSharedConversion"
         }
       },
       "required": [
         "output",
         "send",
         "spatialRating",
-        "effect"
+        "effect",
+        "conversion"
       ],
       "type": "object"
     },
@@ -2754,6 +2679,213 @@
       },
       "type": "object",
       "minProperties": 1
+    },
+    "fieldGroupPlatformConversion": {
+      "additionalProperties": false,
+      "properties": {
+        "inherit": {
+          "type": "boolean"
+        },
+        "values": {
+          "$ref": "#/$defs/fieldGroupConversionPayload"
+        }
+      },
+      "type": "object"
+    },
+    "fieldGroupSharedConversion": {
+      "additionalProperties": false,
+      "properties": {
+        "inherit": {
+          "type": "boolean"
+        },
+        "values": {
+          "$ref": "#/$defs/fieldGroupConversionPayload"
+        }
+      },
+      "type": "object",
+      "required": [
+        "inherit"
+      ],
+      "if": {
+        "properties": {
+          "inherit": {
+            "const": false
+          }
+        },
+        "required": [
+          "inherit"
+        ]
+      },
+      "then": {
+        "required": [
+          "values"
+        ]
+      }
+    },
+    "fieldGroupConversionPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "settingsRef": {
+          "$ref": "#/$defs/fieldGroupGuid"
+        }
+      },
+      "required": [
+        "settingsRef"
+      ],
+      "type": "object"
+    },
+    "conversionSampleRateTier": {
+      "additionalProperties": false,
+      "properties": {
+        "maxBytes": {
+          "$ref": "#/$defs/conversionSizeLimit"
+        },
+        "sampleRate": {
+          "$ref": "#/$defs/conversionSampleRate"
+        }
+      },
+      "required": [
+        "maxBytes",
+        "sampleRate"
+      ],
+      "type": "object"
+    },
+    "conversionComponent": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "rules": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "$ref": "#/$defs/conversionRule"
+              }
+            }
+          },
+          "required": [
+            "rules"
+          ]
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "format": {
+              "enum": [
+                "PCM",
+                "Vorbis"
+              ]
+            },
+            "vorbisQuality": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "sampleRateTiers": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "$ref": "#/$defs/conversionSampleRateTier"
+              }
+            }
+          },
+          "required": [
+            "format",
+            "vorbisQuality",
+            "sampleRateTiers"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "conversionSizeLimit": {
+      "oneOf": [
+        {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9223372036854775807
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "conversionSampleRate": {
+      "type": "integer",
+      "enum": [
+        0,
+        8000,
+        11025,
+        16000,
+        22050,
+        24000,
+        32000,
+        44100,
+        48000
+      ]
+    },
+    "conversionRule": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "maxBytes": {
+              "$ref": "#/$defs/conversionSizeLimit"
+            },
+            "sampleRate": {
+              "$ref": "#/$defs/conversionSampleRate"
+            },
+            "format": {
+              "const": "PCM"
+            }
+          },
+          "required": [
+            "maxBytes",
+            "sampleRate",
+            "format"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "maxBytes": {
+              "$ref": "#/$defs/conversionSizeLimit"
+            },
+            "sampleRate": {
+              "$ref": "#/$defs/conversionSampleRate"
+            },
+            "format": {
+              "const": "Vorbis"
+            },
+            "quality": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10
+            },
+            "vorbisQuality": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          },
+          "required": [
+            "maxBytes",
+            "sampleRate",
+            "format"
+          ],
+          "oneOf": [
+            {
+              "required": ["quality"]
+            },
+            {
+              "required": ["vorbisQuality"]
+            }
+          ]
+        }
+      ]
     }
   },
   "$id": "harken://schema/Editor/current",
@@ -2945,6 +3077,57 @@
         "type": "object"
       },
       "type": "project.effect"
+    },
+    {
+      "pathPatterns": [
+        "Conversions/**/*.vp"
+      ],
+      "required": false,
+      "schema": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "$ref": "#/$defs/s3Pack",
+            "$schema": "https://json-schema.org/draft/2020-12/schema"
+          },
+          "harkenDocument": {
+            "additionalProperties": true,
+            "properties": {
+              "id": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "projectId": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "schemaVersion": {
+                "type": "integer"
+              },
+              "type": {
+                "const": "project.conversion",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "id",
+              "projectId",
+              "schemaVersion"
+            ],
+            "type": "object",
+            "propertyNames": {
+              "pattern": "^(?!(studioVersion|savedStudioVersion|packSchemaVersion|propertyModel)$)"
+            }
+          }
+        },
+        "required": [
+          "harkenDocument",
+          "content"
+        ],
+        "type": "object"
+      },
+      "type": "project.conversion"
     },
     {
       "pathPatterns": [
@@ -3269,7 +3452,8 @@
         "project.action",
         "project.variable",
         "project.attenuation",
-        "project.effect"
+        "project.effect",
+        "project.conversion"
       ],
       "rule": "documentIdMirrorsRoot"
     },
@@ -3543,6 +3727,46 @@
             "Container",
             "Track",
             "Segment"
+          ]
+        },
+        {
+          "allowNull": true,
+          "kind": "guid",
+          "path": [
+            "fieldGroups",
+            "shared",
+            "conversion",
+            "values",
+            "settingsRef"
+          ],
+          "targetTypes": [
+            "Conversion"
+          ]
+        },
+        {
+          "allowNull": true,
+          "kind": "guid",
+          "path": [
+            "fieldGroups",
+            "platforms",
+            "*",
+            "conversion",
+            "values",
+            "settingsRef"
+          ],
+          "targetTypes": [
+            "Conversion"
+          ]
+        },
+        {
+          "kind": "object",
+          "path": [
+            "audio",
+            "defaultConversions",
+            "*"
+          ],
+          "targetTypes": [
+            "Conversion"
           ]
         }
       ],

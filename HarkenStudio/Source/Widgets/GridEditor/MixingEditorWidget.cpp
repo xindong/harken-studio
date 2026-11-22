@@ -1,7 +1,7 @@
 #include "MixingEditorWidget.h"
 #include "GridEditorWidget.h"
 #include "MixingRowCanvas.h"
-#include "SelectionWaveform.h"
+#include "ActiveSourcePreview.h"
 
 #include "Core/ActionManager.h"
 #include "Core/Components/VSelection.h"
@@ -328,7 +328,7 @@ void MixingEditorWidget::buildRow(int index)
     view.children->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
     view.children->setColumns(QStringLiteral("mixing.children"), {
         {QStringLiteral("target"), tr("Child"), 400},
-        {QStringLiteral("waveform"), tr("Waveform"), 600}});
+        {QStringLiteral("activeSource"), tr("Active Source"), 600}});
     auto* footer = view.children->footer();
     footer->addButton()->setToolTip(tr("Add Child"));
     view.removeChild = footer->removeButton();
@@ -382,14 +382,14 @@ void MixingEditorWidget::buildRow(int index)
         cell->addWidget(ref);
         rowLayout->addWidget(cell, 1);
         view.children->rowsLayout()->addWidget(childRow);
-        auto* waveformCell = view.children->createCell(childRow);
-        waveformCell->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-        auto* waveform = new SelectionWaveform(target, waveformCell);
-        connect(waveform, &SelectionWaveform::sourceEditorRequested,
+        auto* activeSourceCell = view.children->createCell(childRow);
+        activeSourceCell->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+        auto* activeSource = new ActiveSourcePreview(target, activeSourceCell);
+        connect(activeSource, &ActiveSourcePreview::sourceEditorRequested,
                 this, &MixingEditorWidget::sourceEditorRequested);
-        waveformCell->addWidget(waveform);
-        rowLayout->addWidget(waveformCell);
-        view.children->registerRow(childRow, {cell, waveformCell});
+        activeSourceCell->addWidget(activeSource);
+        rowLayout->addWidget(activeSourceCell);
+        view.children->registerRow(childRow, {cell, activeSourceCell});
         view.childRows.push_back(childRow);
         view.refs.push_back(ref);
         if (selectedChildren_.value(row.guid) == target) view.selected = child;

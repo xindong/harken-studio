@@ -90,9 +90,9 @@ namespace Harken.Unity
         internal void SetInitPack(string value) => initPack = value ?? string.Empty;
         internal void SetPlayerExports(string[] value) => playerExports = value ?? Array.Empty<string>();
 
-        internal static void ApplyStartupCapacity(ref VnConfig config)
+        internal static void ApplyStartupCapacity(ref VnConfig config, HarkenProjectSettings settings = null)
         {
-            HarkenProjectSettings settings = ActiveForStartup();
+            settings = settings != null ? settings : ActiveForStartup();
             config.maxVoices = settings.MaxVoices;
             // A single emitter stop can address every render voice atomically.
             if (config.maxVoices > DefaultMaxVoices)
@@ -107,14 +107,15 @@ namespace Harken.Unity
             config.emitterVariableSlots = settings.emitterVariableSlots;
         }
 
-        internal static bool TryResolvePackDirectory(out string fullPath, out string error)
+        internal static bool TryResolvePackDirectory(out string fullPath, out string error, HarkenProjectSettings settings = null)
         {
+            settings = settings != null ? settings : ActiveForStartup();
             fullPath = null;
 #if !UNITY_EDITOR
-            return TryResolvePlayerPackDirectory(ActiveForStartup().PackDirectory,
+            return TryResolvePlayerPackDirectory(settings.PackDirectory,
                 Application.streamingAssetsPath, ProjectRoot(), out fullPath, out error);
 #else
-            string raw = ActiveForStartup().PackDirectory.Trim();
+            string raw = settings.PackDirectory.Trim();
             if (string.IsNullOrEmpty(raw) || IsObsoletePackRoot(raw))
             {
                 error = "Select a GeneratedPacks directory in Harken Project Settings.";
@@ -199,13 +200,13 @@ namespace Harken.Unity
             return true;
         }
 
-        internal static bool PlayerIncludesExport(string platformDirectory, out string error)
+        internal static bool PlayerIncludesExport(string platformDirectory, out string error, HarkenProjectSettings settings = null)
         {
             error = null;
             string name = string.IsNullOrEmpty(platformDirectory)
                 ? string.Empty
                 : Path.GetFileName(platformDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
-            string[] exports = ActiveForStartup().PlayerExports;
+            string[] exports = (settings != null ? settings : ActiveForStartup()).PlayerExports;
             if (exports == null || exports.Length == 0)
             {
                 error = "Select which exports are included in the player.";

@@ -1,5 +1,27 @@
 if(HARKEN_BUILD_RUNTIME_UNIT_TESTS)
 
+add_subdirectory(ReferenceVorbis)
+add_library(harken_test_vorbis_fixture STATIC Common/VorbisFixture.cpp)
+target_include_directories(harken_test_vorbis_fixture PRIVATE
+    ${HARKEN_CORE_DIR}/api/include ${HARKEN_CORE_DIR}/media/include)
+target_link_libraries(harken_test_vorbis_fixture PRIVATE harken_pack_format harken_test_vorbis_reference)
+
+# Reuse the decoder cases for Debug CRT qualification without rebuilding the
+# unrelated full-engine tests. This target is explicitly invoked when needed.
+add_executable(harken_vorbis_qualification_tests EXCLUDE_FROM_ALL
+    UnitTest/VorbisDecoderTest.cpp UnitTest/AllocationProbe.cpp
+    ${HARKEN_CORE_DIR}/media/src/VorbisMedia.cpp
+    ${HARKEN_CORE_DIR}/media/src/VorbisDecoder.cpp
+    ${HARKEN_CORE_DIR}/core/src/AllocGuard.cpp)
+target_include_directories(harken_vorbis_qualification_tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${HARKEN_CORE_DIR}/api/include
+    ${HARKEN_CORE_DIR}/core/include
+    ${HARKEN_CORE_DIR}/core/contract/include
+    ${HARKEN_CORE_DIR}/media/include)
+target_link_libraries(harken_vorbis_qualification_tests PRIVATE
+    harken_pack_format harken_vorbis_decoder harken_test_vorbis_fixture harken_buildinfo GTest::gtest_main)
+
 add_subdirectory(UnitTest/ProgramRegistration ProgramRegistration)
 
 add_executable(harken_object_identity_tests
@@ -95,6 +117,9 @@ target_include_directories(harken_pack_storage_tests PRIVATE
 gtest_discover_tests(harken_pack_storage_tests PROPERTIES TIMEOUT 120)
 
 add_executable(harken_runtime_tests
+    UnitTest/VorbisMediaTest.cpp
+    UnitTest/VorbisPlaybackTest.cpp
+    UnitTest/VorbisDecoderTest.cpp
     UnitTest/AllocationProbe.cpp
     UnitTest/AbiExceptionFirewallSweepTest.cpp
     UnitTest/AbiVintageContractTest.cpp
@@ -316,7 +341,7 @@ add_executable(harken_runtime_tests
     E2E/TraceReplayTest.cpp
     E2E/PackLogicRoundtripTest.cpp
 )
-target_link_libraries(harken_runtime_tests PRIVATE harken_core harken_buildinfo harken_host_control
+target_link_libraries(harken_runtime_tests PRIVATE harken_vorbis_decoder harken_test_vorbis_fixture harken_core harken_buildinfo harken_host_control
                       harken_program_registration
                       harken_preview GTest::gtest_main)
 if(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
@@ -593,7 +618,7 @@ add_executable(harken_release_runtime_tests
     UnitTest/MonitorRemoteCodec.cpp
     ${HARKEN_DEVELOPMENT_DIR}/api/SnapshotApi.cpp
 )
-target_link_libraries(harken_release_runtime_tests PRIVATE harken_core_release harken_buildinfo
+target_link_libraries(harken_release_runtime_tests PRIVATE harken_core_release harken_buildinfo harken_test_vorbis_fixture
                       GTest::gtest_main)
 if(MSVC)
     target_compile_options(harken_release_runtime_tests PRIVATE /FS /MP1 /bigobj)

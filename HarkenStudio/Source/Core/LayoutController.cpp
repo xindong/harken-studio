@@ -62,6 +62,8 @@ const QList<QPair<QByteArray, QByteArray>> kDockRenames = {
 
 QString migrateDockName(const QString& name)
 {
+    if (name.startsWith(QLatin1String("SourceEditorDock_")))
+        return QStringLiteral("FileViewerDock_") + name.mid(17);
     for (const auto& rename : kDockRenames)
         if (name == QLatin1String(rename.first))
             return QString::fromLatin1(rename.second);
@@ -363,6 +365,7 @@ QByteArray migrateDockNames(const QByteArray& state)
     QByteArray migrated = state;
     for (const auto& rename : kDockRenames)
         migrated.replace('"' + rename.first + '"', '"' + rename.second + '"');
+    migrated.replace("\"SourceEditorDock_", "\"FileViewerDock_");
     return migrated;
 }
 

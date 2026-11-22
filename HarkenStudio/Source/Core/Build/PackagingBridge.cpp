@@ -3,6 +3,7 @@
 #include "Utils/AudioFileReader.h"
 #include "Tooling/Harkenizer/BuildIdentity.h"
 #include "Tooling/Harkenizer/ResourceCompiler/ResourceCompiler.h"
+#include "Tooling/Harkenizer/Core/VorbisEncoder.h"
 #include <harken_studio_build/BindingTransition.h>
 #include <harken_studio_build/BindingTargets.h>
 
@@ -422,6 +423,36 @@ bool isAiffPath(const QString& path)
            suffix.compare(QStringLiteral("aif"), Qt::CaseInsensitive) == 0;
 }
 
+QString wavCodec(drwav_uint16 formatTag)
+{
+    switch (formatTag) {
+        case DR_WAVE_FORMAT_PCM:
+        case DR_WAVE_FORMAT_IEEE_FLOAT: return QStringLiteral("PCM");
+        case DR_WAVE_FORMAT_ADPCM: return QStringLiteral("MS ADPCM");
+        case DR_WAVE_FORMAT_DVI_ADPCM: return QStringLiteral("IMA ADPCM");
+        case DR_WAVE_FORMAT_ALAW: return QStringLiteral("A-law");
+        case DR_WAVE_FORMAT_MULAW: return QStringLiteral("Mu-law");
+        default: return QStringLiteral("Unknown");
+    }
+}
+
+AudioFileInfoData wavFileInfo(const QString& path)
+{
+    AudioFileInfoData out;
+    harken::studio::AudioFileReader file(path);
+    drwav wav;
+    if (!file.initWav(wav)) return out;
+    out.valid = true;
+    out.codec = wavCodec(wav.translatedFormatTag);
+    out.channels = static_cast<int>(wav.channels);
+    out.sampleRate = static_cast<int>(wav.sampleRate);
+    out.bitDepth = wav.bitsPerSample;
+    out.frameCount = static_cast<int64_t>(wav.totalPCMFrameCount);
+    out.durationSeconds = static_cast<double>(wav.totalPCMFrameCount) / wav.sampleRate;
+    drwav_uninit(&wav);
+    return out;
+}
+
 AudioFileInfoData aiffFileInfo(const QString& path)
 {
     AudioFileInfoData out;
@@ -433,6 +464,7 @@ AudioFileInfoData aiffFileInfo(const QString& path)
         return out;
 
     out.valid = true;
+    out.codec = QStringLiteral("PCM");
     out.channels = static_cast<int>(descriptor.channels);
     out.sampleRate = static_cast<int>(descriptor.sampleRate);
     out.bitDepth = static_cast<int>(descriptor.bitDepth);
@@ -464,6 +496,7 @@ AudioFileInfoData oggFileInfo(const QString& path)
     if (valid)
     {
         out.valid = true;
+        out.codec = QStringLiteral("Vorbis");
         out.channels = first->channels;
         out.sampleRate = first->rate;
         out.bitDepth = 32;
@@ -475,9 +508,10 @@ AudioFileInfoData oggFileInfo(const QString& path)
     return out;
 }
 
-bool initAudioDecoder(harken::studio::AudioFileReader& file, ma_decoder& decoder)
+bool initAudioDecoder(harken::studio::AudioFileReader& file, ma_decoder& decoder,
+                      ma_encoding_format encoding = ma_encoding_format_unknown)
 {
-    if (!file.openReadOnly())
+    if (file.isOpen() ? !file.seek(0) : !file.openReadOnly())
         return false;
     const auto read = [](ma_decoder* decoder, void* output, size_t bytes, size_t* bytesRead) -> ma_result {
         auto* file = static_cast<harken::studio::AudioFileReader*>(decoder->pUserData);
@@ -492,15 +526,14 @@ bool initAudioDecoder(harken::studio::AudioFileReader& file, ma_decoder& decoder
             : (origin == ma_seek_origin_current ? SEEK_CUR : SEEK_END);
         return seekAudioFile(file, offset, whence) == 0 ? MA_SUCCESS : MA_BAD_SEEK;
     };
-    const ma_decoder_config config = ma_decoder_config_init(ma_format_f32, 0, 0);
+    auto config = ma_decoder_config_init(ma_format_f32, 0, 0);
+    config.encodingFormat = encoding;
     return ma_decoder_init(read, seek, &file, &config, &decoder) == MA_SUCCESS;
 }
 
 } // namespace
 
 QString packArtifactExtension() { return QStringLiteral(".bytes"); }
-QString packVorbisCodecName() { return QStringLiteral("unavailable"); }
-QString packOpusCodecName() { return QStringLiteral("unavailable"); }
 uint32_t legacyPackContainerMagic() { return 0; }
 
 uint32_t packFormatCrc32(const uint8_t* data, uint32_t length)
@@ -648,10 +681,14 @@ AudioFileInfoData audioFileInfo(const QString& path)
     if (isAiffPath(path))
         return aiffFileInfo(path);
 
-    AudioFileInfoData out;
+    auto out = wavFileInfo(path);
+    if (out.valid || QFileInfo(path).suffix().compare(QStringLiteral("wav"), Qt::CaseInsensitive) == 0)
+        return out;
+
     ma_decoder decoder{};
     harken::studio::AudioFileReader file(path);
-    if (!initAudioDecoder(file, decoder))
+    const bool flac = initAudioDecoder(file, decoder, ma_encoding_format_flac);
+    if (!flac && !initAudioDecoder(file, decoder, ma_encoding_format_mp3))
         return out;
     ma_uint64 frameCount = 0;
     if (ma_decoder_get_length_in_pcm_frames(&decoder, &frameCount) != MA_SUCCESS)
@@ -661,6 +698,7 @@ AudioFileInfoData audioFileInfo(const QString& path)
         frameCount <= static_cast<ma_uint64>(std::numeric_limits<int64_t>::max()))
     {
         out.valid = true;
+        out.codec = flac ? QStringLiteral("FLAC") : QStringLiteral("MP3");
         out.channels = static_cast<int>(decoder.outputChannels);
         out.sampleRate = static_cast<int>(decoder.outputSampleRate);
         out.bitDepth = 32;
@@ -1351,7 +1389,14 @@ bool PackBuildSession::buildEntries(std::vector<CanonicalPackEntry>* entries)
             input.loopable = source.loopable;
             input.loopStartFrame = source.loopStartFrame;
             input.loopEndFrame = source.loopEndFrame;
-            if (source.interleavedSamples) {
+            if (source.format == PackMediaFormat::Vorbis) {
+                if (!source.encodedMedia) {
+                    impl_->lastError = QStringLiteral("Encoded build input is unavailable: %1").arg(source.sourcePath);
+                    return false;
+                }
+                input.encodedMedia = source.encodedMedia;
+                input.frameCount = source.encodedMedia->frameCount;
+            } else if (source.interleavedSamples) {
                 input.samplesOwner = source.interleavedSamples;
                 input.interleavedSamples = source.interleavedSamples->data();
                 input.sampleCount = source.interleavedSamples->size();
@@ -1420,7 +1465,14 @@ QString PackBuildSession::inputFingerprint()
                 {QStringLiteral("loopStartFrame"), static_cast<qint64>(source.loopStartFrame)},
                 {QStringLiteral("loopEndFrame"), static_cast<qint64>(source.loopEndFrame)}};
             hash.addData(QJsonDocument(identity).toJson(QJsonDocument::Compact));
-            if (source.interleavedSamples) {
+            if (source.format == PackMediaFormat::Vorbis) {
+                if (!source.encodedMedia || source.contentHash.isEmpty()) {
+                    impl_->lastError = QStringLiteral("Encoded build input is unavailable: %1").arg(source.sourcePath);
+                    return {};
+                }
+                hash.addData(QByteArrayView("vorbis\0", 7));
+                hash.addData(source.contentHash.toLatin1());
+            } else if (source.interleavedSamples) {
                 const auto byteCount = source.interleavedSamples->size() * sizeof(float);
                 hash.addData(QByteArray::number(byteCount) + '\0');
                 if (!source.contentHash.isEmpty()) {

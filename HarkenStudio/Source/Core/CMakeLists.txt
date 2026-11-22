@@ -64,6 +64,12 @@ add_library(harken_studio_core STATIC
     PlatformContextService.h
     LanguageContextService.cpp
     LanguageContextService.h
+    PreviewMediaModeService.cpp
+    PreviewMediaModeService.h
+    ConversionEditing.cpp
+    ConversionEditing.h
+    ConversionResults.cpp
+    ConversionResults.h
     AuthoringPlatform.h
     ProjectManager.cpp
     ProjectManager.h

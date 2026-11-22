@@ -2,6 +2,7 @@
 #include "AudioEngine.h"
 #include "CompileTargetProfileCatalog.h"
 #include "ActionManager.h"
+#include "ActionClosureSemantics.h"
 #include "AssetPipeline/AssetRegistry.h"
 #include "AssetPipeline/AssetImporter.h"
 #include "AssetPipeline/MediaPool.h"
@@ -9,8 +10,12 @@
 #include "Components/VAction.h"
 #include "Components/VTrack.h"
 #include "Components/VEffect.h"
+#include "Components/VConversion.h"
+#include "ConversionEditing.h"
+#include "PlayablePropertyAuthoringV1.h"
 #include "Components/VMixNode.h"
 #include "PlatformContextService.h"
+#include "PreviewMediaModeService.h"
 #include "Widgets/EffectEditor/EffectEditorPanel.h"
 #include "Widgets/Common/ParameterSlider.h"
 #include "Widgets/Common/ParameterBinding.h"
@@ -730,6 +735,23 @@ TEST_F(AudioPlaybackRegression, EffectEditorBusDragCannotRestoreADeletedPresetRe
     }
 }
 
+harken::studio::ProjectItem* bindRootConversion(harken::studio::ProjectManager& projects, harken::studio::ProjectItem* item,
+    const harken::studio::ProjectPlatformId& platform, const QString& name)
+{
+    auto* root = item;
+    for (auto* ancestor = item; ancestor; ancestor = ancestor->parent)
+        if (harken::studio::PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(ancestor->type)) root = ancestor;
+    auto* preset = projects.createItem(nullptr, name, harken::studio::ProjectItem::Type::Conversion);
+    if (!preset) return nullptr;
+    preset->comp<harken::studio::VConversion>()->config.rules = {{std::nullopt, 22050, harken::studio::ConversionFormat::Vorbis, 4}};
+    QString error;
+    if (!harken::studio::ConversionEditing::setObject(projects, root->guid, false, preset->guid, platform, nullptr, &error)) {
+        ADD_FAILURE() << error.toStdString();
+        return nullptr;
+    }
+    return preset;
+}
+
 class AuditionLifecycleTest : public AudioPlaybackRegression {
 protected:
     harken::studio::AuditionManager audition{&engine};
@@ -764,6 +786,128 @@ protected:
         return peak;
     }
 };
+
+TEST_F(AuditionLifecycleTest, ConvertedMediaIsPreparedOnlyForRequestedPlaybackAndInvalidatedBeforeReuse)
+{
+    makeLooping();
+    auto* project = projects.currentProject();
+    ASSERT_GE(project->platforms.size(), 2);
+    const auto primary = project->platforms.front().id;
+    const auto other = project->platforms[1].id;
+    harken::studio::PlatformContextService::instance().setSelected({primary}, primary);
+    auto* preset = bindRootConversion(projects, sounds[0], primary, QStringLiteral("PrimaryConversion"));
+    ASSERT_NE(preset, nullptr);
+    auto* otherPreset = bindRootConversion(projects, sounds[0], other, QStringLiteral("OtherConversion"));
+    ASSERT_NE(otherPreset, nullptr);
+    auto& modes = harken::studio::PreviewMediaModeService::instance();
+    const auto previousMode = modes.mode();
+    const auto restoreMode = qScopeGuard([&] { modes.setMode(previousMode); });
+    modes.setMode(harken::studio::PreviewMediaMode::Converted);
+    const QDir artifacts(QFileInfo(project->projectPath).dir().filePath(QStringLiteral(".cache/pack/media")));
+    const auto encodedFiles = [&] { return artifacts.entryList({QStringLiteral("*.vcm")}, QDir::Files); };
+    QString error;
+    harken::studio::bridge::CurrentWorldSoundPreparation preparation;
+    ASSERT_TRUE(harken::studio::ProjectManager::prepareRuntimeSounds(*project, preparation, &error));
+    EXPECT_TRUE(preparation.sounds.empty());
+    EXPECT_TRUE(encodedFiles().empty());
+    EXPECT_EQ(preparation.contentRevisions.at(sounds[0]->runtimeId()), 0u);
+    EXPECT_EQ(preparation.contentRevisions.at(sounds[1]->runtimeId()), 0u);
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    EXPECT_TRUE(encodedFiles().empty());
+
+    const auto playing = audition.playItem(*action);
+    ASSERT_NE(playing, 0u);
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    EXPECT_GT(pump(64), 0.0f);
+    const auto originalFiles = encodedFiles();
+    ASSERT_EQ(originalFiles.size(), 1);
+    ASSERT_TRUE(harken::studio::ProjectManager::prepareRuntimeSounds(*project, preparation, &error));
+    ASSERT_EQ(preparation.sounds.size(), 1u);
+    EXPECT_EQ(preparation.sounds.front().binding.soundId, sounds[0]->runtimeId());
+    const auto preparedMedia = preparation.sounds.front().media;
+    ASSERT_TRUE(preparedMedia);
+    EXPECT_EQ(preparation.contentRevisions.at(sounds[1]->runtimeId()), 0u);
+
+    otherPreset->comp<harken::studio::VConversion>()->config.rules.back().vorbisQuality = 8;
+    projects.itemPropertyChanged(otherPreset, QStringLiteral("conversion"));
+    ASSERT_TRUE(harken::studio::ProjectManager::prepareRuntimeSounds(*project, preparation, &error));
+    ASSERT_EQ(preparation.sounds.size(), 1u);
+    EXPECT_EQ(preparation.sounds.front().media, preparedMedia);
+    EXPECT_EQ(encodedFiles(), originalFiles);
+    EXPECT_EQ(audition.getAudition(playing).stopState, harken::studio::AuditionStopState::None);
+
+    preset->comp<harken::studio::VConversion>()->config.rules.back().vorbisQuality = 8;
+    projects.itemPropertyChanged(preset, QStringLiteral("conversion"));
+    ASSERT_TRUE(harken::studio::ProjectManager::prepareRuntimeSounds(*project, preparation, &error));
+    EXPECT_TRUE(preparation.sounds.empty());
+    EXPECT_EQ(preparation.contentRevisions.at(sounds[0]->runtimeId()), 0u);
+    EXPECT_EQ(encodedFiles(), originalFiles);
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    EXPECT_EQ(encodedFiles(), originalFiles);
+    pump(128);
+    EXPECT_EQ(audition.getAudition(playing).playingId, 0u);
+    const auto replay = audition.playItem(*action);
+    ASSERT_NE(replay, 0u);
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    EXPECT_GT(pump(64), 0.0f);
+    EXPECT_EQ(encodedFiles().size(), 2);
+    ASSERT_TRUE(harken::studio::ProjectManager::prepareRuntimeSounds(*project, preparation, &error));
+    ASSERT_EQ(preparation.sounds.size(), 1u);
+    EXPECT_NE(preparation.sounds.front().media, preparedMedia);
+}
+
+TEST_F(AuditionLifecycleTest, FirstConversionChangeAfterCreatingASoundStopsItsPreview)
+{
+    auto* project = projects.currentProject();
+    const auto primary = project->platforms.front().id;
+    harken::studio::PlatformContextService::instance().setSelected({primary}, primary);
+    auto* preset = bindRootConversion(projects, layer, primary, QStringLiteral("PrimaryConversion"));
+    ASSERT_NE(preset, nullptr);
+    auto& modes = harken::studio::PreviewMediaModeService::instance();
+    const auto previousMode = modes.mode();
+    const auto restoreMode = qScopeGuard([&] { modes.setMode(previousMode); });
+    modes.setMode(harken::studio::PreviewMediaMode::Converted);
+    auto* added = projects.createAudioItem(layer, QStringLiteral("NewConvertedSound"), paths[0], 930001);
+    ASSERT_NE(added, nullptr);
+    added->comp<harken::studio::VAudio>()->loopCount = 0;
+    const auto playing = audition.playItem(*added);
+    ASSERT_NE(playing, 0u);
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    EXPECT_GT(pump(64), 0.0f);
+    preset->comp<harken::studio::VConversion>()->config.rules.back().sampleRate = 16000;
+    projects.itemPropertyChanged(preset, QStringLiteral("conversion"));
+    harken::studio::bridge::CurrentWorldSoundPreparation preparation;
+    QString error;
+    ASSERT_TRUE(harken::studio::ProjectManager::prepareRuntimeSounds(*project, preparation, &error));
+    EXPECT_EQ(preparation.contentRevisions.at(added->runtimeId()), 0u);
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    pump(128);
+    EXPECT_EQ(audition.getAudition(playing).playingId, 0u);
+}
+
+TEST_F(AuditionLifecycleTest, PlaybackMediaClosureExcludesControlAndQuantizationOnlyReferences)
+{
+    const auto platform = projects.currentProject()->platforms.front().id;
+    auto& steps = action->comp<harken::studio::VAction>()->steps;
+    steps.front().quantize.timing = harken::studio::QuantizeTiming::NextBeat;
+    steps.front().quantize.referenceObjectID = sounds[1]->objectID;
+    steps.front().quantize.referenceName = sounds[1]->name;
+    harken::studio::VActionStep stop;
+    stop.type = harken::studio::VActionStep::Type::Stop;
+    stop.targetObjectID = sounds[1]->objectID;
+    stop.targetName = sounds[1]->name;
+    steps.push_back(stop);
+    auto* parent = projects.createActionTargeting(action, harken::studio::VActionStep::Type::PostAction,
+        QStringLiteral("PlayNested"));
+    ASSERT_NE(parent, nullptr);
+    const auto closure = harken::studio::ActionClosureSemantics::playbackContentReferences(
+        *projects.currentProject(), parent->runtimeId(), platform);
+    QSet<harken::studio::types::ObjectId> media;
+    for (const auto& object : closure.objects)
+        if (object.type == harken::studio::ProjectItem::Type::Sound)
+            media.insert(object.stableId);
+    EXPECT_EQ(media, QSet<harken::studio::types::ObjectId>{sounds[0]->runtimeId()});
+}
 
 TEST_F(AuditionLifecycleTest, SilentScheduledTreesRemainControllableUntilTheyReallyEnd)
 {

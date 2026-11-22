@@ -116,6 +116,12 @@ constexpr TypeFacts kTypeFacts[] = {
       Bucket::Effects,      true,  NameNamespace::Effect,
       nullptr, 0,
       false, false, false, false, false, false, true,  true  },
+
+    { T::Conversion,  "Conversion",  "Conversion",
+      { "projectItem.conversion" },
+      Bucket::Conversions, true,  NameNamespace::Conversion,
+      nullptr, 0,
+      false, false, false, false, false, false, false, true  },
 };
 
 struct AliasEntry { const char* name; T type; };
@@ -130,6 +136,7 @@ constexpr BucketFacts kBucketFacts[] = {
     { Bucket::Variables,    kVariablesFolderName,    "Variable",    true,  false },
     { Bucket::Attenuations, kAttenuationsFolderName, "Attenuation", true,  false },
     { Bucket::Effects,      kEffectsFolderName,      "Effect",      true,  false },
+    { Bucket::Conversions,  kConversionsFolderName,  "Conversion",  true,  false },
 };
 
 constexpr char kUnknownName[] = "Unknown";
@@ -144,11 +151,12 @@ const TypeFacts* factsOrNull(ProjectItem::Type type)
     return nullptr;
 }
 
-const std::array<ProjectItem::Type, 10>& allTypes()
+const std::array<ProjectItem::Type, 11>& allTypes()
 {
-    static const std::array<ProjectItem::Type, 10> types = {
+    static const std::array<ProjectItem::Type, 11> types = {
         T::Sound, T::Container, T::Track, T::Segment,
         T::Layer, T::Bus, T::Action, T::Variable, T::Attenuation, T::Effect,
+        T::Conversion,
     };
     return types;
 }
@@ -316,11 +324,12 @@ QString folderNameOf(Bucket bucket)
     return facts ? QString::fromLatin1(facts->folderName) : QString();
 }
 
-const std::array<Bucket, 6>& allBuckets()
+const std::array<Bucket, 7>& allBuckets()
 {
-    static const std::array<Bucket, 6> buckets = {
+    static const std::array<Bucket, 7> buckets = {
         Bucket::Layers, Bucket::Busses, Bucket::Actions,
         Bucket::Variables, Bucket::Attenuations, Bucket::Effects,
+        Bucket::Conversions,
     };
     return buckets;
 }
@@ -375,6 +384,8 @@ const std::vector<CreationSpec>& creationSpecs()
           CreateParentPolicy::DefaultForType, T::None, true,  false, false },
         { T::Effect,      "New_Effect",
           CreateParentPolicy::DefaultForType, T::None, true,  false, false },
+        { T::Conversion,  "New_Conversion",
+          CreateParentPolicy::DefaultForType, T::None, true,  false, false },
         { T::Variable,    "New_Variable",
           CreateParentPolicy::DefaultForType, T::None, true,  false, false },
         { T::Bus,         "New_Bus",
@@ -397,6 +408,7 @@ QString nameNamespaceDisplayName(NameNamespace ns)
         case NameNamespace::Action:      return QStringLiteral("Actions");
         case NameNamespace::Attenuation: return QStringLiteral("Attenuations");
         case NameNamespace::Effect:      return QStringLiteral("Effects");
+        case NameNamespace::Conversion:  return QStringLiteral("Conversions");
         case NameNamespace::Bus:         return QStringLiteral("Buses");
         case NameNamespace::Variable:    return QStringLiteral("Variables");
     }
@@ -425,6 +437,7 @@ const std::vector<ProjectFileBinding>* bucketMember(const ProjectData& data,
         case ItemTypeCatalog::Bucket::Actions:      return &data.actions;
         case ItemTypeCatalog::Bucket::Attenuations: return &data.attenuationItems;
         case ItemTypeCatalog::Bucket::Effects:      return &data.effectItems;
+        case ItemTypeCatalog::Bucket::Conversions:  return &data.conversionItems;
         case ItemTypeCatalog::Bucket::Busses:       return &data.busses;
         case ItemTypeCatalog::Bucket::Variables:    return &data.variables;
         default:                                    return nullptr;

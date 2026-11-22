@@ -3,6 +3,7 @@
 #include "AllocationProbe.h"
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/TestUtil.h"
+#include "Common/VorbisFixture.h"
 
 #include "Engine.h"
 #include "ProjectGenerationTransaction.h"
@@ -2183,6 +2184,70 @@ TEST(CanonicalPackSetActivate, V2ActivationTraceRechecksBadBytesBeforeUnreadMemb
     EXPECT_NE(0, ReplayV2ActivationTrace(changed, output)) << output;
 }
 
+TEST(CanonicalPackSetActivate, NamedPostRejectsSupersededSetAndMismatchedContentLease) {
+    using namespace v2activation;
+    EngineSession session(CanonicalActivationConfig(8, 64, 48000));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    const auto initId = PackId("Init");
+    const auto contentId = PackId("action_" + harken::ObjectIdString(action));
+    Provider init{Build(true, initId)}, content{BuildPreview(false)};
+    std::vector<VnCanonicalPackSetMemberV2> members{
+        Member(initId, true, &init), Member(contentId, false, &content)};
+    VnCanonicalPackSetActivationReportV1 report{};
+    ASSERT_EQ(VN_OK, Activate(members, report));
+
+    const uint8_t keys[129] = {'P', 'l', 'a', 'y'};
+    const uint16_t name[] = {'P', 'l', 'a', 'y'};
+    VnResidentDirectoryMemberV1 row{};
+    row.rootActionId = action;
+    row.packStableId = contentId;
+    row.handle = members[1].source.expectedHandle;
+    VnNamedResidentPostV1 post{};
+    post.structSize = sizeof(post);
+    post.rowCount = 1;
+    post.keyCapacity = sizeof(keys);
+    post.nameUnits = 4;
+    post.keys = keys;
+    post.name = name;
+    post.rows = &row;
+    post.initHandle = report.initHandle;
+    post.setRevision = report.resultSetRevision;
+
+    // Retire content, then load the same Action ID in a new set.
+    members.resize(1);
+    ASSERT_EQ(VN_OK, Activate(members, report, report.resultSetRevision));
+    uint64_t firing = 99;
+    EXPECT_EQ(VN_STALE_HANDLE, Vn_PostNamedResidentActionV1(&post, &firing));
+    EXPECT_EQ(0u, firing);
+    members.push_back(Member(contentId, false, &content));
+    ASSERT_EQ(VN_OK, Activate(members, report, report.resultSetRevision));
+    firing = 99;
+    EXPECT_EQ(VN_STALE_HANDLE, Vn_PostNamedResidentActionV1(&post, &firing));
+    EXPECT_EQ(0u, firing);
+    post.initHandle = report.initHandle;
+    post.setRevision = report.resultSetRevision;
+    ASSERT_NE(row.handle, members[1].source.expectedHandle);
+    EXPECT_EQ(VN_STALE_HANDLE, Vn_PostNamedResidentActionV1(&post, &firing));
+    EXPECT_EQ(0u, firing);
+    row.handle = members[1].source.expectedHandle;
+    row.packStableId = initId;
+    EXPECT_EQ(VN_STALE_HANDLE, Vn_PostNamedResidentActionV1(&post, &firing));
+    EXPECT_EQ(0u, firing);
+    row.packStableId = contentId;
+    --post.keyCapacity;
+    EXPECT_EQ(VN_INVALID_ARG, Vn_PostNamedResidentActionV1(&post, &firing));
+    EXPECT_EQ(0u, firing);
+    ++post.keyCapacity;
+    ASSERT_EQ(VN_OK, Vn_PostNamedResidentActionV1(&post, &firing));
+    ASSERT_NE(0u, firing);
+    ASSERT_EQ(VN_OK, Vn_StopActionFiring(firing, 0));
+    for (unsigned i = 0; i < 4; ++i) {
+        session.Engine()->nullBackend.Pump(4);
+        ASSERT_EQ(VN_OK, Vn_Update());
+    }
+    EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
+}
+
 TEST(CanonicalPackSetActivate, V2ActivationTraceReplaysEmbeddedMediaAfterSourceLoss) {
     using namespace v2activation;
     const auto directory = std::filesystem::path(HARKEN_TEMP_DIR) / "v2-activation-trace-media";
@@ -3413,13 +3478,18 @@ std::vector<float> PlanarSignal(float scale) {
 // Content pack whose action plays one Sound backed by its own stereo media.
 std::vector<std::uint8_t> BuildSoundContent(std::uint64_t id, std::uint64_t revision,
                                             bool streamed, const std::vector<float>& samples,
-                                            std::uint64_t providerId = 0, bool leadingMedia = false) {
+                                            std::uint64_t providerId = 0, bool leadingMedia = false,
+                                            std::uint64_t encodedRevision = 0,
+                                            const std::vector<std::uint8_t>* encoded = nullptr,
+                                            std::size_t leadingFrames = 4096, float leadingSample = 0.125f) {
     using namespace harken;
     using namespace harkentest::packfoundation;
     const auto bus = DefaultRuntimeBusFixture();
-    const float* planes[] = {samples.data(), samples.data() + kFrames};
+    const auto frames = samples.size() / 2;
+    const float* planes[] = {samples.data(), samples.data() + frames};
     std::uint64_t mediaRevision = 0;
-    EXPECT_TRUE(ComputeMediaPcmContentRevisionV1(48000, 2, kFrames, planes, 1, &mediaRevision));
+    EXPECT_TRUE(ComputeMediaPcmContentRevisionV1(48000, 2, frames, planes, 1, &mediaRevision));
+    if (encodedRevision) mediaRevision = encodedRevision;
     PlayablePropertyProgramViewV1 property{};
     property.stableId = kSound;
     property.contentPropertyKind = playableproperties::ContentPropertyKindV1::Sound;
@@ -3482,9 +3552,10 @@ std::vector<std::uint8_t> BuildSoundContent(std::uint64_t id, std::uint64_t revi
     image.AddEntry(HK_PACK_ENTRY_KIND_PACK_DEPENDENCY_EDGE, VnObjectId{},
         DependencyPayload(PackId("Init"), 1, bus.triple), HK_PACK_PACK_DEPENDENCY_EDGE_VINTAGE);
     // An unrelated media blob ahead of the Sound's moves its file offset.
-    if (leadingMedia) image.AddMedia(harkentest::ObjectId(8399), std::vector<float>(4096, 0.125f));
+    if (leadingMedia) image.AddMedia(harkentest::ObjectId(8399), std::vector<float>(leadingFrames, leadingSample));
     if (providerId == 0) {
-        image.AddMedia(kSound, samples, {}, 2);
+        if (encoded) image.AddVorbis(kSound, *encoded, frames, 2);
+        else image.AddMedia(kSound, samples, {}, 2);
         return image.Build();
     }
     PackDependencyEdge edge;
@@ -3501,7 +3572,8 @@ std::vector<std::uint8_t> BuildSoundContent(std::uint64_t id, std::uint64_t revi
 
 // Content pack carrying only the stereo media; its Sound is defined by a
 // member that declares a required content edge to this pack.
-std::vector<std::uint8_t> BuildMediaProvider(std::uint64_t id, const std::vector<float>& samples) {
+std::vector<std::uint8_t> BuildMediaProvider(std::uint64_t id, const std::vector<float>& samples,
+                                             VnSoundId sound = kSound) {
     using namespace harkentest::packfoundation;
     const auto bus = DefaultRuntimeBusFixture();
     std::uint64_t size = 0;
@@ -3512,7 +3584,7 @@ std::vector<std::uint8_t> BuildMediaProvider(std::uint64_t id, const std::vector
     image.AddEntry(HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION, id, std::move(partition));
     image.AddEntry(HK_PACK_ENTRY_KIND_PACK_DEPENDENCY_EDGE, VnObjectId{},
         DependencyPayload(PackId("Init"), 1, bus.triple), HK_PACK_PACK_DEPENDENCY_EDGE_VINTAGE);
-    image.AddMedia(kSound, samples, {}, 2);
+    image.AddMedia(sound, samples, {}, 2);
     return image.Build();
 }
 
@@ -3595,6 +3667,182 @@ harkentest::Capture ResidentReference(const char* name, const std::vector<float>
 }
 
 } // namespace packstream
+
+TEST(CanonicalPackSetActivate, ResidentVorbisActionLoadsMixedPackAndRendersAgainstReference) {
+    using namespace packstream;
+    const auto fixture = harken::test::MakeVorbisFixture(2, false, 0, 0, 4096, true, 173);
+    harken::VorbisMedia media;
+    ASSERT_TRUE(harken::ParseResidentVorbis(fixture.media.data(), fixture.media.size(), media));
+    std::vector<float> planar(fixture.reference.size());
+    for (std::size_t frame = 0; frame < media.frames; ++frame) {
+        planar[frame] = fixture.reference[2 * frame];
+        planar[media.frames + frame] = fixture.reference[2 * frame + 1];
+    }
+    const auto blocks = static_cast<std::uint32_t>((media.frames + 255) / 256 + 8);
+    harkentest::Capture reference;
+    for (const bool encoded : {false, true}) {
+        EngineSession session(StreamConfig());
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto& engine = *session.Engine();
+        PathSet set("pack-vorbis-resident");
+        ASSERT_TRUE(harkentest::WriteBytes(set.content, BuildSoundContent(PathSet::ContentId(), 1,
+            false, planar, 0, true, encoded ? media.revision : 0, encoded ? &fixture.media : nullptr)));
+        if (encoded) {
+            VnCanonicalPackSetActivationReportV1 report{};
+            ASSERT_EQ(VN_OK, Activate(set.members, report));
+            const auto decoded = PostAndCapture(&engine, blocks);
+            const auto start = Audible(reference);
+            ASSERT_EQ(start, Audible(decoded));
+            ASSERT_LE(start + media.frames, decoded.left.size());
+            ASSERT_EQ(reference.left.size(), decoded.left.size());
+            for (std::size_t frame = start; frame < start + media.frames; ++frame) {
+                ASSERT_NEAR(reference.left[frame], decoded.left[frame], 2e-5f) << frame;
+                ASSERT_NEAR(reference.right[frame], decoded.right[frame], 2e-5f) << frame;
+            }
+        } else {
+            VnCanonicalPackSetActivationReportV1 report{};
+            ASSERT_EQ(VN_OK, Activate(set.members, report));
+            reference = PostAndCapture(&engine, blocks);
+        }
+    }
+}
+
+TEST(CanonicalPackSetActivate, ExplicitResidentMediaBudgetRejectsProviderSetAtomically) {
+    using namespace packstream;
+    auto config = StreamConfig();
+    config.maxPackResourceBytes = 1;
+    EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+
+    const auto fixture = harken::test::MakeVorbisFixture(2, false, 0, 0, 4096, true, 173);
+    const auto fingerprint = harken::Fnv1a64(fixture.media.data(), fixture.media.size());
+    Provider init{Build(true, PackId("Init"))};
+    Provider content{BuildSoundContent(PathSet::ContentId(), 1, false, fixture.reference,
+        0, true, fingerprint, &fixture.media)};
+    std::vector<VnCanonicalPackSetMemberV2> members{
+        Member(PackId("Init"), true, &init), Member(PathSet::ContentId(), false, &content)};
+    VnCanonicalPackSetActivationReportV1 report{};
+    EXPECT_EQ(VN_PACK_RESIDENT_CAPACITY, Activate(members, report));
+    EXPECT_EQ(0u, session.Engine()->registry.CookieOf(kSound));
+    EXPECT_EQ(nullptr, PackMasterHolder(session.Engine()));
+    EXPECT_EQ(content.reads, content.releases);
+
+    members.pop_back();
+    ASSERT_EQ(VN_OK, Activate(members, report));
+    EXPECT_EQ(1u, report.resultSetRevision);
+    EXPECT_TRUE(PackAdmissionOpenForInit(session.Engine(), report.initHandle));
+}
+
+TEST(CanonicalPackSetActivate, ProviderMixedPcmCopyUsesSharedStagingWhileEncodedPackIsLive) {
+    using namespace packstream;
+    const auto fixture = harken::test::MakeVorbisFixture(2, false, 0, 0, 4096, true, 173);
+    const auto fingerprint = harken::Fnv1a64(fixture.media.data(), fixture.media.size());
+    constexpr std::size_t frames = 512 * 1024;
+    constexpr auto floatBytes = frames * sizeof(float);
+    for (const bool compact : {false, true}) {
+        Provider init{Build(true, PackId("Init"))};
+        Provider content{BuildSoundContent(PathSet::ContentId(), 1, false, fixture.reference,
+            0, true, fingerprint, &fixture.media, frames, compact ? 0.125f : 0.1f)};
+        // This allowance accommodates the compact copy plus parser/codec scratch,
+        // but cannot hold the original Pack and a full Float32 copy together.
+        for (const bool ample : {false, true}) {
+            SCOPED_TRACE(::testing::Message() << "compact=" << compact << ", ample=" << ample);
+            auto config = StreamConfig();
+            config.maxPackDecodeStagingBytes = content.bytes.size() +
+                (ample ? 2 * floatBytes : 3 * floatBytes / 4);
+            EngineSession session(config);
+            ASSERT_EQ(VN_OK, session.InitResult());
+            VnCanonicalPackSetActivationReportV1 report{};
+            std::vector<VnCanonicalPackSetMemberV2> members{
+                Member(PackId("Init"), true, &init), Member(PathSet::ContentId(), false, &content)};
+            init.reads = init.releases = content.reads = content.releases = 0;
+            const auto result = Activate(members, report);
+            EXPECT_EQ(1u, init.reads);
+            EXPECT_EQ(1u, content.reads);
+            EXPECT_EQ(init.reads, init.releases);
+            EXPECT_EQ(content.reads, content.releases);
+            if (!compact && !ample) {
+                EXPECT_EQ(VN_PACK_RESIDENT_CAPACITY, result);
+                EXPECT_EQ(0u, session.Engine()->packs.LoadedCount());
+                EXPECT_EQ(0u, session.Engine()->registry.CookieOf(kSound));
+            } else {
+                ASSERT_EQ(VN_OK, result);
+                EXPECT_EQ(2u, session.Engine()->packs.LoadedCount());
+                EXPECT_NE(0u, session.Engine()->registry.CookieOf(kSound));
+            }
+        }
+    }
+}
+
+TEST(CanonicalPackSetActivate, ProviderMixedPcmCopyRemainsChargedWhenReadingNextMember) {
+    using namespace packstream;
+    constexpr std::size_t frames = 512 * 1024;
+    constexpr auto floatBytes = frames * sizeof(float);
+    const auto fixture = harken::test::MakeVorbisFixture(2, false, 0, 0, 4096, true, 173);
+    Provider init{Build(true, PackId("Init"))};
+    Provider mixed{BuildSoundContent(PathSet::ContentId(), 1, false, fixture.reference,
+        0, true, harken::Fnv1a64(fixture.media.data(), fixture.media.size()), &fixture.media, frames, 0.1f)};
+    const auto nextId = PackId("next-media");
+    Provider next{BuildMediaProvider(nextId, std::vector<float>(frames + frames / 2, 0.25f),
+        harkentest::ObjectId(8401))};
+    // The mixed member fits during preparation, and the next source fits on its
+    // own. Keeping the prepared PCM alive across the two reads exceeds the limit.
+    for (const bool ample : {false, true}) {
+        SCOPED_TRACE(ample);
+        auto config = StreamConfig();
+        config.maxPackDecodeStagingBytes = next.bytes.size() + (ample ? 2 * floatBytes : 3 * floatBytes / 4);
+        EngineSession session(config);
+        ASSERT_EQ(VN_OK, session.InitResult());
+        std::vector<VnCanonicalPackSetMemberV2> members{Member(PackId("Init"), true, &init),
+            Member(PathSet::ContentId(), false, &mixed), Member(nextId, false, &next)};
+        VnCanonicalPackSetActivationReportV1 report{};
+        next.reads = next.releases = 0;
+        const auto result = Activate(members, report);
+        EXPECT_EQ(1u, next.reads);
+        EXPECT_EQ(next.reads, next.releases);
+        EXPECT_EQ(ample ? VN_OK : VN_PACK_RESIDENT_CAPACITY, result);
+        EXPECT_EQ(ample ? 3u : 0u, session.Engine()->packs.LoadedCount());
+    }
+}
+
+TEST(CanonicalPackSetActivate, ProviderVorbisRejectsWrongTrimWithoutReplacingLiveMedia) {
+    using namespace packstream;
+    EngineSession session(StreamConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto* engine = session.Engine();
+    auto fixture = harken::test::MakeVorbisFixture(2, false, 0, 0, 4096, true, 173);
+    auto contentBytes = [&](unsigned revision) {
+        const auto fingerprint = harken::Fnv1a64(fixture.media.data(), fixture.media.size());
+        return BuildSoundContent(PathSet::ContentId(), revision, false, fixture.reference,
+            0, true, fingerprint, &fixture.media);
+    };
+    Provider init{Build(true, PackId("Init"))}, content{contentBytes(1)};
+    std::vector<VnCanonicalPackSetMemberV2> members{
+        Member(PackId("Init"), true, &init), Member(PathSet::ContentId(), false, &content)};
+    VnCanonicalPackSetActivationReportV1 activation{};
+    const auto beforeWide = engine->vorbis.settings.WideRequests();
+    ASSERT_EQ(VN_OK, Activate(members, activation));
+    EXPECT_GT(engine->vorbis.settings.WideRequests(), beforeWide);
+    EXPECT_EQ(init.reads, 1u);
+    EXPECT_EQ(init.releases, 1u);
+    EXPECT_EQ(content.reads, 1u);
+    EXPECT_EQ(content.releases, 1u);
+    const auto previous = engine->registry.CookieOf(kSound);
+    ASSERT_NE(0u, previous);
+    const auto blocks = static_cast<unsigned>((fixture.reference.size() / 2 + 255) / 256 + 8);
+    const auto reference = PostAndCapture(engine, blocks);
+    ASSERT_LT(Audible(reference), reference.left.size());
+
+    ++fixture.media[offsetof(HkPackVorbisHeader, tailFrames)];
+    content.bytes = contentBytes(2);
+    harken::PackCanonicalImage image;
+    EXPECT_EQ(VN_BAD_PACK, harken::ParsePackCanonicalImage(content.bytes.data(), content.bytes.size(), &image));
+    EXPECT_EQ(VN_BAD_PACK, Activate(members, activation, 1));
+    EXPECT_EQ(previous, engine->registry.CookieOf(kSound));
+    const auto after = PostAndCapture(engine, blocks);
+    EXPECT_EQ(reference.left, after.left);
+    EXPECT_EQ(reference.right, after.right);
+}
 
 TEST(CanonicalPackSetActivate, StreamedPackMediaPlaysResidentSamplesWithoutResidentCopy) {
     using namespace packstream;

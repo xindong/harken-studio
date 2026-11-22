@@ -36,7 +36,7 @@ std::string Block(std::string_view output = kInherit,
 {
     std::string result = "{\"shared\":{\"output\":" + std::string(output)
         + ",\"send\":" + std::string(send) + ",\"spatialRating\":" + std::string(rating)
-        + ",\"effect\":" + std::string(effects) + "}";
+        + ",\"effect\":" + std::string(effects) + ",\"conversion\":" + kInherit + "}";
     if (!platforms.empty()) result += ",\"platforms\":" + std::string(platforms);
     return result + "}";
 }

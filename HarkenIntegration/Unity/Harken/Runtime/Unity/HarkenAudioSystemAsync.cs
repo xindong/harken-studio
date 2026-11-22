@@ -48,6 +48,13 @@ namespace Harken.Unity
                 if (result != VnResult.VN_OK) return CompleteSessionStartup(result, string.Empty);
                 if (source.IsAsync && !PackSource.HasControlContext)
                     return CompleteSessionStartup(VnResult.VN_INVALID_ARG, string.Empty);
+                if (source.IsDirectory)
+                {
+                    if (!this || !isActiveAndEnabled || Environment.CurrentManagedThreadId != gameThreadId)
+                        return VnResult.VN_NOT_INITIALIZED;
+                    result = PackBootstrap.StartLocal(source, ref config, out session, request.Token);
+                    return CompleteSessionStartup(result, source.Root);
+                }
                 PackMetadataCapture captured = await source.CaptureAsync(null, default, null, request.Token);
                 request.Token.ThrowIfCancellationRequested();
                 if (!this || !isActiveAndEnabled || !ReferenceEquals(packSourceStartup, request) ||

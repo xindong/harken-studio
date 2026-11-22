@@ -187,6 +187,7 @@ void PrivatePlainLayoutState::ClearCandidate() noexcept {
                                        std::memory_order_relaxed);
         bucket.attemptGeneration = 0;
         bucket.quantum = 0;
+        bucket.elasticSoundStart = false;
         bucket.sourceWaitSequence.store(0, std::memory_order_relaxed);
         bucket.completedAudioSequence.store(0, std::memory_order_relaxed);
         bucket.firstEvent = bucket.eventCount = 0;
@@ -4229,6 +4230,7 @@ void ImmediateActionLane::InstallPlacement(ImmediateLaneHandle handle,
             ++firstGroup;
         }
         bucket.state.store(ImmediateLaneBucketState::Prepared, std::memory_order_relaxed);
+        bucket.elasticSoundStart = false;
         bucket.sourceWaitSequence.store(0, std::memory_order_relaxed);
         bucket.completedAudioSequence.store(0, std::memory_order_relaxed);
     }
@@ -4236,7 +4238,7 @@ void ImmediateActionLane::InstallPlacement(ImmediateLaneHandle handle,
     attempt->anchorFrame = anchor;
 }
 
-bool ImmediateActionLane::Publish(ImmediateLaneHandle handle) noexcept {
+bool ImmediateActionLane::Publish(ImmediateLaneHandle handle, bool elasticSoundStart) noexcept {
     auto* attempt = Resolve(handle);
     if (attempt == nullptr || attempt->privatePlacementProof != nullptr) return false;
     const auto initial = attempt->state.load(std::memory_order_acquire);
@@ -4245,6 +4247,13 @@ bool ImmediateActionLane::Publish(ImmediateLaneHandle handle) noexcept {
     AttemptReadAccess access(*attempt);
     if (!access || Resolve(handle) != attempt) return false;
     if (!ValidatePrivatePublication(handle, *attempt)) return false;
+    if (elasticSoundStart) {
+        const auto& event = EventBase(handle.slot)[0];
+        if (attempt->bucketCount != 1 || attempt->eventCount != 1 || attempt->groupCount != 0 ||
+            event.timeDomain != ImmediateLaneTimeDomain::RelativeToAnchor || event.relativeFrame != 0 ||
+            event.event.frontier.Present() || !event.event.armToken.Valid()) return false;
+        BucketBase(handle.slot)[0].elasticSoundStart = true;
+    }
     ApplyPrivatePublicationImpl(handle, *attempt);
     return true;
 }
@@ -4435,7 +4444,8 @@ const ImmediateLaneBucket* ImmediateActionLane::CaptureDue(
             (attempt.conditionalProjectionAdmission.load(std::memory_order_acquire) &
                 kEventWithdrawalRequested) != 0;
         const auto sourceWait = bucket.sourceWaitSequence.load(std::memory_order_acquire);
-        const bool resuming = sourceWait != 0 && sourceWait <= quantum + 1u && bucket.quantum <= quantum;
+        const bool resuming = (bucket.elasticSoundStart || (sourceWait != 0 && sourceWait <= quantum + 1u)) &&
+            bucket.quantum <= quantum;
         if (attempt.queueContinuation != nullptr && bucket.quantum <= quantum &&
             state == ImmediateLaneBucketState::Committed && !attempt.queueContinuation->BeginAudio()) {
             auto expected = ImmediateLaneBucketState::Committed;
@@ -4509,7 +4519,7 @@ bool ImmediateActionLane::CapturedSourceWaitQuantum(std::uint32_t slot,
         attempt.capturedBucketOrdinal >= attempt.bucketCount ||
         bucket != BucketBase(slot) + attempt.capturedBucketOrdinal ||
         bucket->attemptGeneration != attempt.generation || attempt.capturedAudioSequence == 0 ||
-        bucket->sourceWaitSequence.load(std::memory_order_acquire) == 0 ||
+        (!bucket->elasticSoundStart && bucket->sourceWaitSequence.load(std::memory_order_acquire) == 0) ||
         bucket->sourceWaitSequence.load(std::memory_order_acquire) > attempt.capturedAudioSequence) return false;
     *outQuantum = attempt.capturedAudioSequence - 1u;
     return true;

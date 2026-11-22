@@ -54,7 +54,6 @@ void BlueprintCanvasWidget::refreshNodeTitles_()
             const auto source = SoundSourceEditing::activeSourceId(*item, platform, language);
             if (source != 0) {
                 switch (MediaPool::instance().cachedStatus(source)) {
-                case MediaStatus::Outdated: color = colors.warning; break;
                 case MediaStatus::Missing:
                 case MediaStatus::Error: color = colors.error; break;
                 case MediaStatus::Orphaned: color = colors.textSecondary; break;

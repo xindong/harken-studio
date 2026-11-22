@@ -42,6 +42,7 @@ inline QJsonObject projectDocument(const QString& type,
                     {QStringLiteral("send"), inherit},
                     {QStringLiteral("spatialRating"), inherit},
                     {QStringLiteral("effect"), inherit},
+                    {QStringLiteral("conversion"), inherit},
                 }},
             });
         }

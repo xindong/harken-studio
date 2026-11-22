@@ -1,17 +1,21 @@
 
 #include "AudioAssetLabels.h"
 
+#include "Core/AssetPipeline/AudioFormatCatalog.h"
 #include "Core/AssetPipeline/PathUtils.h"
 
 #include <QCoreApplication>
+#include <QFileInfo>
 
 namespace harken::studio {
 
 QString assetDisplayName(const AssetInfo& asset)
 {
-    const QString normalized = PathUtils::normalizeToUnix(asset.relativePath);
-    const int slash = normalized.lastIndexOf(QLatin1Char('/'));
-    return slash < 0 ? normalized : normalized.mid(slash + 1);
+    const QFileInfo file(PathUtils::normalizeToUnix(
+        asset.relativePath.isEmpty() ? asset.absolutePath : asset.relativePath));
+    const QString stem = file.completeBaseName();
+    return !stem.isEmpty() && AudioFormatCatalog::containsExtension(file.suffix())
+        ? stem : file.fileName();
 }
 
 QString assetDisplayPath(const AssetInfo& asset)

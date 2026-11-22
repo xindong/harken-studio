@@ -61,7 +61,7 @@ namespace harken::studio {
     class InspectorPanel;
     class AudioEngine;
     class ProjectSerializer;
-    class SourceEditorPanel;
+    class FileViewerPanel;
     class ExternalEditorPanel;
     class EffectEditorPanel;
     class TimelineEditorPanel;
@@ -226,7 +226,7 @@ public:
     InspectorPanel* inspectorShowingItem(ProjectItem* item, bool includeClosed = false) const;
     InspectorPanel* openOrFocusInspectorForItem(ProjectItem* item, const PlacementContext* placement = nullptr);
 
-    SourceEditorPanel* openSourceEditor(uint32_t sourceId);
+    FileViewerPanel* openFileViewer(uint32_t sourceId);
 
     ExternalEditorPanel* openCurveEditor(const CurveSelection& selection);
     ExternalEditorPanel* openExternalEditor(const ExternalEditorSelection& selection);
@@ -337,7 +337,7 @@ private:
     void saveProjectLayout();
     void connectSignals();
     void enforceDisabledDocks();
-    SourceEditorPanel* focusedSourceEditorPanel() const;
+    FileViewerPanel* focusedFileViewerPanel() const;
     void setAuditionTarget(ProjectItem* item);
     
     void initEmptyProject();

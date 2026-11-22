@@ -22,8 +22,6 @@
 #include "AssetPipeline/AssetRegistry.h"
 #include "AssetPipeline/AssetImporter.h"
 #include "AssetPipeline/MediaPool.h"
-#include "AssetPipeline/AssetConverter.h"
-#include "AssetPipeline/PlatformProfile.h"
 #include "AssetPipeline/AssetGarbageCollector.h"
 #include "AssetPipeline/ImportAssetsCommand.h"
 #include "AssetPipeline/PathUtils.h"

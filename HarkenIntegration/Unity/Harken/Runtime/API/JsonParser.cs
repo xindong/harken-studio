@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
-using System.Text.RegularExpressions;
 
 namespace Harken
 {
@@ -60,13 +59,39 @@ namespace Harken
             if (token == "null") return null;
             if (token == "true") return true;
             if (token == "false") return false;
-            if (!Regex.IsMatch(token, @"\A-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?\z")) throw new FormatException();
+            if (!IsNumber(token)) throw new FormatException();
             if (rawNumber) return new NumberToken(token);
             if (ulong.TryParse(token, NumberStyles.None, CultureInfo.InvariantCulture, out ulong unsigned)) return unsigned;
             if (long.TryParse(token, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out long signed)) return signed;
             if (!double.TryParse(token, NumberStyles.Float, CultureInfo.InvariantCulture, out double number)) throw new FormatException();
             return number;
         }
+        private static bool TakeDigits(string value, ref int i)
+        {
+            int start = i;
+            while (i < value.Length && value[i] >= '0' && value[i] <= '9') ++i;
+            return i != start;
+        }
+
+        private static bool IsNumber(string token)
+        {
+            int i = token.Length > 0 && token[0] == '-' ? 1 : 0;
+            if (i < token.Length && token[i] == '0') ++i;
+            else if (!TakeDigits(token, ref i)) return false;
+            if (i < token.Length && token[i] == '.')
+            {
+                ++i;
+                if (!TakeDigits(token, ref i)) return false;
+            }
+            if (i < token.Length && (token[i] == 'e' || token[i] == 'E'))
+            {
+                ++i;
+                if (i < token.Length && (token[i] == '+' || token[i] == '-')) ++i;
+                if (!TakeDigits(token, ref i)) return false;
+            }
+            return i == token.Length;
+        }
+
         private string String()
         {
             if (cursor >= text.Length || text[cursor++] != '"') throw new FormatException();

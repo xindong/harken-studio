@@ -211,7 +211,10 @@ QByteArray fileFingerprint(const QString& path)
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly))
         return {};
-    return QCryptographicHash::hash(file.readAll(), QCryptographicHash::Sha256);
+    QCryptographicHash hash(QCryptographicHash::Sha256);
+    if (!hash.addData(&file) || file.error() != QFileDevice::NoError)
+        return {};
+    return hash.result();
 }
 
 bool isIteratorDotEntry(const QString& relativePath)
@@ -220,6 +223,20 @@ bool isIteratorDotEntry(const QString& relativePath)
         || relativePath == QStringLiteral("..")
         || relativePath.endsWith(QStringLiteral("/."))
         || relativePath.endsWith(QStringLiteral("/.."));
+}
+
+bool migrationInputsUnchanged(const ProjectUpgradeAnalysis& analysis)
+{
+    for (auto input = analysis.migrationPlan.inputFingerprints.cbegin();
+         input != analysis.migrationPlan.inputFingerprints.cend(); ++input) {
+        const QString path = QDir(analysis.projectDirectory).filePath(input.key());
+        if (input.value().isEmpty()) {
+            if (QFileInfo::exists(path)) return false;
+        } else if (fileFingerprint(path) != input.value()) {
+            return false;
+        }
+    }
+    return true;
 }
 
 QByteArray treeFingerprint(const QString& directory, const ProjectDataPolicy& dataPolicy)
@@ -527,7 +544,8 @@ ProjectUpgradeResult ProjectUpgradeManager::execute(
         result.error = projectIssueCode(result.issue) + QChar(':') + result.detail;
         return result;
     }
-    if (fileFingerprint(analysis.projectFilePath) != analysis.sourceFingerprint
+    if (!migrationInputsUnchanged(analysis)
+        || fileFingerprint(analysis.projectFilePath) != analysis.sourceFingerprint
         || treeFingerprint(analysis.projectDirectory, analysis.dataPolicy)
                != analysis.sourceTreeFingerprint) {
         result.issue = ProjectIssue::ProjectChangedDuringUpgrade;
@@ -628,8 +646,9 @@ ProjectUpgradeResult ProjectUpgradeManager::execute(
         }
     }
 
-    if (treeFingerprint(analysis.projectDirectory, analysis.dataPolicy)
-        != analysis.sourceTreeFingerprint) {
+    if (!migrationInputsUnchanged(analysis)
+        || treeFingerprint(analysis.projectDirectory, analysis.dataPolicy)
+               != analysis.sourceTreeFingerprint) {
         result.error = QStringLiteral("Project changed while staging; upgrade was cancelled");
         QDir(stagingDirectory).removeRecursively();
         return result;
@@ -683,8 +702,9 @@ ProjectUpgradeResult ProjectUpgradeManager::execute(
         QDir(stagingDirectory).removeRecursively();
         return result;
     };
-    if (treeFingerprint(analysis.projectDirectory, analysis.dataPolicy)
-        != analysis.sourceTreeFingerprint)
+    if (!migrationInputsUnchanged(analysis)
+        || treeFingerprint(analysis.projectDirectory, analysis.dataPolicy)
+               != analysis.sourceTreeFingerprint)
         return failWithRollback(QStringLiteral("Project changed before upgrade commit"));
     if (!transaction->replaceFromDirectory(
             stagingDirectory, &error,

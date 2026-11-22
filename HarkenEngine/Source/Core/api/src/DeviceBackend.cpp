@@ -23,6 +23,13 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <initguid.h>
+#include <audioclient.h>
+#if WINAPI_FAMILY_PARTITION(WINAPI_PARTITION_DESKTOP)
+#define HARKEN_DESKTOP_WASAPI_FORMAT_QUERY
+#include <mmdeviceapi.h>
+#include <wrl/client.h>
+#endif
 #endif
 
 #include "miniaudio.h"
@@ -34,6 +41,7 @@ extern "C" ma_bool32
 VnMiniaudioAtomicBool32Get(ma_atomic_bool32* value) noexcept;
 #endif
 
+#include <algorithm>
 #include <cassert>
 #include <atomic>
 #include <cstdio>
@@ -49,6 +57,72 @@ namespace harken {
 
 namespace {
 
+
+#if defined(_WIN32) && defined(HARKEN_WINDOWS_GAME_LOW_LATENCY)
+bool SupportsGameOutput(const ma_device& device, const EngineConfig& config) {
+    if (config.renderWorkerCount != 0 || config.blockFrames != 256 ||
+        config.mixRate.SampleRate() != 48000 || config.deviceChannelCount != 2 ||
+        device.playback.internalChannels != 2 || device.playback.internalSampleRate != 48000 ||
+        device.playback.internalFormat != ma_format_f32 ||
+        device.wasapi.actualBufferSizeInFramesPlayback != 1920 ||
+        device.wasapi.pAudioClientPlayback == nullptr || device.wasapi.pRenderClient == nullptr ||
+        device.wasapi.hEventPlayback == nullptr)
+        return false;
+    auto* client = static_cast<IAudioClient*>(device.wasapi.pAudioClientPlayback);
+    IAudioClient3* shared = nullptr;
+    if (FAILED(client->QueryInterface(IID_PPV_ARGS(&shared)))) return false;
+    WAVEFORMATEX* format = nullptr;
+    UINT32 frames = 0;
+    const HRESULT queried = shared->GetCurrentSharedModeEnginePeriod(&format, &frames);
+    CoTaskMemFree(format);
+    shared->Release();
+    return SUCCEEDED(queried) && frames == 480;
+}
+
+ma_result RenderAvailableWasapiFrames(ma_device* device) {
+    auto* client = static_cast<IAudioClient*>(device->wasapi.pAudioClientPlayback);
+    auto* writer = static_cast<IAudioRenderClient*>(device->wasapi.pRenderClient);
+    const HANDLE event = static_cast<HANDLE>(device->wasapi.hEventPlayback);
+    const auto capacity = device->wasapi.actualBufferSizeInFramesPlayback;
+    if (client == nullptr || writer == nullptr || event == nullptr || capacity == 0)
+        return MA_INVALID_DEVICE_CONFIG;
+    const auto sampleRate = device->playback.internalSampleRate;
+    // The open-time check verified the shared period and native float format.
+    const auto idleDepth = sampleRate / 100u;
+    std::uint32_t silence = sampleRate;
+    while (ma_device_get_state(device) == ma_device_state_started) {
+        UINT32 padding = 0;
+        if (FAILED(client->GetCurrentPadding(&padding)) || padding > capacity)
+            return MA_ERROR;
+        // Keep one hardware period during sustained digital silence. The first
+        // audible buffer restores the full queue before waiting on the endpoint.
+        const auto target = silence >= sampleRate / 4u ? idleDepth : capacity;
+        const UINT32 writable = padding < target ? target - padding : 0u;
+        if (writable != 0) {
+            BYTE* output = nullptr;
+            const HRESULT acquired = writer->GetBuffer(writable, &output);
+            if (SUCCEEDED(acquired)) {
+                const auto rendered = ma_device_handle_backend_data_callback(device, output, nullptr, writable);
+                if (rendered == MA_SUCCESS) {
+                    const auto* samples = reinterpret_cast<const float*>(output);
+                    const auto count = static_cast<std::size_t>(writable) * device->playback.internalChannels;
+                    const bool nonzero = std::any_of(samples, samples + count, [](float sample) { return sample != 0.0f; });
+                    silence = nonzero ? 0u : std::min(sampleRate, silence + writable);
+                }
+                const DWORD flags = rendered == MA_SUCCESS ? 0 : AUDCLNT_BUFFERFLAGS_SILENT;
+                if (FAILED(writer->ReleaseBuffer(writable, flags)) || rendered != MA_SUCCESS)
+                    return MA_ERROR;
+                continue;
+            }
+            if (acquired != AUDCLNT_E_BUFFER_TOO_LARGE && acquired != AUDCLNT_E_BUFFER_ERROR)
+                return MA_ERROR;
+        }
+        if (WaitForSingleObject(event, 5000) != WAIT_OBJECT_0)
+            return MA_ERROR;
+    }
+    return MA_SUCCESS;
+}
+#endif
 
 DeviceStartFault g_deviceStartFault = DeviceStartFault::None;
 DeviceBackendTestState* g_deviceBackendTestState = nullptr;
@@ -576,6 +650,49 @@ struct ImplDeleter {
 
 } // namespace
 
+#if defined(HARKEN_DESKTOP_WASAPI_FORMAT_QUERY)
+static bool QueryWindowsPlaybackFormat(DeviceQueryResult& out) {
+    // An existing STA can query its endpoint without changing apartments.
+    const auto initialized = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    if (FAILED(initialized) && initialized != RPC_E_CHANGED_MODE) return false;
+    struct Apartment {
+        bool acquired;
+        ~Apartment() { if (acquired) CoUninitialize(); }
+    } apartment{SUCCEEDED(initialized)};
+    using Microsoft::WRL::ComPtr;
+    ComPtr<IMMDeviceEnumerator> enumerator;
+    ComPtr<IMMDevice> endpoint;
+    ComPtr<IAudioClient> client;
+    ComPtr<IPropertyStore> properties;
+    if (FAILED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL,
+                                IID_PPV_ARGS(enumerator.GetAddressOf()))) ||
+        FAILED(enumerator->GetDefaultAudioEndpoint(eRender, eConsole, endpoint.GetAddressOf())) ||
+        FAILED(endpoint->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr,
+                                  reinterpret_cast<void**>(client.GetAddressOf())))) return false;
+    WAVEFORMATEX* mix = nullptr;
+    if (FAILED(client->GetMixFormat(&mix)) || !mix) return false;
+    const auto channels = mix->nChannels;
+    const auto rate = mix->nSamplesPerSec;
+    CoTaskMemFree(mix);
+    if (!channels || !rate || FAILED(endpoint->OpenPropertyStore(STGM_READ, properties.GetAddressOf())))
+        return false;
+
+    // The existing query picks the widest format, preferring the shared mix
+    // on ties. WASAPI's exclusive-mode probe only considers this property's
+    // channel count. A wider or unavailable format needs the full probe.
+    PROPVARIANT value{};
+    const auto read = properties->GetValue(PKEY_AudioEngine_DeviceFormat, &value);
+    WAVEFORMATEX stored{};
+    const bool hasFormat = SUCCEEDED(read) && value.vt == VT_BLOB &&
+        value.blob.pBlobData && value.blob.cbSize >= sizeof(stored);
+    if (hasFormat) std::memcpy(&stored, value.blob.pBlobData, sizeof(stored));
+    PropVariantClear(&value);
+    if (!hasFormat || !stored.nChannels || stored.nChannels > channels) return false;
+    out = {channels, rate, kDeviceQueryChannelsKnown | kDeviceQuerySampleRateKnown};
+    return true;
+}
+#endif
+
 bool QueryDefaultDeviceFormat(DeviceQueryResult* out) {
     if (out == nullptr) {
         return false;
@@ -603,6 +720,9 @@ bool QueryDefaultDeviceFormat(DeviceQueryResult* out) {
     if (kPlatformBackendCount == 0) {
         return false;
     }
+#if defined(HARKEN_DESKTOP_WASAPI_FORMAT_QUERY)
+    if (QueryWindowsPlaybackFormat(*out)) return true;
+#endif
     // A temporary context on the platform's backend(s) (the same list the engine
     // opens) just long enough to read the default playback device's native
     // format; no stream is started. Any failure returns false so the caller
@@ -656,6 +776,18 @@ DeviceBackend::~DeviceBackend() {
 VnResult DeviceBackend::Prepare(
     MixerLoop& mixer, const EngineConfig& config,
     const DeviceQueryResult* endpointObservation) {
+    if (m_impl != nullptr) return VN_OK;
+    const auto result = Prepare(config, endpointObservation);
+    if (result == VN_OK) BindPreparedMixer(mixer);
+    return result;
+}
+
+void DeviceBackend::BindPreparedMixer(MixerLoop& mixer) noexcept {
+    m_impl->mixer = &mixer;
+}
+
+VnResult DeviceBackend::Prepare(const EngineConfig& config,
+                                const DeviceQueryResult* endpointObservation) {
     if (m_impl != nullptr) {
         return VN_OK; // lifecycle calls are idempotent
     }
@@ -670,6 +802,13 @@ VnResult DeviceBackend::Prepare(
         rateObservation.knownFields |=
             kDeviceRateQueriedDefaultEndpointKnown;
     }
+#if defined(_WIN32)
+    if (g_deviceBackendTestState && !endpointObservation && g_deviceBackendTestState->querySucceeds &&
+        g_deviceBackendTestState->querySampleRate) {
+        rateObservation.queriedDefaultEndpointRate = g_deviceBackendTestState->querySampleRate;
+        rateObservation.knownFields |= kDeviceRateQueriedDefaultEndpointKnown;
+    }
+#endif
     m_rateObservation = rateObservation;
     if (DeviceStartFaultForTests() == DeviceStartFault::BeforeBackend) {
         throw std::bad_alloc{};
@@ -689,7 +828,7 @@ VnResult DeviceBackend::Prepare(
         }
     }
     std::unique_ptr<Impl, ImplDeleter> impl(new Impl());
-    impl->mixer = &mixer;
+    impl->mixer = nullptr;
     impl->renderState = m_renderState;
     impl->hostOutputMute = &m_hostOutputMute;
     impl->workerCount = config.renderWorkerCount;
@@ -858,7 +997,25 @@ VnResult DeviceBackend::Prepare(
             return VN_DEVICE_ERROR;
         }
     }
+#if defined(HARKEN_DESKTOP_WASAPI_FORMAT_QUERY)
+    // The shared-mode open observed the endpoint rate before applying the requested rate.
+    if (!endpointObservation && !openPlan.defaultFailed && impl->context.backend == ma_backend_wasapi) {
+        const auto endpointRate = impl->device.wasapi.endpointMixSampleRatePlayback;
+        if (endpointRate != 0) {
+            m_rateObservation.queriedDefaultEndpointRate = endpointRate;
+            m_rateObservation.knownFields |= kDeviceRateQueriedDefaultEndpointKnown;
+        }
+    }
+#endif
     impl->deviceReady = true;
+#if defined(_WIN32) && defined(HARKEN_WINDOWS_GAME_LOW_LATENCY)
+    if (SupportsGameOutput(impl->device, config)) {
+        // This context serves one playback device. Ownership, wakeup, thread
+        // registration, format conversion and shutdown remain with miniaudio.
+        impl->context.callbacks.onDeviceDataLoop = RenderAvailableWasapiFrames;
+        impl->device.noFixedSizedCallback = MA_TRUE;
+    }
+#endif
 #if defined(_WIN32)
     // A parallel session requires miniaudio's callback thread to create and
     // publish a concrete MMCSS task group before workers can join it.
@@ -921,7 +1078,7 @@ VnResult DeviceBackend::StartPrepared(
         return VN_DEVICE_ERROR;
     }
     *admissionGeneration = 0;
-    if (m_impl == nullptr) {
+    if (m_impl == nullptr || m_impl->mixer == nullptr) {
         return VN_DEVICE_ERROR;
     }
     if (m_impl->started) {
@@ -1027,6 +1184,14 @@ void DeviceBackend::RevokeRenderAdmission() noexcept {
 
 bool DeviceBackend::RenderAdmissionCommitted() const noexcept {
     return m_impl != nullptr && m_impl->RenderAdmitted();
+}
+
+bool DeviceBackend::UsesGameOutput() const noexcept {
+#if defined(_WIN32) && defined(HARKEN_WINDOWS_GAME_LOW_LATENCY)
+    return m_impl != nullptr && m_impl->context.callbacks.onDeviceDataLoop == RenderAvailableWasapiFrames;
+#else
+    return false;
+#endif
 }
 
 void DeviceBackend::SetHostOutputMute(bool muted,

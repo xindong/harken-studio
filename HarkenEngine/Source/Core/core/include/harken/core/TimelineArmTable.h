@@ -209,6 +209,7 @@ public:
         std::uint64_t armDeadline = 0;
         bool pendingImmediateStart = false;
         bool startBound = true;
+        bool publishOnLaneStart = false;
         ProgramGeneration programGeneration = 0;
         TimelineSemanticTarget target{};
         ParentAudioGroupRef parentGroup{};
@@ -840,7 +841,8 @@ public:
         TimelineArmToken* outToken) noexcept;
     bool BindPendingImmediateStart(TimelineArmToken token,
                                    std::uint64_t startFrame,
-                                   std::uint64_t armDeadline) noexcept;
+                                   std::uint64_t armDeadline,
+                                   bool beforeInstallation = false) noexcept;
     bool ProvePrivatePendingImmediateArmBatch(
         const PrivatePendingImmediateArmInput* inputs,
         std::size_t inputCount, Row** reservedRows,
@@ -907,7 +909,8 @@ public:
                         std::uint64_t audioSequence,
                         LaneAudioProof* out,
                         ProgramGeneration programGeneration = 0,
-                        const TimelineSemanticTarget* target = nullptr) noexcept;
+                        const TimelineSemanticTarget* target = nullptr,
+                        bool* reservationBusy = nullptr) noexcept;
     bool ProveLaneCancelledStart(const TimelineArmReaderPin& reader,
         const ConsumedEvent& original, ProgramGeneration armGeneration,
         std::uint64_t audioSequence, LaneAudioProof* out) noexcept;

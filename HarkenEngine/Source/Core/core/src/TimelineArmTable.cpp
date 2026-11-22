@@ -937,6 +937,7 @@ bool TimelineArmTable::ReserveInternal(
         row.tombstoneAudioSequence.store(0, std::memory_order_relaxed);
         row.armedCompletionSequence.store(0, std::memory_order_relaxed);
         row.sourcePublicationSequence = 0;
+        row.publishOnLaneStart = false;
         row.startedBlockSequence.store(0, std::memory_order_relaxed);
         row.actualStartFrame.store(UINT64_MAX, std::memory_order_relaxed);
         row.logicalCompletionSequence.store(0, std::memory_order_relaxed);
@@ -2052,14 +2053,15 @@ ArmPublishStatus TimelineArmTable::PublishExact(
 
 bool TimelineArmTable::BindPendingImmediateStart(
     TimelineArmToken token, std::uint64_t startFrame,
-    std::uint64_t armDeadline) noexcept {
+    std::uint64_t armDeadline, bool beforeInstallation) noexcept {
     Row* row = Resolve(token);
     if (row == nullptr || armDeadline > startFrame ||
         row->reservation.test_and_set(std::memory_order_acquire)) {
         return false;
     }
+    const auto state = row->state.load(std::memory_order_acquire);
     const bool valid = IdentityMatches(*row, token) &&
-        row->state.load(std::memory_order_acquire) == ArmState::Armed &&
+        (state == ArmState::Armed || (beforeInstallation && state == ArmState::PendingApply)) &&
         row->pendingImmediateStart && !row->startBound &&
         row->authoredControl.operation == nullptr &&
         row->frontierReaderPins.load(std::memory_order_acquire) == 0 &&
@@ -2069,6 +2071,7 @@ bool TimelineArmTable::BindPendingImmediateStart(
         row->startFrame = startFrame;
         row->armDeadline = armDeadline;
         row->startBound = true;
+        row->publishOnLaneStart = beforeInstallation;
     }
     row->reservation.clear(std::memory_order_release);
     return valid;
@@ -2401,12 +2404,14 @@ bool TimelineArmTable::ProveLaneStart(
     TimelineArmToken token, std::uint64_t executeFrame,
     std::uint64_t audioSequence, LaneAudioProof* out,
     ProgramGeneration programGeneration,
-    const TimelineSemanticTarget* target) noexcept {
+    const TimelineSemanticTarget* target, bool* reservationBusy) noexcept {
+    if (reservationBusy != nullptr) *reservationBusy = false;
     Row* row = Resolve(token);
-    if (row == nullptr || out == nullptr || out->Valid() ||
-        audioSequence == 0 ||
-        row->reservation.test_and_set(std::memory_order_acquire))
+    if (row == nullptr || out == nullptr || out->Valid() || audioSequence == 0) return false;
+    if (row->reservation.test_and_set(std::memory_order_acquire)) {
+        if (reservationBusy != nullptr) *reservationBusy = true;
         return false;
+    }
     if (row->authoredControl.operation != nullptr ||
         row->frontierReaderPins.load(std::memory_order_acquire) == 0 ||
         row->sourcePublicationSequence > acceptedSourceTail_ ||
@@ -2414,8 +2419,13 @@ bool TimelineArmTable::ProveLaneStart(
         !IdentityMatches(*row, token) ||
         (programGeneration != 0 && row->programGeneration != programGeneration) ||
         (target != nullptr && !(row->target == *target)) ||
-        !row->startBound || row->startFrame != executeFrame ||
-        row->state.load(std::memory_order_acquire) != ArmState::Published) {
+        !row->startBound || row->startFrame != executeFrame) {
+        row->reservation.clear(std::memory_order_release);
+        return false;
+    }
+    if (row->publishOnLaneStart && row->state.load(std::memory_order_acquire) == ArmState::Armed)
+        row->state.store(ArmState::Published, std::memory_order_release);
+    if (row->state.load(std::memory_order_acquire) != ArmState::Published) {
         row->reservation.clear(std::memory_order_release);
         return false;
     }

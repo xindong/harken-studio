@@ -170,7 +170,7 @@ bool preparedSoundsAreCurrent(const build::CurrentWorldSyncRequestPtr& request)
     }
     for (const auto& sound : preparation.sounds) {
         const auto revision = preparation.contentRevisions.find(sound.binding.soundId);
-        if (sound.samples.empty() && revision != preparation.contentRevisions.end()
+        if (sound.samples.empty() && !sound.media && revision != preparation.contentRevisions.end()
             && bridge::registeredSoundRevision(sound.binding.soundId) != revision->second)
             return false;
     }

@@ -26,6 +26,7 @@ internal sealed class AsyncSourceChecks
         using (var context = new ControlContext()) context.Run(checks.SharingCancellationAndStaleCompletion);
         using (var context = new ControlContext()) context.Run(checks.ShutdownFromReadCallback);
         using (var context = new ControlContext()) context.Run(checks.MetadataCallbackCannotAwaitItself);
+        using (var context = new ControlContext()) context.Run(checks.LanguageSwitchRollback);
     }
 
     private byte[] Read(string path)
@@ -193,6 +194,55 @@ internal sealed class AsyncSourceChecks
             ActionPreparationResult ready = await session.PrepareActionsAsync(new[] { action }, session.ProjectId);
             Ok(ready.Result, "nested prepare returns without deadlock");
             Ok(ready.Preparation.Release(), "nested prepare release");
+        }
+    }
+
+    private async Task LanguageSwitchRollback()
+    {
+        string localized = "Unexported/" + action;
+        var pending = new TaskCompletionSource<byte[]>();
+        bool block = true;
+        bool corrupt = false;
+        CancellationToken provider = default;
+        var source = PackSource.FromAsyncReader((path, token) =>
+        {
+            if (path == localized + ".bytes" && block)
+            {
+                provider = token;
+                return pending.Task;
+            }
+            if (corrupt && path == action + ".json") return Task.FromResult(Encoding.UTF8.GetBytes("{"));
+            return Task.FromResult(Read(path));
+        });
+        PackStartupResult started = await PackBootstrap.StartAsync(source, Config());
+        Ok(started.Result, "Init before language switch");
+        using (PackBootstrapSession session = started.Session)
+        {
+            ActionPreparationResult ready = await session.PrepareActionsAsync(new[] { action }, session.ProjectId);
+            Ok(ready.Result, "prepare before language switch");
+            ulong revision = session.SetRevision;
+            using (var cancellation = new CancellationTokenSource())
+            {
+                Task<VnResult> switching = session.SetLanguageAsync("Unexported", cancellation.Token);
+                Check(!switching.IsCompleted && ready.Preparation.Release() == VnResult.VN_IN_USE,
+                    "preparation stays owned during language selection");
+                cancellation.Cancel();
+                await Cancelled(switching);
+                Check(provider.IsCancellationRequested, "language cancellation reaches the reader");
+            }
+            block = false;
+            corrupt = true;
+            Check(await session.SetLanguageAsync("Unexported") == VnResult.VN_BAD_PACK,
+                "invalid fallback metadata refuses the selection");
+            Check(session.Language == string.Empty && session.SetRevision == revision && ready.Preparation.IsPrepared,
+                "failed selections preserve the previous publication");
+            corrupt = false;
+            Ok(await session.SetLanguageAsync("Unexported"), "retry language selection");
+            pending.SetResult(null);
+            await Task.Yield();
+            Check(session.Language == "Unexported" && session.SetRevision == revision,
+                "a late read cannot replace the committed fallback");
+            Ok(ready.Preparation.Release(), "release after switch");
         }
     }
 

@@ -139,7 +139,7 @@ const QVector<ThemeColorRole>& studioDefaultColorRoles()
          }},
         {QStringLiteral("background.hover"), QStringLiteral("Interaction"),
          QStringLiteral("Hover background"),
-         QStringLiteral("Solid menu bar highlights and selected node bodies."),
+         QStringLiteral("Solid background for active menu bar items."),
          {
              {QStringLiteral("background.hover"), std::nullopt},
              {QStringLiteral("nodeGraph.node.bodySelected"), std::nullopt},

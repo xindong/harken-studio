@@ -355,6 +355,20 @@ AttenuationSlot resolveEffectiveAttenuation(const ResolutionScope& scope)
     return slot;
 }
 
+SlotResolution resolveEffectiveConversion(const ResolutionScope& scope)
+{
+    SlotResolution result;
+    if (!scope.subject
+        || !PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(scope.subject->type))
+        return result;
+    const auto* effective = effectiveDefinition(scope, result);
+    if (!effective) return result;
+    applySource(scope, effective->conversionSource, result);
+    if (!harken::studio::project_schema::IsNull(effective->conversion.settingsRef))
+        result.target = scope.effectiveGroups->objects.at(effective->conversion.settingsRef);
+    return result;
+}
+
 SendSlot resolveEffectiveSends(const ResolutionScope& scope)
 {
     SendSlot result;

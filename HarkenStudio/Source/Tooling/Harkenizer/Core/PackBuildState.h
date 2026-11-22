@@ -3,6 +3,8 @@
 #include "Tooling/Harkenizer/Core/ProjectPackExporter.h"
 #include "Tooling/Harkenizer/Core/ProjectBuildSnapshot.h"
 
+#include <optional>
+
 namespace harken::studio {
 
 class PackBuildState
@@ -21,6 +23,7 @@ public:
     bool flush();
     void retainOutputs(const QString& outputRoot, const QMap<QString, QJsonArray>& outputs);
     QString resourceFingerprint(const QString& relativePackPath) const;
+    std::optional<QJsonArray> mediaResults(const QString& relativePackPath) const;
     void setResourceFingerprint(const QString& relativePackPath, const QString& fingerprint);
     void prune() const;
 

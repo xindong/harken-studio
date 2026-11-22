@@ -19,6 +19,7 @@
 #include <new>
 #include <stdexcept>
 #include <utility>
+#include <unordered_set>
 
 namespace harken {
 
@@ -26,6 +27,7 @@ namespace {
 
 bool EqualPlanarSamples(const PCMView& view, const float* samples) noexcept {
     PCMView source = view;
+    source.encoded = nullptr;
     source.sampleFormat = PcmSampleFormat::Float32;
     for (std::uint32_t ch = 0; ch < view.channelCount; ++ch)
         source.channels[ch] = samples + static_cast<std::size_t>(ch) * view.frames;
@@ -1417,6 +1419,60 @@ VnResult PackTable::PrepareCanonicalSet(
     } catch (const std::length_error&) {
         return VN_PACK_RESIDENT_CAPACITY;
     }
+}
+
+bool PackTable::FitsResidentMediaBudget(const PreparedSetMutation& prepared, std::uint64_t limit,
+                                       std::uint64_t newResidentPcmBytes) const {
+    if (newResidentPcmBytes > limit) return false;
+    std::uint64_t available = limit - newResidentPcmBytes;
+    std::unordered_set<const void*> counted;
+    const auto admit = [&](const void* owner, std::uint64_t bytes) {
+        if (!owner || !counted.insert(owner).second) return true;
+        if (bytes > available) return false;
+        available -= bytes;
+        return true;
+    };
+    const auto include = [&](const PCMRegistry::PackReference& ref) {
+        const auto cost = ref.Cost();
+        return admit(cost.resource, cost.privateBytes) && admit(cost.settings, cost.settingsBytes);
+    };
+    const auto entriesFit = [&](const std::vector<PackEntry>& entries) {
+        return std::all_of(entries.begin(), entries.end(),
+            [&](const PackEntry& entry) { return include(entry.registration); });
+    };
+
+    for (std::size_t i = 0; i < m_slots.size(); ++i) {
+        const auto& slot = m_slots[i];
+        const auto& change = prepared.m_changes[i];
+        if (!change.touched) {
+            if (slot.loaded && !entriesFit(slot.entries)) return false;
+            continue;
+        }
+        if (!entriesFit(change.entries)) return false;
+        if (!slot.loaded) continue;
+        // Commit keeps the whole old slot if a closure or any extracted generation
+        // still reads it. Shared owned samples which stay in the registry are
+        // already charged through their surviving registration.
+        bool retained = change.retainAnchor || slot.closureRefCount != 0;
+        for (const PackEntry& entry : slot.entries) {
+            const auto view = entry.registration.View();
+            if (!view.useCount || !view.useCount->load(std::memory_order_acquire)) continue;
+            if (!entry.registration.OwnsSamples() ||
+                std::any_of(prepared.m_retiringMedia.begin(), prepared.m_retiringMedia.end(),
+                    [&](const auto& old) { return old.slotIndex == i && old.cookie == entry.registrationCookie; })) {
+                retained = true;
+                break;
+            }
+        }
+        if (retained && !entriesFit(slot.entries)) return false;
+    }
+    for (const auto& old : m_retiring) {
+        if (old.state != RetiringState::Live) continue;
+        if (!entriesFit(old.packEntries)) return false;
+        for (const auto& entry : old.entries) if (!include(entry.Reference())) return false;
+        for (const auto& entry : old.successorEntries) if (!include(entry.Reference())) return false;
+    }
+    return true;
 }
 
 void PackTable::CancelPreparedSet(PreparedSetMutation* prepared) noexcept {

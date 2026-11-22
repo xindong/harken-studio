@@ -1047,8 +1047,8 @@ bool fillWaveformPackMetadata(const CanonicalPackSetExportRequest& request,
             const auto* item = findItemByStableId(project, media.soundStableId);
             const auto* sound = item ? item->comp<VSound>() : nullptr;
             const auto* source = sound ? SoundSourceSemantics::findEntry(*sound, media.sourceEntryId) : nullptr;
-            const auto conversion = snapshot.media.request(media.authoringSourceId,
-                QUuid(pack.platform), error);
+            const auto conversion = snapshot.media.request(
+                QUuid(objectIdString(media.soundStableId)), media.authoringSourceId, QUuid(pack.platform), error);
             if (!source || !conversion) {
                 *error = QStringLiteral("Waveform source is unavailable for Sound %1")
                     .arg(objectIdString(media.soundStableId));
@@ -2794,8 +2794,14 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
             return true;
         };
         if (meta.current) {
+            const auto media = request.options.packBuildState->mediaResults(meta.fileName);
+            if (!media) {
+                unit.error = QStringLiteral("Cannot restore recorded media for Pack '%1'").arg(meta.fileName);
+                return unit;
+            }
             unit.success = true;
             unit.reusedResources = true;
+            unit.media = *media;
             unit.outputPath = liveDir.filePath(meta.fileName);
             if (!appendResources(unit, {})) unit.success = false;
             meta.resourceFingerprint = meta.previousResourceFingerprint;
@@ -2817,6 +2823,17 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         } else {
             ProjectPackExporter::ExportOptions contentOpts = resourceOptions;
             contentOpts.language = meta.language;
+            std::set<std::tuple<QString, QString, QString>> mediaIdentities;
+            const auto appendMedia = [&](const QJsonArray& media) {
+                for (const auto& value : media) {
+                    const auto row = value.toObject();
+                    if (mediaIdentities.emplace(
+                            row.value(QStringLiteral("soundId")).toString(),
+                            row.value(QStringLiteral("sourceEntryId")).toString(),
+                            row.value(QStringLiteral("language")).toString()).second)
+                        unit.media.append(row);
+                }
+            };
             for (harken::studio::types::ObjectId actionId : meta.actionStableIds) {
                 const ProjectItem* action = actionFor(actionId);
                 if (!action) {
@@ -2830,7 +2847,11 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
                         project, *action, path, contentOpts, entries)
                     : exporter.ExportActionPack(
                         project, action->name, path, contentOpts, entries);
-                if (!member.success) return member;
+                appendMedia(member.media);
+                if (!member.success) {
+                    member.media = std::move(unit.media);
+                    return member;
+                }
                 for (const auto& [soundId, revision] : member.soundContentRevisions) {
                     const auto [found, inserted] = meta.soundContentRevisions.emplace(soundId, revision);
                     if (!inserted && found->second != revision) {
@@ -2974,6 +2995,11 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
             pack.elapsedNanoseconds += timer.nsecsElapsed();
             result.mediaCacheHits += pack.mediaResult.mediaCacheHits;
             result.mediaConversions += pack.mediaResult.mediaConversions;
+            for (const auto& value : pack.mediaResult.media) {
+                auto media = value.toObject();
+                media.insert(QStringLiteral("pack"), pack.fileName);
+                result.media.append(media);
+            }
             if (!pack.mediaResult.success) {
                 recordFailure(pack, pack.mediaResult.error);
                 continue;
@@ -3779,6 +3805,8 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
     QSet<qulonglong> completed;
     for (PackMeta& pack : packs) {
         if (exportCanceled(request.options.cancelCheck, &result.error)) return fail(result.error);
+        const auto retainedMedia = pack.retained && request.options.packBuildState
+            ? request.options.packBuildState->mediaResults(pack.fileName) : std::nullopt;
         ProjectPackExporter::ExportResult unit;
         const auto failedDependency = std::find_if(pack.dependencies.begin(), pack.dependencies.end(),
             [&](auto dependency) { return !completed.contains(dependency); });
@@ -3911,6 +3939,10 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         }
         QJsonObject output{{QStringLiteral("key"), pack.unitKey},
                            {QStringLiteral("path"), pack.fileName}};
+        if (!pack.retained)
+            output.insert(QStringLiteral("media"), unit.media);
+        else if (retainedMedia)
+            output.insert(QStringLiteral("media"), *retainedMedia);
         if (pack.packMetadata.contains(QStringLiteral("waveforms")))
             output.insert(QStringLiteral("packMetadata"), QJsonObject{
                 {QStringLiteral("waveforms"), pack.packMetadata.value(QStringLiteral("waveforms"))}});

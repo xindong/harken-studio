@@ -88,6 +88,8 @@ struct AttenuationSlot : SlotResolution
 AttenuationSlot resolveEffectiveAttenuation(const ResolutionScope& scope);
 AttenuationSlot resolveEffectiveAttenuation(const ProjectItem* item);
 
+SlotResolution resolveEffectiveConversion(const ResolutionScope& scope);
+
 struct SendSlot : SlotResolution
 {
     std::vector<Send> sends;

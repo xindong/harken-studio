@@ -17,6 +17,8 @@ add_library(harken_runtime_bridge STATIC
     BusTopologySync.h
     RuntimeLink.cpp
     RuntimeLink.h
+    TransitionalVorbisPreviewDecoder.cpp
+    TransitionalVorbisPreviewDecoder.h
     RuntimeLinkInternal.h
     MonitorBridge.h
     MonitorBridge.cpp
@@ -46,7 +48,8 @@ target_include_directories(harken_runtime_bridge PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/..
 )
 
-target_link_libraries(harken_runtime_bridge PRIVATE Harken::EngineDev)
+target_link_libraries(harken_runtime_bridge PRIVATE Harken::EngineDev vorbis)
+target_include_directories(harken_runtime_bridge PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../Core)
 
 if(MSVC)
     target_compile_options(harken_runtime_bridge PRIVATE /W4 /wd4100 /wd4189 /utf-8)

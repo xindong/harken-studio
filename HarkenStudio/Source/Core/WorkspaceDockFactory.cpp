@@ -11,7 +11,7 @@
 #include "Widgets/Information/InformationPanel.h"
 #include "Widgets/Inspector/InspectorPanel.h"
 #include "Widgets/ControlPanel/ControlPanel.h"
-#include "Widgets/SourceEditor/SourceEditorPanel.h"
+#include "Widgets/FileViewer/FileViewerPanel.h"
 #include "Widgets/Timeline/TimelineEditorPanel.h"
 
 #include <DockAreaTitleBar.h>
@@ -90,7 +90,7 @@ QAction* pinActionFor(QWidget* content)
         return bindPinAction(panel);
     if (auto* panel = qobject_cast<EffectEditorPanel*>(content))
         return bindPinAction(panel);
-    if (auto* panel = qobject_cast<SourceEditorPanel*>(content))
+    if (auto* panel = qobject_cast<FileViewerPanel*>(content))
         return bindPinAction(panel);
     return nullptr;
 }

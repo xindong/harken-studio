@@ -11,7 +11,7 @@
 
 | 对象 | 表格 | Tab > Section | 列名 | 数据与编辑性质 |
 |---|---|---|---|---|
-| Sound | Sources | Basic > Source | # / Audio / Waveform / Active | 音频引用配置 |
+| Sound | Sources | Basic > Source | # / Source / Original / Active | 音频引用配置 |
 | Track | Clips | Basic > Clip | # / Child | 音频片段配置 |
 | Action | Steps | Basic > Step | # / Type / Target / Delay / 无标题展开列 | 动作步骤配置，末列展开详情 |
 | Attenuation | Dimensions | Basic > Dimension | # / Property / Curve | 衰减维度配置 |
@@ -63,10 +63,10 @@
 | Sends / 显示与发布 | Receives 和信号图显示 Mode；图中按 Mode 区分增益编辑、删除与撤销；试听发布 Mix 和 Ducking，Ducking 继承配置按最终 Sound 生效，Bus 可直接发送；打包仍仅发布 Mix；Sidechain 保留编辑配置，尚未接入插件辅助输入 |
 | Sends / 平台范围 | Bus 的 Receives 和信号图读取当前平台生效路由；图上删除仅修改对应范围；移动、删除目标及撤销覆盖共享值和平台覆盖，循环校验覆盖所有受影响的平台 |
 | Sources / Language | 关闭时显示普通组，开启时显示全部项目语言组（含空组）；Toolbar 当前语言置顶，其余按项目语言顺序；两类数据分别保留 |
-| Sources / 拖入 | 组内导入边框限定目标语言组；Audio 引用框独立处理引用替换与高光，拒绝的拖入不转为组内导入 |
+| Sources / 拖入 | 组内导入边框限定目标语言组；Original 引用框独立处理引用替换与高光，拒绝的拖入不转为组内导入 |
 | Sources / Active | 同一平台与语言只选一个来源；多平台不一致时显示半勾选 |
-| Sources / Waveform | 展示音频裁剪与循环范围，可打开范围编辑；文件缺失时留空且不可编辑 |
-| Sources / 缺失引用 | 保留引用及 Active；Audio 标红，仅当前平台与语言的 Active 来源缺失使 Sound 标红 |
+| Sources / Source | 展示音频裁剪与循环范围，可打开范围编辑；文件缺失时留空且不可编辑 |
+| Sources / 缺失引用 | 保留引用及 Active；Original 标红，仅当前平台与语言的 Active 来源缺失使 Sound 标红 |
 | Playback / Filter | Sound、Container、Layer、Track、Segment、Bus 的 MixNode 属性；标签加共享预览窗，点击进入 External Editor；全默认时淡化，有非默认值时激活，均可编辑 |
 | Steps / Set Variable | 详情含 Value 与 Scope；Scope 为 Global／Emitter，默认 Emitter，随步骤保存，更换 Target 不重置 |
 | Steps / PostAction | 拒绝直接或间接循环；候选显示循环路径，拒绝不产生修改或撤销记录；重复引用和无环菱形依赖允许 |
@@ -106,3 +106,8 @@ Frequency 范围为 20–20000 Hz，四节默认值依次为 20000、20、200、
 | 发送 | Sends | Route > Send |
 | 空间属性 | 声像、3D 开关、衰减引用、衰减距离缩放 | Spatial > Rating |
 | 效果器 | 整条 Effects 链，含 Custom／Preset、顺序、Active | Basic > Effect |
+| 转换 | Settings（Conversion 预设引用，可清空） | Limitation > Conversion，位于 Playback Priority 之后 |
+
+Conversion 适用于 Sound、Container、Layer、Track、Segment，Bus 与 Action 不适用。该 section 只有 Inherit 与 Settings，与其他字段组一样随 Toolbar 平台编辑 Shared 或平台覆写；根对象隐藏 Inherit，继承时展示有效预设且禁止修改引用，仍保留定位和双击打开独立 Conversion Editor。
+
+多选仅聚合 Conversion，其余 section 保持当前对象，批量修改写入当前平台作用域。引用不同时显示混合值，继承不同时显示半选；仅全部目标可继承时允许切换 Inherit，全部目标可编辑本地值时允许统一设置或清空 Settings。一次批量修改共用一次撤销与重做，任一目标的编辑快照失效时整组拒绝。单对象保留字段组的本地历史与 Rebuild Local 菜单；多选不提供重建菜单。
