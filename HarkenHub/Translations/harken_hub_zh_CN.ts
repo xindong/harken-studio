@@ -2318,14 +2318,6 @@ PACKAGE STATUS</source>
         <translation>集成包检查失败，请查看检查日志了解详情。</translation>
     </message>
     <message>
-        <source>All Harken-managed files match Integration Package %1; %2 Unity metadata file(s) and %3 optional target runtime file(s) are retained as expected.</source>
-        <translation>所有 Harken 管理的文件均与集成包 %1 一致；已正常保留 %2 个 Unity 元数据文件和 %3 个可选目标运行时文件。</translation>
-    </message>
-    <message>
-        <source>All Harken-managed files match Integration Package %1; %2 project-specific file(s) need review, while %3 Unity metadata and %4 optional runtime file(s) are retained normally.</source>
-        <translation>所有 Harken 管理的文件均与集成包 %1 一致；有 %2 个工程自定义文件需要检查，另有 %3 个 Unity 元数据文件和 %4 个可选运行时文件已正常保留。</translation>
-    </message>
-    <message>
         <source>The project-specific files are outside Harken Integration Package ownership, so the check cannot determine whether they are still needed.</source>
         <translation>这些工程自定义文件不由 Harken 集成包管理，无法自动判断是否仍需保留。</translation>
     </message>
@@ -3594,10 +3586,6 @@ PACKAGE VERSION</source>
         <translation>请核对文件列表，再确认更换集成包。</translation>
     </message>
     <message>
-        <source>%1 missing Integration Package file(s) will be added; %2 existing Integration Package file(s) need updating; %3 obsolete Harken-managed file(s) will be removed; %4 project-specific file(s) will be kept unchanged; %5 Unity-generated metadata file(s) and %6 optional target runtime file(s) will be kept automatically</source>
-        <translation>将新增 %1 个缺失的集成包文件；更新 %2 个现有集成包文件；移除 %3 个已废弃的 Harken 管理文件；保留 %4 个工程专属文件不变；自动保留 %5 个 Unity 生成的元数据文件和 %6 个可选目标运行时文件</translation>
-    </message>
-    <message>
         <source>Files to add</source>
         <translation>待新增文件</translation>
     </message>
@@ -4679,14 +4667,6 @@ Integration Package installation location:
     <message><source>Resume Integration Package Removal...</source><translation>继续卸载集成包...</translation></message>
     <message><source>The safety backup was created, but removal stopped before changing project files. Backup: %1</source><translation>已创建安全备份，但卸载在修改工程文件前停止。备份：%1</translation></message>
     <message><source>Some files required for this Integration Package operation cannot be changed.</source><translation>此次集成包操作需要修改的部分文件无法修改。</translation></message>
-    <message>
-        <source>Restore Current Version...</source>
-        <translation>还原当前版本…</translation>
-    </message>
-    <message>
-        <source>Restore Current Version</source>
-        <translation>还原当前版本</translation>
-    </message>
     <message>
         <source>Recover Restoration...</source>
         <translation>恢复未完成的还原…</translation>

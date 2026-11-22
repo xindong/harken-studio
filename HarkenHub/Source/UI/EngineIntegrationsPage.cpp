@@ -196,7 +196,6 @@ QString integrationContentText(IntegrationContentState state)
 {
     switch (state) {
         case IntegrationContentState::MatchesInstallation:
-        case IntegrationContentState::OptionalFilesMissing:
             return QCoreApplication::translate("HarkenHub", "Normal");
         case IntegrationContentState::Modified:
             return QCoreApplication::translate("HarkenHub", "Files modified");
@@ -1272,7 +1271,6 @@ void EngineIntegrationsPage::populateList()
                 statusItem->setToolTip(QCoreApplication::translate(
                     "HarkenHub", "Current Integration Package installation path:\n%1").arg(observation.integrationInstallPath));
             if (observation.integrationContentState != IntegrationContentState::NotChecked
-                && observation.integrationContentState != IntegrationContentState::OptionalFilesMissing
                 && observation.integrationContentState != IntegrationContentState::MatchesInstallation)
                 statusItem->setForeground(HubTheme::color(HubTheme::Tone::Warning));
             table_->setItem(row, kIntegrationStatusColumn, statusItem);
@@ -1429,7 +1427,6 @@ void EngineIntegrationsPage::populateQuickIntegrationMenu(QMenu* change, const Q
             if (installedSource) {
                 label += QCoreApplication::translate("HarkenHub", " (Installed source)");
                 if (observation.integrationContentState != IntegrationContentState::NotChecked
-                    && observation.integrationContentState != IntegrationContentState::OptionalFilesMissing
                     && observation.integrationContentState != IntegrationContentState::MatchesInstallation)
                     label += QStringLiteral(" — ") + integrationContentText(observation.integrationContentState);
             } else if (sameVersion)

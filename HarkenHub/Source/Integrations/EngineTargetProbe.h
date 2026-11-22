@@ -20,7 +20,6 @@ enum class IntegrationContentState
 {
     NotChecked,
     MatchesInstallation,
-    OptionalFilesMissing,
     Modified,
     Missing,
     ModifiedAndMissing,
