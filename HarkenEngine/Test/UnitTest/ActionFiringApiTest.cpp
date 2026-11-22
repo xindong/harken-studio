@@ -12415,7 +12415,6 @@ TEST(ActionFiringApi, PreparedImmediateSoundPlaysOnceWhileGameUpdatesAreStalled)
             ASSERT_EQ(VN_OK, Vn_PostAction(&next, &replacement));
             ASSERT_EQ(VN_OK, Vn_SetBusVolume(VN_BUS_MASTER, -6.0206f, 0));
         }
-        if (scenario == 0) ASSERT_EQ(VN_OK, Vn_Update());
         float peak = 0.0f;
         std::uint32_t audibleFrames = 0;
         for (unsigned block = 0; block < 128; ++block) {
@@ -12426,18 +12425,27 @@ TEST(ActionFiringApi, PreparedImmediateSoundPlaysOnceWhileGameUpdatesAreStalled)
             for (unsigned frame = 0; frame < frames; ++frame) {
                 const float sample = output[frame * engine->nullBackend.Channels()];
                 const float marked = replacement != 0 ? -sample : sample;
+                const auto position = block * frames + frame;
+                if (replacement != 0 && position < samples.size()) {
+                    // A direct master gain change on a mixed bus ramps for 5 ms at 48 kHz.
+                    const float progress = std::min(1.0f, static_cast<float>(position + 1u) / 240.0f);
+                    ASSERT_NEAR(referencePeak * (1.0f - 0.5f * progress), marked, 1e-5f);
+                }
                 if (std::abs(sample) > 0.001f) {
                     ASSERT_GT(marked, 0.0f);
                     peak = std::max(peak, marked);
                     ++audibleFrames;
                 }
             }
+            if (block == 0) {
+                EXPECT_EQ(cancel ? 0u : frames, audibleFrames);
+                if (scenario == 0) ASSERT_EQ(VN_OK, Vn_Update());
+            }
             if (block == 79) EXPECT_EQ(cancel ? 0u : samples.size(), audibleFrames);
         }
         EXPECT_EQ(cancel ? 0u : samples.size(), audibleFrames);
         if (scenario == 0) referencePeak = peak;
         if (replacement != 0) {
-            EXPECT_NEAR(referencePeak * 0.5f, peak, 1e-5f);
             EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(replacement));
         }
         EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
@@ -14062,7 +14070,10 @@ TEST(ActionFiringApi, PublicationFrontierEqualToFrameRemainsWritable) {
     VnPostActionDesc desc = ValidPostDesc();
     desc.actionId = image.actions[9].actionStableId;
     VnActionFiringHandle firing = 0;
+    // Exercise normal timeline publication without the prepared single-sound shortcut.
+    engine->deferPendingImmediateEntriesForTest = true;
     ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
+    engine->deferPendingImmediateEntriesForTest = false;
     ASSERT_EQ(1u, engine->playableInstances.LiveCount());
     EXPECT_GE(engine->playableServices[0].startFrame, cutoff);
     VnActionStepResult step{};
@@ -14253,7 +14264,10 @@ TEST(ActionFiringApi, AudioReadBeforeNormalUpdatePreservesOriginalStart) {
     VnPostActionDesc desc = ValidPostDesc();
     desc.actionId = image.actions[9].actionStableId;
     VnActionFiringHandle firing = 0;
+    // Exercise normal timeline publication without the prepared single-sound shortcut.
+    engine->deferPendingImmediateEntriesForTest = true;
     ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
+    engine->deferPendingImmediateEntriesForTest = false;
     ASSERT_NE(0u, firing);
     const auto row = std::find_if(
         engine->playableServices.begin(), engine->playableServices.end(),
@@ -74133,10 +74147,13 @@ static void CheckIndependentSoundPreparedRetry(std::uint32_t roots) {
         EXPECT_FALSE(original.bundle.Valid());
         EXPECT_FALSE(original.serviceRetention.Valid());
     }
-    const auto before = engine.mixer.BlocksRendered();
-    engine.nullBackend.Pump(1);
-    ASSERT_EQ(before + 1u, engine.mixer.BlocksRendered());
-    ASSERT_EQ(VN_OK, Vn_Update());
+    if (roots > 1u) {
+        // Multiple roots require an audio acknowledgement before their lane is placed.
+        const auto before = engine.mixer.BlocksRendered();
+        engine.nullBackend.Pump(1);
+        ASSERT_EQ(before + 1u, engine.mixer.BlocksRendered());
+        ASSERT_EQ(VN_OK, Vn_Update());
+    }
     auto attempt = std::find_if(engine.immediateEntryAttempts.begin(),
         engine.immediateEntryAttempts.end(),
         [firing](const auto& original) { return original.active && original.root == firing; });
@@ -74150,38 +74167,57 @@ static void CheckIndependentSoundPreparedRetry(std::uint32_t roots) {
         ASSERT_EQ(VN_OK, Vn_Update());
     }
     const auto lane = attempt->lane;
-    const auto scratch = engine.voices.ScratchBytesBeforeTimeline(64u);
-    ASSERT_GT(scratch, 0u);
-    engine.mixer.ArenaForTests().SetCapacityForTests(
-        static_cast<std::uint32_t>(2u * 64u * sizeof(float) + scratch - 1u));
+    // Leave room for the stereo bus but no first-block voice scratch.
+    std::uint32_t arenaBytes = 2u * 64u * sizeof(float);
+    if (roots > 1u) {
+        const auto scratch = engine.voices.ScratchBytesBeforeTimeline(64u);
+        ASSERT_GT(scratch, 0u);
+        arenaBytes += static_cast<std::uint32_t>(scratch - 1u);
+    }
+    engine.mixer.ArenaForTests().SetCapacityForTests(arenaBytes);
     engine.nullBackend.Pump(1);
     engine.mixer.ArenaForTests().RestoreCapacityForTests();
     ASSERT_EQ(entryQuantum + 1u, engine.mixer.BlocksRendered());
     EXPECT_EQ(0.0f, harkentest::Peak(engine.nullBackend.LastBlock(), 128u));
     engine.nullBackend.Pump(1);
-    harken::ImmediateLaneObservation missed{};
-    ASSERT_TRUE(engine.immediateActionLane.Observe(lane, &missed));
-    EXPECT_TRUE(missed.missed);
-    EXPECT_TRUE(missed.arenaCapacityMissed);
-    EXPECT_FALSE(missed.applied);
-    bool heard = false;
-    for (unsigned block = 0; block < 48u && !heard; ++block) {
+    harken::ImmediateLaneObservation observed{};
+    ASSERT_TRUE(engine.immediateActionLane.Observe(lane, &observed));
+    if (roots == 1u) {
+        // A prepared single sound retries on the audio thread without a game update.
+        EXPECT_TRUE(observed.applied);
+        EXPECT_FALSE(observed.missed);
+        EXPECT_GT(harkentest::Peak(engine.nullBackend.LastBlock(), 128u), 0.001f);
+        harken::TimelineArmObservation started{};
+        ASSERT_TRUE(engine.timelineArms.Observe(originalArm, &started));
+        EXPECT_EQ(entryQuantum + 2u, started.startedBlockSequence);
+        EXPECT_EQ(originalRender, service->renderHandle);
         ASSERT_EQ(VN_OK, Vn_Update());
-        const auto previous = engine.mixer.BlocksRendered();
-        engine.nullBackend.Pump(1);
-        ASSERT_EQ(previous + 1u, engine.mixer.BlocksRendered());
-        heard = harkentest::Peak(engine.nullBackend.LastBlock(), 128u) > 0.001f;
-    }
-    ASSERT_TRUE(heard);
-    std::size_t replacementCount = 0;
-    for (const auto& member : engine.playableServices)
-        if (member.PendingImmediateCohortRoot() == firing) {
-            ASSERT_LT(replacementCount, originalCount);
-            EXPECT_NE(originalRenders[replacementCount++], member.renderHandle);
+    } else {
+        EXPECT_TRUE(observed.missed);
+        EXPECT_TRUE(observed.arenaCapacityMissed);
+        EXPECT_FALSE(observed.applied);
+        bool heard = false;
+        for (unsigned block = 0; block < 48u && !heard; ++block) {
+            ASSERT_EQ(VN_OK, Vn_Update());
+            const auto previous = engine.mixer.BlocksRendered();
+            engine.nullBackend.Pump(1);
+            ASSERT_EQ(previous + 1u, engine.mixer.BlocksRendered());
+            heard = harkentest::Peak(engine.nullBackend.LastBlock(), 128u) > 0.001f;
         }
-    EXPECT_EQ(roots, replacementCount);
-    EXPECT_NE(originalRender, service->renderHandle);
-    EXPECT_TRUE(originalArm.slot != service->arm.slot || originalArm.generation != service->arm.generation);
+        ASSERT_TRUE(heard);
+        std::size_t replacementCount = 0;
+        for (const auto& member : engine.playableServices)
+            if (member.PendingImmediateCohortRoot() == firing) {
+                ASSERT_LT(replacementCount, originalCount);
+                EXPECT_NE(originalRenders[replacementCount++], member.renderHandle);
+                harken::TimelineArmObservation started{};
+                ASSERT_TRUE(engine.timelineArms.Observe(member.arm, &started));
+                EXPECT_EQ(engine.mixer.BlocksRendered(), started.startedBlockSequence);
+            }
+        EXPECT_EQ(roots, replacementCount);
+        EXPECT_NE(originalRender, service->renderHandle);
+        EXPECT_TRUE(originalArm.slot != service->arm.slot || originalArm.generation != service->arm.generation);
+    }
     EXPECT_FALSE(engine.runtimeRecreateRequired);
     EXPECT_EQ(roots, timeline.starts.size());
     EXPECT_EQ(0u, timeline.transactions.size());
