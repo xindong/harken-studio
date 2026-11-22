@@ -45,6 +45,7 @@
 #include <atomic>
 #include <bit>
 #include "harken/core/AllocGuard.h"
+#include "harken/core/LogicAllocCheckpoint.h"
 #include <cstdint>
 #include <cstring>
 #include <memory>
@@ -97,7 +98,8 @@ public:
             m_capacity = capacity;
             m_mask = capacity - 1;
             return true;
-        } catch (const std::bad_alloc&) {
+        } catch (const std::bad_alloc& failure) {
+            detail::RecordLogicAllocFailure(failure, detail::LogicAllocSite::EngineStorage);
             return false;
         }
     }
