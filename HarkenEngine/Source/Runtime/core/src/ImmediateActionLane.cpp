@@ -492,6 +492,81 @@ bool ImmediateActionLane::CapturePrivatePlacedEvent(const PrivateImmediateLanePl
 // Reserve and Retire publish membership on the control thread. Capture reads
 // the next slot after each attempt so publication during capture stays visible.
 struct ImmediateActionLane::ActiveAttemptSlots {
+    // Logic posts a slot once until audio consumes its newest deadline. Only audio
+    // edits the deadline tree. Each radix node stores the earliest of its children.
+    struct Notification {
+        std::atomic<bool> pending{false};
+        std::atomic<std::uint64_t> deadline{UINT64_MAX};
+        std::uint32_t next = UINT32_MAX;
+    };
+    struct Deadlines {
+        std::array<std::uint64_t, 16> children;
+        Deadlines() noexcept { children.fill(UINT64_MAX); }
+    };
+    GrowingRowStorage<Notification> notifications;
+    std::atomic<std::uint32_t> dirty{UINT32_MAX};
+    std::array<GrowingRowStorage<Deadlines>, 8> deadlines;
+
+    bool PrepareDeadlines(std::uint32_t slot, bool grow) noexcept {
+        if (slot == UINT32_MAX) return false;
+        if (slot >= notifications.size() && (!grow || !notifications.ConstructThrough(slot + 1u))) return false;
+        for (auto& level : deadlines) {
+            slot /= 16u;
+            if (slot >= level.size() && (!grow || !level.ConstructThrough(slot + 1u))) return false;
+        }
+        return true;
+    }
+
+    void Notify(std::uint32_t slot, std::uint64_t due) noexcept {
+        auto& entry = notifications[slot];
+        entry.deadline.store(due, std::memory_order_relaxed);
+        if (entry.pending.exchange(true, std::memory_order_acq_rel)) return;
+        // There is one serialized logic producer. Audio only detaches the entire list.
+        auto first = dirty.load(std::memory_order_relaxed);
+        do {
+            entry.next = first;
+        } while (!dirty.compare_exchange_weak(first, slot, std::memory_order_release, std::memory_order_relaxed));
+    }
+
+    void SetDeadline(std::uint32_t slot, std::uint64_t due) noexcept {
+        for (auto& level : deadlines) {
+            auto& children = level[slot / 16u].children;
+            auto& previous = children[slot % 16u];
+            if (previous == due) break;
+            previous = due;
+            due = *std::min_element(children.begin(), children.end());
+            slot /= 16u;
+        }
+    }
+
+    void DrainNotifications() noexcept {
+        if (dirty.load(std::memory_order_acquire) == UINT32_MAX) return;
+        auto slot = dirty.exchange(UINT32_MAX, std::memory_order_acquire);
+        while (slot != UINT32_MAX) {
+            auto& entry = notifications[slot];
+            const auto next = entry.next;
+            entry.pending.exchange(false, std::memory_order_acq_rel);
+            SetDeadline(slot, entry.deadline.load(std::memory_order_acquire));
+            slot = next;
+        }
+    }
+
+    std::uint32_t NextDue(unsigned level, std::uint32_t group, std::uint32_t start,
+                          std::uint32_t end, std::uint64_t quantum) const noexcept {
+        const auto* node = deadlines[level].TryAt(group);
+        if (!node) return end;
+        const auto shift = level * 4u;
+        const auto first = std::max(group * 16u, start >> shift);
+        for (auto index = std::uint64_t{first}; index < std::uint64_t{group} * 16u + 16u; ++index) {
+            if ((index << shift) >= end) break;
+            if (node->children[index % 16u] > quantum) continue;
+            if (!level) return static_cast<std::uint32_t>(index);
+            const auto found = NextDue(level - 1u, static_cast<std::uint32_t>(index), start, end, quantum);
+            if (found != end) return found;
+        }
+        return end;
+    }
+
     struct Level {
         std::atomic<std::uint64_t> first{0};
         GrowingRowStorage<std::atomic<std::uint64_t>> rest;
@@ -505,6 +580,7 @@ struct ImmediateActionLane::ActiveAttemptSlots {
     std::array<Level, 6> levels;
 
     bool Prepare(std::uint32_t slot, bool allowGrowth) noexcept {
+        if (!PrepareDeadlines(slot, allowGrowth)) return false;
         for (auto& level : levels) {
             slot /= 64u;
             if (slot == 0) break;
@@ -550,6 +626,23 @@ std::uint32_t ImmediateActionLane::NextReservedAttempt(std::uint32_t start, std:
     if (fullCaptureScanForTest_) return std::min(start, end);
 #endif
     return activeAttemptSlots_ ? activeAttemptSlots_->Next(0, start, end) : end;
+}
+
+std::uint32_t ImmediateActionLane::NextCaptureAttempt(std::uint32_t start, std::uint32_t end,
+    std::uint64_t quantum) noexcept {
+    if (start >= end || quantum == UINT64_MAX) return end;
+#if !defined(HARKEN_RT_QUALIFICATION)
+    if (fullCaptureScanForTest_) return start;
+#endif
+    activeAttemptSlots_->DrainNotifications();
+    return activeAttemptSlots_->NextDue(7, 0, start, end, quantum);
+}
+
+const ImmediateLaneBucket* ImmediateActionLane::CaptureIndexedDue(std::uint32_t slot, std::uint64_t quantum) noexcept {
+    auto nextVisit = quantum;
+    const auto* bucket = CaptureDueImpl(slot, quantum, nextVisit);
+    if (slot < activeAttemptSlots_->notifications.size()) activeAttemptSlots_->SetDeadline(slot, nextVisit);
+    return bucket;
 }
 
 ImmediateActionLane::~ImmediateActionLane() {
@@ -4383,6 +4476,7 @@ void ImmediateActionLane::ApplyPrivatePublicationImpl(ImmediateLaneHandle handle
                                    std::memory_order_relaxed);
     attempt->state.store(ImmediateLaneAttemptState::Committed,
                          std::memory_order_release);
+    activeAttemptSlots_->Notify(handle.slot, buckets[0].quantum);
 }
 
 PrivateImmediateLanePublicationProof::PrivateImmediateLanePublicationProof(
@@ -4486,15 +4580,24 @@ bool ImmediateActionLane::Cancel(ImmediateLaneHandle handle) noexcept {
     if (allCancelled)
         attempt->nextBucket.store(attempt->bucketCount,
                                   std::memory_order_release);
+    activeAttemptSlots_->Notify(handle.slot, allCancelled ? UINT64_MAX : 0u);
     return allCancelled;
 }
 
 const ImmediateLaneBucket* ImmediateActionLane::CaptureDue(
     std::uint32_t slot, std::uint64_t quantum) noexcept {
+    auto nextVisit = quantum;
+    return CaptureDueImpl(slot, quantum, nextVisit);
+}
+
+const ImmediateLaneBucket* ImmediateActionLane::CaptureDueImpl(
+    std::uint32_t slot, std::uint64_t quantum, std::uint64_t& nextVisit) noexcept {
+    nextVisit = UINT64_MAX;
     if (!valid_ || slot >= attempts_.size() || quantum == UINT64_MAX) return nullptr;
     auto& attempt = attempts_[slot];
     if (attempt.state.load(std::memory_order_acquire) == ImmediateLaneAttemptState::Free)
         return nullptr;
+    nextVisit = quantum;
     for (std::uint32_t scanned = 0; scanned < config_.eventsPerAttempt; ++scanned) {
         AttemptReadAccess access(attempt);
         if (!access) return nullptr;
@@ -4503,9 +4606,9 @@ const ImmediateLaneBucket* ImmediateActionLane::CaptureDue(
 #endif
         const auto phase = attempt.state.load(std::memory_order_acquire);
         if (phase != ImmediateLaneAttemptState::Committed &&
-            phase != ImmediateLaneAttemptState::Cancelling) return nullptr;
+            phase != ImmediateLaneAttemptState::Cancelling) { nextVisit = UINT64_MAX; return nullptr; }
         auto next = attempt.nextBucket.load(std::memory_order_relaxed);
-        if (next >= attempt.bucketCount) return nullptr;
+        if (next >= attempt.bucketCount) { nextVisit = UINT64_MAX; return nullptr; }
         auto& bucket = BucketBase(slot)[next];
         auto state = bucket.state.load(std::memory_order_acquire);
         if (state == ImmediateLaneBucketState::Cancelled) {
@@ -4515,6 +4618,10 @@ const ImmediateLaneBucket* ImmediateActionLane::CaptureDue(
         if (Terminal(state)) {
             (void)attempt.nextBucket.compare_exchange_strong(next, next + 1u,
                 std::memory_order_acq_rel, std::memory_order_acquire);
+            return nullptr;
+        }
+        if (bucket.quantum > quantum && state == ImmediateLaneBucketState::Committed) {
+            nextVisit = bucket.quantum;
             return nullptr;
         }
         bool withdrawnOld = bucket.quantum < quantum &&
@@ -5631,6 +5738,7 @@ bool ImmediateActionLane::Retire(ImmediateLaneHandle handle,
     attempt->nextBucket.store(0, std::memory_order_relaxed);
     attempt->state.store(ImmediateLaneAttemptState::Free,
                          std::memory_order_release);
+    activeAttemptSlots_->Notify(handle.slot, UINT64_MAX);
     activeAttemptSlots_->Set(handle.slot, false);
     firstFreeCandidate_ = std::min(firstFreeCandidate_, handle.slot);
     const auto previous = outstandingAttemptCount_.fetch_sub(1, std::memory_order_release);

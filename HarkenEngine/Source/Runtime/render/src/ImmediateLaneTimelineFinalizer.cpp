@@ -135,9 +135,9 @@ bool ImmediateLaneTimelineFinalizer::Capture(std::uint64_t quantum) noexcept {
     state.capturedQuantum = quantum;
     if (!state.lane->HasOutstandingAttempts()) return false;
     const auto prefix = state.lane->ReservedAttemptPrefix();
-    for (auto slot = state.lane->NextReservedAttempt(0, prefix); slot < prefix;
-         slot = state.lane->NextReservedAttempt(slot + 1u, prefix)) {
-        const auto* bucket = state.lane->CaptureDue(slot, quantum);
+    for (auto slot = state.lane->NextCaptureAttempt(0, prefix, quantum); slot < prefix;
+         slot = state.lane->NextCaptureAttempt(slot + 1u, prefix, quantum)) {
+        const auto* bucket = state.lane->CaptureIndexedDue(slot, quantum);
         if (bucket != nullptr)
             state.receipts[state.receiptCount++] = {slot, bucket, true, false, false};
     }

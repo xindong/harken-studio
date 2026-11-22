@@ -569,6 +569,9 @@ public:
     std::uint32_t ReservedAttemptPrefix() const noexcept {
         return reservedAttemptPrefix_.load(std::memory_order_acquire);
     }
+    std::uint32_t NextCaptureAttempt(std::uint32_t start, std::uint32_t end,
+                                     std::uint64_t quantum) noexcept;
+    const ImmediateLaneBucket* CaptureIndexedDue(std::uint32_t slot, std::uint64_t quantum) noexcept;
     std::uint32_t NextReservedAttempt(std::uint32_t start, std::uint32_t end) const noexcept;
 #if !defined(HARKEN_RT_QUALIFICATION)
     void UseFullCaptureScanForTest(bool enabled) noexcept { fullCaptureScanForTest_ = enabled; }
@@ -1182,6 +1185,8 @@ private:
     std::atomic<std::uint32_t> outstandingAttemptCount_{0};
     std::atomic<std::uint32_t> reservedAttemptPrefix_{0};
     struct ActiveAttemptSlots;
+    const ImmediateLaneBucket* CaptureDueImpl(std::uint32_t slot, std::uint64_t quantum,
+                                              std::uint64_t& nextVisit) noexcept;
     std::unique_ptr<ActiveAttemptSlots> activeAttemptSlots_;
 #if !defined(HARKEN_RT_QUALIFICATION)
     bool fullCaptureScanForTest_ = false;
