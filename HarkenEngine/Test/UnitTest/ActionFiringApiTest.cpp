@@ -1,3 +1,4 @@
+#include "harken/core/detail/PageCommitFault.h"
 #include "../Common/MonitorExecutionTestSupport.h"
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/TestUtil.h"
@@ -4381,7 +4382,10 @@ void ExpectScheduleCapacityActionCompletes(
         const auto sequence = engine->logicCommits.IssuedCount();
         const auto occupiedInstanceRows = engine->playableInstances.UnavailableRowCount();
         engine->originalSourceSubmissions.SetCommitPageLimitForTests(0);
-        EXPECT_EQ(VN_OUT_OF_MEMORY, Vn_PostAction(&desc, &firing));
+        {
+            harken::detail::ScopedPageCommitFaultForTests physicalFailure;
+            EXPECT_EQ(VN_OUT_OF_MEMORY, Vn_PostAction(&desc, &firing));
+        }
         engine->originalSourceSubmissions.SetCommitPageLimitForTests(SIZE_MAX);
         EXPECT_EQ(0u, firing);
         EXPECT_EQ(0u, engine->sourceTerminals.OccupiedCount());
@@ -7257,6 +7261,74 @@ TEST(ActionFiringApi, PostValidatesEmitterBeforeUnsupportedDelayedPostAction) {
     firing = 99;
     EXPECT_EQ(VN_STALE_HANDLE, Vn_PostAction(&desc, &firing));
     EXPECT_EQ(0u, firing);
+}
+
+TEST(ActionFiringApi, DeferredChildStopKeepsLateTargetsWithoutReservingTheVoiceCeiling) {
+    auto config = harkentest::MakeNullConfig(0, 256, 48000);
+    harkentest::EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    ASSERT_TRUE(engine.config.automaticRenderVoices);
+    std::vector<float> samples(48000, 0.25f);
+    const auto pcm = harkentest::MonoDesc(samples, 48000);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(CanonicalActionWorld::kFirstSound, &pcm));
+    CanonicalActionWorld image(engine.registry.Lookup(CanonicalActionWorld::kFirstSound).contentRevision);
+    image.MakeImmediateSoundPlayAndSeparateStopActions();
+    image.MakeQuantizedPostAction(harken::ActionQuantizeTimingV1::Immediate,
+        harken::ActionIfSilentV1::Immediate, DelayNanosecondsForTargetFrame(engine,
+            engine.timelinePool.WindowEndFrame() + 512), 10, 14, harkentest::ObjectId(51), 8);
+    ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(engine, image.world).status);
+    const auto measure = [&](const char* stage) {
+        RecordProperty(std::string(stage) + "_arm_bytes", std::to_string(engine.timelineArms.RowCommittedBytes()));
+        RecordProperty(std::string(stage) + "_arm_scope_bytes", std::to_string(engine.timelineArms.ScopeCommittedBytes()));
+        RecordProperty(std::string(stage) + "_stop_resource_bytes", std::to_string(engine.authoredStopResources.CommittedBytes()));
+    };
+    measure("initial");
+    auto post = ValidPostDesc();
+    post.actionId = image.actions[10].actionStableId;
+    VnActionFiringHandle parent{}, cancelled{};
+    {
+        harken::StableStoragePreparation hold;
+        ASSERT_TRUE(engine.actionDeferredScratch.PrepareBacking(0, 0, &hold));
+        auto use = hold.Use();
+        EXPECT_EQ(VN_BACKPRESSURE, Vn_PostAction(&post, &parent));
+        EXPECT_EQ(0u, parent);
+        EXPECT_EQ(0u, engine.actionDeferredRecords.LiveCount());
+    }
+    ASSERT_EQ(VN_OK, Vn_PostAction(&post, &parent));
+    measure("one");
+    EXPECT_LE(engine.timelineArms.ConstructedRowCount(), engine.authoredStopResources.Capacity());
+    ASSERT_EQ(VN_OK, Vn_PostAction(&post, &cancelled));
+    measure("two");
+    ASSERT_EQ(VN_OK, Vn_StopActionFiring(cancelled, 0));
+    measure("cancelled");
+    post.actionId = image.actions[9].actionStableId;
+    VnActionFiringHandle play{};
+    VnActionFiringHandle secondPlay{};
+    ASSERT_EQ(VN_OK, Vn_PostAction(&post, &play));
+    ASSERT_EQ(VN_OK, Vn_PostAction(&post, &secondPlay));
+    engine.timelineArms.SetRowCommitPageLimitForTests(0);
+    DrainActionDeferred(&engine);
+    VnActionStepResult child{};
+    child.structSize = sizeof(child);
+    ASSERT_EQ(VN_OK, Vn_QueryActionStep(parent, 0, &child));
+    EXPECT_EQ(VN_ACTION_STEP_SUCCEEDED, child.state);
+    ASSERT_NE(0u, child.childFiring);
+    const auto stop = child.childFiring;
+    // Materialization precedes the stop frame on the audio timeline.
+    for (unsigned i = 0; i < 80; ++i) {
+        engine.nullBackend.Pump(1);
+        ASSERT_EQ(VN_OK, Vn_Update());
+    }
+    VnActionFiringInfo info{};
+    info.structSize = sizeof(info);
+    ASSERT_EQ(VN_OK, Vn_QueryActionStep(stop, 0, &child));
+    EXPECT_EQ(VN_ACTION_STEP_SUCCEEDED, child.state);
+    for (const auto target : {play, secondPlay}) {
+        ASSERT_EQ(VN_OK, Vn_QueryActionFiring(target, &info));
+        EXPECT_EQ(0u, info.livePlayableCount);
+    }
+    measure("executed");
 }
 
 TEST(ActionFiringApi, DelayedPostActionCreatesChildOnlyAfterMaterialization) {

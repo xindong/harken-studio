@@ -13,6 +13,44 @@ namespace Harken.Unity.Tests
     public sealed class HarkenComponentTests
     {
         [Test]
+        public void ManagedPlaybackPreservesLiveHandlesAcrossGrowthAndSlotReuse()
+        {
+            var table = new HarkenAudioSystem.ManagedFiringTable();
+            for (int i = 0; i < 257; ++i)
+            {
+                int slot = table.Reserve();
+                table[slot].Firing = new ActionFiring((ulong)i + 1);
+            }
+            Assert.That(table.Count, Is.EqualTo(257));
+            var returned = new System.Collections.Generic.HashSet<int>();
+            for (int slot = table.First; slot >= 0;)
+            {
+                ref var row = ref table[slot];
+                int next = row.Next;
+                if (row.Firing.Handle % 2 != 0)
+                {
+                    returned.Add(slot);
+                    table.Return(slot);
+                }
+                slot = next;
+            }
+            int reused = table.Reserve();
+            Assert.That(returned, Does.Contain(reused));
+            Assert.That(table[reused].Firing.IsValid, Is.False);
+            table[reused].Firing = new ActionFiring(258);
+            int current = table.First;
+            for (ulong handle = 2; handle <= 258; handle += 2)
+            {
+                Assert.That(current, Is.GreaterThanOrEqualTo(0));
+                Assert.That(table[current].Firing.Handle, Is.EqualTo(handle));
+                current = table[current].Next;
+            }
+            Assert.That(current, Is.EqualTo(-1));
+            Assert.That(table.Last, Is.EqualTo(reused));
+            Assert.That(table.Count, Is.EqualTo(129));
+        }
+
+        [Test]
         public void ComponentsAttachToOrdinaryGameObjects()
         {
             GameObject owner = new GameObject("Runtime");

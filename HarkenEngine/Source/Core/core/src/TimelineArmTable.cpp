@@ -274,10 +274,12 @@ bool TimelineArmTable::PrepareRowDependencies(std::uint32_t count, bool fullSour
 
 bool TimelineArmTable::ConstructRowsThrough(std::uint32_t count) noexcept {
     if (rows_.PreparedUseActive()) return count <= rows_.ConstructedCount();
-    if (rows_.ConstructThrough(count, [this](std::uint32_t required) noexcept {
-        return PrepareRowDependencies(required, rows_.HasPreparedBacking());
+    bool readyToConstruct = false;
+    if (rows_.ConstructThrough(count, [&](std::uint32_t required) noexcept {
+        readyToConstruct = PrepareRowDependencies(required, rows_.HasPreparedBacking());
+        return readyToConstruct;
     })) return true;
-    detail::RecordLogicAllocFailure(detail::LogicAllocSite::EngineStorage);
+    if (readyToConstruct) detail::RecordLogicAllocFailure(detail::LogicAllocSite::EngineStorage);
     return false;
 }
 
@@ -296,8 +298,8 @@ bool TimelineArmTable::PrepareBacking(std::uint32_t count, StableStoragePreparat
         memguard::IsAudioTagged()) return false;
     // Reusable rows may have only the ordinary Source record. An accepted request
     // also needs both capture paths and the command tail before it can keep the row.
-    if (PrepareRowDependencies(static_cast<std::uint32_t>(required), true) &&
-        rows_.PrepareBacking(count, occupied, out)) return true;
+    if (!PrepareRowDependencies(static_cast<std::uint32_t>(required), true)) return false;
+    if (rows_.PrepareBacking(count, occupied, out)) return true;
     detail::RecordLogicAllocFailure(detail::LogicAllocSite::EngineStorage);
     return false;
 }

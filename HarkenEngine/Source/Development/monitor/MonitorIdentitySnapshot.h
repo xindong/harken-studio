@@ -10,7 +10,7 @@ namespace harken::monitor {
 enum IdentityDomain : std::size_t { Playables, Actions, LogicalVoices, PublicEmitters, DefaultEmitter };
 inline std::array<std::size_t, 5> IdentityDomainCounts(const Engine& engine) noexcept {
     return {engine.playableInstances.Capacity(), engine.actionFirings.Capacity(),
-        engine.ledger.Capacity(), engine.monitorEmitters.Capacity(), 1};
+        engine.ledger.ConstructedEntryCount(), engine.monitorEmitters.Capacity(), 1};
 }
 inline std::size_t IdentitySlotCapacity(const Engine& engine) noexcept {
     std::size_t size = 0;

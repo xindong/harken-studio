@@ -91,9 +91,7 @@ typedef struct VnSnapshot {
     uint64_t voiceHighWater;      /* most Render Voices ever live at once */
     uint64_t voiceCompletedCount; /* voices that finished or were stopped */
     uint64_t staleHandleCount;    /* operations refused on stale handles */
-    uint64_t noVoiceCount;        /* voice admissions refused with VN_NO_VOICE,
-                                   * including capacity, policy, or controlled
-                                   * logic-side allocation failures */
+    uint64_t noVoiceCount;        /* render voice admission refusals recorded by the voice pool */
     uint64_t backpressureCount;   /* commands refused by a full queue */
     uint64_t notificationDropCount;      /* notifications lost to drop-oldest */
     uint64_t logDropCount;        /* audio-side log records lost to drop-oldest

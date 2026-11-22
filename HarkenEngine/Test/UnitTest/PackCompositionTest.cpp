@@ -1,3 +1,4 @@
+#include "harken/core/detail/PageCommitFault.h"
 #include <harken/HarkenDevelopment.h>
 #include "UnitTest/CanonicalPackSetActivate.h"
 #include "AllocationProbe.h"
@@ -20071,7 +20072,10 @@ static void CheckOriginalDeferredPreparationCapacityExit(ActionOpcodeV1 opcode, 
         if (state.fault) EXPECT_EQ(VN_OK, actual.packs.ReleaseResourceClosure(resource));
     };
     engine.originalPackResourceAcquiredContextForTest = &prefix;
-    EXPECT_EQ(fault && opcode != ActionOpcodeV1::Stop ? VN_RUNTIME_RECREATE_REQUIRED : VN_OUT_OF_MEMORY, fixture.PostOperation());
+    {
+        harken::detail::ScopedPageCommitFaultForTests physicalFailure;
+        EXPECT_EQ(fault && opcode != ActionOpcodeV1::Stop ? VN_RUNTIME_RECREATE_REQUIRED : VN_OUT_OF_MEMORY, fixture.PostOperation());
+    }
     engine.originalPackResourceAcquiredHookForTest = nullptr;
     engine.originalPackResourceAcquiredContextForTest = nullptr;
     ASSERT_EQ(opcode == ActionOpcodeV1::Stop ? 0u : 1u, prefix.calls);

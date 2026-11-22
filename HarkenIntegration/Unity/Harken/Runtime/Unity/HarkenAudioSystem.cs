@@ -108,7 +108,7 @@ namespace Harken.Unity
             public bool PublishFailure;
         }
 
-        private struct ManagedFiring
+        internal struct ManagedFiring
         {
             public ActionFiring Firing;
             public HarkenSpatialSource Source;
@@ -121,7 +121,7 @@ namespace Harken.Unity
             public bool ResourcesObserved;
             public VnResult LastResourcesResult;
         }
-        private sealed class ManagedFiringTable
+        internal sealed class ManagedFiringTable
         {
             private const int PageSize = 32;
             private readonly List<ManagedFiring[]> pages = new List<ManagedFiring[]>();

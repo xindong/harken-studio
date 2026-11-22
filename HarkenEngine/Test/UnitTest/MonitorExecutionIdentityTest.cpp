@@ -1292,6 +1292,8 @@ TEST(MonitorIdentitySnapshot, CopiesCommittedSlotsAndDefaultEmitterWithoutPublis
     ReadIdentityEvents(events);
     unsigned playableCount = 0, emitterCount = 0, defaultCount = 0;
     const auto counts = IdentityDomainCounts(engine);
+    EXPECT_EQ(0u, counts[LogicalVoices]);
+    EXPECT_GT(engine.ledger.Capacity(), counts[LogicalVoices]);
     for (std::size_t domain = 0; domain < counts.size(); ++domain)
     for (std::size_t slot = 0; slot < counts[domain]; ++slot) {
         MonitorExecutionFact fact{};

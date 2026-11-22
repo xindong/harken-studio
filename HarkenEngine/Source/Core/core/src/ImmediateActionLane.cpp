@@ -1099,9 +1099,11 @@ bool ImmediateActionLane::Reset(Config config) {
                        config.eventsPerAttempt;
     GrowingRowStorage<PrivateEntryAssociation> privateEntries;
     if (slots > UINT32_MAX) return false;
-    activeAttemptSlots_.reset(new (std::nothrow) ActiveAttemptSlots);
-    if (!activeAttemptSlots_) {
-        detail::RecordCurrentLogicAllocFailure(detail::LogicAllocSite::ImmediateEntryStorage);
+    try {
+        detail::LogicAllocCheckpoint(detail::LogicAllocSite::ImmediateEntryStorage);
+        activeAttemptSlots_ = std::make_unique<ActiveAttemptSlots>();
+    } catch (const std::bad_alloc& failure) {
+        detail::RecordLogicAllocFailure(failure, detail::LogicAllocSite::ImmediateEntryStorage);
         return false;
     }
     privateEntries_.Swap(privateEntries);

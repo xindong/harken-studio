@@ -115,12 +115,15 @@ MixerLoop::MixerLoop(const EngineConfig& config, VoicePool& voices,
       m_installAckSideTableCapacity(ackSideTableCapacity),
       m_installAckRing(installAckRing),
       m_bootstrapMeterLanes{meterRing.PrepareLane(0)},
-      m_arena(config.arenaBytes, BlockArena::BackingMode::OnDemand),
+      m_arena(config.arenaBytes, config.automaticArena ? BlockArena::BackingMode::Automatic : BlockArena::BackingMode::OnDemand,
+              static_cast<std::uint32_t>((config.mixChannelCount + (kMaxChannels +
+                  std::max<std::uint32_t>(kMaxChannels, config.mixChannelCount)) *
+                  (config.renderWorkerCount == 0 ? 1u : 2u)) * config.blockFrames * sizeof(float) + alignof(float))),
       m_arenaLowBytes(static_cast<std::uint64_t>(config.mixChannelCount) *
                       config.blockFrames * sizeof(float)),
       m_busFxSlots(config.fxSlotsPerBus),
       m_dynamicRouteCapacity(config.dynamicRouteCapacity),
-      m_arenaBytesPerSlot(std::min<std::uint64_t>(config.arenaBytes,
+      m_arenaBytesPerSlot(std::min<std::uint64_t>(m_arena.CapacityBytes(),
           static_cast<std::uint64_t>(kMaxChannels +
               std::max<std::uint32_t>(kMaxChannels, config.mixChannelCount)) *
           config.blockFrames * sizeof(float) * (config.renderWorkerCount == 0 ? 1u : 2u))),

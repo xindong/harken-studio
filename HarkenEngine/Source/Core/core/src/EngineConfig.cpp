@@ -314,7 +314,8 @@ VnResult ResolveConfigForInitialDevice(const VnConfig* config,
     if (config->maxVoices != 0)
         renderVoiceCapacity = config->maxVoices;
     if (config->fxSlotsPerVoice != 0) resolved.fxSlotsPerVoice = config->fxSlotsPerVoice;
-    if (config->arenaBytes != 0) resolved.arenaBytes = config->arenaBytes;
+    resolved.automaticArena = config->arenaBytes == 0;
+    if (!resolved.automaticArena) resolved.arenaBytes = config->arenaBytes;
     if (hasTransportFields) {
         // maxBuses is a retained ABI field; definitions grow on demand.
         if (config->commandQueueDepth != 0)

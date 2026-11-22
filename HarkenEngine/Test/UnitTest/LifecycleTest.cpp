@@ -280,6 +280,11 @@ TEST(NullBackendLifecycle, ArgumentAndStateErrors) {
     EXPECT_EQ(VN_OUT_OF_MEMORY, Vn_Init(&good));
     EXPECT_EQ(nullptr, harken::detail::ActiveEngine());
     EXPECT_EQ(VN_NOT_INITIALIZED, Vn_Term());
+    harken::detail::ArmLogicAllocFaultForTests(1, harken::detail::LogicAllocSite::ImmediateEntryStorage);
+    const auto laneFailure = Vn_Init(&good);
+    harken::detail::DisarmLogicAllocFaultForTests();
+    EXPECT_EQ(VN_OUT_OF_MEMORY, laneFailure);
+    EXPECT_EQ(nullptr, harken::detail::ActiveEngine());
     ASSERT_EQ(VN_OK, Vn_Init(&good));
     EXPECT_EQ(VN_ALREADY_INITIALIZED, Vn_Init(&good));
     EXPECT_EQ(VN_OK, Vn_Term());

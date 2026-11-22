@@ -22,6 +22,7 @@
 // alignment. If that ever changes, this equivalence has to be re-established
 // before the goldens can be trusted.
 #include "harken/core/BlockArena.h"
+#include "harken/core/LogicAllocCheckpoint.h"
 
 #include <gtest/gtest.h>
 
@@ -32,6 +33,22 @@
 namespace {
 
 constexpr std::size_t kAlign = alignof(float);
+
+TEST(BlockArena, AutomaticReservationRetriesWithoutReportingARecoveredAllocationFailure) {
+    constexpr std::uint32_t requested = 1u << 20;
+    harken::detail::LogicAllocCallScope call;
+    harken::detail::StablePageReservation::FailNextReservationForTests();
+    harken::BlockArena arena(requested, harken::BlockArena::BackingMode::Automatic, 4096);
+    EXPECT_EQ(requested / 2, arena.CapacityBytes());
+    EXPECT_EQ(0u, arena.CommittedBytes());
+    ASSERT_TRUE(arena.PrepareBacking(4096, 4096));
+    ASSERT_NE(nullptr, arena.AllocFloats(1024));
+    ASSERT_NE(nullptr, arena.AllocFloatsHigh(1024));
+    EXPECT_EQ(harken::detail::LogicAllocSite::None, call.Failure().site);
+    harken::detail::StablePageReservation::FailNextReservationForTests();
+    EXPECT_THROW(harken::BlockArena(requested, harken::BlockArena::BackingMode::OnDemand), std::bad_alloc);
+    EXPECT_NE(harken::detail::LogicAllocSite::None, call.Failure().site);
+}
 
 // A single-cursor arena's verdict on the same request sequence: planes first
 // (as RenderBlock issues them), then the per-voice scratch.

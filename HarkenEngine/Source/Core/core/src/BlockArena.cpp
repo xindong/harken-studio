@@ -7,10 +7,17 @@
 
 namespace harken {
 
-BlockArena::BlockArena(std::uint32_t capacityBytes, BackingMode mode)
+BlockArena::BlockArena(std::uint32_t capacityBytes, BackingMode mode, std::uint32_t minimumBytes)
     : m_storageCapacity(capacityBytes), m_capacity(capacityBytes) {
-    if (!m_buffer.Reserve(std::max<std::size_t>(capacityBytes, alignof(float)), alignof(float), false) ||
-        (mode == BackingMode::Full && !PrepareBacking(capacityBytes, 0))) throw harken::detail::LogicPreparationFailure{};
+    // Negotiate address space before any worker can retain a pointer.
+    while (mode == BackingMode::Automatic && m_capacity > minimumBytes) {
+        detail::LogicAllocCallScope attempt;
+        if (m_buffer.Reserve(m_capacity, alignof(float), false)) return;
+        if (attempt.Failure().site == detail::LogicAllocSite::None) throw detail::LogicPreparationFailure{};
+        m_capacity = m_storageCapacity = std::max(minimumBytes, m_capacity / 2u);
+    }
+    if (!m_buffer.Reserve(std::max<std::size_t>(m_capacity, alignof(float)), alignof(float), false) ||
+        (mode == BackingMode::Full && !PrepareBacking(m_capacity, 0))) throw detail::LogicPreparationFailure{};
 }
 
 bool BlockArena::PrepareBacking(std::uint64_t lowBytes, std::uint64_t highBytes) noexcept {

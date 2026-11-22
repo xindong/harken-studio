@@ -64869,24 +64869,24 @@ VnResult Engine::PrepareNativeBindingGrowth(
             return true;
         };
         if (!refreshGroups(preparedPendingVariableGroups) || !refreshGroups(acceptedPendingVariableGroups))
-            return VN_OUT_OF_MEMORY;
+            return VN_BACKPRESSURE;
         for (auto& holder : pendingOrdinarySelections) {
             if (!holder.replacementVoice.HasStorage()) continue;
             auto* row = ResolvePlayableService(holder.reference);
             if (row == nullptr || row->containerLoopAuthorityKind == PlayableExecutionAuthorityKind::Pack) continue;
             backing::Profile profile;
-            if (!count(*row, false, profile)) return VN_OUT_OF_MEMORY;
+            if (!count(*row, false, profile)) return VN_BACKPRESSURE;
             if (profile.voice.bindings > holder.nativeBindingBacking.ReservedRows()) {
                 ParamSystem::BackingPreparation candidate;
-                if (!params.PrepareBindingBacking(profile.voice.bindings, &candidate)) return VN_OUT_OF_MEMORY;
+                if (!params.PrepareBindingBacking(profile.voice.bindings, &candidate)) return VN_BACKPRESSURE;
                 holder.nativeBindingBacking = std::move(candidate);
             }
             if (!PrepareVoiceBindingResolutionStorage(profile.voice.bindings) ||
                 !grow(holder.replacementVoice, profile.voice) || !growSide(holder.nativeReplacement, profile.voice))
-                return VN_OUT_OF_MEMORY;
+                return VN_BACKPRESSURE;
             if (holder.replacement.Valid()) {
                 auto* child = FindFrontierAttempt(*this, holder.replacement);
-                if (child == nullptr || !growSide(child->voiceStarts, profile.voice)) return VN_OUT_OF_MEMORY;
+                if (child == nullptr || !growSide(child->voiceStarts, profile.voice)) return VN_BACKPRESSURE;
             }
         }
         return VN_OK;
@@ -86301,7 +86301,7 @@ engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         if (planned.step->opcode == harken::ActionOpcodeV1::Play) {
             if (plan->deferredPreparedCount == UINT32_MAX ||
                 !engine.actionDeferredScratch.ConstructThrough(plan->deferredPreparedCount + 1u)) {
-                plan->result = VN_OUT_OF_MEMORY; abandonPrepared(); return false;
+                plan->result = VN_BACKPRESSURE; abandonPrepared(); return false;
             }
             auto& scratch = engine.actionDeferredScratch[plan->deferredPreparedCount++];
             if (scratch.originalPackLease.Valid()) {
@@ -86343,7 +86343,7 @@ engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             if (recordCount == 0) {
                 if (plan->deferredPreparedCount == UINT32_MAX ||
                 !engine.actionDeferredScratch.ConstructThrough(plan->deferredPreparedCount + 1u)) {
-                    plan->result = VN_OUT_OF_MEMORY;
+                    plan->result = VN_BACKPRESSURE;
                     abandonPrepared();
                     return false;
                 }
@@ -86359,7 +86359,7 @@ engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         } else {
             if (plan->deferredPreparedCount == UINT32_MAX ||
                 !engine.actionDeferredScratch.ConstructThrough(plan->deferredPreparedCount + 1u)) {
-                plan->result = VN_OUT_OF_MEMORY;
+                plan->result = VN_BACKPRESSURE;
                 if (!nativeTarget && targetPackLease.leaseToken != 0 &&
                     engine.ReleasePackIdentityLease(targetPackLease) != VN_OK)
                     engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
@@ -86965,15 +86965,16 @@ VnResult CountDeferredInstanceRows(const ImmediateActionPlan& plan,
     }
     const bool stop = step.opcode == harken::ActionOpcodeV1::Stop;
     if (stop && !capturedStop) {
-        // A delayed child Action captures its targets at execution. Each render
-        // voice can need at most one control arm for this Stop.
+        // The child chooses targets at execution. Each scheduled control arm
+        // also occupies an authored Stop resource until that control retires.
         try {
             if (!trees) trees = std::make_unique<harken::Engine::DeferredTreeBacking>();
         } catch (const std::bad_alloc&) {
             harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage);
             return VN_OUT_OF_MEMORY;
         }
-        return trees->AddArms(engine.config.voiceCapacity.Render()) ? VN_OK : VN_OUT_OF_MEMORY;
+        const auto controls = std::min(engine.config.voiceCapacity.Render(), engine.authoredStopResources.Capacity());
+        return trees->AddArms(controls) ? VN_OK : VN_BACKPRESSURE;
     }
     if (!stop && step.opcode != harken::ActionOpcodeV1::Play) return VN_OK;
     if (rows == UINT32_MAX) return VN_OUT_OF_MEMORY;
@@ -104449,7 +104450,7 @@ bool CaptureDeferredActionStopRoots(
         }
         if (plan.deferredPreparedCount == UINT32_MAX ||
                 !engine.actionDeferredScratch.ConstructThrough(plan.deferredPreparedCount + 1u)) {
-            plan.result = VN_OUT_OF_MEMORY;
+            plan.result = VN_BACKPRESSURE;
             return false;
         }
         auto& scratch =

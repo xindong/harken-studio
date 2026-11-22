@@ -1,4 +1,5 @@
 #include "harken/core/StableRowStorage.h"
+#include "harken/core/detail/PageCommitFault.h"
 #include "harken/core/LogicAllocCheckpoint.h"
 
 #include <exception>
@@ -149,6 +150,7 @@ bool StablePageReservation::CommitSuffixFrom(std::size_t offset) noexcept {
 
 std::size_t StablePageReservation::CommitPages(std::size_t offset, std::size_t count) noexcept {
     const auto permitted = std::min(count, remainingPagesForTests_);
+    if (permitted < count && ScopedPageCommitFaultForTests::Active()) RecordLogicAllocFailure(LogicAllocSite::EngineStorage);
     if (permitted == 0) return 0;
 #if defined(_WIN32)
     auto* first = static_cast<std::byte*>(address_) + offset;
@@ -168,7 +170,10 @@ std::size_t StablePageReservation::CommitPages(std::size_t offset, std::size_t c
 }
 
 bool StablePageReservation::CommitPage(std::size_t offset) noexcept {
-    if (remainingPagesForTests_ == 0) return false;
+    if (remainingPagesForTests_ == 0) {
+        if (ScopedPageCommitFaultForTests::Active()) RecordLogicAllocFailure(LogicAllocSite::EngineStorage);
+        return false;
+    }
     auto* page = static_cast<std::byte*>(address_) + offset;
 #if defined(_WIN32)
     if (VirtualAlloc(page, pageBytes_, MEM_COMMIT, PAGE_READWRITE) == nullptr) {

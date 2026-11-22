@@ -132,6 +132,7 @@ struct EngineConfig {
     VoiceCapacityModel voiceCapacity;
     std::uint32_t fxSlotsPerVoice = 8;
     std::uint32_t arenaBytes = UINT32_MAX;
+    bool automaticArena = false;
     bool nullDevice = true;
     bool automaticRenderVoices = false;
     std::uint32_t InitialRenderVoices() const noexcept {
