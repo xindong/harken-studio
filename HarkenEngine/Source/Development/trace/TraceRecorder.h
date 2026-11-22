@@ -125,7 +125,6 @@ public:
         std::uint32_t publicationVintage = 0) noexcept;
     void RecordProjectGenerationInstallAck(
         const ProjectGenerationInstallAckV1& ack) noexcept;
-    void RecordPreparedTopologyPlan(const TopologyPlanView& plan) noexcept;
     void RecordMeterProbeInstall(VnObjectId probeStableId, VnBusId busId,
                                  std::uint32_t tap, std::uint32_t attackMs,
                                  std::uint32_t releaseMs,
