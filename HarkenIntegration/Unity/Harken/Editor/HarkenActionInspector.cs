@@ -38,8 +38,6 @@ namespace Harken.Unity.Editor
             Refresh(false);
         }
 
-        private void Refresh() => Refresh(true);
-
         public override void OnInspectorGUI()
         {
             serializedObject.Update();

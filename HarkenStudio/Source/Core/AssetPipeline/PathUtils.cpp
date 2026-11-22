@@ -1,8 +1,6 @@
 
 #include "PathUtils.h"
 #include "AudioFormatCatalog.h"
-#include <QDateTime>
-#include <QFile>
 #include <QObject>
 #include <QRegularExpression>
 
@@ -228,37 +226,9 @@ QString PathUtils::getDotCacheDir(const QString& projectRoot)
     return QDir(projectRoot).absoluteFilePath(DOT_CACHE_DIR);
 }
 
-QString PathUtils::getTrashDir(const QString& projectRoot)
-{
-    return QDir(projectRoot).absoluteFilePath(TRASH_DIR);
-}
-
 bool PathUtils::ensureDirectory(const QString& path)
 {
     return QDir(path).exists() || QDir().mkpath(path);
-}
-
-bool PathUtils::moveToTrash(const QString& projectRoot,
-                            const QString& absolutePath,
-                            const QString& relativePath)
-{
-    if (!QFile::exists(absolutePath))
-        return false;
-
-    const QString sessionDir = QDir(getTrashDir(projectRoot)).absoluteFilePath(
-        QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd-HHmmss")));
-    QString destPath = toAbsolutePath(relativePath, sessionDir);
-    if (!QDir().mkpath(QFileInfo(destPath).absolutePath()))
-        return false;
-
-    const QFileInfo destInfo(destPath);
-    const QString base = destInfo.absolutePath() + '/' + destInfo.completeBaseName();
-    const QString suffix = destInfo.suffix().isEmpty()
-        ? QString() : '.' + destInfo.suffix();
-    for (int i = 1; QFile::exists(destPath); ++i)
-        destPath = base + QStringLiteral("_%1").arg(i) + suffix;
-
-    return QFile::rename(absolutePath, destPath);
 }
 
 QString PathUtils::getProjectIndexCacheDir(const QString& projectRoot)

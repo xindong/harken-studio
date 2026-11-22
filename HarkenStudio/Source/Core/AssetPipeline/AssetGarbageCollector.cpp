@@ -1,7 +1,6 @@
 
 #include "AssetGarbageCollector.h"
-#include "AudioFormatCatalog.h"
-#include "AssetRegistry.h"
+#include "../ProjectPlatform.h"
 #include "../ProjectPlatformActivity.h"
 #include "PathUtils.h"
 
@@ -217,50 +216,6 @@ AssetGarbageCollector::CacheStats AssetGarbageCollector::getCacheStats() const
     return stats;
 }
 
-
-QList<QString> AssetGarbageCollector::scanForOrphans()
-{
-    QList<QString> orphans;
-    QString AudioSourcesDir = PathUtils::getAudioSourcesDir(projectRoot_);
-
-    QDirIterator it(AudioSourcesDir,
-                    AudioFormatCatalog::filePatterns(),
-                    QDir::Files,
-                    QDirIterator::Subdirectories);
-
-    while (it.hasNext()) {
-        it.next();
-        QString relativePath = PathUtils::toRelativePath(it.filePath(), AudioSourcesDir);
-
-        if (!AssetRegistry::instance().getAssetByPath(relativePath)) {
-            orphans.append(relativePath);
-        }
-    }
-
-    return orphans;
-}
-
-int AssetGarbageCollector::purgeTrash(int maxAgeDays)
-{
-    const QDir trashDir(PathUtils::getTrashDir(projectRoot_));
-    if (!trashDir.exists())
-        return 0;
-
-    const QDateTime cutoff = QDateTime::currentDateTime().addDays(-maxAgeDays);
-    int purged = 0;
-    const QFileInfoList entries =
-        trashDir.entryInfoList(QDir::Dirs | QDir::Files | QDir::NoDotAndDotDot);
-    for (const QFileInfo& entry : entries) {
-        if (entry.lastModified() >= cutoff)
-            continue;
-        const bool removed = entry.isDir()
-            ? QDir(entry.absoluteFilePath()).removeRecursively()
-            : QFile::remove(entry.absoluteFilePath());
-        if (removed)
-            ++purged;
-    }
-    return purged;
-}
 
 QList<QString> AssetGarbageCollector::scanForStaleCaches()
 {

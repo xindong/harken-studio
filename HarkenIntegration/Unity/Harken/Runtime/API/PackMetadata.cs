@@ -134,10 +134,9 @@ namespace Harken
         internal readonly uint Kind, Operation;
         internal readonly Pack Expected;
         internal readonly byte[] Bytes;
-        internal readonly PackMetadata Names;
         internal PackMetadataMember(ulong id, uint kind, Pack expected, uint operation = VnConstants.VN_PACK_MEMBER_KEEP,
-            byte[] bytes = null, PackMetadata names = null)
-        { Id = id; Kind = kind; Expected = expected; Operation = operation; Bytes = bytes; Names = names; }
+            byte[] bytes = null)
+        { Id = id; Kind = kind; Expected = expected; Operation = operation; Bytes = bytes; }
     }
 
     internal static class PackMetadataNative

@@ -512,52 +512,6 @@ void TraceRecorder::RecordProjectGenerationInstallAck(
     CommitRecord(start);
 }
 
-void TraceRecorder::RecordPreparedTopologyPlan(
-    const TopologyPlanView& plan) noexcept {
-    if (!m_active) {
-        return;
-    }
-    if (!plan.valid || plan.slotCount == 0 || plan.slotsPerBus == 0 ||
-        plan.busIds == nullptr || plan.parents == nullptr ||
-        plan.alive == nullptr || plan.sendTargets == nullptr) {
-        FailTrace();
-        return;
-    }
-    const std::uint32_t n = plan.slotCount;
-    const std::uint32_t slots = plan.slotsPerBus;
-    const std::uint64_t sendCount =
-        static_cast<std::uint64_t>(n) * slots;
-    if (n > m_engine.config.maxBuses ||
-        slots > m_engine.config.busSendSlotsPerBus ||
-        sendCount > (1u << 20)) {
-        FailTrace();
-        return;
-    }
-    const std::size_t start = BeginRecord(kTraceRecordPreparedTopologyPlan);
-    AppendU32(kTracePreparedTopologyPlanVintage);
-    AppendU32(n);
-    AppendU32(slots);
-    AppendU32(0);
-    for (std::uint32_t i = 0; i < n; ++i) {
-        AppendObjectId(plan.busIds[i]);
-        AppendU32(plan.generations != nullptr ? plan.generations[i] : 1u);
-        AppendU32(plan.parents[i]);
-        AppendU32(plan.alive[i]);
-        AppendU32(0);
-    }
-    for (std::uint64_t i = 0; i < sendCount; ++i) {
-        AppendU32(plan.sendTargets[i]);
-        std::uint32_t bits = 0;
-        const float level = plan.preparedSendLevels != nullptr
-                                ? plan.preparedSendLevels[i]
-                                : 0.0f;
-        std::memcpy(&bits, &level, sizeof(bits));
-        AppendU32(bits);
-        AppendU32(plan.sendLevelApply != nullptr ? plan.sendLevelApply[i] : 0);
-    }
-    CommitRecord(start);
-}
-
 void TraceRecorder::RecordMeterProbeInstall(
     VnObjectId probeStableId, VnBusId busId, std::uint32_t tap,
     std::uint32_t attackMs, std::uint32_t releaseMs,

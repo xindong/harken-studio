@@ -495,10 +495,6 @@ private:
     bool setItemOutputBusRefInternal(ProjectItem* item, uint32_t busID, const QObject* originator = nullptr);
     bool reorderItemChildrenInternal(ProjectItem* parent, const std::vector<std::shared_ptr<ProjectItem>>& orderedChildren);
 
-    // Open-time asset reconciliation: drops registry records no tree references,
-    // then removes AudioSources files no record maps to.
-    void reconcileAssetsOnOpen(int bindingLoadFailures);
-
     // Extension point ④: per-type runtime lifecycle dispatch. The shared
     // create/delete/move flow drives these; buses mirror into the engine
     // BusTree, other types into the runtime object registry.

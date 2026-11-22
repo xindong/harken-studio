@@ -4650,8 +4650,6 @@ Integration Package installation location:
     <message><source>Choose a new backup directory outside the Unity project.</source><translation>请选择 Unity 工程之外尚不存在的备份目录。</translation></message>
     <message><source>Backup verification failed. No project files were changed.</source><translation>备份核验失败，未修改任何工程文件。</translation></message>
     <message><source>The safety backup is verified. Removing the approved files.</source><translation>安全备份已通过核验，正在移除已确认的文件。</translation></message>
-    <message><source>A file changed after backup and was preserved:</source><translation>以下文件在备份后发生变化，已保留，未删除：</translation></message>
-    <message><source>Cannot remove file:</source><translation>无法移除文件：</translation></message>
     <message><source>The installation directory changed during removal. Its remaining files were preserved.</source><translation>安装目录在卸载期间发生变化，已保留其中的剩余文件。</translation></message>
     <message><source>The removal record could not be cleared. Retry Uninstall Integration Package to finish.</source><translation>无法清除卸载记录。请再次点击卸载按钮完成收尾。</translation></message>
     <message><source>Existing files are outside Integration Package ownership. Files absent from the selected source will be preserved.</source><translation>目录中有不属于集成包管理范围的文件；所选来源未包含的文件将保留原位。</translation></message>

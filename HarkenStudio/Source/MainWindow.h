@@ -55,7 +55,6 @@ namespace QWK { class WidgetWindowAgent; }
 #endif
 
 namespace harken::studio {
-    struct ProjectConfig;
     class ProjectExplorer;
     class Hierarchy;
     class InspectorPanel;
@@ -74,7 +73,6 @@ namespace harken::studio {
     class AIAssistantService;
     class IPCServer;
     class PanelInstanceRegistry;
-    class EditorShellRegistry;
     class LayoutController;
     class SelectionRouter;
     struct CurveSelection;
@@ -174,10 +172,6 @@ public:
         QString* error = nullptr,
         bool* forwarded = nullptr);
     bool isProjectOpening() const { return projectOpenInProgress_; }
-
-    bool createProjectFromConfig(
-        const ProjectConfig& config,
-        std::function<void(StartupPhase)> startupProgress = {});
 
     void finishPreparedProject(const QString& path,
                                bool created,
@@ -395,7 +389,6 @@ private:
     ads::CDockWidget* assistantDock_ = nullptr;
 
     QPointer<PanelInstanceRegistry> panelRegistry_;
-    std::unique_ptr<EditorShellRegistry> editorShellRegistry_;
     LayoutController* layoutController_ = nullptr;
     SelectionRouter* selectionRouter_ = nullptr;
     BusController* busController_ = nullptr;

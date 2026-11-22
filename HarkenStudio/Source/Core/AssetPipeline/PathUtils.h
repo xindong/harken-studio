@@ -39,17 +39,7 @@ public:
 
     static QString getSearchIndexCacheDir(const QString& projectRoot);
 
-    static QString getTrashDir(const QString& projectRoot);
-
     static bool ensureDirectory(const QString& path);
-
-    // Quarantine instead of delete: moves the file into
-    // .trash/<timestamp>/<relativePath> so reconcile/cleanup passes never
-    // destroy audio irrecoverably. Returns false when the source is absent or
-    // the move failed (the file is then left in place, never removed).
-    static bool moveToTrash(const QString& projectRoot,
-                            const QString& absolutePath,
-                            const QString& relativePath);
 
     static QString calculateImportDestination(const QString& externalPath,
                                                const QString& projectRoot);
@@ -67,7 +57,6 @@ public:
     static constexpr const char* AUDIO_SOURCES_DIR = "AudioSources";
 
     static constexpr const char* DOT_CACHE_DIR = ".cache";
-    static constexpr const char* TRASH_DIR = ".trash";
     static constexpr const char* PROJECT_INDEX_SUBDIR = "project_index";
     static constexpr const char* ASSET_REGISTRY_SUBDIR = "asset_registry";
     static constexpr const char* MEDIA_CACHE_SUBDIR = "media";

@@ -5,10 +5,6 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QEvent>
-#include <QFile>
-#include <QJsonDocument>
-#include <QJsonObject>
-#include <QJsonArray>
 #include <QLineEdit>
 #include <QMenu>
 #include <QMenuBar>
@@ -447,57 +443,6 @@ void ShortcutManager::loadShortcuts()
     }
 
     settings.endGroup();
-}
-
-void ShortcutManager::exportShortcuts(const QString& filePath)
-{
-    QJsonObject root;
-    
-    for (auto it = shortcuts_.begin(); it != shortcuts_.end(); ++it)
-    {
-        QJsonObject shortcutObj;
-        shortcutObj["default"] = it.value().defaultShortcut.toString();
-        shortcutObj["current"] = it.value().currentShortcut.toString();
-        shortcutObj["isCustom"] = it.value().isCustom;
-        root[it.key()] = shortcutObj;
-    }
-
-    QFile file(filePath);
-    if (file.open(QIODevice::WriteOnly))
-    {
-        QJsonDocument doc(root);
-        file.write(doc.toJson(QJsonDocument::Indented));
-    }
-}
-
-bool ShortcutManager::importShortcuts(const QString& filePath)
-{
-    QFile file(filePath);
-    if (!file.open(QIODevice::ReadOnly))
-        return false;
-
-    QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
-    if (!doc.isObject())
-        return false;
-
-    QJsonObject root = doc.object();
-    for (auto it = root.begin(); it != root.end(); ++it)
-    {
-        const QString id = canonicalShortcutId(it.key());
-        if (!shortcuts_.contains(id))
-            continue;
-
-        QJsonObject obj = it.value().toObject();
-        QString currentStr = obj["current"].toString();
-        QKeySequence seq(currentStr);
-        
-        shortcuts_[id].currentShortcut = seq;
-        shortcuts_[id].isCustom = (seq != shortcuts_[id].defaultShortcut);
-        applyShortcut(id);
-    }
-
-    emit shortcutsReset();
-    return true;
 }
 
 QString ShortcutManager::categoryName(ShortcutCategory category)

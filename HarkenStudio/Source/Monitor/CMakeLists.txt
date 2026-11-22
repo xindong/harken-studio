@@ -13,8 +13,6 @@ add_library(harken_editor_monitor_data STATIC
     MonitorCaptureControl.cpp
     MonitorRemoteStatus.h
     MonitorRemoteStatus.cpp
-    MonitorRemoteAllowlist.h
-    MonitorRemoteAllowlist.cpp
     MonitorRecordingBrowser.h
     MonitorRecordingBrowser.cpp
     MonitorSessionCompareUi.h
@@ -36,14 +34,9 @@ add_library(harken_editor_monitor_data STATIC
     MonitorProjectionTypes.h
     MonitorStateCut.h
     MonitorStateCut.cpp
-    MonitorGeneration.h
-    MonitorGeneration.cpp
     MonitorDrop.h
     MonitorDrop.cpp
 
-    # P2-5 availability
-    MonitorAvailability.h
-    MonitorAvailability.cpp
     # P2-6 session-file
     MonitorSessionFile.h
     MonitorSessionFile.cpp

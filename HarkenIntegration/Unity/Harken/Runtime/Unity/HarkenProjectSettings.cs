@@ -83,12 +83,7 @@ namespace Harken.Unity
 
         internal void SetPackDirectory(string value) => packDirectory = value ?? string.Empty;
         internal void SetMaxVoices(uint value) => maxVoices = value;
-        internal void SetMaxPacks(uint value) => maxPacks = value;
         internal void SetMaxActionFirings(uint value) => maxActionFirings = value;
-        internal void SetSuppressUnityAudio(bool value) => suppressUnityAudio = value;
-        internal void SetLanguage(string value) => language = value ?? string.Empty;
-        internal void SetInitPack(string value) => initPack = value ?? string.Empty;
-        internal void SetPlayerExports(string[] value) => playerExports = value ?? Array.Empty<string>();
 
         internal static void ApplyStartupCapacity(ref VnConfig config, HarkenProjectSettings settings = null)
         {

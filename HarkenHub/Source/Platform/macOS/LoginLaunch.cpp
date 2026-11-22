@@ -51,14 +51,6 @@ bool registerBackgroundOnLogin()
     return file.write(data) == data.size();
 }
 
-bool unregisterBackgroundOnLogin()
-{
-    const QString path = agentPlistPath();
-    if (!QFile::exists(path))
-        return true;
-    return QFile::remove(path);
-}
-
 bool isBackgroundOnLoginRegistered()
 {
     return QFile::exists(agentPlistPath());

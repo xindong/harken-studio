@@ -41,12 +41,6 @@ public:
     CacheStats getCacheStats() const;
 
 
-    QList<QString> scanForOrphans();
-
-    // Drops .trash/ quarantine entries older than maxAgeDays; quarantined
-    // audio stays recoverable until then.
-    int purgeTrash(int maxAgeDays = 30);
-
     QList<QString> scanForStaleCaches();
 
 signals:

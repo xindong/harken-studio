@@ -72,9 +72,6 @@ public:
 
     static std::optional<ProjectTemplateData> load(const QString& id);
 
-    static std::optional<ProjectTemplateData> loadFile(
-        const QString& path, ValidationResult* result = nullptr);
-
     static ValidationResult validate(const QJsonDocument& doc,
                                      const QString& sourceLabel = QString());
 
@@ -82,9 +79,6 @@ public:
         const QJsonObject& object,
         ValidationResult* result = nullptr,
         const QString& id = QString());
-
-    static std::optional<QString> importFromFile(const QString& srcPath,
-                                                 ValidationResult& outResult);
 
     static QString runtimeDir();
 

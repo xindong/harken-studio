@@ -76,28 +76,6 @@ struct MonitorStateCutProjection
     bool mandatoryResync = false;
 };
 
-enum class MonitorGenerationStatus
-{
-    Unbounded = 0,
-    Bounded,
-    ActivationMissing,
-};
-
-struct MonitorGenerationBound
-{
-    uint64_t epoch = 0;
-    uint64_t streamId = 0;
-    uint64_t capturePlanGeneration = 0;
-    uint64_t executeFrame = 0;
-};
-
-struct MonitorGenerationProjection
-{
-    MonitorGenerationStatus status = MonitorGenerationStatus::Unbounded;
-    std::vector<MonitorGenerationBound> bounds;
-    const char* reason = nullptr;
-};
-
 enum class MonitorDropReasonKind
 {
     StageGap = 0,
