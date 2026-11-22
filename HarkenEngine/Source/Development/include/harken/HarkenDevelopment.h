@@ -749,6 +749,7 @@ enum {
     VN_MONITOR_MEASURE_SCOPE = 7,
     VN_MONITOR_MEASURE_SPECTRUM = 8,
     VN_MONITOR_MEASURE_LUFS_MOMENTARY = 9,
+    /* Deprecated. Both names retire next version. IDs 10 and 11 are permanently reserved. */
     VN_MONITOR_MEASURE_LUFS_SHORT_TERM = 10,
     VN_MONITOR_MEASURE_LUFS_INTEGRATED = 11
 };

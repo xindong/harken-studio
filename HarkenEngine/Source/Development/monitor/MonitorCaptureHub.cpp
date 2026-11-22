@@ -2860,7 +2860,6 @@ bool PublishToRing(MonitorProducerRing& ring, const std::uint8_t* bytes,
         return false;
     }
     ProcessOwner& owner = Owner();
-#if !defined(HARKEN_MONITOR_HUB_ABSENT)
     if (!ring.TryPush(bytes, size, 0, origin)) {
         const std::uint64_t sourceSequence =
             ReadPackedU64(bytes, kPackedSourceSequenceOffset);
@@ -2872,11 +2871,6 @@ bool PublishToRing(MonitorProducerRing& ring, const std::uint8_t* bytes,
     owner.publishedCount.fetch_add(1, std::memory_order_acq_rel);
     owner.WakeDrain();
     return true;
-#else
-    (void)owner;
-    (void)ring;
-    return false;
-#endif
 }
 
 bool PublishPacked(const std::uint8_t* bytes, std::uint32_t size) {
@@ -3479,9 +3473,6 @@ VnResult OpenSessionWithPermissions(const VnMonitorSessionDesc* desc,
     std::uint32_t executionVersion = 0;
     const auto versionResult = ReadExecutionVersion(desc, executionVersion);
     if (versionResult != VN_OK) return versionResult;
-#if defined(HARKEN_MONITOR_HUB_ABSENT)
-    if (executionVersion != 0) return VN_MONITOR_UNSUPPORTED;
-#endif
     if (executionVersion != 0 && (desc->requestSymbols > 1 || desc->requestRawAudio > 1 ||
         (eventCatalog && ((desc->requestedPermissionMask & VN_MONITOR_PERM_OBSERVE_EVENTS) == 0 ||
             (desc->requestedStreamKindMask & VN_MONITOR_STREAM_EVENT) == 0)))) return VN_INVALID_ARG;
@@ -3604,12 +3595,10 @@ VnResult OpenSessionWithPermissions(const VnMonitorSessionDesc* desc,
                     return CaptureSymbolSlot(owner, index, value);
                 });
         }
-#if !defined(HARKEN_MONITOR_HUB_ABSENT)
         if (!StartDrain(owner)) {
             slot->identity = {};
             return VN_IN_USE;
         }
-#endif
     } catch (const std::bad_alloc&) {
         slot->identity = {};
         if (!owner.identityResourcesReady.load(std::memory_order_acquire)) {
@@ -3785,14 +3774,6 @@ VnResult OpenRemoteSession(const VnMonitorSessionDesc* desc,
 VnResult OpenEventSession(const VnMonitorSessionDesc* desc,
                           VnMonitorSessionHandle* outHandle,
                           bool remote, std::uint64_t principalHash, std::uint32_t remoteGrant) {
-#if defined(HARKEN_MONITOR_HUB_ABSENT)
-    (void)desc;
-    (void)outHandle;
-    (void)remote;
-    (void)principalHash;
-    (void)remoteGrant;
-    return VN_MONITOR_UNSUPPORTED;
-#else
     std::uint32_t version = 0;
     const auto versionResult = ReadExecutionVersion(desc, version);
     if (versionResult != VN_OK) return versionResult;
@@ -3807,7 +3788,6 @@ VnResult OpenEventSession(const VnMonitorSessionDesc* desc,
     return OpenSessionWithPermissions(desc, remote,
                                       version == 0 ? VN_MONITOR_PERM_OBSERVE_EVENTS : remoteGrant,
                                       principalHash, outHandle, true);
-#endif
 }
 
 VnResult SealEventSession(VnMonitorSessionHandle handle) {
@@ -3955,11 +3935,6 @@ bool PublishStreamFact(VnMonitorStreamFactV1 value, bool audioProducer) noexcept
 }
 
 bool PublishExecutionFact(MonitorExecutionFact fact, bool audioProducer) noexcept {
-#if defined(HARKEN_MONITOR_HUB_ABSENT)
-    (void)fact;
-    (void)audioProducer;
-    return false;
-#else
     auto& owner = Owner();
     if (!ExecutionObservationEnabled() || (!audioProducer && !LogicThreadReady())) return false;
     // Identity cuts have per-session staging/watermarks. Keep this source
@@ -3970,7 +3945,6 @@ bool PublishExecutionFact(MonitorExecutionFact fact, bool audioProducer) noexcep
         owner.engine->monitorRequests.EngineInstance());
     owner.WakeDrain();
     return result;
-#endif
 }
 
 bool PublishEventDetail(const VnMonitorEventDetail& detail,
@@ -5467,14 +5441,6 @@ void PublishTimeSeriesQuantum(std::uint32_t callbackCpuUs,
                               std::uint32_t voicesCpuUs,
                               std::uint32_t busesCpuUs,
                               std::uint32_t arenaHighWaterBytes) {
-#if defined(HARKEN_MONITOR_HUB_ABSENT)
-    (void)callbackCpuUs;
-    (void)drainCpuUs;
-    (void)voicesCpuUs;
-    (void)busesCpuUs;
-    (void)arenaHighWaterBytes;
-    return;
-#else
     ProcessOwner& owner = Owner();
     std::uint32_t cadenceHz = 0;
     std::uint64_t generation = 0;
@@ -5534,7 +5500,6 @@ void PublishTimeSeriesQuantum(std::uint32_t callbackCpuUs,
         owner.publishedCount.fetch_add(1, std::memory_order_relaxed);
     }
     owner.WakeDrain();
-#endif
 }
 
 void PublishMasterAudioChunk(const float* interleaved, std::uint32_t frames,
@@ -5542,16 +5507,6 @@ void PublishMasterAudioChunk(const float* interleaved, std::uint32_t frames,
                              std::uint32_t sampleRate,
                              std::uint32_t masterGeneration,
                              std::uint64_t sourceFrameBegin) {
-#if defined(HARKEN_MONITOR_HUB_ABSENT)
-    (void)interleaved;
-    (void)frames;
-    (void)channels;
-    (void)layout;
-    (void)sampleRate;
-    (void)masterGeneration;
-    (void)sourceFrameBegin;
-    return;
-#else
     if (interleaved == nullptr || frames == 0 || channels == 0 ||
         frames > VN_MONITOR_HARD_AUDIO_CHUNK_FRAMES ||
         channels > kPackedAudioMaxChannels) {
@@ -5601,7 +5556,6 @@ void PublishMasterAudioChunk(const float* interleaved, std::uint32_t frames,
                                 channels, layout, sourceFrameBegin, interleaved,
                                 frames);
     }
-#endif
 }
 
 bool SnapLiveAudioPlan(ProcessOwner& owner, std::uint64_t* generation,
@@ -5791,12 +5745,6 @@ bool MaybeExactInstanceStale(ProcessOwner& owner, std::uint32_t tapIndex,
 
 void NoteExactInstanceRetired(std::uint32_t tapKind, std::uint64_t ownerHandle,
                               std::uint64_t ownerGeneration) {
-#if defined(HARKEN_MONITOR_HUB_ABSENT)
-    (void)tapKind;
-    (void)ownerHandle;
-    (void)ownerGeneration;
-    return;
-#else
     if (!LiveTapKindArmed(tapKind) || ownerHandle == 0) {
         return;
     }
@@ -5830,7 +5778,6 @@ void NoteExactInstanceRetired(std::uint32_t tapKind, std::uint64_t ownerHandle,
         MaybeExactInstanceStale(owner, i, &taps[i], generation, executeFrame,
                                 packed, packedBytes);
     }
-#endif
 }
 
 void PublishPlanarAudioChunk(std::uint32_t tapKind, std::uint64_t ownerHandle,
@@ -5839,20 +5786,6 @@ void PublishPlanarAudioChunk(std::uint32_t tapKind, std::uint64_t ownerHandle,
                              std::uint32_t channels, std::uint32_t offset,
                              std::uint32_t layout, std::uint32_t sampleRate,
                              std::uint64_t sourceFrameBegin) {
-#if defined(HARKEN_MONITOR_HUB_ABSENT)
-    (void)tapKind;
-    (void)ownerHandle;
-    (void)ownerGeneration;
-    (void)slotId;
-    (void)planes;
-    (void)frames;
-    (void)channels;
-    (void)offset;
-    (void)layout;
-    (void)sampleRate;
-    (void)sourceFrameBegin;
-    return;
-#else
     if (planes == nullptr || frames == 0 || channels == 0 ||
         frames > VN_MONITOR_HARD_AUDIO_CHUNK_FRAMES ||
         channels > kPackedAudioMaxChannels) {
@@ -5924,7 +5857,6 @@ void PublishPlanarAudioChunk(std::uint32_t tapKind, std::uint64_t ownerHandle,
                                 channels, layout, sourceFrameBegin, interleaved,
                                 frames);
     }
-#endif
 }
 
 void AdvanceExecuteFrameForTests(std::uint64_t frames) {
@@ -6100,9 +6032,6 @@ void ObserveMonitorStream(VnMonitorStreamFactV1& value) noexcept {
 }
 
 void ObserveMonitorCurrentWorld(std::uint64_t worldGeneration) noexcept {
-#if defined(HARKEN_MONITOR_HUB_ABSENT)
-    (void)worldGeneration;
-#else
     if (worldGeneration == 0) {
         return;
     }
@@ -6111,13 +6040,9 @@ void ObserveMonitorCurrentWorld(std::uint64_t worldGeneration) noexcept {
     }
     monitor::Owner().currentWorldGeneration.store(worldGeneration,
                                                   std::memory_order_release);
-#endif
 }
 
 void ObserveMonitorVariableResult(const MonitorVariableResultFacts& facts) noexcept {
-#if defined(HARKEN_MONITOR_HUB_ABSENT)
-    (void)facts;
-#else
     if (!monitor::ExecutionObservationEnabled() || !monitor::LogicThreadReady()) return;
     auto& engine = *monitor::Owner().engine;
     MonitorExecutionFact fact{};
@@ -6160,7 +6085,6 @@ void ObserveMonitorVariableResult(const MonitorVariableResultFacts& facts) noexc
     monitor::SetSourceField(fact, VN_MONITOR_FACT_FIELD_EXECUTE_FRAME, facts.outcome == VN_VARIABLE_OUTCOME_APPLIED);
     monitor::SetSourceField(fact, VN_MONITOR_FACT_FIELD_ACTIVITY_VARIABLE);
     monitor::PublishExecutionFact(fact);
-#endif
 }
 
 void ObserveMonitorLifecycle(MonitorLifecyclePhase phase,
@@ -6174,20 +6098,6 @@ void ObserveMonitorLifecycle(MonitorLifecyclePhase phase,
                              std::uint8_t playableKind,
                              std::uint64_t occurrence,
                              const MonitorLifecycleFacts& facts) noexcept {
-#if defined(HARKEN_MONITOR_HUB_ABSENT)
-    (void)phase;
-    (void)instanceHandle;
-    (void)instanceGeneration;
-    (void)worldGeneration;
-    (void)stableId;
-    (void)relatedPlayableHandle;
-    (void)relatedActionHandle;
-    (void)reason;
-    (void)playableKind;
-    (void)occurrence;
-    (void)facts;
-    return;
-#else
     monitor::ProcessOwner& owner = monitor::Owner();
     if (owner.observerCount.load(std::memory_order_acquire) == 0 &&
         owner.internalEnabledMask.load(std::memory_order_acquire) == 0) {
@@ -6307,7 +6217,6 @@ void ObserveMonitorLifecycle(MonitorLifecyclePhase phase,
         return;
     }
     owner.RememberLifecycleKey(key);
-#endif
 }
 
 namespace {
@@ -6330,11 +6239,6 @@ enum class MonitorObjectPhase : std::uint8_t {
 void PublishObjectEnvelope(MonitorObjectKind kind,
                            const monitor::LifecycleEnvelope& seed,
                            MonitorObjectPhase occurrencePhase) noexcept {
-#if defined(HARKEN_MONITOR_HUB_ABSENT)
-    (void)kind;
-    (void)seed;
-    (void)occurrencePhase;
-#else
     monitor::ProcessOwner& owner = monitor::Owner();
     if (owner.observerCount.load(std::memory_order_acquire) == 0 &&
         owner.internalEnabledMask.load(std::memory_order_acquire) == 0) {
@@ -6401,7 +6305,6 @@ void PublishObjectEnvelope(MonitorObjectKind kind,
     if (kind != MonitorObjectKind::DspGap) {
         owner.RememberLifecycleKey(key);
     }
-#endif
 }
 
 } // namespace
@@ -6460,12 +6363,10 @@ void ObserveMonitorEffectRelease(std::uint64_t instanceHandle,
 }
 
 void ObserveMonitorSelectionUnavailable() noexcept {
-#if !defined(HARKEN_MONITOR_HUB_ABSENT)
     if (!monitor::ExecutionObservationEnabled() || !monitor::LogicThreadReady()) return;
     auto& owner = monitor::Owner();
     owner.executionProducers[0].DeclareDrop(owner.engine->monitorRequests.EngineInstance());
     owner.WakeDrain();
-#endif
 }
 
 void ObserveMonitorDspGap() noexcept {

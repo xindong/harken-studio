@@ -326,24 +326,6 @@ if(HARKEN_BUILD_RUNTIME_UNIT_TESTS)
         target_compile_definitions(harken_core_release PUBLIC
             HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
     endif()
-
-    add_library(harken_core_hub_absent STATIC ${HARKEN_CORE_SOURCES} ${HARKEN_DEVELOPMENT_SOURCES})
-    target_link_libraries(harken_core_hub_absent PRIVATE harken_buildinfo)
-    target_include_directories(harken_core_hub_absent
-        PUBLIC ${HARKEN_CORE_DIR}/api/include ${HARKEN_DEVELOPMENT_DIR}/include
-        PRIVATE ${HARKEN_RUNTIME_PRIVATE_INCLUDES}
-                ${HARKEN_DEVELOPMENT_PRIVATE_INCLUDES}
-                ${HARKEN_CORE_DIR}/api/src)
-    target_compile_definitions(harken_core_hub_absent PUBLIC HARKEN_ENGINE_DEV=1 PRIVATE HARKEN_MONITOR_HUB_ABSENT)
-    if(HARKEN_ENABLE_STAGE_TAPS)
-        target_compile_definitions(harken_core_hub_absent PRIVATE HARKEN_ENABLE_STAGE_TAPS)
-    endif()
-    if(HARKEN_PLATFORM_AUDIO_LIBS)
-        target_link_libraries(harken_core_hub_absent PUBLIC ${HARKEN_PLATFORM_AUDIO_LIBS})
-    endif()
-    if(WIN32)
-        target_link_libraries(harken_core_hub_absent PUBLIC advapi32 ws2_32 iphlpapi)
-    endif()
 endif()
 
 option(HARKEN_DEVELOPMENT_PREVIEW

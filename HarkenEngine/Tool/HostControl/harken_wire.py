@@ -12870,6 +12870,10 @@ TABLE_JSON = r'''
       },
       "VnMonitorMeasurementKind": {
         "backing": "u32",
+        "deprecatedValues": {
+          "VN_MONITOR_MEASURE_LUFS_SHORT_TERM": "ID 10 is permanently reserved.",
+          "VN_MONITOR_MEASURE_LUFS_INTEGRATED": "ID 11 is permanently reserved."
+        },
         "values": {
           "VN_MONITOR_MEASURE_SAMPLE_PEAK": 1,
           "VN_MONITOR_MEASURE_TRUE_PEAK": 2,

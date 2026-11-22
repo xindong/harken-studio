@@ -2719,6 +2719,10 @@
         },
         "VnMonitorMeasurementKind": {
           "backing": "u32",
+          "deprecatedValues": {
+            "VN_MONITOR_MEASURE_LUFS_INTEGRATED": "ID 11 is permanently reserved.",
+            "VN_MONITOR_MEASURE_LUFS_SHORT_TERM": "ID 10 is permanently reserved."
+          },
           "edition": "development",
           "values": {
             "VN_MONITOR_MEASURE_GAIN_REDUCTION": 5,
@@ -26451,7 +26455,7 @@
       }
     }
   },
-  "contractSha256": "efd650ca37c871bf82c7d79809bc1217a27db0d838e3e114bf2286044b7119ba",
+  "contractSha256": "fd6ae9d131f4363a20cb7ea81ffcd5d37e6403cc2f7c3f2e428394874c587456",
   "kind": "harken-contract-suite-manifest",
   "schemaVersion": 1
 }

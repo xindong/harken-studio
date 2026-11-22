@@ -3112,13 +3112,6 @@ VnResult PackComposition::PrepareCandidate(const PackCanonicalImage& image,
     return VN_OK;
 }
 
-VnResult PackComposition::DecodeOwner(CandidateOwner& owner) const {
-    if (!owner.hasPartition) {
-        return VN_OK;
-    }
-    return VN_OK;
-}
-
 VnResult PackComposition::BuildIndex(PublishedView& view,
                                      PackOwnerLocalFacts* facts) const {
     view.index.clear();

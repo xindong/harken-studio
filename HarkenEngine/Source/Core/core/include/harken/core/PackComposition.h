@@ -398,7 +398,6 @@ private:
                           const PackPartitionLease& b) noexcept;
     static bool SameLeaseIdentity(const PackPartitionLease& a,
                                   const PackPartitionLease& b) noexcept;
-    VnResult DecodeOwner(CandidateOwner& owner) const;
     VnResult BuildIndex(PublishedView& view,
                         PackOwnerLocalFacts* facts) const;
     VnResult PrepareLease(const PublishedOwner& owner, PackLeaseSlice slice,

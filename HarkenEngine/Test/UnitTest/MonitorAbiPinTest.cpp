@@ -64,7 +64,8 @@ static_assert(VN_MONITOR_PERM_RAW_AUDIO == 1u << 5, "permission bit");
 static_assert(VN_MONITOR_SECURITY_LAN_MTLS == 2, "security profile");
 static_assert(VN_MONITOR_PLAN_RETIRED == 2, "plan state");
 static_assert(VN_MONITOR_STATE_CUT_ABORTED == 2, "state cut");
-static_assert(VN_MONITOR_MEASURE_LUFS_INTEGRATED == 11, "measurement kind");
+static_assert(VN_MONITOR_MEASURE_LUFS_SHORT_TERM == 10 && VN_MONITOR_MEASURE_LUFS_INTEGRATED == 11,
+              "retired LUFS measurement IDs are reserved");
 static_assert(VN_MONITOR_VALID_UNSUPPORTED == 1u << 3, "validity flag");
 static_assert(VN_MONITOR_REGISTRY_CAPABILITY == 8, "registry kind");
 static_assert(VN_MONITOR_CHANNEL_MONO_AVERAGE == 1, "channel mode");
