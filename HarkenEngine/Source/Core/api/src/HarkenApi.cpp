@@ -20107,18 +20107,6 @@ ScheduleMaterializeStatus MaterializeScheduleNode(
     return ScheduleMaterializeStatus::Ok;
 }
 
-template <typename WorldView>
-struct VariableControlNestedQueueSelection {
-    const harken::ContainerProgramViewV3* program = nullptr;
-    harken::EffectiveQueueState initial{};
-    harken::EffectiveQueueState next{};
-    harken::EffectiveQueueState resetInitial{};
-    std::uint32_t currentChildOrdinal = 0;
-    bool random = false;
-    bool hasContinuation = false;
-    std::uint32_t successorChildOrdinal = 0;
-};
-
 enum class QueueContinuationPrepareStatus : std::uint8_t {
     Prepared = 0,
     Deferred = 1,
@@ -20167,213 +20155,6 @@ bool PrepareImmediateActionQueueInstance(
     std::uint64_t worldGeneration,
     std::uint64_t emitter, bool signalOnlyNoOverlap, bool prepareTerminalOccurrence,
     QueueActionInitialization action) noexcept;
-
-template <typename WorldView>
-bool PrepareVariableControlNestedSelection(
-    harken::Engine& engine, const WorldView& world,
-    const harken::PlayableStartRequest& request,
-    const harken::ContainerProgramViewV3& rootProgram,
-    std::uint32_t rootChildOrdinal,
-    harken::LogicCommitSequence provisionalTicket,
-    harken::PreparedSelectionPlayV1* selectionPlays,
-    std::uint32_t* selectionPlayCount,
-    std::size_t selectionCapacity,
-    MaterializedScheduleSet* out,
-    VariableControlNestedQueueSelection<WorldView>* nestedQueue = nullptr,
-    std::uint32_t selectionEventBase = 0)
-    noexcept {
-    if (selectionPlays == nullptr || selectionPlayCount == nullptr ||
-        out == nullptr || *selectionPlayCount >= selectionCapacity) {
-        return false;
-    }
-    const auto authority = [&]() noexcept {
-        if constexpr (std::is_same_v<WorldView, harken::PackPlaybackView>) {
-            return harken::PlayableExecutionAuthority::Pack(world);
-        } else {
-            return harken::PlayableExecutionAuthority::Current(world);
-        }
-    }();
-    const auto resolve = [&](const harken::PlayableRefV1& ref) noexcept
-        -> const harken::ContainerProgramViewV3* {
-        const harken::ContainerProgramViewV3* program = nullptr;
-        return ResolveSharedContainerProgram(
-                   authority, world, ref, &program)
-            ? program
-            : nullptr;
-    };
-    const auto worldGeneration = [&]() noexcept {
-        if constexpr (std::is_same_v<WorldView, harken::PackPlaybackView>) {
-            return world.CompositeGeneration();
-        } else {
-            return world.generation;
-        }
-    }();
-    const auto worldFingerprint = [&]() noexcept {
-        if constexpr (std::is_same_v<WorldView, harken::PackPlaybackView>) {
-            return world.WorldSemanticFingerprint();
-        } else {
-            return world.identity.runtimeSemanticFingerprint;
-        }
-    }();
-    std::array<harken::SelectionPathNodeV1,
-               harken::kSelectionPathNodeCapacity> path{};
-    std::array<std::uint32_t, harken::kSelectionPathNodeCapacity> ordinals{};
-    std::uint32_t pathCount = 1;
-    path[0] = MakeContainerSelectionPathNode(
-        rootProgram.containerStableId, rootChildOrdinal);
-    ordinals[0] = rootChildOrdinal;
-    const harken::ContainerChildProgramViewV2* child = nullptr;
-    if (!ResolveSharedContainerChild(
-            authority, rootProgram, rootChildOrdinal, &child) ||
-        child == nullptr) {
-        return false;
-    }
-    harken::PlayableRefV1 current = child->playable;
-    std::uint32_t occurrenceOrdinal = rootChildOrdinal;
-    while (current.kind == harken::PlayableKindV1::Container) {
-        const auto* program = resolve(current);
-        if (program == nullptr || pathCount >= path.size()) {
-            return false;
-        }
-        if (program->mode == harken::ContainerModeV1::SequenceQueue ||
-            program->mode == harken::ContainerModeV1::RandomQueue) {
-            if (nestedQueue == nullptr || nestedQueue->program != nullptr) return false;
-            QueueRootPlan queuePlan{};
-            const QueueRootPlanRequest queueRequest{worldGeneration, worldFingerprint,
-                request.root.stableId, request.emitter, request.callerSeed, provisionalTicket};
-            if (PrepareSharedQueueRootPlan(engine, *program, queueRequest, &queuePlan) != QueueRootPlanStatus::Ok ||
-                queuePlan.frontier.selected == nullptr) return false;
-            const auto& initial = queuePlan.frontier.initial;
-            const auto& next = queuePlan.frontier.next;
-            const auto step = queuePlan.frontier.status;
-            const auto* selected = queuePlan.frontier.selected;
-            nestedQueue->resetInitial = queuePlan.frontier.resetInitial;
-            nestedQueue->program = program;
-            nestedQueue->initial = initial;
-            nestedQueue->next = next;
-            nestedQueue->currentChildOrdinal = initial.currentChildOrdinal;
-            nestedQueue->random =
-                program->mode == harken::ContainerModeV1::RandomQueue;
-            nestedQueue->hasContinuation =
-                step == harken::QueueSequenceStepStatus::Successor;
-            nestedQueue->successorChildOrdinal =
-                nestedQueue->hasContinuation ? next.currentChildOrdinal : 0;
-            path[pathCount] = MakeContainerSelectionPathNode(
-                program->containerStableId, initial.currentChildOrdinal);
-            ordinals[pathCount] = initial.currentChildOrdinal;
-            ++pathCount;
-            current = selected->playable;
-            occurrenceOrdinal = initial.currentChildOrdinal;
-            continue;
-        }
-        if (program->mode == harken::ContainerModeV1::VariableControl) {
-            // A nested VariableControl is a real container owner. The
-            // current bounded frontier admits its deterministic one-child
-            // form and carries that child through the same path ownership
-            // records used by other nested containers.
-            if (program->childCount != 1u || program->children == nullptr) {
-                return false;
-            }
-            const auto& nestedChild = program->children[0];
-            if (pathCount >= path.size()) return false;
-            path[pathCount] = MakeContainerSelectionPathNode(
-                program->containerStableId,
-                nestedChild.stableChildOrdinal);
-            ordinals[pathCount] = nestedChild.stableChildOrdinal;
-            ++pathCount;
-            current = nestedChild.playable;
-            occurrenceOrdinal = nestedChild.stableChildOrdinal;
-            continue;
-        }
-        if ((program->mode != harken::ContainerModeV1::Random &&
-             program->mode != harken::ContainerModeV1::Sequence) ||
-             *selectionPlayCount >= selectionCapacity) {
-            return false;
-        }
-        harken::SelectionMemoryKeyV1 key{};
-        key.world = worldGeneration;
-        key.containerStableId = program->containerStableId;
-        key.programSemanticFingerprint =
-            program->programSemanticFingerprint;
-        key.memoryScope = program->memoryScope;
-        if (program->memoryScope == harken::MemoryScopeV1::Emitter) {
-            if (request.emitter == 0) return false;
-            key.emitterSlot = static_cast<std::uint32_t>(request.emitter);
-            key.emitterGeneration =
-                static_cast<std::uint32_t>(request.emitter >> 32);
-        } else if (program->memoryScope == harken::MemoryScopeV1::Global) {
-            key.emitterSlot = UINT32_MAX;
-        } else {
-            return false;
-        }
-        std::uint32_t selectedOrdinal = 0;
-        if (PrepareSharedSelectionPlay(
-                engine, key, program, worldFingerprint, request.root.stableId,
-                request.callerSeed, provisionalTicket, pathCount, path.data(),
-                occurrenceOrdinal, provisionalTicket, selectionEventBase + *selectionPlayCount, 0,
-                &selectionPlays[*selectionPlayCount], &selectedOrdinal) !=
-            harken::SelectionMemoryStatusV1::Ok) {
-            return false;
-        }
-        ++*selectionPlayCount;
-        ordinals[pathCount] = selectedOrdinal;
-        path[pathCount] = MakeContainerSelectionPathNode(
-            program->containerStableId, selectedOrdinal);
-        ++pathCount;
-        const auto* selected = FindQueueChild(*program, selectedOrdinal);
-        if (selected == nullptr) return false;
-        current = selected->playable;
-        occurrenceOrdinal = selectedOrdinal;
-    }
-    MaterializedScheduleSet materialized{};
-    if (current.kind == harken::PlayableKindV1::Sound) {
-        materialized.leafCount = 1;
-        materialized.leaves[0].leaf = current;
-        materialized.leaves[0].selectionCount = pathCount;
-        std::copy_n(ordinals.begin(), pathCount,
-                    materialized.leaves[0].selectedOrdinals.begin());
-    } else if (current.kind == harken::PlayableKindV1::Track ||
-               current.kind == harken::PlayableKindV1::Segment) {
-        const auto status = [&]() noexcept {
-            if constexpr (std::is_same_v<WorldView, harken::PackPlaybackView>) {
-                return MaterializeSchedule(
-                    world, current, engine.config.mixRate.SampleRate(),
-                    harken::kMaxKnownScheduleLeaves,
-                    harken::kSelectionPathNodeCapacity, &materialized);
-            } else {
-                return MaterializeSchedule(
-                    world, current, engine.config.mixRate.SampleRate(),
-                    &materialized);
-            }
-        }();
-        if (status != ScheduleMaterializeStatus::Ok) return false;
-        for (std::uint32_t index = 0; index < materialized.leafCount;
-             ++index) {
-            auto& leaf = materialized.leaves[index];
-            if (leaf.selectionCount + pathCount >
-                leaf.selectedOrdinals.size()) {
-                return false;
-            }
-            std::move_backward(
-                leaf.selectedOrdinals.begin(),
-                leaf.selectedOrdinals.begin() + leaf.selectionCount,
-                leaf.selectedOrdinals.begin() + leaf.selectionCount +
-                    pathCount);
-            std::move_backward(
-                leaf.pathTrackIds.begin(),
-                leaf.pathTrackIds.begin() + leaf.selectionCount,
-                leaf.pathTrackIds.begin() + leaf.selectionCount + pathCount);
-            std::fill_n(leaf.pathTrackIds.begin(), pathCount, VnObjectId{});
-            std::copy_n(ordinals.begin(), pathCount,
-                        leaf.selectedOrdinals.begin());
-            leaf.selectionCount += pathCount;
-        }
-    } else {
-        return false;
-    }
-    *out = materialized;
-    return true;
-}
 
 template<class World>
 ScheduleMaterializeStatus MaterializeScheduleInto(
@@ -75269,9 +75050,6 @@ bool PublishPropertyCommits(void* ctx, std::span<const harken::PropertyCommit> c
     } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return false; }
 }
 
-// Shared global Variable write for internal Action and legacy meter callers.
-// Public Vn_SetValue uses the same VariableService acceptance directly so its
-// exact call observation and ticket can be serialized in VTRC4.
 } // namespace
 
 namespace harken {
@@ -75573,16 +75351,6 @@ void TraceVariableAccept(harken::TraceCallScribe& trace,
         .U64(accepted.ticket.sequence)
         .U32(static_cast<std::uint32_t>(harken::detail::NormalizeApiResult(accepted.result)))
         .U32(0);
-}
-
-VnResult SetGlobalVariableValue(harken::Engine& engine, VnVariableId id,
-                                float value) {
-    if (engine.runtimeTransportResetActive) {
-        return VN_BACKPRESSURE;
-    }
-    return engine.variables.AcceptGlobal(
-        id, value, ObserveVariableCall(engine), engine.params,
-        engine.bindings, engine.busTargets).result;
 }
 
 // --- binding attachment resolution at play ---
@@ -128865,23 +128633,6 @@ void CommitCanonicalOwners(Engine& engine,
     engine.packComposition.CommitPrepared(&prepared->composition);
     CommitSignals(engine, prepared->signals);
     if (prepared->signalTopology) prepared->signalTopology->Commit();
-}
-
-VnResult PublishCanonicalOwners(Engine& engine,
-                                std::vector<PackComposition::CandidateOwner> owners,
-                                const PackCanonicalImage* catalog,
-                                VnPackHandle initHandle,
-                                PackVariablePublicationReason reason) {
-    PreparedCanonicalPublication prepared;
-    const VnResult result = PrepareCanonicalOwners(
-        engine, std::move(owners), catalog, initHandle, reason, &prepared);
-    if (result != VN_OK) {
-        return result;
-    }
-    const auto signalResult = PrepareCanonicalSignals(engine, prepared);
-    if (signalResult != VN_OK) return signalResult;
-    CommitCanonicalOwners(engine, &prepared);
-    return VN_OK;
 }
 
 std::vector<PackEntry> MakeCanonicalMediaEntries(

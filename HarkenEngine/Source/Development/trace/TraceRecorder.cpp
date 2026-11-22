@@ -527,59 +527,6 @@ void TraceRecorder::RecordProjectGenerationInstallAck(
     CommitRecord(start);
 }
 
-void TraceRecorder::RecordPreparedTopologyPlan(
-    const TopologyPlanView& plan) noexcept {
-    if (!m_active) {
-        return;
-    }
-    if (!plan.valid || plan.slotCount == 0 ||
-        plan.busIds == nullptr || plan.parents == nullptr ||
-        plan.alive == nullptr || (plan.sendTargets == nullptr && plan.sendRanges == nullptr)) {
-        FailTrace();
-        return;
-    }
-    const std::uint32_t n = plan.slotCount;
-    std::uint64_t sendCount = 0;
-    for (std::uint32_t bus = 0; bus < n; ++bus) {
-        const auto range = plan.Sends(bus);
-        for (std::uint32_t j = 0; j < range.count; ++j)
-            sendCount += plan.sendTargets[range.first + j] != kEmptySendTarget;
-    }
-    if (n > m_engine.BusCapacity() || 16ull + n * 32ull + sendCount * 24ull > UINT32_MAX) {
-        FailTrace();
-        return;
-    }
-    const std::size_t start = BeginRecord(kTraceRecordPreparedTopologyPlan);
-    AppendU32(kTracePreparedTopologyPlanVintage);
-    AppendU32(n);
-    AppendU32(static_cast<std::uint32_t>(sendCount));
-    AppendU32(0);
-    for (std::uint32_t i = 0; i < n; ++i) {
-        AppendObjectId(plan.busIds[i]);
-        AppendU32(plan.generations != nullptr ? plan.generations[i] : 1u);
-        AppendU32(plan.parents[i]);
-        AppendU32(plan.alive[i]);
-        AppendU32(0);
-    }
-    for (std::uint32_t bus = 0; bus < n; ++bus) {
-        const auto range = plan.Sends(bus);
-        for (std::uint32_t j = 0; j < range.count; ++j) {
-            const auto offset = range.first + j;
-            if (plan.sendTargets[offset] == kEmptySendTarget) continue;
-            AppendU32(bus);
-            AppendU32(plan.sendTargets[offset]);
-            AppendU32(plan.LogicalSendSlot(offset));
-            std::uint32_t bits = 0;
-            const float level = plan.preparedSendLevels != nullptr ? plan.preparedSendLevels[offset] : 1.0f;
-            std::memcpy(&bits, &level, sizeof(bits));
-            AppendU32(bits);
-            AppendU32(plan.sendLevelApply != nullptr ? plan.sendLevelApply[offset] : 0);
-            AppendU32(plan.sendLevelRampMs != nullptr ? plan.sendLevelRampMs[offset] : 0);
-        }
-    }
-    CommitRecord(start);
-}
-
 void TraceRecorder::RecordMeterProbeInstall(
     VnObjectId probeStableId, VnBusId busId, std::uint32_t tap,
     std::uint32_t attackMs, std::uint32_t releaseMs,

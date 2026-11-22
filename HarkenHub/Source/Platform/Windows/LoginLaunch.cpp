@@ -26,14 +26,6 @@ bool registerBackgroundOnLogin()
     return run.status() == QSettings::NoError;
 }
 
-bool unregisterBackgroundOnLogin()
-{
-    QSettings run(kRunKey, QSettings::NativeFormat);
-    run.remove(kValueName);
-    run.sync();
-    return run.status() == QSettings::NoError;
-}
-
 bool isBackgroundOnLoginRegistered()
 {
     QSettings run(kRunKey, QSettings::NativeFormat);

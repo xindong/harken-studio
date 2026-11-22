@@ -81,8 +81,6 @@ public:
 
     void saveShortcuts();
     void loadShortcuts();
-    void exportShortcuts(const QString& filePath);
-    bool importShortcuts(const QString& filePath);
 
     static QString categoryName(ShortcutCategory category);
     static QString categoryIcon(ShortcutCategory category);

@@ -199,7 +199,11 @@ protected:
         config.name = QStringLiteral("WorkspaceLifecycle");
         config.location = temporary_.path();
         config.platforms = HarkenTest::platforms({QStringLiteral("Windows")});
-        return window_->createProjectFromConfig(config);
+        auto& manager = ProjectManager::instance();
+        if (!manager.createProject(config))
+            return false;
+        window_->finishPreparedProject(manager.currentProject()->projectPath, true);
+        return true;
     }
 
     ads::CDockWidget* dock(const QString& type) const

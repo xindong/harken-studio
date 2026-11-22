@@ -10,7 +10,6 @@
 #include "AuthoringPolicy.h"
 #include "ProjectLanguageSemantics.h"
 #include "Tooling/Harkenizer/Core/CanonicalRuntimeProjectAdapter.h"
-#include "AssetPipeline/AssetGarbageCollector.h"
 #include "AssetPipeline/AssetImporter.h"
 #include "AssetPipeline/AssetRegistry.h"
 #include "AssetPipeline/MediaPool.h"
@@ -2038,84 +2037,6 @@ bool ProjectManager::loadProject(const QString& filePath, bool allowUpgrade,
         m_startupProgressCallback(StartupPhase::PreparingRuntime);
     publishProjectOpened();
     return true;
-}
-
-void ProjectManager::reconcileAssetsOnOpen(int bindingLoadFailures)
-{
-    if (!m_currentProject) return;
-
-    // A failed .vp load would make that binding's assets look unreferenced;
-    // destroying them here would be wrong, so skip the whole pass.
-    if (bindingLoadFailures > 0) {
-        qWarning() << "[ProjectManager] Skipping asset reconcile:"
-                   << bindingLoadFailures << "binding file(s) failed to load.";
-        return;
-    }
-
-    const QString projectRoot = AssetRegistry::instance().projectRoot();
-    if (projectRoot.isEmpty()) return;
-
-    QSet<uint32_t> referenced;
-    QSet<QString> referencedPaths;
-    for (auto* binding : m_currentProject->allFileBindings()) {
-        if (!binding || !binding->rootItem) continue;
-        for (const MediaFileRef& ref : collectMediaFiles(binding->rootItem.get())) {
-            if (!ProjectDataPolicy::isSafeRelativePath(ref.relativePath)) {
-                qWarning() << "[ProjectManager] Skipping asset reconcile: unresolved audio source"
-                           << ref.sourceID;
-                return;
-            }
-            referenced.insert(ref.sourceID);
-            referencedPaths.insert(PathUtils::normalizeToUnix(ref.relativePath));
-        }
-    }
-
-    QList<QString> reclaim;
-    for (uint32_t id : AssetRegistry::instance().getAllSourceIDs()) {
-        if (referenced.contains(id)) continue;
-        if (const AssetInfo* info = AssetRegistry::instance().getAsset(id)) {
-            reclaim.append(info->relativePath);
-        }
-    }
-    if (!reclaim.isEmpty()) {
-        AssetRegistry::instance().cleanupOrphaned(reclaim);
-        qInfo() << "[ProjectManager] Reconcile: dropped" << reclaim.size()
-                << "unreferenced asset record(s).";
-    }
-
-    AssetGarbageCollector gc;
-    gc.setProjectRoot(projectRoot);
-    const QString audioSourcesDir = PathUtils::getAudioSourcesDir(projectRoot);
-    int trashedFiles = 0;
-    for (const QString& relativePath : gc.scanForOrphans()) {
-        // A file a tree node still points to, but whose record was lost (e.g. a
-        // crash between writing the project and assets.json), must survive as an
-        // honest Missing rather than be quarantined here.
-        if (referencedPaths.contains(PathUtils::normalizeToUnix(relativePath))) continue;
-        const QString absPath = PathUtils::toAbsolutePath(relativePath, audioSourcesDir);
-        if (PathUtils::moveToTrash(projectRoot, absPath, relativePath)) ++trashedFiles;
-    }
-    if (trashedFiles > 0) {
-        qInfo() << "[ProjectManager] Reconcile: quarantined" << trashedFiles
-                << "orphaned AudioSources file(s) into" << PathUtils::TRASH_DIR;
-    }
-
-    if (!reclaim.isEmpty() || trashedFiles > 0) {
-        LogService::logInfo(LogCategory::File,
-            tr("Asset cleanup: %1 unused asset(s) and %2 orphaned file(s) moved to %3/")
-                .arg(reclaim.size()).arg(trashedFiles)
-                .arg(QLatin1String(PathUtils::TRASH_DIR)));
-    }
-
-    if (!reclaim.isEmpty()) {
-        AssetRegistry::instance().saveToFile();
-    }
-
-    const int purged = gc.purgeTrash();
-    if (purged > 0) {
-        qInfo() << "[ProjectManager] Reconcile: purged" << purged
-                << "expired trash entries.";
-    }
 }
 
 std::unique_ptr<ProjectSaveBaseline> ProjectManager::captureSaveBaseline(

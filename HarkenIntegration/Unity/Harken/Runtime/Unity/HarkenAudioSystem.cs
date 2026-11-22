@@ -763,8 +763,7 @@ namespace Harken.Unity
             Instance = this;
             ulong outputTicket = 0;
 #if UNITY_STANDALONE_WIN && !UNITY_EDITOR
-            if (autoInitialize && isActiveAndEnabled && !nullDevice && configuredPackSource == null &&
-                preparedPackSource == null && preparedPacks == null)
+            if (autoInitialize && isActiveAndEnabled && !nullDevice && configuredPackSource == null)
                 outputTicket = HarkenEngine.BeginOutputPreparation(CreateOutputConfig());
 #endif
             try { InitializeOwnedComponent(outputTicket); }
@@ -863,12 +862,6 @@ namespace Harken.Unity
                 return "iOS";
             }
             return null;
-        }
-
-        private void FailStartup(string reason)
-        {
-            LastStartupError = reason;
-            CompleteSessionStartup(VnResult.VN_INVALID_ARG, string.Empty);
         }
 
         public void RegisterParticipant(IHarkenRuntimeParticipant participant)

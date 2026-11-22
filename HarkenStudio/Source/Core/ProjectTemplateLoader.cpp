@@ -514,18 +514,6 @@ QJsonDocument readJsonFile(const QString& path, QString* parseErrOut) {
     return doc;
 }
 
-QString uniqueIdInDir(const QString& dir, const QString& baseStem) {
-    QDir d(dir);
-    if (!d.exists(baseStem + QStringLiteral(".json")))
-        return baseStem;
-    for (int i = 2; i < 1000; ++i) {
-        const QString candidate = QStringLiteral("%1_%2").arg(baseStem).arg(i);
-        if (!d.exists(candidate + QStringLiteral(".json")))
-            return candidate;
-    }
-    return baseStem + QStringLiteral("_uniq");
-}
-
 void removeRetiredBuiltInTemplates(const QString& directory)
 {
     const QString path =
@@ -659,66 +647,6 @@ std::optional<ProjectTemplateData> ProjectTemplateLoader::load(const QString& id
         return std::nullopt;
     }
     return parseTemplate(doc, id);
-}
-
-std::optional<ProjectTemplateData> ProjectTemplateLoader::loadFile(
-    const QString& path, ValidationResult* result) {
-    QString parseErr;
-    const auto doc = readJsonFile(path, &parseErr);
-    if (doc.isNull()) {
-        if (result) {
-            result->valid = false;
-            result->summary = QStringLiteral("Template could not be read.");
-            result->errors = {{path, parseErr}};
-        }
-        return std::nullopt;
-    }
-    const ValidationResult validation = validate(doc, path);
-    if (result)
-        *result = validation;
-    if (!validation.valid)
-        return std::nullopt;
-    return parseTemplate(doc, QFileInfo(path).completeBaseName());
-}
-
-std::optional<QString> ProjectTemplateLoader::importFromFile(
-    const QString& srcPath, ValidationResult& outResult) {
-
-    QString parseErr;
-    const auto doc = readJsonFile(srcPath, &parseErr);
-    if (doc.isNull()) {
-        outResult.valid   = false;
-        outResult.summary = QStringLiteral("JSON parse error in '%1'").arg(srcPath);
-        outResult.errors.clear();
-        outResult.errors.push_back({QFileInfo(srcPath).fileName(), parseErr});
-        return std::nullopt;
-    }
-    outResult = validate(doc, QFileInfo(srcPath).fileName());
-    if (!outResult.valid)
-        return std::nullopt;
-
-    const QString destDir = runtimeDir();
-    if (!QDir().mkpath(destDir)) {
-        outResult.valid   = false;
-        outResult.summary = QStringLiteral("Cannot create runtime templates dir");
-        outResult.errors.clear();
-        outResult.errors.push_back({destDir,
-                                    QStringLiteral("mkpath failed")});
-        return std::nullopt;
-    }
-    const QString baseStem = QFileInfo(srcPath).completeBaseName();
-    const QString id       = uniqueIdInDir(destDir, baseStem);
-    const QString destPath = QDir(destDir).filePath(id + QStringLiteral(".json"));
-    if (!QFile::copy(srcPath, destPath)) {
-        outResult.valid   = false;
-        outResult.summary = QStringLiteral("Failed to copy template into '%1'")
-                                .arg(destDir);
-        outResult.errors.clear();
-        outResult.errors.push_back({destPath,
-                                    QStringLiteral("QFile::copy failed")});
-        return std::nullopt;
-    }
-    return id;
 }
 
 }

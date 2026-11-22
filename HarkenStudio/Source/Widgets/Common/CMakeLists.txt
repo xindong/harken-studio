@@ -66,8 +66,6 @@ add_library(harken_editor_common STATIC
     NumericToolTip.h
     RehearsalSlider.cpp
     RehearsalSlider.h
-    AxisRehearsalRow.cpp
-    AxisRehearsalRow.h
     RangeField.cpp
     RangeField.h
     ReferenceImpactDialog.cpp
