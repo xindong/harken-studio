@@ -6,7 +6,7 @@
 
 #include <vector>
 
-namespace VNH {
+namespace harken::hub {
 
 enum class LaunchVerdict
 {

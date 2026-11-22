@@ -4,7 +4,7 @@
 
 #include <algorithm>
 
-namespace VNH {
+namespace harken::hub {
 
 int BackoffPolicy::delayMsForAttempt(int attempt, double jitterUnit) const
 {

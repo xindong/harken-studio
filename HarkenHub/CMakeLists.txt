@@ -8,7 +8,7 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/Hub")
 harken_read_version("${CMAKE_CURRENT_SOURCE_DIR}/VERSION" HARKEN_HUB_VERSION)
 file(CONFIGURE
     OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/HubVersion.h"
-    CONTENT "#pragma once\n\n#include <string_view>\n\nnamespace VNH {\n\ninline constexpr std::string_view HubVersion = \"@HARKEN_HUB_VERSION@\";\n\n}\n"
+    CONTENT "#pragma once\n\n#include <string_view>\n\nnamespace harken::hub {\n\ninline constexpr std::string_view HubVersion = \"@HARKEN_HUB_VERSION@\";\n\n}\n"
     @ONLY)
 file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/HubVersion.txt" CONTENT "@HARKEN_HUB_VERSION@\n" @ONLY)
 

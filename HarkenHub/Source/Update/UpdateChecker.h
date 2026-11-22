@@ -13,7 +13,7 @@
 
 class QNetworkReply;
 
-namespace VNH {
+namespace harken::hub {
 
 struct UpdateCheckResult
 {
@@ -64,7 +64,7 @@ public:
 #endif
 
 signals:
-    void checkFinished(const VNH::UpdateCheckResult& result);
+    void checkFinished(const harken::hub::UpdateCheckResult& result);
 
 private:
     void beginRound(bool manual = false);

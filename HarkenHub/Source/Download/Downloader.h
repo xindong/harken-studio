@@ -13,7 +13,7 @@
 
 class QNetworkReply;
 
-namespace VNH {
+namespace harken::hub {
 
 struct DownloadRequest
 {
@@ -58,7 +58,7 @@ public:
 signals:
     void progress(qint64 receivedBytes, qint64 totalBytes);
     void sourceSelected(const QString& source, bool restarted);
-    void finished(const VNH::DownloadResult& result);
+    void finished(const harken::hub::DownloadResult& result);
 
 private:
     void beginAttempt();

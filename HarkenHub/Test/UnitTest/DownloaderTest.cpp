@@ -17,10 +17,10 @@
 
 #include <functional>
 
-using VNH::BackoffPolicy;
-using VNH::Downloader;
-using VNH::DownloadRequest;
-using VNH::DownloadResult;
+using harken::hub::BackoffPolicy;
+using harken::hub::Downloader;
+using harken::hub::DownloadRequest;
+using harken::hub::DownloadResult;
 using HarkenHubTest::RangeHttpServer;
 
 namespace {
@@ -346,13 +346,13 @@ TEST_F(DownloaderTest, CancellationDuringSelectionReleasesOwnershipAndStopsReque
     ResultCapture capture(downloader);
     ASSERT_TRUE(downloader.start(request));
     ASSERT_TRUE(spinUntil([&]() { return server.requestCount() && mirror.requestCount(); }));
-    EXPECT_FALSE(VNH::DownloadLease::acquire(request.targetPath));
+    EXPECT_FALSE(harken::hub::DownloadLease::acquire(request.targetPath));
     downloader.cancel();
     ASSERT_TRUE(spinUntil([&]() { return capture.finishedCount == 1; }));
     spinFor(550);
     EXPECT_EQ(capture.finishedCount, 1);
     EXPECT_FALSE(capture.result.ok);
-    EXPECT_TRUE(VNH::DownloadLease::acquire(request.targetPath));
+    EXPECT_TRUE(harken::hub::DownloadLease::acquire(request.targetPath));
     EXPECT_FALSE(QFile::exists(request.targetPath));
     EXPECT_FALSE(QFile::exists(Downloader::partPath(request.targetPath)));
     EXPECT_EQ(server.requestCount(), 1);
@@ -524,7 +524,7 @@ TEST_F(DownloaderTest, ArtifactOwnershipSurvivesDownloadUntilConsumerReleasesIt)
     const auto request = makeRequest(payload.size());
     ASSERT_TRUE(first.start(request));
     EXPECT_FALSE(second.start(request));
-    EXPECT_FALSE(VNH::DownloadLease::acquire(request.targetPath + QStringLiteral(".manifest")));
+    EXPECT_FALSE(harken::hub::DownloadLease::acquire(request.targetPath + QStringLiteral(".manifest")));
     ASSERT_TRUE(spinUntil([&]() { return capture.finishedCount == 1; }));
     ASSERT_TRUE(capture.result.ok);
     EXPECT_FALSE(second.start(request));

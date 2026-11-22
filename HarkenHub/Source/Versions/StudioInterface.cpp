@@ -11,7 +11,7 @@
 #include <QProcess>
 #include <QVersionNumber>
 
-namespace VNH::StudioInterface {
+namespace harken::hub::StudioInterface {
 
 namespace {
 

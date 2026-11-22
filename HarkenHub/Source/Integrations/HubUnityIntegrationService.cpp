@@ -11,10 +11,10 @@
 #include <QJsonObject>
 #include <QRegularExpression>
 
-namespace VNH {
+namespace harken::hub {
 namespace {
 
-using Service = VNX::UnityIntegrationService;
+using Service = harken::hub::unity::UnityIntegrationService;
 
 Service::Result inspectInstalled(const UnityIntegrationRequest& request)
 {
@@ -23,7 +23,7 @@ Service::Result inspectInstalled(const UnityIntegrationRequest& request)
     result.unityProjectPath = request.unityProjectPath.trimmed().isEmpty()
         ? QString() : QDir::cleanPath(QFileInfo(request.unityProjectPath).absoluteFilePath());
     for (const auto& spec : {qMakePair("unity_preflight", "Validate Unity project"),
-                             qMakePair("inspect_installed_sdk", "Inspect installed Unity Integration Package")}) {
+                             qMakePair("inspect_installed_package", "Inspect installed Unity Integration Package")}) {
         Service::StepResult step;
         step.id = QString::fromLatin1(spec.first);
         step.title = QString::fromLatin1(spec.second);
@@ -55,7 +55,7 @@ Service::Result inspectInstalled(const UnityIntegrationRequest& request)
     inspection.status = StepStatus::Failed;
     result.backupPath = Service::previousVersionBackup(result.unityProjectPath);
     result.previousVersionAvailable = !result.backupPath.isEmpty();
-    const auto discovery = VNX::UnityInstallation::discover(result.unityProjectPath);
+    const auto discovery = harken::hub::unity::UnityInstallation::discover(result.unityProjectPath);
     for (const auto& installation : discovery.installations) inspection.artifacts << installation.path;
     result.targetInstalled = discovery.installations.size() == 1;
     if (discovery.installations.size() == 1) {

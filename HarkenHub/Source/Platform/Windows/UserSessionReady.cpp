@@ -5,7 +5,7 @@
 
 #include <sddl.h>
 
-namespace VNH {
+namespace harken::hub {
 
 namespace {
 

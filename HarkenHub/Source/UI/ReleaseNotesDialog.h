@@ -2,7 +2,7 @@
 
 #include <QDialog>
 
-namespace VNH {
+namespace harken::hub {
 
 class ReleaseNotesDialog : public QDialog
 {

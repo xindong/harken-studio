@@ -13,8 +13,8 @@
 namespace {
 
 using HarkenHubTest::RangeHttpServer;
-using VNH::HubSettings;
-using VNH::VersionReleaseNotes;
+using harken::hub::HubSettings;
+using harken::hub::VersionReleaseNotes;
 
 class VersionReleaseNotesTest : public ::testing::TestWithParam<VersionReleaseNotes::Product>
 {

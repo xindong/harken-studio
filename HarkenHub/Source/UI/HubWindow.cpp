@@ -67,7 +67,7 @@
 #include <QWKWidgets/widgetwindowagent.h>
 #endif
 
-namespace VNH {
+namespace harken::hub {
 
 namespace {
 

@@ -19,10 +19,10 @@
 
 #include <memory>
 
-using VNH::InstallIndex;
-using VNH::InstalledVersionRecord;
-using VNH::IntegrityChecker;
-using VNH::RepairExecutor;
+using harken::hub::InstallIndex;
+using harken::hub::InstalledVersionRecord;
+using harken::hub::IntegrityChecker;
+using harken::hub::RepairExecutor;
 
 namespace {
 
@@ -65,7 +65,7 @@ QString makeInstallDir(const QString& root, const QString& buildId)
 
     QJsonArray files;
     QJsonObject binaryRecord;
-    binaryRecord[QStringLiteral("path")] = VNH::studioBinaryRelativePath();
+    binaryRecord[QStringLiteral("path")] = harken::hub::studioBinaryRelativePath();
     binaryRecord[QStringLiteral("size")] = binary.size();
     binaryRecord[QStringLiteral("sha256")] = sha(binary);
     files.append(binaryRecord);
@@ -81,7 +81,7 @@ QString makeInstallDir(const QString& root, const QString& buildId)
     manifest[QStringLiteral("version")] = QStringLiteral("1.4.0");
     manifest[QStringLiteral("files")] = files;
 
-    writeFile(installPath + QStringLiteral("/") + VNH::studioBinaryRelativePath(), binary);
+    writeFile(installPath + QStringLiteral("/") + harken::hub::studioBinaryRelativePath(), binary);
     writeFile(installPath + QStringLiteral("/data/asset.bin"), asset);
     writeFile(installPath + QStringLiteral("/package-manifest.json"),
               QJsonDocument(manifest).toJson());
@@ -102,7 +102,7 @@ protected:
         versionsGuard = std::make_unique<EnvGuard>(
             "HARKEN_HUB_VERSIONS_ROOT",
             dir.filePath(QStringLiteral("versions")));
-        installPath = makeInstallDir(VNH::studioVersionsRoot(),
+        installPath = makeInstallDir(harken::hub::studioVersionsRoot(),
                                      QStringLiteral("run1.aaaa1111"));
     }
 

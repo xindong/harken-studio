@@ -11,8 +11,8 @@
 #include <QTextStream>
 #include <QThread>
 
-using VNH::UpdateStateRecord;
-using VNH::UpdateStateStore;
+using harken::hub::UpdateStateRecord;
+using harken::hub::UpdateStateStore;
 
 namespace {
 

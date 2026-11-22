@@ -8,7 +8,7 @@
 
 #include <memory>
 
-namespace VNH {
+namespace harken::hub {
 
 namespace {
 

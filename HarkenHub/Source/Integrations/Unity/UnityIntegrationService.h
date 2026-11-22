@@ -4,7 +4,7 @@
 #include <QStringList>
 #include <QVector>
 
-namespace VNX {
+namespace harken::hub::unity {
 
 class UnityIntegrationService final
 {
@@ -75,4 +75,4 @@ private:
     Result restorePrevious(const Request& request);
 };
 
-} // namespace VNX
+} // namespace harken::hub::unity

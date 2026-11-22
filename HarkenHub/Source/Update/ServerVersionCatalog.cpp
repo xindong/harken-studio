@@ -9,7 +9,7 @@
 #include <QNetworkReply>
 #include <QNetworkRequest>
 
-namespace VNH {
+namespace harken::hub {
 
 namespace {
 

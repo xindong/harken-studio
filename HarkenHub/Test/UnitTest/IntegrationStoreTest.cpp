@@ -11,10 +11,10 @@
 
 namespace {
 
-VNH::IntegrationRecord record(const QString& id, const QString& project,
+harken::hub::IntegrationRecord record(const QString& id, const QString& project,
                               const QString& target)
 {
-    VNH::IntegrationRecord value;
+    harken::hub::IntegrationRecord value;
     value.integrationId = id;
     value.harkenProjectPath = project;
     value.engineTargetId = target;
@@ -29,7 +29,7 @@ TEST(IntegrationStoreTest, EnforcesOneToOneProjectRelationships)
 {
     QTemporaryDir directory;
     ASSERT_TRUE(directory.isValid());
-    VNH::IntegrationStore store;
+    harken::hub::IntegrationStore store;
     ASSERT_TRUE(store.open(
         QDir(directory.path()).filePath(QStringLiteral("integrations.db"))));
 
@@ -58,7 +58,7 @@ TEST(IntegrationStoreTest, PersistsAndUpdatesIntegrationSourcePath)
 {
     QTemporaryDir directory;
     ASSERT_TRUE(directory.isValid());
-    VNH::IntegrationStore store;
+    harken::hub::IntegrationStore store;
     ASSERT_TRUE(store.open(
         QDir(directory.path()).filePath(QStringLiteral("integrations.db"))));
 
@@ -107,7 +107,7 @@ TEST(IntegrationStoreTest, MigratesExistingDatabaseForIntegrationSourcePath)
     }
     QSqlDatabase::removeDatabase(connectionName);
 
-    VNH::IntegrationStore store;
+    harken::hub::IntegrationStore store;
     ASSERT_TRUE(store.open(databasePath))
         << store.lastError().toStdString();
     ASSERT_EQ(store.list().size(), 1u);
@@ -136,13 +136,13 @@ TEST(IntegrationStoreTest, MigratesAndPersistsPerGameIntegrationLocationsIndepen
             "INSERT INTO engineTargets VALUES ('game', 'unity', 'D:/Game', '', 'Game', '2026-09-21')")));
     }
     QSqlDatabase::removeDatabase(connectionName);
-    VNH::EngineTargetStore targets;
+    harken::hub::EngineTargetStore targets;
     ASSERT_TRUE(targets.open(path));
     ASSERT_EQ(targets.list().size(), 1);
     EXPECT_TRUE(targets.list().front().integrationInstallPath.isEmpty());
     const QString location = QStringLiteral("Assets/ThirdParty/HarkenSDK");
     ASSERT_TRUE(targets.updateIntegrationInstallPath(QStringLiteral("game"), location));
-    VNH::IntegrationStore integrations;
+    harken::hub::IntegrationStore integrations;
     ASSERT_TRUE(integrations.open(directory.filePath(QStringLiteral("integrations.db"))));
     ASSERT_TRUE(integrations.add(record(QStringLiteral("link"), QStringLiteral("D:/Audio.hsp"), QStringLiteral("game")), false));
     ASSERT_TRUE(integrations.remove(QStringLiteral("link")));

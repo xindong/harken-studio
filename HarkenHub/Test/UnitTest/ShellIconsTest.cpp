@@ -22,7 +22,7 @@ TEST(ShellIconsTest, ShellReadableImagesPreserveEverySourceSizeAndPixel)
 {
     QTemporaryDir directory;
     ASSERT_TRUE(directory.isValid());
-    const QString path = VNH::saveShellIcon(VNH::HubIcons::applicationIcon(), directory.path());
+    const QString path = harken::hub::saveShellIcon(harken::hub::HubIcons::applicationIcon(), directory.path());
     ASSERT_FALSE(path.isEmpty());
     const auto nativePath = QDir::toNativeSeparators(path).toStdWString();
     QImageReader original(QStringLiteral(":/Resources/icons/HubIcon.ico"));
@@ -155,9 +155,9 @@ TEST_F(ShellShortcutTest, MigrationPreservesUserChoicesAndIsIdempotent)
     ASSERT_TRUE(desktopLink.open(QIODevice::ReadOnly));
     const auto desktopBytes = desktopLink.readAll();
     desktopLink.close();
-    const QString path = VNH::saveShellIcon(VNH::HubIcons::applicationIcon(), directory.filePath(QStringLiteral("shell-icons")));
+    const QString path = harken::hub::saveShellIcon(harken::hub::HubIcons::applicationIcon(), directory.filePath(QStringLiteral("shell-icons")));
     ASSERT_FALSE(path.isEmpty());
-    ASSERT_EQ(VNH::migrateShellShortcuts(path), VNH::ShortcutMigrationResult::Complete);
+    ASSERT_EQ(harken::hub::migrateShellShortcuts(path), harken::hub::ShortcutMigrationResult::Complete);
     EXPECT_EQ(read(pinned), (QStringList{executable, path, arguments}));
     EXPECT_EQ(read(custom), (QStringList{executable, customIcon, arguments}));
     EXPECT_EQ(read(desktop), (QStringList{executable, executable, arguments}));
@@ -171,7 +171,7 @@ TEST_F(ShellShortcutTest, MigrationPreservesUserChoicesAndIsIdempotent)
     ASSERT_TRUE(migrated.open(QIODevice::ReadOnly));
     const auto bytes = migrated.readAll();
     migrated.close();
-    ASSERT_EQ(VNH::migrateShellShortcuts(path), VNH::ShortcutMigrationResult::Complete);
+    ASSERT_EQ(harken::hub::migrateShellShortcuts(path), harken::hub::ShortcutMigrationResult::Complete);
     ASSERT_TRUE(migrated.open(QIODevice::ReadOnly));
     EXPECT_EQ(migrated.readAll(), bytes);
 }
@@ -205,12 +205,12 @@ TEST_F(ShellShortcutTest, AppliesIconAfterConcurrentMigrationReleasesLock)
         owner.join();
     });
     ASSERT_TRUE(acquired.get_future().get());
-    VNH::TaskbarIcon taskbar;
-    taskbar.setIcon(VNH::HubIcons::applicationIcon());
+    harken::hub::TaskbarIcon taskbar;
+    taskbar.setIcon(harken::hub::HubIcons::applicationIcon());
     ASSERT_EQ(read(pinned).value(1), executable);
     release.set_value();
     unlocked = true;
-    const QString expected = VNH::saveShellIcon(VNH::HubIcons::applicationIcon(), directory.filePath(QStringLiteral("shell-icons")));
+    const QString expected = harken::hub::saveShellIcon(harken::hub::HubIcons::applicationIcon(), directory.filePath(QStringLiteral("shell-icons")));
     for (int attempt = 0; attempt < 40 && read(pinned).value(1) != expected; ++attempt)
         QTest::qWait(50);
     EXPECT_EQ(read(pinned), (QStringList{executable, expected, QStringLiteral("--show-versions")}));

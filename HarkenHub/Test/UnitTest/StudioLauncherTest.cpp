@@ -4,12 +4,12 @@
 
 TEST(StudioLauncherTest, BuildsProjectCreationArguments)
 {
-    VNH::StudioCreateSpec spec;
+    harken::hub::StudioCreateSpec spec;
     spec.projectName = QStringLiteral("My Project");
     spec.projectLocation = QStringLiteral("D:/Projects");
     spec.templateId = QStringLiteral("mmorpg");
 
-    EXPECT_EQ(VNH::StudioLauncher::argumentsForCreate(spec),
+    EXPECT_EQ(harken::hub::StudioLauncher::argumentsForCreate(spec),
               (QStringList{
                   QStringLiteral("--create-project"),
                   QStringLiteral("--project-name"),
@@ -23,20 +23,20 @@ TEST(StudioLauncherTest, BuildsProjectCreationArguments)
 
 TEST(StudioLauncherTest, OmitsTemplateArgumentsForEmptyProject)
 {
-    VNH::StudioCreateSpec spec;
+    harken::hub::StudioCreateSpec spec;
     spec.projectName = QStringLiteral("Empty");
     spec.projectLocation = QStringLiteral("D:/Projects");
 
     const QStringList arguments =
-        VNH::StudioLauncher::argumentsForCreate(spec);
+        harken::hub::StudioLauncher::argumentsForCreate(spec);
     EXPECT_FALSE(arguments.contains(QStringLiteral("--project-template-id")));
     EXPECT_FALSE(arguments.contains(QStringLiteral("--project-template-file")));
 }
 
 TEST(StudioLauncherTest, PassesTheProjectPathAsASingleArgument)
 {
-    VNH::StudioLaunchSpec spec;
+    harken::hub::StudioLaunchSpec spec;
     spec.projectPath = QStringLiteral("D:/Old Projects/Legacy.hsp");
-    EXPECT_EQ(VNH::StudioLauncher::argumentsFor(spec),
+    EXPECT_EQ(harken::hub::StudioLauncher::argumentsFor(spec),
               (QStringList{QStringLiteral("--project"), spec.projectPath}));
 }

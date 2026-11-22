@@ -6,7 +6,7 @@ class QMouseEvent;
 class QResizeEvent;
 class QShowEvent;
 
-namespace VNH {
+namespace harken::hub {
 
 class BoundedHeaderView final : public QHeaderView
 {

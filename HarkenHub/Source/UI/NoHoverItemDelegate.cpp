@@ -2,7 +2,7 @@
 
 #include <QStyle>
 
-namespace VNH {
+namespace harken::hub {
 
 void NoHoverItemDelegate::paint(QPainter* painter,
                                 const QStyleOptionViewItem& option,

@@ -6,7 +6,7 @@
 #include <QSet>
 #include <QUrl>
 
-namespace VNH {
+namespace harken::hub {
 
 class VersionReleaseNotes : public QObject
 {

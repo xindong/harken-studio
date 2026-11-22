@@ -9,7 +9,7 @@
 #include <wbemidl.h>
 #include <comdef.h>
 
-namespace VNH {
+namespace harken::hub {
 
 bool runningUnrealEditors(QList<RunningProcess>* processes)
 {

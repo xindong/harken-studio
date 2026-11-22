@@ -25,7 +25,7 @@
 #endif
 #endif
 
-namespace VNH {
+namespace harken::hub {
 
 bool checkIntegrationDirectoryChanges(const QStringList& destinations, const QStringList& sources, QString* error)
 {

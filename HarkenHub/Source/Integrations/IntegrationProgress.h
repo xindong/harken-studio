@@ -7,7 +7,7 @@
 #include <atomic>
 #include <utility>
 
-namespace VNH {
+namespace harken::hub {
 
 struct IntegrationScanStopped {};
 

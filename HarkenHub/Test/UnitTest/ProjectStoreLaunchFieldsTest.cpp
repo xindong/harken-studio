@@ -4,8 +4,8 @@
 
 #include <QTemporaryDir>
 
-using VNH::ProjectRecord;
-using VNH::ProjectStore;
+using harken::hub::ProjectRecord;
+using harken::hub::ProjectStore;
 
 namespace {
 

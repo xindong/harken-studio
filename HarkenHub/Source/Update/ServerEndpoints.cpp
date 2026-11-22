@@ -4,7 +4,7 @@
 
 #include <QRegularExpression>
 
-namespace VNH {
+namespace harken::hub {
 
 namespace {
 

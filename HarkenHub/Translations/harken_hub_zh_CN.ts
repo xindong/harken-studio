@@ -244,7 +244,7 @@
     <message><source>Install and manage the Unity Integration Package through Hub to try and test Harken integration in your Unity projects.</source><translation>通过 Hub 安装和管理 Unity 集成包，在 Unity 项目中体验并测试 Harken 集成。</translation></message>
 </context>
 <context>
-    <name>VNH::ConsentDialog</name>
+    <name>harken::hub::ConsentDialog</name>
     <message>
         <source>License Agreement</source>
         <translation>许可协议</translation>
@@ -294,7 +294,7 @@
     </message>
 </context>
 <context>
-    <name>VNH::HubWindow</name>
+    <name>harken::hub::HubWindow</name>
     <message>
         <location filename="../Source/UI/HubWindow.cpp" line="99"/>
         <location filename="../Source/UI/HubWindow.cpp" line="158"/>
@@ -534,7 +534,7 @@ Continue?</source>
 %1</translation></message>
 </context>
 <context>
-    <name>VNH::LogConsoleDialog</name>
+    <name>harken::hub::LogConsoleDialog</name>
     <message>
         <location filename="../Source/UI/LogConsoleDialog.cpp" line="211"/>
         <source>Harken Hub Activity Log (%1)</source>
@@ -552,7 +552,7 @@ Continue?</source>
     </message>
 </context>
 <context>
-    <name>VNH::ReleaseNotesDialog</name>
+    <name>harken::hub::ReleaseNotesDialog</name>
     <message>
         <location filename="../Source/UI/ReleaseNotesDialog.cpp" line="22"/>
         <source>Added</source>
@@ -595,7 +595,7 @@ Continue?</source>
     </message>
 </context>
 <context>
-    <name>VNH::UpdateNotifier</name>
+    <name>harken::hub::UpdateNotifier</name>
     <message><source>HarkenStudio update could not be installed</source><translation>HarkenStudio 更新安装失败</translation></message>
     <message><source>Open Harken Hub to retry the installation.</source><translation>打开 Harken Hub 重试安装。</translation></message>
     <message>

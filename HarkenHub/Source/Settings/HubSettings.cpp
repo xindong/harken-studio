@@ -13,7 +13,7 @@
 #include <QDeadlineTimer>
 #include <QThread>
 
-namespace VNH {
+namespace harken::hub {
 
 namespace {
 

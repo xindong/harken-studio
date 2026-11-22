@@ -9,7 +9,7 @@
 
 class QWidget;
 
-namespace VNH {
+namespace harken::hub {
 
 class ProjectStore;
 

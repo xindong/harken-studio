@@ -11,7 +11,7 @@
 
 #include <cstdio>
 
-namespace VNH {
+namespace harken::hub {
 
 namespace {
 

@@ -13,7 +13,7 @@
 
 #include <algorithm>
 
-namespace VNH {
+namespace harken::hub {
 
 std::vector<TransactionSummary> TransactionDiagnostics::summarize()
 {

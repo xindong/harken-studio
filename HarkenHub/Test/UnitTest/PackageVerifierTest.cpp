@@ -13,9 +13,9 @@
 #include <QJsonObject>
 #include <QTemporaryDir>
 
-using VNH::ExpectedPackage;
-using VNH::PackageReader;
-using VNH::PackageVerifier;
+using harken::hub::ExpectedPackage;
+using harken::hub::PackageReader;
+using harken::hub::PackageVerifier;
 using HarkenHubTest::TestEntry;
 using HarkenHubTest::writeArchive;
 
@@ -36,7 +36,7 @@ struct PackageSpec
     bool lieAboutSize = false;
     bool invalidHashFormat = false;
     bool wrongProduct = false;
-    QString binaryPath = VNH::studioBinaryRelativePath();
+    QString binaryPath = harken::hub::studioBinaryRelativePath();
 
 };
 
@@ -264,7 +264,7 @@ TEST(PackageVerifier, ResultCarriesPerFileHashesForExtraction)
         << error.toStdString();
 
     QHash<QString, QString> tampered = verified;
-    tampered.insert(VNH::studioBinaryRelativePath(), QString(64, QLatin1Char('0')));
+    tampered.insert(harken::hub::studioBinaryRelativePath(), QString(64, QLatin1Char('0')));
     EXPECT_FALSE(PackageReader::extractAllVerified(
         archive, dir.filePath(QStringLiteral("outTampered")), tampered, &error));
     EXPECT_TRUE(error.contains(QStringLiteral("SHA-256")));

@@ -16,7 +16,7 @@
 #include <thread>
 #endif
 
-using VNH::SelfUpdateHealthCheck;
+using harken::hub::SelfUpdateHealthCheck;
 
 namespace {
 
@@ -124,35 +124,35 @@ TEST(SelfUpdateHealthCheckTest, ChannelNamesAreUnique)
 
 TEST(UserSessionReadyTest, RequiresConfirmationFromTheStartedHub)
 {
-    VNH::UserSessionReady ready;
+    harken::hub::UserSessionReady ready;
     QString error;
-    ASSERT_TRUE(ready.create(VNH::currentUserId(), &error)) << error.toStdString();
+    ASSERT_TRUE(ready.create(harken::hub::currentUserId(), &error)) << error.toStdString();
     const HANDLE process = OpenProcess(SYNCHRONIZE, FALSE, GetCurrentProcessId());
     ASSERT_NE(process, nullptr);
     const auto cleanup = qScopeGuard([process]() { CloseHandle(process); });
     EXPECT_FALSE(ready.wait(process, 10, &error));
     EXPECT_TRUE(error.contains(QStringLiteral("Timed out"))) << error.toStdString();
-    ASSERT_TRUE(VNH::UserSessionReady::signal(ready.name(), &error)) << error.toStdString();
+    ASSERT_TRUE(harken::hub::UserSessionReady::signal(ready.name(), &error)) << error.toStdString();
     EXPECT_TRUE(ready.wait(process, 1000, &error)) << error.toStdString();
 }
 
 TEST(UserSessionReadyTest, RejectsInvalidUserAndForeignEventNames)
 {
-    VNH::UserSessionReady ready;
+    harken::hub::UserSessionReady ready;
     QString error;
     EXPECT_FALSE(ready.create(QStringLiteral("not-a-sid"), &error));
-    EXPECT_FALSE(VNH::UserSessionReady::signal(QStringLiteral("Global\\OtherEvent"), &error));
+    EXPECT_FALSE(harken::hub::UserSessionReady::signal(QStringLiteral("Global\\OtherEvent"), &error));
 }
 
 TEST(UserSessionReadyTest, EachRestartRequiresItsOwnConfirmation)
 {
-    VNH::UserSessionReady first;
-    VNH::UserSessionReady second;
+    harken::hub::UserSessionReady first;
+    harken::hub::UserSessionReady second;
     QString error;
-    ASSERT_TRUE(first.create(VNH::currentUserId(), &error));
-    ASSERT_TRUE(second.create(VNH::currentUserId(), &error));
+    ASSERT_TRUE(first.create(harken::hub::currentUserId(), &error));
+    ASSERT_TRUE(second.create(harken::hub::currentUserId(), &error));
     EXPECT_NE(first.name(), second.name());
-    ASSERT_TRUE(VNH::UserSessionReady::signal(first.name(), &error));
+    ASSERT_TRUE(harken::hub::UserSessionReady::signal(first.name(), &error));
     const HANDLE process = OpenProcess(SYNCHRONIZE, FALSE, GetCurrentProcessId());
     ASSERT_NE(process, nullptr);
     const auto cleanup = qScopeGuard([process]() { CloseHandle(process); });
@@ -162,9 +162,9 @@ TEST(UserSessionReadyTest, EachRestartRequiresItsOwnConfirmation)
 
 TEST(UserSessionReadyTest, AllowsMediumIntegrityConfirmationFromTheUserSession)
 {
-    VNH::UserSessionReady ready;
+    harken::hub::UserSessionReady ready;
     QString error;
-    ASSERT_TRUE(ready.create(VNH::currentUserId(), &error)) << error.toStdString();
+    ASSERT_TRUE(ready.create(harken::hub::currentUserId(), &error)) << error.toStdString();
     const HANDLE event = OpenEventW(READ_CONTROL, FALSE, ready.name().toStdWString().c_str());
     ASSERT_NE(event, nullptr);
     const auto closeEvent = qScopeGuard([event]() { CloseHandle(event); });
@@ -189,9 +189,9 @@ namespace {
 
 void verifyExitedHub(int exitCode, bool primaryConfirms)
 {
-    VNH::UserSessionReady ready;
+    harken::hub::UserSessionReady ready;
     QString error;
-    ASSERT_TRUE(ready.create(VNH::currentUserId(), &error)) << error.toStdString();
+    ASSERT_TRUE(ready.create(harken::hub::currentUserId(), &error)) << error.toStdString();
     std::wstring command = QStringLiteral("\"%1\" /d /c exit %2")
                                .arg(QDir::toNativeSeparators(qEnvironmentVariable("ComSpec")))
                                .arg(exitCode).toStdWString();
@@ -210,7 +210,7 @@ void verifyExitedHub(int exitCode, bool primaryConfirms)
         std::thread primary([&]() {
             Sleep(30);
             QString signalError;
-            signaled = VNH::UserSessionReady::signal(ready.name(), &signalError);
+            signaled = harken::hub::UserSessionReady::signal(ready.name(), &signalError);
         });
         const bool confirmed = ready.wait(process.hProcess, 5000, &error);
         primary.join();

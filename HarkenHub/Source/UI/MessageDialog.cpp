@@ -11,7 +11,7 @@
 #include <QTextDocument>
 #include <QVBoxLayout>
 
-namespace VNH {
+namespace harken::hub {
 
 MessageDialog::MessageDialog(QMessageBox::Icon icon, const QString& title,
                              const QString& text, QMessageBox::StandardButtons buttons,

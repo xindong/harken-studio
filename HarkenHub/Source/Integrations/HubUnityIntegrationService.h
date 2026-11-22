@@ -2,10 +2,10 @@
 
 #include "Integrations/Unity/UnityIntegrationService.h"
 
-namespace VNH {
+namespace harken::hub {
 
-using UnityIntegrationStepStatus = VNX::UnityIntegrationService::StepStatus;
-using UnityIntegrationStep = VNX::UnityIntegrationService::StepResult;
+using UnityIntegrationStepStatus = harken::hub::unity::UnityIntegrationService::StepStatus;
+using UnityIntegrationStep = harken::hub::unity::UnityIntegrationService::StepResult;
 
 struct UnityIntegrationRequest
 {
@@ -18,7 +18,7 @@ struct UnityIntegrationRequest
     bool restorePrevious = false;
 };
 
-struct UnityIntegrationResult : VNX::UnityIntegrationService::Result
+struct UnityIntegrationResult : harken::hub::unity::UnityIntegrationService::Result
 {
     bool cancelled = false;
 };

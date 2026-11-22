@@ -4,8 +4,8 @@
 
 #include <gtest/gtest.h>
 
-using VNH::ManifestVerifier;
-using VNH::ServerEndpoints;
+using harken::hub::ManifestVerifier;
+using harken::hub::ServerEndpoints;
 
 TEST(ServerEndpointsTest, DefaultSourcesMatchPublishedProducts)
 {

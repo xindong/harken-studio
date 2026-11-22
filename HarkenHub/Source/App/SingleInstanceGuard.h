@@ -9,7 +9,7 @@
 class QLocalServer;
 class QLockFile;
 
-namespace VNH {
+namespace harken::hub {
 
 class SingleInstanceGuard : public QObject
 {

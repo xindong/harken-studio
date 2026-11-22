@@ -6,7 +6,7 @@
 #include <QFileInfo>
 #include <QProcess>
 
-namespace VNH {
+namespace harken::hub {
 
 namespace {
 

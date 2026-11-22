@@ -24,7 +24,7 @@
 #include <functional>
 #include <memory>
 
-namespace VNX {
+namespace harken::hub::unity {
 namespace {
 
 using Service = UnityIntegrationService;
@@ -68,7 +68,7 @@ QStringList allFiles(const QString& root)
     QDirIterator it(root, QDir::Files | QDir::Hidden | QDir::System | QDir::NoDotAndDotDot,
                     QDirIterator::Subdirectories);
     while (it.hasNext()) {
-        VNH::IntegrationProgress::inspectedEntry();
+        harken::hub::IntegrationProgress::inspectedEntry();
         files << normalizePath(QDir(root).relativeFilePath(it.next()));
     }
     files.sort(Qt::CaseSensitive);
@@ -86,13 +86,13 @@ QStringList relativeFiles(const QString& root)
 
 QByteArray sha256File(const QString& path)
 {
-    VNH::IntegrationProgress::inspectedEntry();
+    harken::hub::IntegrationProgress::inspectedEntry();
     constexpr int kRetries = 25;
     for (int attempt = 0; attempt <= kRetries; ++attempt) {
         QFile file(path);
         if (file.open(QIODevice::ReadOnly)) {
             QCryptographicHash hash(QCryptographicHash::Sha256);
-            if (VNH::IntegrationProgress::addFileData(file, hash)) return hash.result();
+            if (harken::hub::IntegrationProgress::addFileData(file, hash)) return hash.result();
         }
         if (!QFileInfo::exists(path)) return {};
         QThread::msleep(20);
@@ -118,7 +118,7 @@ bool copyFile(const QString& source, const QString& target, QString* error)
     }
     QByteArray buffer(1024 * 1024, Qt::Uninitialized);
     while (!input.atEnd()) {
-        VNH::IntegrationProgress::checkpoint();
+        harken::hub::IntegrationProgress::checkpoint();
         const qint64 count = input.read(buffer.data(), buffer.size());
         if (count < 0 || output.write(buffer.constData(), count) != count) {
             *error = QStringLiteral("Copy failed from %1 to %2").arg(source, target);
@@ -184,7 +184,7 @@ QString projectIdentity(const QString& project)
 
 QString hubProjectDirectory(const QString& area, const QString& project, QString* error)
 {
-    const QString userRoot = VNH::userDataDir();
+    const QString userRoot = harken::hub::userDataDir();
     if (userRoot.isEmpty() || !QDir().mkpath(userRoot)) {
         *error = QCoreApplication::translate("HarkenHub", "Cannot create the Hub application-data directory: %1").arg(userRoot);
         return {};
@@ -288,7 +288,7 @@ bool createBackup(const QString& project, const QString& target, const QString& 
         {QStringLiteral("version"), packageVersion(target)},
         {QStringLiteral("files"), QJsonArray::fromStringList(files)},
         {QStringLiteral("created_at_utc"), QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs)}};
-    if (VNH::writeIntegrationFile(QDir(backupRoot).filePath(QLatin1String(kBackupRecord)),
+    if (harken::hub::writeIntegrationFile(QDir(backupRoot).filePath(QLatin1String(kBackupRecord)),
                                   QJsonDocument(record).toJson(QJsonDocument::Indented), error)
         && (files.isEmpty() || backupReady(backupRoot)))
         return true;
@@ -416,7 +416,7 @@ void writeReport(Service::Result& result, const QString& kind, bool checkOnly, S
         if (!item.details.isEmpty()) text += QStringLiteral("Details:\n%1\n\n").arg(item.details.join(QLatin1Char('\n')));
     }
     const QJsonObject root{
-        {QStringLiteral("schema_version"), 3},
+        {QStringLiteral("schema_version"), 4},
         {QStringLiteral("operation"), kind},
         {QStringLiteral("generated_at_utc"), QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs)},
         {QStringLiteral("success"), success},
@@ -429,8 +429,8 @@ void writeReport(Service::Result& result, const QString& kind, bool checkOnly, S
         {QStringLiteral("previous_version_available"), result.previousVersionAvailable},
         {QStringLiteral("steps"), steps}};
     QString error;
-    if (!VNH::writeIntegrationFile(jsonPath, QJsonDocument(root).toJson(QJsonDocument::Indented), &error)
-        || !VNH::writeIntegrationFile(textPath, text.toUtf8(), &error)) {
+    if (!harken::hub::writeIntegrationFile(jsonPath, QJsonDocument(root).toJson(QJsonDocument::Indented), &error)
+        || !harken::hub::writeIntegrationFile(textPath, text.toUtf8(), &error)) {
         step.status = StepStatus::Failed;
         step.summary = QStringLiteral("The integration report could not be written.");
         step.cause = error;
@@ -521,9 +521,9 @@ UnityIntegrationService::Result UnityIntegrationService::install(const Request& 
     Result result;
     result.unityProjectPath = cleanAbsolutePath(request.unityProjectPath);
     StepRunner runner(result, {{"unity_preflight", "Validate Unity project"},
-         {"sdk_preflight", "Validate Harken Unity Integration Package source"},
-         {"compare_sdk", "Compare installed Unity Integration Package"},
-         {"install_sdk", "Install or update Unity Integration Package"},
+         {"package_preflight", "Validate Harken Unity Integration Package source"},
+         {"compare_package", "Compare installed Unity Integration Package"},
+         {"install_package", "Install or update Unity Integration Package"},
          {"verify", "Verify installed Integration Package"},
          {"report", "Write integration report"}});
     QString target;
@@ -885,4 +885,4 @@ UnityIntegrationService::Result UnityIntegrationService::restorePrevious(const R
     return result;
 }
 
-} // namespace VNX
+} // namespace harken::hub::unity

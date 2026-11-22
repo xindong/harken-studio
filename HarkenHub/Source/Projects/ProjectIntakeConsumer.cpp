@@ -16,7 +16,7 @@
 #include <QRegularExpression>
 #include <QTimer>
 
-namespace VNH {
+namespace harken::hub {
 
 namespace {
 

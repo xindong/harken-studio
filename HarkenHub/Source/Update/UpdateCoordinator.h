@@ -10,7 +10,7 @@
 #include <QTimer>
 #include <QUrl>
 
-namespace VNH {
+namespace harken::hub {
 
 class UpdateCoordinator : public QObject
 {
@@ -48,7 +48,7 @@ public:
                           std::shared_ptr<DownloadLease> lease = {});
 
 signals:
-    void stateChanged(const VNH::UpdateStateRecord& record);
+    void stateChanged(const harken::hub::UpdateStateRecord& record);
 
 private:
     bool persist(UpdateStateRecord& record, const QDateTime& now,

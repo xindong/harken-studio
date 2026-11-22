@@ -7,7 +7,7 @@
 #include <QRandomGenerator>
 #include <QRegularExpression>
 
-namespace VNH {
+namespace harken::hub {
 
 namespace {
 

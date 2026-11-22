@@ -7,7 +7,7 @@ class QFileSystemWatcher;
 class QJsonObject;
 class QTimer;
 
-namespace VNH {
+namespace harken::hub {
 
 class ProjectStore;
 

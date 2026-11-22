@@ -4,7 +4,7 @@
 
 class QApplication;
 
-namespace VNH::HubIcons {
+namespace harken::hub::HubIcons {
 
 QIcon applicationIcon();
 void installApplicationIcon(QApplication& app);

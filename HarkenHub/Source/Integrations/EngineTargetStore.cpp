@@ -10,7 +10,7 @@
 #include <QSqlQuery>
 #include <QVariant>
 
-namespace VNH {
+namespace harken::hub {
 namespace {
 QString hubTranslate(const QString& source)
 {
@@ -179,7 +179,7 @@ bool EngineTargetStore::updateIntegrationInstallPath(const QString& targetId,
                                             const QString& relativePath)
 {
     lastError_.clear();
-    if (connectionName_.isEmpty() || !VNX::UnityInstallation::safeRelativePath(relativePath)) {
+    if (connectionName_.isEmpty() || !harken::hub::unity::UnityInstallation::safeRelativePath(relativePath)) {
         lastError_ = hubTranslate(QStringLiteral("Cannot save the Integration Package installation location"));
         return false;
     }

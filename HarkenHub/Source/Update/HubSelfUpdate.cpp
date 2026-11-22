@@ -28,7 +28,7 @@
 #include <QUuid>
 #include <QVariant>
 
-namespace VNH {
+namespace harken::hub {
 
 namespace {
 

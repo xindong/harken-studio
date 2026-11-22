@@ -11,7 +11,7 @@
 #include "Platform/Windows/TaskbarIcon.h"
 #endif
 
-namespace VNH::HubIcons {
+namespace harken::hub::HubIcons {
 
 namespace {
 

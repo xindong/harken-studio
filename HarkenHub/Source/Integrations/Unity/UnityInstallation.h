@@ -4,7 +4,7 @@
 #include <QStringList>
 #include <QVector>
 
-namespace VNX::UnityInstallation {
+namespace harken::hub::unity::UnityInstallation {
 
 struct Installation
 {

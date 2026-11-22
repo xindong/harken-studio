@@ -4,7 +4,7 @@
 #include <QUrl>
 #include <QList>
 
-namespace VNH {
+namespace harken::hub {
 
 class ServerEndpoints
 {

@@ -16,7 +16,7 @@
 #include <memory>
 #include <vector>
 
-using VNH::HubSettings;
+using harken::hub::HubSettings;
 
 namespace {
 

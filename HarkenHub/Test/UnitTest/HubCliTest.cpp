@@ -242,7 +242,7 @@ TEST_F(HubCliTest, ProjectDispatchResolvesCatalogChoicesAndConsumesSuccessfulStu
     while (!QFileInfo::exists(launchPath) && timer.elapsed() < 10000) QThread::msleep(10);
     const auto launch = QJsonDocument::fromJson(read(launchPath)).object();
     const auto pid = launch["pid"].toInteger();
-    const auto stop = qScopeGuard([&] { if (pid > 0) VNH::terminateProcessById(pid); });
+    const auto stop = qScopeGuard([&] { if (pid > 0) harken::hub::terminateProcessById(pid); });
     ASSERT_GT(pid, 0);
     const auto arguments = launch["arguments"].toArray().toVariantList();
     const auto templateIndex = arguments.indexOf(QStringLiteral("--project-template-id"));
@@ -268,12 +268,12 @@ TEST_F(HubCliTest, InstalledMetadataCannotValidateItselfAndFileChangesInvalidate
     const QByteArray binary("original");
     QJsonObject manifest{{"product", "HarkenStudio"}, {"buildId", "build"}, {"version", "1.0.0"}, {"channel", "stable"},
         {"files", QJsonArray{QJsonObject{{"path", "payload.bin"}, {"size", binary.size()}, {"sha256", hash(binary)}},
-            QJsonObject{{"path", VNH::studioBinaryRelativePath()}, {"size", binary.size()}, {"sha256", hash(binary)}}}}};
+            QJsonObject{{"path", harken::hub::studioBinaryRelativePath()}, {"size", binary.size()}, {"sha256", hash(binary)}}}}};
     const auto manifestBytes = QJsonDocument(manifest).toJson();
     write(installation + "/package-manifest.json", manifestBytes);
     const auto capabilities = QJsonDocument(HarkenHubTest::studioCapabilities("build", "1.0.0")).toJson();
     write(installation + "/capabilities.json", capabilities);
-    write(installation + '/' + VNH::studioBinaryRelativePath(), binary);
+    write(installation + '/' + harken::hub::studioBinaryRelativePath(), binary);
     write(installation + "/payload.bin", binary);
     const QJsonObject record{{"buildId", "build"}, {"semanticVersion", "1.0.0"}, {"channel", "stable"},
         {"installPath", installation}, {"packageHash", "unused"}, {"packageManifestHash", hash(manifestBytes)},
@@ -303,10 +303,10 @@ TEST_F(HubCliTest, AutomaticPreferencesNotifyTheRunningServiceWithoutOpeningTheG
         if (previousRoot.isNull()) qunsetenv("HARKEN_HUB_USER_ROOT");
         else qputenv("HARKEN_HUB_USER_ROOT", previousRoot);
     });
-    VNH::SingleInstanceGuard service(VNH::SingleInstanceGuard::backgroundServerName());
+    harken::hub::SingleInstanceGuard service(harken::hub::SingleInstanceGuard::backgroundServerName());
     ASSERT_TRUE(service.isPrimary());
     int notifications = 0;
-    QObject::connect(&service, &VNH::SingleInstanceGuard::activationRequested, &service, [&](const QStringList& arguments) {
+    QObject::connect(&service, &harken::hub::SingleInstanceGuard::activationRequested, &service, [&](const QStringList& arguments) {
         EXPECT_EQ(arguments, QStringList{"--settings-changed"});
         ++notifications;
     });
@@ -372,10 +372,10 @@ TEST_F(HubCliTest, UpdateApplicationRejectsActiveTransactionsAndUntrustedFilesBe
         if (previousRoot.isNull()) qunsetenv("HARKEN_HUB_USER_ROOT");
         else qputenv("HARKEN_HUB_USER_ROOT", previousRoot);
     });
-    VNH::SingleInstanceGuard background(VNH::SingleInstanceGuard::backgroundServerName());
+    harken::hub::SingleInstanceGuard background(harken::hub::SingleInstanceGuard::backgroundServerName());
     ASSERT_TRUE(background.isPrimary());
     int messages = 0;
-    QObject::connect(&background, &VNH::SingleInstanceGuard::activationRequested, &background, [&](const QStringList&) { ++messages; });
+    QObject::connect(&background, &harken::hub::SingleInstanceGuard::activationRequested, &background, [&](const QStringList&) { ++messages; });
     const QStringList apply{"updates", "apply", "--product", "hub"};
     const auto review = run(apply, 4);
     const auto failed = run(apply + QStringList{"--confirm", review["confirmation"].toString()}, 3);
@@ -400,7 +400,7 @@ TEST_F(HubCliTest, NetworkDownloadsRequireBothSignedIdentityAndValidArchiveConte
     const auto hash = [](const QByteArray& bytes) { return QString::fromLatin1(QCryptographicHash::hash(bytes, QCryptographicHash::Sha256).toHex()); };
     const QByteArray binary("studio fixture");
     const QString version("1.4.0"), build("run12.abcd1234");
-    const auto binaryPath = VNH::studioBinaryRelativePath().toUtf8();
+    const auto binaryPath = harken::hub::studioBinaryRelativePath().toUtf8();
     const QJsonObject manifest{{"product", "HarkenStudio"}, {"version", version}, {"buildId", build}, {"channel", "stable"},
         {"files", QJsonArray{QJsonObject{{"path", QString::fromUtf8(binaryPath)}, {"size", binary.size()}, {"sha256", hash(binary)}}}}};
     const QJsonObject capabilities{{"studioVersion", version}, {"buildId", build}, {"capabilitiesVersion", 2}};

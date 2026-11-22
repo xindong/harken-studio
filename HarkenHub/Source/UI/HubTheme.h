@@ -6,7 +6,7 @@
 
 class QWidget;
 
-namespace VNH::HubTheme {
+namespace harken::hub::HubTheme {
 
 enum class Tone { Text, Muted, Accent, Warning, Error, Success, Info };
 

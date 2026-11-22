@@ -2,7 +2,7 @@
 
 #include <QStyledItemDelegate>
 
-namespace VNH {
+namespace harken::hub {
 
 class NoHoverItemDelegate final : public QStyledItemDelegate
 {

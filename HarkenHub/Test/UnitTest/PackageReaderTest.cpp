@@ -14,7 +14,7 @@
 #include <sys/stat.h>
 #endif
 
-using VNH::PackageReader;
+using harken::hub::PackageReader;
 using HarkenHubTest::TestEntry;
 using HarkenHubTest::writeArchive;
 

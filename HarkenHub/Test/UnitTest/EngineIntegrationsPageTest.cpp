@@ -100,7 +100,7 @@ protected:
         writeFile(executablePath, "studio");
         for (const auto* folder : {"Assets", "Packages", "ProjectSettings"})
             ASSERT_TRUE(QDir().mkpath(QDir(unityPath).filePath(folder)));
-        page = std::make_unique<VNH::EngineIntegrationsPage>(
+        page = std::make_unique<harken::hub::EngineIntegrationsPage>(
             &integrations, &targets, &projects);
         page->resize(900, 700);
         page->show();
@@ -213,10 +213,10 @@ protected:
         QDir().mkpath(root);
         return QDir(root).filePath("hub-integration-XXXXXX");
     }()};
-    VNH::IntegrationStore integrations;
-    VNH::EngineTargetStore targets;
-    VNH::ProjectStore projects;
-    std::unique_ptr<VNH::EngineIntegrationsPage> page;
+    harken::hub::IntegrationStore integrations;
+    harken::hub::EngineTargetStore targets;
+    harken::hub::ProjectStore projects;
+    std::unique_ptr<harken::hub::EngineIntegrationsPage> page;
     QString harkenPath;
     QString executablePath;
     QString unityPath;
@@ -245,9 +245,9 @@ TEST_F(EngineIntegrationsPageTest, LongIntegrationTasksKeepEventsAndProgressResp
     });
     timer.start(50);
     const auto* guiThread = QThread::currentThread();
-    const auto result = VNH::runIntegrationTask(page.get(), [&]() {
+    const auto result = harken::hub::runIntegrationTask(page.get(), [&]() {
         background = QThread::currentThread() != guiThread;
-        for (int index = 0; index < 7; ++index) VNH::IntegrationProgress::inspectedEntry();
+        for (int index = 0; index < 7; ++index) harken::hub::IntegrationProgress::inspectedEntry();
         return release.tryAcquire(1, 2500) ? 42 : -1;
     });
     ASSERT_TRUE(result);
@@ -261,8 +261,8 @@ TEST_F(EngineIntegrationsPageTest, LongIntegrationTasksKeepEventsAndProgressResp
 
 TEST_F(EngineIntegrationsPageTest, ReadOnlyIntegrationInspectionCanBeCancelledWithoutClosingItsWorker)
 {
-    VNH::EngineTargetRecord unreal;
-    unreal.engineKind = VNH::EngineKind::Unreal;
+    harken::hub::EngineTargetRecord unreal;
+    unreal.engineKind = harken::hub::EngineKind::Unreal;
     unreal.canonicalRoot = dir.filePath("UnrealGame");
     unreal.descriptorPath = QDir(unreal.canonicalRoot).filePath("Game.uproject");
     writeFile(unreal.descriptorPath, "{}");
@@ -290,12 +290,12 @@ TEST_F(EngineIntegrationsPageTest, ReadOnlyIntegrationInspectionCanBeCancelledWi
         }
         const auto removeTranslator = qScopeGuard([&]() { QCoreApplication::removeTranslator(&translator); });
         timer.start(50);
-        const auto result = VNH::runIntegrationTask(page.get(), [&]() {
+        const auto result = harken::hub::runIntegrationTask(page.get(), [&]() {
             QElapsedTimer elapsed;
             elapsed.start();
             while (elapsed.elapsed() < 2500) {
-                if (unity) VNX::UnityInstallation::discover(unityPath);
-                else VNH::ProjectIntegrationExecutor::inspectUnreal(unreal);
+                if (unity) harken::hub::unity::UnityInstallation::discover(unityPath);
+                else harken::hub::ProjectIntegrationExecutor::inspectUnreal(unreal);
             }
             return true;
         }, true);
@@ -341,7 +341,7 @@ TEST_F(EngineIntegrationsPageTest, UnrealUsesTheSameProjectAndIntegrationWorkflo
             page.reset();
             QCoreApplication::removeTranslator(&translator);
         });
-        page = std::make_unique<VNH::EngineIntegrationsPage>(&integrations, &targets, &projects);
+        page = std::make_unique<harken::hub::EngineIntegrationsPage>(&integrations, &targets, &projects);
         page->resize(760, 600);
         page->show();
         page->beginEditForProject(project);
@@ -415,7 +415,7 @@ TEST_F(EngineIntegrationsPageTest, UnrealUsesTheSameProjectAndIntegrationWorkflo
         ASSERT_TRUE(QFile::remove(installed + "/Binaries/ThirdParty/HarkenCore/Linux/x86_64/libHarkenCore.so"));
         selectIntegrationFolder(source);
         checkButton()->click();
-        const QString differences = page->findChild<VNH::DialogTextView*>("integrationDiffSummary")->text();
+        const QString differences = page->findChild<harken::hub::DialogTextView*>("integrationDiffSummary")->text();
         EXPECT_TRUE(differences.contains(QCoreApplication::translate(
             "HarkenHub", "Locally modified files to overwrite or remove: %1").arg(1)));
         EXPECT_TRUE(differences.contains(QCoreApplication::translate(
@@ -447,16 +447,16 @@ TEST_F(EngineIntegrationsPageTest, UnrealUsesTheSameProjectAndIntegrationWorkflo
         ASSERT_EQ(folders.size(), 1);
         QFile journal(backups.filePath(folders.front() + "/migration.json"));
         ASSERT_TRUE(journal.open(QIODevice::ReadOnly));
-        VNH::EngineTargetRecord target;
-        ASSERT_TRUE(VNH::EngineTargetProbe::resolve(root, &target));
-        writeFile(VNH::ProjectIntegrationExecutor::unrealMigrationJournalPath(target), journal.readAll());
+        harken::hub::EngineTargetRecord target;
+        ASSERT_TRUE(harken::hub::EngineTargetProbe::resolve(root, &target));
+        writeFile(harken::hub::ProjectIntegrationExecutor::unrealMigrationJournalPath(target), journal.readAll());
         page->showList();
         page->beginEditForProject(project, {}, root);
         ASSERT_TRUE(waitForVersion());
         EXPECT_TRUE(move->isEnabled());
         EXPECT_FALSE(page->findChild<QPushButton*>("uninstallIntegration")->isEnabled());
         move->click();
-        EXPECT_FALSE(VNH::ProjectIntegrationExecutor::hasPendingUnrealMigration(target));
+        EXPECT_FALSE(harken::hub::ProjectIntegrationExecutor::hasPendingUnrealMigration(target));
         ASSERT_TRUE(QTest::qWaitFor([&]() {
             return page->findChild<QLineEdit*>("integrationInstallPath")->text() == "Plugins/Harken";
         }, 5000));
@@ -500,19 +500,19 @@ TEST_F(EngineIntegrationsPageTest, SortedListKeepsSelectionAndActionTargets)
 {
     for (const auto* number : {"10", "2"}) {
         const QString suffix = QString::fromLatin1(number);
-        VNH::ProjectRecord project;
+        harken::hub::ProjectRecord project;
         project.canonicalPath = dir.filePath("Audio #" + suffix + "/Project" + suffix + ".hsp");
         project.displayName = "Project" + suffix;
         writeFile(project.canonicalPath, "{}");
         ASSERT_TRUE(projects.addProject(project));
-        VNH::EngineTargetRecord target;
+        harken::hub::EngineTargetRecord target;
         target.targetId = suffix;
         target.displayName = "Game" + (suffix == "10" ? QString("2") : QString("10"));
         target.canonicalRoot = dir.filePath(target.displayName);
         ASSERT_TRUE(QDir().mkpath(target.canonicalRoot));
         target.addedAt = "2026-10-21T00:00:00Z";
         ASSERT_TRUE(targets.add(target));
-        VNH::IntegrationRecord integration;
+        harken::hub::IntegrationRecord integration;
         integration.integrationId = suffix;
         integration.harkenProjectPath = project.canonicalPath;
         integration.engineTargetId = suffix;
@@ -553,17 +553,17 @@ TEST_F(EngineIntegrationsPageTest, SortedListKeepsSelectionAndActionTargets)
     EXPECT_EQ(table->selectionModel()->selectedRows(0).front().data(Qt::UserRole).toString(), "2");
 
     ASSERT_TRUE(QTest::qWaitFor([]() {
-        const auto sort = VNH::HubSettings::tableSort(QStringLiteral("engineIntegrations"));
+        const auto sort = harken::hub::HubSettings::tableSort(QStringLiteral("engineIntegrations"));
         return sort.column == 1 && sort.order == Qt::DescendingOrder;
     }, 5000));
-    VNH::EngineIntegrationsPage reopened(&integrations, &targets, &projects);
+    harken::hub::EngineIntegrationsPage reopened(&integrations, &targets, &projects);
     for (auto* candidate : reopened.findChildren<QTableWidget*>()) {
         if (candidate->objectName() != QStringLiteral("engineIntegrationsTable")) continue;
         EXPECT_EQ(candidate->horizontalHeader()->sortIndicatorSection(), 1);
         EXPECT_EQ(candidate->horizontalHeader()->sortIndicatorOrder(), Qt::DescendingOrder);
         EXPECT_EQ(candidate->item(0, 0)->data(Qt::UserRole).toString(), "2");
     }
-    VNH::ProjectsPage projectsPage(&projects);
+    harken::hub::ProjectsPage projectsPage(&projects);
     const auto* projectsTable = projectsPage.findChild<QTableWidget*>();
     EXPECT_EQ(projectsTable->horizontalHeader()->sortIndicatorSection(), 0);
     EXPECT_EQ(projectsTable->horizontalHeader()->sortIndicatorOrder(), Qt::AscendingOrder);
@@ -619,7 +619,7 @@ TEST_F(EngineIntegrationsPageTest, SortedListKeepsSelectionAndActionTargets)
         if (auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget())) {
             menu->setActiveAction(unlink ? menu->actions().last() : menu->actions().first());
             QTest::keyClick(menu, Qt::Key_Return);
-        } else if (auto* message = qobject_cast<VNH::MessageDialog*>(QApplication::activeModalWidget())) {
+        } else if (auto* message = qobject_cast<harken::hub::MessageDialog*>(QApplication::activeModalWidget())) {
             message->button(QMessageBox::Yes)->click();
         }
     });
@@ -638,17 +638,17 @@ TEST_F(EngineIntegrationsPageTest, SortedListKeepsSelectionAndActionTargets)
 
 TEST_F(EngineIntegrationsPageTest, ExistingEditorReturnsBeforeVersionCheckAndKeepsStoredIntegration)
 {
-    VNH::ProjectRecord project;
+    harken::hub::ProjectRecord project;
     project.canonicalPath = harkenPath;
     project.displayName = "Demo";
     ASSERT_TRUE(projects.addProject(project));
-    VNH::EngineTargetRecord target;
+    harken::hub::EngineTargetRecord target;
     target.targetId = "unity";
     target.canonicalRoot = unityPath;
     target.displayName = "UnityGame";
     target.addedAt = "2026-09-20T00:00:00Z";
     ASSERT_TRUE(targets.add(target));
-    VNH::IntegrationRecord integration;
+    harken::hub::IntegrationRecord integration;
     integration.integrationId = "integration";
     integration.harkenProjectPath = harkenPath;
     integration.engineTargetId = target.targetId;
@@ -674,7 +674,7 @@ TEST_F(EngineIntegrationsPageTest, ExistingEditorReturnsBeforeVersionCheckAndKee
     ASSERT_TRUE(entered.tryAcquire(1, 5000));
 
     page.reset();
-    page = std::make_unique<VNH::EngineIntegrationsPage>(&integrations, &targets, &projects);
+    page = std::make_unique<harken::hub::EngineIntegrationsPage>(&integrations, &targets, &projects);
     page->show();
     page->refresh();
     page->refreshStudioVersion();
@@ -682,7 +682,7 @@ TEST_F(EngineIntegrationsPageTest, ExistingEditorReturnsBeforeVersionCheckAndKee
     EXPECT_TRUE(page->isEnabled());
     EXPECT_EQ(page->findChild<QDialog*>(QStringLiteral("integrationTaskProgress")), nullptr);
     page.reset();
-    page = std::make_unique<VNH::EngineIntegrationsPage>(&integrations, &targets, &projects);
+    page = std::make_unique<harken::hub::EngineIntegrationsPage>(&integrations, &targets, &projects);
     page->show();
     page->beginEditForProject(harkenPath, executablePath);
     EXPECT_EQ(page->findChild<QStackedWidget*>()->currentIndex(), 1);
@@ -751,7 +751,7 @@ TEST_F(EngineIntegrationsPageTest, InvalidOrClearedProjectDiscardsPendingVersion
         auto* integrationField = field("Runtime/Integration Package source path");
         QTimer dismiss;
         QObject::connect(&dismiss, &QTimer::timeout, page.get(), [&]() {
-            auto* warning = qobject_cast<VNH::MessageDialog*>(QApplication::activeModalWidget());
+            auto* warning = qobject_cast<harken::hub::MessageDialog*>(QApplication::activeModalWidget());
             if (warning)
                 warning->accept();
         });
@@ -789,12 +789,12 @@ TEST_F(EngineIntegrationsPageTest, InvalidOrClearedProjectDiscardsPendingVersion
 
 TEST_F(EngineIntegrationsPageTest, ManagedVersionStillChecksIntegrityAndPreservesIntegrationEditedWhileLoading)
 {
-    VNH::InstalledVersionRecord installed;
+    harken::hub::InstalledVersionRecord installed;
     installed.buildId = "test-build";
     installed.semanticVersion = "1.0.0";
     installed.healthState = "Installed";
     installed.installPath = dir.filePath("versions/test-build");
-    const QString binary = QDir(installed.installPath).filePath(VNH::studioBinaryRelativePath());
+    const QString binary = QDir(installed.installPath).filePath(harken::hub::studioBinaryRelativePath());
     const QByteArray contents("studio");
     writeFile(binary, contents);
     writeFile(QDir(installed.installPath).filePath("package-manifest.json"),
@@ -802,7 +802,7 @@ TEST_F(EngineIntegrationsPageTest, ManagedVersionStillChecksIntegrityAndPreserve
                   {"product", "HarkenStudio"}, {"buildId", installed.buildId},
                   {"version", installed.semanticVersion},
                   {"files", QJsonArray{QJsonObject{
-                      {"path", VNH::studioBinaryRelativePath()}, {"size", contents.size()},
+                      {"path", harken::hub::studioBinaryRelativePath()}, {"size", contents.size()},
                       {"sha256", QString::fromLatin1(QCryptographicHash::hash(
                           contents, QCryptographicHash::Sha256).toHex())}}}}}).toJson());
     writeFile(QDir(installed.installPath).filePath("capabilities.json"),
@@ -811,7 +811,7 @@ TEST_F(EngineIntegrationsPageTest, ManagedVersionStillChecksIntegrityAndPreserve
     writeFile(harkenPath,
               R"({"harkenDocument":{"type":"project.root","savedStudioVersion":"1.0.0"}})");
     QString error;
-    ASSERT_TRUE(VNH::InstallIndex::commitInstallation(installed, 1, &error));
+    ASSERT_TRUE(harken::hub::InstallIndex::commitInstallation(installed, 1, &error));
     integrationPath = QDir(QFileInfo(binary).absolutePath()).filePath("HarkenSDK/Unity/Harken");
     makeIntegration();
 
@@ -903,10 +903,10 @@ TEST_F(EngineIntegrationsPageTest, AppearanceChangesPreserveReviewedPlans)
     const auto previousStyle = qApp->styleSheet();
     const auto resetAppearance = qScopeGuard([&] { qApp->setStyleSheet(previousStyle); qApp->setPalette(previousPalette); });
     makeIntegration();
-    VNH::UnityIntegrationRequest install;
+    harken::hub::UnityIntegrationRequest install;
     install.unityProjectPath = unityPath;
     install.integrationSourcePath = integrationPath;
-    ASSERT_TRUE(VNH::HubUnityIntegrationService::run(install).success);
+    ASSERT_TRUE(harken::hub::HubUnityIntegrationService::run(install).success);
     writeFile(integrationPath + "/Runtime/Added.cs", "new core content");
     page->beginEditForProject(harkenPath, {}, unityPath);
     ASSERT_TRUE(waitForVersion());
@@ -918,16 +918,16 @@ TEST_F(EngineIntegrationsPageTest, AppearanceChangesPreserveReviewedPlans)
     ASSERT_NE(tabs, nullptr);
     tabs->setCurrentIndex(1);
     for (const auto* mode : {"light", "dark"}) {
-        ASSERT_TRUE(VNH::HubSettings::setThemePreference(mode));
-        VNH::HubTheme::applyPreference();
+        ASSERT_TRUE(harken::hub::HubSettings::setThemePreference(mode));
+        harken::hub::HubTheme::applyPreference();
         QCoreApplication::processEvents();
         EXPECT_EQ(tabs->currentIndex(), 1);
         EXPECT_TRUE(primary()->isEnabled());
         const QString filename = QStringLiteral("#69D391/style='color:#69D391'.cs").toHtmlEscaped();
-        const auto formatted = VNH::HubTheme::html(QStringLiteral("<span style='color:#69D391'>%1</span>").arg(filename));
+        const auto formatted = harken::hub::HubTheme::html(QStringLiteral("<span style='color:#69D391'>%1</span>").arg(filename));
         EXPECT_TRUE(formatted.contains(filename));
-        EXPECT_TRUE(formatted.startsWith(QStringLiteral("<span style='color:%1'>").arg(VNH::HubTheme::color(VNH::HubTheme::Tone::Success).name())));
-        const auto warning = VNH::HubTheme::color(VNH::HubTheme::Tone::Warning);
+        EXPECT_TRUE(formatted.startsWith(QStringLiteral("<span style='color:%1'>").arg(harken::hub::HubTheme::color(harken::hub::HubTheme::Tone::Success).name())));
+        const auto warning = harken::hub::HubTheme::color(harken::hub::HubTheme::Tone::Warning);
         EXPECT_GT(warning.red(), warning.blue());
         EXPECT_EQ(qApp->palette().color(QPalette::Window).lightness() < 128, QString::fromLatin1(mode) == "dark");
         const auto screenshots = qEnvironmentVariable("HARKEN_HUB_TEST_SCREENSHOTS");
@@ -950,7 +950,7 @@ TEST_F(EngineIntegrationsPageTest, RequiresClosedUnityBeforeCheckingAndRechecksA
     ASSERT_TRUE(waitForVersion());
     startIntegrationSelection();
     auto* dialog = page->findChild<QDialog*>(QStringLiteral("integrationSelectionDialog"));
-    auto* engineHint = page->findChild<VNH::DialogTextView*>(QStringLiteral("integrationEngineRunningHint"));
+    auto* engineHint = page->findChild<harken::hub::DialogTextView*>(QStringLiteral("integrationEngineRunningHint"));
     ASSERT_NE(engineHint, nullptr);
     EXPECT_FALSE(engineHint->isVisible());
     const QString installed = QDir(unityPath).filePath("Packages/com.harken.core");
@@ -1020,7 +1020,7 @@ TEST_F(EngineIntegrationsPageTest, QuickIntegrationChangePreservesSafetyAndHandl
     if (chinese) {
         ASSERT_TRUE(translator.load(QString::fromUtf8(HARKEN_HUB_TRANSLATION_FILE)));
         QCoreApplication::installTranslator(&translator);
-        page = std::make_unique<VNH::EngineIntegrationsPage>(&integrations, &targets, &projects);
+        page = std::make_unique<harken::hub::EngineIntegrationsPage>(&integrations, &targets, &projects);
         page->resize(900, 700);
         page->show();
     }
@@ -1030,8 +1030,8 @@ TEST_F(EngineIntegrationsPageTest, QuickIntegrationChangePreservesSafetyAndHandl
     });
     makeIntegration();
     const QString originalSource = integrationPath;
-    VNX::UnityIntegrationService service;
-    VNX::UnityIntegrationService::Request request;
+    harken::hub::unity::UnityIntegrationService service;
+    harken::hub::unity::UnityIntegrationService::Request request;
     request.unityProjectPath = unityPath;
     request.integrationSourcePath = originalSource;
     ASSERT_TRUE(service.run(request).success);
@@ -1051,12 +1051,12 @@ TEST_F(EngineIntegrationsPageTest, QuickIntegrationChangePreservesSafetyAndHandl
     const auto saved = integrations.list().front();
     page->showList();
 
-    VNH::InstalledVersionRecord studio;
+    harken::hub::InstalledVersionRecord studio;
     studio.buildId = "same-sdk-version-new-runtime";
     studio.semanticVersion = "2.0.0";
     studio.healthState = "Installed";
     studio.installPath = dir.filePath("versions/new-runtime");
-    const QString binary = QDir(studio.installPath).filePath(VNH::studioBinaryRelativePath());
+    const QString binary = QDir(studio.installPath).filePath(harken::hub::studioBinaryRelativePath());
     writeFile(binary, "studio");
     writeFile(QDir(studio.installPath).filePath("package-manifest.json"),
               QJsonDocument(QJsonObject{{"product", "HarkenStudio"},
@@ -1065,7 +1065,7 @@ TEST_F(EngineIntegrationsPageTest, QuickIntegrationChangePreservesSafetyAndHandl
               QJsonDocument(HarkenHubTest::studioCapabilities(
                   studio.buildId, studio.semanticVersion)).toJson());
     QString error;
-    ASSERT_TRUE(VNH::InstallIndex::commitInstallation(studio, 1, &error));
+    ASSERT_TRUE(harken::hub::InstallIndex::commitInstallation(studio, 1, &error));
     integrationPath = QDir(QFileInfo(binary).absolutePath()).filePath("HarkenSDK/Unity/Harken");
     makeIntegration();
     const QString runtime = "Runtime/Plugins/Windows/runtime.bin";
@@ -1219,19 +1219,19 @@ TEST_F(EngineIntegrationsPageTest, IntegrationSelectionCancelKeepsSavedStateAndA
 {
     makeIntegration();
     const QString originalSource = integrationPath;
-    VNX::UnityIntegrationService service;
-    VNX::UnityIntegrationService::Request request;
+    harken::hub::unity::UnityIntegrationService service;
+    harken::hub::unity::UnityIntegrationService::Request request;
     request.unityProjectPath = unityPath;
     request.integrationSourcePath = originalSource;
     ASSERT_TRUE(service.run(request).success);
     const QString installed = QDir(unityPath).filePath("Packages/com.harken.core");
     writeFile(installed + "/package.json.meta", "guid: stable-package-guid");
-    VNH::InstalledVersionRecord studio;
+    harken::hub::InstalledVersionRecord studio;
     studio.buildId = "sdk-update-build";
     studio.semanticVersion = "2.0.0";
     studio.healthState = "Installed";
     studio.installPath = dir.filePath("versions/sdk-update-build");
-    const QString binary = QDir(studio.installPath).filePath(VNH::studioBinaryRelativePath());
+    const QString binary = QDir(studio.installPath).filePath(harken::hub::studioBinaryRelativePath());
     writeFile(binary, "studio");
     writeFile(QDir(studio.installPath).filePath("package-manifest.json"),
               QJsonDocument(QJsonObject{{"product", "HarkenStudio"},
@@ -1240,7 +1240,7 @@ TEST_F(EngineIntegrationsPageTest, IntegrationSelectionCancelKeepsSavedStateAndA
               QJsonDocument(HarkenHubTest::studioCapabilities(
                   studio.buildId, studio.semanticVersion)).toJson());
     QString error;
-    ASSERT_TRUE(VNH::InstallIndex::commitInstallation(studio, 1, &error));
+    ASSERT_TRUE(harken::hub::InstallIndex::commitInstallation(studio, 1, &error));
     integrationPath = QDir(QFileInfo(binary).absolutePath()).filePath("HarkenSDK/Unity/Harken");
     makeIntegration();
     writeFile(QDir(integrationPath).filePath("package.json"),
@@ -1357,7 +1357,7 @@ TEST_F(EngineIntegrationsPageTest, SourceRefreshPreservesSelectionAndCheckedResu
     selectIntegrationFolder(selectedSource);
     checkButton()->click();
     auto* sources = page->findChild<QComboBox*>(QStringLiteral("integrationSourceSelector"));
-    auto* summary = page->findChild<VNH::DialogTextView*>(QStringLiteral("integrationSelectionSummary"));
+    auto* summary = page->findChild<harken::hub::DialogTextView*>(QStringLiteral("integrationSelectionSummary"));
     ASSERT_NE(sources, nullptr);
     ASSERT_NE(summary, nullptr);
     ASSERT_GT(steps()->rowCount(), 0);
@@ -1368,12 +1368,12 @@ TEST_F(EngineIntegrationsPageTest, SourceRefreshPreservesSelectionAndCheckedResu
             checkedSteps << steps()->item(row, column)->text();
 
     for (int trigger = 0; trigger < 3; ++trigger) {
-        VNH::InstalledVersionRecord studio;
+        harken::hub::InstalledVersionRecord studio;
         studio.buildId = QStringLiteral("added-studio-%1").arg(trigger);
         studio.semanticVersion = QStringLiteral("2.0.%1").arg(trigger);
         studio.healthState = "Installed";
         studio.installPath = dir.filePath("versions/" + studio.buildId);
-        const QString binary = QDir(studio.installPath).filePath(VNH::studioBinaryRelativePath());
+        const QString binary = QDir(studio.installPath).filePath(harken::hub::studioBinaryRelativePath());
         writeFile(binary, "studio");
         writeFile(QDir(studio.installPath).filePath("package-manifest.json"),
                   QJsonDocument(QJsonObject{{"product", "HarkenStudio"},
@@ -1391,12 +1391,12 @@ TEST_F(EngineIntegrationsPageTest, SourceRefreshPreservesSelectionAndCheckedResu
             ? "HarkenSDK/Unity/Harken" : "HarkenIntegration/Unity/Harken");
         makeIntegration();
         QString error;
-        ASSERT_TRUE(VNH::InstallIndex::commitInstallation(studio, trigger + 1, &error));
+        ASSERT_TRUE(harken::hub::InstallIndex::commitInstallation(studio, trigger + 1, &error));
         EXPECT_LT(sources->findData(integrationPath), 0);
         if (trigger == 0) {
-            VNH::VersionsPage versions(&projects);
-            QObject::connect(&versions, &VNH::VersionsPage::versionsRefreshed,
-                             page.get(), &VNH::EngineIntegrationsPage::refreshStudioVersion);
+            harken::hub::VersionsPage versions(&projects);
+            QObject::connect(&versions, &harken::hub::VersionsPage::versionsRefreshed,
+                             page.get(), &harken::hub::EngineIntegrationsPage::refreshStudioVersion);
             versions.refresh();
         } else {
             if (trigger == 1)
@@ -1618,7 +1618,7 @@ TEST_F(EngineIntegrationsPageTest, AmbiguousGameFolderPreservesSelectionAndCanRe
         int warnings = 0;
         QTimer dismiss;
         QObject::connect(&dismiss, &QTimer::timeout, page.get(), [&]() {
-            auto* warning = qobject_cast<VNH::MessageDialog*>(QApplication::activeModalWidget());
+            auto* warning = qobject_cast<harken::hub::MessageDialog*>(QApplication::activeModalWidget());
             if (!warning) return;
             ++warnings;
             warning->accept();
@@ -1662,15 +1662,15 @@ TEST_F(EngineIntegrationsPageTest, LocalizedGuidanceUsesSummaryUntilChecking)
         "QPushButton:disabled { background-color: #171C28; color: #555555; border-color: #272D3A; }"));
     makeIntegration();
     writeFile(QDir(integrationPath).filePath("Runtime/LegacySupport.cs"), "legacy");
-    VNX::UnityIntegrationService service;
-    VNX::UnityIntegrationService::Request request;
+    harken::hub::unity::UnityIntegrationService service;
+    harken::hub::unity::UnityIntegrationService::Request request;
     request.unityProjectPath = unityPath;
     request.integrationSourcePath = integrationPath;
     request.integrationInstallPath = QStringLiteral("Assets/ThirdParty/HarkenSDK");
     ASSERT_TRUE(service.run(request).success);
     page->beginEditForProject(harkenPath, executablePath, unityPath);
     ASSERT_TRUE(waitForVersion());
-    VNH::IntegrationRecord integration;
+    harken::hub::IntegrationRecord integration;
     integration.integrationId = "integration";
     integration.harkenProjectPath = harkenPath;
     integration.engineTargetId = targets.list().front().targetId;
@@ -1689,7 +1689,7 @@ TEST_F(EngineIntegrationsPageTest, LocalizedGuidanceUsesSummaryUntilChecking)
             page.reset();
             QCoreApplication::removeTranslator(&translator);
         });
-        page = std::make_unique<VNH::EngineIntegrationsPage>(
+        page = std::make_unique<harken::hub::EngineIntegrationsPage>(
             &integrations, &targets, &projects);
         page->resize(900, 700);
         page->show();
@@ -1845,8 +1845,8 @@ TEST_F(EngineIntegrationsPageTest, LocalizedGuidanceUsesSummaryUntilChecking)
 TEST_F(EngineIntegrationsPageTest, InspectsInstalledIntegrationWithoutSourceInBothLanguages)
 {
     makeIntegration();
-    VNX::UnityIntegrationService service;
-    VNX::UnityIntegrationService::Request request;
+    harken::hub::unity::UnityIntegrationService service;
+    harken::hub::unity::UnityIntegrationService::Request request;
     request.unityProjectPath = unityPath;
     request.integrationSourcePath = integrationPath;
     ASSERT_TRUE(service.run(request).success);
@@ -1868,7 +1868,7 @@ TEST_F(EngineIntegrationsPageTest, InspectsInstalledIntegrationWithoutSourceInBo
             page.reset();
             QCoreApplication::removeTranslator(&translator);
         });
-        page = std::make_unique<VNH::EngineIntegrationsPage>(&integrations, &targets, &projects);
+        page = std::make_unique<harken::hub::EngineIntegrationsPage>(&integrations, &targets, &projects);
         page->resize(900, 700);
         page->show();
         bool unexpectedDialog = false;
@@ -1919,8 +1919,8 @@ TEST_F(EngineIntegrationsPageTest, InspectsInstalledIntegrationWithoutSourceInBo
 TEST_F(EngineIntegrationsPageTest, RecoversMovedLocationAndDoesNotSaveFailedCandidate)
 {
     makeIntegration();
-    VNX::UnityIntegrationService service;
-    VNX::UnityIntegrationService::Request request;
+    harken::hub::unity::UnityIntegrationService service;
+    harken::hub::unity::UnityIntegrationService::Request request;
     request.unityProjectPath = unityPath;
     request.integrationSourcePath = integrationPath;
     ASSERT_TRUE(service.run(request).success);
@@ -1975,7 +1975,7 @@ TEST_F(EngineIntegrationsPageTest, InstallUpdateUnlinkAndRelinkKeepIntegrationId
         auto* dialog = activeActionDialog();
         if (!dialog) return;
         ++confirmations;
-        if (auto* message = qobject_cast<VNH::MessageDialog*>(dialog)) {
+        if (auto* message = qobject_cast<harken::hub::MessageDialog*>(dialog)) {
             message->button(approve ? QMessageBox::Yes : QMessageBox::No)->click();
         } else if (approve) {
             dialog->accept();
@@ -2085,7 +2085,7 @@ TEST_F(EngineIntegrationsPageTest, FailedUnlinkKeepsRelationshipAndSourceChangeI
     QObject::connect(&responder, &QTimer::timeout, page.get(), [&]() {
         auto* dialog = activeActionDialog();
         if (!dialog) return;
-        if (auto* message = qobject_cast<VNH::MessageDialog*>(dialog))
+        if (auto* message = qobject_cast<harken::hub::MessageDialog*>(dialog))
             message->button(message->standardButtons().testFlag(QMessageBox::Yes)
                 ? QMessageBox::Yes : QMessageBox::Ok)->click();
         else dialog->accept();
@@ -2115,7 +2115,7 @@ TEST_F(EngineIntegrationsPageTest, FailedUnlinkKeepsRelationshipAndSourceChangeI
     EXPECT_EQ(steps()->rowCount(), 0);
     EXPECT_EQ(changes->topLevelItemCount(), 0);
     EXPECT_TRUE(log->toPlainText().isEmpty());
-    EXPECT_TRUE(page->findChild<VNH::DialogTextView*>(QStringLiteral("integrationDiffSummary"))->text().isEmpty());
+    EXPECT_TRUE(page->findChild<harken::hub::DialogTextView*>(QStringLiteral("integrationDiffSummary"))->text().isEmpty());
     EXPECT_FALSE(primary()->isEnabled());
     field("Runtime/Integration Package source path")->setText(integrationPath);
     EXPECT_TRUE(primary()->isEnabled());

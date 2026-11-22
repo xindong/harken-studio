@@ -11,7 +11,7 @@ class QThread;
 class QTimer;
 class QToolButton;
 
-namespace VNH {
+namespace harken::hub {
 
 class EngineIntegrationsPage;
 class EngineTargetStore;

@@ -1,6 +1,6 @@
 #include "Platform/Elevation.h"
 
-namespace VNH {
+namespace harken::hub {
 
 ElevationLaunchResult launchElevatedInstall(const QString& transactionId,
                                             bool explicitInstall, const QString& reviewedDestination, const QString& reviewedIndexHash,

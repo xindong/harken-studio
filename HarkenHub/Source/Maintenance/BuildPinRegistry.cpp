@@ -13,7 +13,7 @@
 #include <QRegularExpression>
 #include <QSaveFile>
 
-namespace VNH {
+namespace harken::hub {
 
 namespace {
 

@@ -39,7 +39,7 @@
 #include <QTimer>
 #include <algorithm>
 
-namespace VNH::Cli {
+namespace harken::hub::Cli {
 namespace {
 
 QJsonObject manifestJson(const ReleaseManifest& manifest)

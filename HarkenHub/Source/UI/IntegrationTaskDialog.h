@@ -20,7 +20,7 @@
 #include <optional>
 #include <type_traits>
 
-namespace VNH {
+namespace harken::hub {
 
 class IntegrationTaskProgress : public QWidget
 {

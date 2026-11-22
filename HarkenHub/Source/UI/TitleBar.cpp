@@ -5,7 +5,7 @@
 #include <QStyle>
 #include <QStyleOptionButton>
 
-namespace VNH {
+namespace harken::hub {
 
 TitleBarButton::TitleBarButton(TitleBarButtonKind kind, QWidget* parent)
     : QPushButton(parent)

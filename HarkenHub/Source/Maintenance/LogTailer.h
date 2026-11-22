@@ -7,7 +7,7 @@
 #include <QStringList>
 #include <QTimer>
 
-namespace VNH {
+namespace harken::hub {
 
 class LogTailer : public QObject
 {

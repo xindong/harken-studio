@@ -2,7 +2,7 @@
 
 #include <QByteArray>
 
-namespace VNH {
+namespace harken::hub {
 
 class TrustAnchors
 {

@@ -8,7 +8,7 @@
 #include <QJsonDocument>
 #include <QSaveFile>
 
-namespace VNH::Cli {
+namespace harken::hub::Cli {
 
 QString writeGuides(QString* error)
 {

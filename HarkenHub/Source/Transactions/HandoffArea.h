@@ -3,7 +3,7 @@
 #include <QByteArray>
 #include <QString>
 
-namespace VNH {
+namespace harken::hub {
 
 struct HandoffPlacement
 {

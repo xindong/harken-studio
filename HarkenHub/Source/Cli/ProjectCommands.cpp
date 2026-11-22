@@ -22,7 +22,7 @@
 #include <QRegularExpression>
 #include <algorithm>
 
-namespace VNH::Cli {
+namespace harken::hub::Cli {
 namespace {
 
 InstalledVersion selectedVersion(const QString& build)

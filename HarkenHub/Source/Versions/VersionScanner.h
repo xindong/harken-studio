@@ -3,7 +3,7 @@
 #include <QString>
 #include <vector>
 
-namespace VNH {
+namespace harken::hub {
 
 struct InstalledVersionRecord;
 

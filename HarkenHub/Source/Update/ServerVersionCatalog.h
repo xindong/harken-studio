@@ -12,7 +12,7 @@
 
 class QNetworkReply;
 
-namespace VNH {
+namespace harken::hub {
 
 struct ServerVersionEntry
 {
@@ -53,7 +53,7 @@ public:
         const QDateTime& now);
 
 signals:
-    void finished(const VNH::ServerVersionList& result);
+    void finished(const harken::hub::ServerVersionList& result);
 
 private:
     void handleReplyFinished();

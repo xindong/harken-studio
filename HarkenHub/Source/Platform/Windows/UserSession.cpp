@@ -11,7 +11,7 @@
 #include <userenv.h>
 #include <wtsapi32.h>
 
-namespace VNH {
+namespace harken::hub {
 
 namespace {
 

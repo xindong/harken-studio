@@ -15,7 +15,7 @@
 #include <climits>
 #include <limits>
 
-namespace VNH {
+namespace harken::hub {
 
 namespace {
 

@@ -24,7 +24,7 @@
 #include <QTableWidget>
 #include <QVBoxLayout>
 
-namespace VNH {
+namespace harken::hub {
 
 namespace {
 

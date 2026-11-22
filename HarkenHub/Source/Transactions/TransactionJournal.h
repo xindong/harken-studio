@@ -4,7 +4,7 @@
 #include <QHash>
 #include <QString>
 
-namespace VNH {
+namespace harken::hub {
 
 class TransactionJournal
 {

@@ -19,7 +19,7 @@
 #include <QRegularExpression>
 #include <QStorageInfo>
 
-namespace VNH {
+namespace harken::hub {
 
 namespace {
 

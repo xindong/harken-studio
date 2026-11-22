@@ -8,7 +8,7 @@
 
 #include <memory>
 
-using VNH::BuildPinRegistry;
+using harken::hub::BuildPinRegistry;
 
 namespace {
 
@@ -70,9 +70,9 @@ TEST_F(BuildPinRegistryTest, PinRegistryUnionsAllUsers)
 
 TEST_F(BuildPinRegistryTest, PinRegistryReflectsProjectAssociations)
 {
-    VNH::ProjectStore store;
+    harken::hub::ProjectStore store;
     ASSERT_TRUE(store.open(dir.filePath(QStringLiteral("projects.db"))));
-    VNH::ProjectRecord project;
+    harken::hub::ProjectRecord project;
     project.canonicalPath = dir.filePath(QStringLiteral("p1.hsp"));
     project.displayName = QStringLiteral("p1");
     project.preferredStudioBuildId = QStringLiteral("preferred1");

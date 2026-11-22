@@ -19,7 +19,7 @@ class QTableWidget;
 class QTimer;
 class QVariantAnimation;
 
-namespace VNH {
+namespace harken::hub {
 
 class ProjectStore;
 class TableSorting;

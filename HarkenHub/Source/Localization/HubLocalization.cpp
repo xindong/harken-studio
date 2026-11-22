@@ -5,7 +5,7 @@
 #include <QCoreApplication>
 #include <QTranslator>
 
-namespace VNH {
+namespace harken::hub {
 
 namespace {
 

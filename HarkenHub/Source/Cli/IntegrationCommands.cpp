@@ -18,7 +18,7 @@
 #include <QUuid>
 #include <algorithm>
 
-namespace VNH::Cli {
+namespace harken::hub::Cli {
 namespace {
 
 QJsonObject relationship(const IntegrationRecord& record)
@@ -43,15 +43,15 @@ Reply unity(const Arguments& args, EngineTargetRecord& target)
     UnityIntegrationRequest request;
     request.unityProjectPath = target.canonicalRoot;
     request.restorePrevious = args.operation == "restore";
-    const auto discovery = VNX::UnityInstallation::discover(target.canonicalRoot);
+    const auto discovery = harken::hub::unity::UnityInstallation::discover(target.canonicalRoot);
     if (!request.restorePrevious) require(discovery.errors.isEmpty(), discovery.errors.join('\n'));
     if (target.integrationInstallPath.isEmpty() && discovery.installations.size() == 1)
         target.integrationInstallPath = QDir(target.canonicalRoot).relativeFilePath(discovery.installations.front().path);
     if (args.options.contains("location") && args.operation == "locate") {
         QString resolved;
         QString error;
-        require(VNX::UnityInstallation::resolveTarget(target.canonicalRoot, args.required("location"), &resolved, &error), error);
-        require(discovery.installations.size() == 1 && VNX::UnityInstallation::samePath(resolved, discovery.installations.front().path),
+        require(harken::hub::unity::UnityInstallation::resolveTarget(target.canonicalRoot, args.required("location"), &resolved, &error), error);
+        require(discovery.installations.size() == 1 && harken::hub::unity::UnityInstallation::samePath(resolved, discovery.installations.front().path),
             "The supplied location does not identify the installed integration");
     }
     request.integrationInstallPath = target.integrationInstallPath;

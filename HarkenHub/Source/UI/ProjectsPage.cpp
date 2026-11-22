@@ -54,7 +54,7 @@
 #include <algorithm>
 #include <unordered_map>
 
-namespace VNH {
+namespace harken::hub {
 
 namespace {
 
