@@ -118,6 +118,37 @@ QByteArray artifactDigest(const QByteArray& header, const std::vector<float>& sa
     return hash.result();
 }
 
+QString artifactPath(const QString& outputDir, const QString& key, ConversionFormat format)
+{
+    return QDir(outputDir).filePath(key
+        + (format == ConversionFormat::Vorbis ? QStringLiteral(".vcm") : QStringLiteral(".pcm")));
+}
+
+bool readPcmHeader(const QByteArray& header, qint64 fileSize, MaterializedArtifact& artifact)
+{
+    QDataStream stream(header);
+    stream.setByteOrder(QDataStream::LittleEndian);
+    quint32 magic = 0, version = 0, sampleRate = 0, channels = 0;
+    quint64 loopStart = 0, loopEnd = 0, revision = 0;
+    stream >> magic >> version >> sampleRate >> channels >> loopStart >> loopEnd >> revision;
+    const auto payloadBytes = fileSize - kHeaderBytes - kDigestBytes;
+    if (stream.status() != QDataStream::Ok || magic != kArtifactMagic || version != kArtifactVersion
+        || sampleRate == 0 || channels == 0 || channels > 8 || payloadBytes <= 0
+        || payloadBytes % (channels * sizeof(float)) != 0)
+        return false;
+    const auto frames = static_cast<quint64>(payloadBytes / (channels * sizeof(float)));
+    if (loopEnd == 0 ? loopStart != 0 : loopStart >= loopEnd || loopEnd > frames)
+        return false;
+    artifact.sampleRate = sampleRate;
+    artifact.channels = static_cast<uint16_t>(channels);
+    artifact.loopStartFrame = loopStart;
+    artifact.loopEndFrame = loopEnd;
+    artifact.loopable = loopEnd != 0;
+    artifact.revision = revision;
+    artifact.outputBytes = static_cast<uint64_t>(payloadBytes);
+    return true;
+}
+
 std::optional<MaterializedArtifact> loadArtifact(const QString& outputDir, const QByteArray& key,
                                                 ConversionFormat format)
 {
@@ -125,8 +156,8 @@ std::optional<MaterializedArtifact> loadArtifact(const QString& outputDir, const
     MaterializedArtifact artifact;
     artifact.format = format;
     artifact.cacheKey = QString::fromLatin1(key);
+    artifact.path = artifactPath(outputDir, artifact.cacheKey, format);
     if (format == ConversionFormat::Vorbis) {
-        artifact.path = QDir(outputDir).filePath(artifact.cacheKey + QStringLiteral(".vcm"));
         auto encoded = std::make_shared<VorbisEncoder::EncodedMedia>();
         if (!readVorbisCacheArtifact(artifact.path, *encoded, artifact.revision,
                                     &artifact.contentHash, nullptr, &artifact.outputBytes))
@@ -140,39 +171,20 @@ std::optional<MaterializedArtifact> loadArtifact(const QString& outputDir, const
         artifact.encodedMedia = std::move(encoded);
         return artifact;
     }
-    artifact.path = QDir(outputDir).filePath(artifact.cacheKey + QStringLiteral(".pcm"));
     QFile file(artifact.path);
     if (!file.open(QIODevice::ReadOnly)) return std::nullopt;
     const auto header = file.read(kHeaderBytes);
     const auto digest = file.read(kDigestBytes);
     if (header.size() != kHeaderBytes || digest.size() != kDigestBytes) return std::nullopt;
-    QDataStream stream(header);
-    stream.setByteOrder(QDataStream::LittleEndian);
-    quint32 magic = 0, version = 0, sampleRate = 0, channels = 0;
-    quint64 loopStart = 0, loopEnd = 0, revision = 0;
-    stream >> magic >> version >> sampleRate >> channels >> loopStart >> loopEnd >> revision;
-    const auto payloadBytes = file.size() - kHeaderBytes - kDigestBytes;
-    if (stream.status() != QDataStream::Ok || magic != kArtifactMagic || version != kArtifactVersion
-        || sampleRate == 0 || channels == 0 || channels > 8 || payloadBytes <= 0
-        || payloadBytes % (channels * sizeof(float)) != 0)
-        return std::nullopt;
-    const auto frames = static_cast<quint64>(payloadBytes / (channels * sizeof(float)));
-    if (loopEnd == 0 ? loopStart != 0 : loopStart >= loopEnd || loopEnd > frames)
-        return std::nullopt;
+    if (!readPcmHeader(header, file.size(), artifact)) return std::nullopt;
+    const auto payloadBytes = static_cast<qint64>(artifact.outputBytes);
     auto samples = std::make_shared<std::vector<float>>(payloadBytes / sizeof(float));
     if (file.read(reinterpret_cast<char*>(samples->data()), payloadBytes) != payloadBytes
         || artifactDigest(header, *samples) != digest)
         return std::nullopt;
-    artifact.sampleRate = sampleRate;
-    artifact.channels = static_cast<uint16_t>(channels);
-    artifact.loopStartFrame = loopStart;
-    artifact.loopEndFrame = loopEnd;
-    artifact.loopable = loopEnd != 0;
     artifact.cacheHit = true;
     artifact.contentHash = QString::fromLatin1(digest.toHex());
     artifact.samples = std::move(samples);
-    artifact.revision = revision;
-    artifact.outputBytes = static_cast<uint64_t>(payloadBytes);
     return artifact;
 }
 
@@ -182,8 +194,7 @@ bool publishArtifact(MaterializedArtifact& artifact, const QString& outputDir, Q
         artifact.path.clear();
         return true;
     }
-    const auto path = QDir(outputDir).filePath(artifact.cacheKey
-        + (artifact.format == ConversionFormat::Vorbis ? QStringLiteral(".vcm") : QStringLiteral(".pcm")));
+    const auto path = artifactPath(outputDir, artifact.cacheKey, artifact.format);
     if (artifact.path == path && QFileInfo(path).isFile()) return true;
     bool written = false;
     if (artifact.format == ConversionFormat::Vorbis) {
@@ -220,11 +231,19 @@ MaterializationEvents& MaterializationEvents::instance()
     return events;
 }
 
-std::optional<MaterializedArtifact> findCachedArtifact(const QString& key,
+std::optional<CachedMediaProperties> inspectCachedArtifact(const QString& key,
     const QString& outputDir, ConversionFormat format)
 {
-    if (key.isEmpty()) return std::nullopt;
-    return loadArtifact(outputDir, key.toLatin1(), format);
+    if (key.isEmpty() || outputDir.isEmpty()) return std::nullopt;
+    const auto path = artifactPath(outputDir, key, format);
+    if (format == ConversionFormat::Vorbis) return inspectVorbisCacheArtifact(path);
+    QFile file(path);
+    MaterializedArtifact metadata;
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Unbuffered)
+        || !readPcmHeader(file.read(kHeaderBytes), file.size(), metadata))
+        return std::nullopt;
+    return CachedMediaProperties{path, metadata.sampleRate, metadata.channels,
+        metadata.outputBytes / sizeof(float) / metadata.channels, metadata.outputBytes};
 }
 
 QString cacheKey(const QString& inputFingerprint, const SoundSourceDef& source,

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Components/VSound.h"
+#include "Core/AssetPipeline/CacheArtifactWriter.h"
 #include "Core/ConversionResolution.h"
 #include "ProjectPlatform.h"
 #include "Tooling/Harkenizer/Core/VorbisEncoder.h"
@@ -91,7 +92,7 @@ QString cacheKey(const QString& inputFingerprint, const SoundSourceDef& source,
                  double scheduleOffsetSec, const std::optional<ResolvedConversion>& conversion,
                  const AudioMetadata& metadata);
 
-std::optional<MaterializedArtifact> findCachedArtifact(const QString& key,
+std::optional<CachedMediaProperties> inspectCachedArtifact(const QString& key,
     const QString& outputDir, ConversionFormat format);
 
 std::optional<FrameRange> mapFrameRange(const SoundSourceDef& source,

@@ -39,6 +39,46 @@ bool cacheError(QString* error, const QString& message)
     return false;
 }
 
+struct VorbisCacheHeader
+{
+    quint32 sampleRate, channels, smallBlockFrames, largeBlockFrames, seekGrainFrames;
+    quint64 frameCount, prerollFrames, tailFrames, loopStartFrame, loopEndFrame;
+    quint64 revision = 0;
+    quint64 payloadBytes = 0;
+    quint32 encoderBytes = 0;
+    quint32 identificationBytes = 0;
+    quint32 setupBytes = 0;
+    quint32 packetCount = 0;
+    quint32 seekCount = 0;
+};
+
+bool readVorbisHeader(const QByteArray& bytes, qint64 fileSize, VorbisCacheHeader& header)
+{
+    if (bytes.size() != kVorbisHeaderBytes || fileSize < kVorbisHeaderBytes + kDigestBytes) return false;
+    QDataStream fields(bytes);
+    fields.setByteOrder(QDataStream::LittleEndian);
+    quint32 magic = 0, version = 0;
+    fields >> magic >> version >> header.sampleRate >> header.channels >> header.smallBlockFrames
+           >> header.largeBlockFrames >> header.seekGrainFrames >> header.frameCount
+           >> header.prerollFrames >> header.tailFrames >> header.loopStartFrame >> header.loopEndFrame
+           >> header.revision >> header.encoderBytes >> header.identificationBytes >> header.setupBytes
+           >> header.packetCount >> header.seekCount >> header.payloadBytes;
+    const auto minimumBytes = static_cast<uint64_t>(header.encoderBytes) + header.identificationBytes
+        + header.setupBytes + static_cast<uint64_t>(header.packetCount) * 13
+        + static_cast<uint64_t>(header.seekCount) * 28;
+    if (fields.status() != QDataStream::Ok || magic != kVorbisCacheMagic
+        || version != VorbisEncoder::kFormatVersion || header.channels == 0 || header.channels > 8
+        || !header.sampleRate || !header.frameCount || !header.seekGrainFrames
+        || header.frameCount > static_cast<quint64>(std::numeric_limits<qint64>::max())
+        || (header.loopEndFrame == 0 ? header.loopStartFrame != 0
+            : header.loopStartFrame >= header.loopEndFrame || header.loopEndFrame > header.frameCount)
+        || !header.encoderBytes || !header.identificationBytes || !header.setupBytes
+        || !header.packetCount || !header.seekCount
+        || header.payloadBytes != static_cast<uint64_t>(fileSize - kVorbisHeaderBytes - kDigestBytes)
+        || minimumBytes > header.payloadBytes) return false;
+    return true;
+}
+
 }
 
 bool writeCacheArtifact(const QString& path, const std::function<bool(QIODevice&)>& write)
@@ -133,50 +173,47 @@ QByteArray encodeVorbisCacheArtifact(const VorbisEncoder::EncodedMedia& media,
     return header + digest + payload;
 }
 
+std::optional<CachedMediaProperties> inspectVorbisCacheArtifact(const QString& path)
+{
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Unbuffered)) return std::nullopt;
+    VorbisCacheHeader header;
+    if (!readVorbisHeader(file.read(kVorbisHeaderBytes), file.size(), header)) return std::nullopt;
+    return CachedMediaProperties{path, header.sampleRate, static_cast<uint16_t>(header.channels),
+        header.frameCount, header.payloadBytes};
+}
+
 bool readVorbisCacheArtifact(const QString& path, VorbisEncoder::EncodedMedia& media,
     uint64_t& mediaRevision, QString* contentHash, QString* error, uint64_t* outputBytes)
 {
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly)) return cacheError(error, file.errorString());
-    const auto bytes = file.readAll();
     const auto invalid = [&] { return cacheError(error, QStringLiteral("Invalid Vorbis cache: %1").arg(path)); };
-    if (bytes.size() < kVorbisHeaderBytes + kDigestBytes || bytes.size() != file.size()) return invalid();
-    const auto header = bytes.first(kVorbisHeaderBytes);
-    const auto digest = bytes.mid(kVorbisHeaderBytes, kDigestBytes);
-    const auto payload = bytes.sliced(kVorbisHeaderBytes + kDigestBytes);
-    if (vorbisDigest(header, payload) != digest) return invalid();
-    QDataStream fields(header);
-    fields.setByteOrder(QDataStream::LittleEndian);
-    quint32 magic = 0, version = 0, sampleRate = 0, channels = 0, smallBlock = 0, largeBlock = 0, grain = 0;
-    quint64 frames = 0, preroll = 0, tail = 0, loopStart = 0, loopEnd = 0, revision = 0, payloadBytes = 0;
-    quint32 encoderBytes = 0, identificationBytes = 0, setupBytes = 0, packetCount = 0, seekCount = 0;
-    fields >> magic >> version >> sampleRate >> channels >> smallBlock >> largeBlock >> grain
-           >> frames >> preroll >> tail >> loopStart >> loopEnd >> revision
-           >> encoderBytes >> identificationBytes >> setupBytes >> packetCount >> seekCount >> payloadBytes;
-    const auto minimumBytes = static_cast<uint64_t>(encoderBytes) + identificationBytes + setupBytes
-        + static_cast<uint64_t>(packetCount) * 13 + static_cast<uint64_t>(seekCount) * 28;
-    if (fields.status() != QDataStream::Ok || magic != kVorbisCacheMagic
-        || version != VorbisEncoder::kFormatVersion || channels > 8
-        || payloadBytes != static_cast<uint64_t>(payload.size()) || minimumBytes > payloadBytes)
-        return invalid();
+    const auto headerBytes = file.read(kVorbisHeaderBytes);
+    VorbisCacheHeader header;
+    if (!readVorbisHeader(headerBytes, file.size(), header)) return invalid();
+    const auto digest = file.read(kDigestBytes);
+    const auto payload = file.readAll();
+    if (static_cast<uint64_t>(payload.size()) != header.payloadBytes
+        || vorbisDigest(headerBytes, payload) != digest) return invalid();
     VorbisEncoder::EncodedMedia decoded;
-    decoded.sampleRate = sampleRate;
-    decoded.channels = static_cast<uint16_t>(channels);
-    decoded.smallBlockFrames = smallBlock;
-    decoded.largeBlockFrames = largeBlock;
-    decoded.seekGrainFrames = grain;
-    decoded.frameCount = frames;
-    decoded.prerollFrames = preroll;
-    decoded.tailFrames = tail;
-    decoded.loopStartFrame = loopStart;
-    decoded.loopEndFrame = loopEnd;
+    decoded.sampleRate = header.sampleRate;
+    decoded.channels = static_cast<uint16_t>(header.channels);
+    decoded.smallBlockFrames = header.smallBlockFrames;
+    decoded.largeBlockFrames = header.largeBlockFrames;
+    decoded.seekGrainFrames = header.seekGrainFrames;
+    decoded.frameCount = header.frameCount;
+    decoded.prerollFrames = header.prerollFrames;
+    decoded.tailFrames = header.tailFrames;
+    decoded.loopStartFrame = header.loopStartFrame;
+    decoded.loopEndFrame = header.loopEndFrame;
     QDataStream data(payload);
     data.setByteOrder(QDataStream::LittleEndian);
-    decoded.encoderVersion = QString::fromUtf8(data.device()->read(encoderBytes));
-    decoded.identificationHeader = data.device()->read(identificationBytes);
-    decoded.setupHeader = data.device()->read(setupBytes);
-    decoded.packets.reserve(packetCount);
-    for (quint32 i = 0; i < packetCount; ++i) {
+    decoded.encoderVersion = QString::fromUtf8(data.device()->read(header.encoderBytes));
+    decoded.identificationHeader = data.device()->read(header.identificationBytes);
+    decoded.setupHeader = data.device()->read(header.setupBytes);
+    decoded.packets.reserve(header.packetCount);
+    for (quint32 i = 0; i < header.packetCount; ++i) {
         quint32 count = 0;
         qint64 granule = 0;
         data >> count >> granule;
@@ -184,10 +221,10 @@ bool readVorbisCacheArtifact(const QString& path, VorbisEncoder::EncodedMedia& m
             return invalid();
         decoded.packets.push_back({data.device()->read(count), granule});
     }
-    if (static_cast<uint64_t>(data.device()->bytesAvailable()) != static_cast<uint64_t>(seekCount) * 28)
+    if (static_cast<uint64_t>(data.device()->bytesAvailable()) != static_cast<uint64_t>(header.seekCount) * 28)
         return invalid();
-    decoded.seekTable.reserve(seekCount);
-    for (quint32 i = 0; i < seekCount; ++i) {
+    decoded.seekTable.reserve(header.seekCount);
+    for (quint32 i = 0; i < header.seekCount; ++i) {
         quint64 outputFrame = 0, byteOffset = 0, discardFrames = 0;
         quint32 packetIndex = 0;
         data >> outputFrame >> packetIndex >> byteOffset >> discardFrames;
@@ -196,9 +233,9 @@ bool readVorbisCacheArtifact(const QString& path, VorbisEncoder::EncodedMedia& m
     if (data.status() != QDataStream::Ok || !data.atEnd() || !VorbisEncoder::validate(decoded, error))
         return invalid();
     media = std::move(decoded);
-    mediaRevision = revision;
+    mediaRevision = header.revision;
     if (contentHash) *contentHash = QString::fromLatin1(digest.toHex());
-    if (outputBytes) *outputBytes = payloadBytes;
+    if (outputBytes) *outputBytes = header.payloadBytes;
     return true;
 }
 

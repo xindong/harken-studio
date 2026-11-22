@@ -49,7 +49,13 @@ struct SelectedSource
     QString language;
 };
 
-QVector<SelectedSource> selectedSources(const ProjectData& project, const QUuid& presetGuid,
+struct SourceSelection
+{
+    const ProjectItem* preset = nullptr;
+    QVector<SelectedSource> sources;
+};
+
+SourceSelection selectedSources(const ProjectData& project, const QUuid& presetGuid,
     ProjectPlatformId platform, QString* error)
 {
     if (error) error->clear();
@@ -65,7 +71,7 @@ QVector<SelectedSource> selectedSources(const ProjectData& project, const QUuid&
         if (error) *error = QStringLiteral("Conversion preset is unavailable");
         return {};
     }
-    QVector<SelectedSource> selected;
+    SourceSelection selected{*preset, {}};
     const auto effective = std::make_shared<const FieldGroupEffectiveSnapshot>(
         buildFieldGroupEffectiveSnapshot(project, toFieldGroupGuid(platform)));
     for (const auto* item : items) {
@@ -95,7 +101,7 @@ QVector<SelectedSource> selectedSources(const ProjectData& project, const QUuid&
                 }
                 continue;
             }
-            selected.push_back({item, selection.source, language});
+            selected.sources.push_back({item, selection.source, language});
         }
     }
     return selected;
@@ -134,17 +140,12 @@ QJsonObject SourceResult::toJson() const
     return result;
 }
 
-std::optional<SourceResult> inspectSource(const ProjectData& project,
-    const ProjectItem& sound, const SoundSourceDef& source, const AssetInfo& asset,
-    ProjectPlatformId platform, const QString& language, double scheduleOffsetSec, QString* error)
+namespace {
+
+SourceResult describeSource(const ProjectItem& sound, const SoundSourceDef& source,
+    const AssetInfo& asset, const QString& language, double scheduleOffsetSec,
+    const std::optional<ResolvedConversion>& conversion, const QString& directory)
 {
-    QString resolutionError;
-    const auto conversion = resolveConversion(project, sound, platform, asset, &resolutionError);
-    if (!resolutionError.isEmpty()) {
-        if (error) *error = resolutionError;
-        return std::nullopt;
-    }
-    if (error) error->clear();
     SourceResult result;
     result.soundGuid = sound.guid;
     result.source = source;
@@ -156,32 +157,55 @@ std::optional<SourceResult> inspectSource(const ProjectData& project,
     result.presetGuid = conversion->presetGuid;
     const auto key = SoundSourceDerivative::cacheKey(asset.contentHash,
         SoundSourceSemantics::authoredView(source, &asset), scheduleOffsetSec, conversion, asset.metadata);
-    const auto artifact = SoundSourceDerivative::findCachedArtifact(key, cacheDirectory(project), conversion->format);
+    const auto artifact = SoundSourceDerivative::inspectCachedArtifact(key, directory, conversion->format);
     if (artifact) {
-        const auto frames = artifact->encodedMedia ? artifact->encodedMedia->frameCount
-            : artifact->samples->size() / artifact->channels;
         result.converted = FileProperties{artifact->path,
-            artifact->format == ConversionFormat::Vorbis ? QStringLiteral("Vorbis") : QStringLiteral("PCM"),
-            artifact->sampleRate, artifact->channels, frames, artifact->outputBytes};
+            conversion->format == ConversionFormat::Vorbis ? QStringLiteral("Vorbis") : QStringLiteral("PCM"),
+            artifact->sampleRate, artifact->channels, artifact->frames, artifact->outputBytes};
     }
     return result;
+}
+
+}
+
+std::optional<SourceResult> inspectSource(const ProjectData& project,
+    const ProjectItem& sound, const SoundSourceDef& source, const AssetInfo& asset,
+    ProjectPlatformId platform, const QString& language, double scheduleOffsetSec, QString* error)
+{
+    QString resolutionError;
+    const auto conversion = resolveConversion(project, sound, platform, asset, &resolutionError);
+    if (!resolutionError.isEmpty()) {
+        if (error) *error = resolutionError;
+        return std::nullopt;
+    }
+    if (error) error->clear();
+    return describeSource(sound, source, asset, language, scheduleOffsetSec, conversion, cacheDirectory(project));
 }
 
 QVector<SourceResult> query(const ProjectData& project, const QUuid& presetGuid,
     ProjectPlatformId platform, QString* error)
 {
-    const auto sources = selectedSources(project, presetGuid, platform, error);
+    const auto selection = selectedSources(project, presetGuid, platform, error);
+    if (selection.sources.isEmpty()) return {};
+    const auto* config = selection.preset->comp<VConversion>();
+    if (!config) {
+        if (error) *error = QStringLiteral("Conversion reference does not target a Conversion preset");
+        return {};
+    }
+    const ConversionPresetSnapshot preset{presetGuid, config->config};
+    const auto directory = cacheDirectory(project);
     QVector<SourceResult> results;
-    for (const auto& selected : sources) {
+    results.reserve(selection.sources.size());
+    for (const auto& selected : selection.sources) {
         const auto* asset = AssetRegistry::instance().getAsset(selected.source->sourceId);
         if (!asset) {
             if (error) *error = QStringLiteral("Conversion source %1 is unavailable").arg(selected.source->sourceId);
             return {};
         }
-        const auto row = inspectSource(project, *selected.sound, *selected.source, *asset, platform,
-            selected.language, selected.sound->comp<VSound>()->scheduleOffsetSec, error);
-        if (!row) return {};
-        results.push_back(*row);
+        const auto conversion = resolveConversion(preset, *asset, error);
+        if (!conversion) return {};
+        results.push_back(describeSource(*selected.sound, *selected.source, *asset, selected.language,
+            selected.sound->comp<VSound>()->scheduleOffsetSec, conversion, directory));
     }
     return results;
 }
@@ -235,7 +259,7 @@ std::shared_ptr<Batch> Batch::create(const ProjectData& project,
     const QUuid& presetGuid, ProjectPlatformId platform, QString* error)
 {
     QString selectionError;
-    const auto sources = selectedSources(project, presetGuid, platform, &selectionError);
+    const auto selection = selectedSources(project, presetGuid, platform, &selectionError);
     if (!selectionError.isEmpty()) {
         if (error) *error = selectionError;
         return {};
@@ -248,7 +272,7 @@ std::shared_ptr<Batch> Batch::create(const ProjectData& project,
     state.snapshot = AssetRegistry::instance().buildSnapshot(projectRoot, project.platforms, false);
     if (!state.snapshot.captureConversions(project, error)) return {};
     state.snapshot.sourceInputs = std::make_shared<BuildSourceInputs>(projectRoot, state.snapshot.assets);
-    for (const auto& selected : sources)
+    for (const auto& selected : selection.sources)
         state.work.push_back({selected.sound->runtimeId(), *selected.source,
             selected.sound->comp<VSound>()->scheduleOffsetSec});
     return batch;
