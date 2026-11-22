@@ -2367,7 +2367,12 @@ TEST(CanonicalPackSetActivate, DefaultBudgetsLoadBeyondFormerResidentAndIndexLim
         packCount * actionsPerPack - 1);
     VnActionFiringHandle firing = 0;
     ASSERT_EQ(VN_OK, Vn_PostAction(&post, &firing));
-    EXPECT_NE(0u, firing);
+    ASSERT_NE(0u, firing);
+    VnActionFiringInfo info{};
+    info.structSize = sizeof(info);
+    ASSERT_EQ(VN_OK, Vn_QueryActionFiring(firing, &info));
+    EXPECT_EQ(VN_ACTION_OUTCOME_SUCCEEDED, info.outcome);
+    EXPECT_EQ(stepsPerAction, info.directStepTerminalCount);
     EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
 }
 
