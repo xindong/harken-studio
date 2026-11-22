@@ -224,7 +224,7 @@ typedef struct VnConfig {
                                        * all voice and bus chains; 0 = grow on demand */
     uint32_t streamRingFrames;   /* per-stream ring capacity in frames;
                                   * 0 = 16384; rounded up to a power of two */
-    uint32_t maxStreams;         /* stream slot capacity; 0 = 16. A streamed
+    uint32_t maxStreams;         /* stream slot capacity; 0 = grow on demand. A streamed
                                   * Render Voice also consumes one such slot. */
     uint32_t prebufferMs;        /* ring fill required before a streamed
                                   * voice starts sounding; 0 = 100 */
