@@ -5738,7 +5738,8 @@ bool ImmediateActionLane::Retire(ImmediateLaneHandle handle,
     attempt->nextBucket.store(0, std::memory_order_relaxed);
     attempt->state.store(ImmediateLaneAttemptState::Free,
                          std::memory_order_release);
-    activeAttemptSlots_->Notify(handle.slot, UINT64_MAX);
+    if (phase == ImmediateLaneAttemptState::Committed || phase == ImmediateLaneAttemptState::Cancelling)
+        activeAttemptSlots_->Notify(handle.slot, UINT64_MAX);
     activeAttemptSlots_->Set(handle.slot, false);
     firstFreeCandidate_ = std::min(firstFreeCandidate_, handle.slot);
     const auto previous = outstandingAttemptCount_.fetch_sub(1, std::memory_order_release);

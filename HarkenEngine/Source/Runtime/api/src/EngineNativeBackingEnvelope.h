@@ -736,6 +736,7 @@ private:
                     result.profile.variableControls = SaturatingAdd(result.profile.variableControls,
                         dynamic.profile.variableControls, UINT32_MAX, result.flags);
                     result.profile.queueRows = SaturatingAdd(result.profile.queueRows, dynamic.profile.queueRows, UINT32_MAX, result.flags);
+                    result.profile.queue.Include(dynamic.profile.queue);
                     result.profile.conditionalRows = SaturatingAdd(result.profile.conditionalRows, dynamic.profile.conditionalRows, UINT32_MAX, result.flags);
                     for (std::uint32_t t = 1; t <= kLeafCapacity; ++t)
                         result.profile.completionWidths[t] = SaturatingAdd(result.profile.completionWidths[t],
@@ -895,6 +896,7 @@ private:
                 futureTransitions = std::max(futureTransitions, next.profile.transitionRows);
                 futureControls = std::max(futureControls, next.profile.variableControls);
                 futureQueueRows = std::max(futureQueueRows, next.profile.queueRows);
+                current.profile.queue.Include(next.profile.queue);
                 futureConditionalRows = std::max(futureConditionalRows, next.profile.conditionalRows);
                 futureEmbeddedGroups = std::max(futureEmbeddedGroups, next.profile.embeddedArmGroups);
                 futureEmbeddedMembers = std::max(futureEmbeddedMembers, next.profile.embeddedArmMembers);
