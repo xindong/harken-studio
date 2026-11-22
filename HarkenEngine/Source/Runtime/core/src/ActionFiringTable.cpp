@@ -164,6 +164,7 @@ bool ActionFiringTable::Reset() {
     }
     GrowingRowStorage<Row> rows;
     rows_.Swap(rows);
+    firstFree_ = 0;
     liveCount_ = 0;
     highWater_ = 0;
     quarantinedCount_ = 0;
@@ -174,13 +175,14 @@ bool ActionFiringTable::Reset() {
 
 ActionFiringTable::Row* ActionFiringTable::AcquireFreeRow(std::uint32_t& slot) noexcept {
     const auto count = rows_.ConstructedCount();
-    for (slot = 0; slot < UINT32_MAX; ++slot) {
+    for (slot = firstFree_; slot < UINT32_MAX; ++slot) {
         if (slot == count && !rows_.ConstructThrough(slot + 1u)) {
             detail::RecordLogicAllocFailure(detail::LogicAllocSite::EngineStorage);
             break;
         }
         auto& row = rows_[slot];
         if (row.state != SlotState::Free) continue;
+        firstFree_ = slot;
         if (row.generation != 0) return &row;
         row.generation = NextActionFiringGeneration();
         if (row.generation != 0) return &row;
@@ -1057,20 +1059,7 @@ bool ActionFiringTable::CommitTree(
     }
     const ActionFiringHandle rootHandle = prepared->handle_;
     std::uint32_t committed = 0;
-    for (std::uint32_t slot = 0; slot < rows_.ConstructedCount(); ++slot) {
-        Row& candidate = rows_[slot];
-        if (candidate.state == SlotState::Prepared &&
-            candidate.root == prepared->handle_) {
-            candidate.acceptedLogicSequence = acceptedLogicSequence;
-            candidate.state = SlotState::Active;
-            for (std::uint32_t index = 0;
-                 index < candidate.directStepCount; ++index) {
-                candidate.results[index].logicCommitSequence =
-                    acceptedLogicSequence;
-            }
-            ++committed;
-        }
-    }
+    if (!ActivatePreparedSubtree(rootHandle, acceptedLogicSequence, &committed)) return false;
     prepared->prepared_ = false;
     liveCount_ += committed;
     highWater_ = (std::max)(highWater_, liveCount_);
@@ -1179,6 +1168,7 @@ bool ActionFiringTable::Recycle(std::uint32_t slot, Row& row) noexcept {
         return false;
     }
     row.state = SlotState::Free;
+    firstFree_ = std::min(firstFree_, slot);
     return true;
 }
 
@@ -1491,6 +1481,20 @@ ActionFiringHandle ActionFiringTable::ActiveRootAt(std::uint32_t slot) const noe
     return MakeHandle(slot, row.generation);
 }
 
+template<class Visit>
+bool ActionFiringTable::VisitPublishedTree(const Row& row, const Visit& visit) const noexcept {
+    // Delayed children can be linked while still private. Their descendants
+    // are not visible to queries until the subtree has committed.
+    if (row.state == SlotState::Prepared) return true;
+    if (!visit(row)) return false;
+    for (auto handle = row.firstChild; handle != 0;) {
+        const auto* child = rows_.TryAt(ResolveSlot(handle));
+        if (!child || !VisitPublishedTree(*child, visit)) return false;
+        handle = child->nextSibling;
+    }
+    return true;
+}
+
 bool ActionFiringTable::CaptureTerminalTreeOwners(
     ActionFiringHandle root, ActionFiringOwnerStamp* outOwners,
     std::uint32_t ownerCapacity,
@@ -1505,33 +1509,18 @@ bool ActionFiringTable::CaptureTerminalTreeOwners(
         rootRow->state != SlotState::TerminalRetained) {
         return false;
     }
-    for (std::uint32_t slot = 0; slot < rows_.ConstructedCount(); ++slot) {
-        const Row& row = rows_[slot];
-        if (row.root != root || row.state == SlotState::Free ||
-            row.state == SlotState::Prepared ||
-            row.state == SlotState::Quarantined) {
-            continue;
-        }
-        if (row.state != SlotState::TerminalRetained ||
-            row.ownedDeferredCount != 0 || !row.owner.Valid()) {
-            *outOwnerCount = 0;
+    const auto collect = [&](const Row& row) {
+        if (row.state != SlotState::TerminalRetained || row.ownedDeferredCount != 0 || !row.owner.Valid())
             return false;
-        }
-        bool duplicate = false;
-        for (std::uint32_t index = 0; index < *outOwnerCount; ++index) {
-            if (outOwners[index] == row.owner) {
-                duplicate = true;
-                break;
-            }
-        }
-        if (duplicate) {
-            continue;
-        }
-        if (*outOwnerCount == ownerCapacity) {
-            *outOwnerCount = 0;
-            return false;
-        }
+        for (std::uint32_t index = 0; index < *outOwnerCount; ++index)
+            if (outOwners[index] == row.owner) return true;
+        if (*outOwnerCount == ownerCapacity) return false;
         outOwners[(*outOwnerCount)++] = row.owner;
+        return true;
+    };
+    if (!VisitPublishedTree(*rootRow, collect)) {
+        *outOwnerCount = 0;
+        return false;
     }
     return *outOwnerCount != 0;
 }
@@ -1555,18 +1544,11 @@ bool ActionFiringTable::TreeLivePlayableCount(
         return false;
     }
     std::uint32_t total = 0;
-    for (std::uint32_t slot = 0; slot < rows_.ConstructedCount(); ++slot) {
-        const Row& row = rows_[slot];
-        if ((row.state == SlotState::Active ||
-             row.state == SlotState::Stopping ||
-             row.state == SlotState::TerminalRetained) &&
-            row.root == root) {
-            if (total > UINT32_MAX - row.livePlayableCount) {
-                return false;
-            }
-            total += row.livePlayableCount;
-        }
-    }
+    if (!VisitPublishedTree(*rootRow, [&](const Row& row) {
+        if (row.livePlayableCount > UINT32_MAX - total) return false;
+        total += row.livePlayableCount;
+        return true;
+    })) return false;
     *out = total;
     return true;
 }
@@ -1582,18 +1564,11 @@ bool ActionFiringTable::TreeOwnedDeferredCount(
         return false;
     }
     std::uint32_t total = 0;
-    for (std::uint32_t slot = 0; slot < rows_.ConstructedCount(); ++slot) {
-        const Row& row = rows_[slot];
-        if ((row.state == SlotState::Active ||
-             row.state == SlotState::Stopping ||
-             row.state == SlotState::TerminalRetained) &&
-            row.root == root) {
-            if (total > UINT32_MAX - row.ownedDeferredCount) {
-                return false;
-            }
-            total += row.ownedDeferredCount;
-        }
-    }
+    if (!VisitPublishedTree(*rootRow, [&](const Row& row) {
+        if (row.ownedDeferredCount > UINT32_MAX - total) return false;
+        total += row.ownedDeferredCount;
+        return true;
+    })) return false;
     *out = total;
     return true;
 }

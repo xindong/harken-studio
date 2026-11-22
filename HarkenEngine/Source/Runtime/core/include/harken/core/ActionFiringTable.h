@@ -421,7 +421,11 @@ private:
     void ObserveCommittedSubtree(ActionFiringHandle handle) noexcept;
     void ObserveActionTerminal(Row& row) noexcept;
 
+    template<class Visit>
+    bool VisitPublishedTree(const Row& row, const Visit& visit) const noexcept;
+
     GrowingRowStorage<Row> rows_;
+    std::uint32_t firstFree_ = 0;
     std::uint32_t liveCount_ = 0;
     std::uint32_t highWater_ = 0;
     std::uint32_t quarantinedCount_ = 0;
