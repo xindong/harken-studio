@@ -75,6 +75,8 @@ class SchemaLockTest(unittest.TestCase):
         manifest["supportedHistorical"] = sorted(set(self.editor_history) | {self.editor_version})
         path.write_text(json.dumps(manifest), encoding="utf-8")
         before = self.snapshot()
+        with self.assertRaisesRegex(ValueError, "development generation must be staged with next"):
+            self.stage()
         result = self.stage(editor="next")
         self.assertEqual(self.snapshot(), before)
         self.assertEqual(result["trees"]["Editor"]["generation"], self.editor_version + 1)

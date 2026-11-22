@@ -39,15 +39,16 @@ def stage_candidate(target: Path, modes: dict[str, str], source_root: Path | Non
         raise ValueError(f"{audit.PACK_BINARY} tree is missing")
     if set(modes) != set(audit.TREE_NAMES) or any(mode not in {"same", "next"} for mode in modes.values()):
         raise ValueError("Choose same or next independently for Editor and Pack")
+    for tree, data in trees.items():
+        if "developmentVersion" in data["manifest"] and modes[tree] != "next":
+            raise ValueError(f"{tree} development generation must be staged with next")
     studio_target, pack_target = candidate_roots(target)
     shutil.copytree(source_root, studio_target)
     shutil.copytree(pack_binary_root, pack_target)
     for tree, data in trees.items():
         manifest = dict(data["manifest"])
         version = max(manifest["published"])
-        development = manifest.pop("developmentVersion", None)
-        if development is not None and modes[tree] != "next":
-            raise ValueError(f"{tree} development generation must be staged with next")
+        manifest.pop("developmentVersion", None)
         if modes[tree] == "next":
             version += 1
             manifest["published"] = [*manifest["published"], version]
