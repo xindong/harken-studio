@@ -35,6 +35,7 @@
 #include "harken_buildinfo.h"
 
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 #include "harken_studio_build/WorldCodec.h"
 #include "harken_studio_build/MediaContentRevision.h"
 #include "harken_studio_build/WorldValidation.h"
@@ -67,6 +68,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <limits>
@@ -3700,6 +3702,137 @@ TEST(ProjectPackExport, ProjectBuildReuseOnlyDependsOnSelectedPlatformSources)
     ASSERT_TRUE(reused.finalizationResult.success) << reused.finalizationResult.error.toStdString();
     EXPECT_FALSE(compiled);
     EXPECT_EQ(readFileBytes(context.live.filePath(QStringLiteral("One.bytes"))), windowsBytes);
+}
+
+TEST(ResidentVorbisPackPlayback, EnginePlaysSeeksAndLoopsStudioExport)
+{
+    using namespace harken::studio;
+    constexpr uint32_t rate = 48000, block = 128;
+    constexpr uint32_t loopStart = 4321, loopEnd = 12513, seekFrame = 10721;
+    // Each landmark has a different level. The preceding seek-grid point and the
+    // audio after the loop end are quiet, so decoding from either is detectable.
+    std::vector<float> samples(16000);
+    for (size_t i = 0; i < samples.size(); ++i) {
+        float level = 0.02f;
+        if (i < 2048) level = 0.12f;
+        if (i >= loopStart && i < loopStart + 1024) level = 0.72f;
+        if (i >= seekFrame && i < loopEnd) level = 0.36f;
+        samples[i] = level * static_cast<float>(std::sin(i * (2.0 * 3.141592653589793 / 48.0)));
+    }
+
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    auto& registry = AssetRegistry::instance();
+    registry.clear();
+    const auto clearRegistry = qScopeGuard([&] { registry.clear(); });
+    registry.setProjectRoot(dir.path());
+    const auto source = registerPcmAsset(dir.path(), "markers.wav", samples, 1);
+    ProjectData project;
+    ASSERT_NO_FATAL_FAILURE(buildProject(project, dir.path(), source, source,
+        {{QStringLiteral("Play"), 21, kSharedSoundObjectId}}));
+    auto& sound = *project.layers.front().rootItem->children.front();
+    sound.comp<VAudio>()->loopCount = 0;
+    sound.comp<VSound>()->sources.plain.entries.front().loopRegion = SoundLoopRegion{loopStart, loopEnd};
+    auto preset = makeItem("Vorbis", ProjectItem::Type::Conversion, 601);
+    auto& rules = preset->comp<VConversion>()->config.rules;
+    rules = {{std::nullopt, rate}};
+    rules.front().setFormat(ConversionFormat::Vorbis);
+    project.conversionItems.push_back({preset});
+    sound.fieldGroups.conversion.shared = {FieldGroupMode::Local, ConversionFieldGroup{toFieldGroupGuid(preset->guid)}};
+
+    const QDir output(dir.filePath("published"));
+    ProjectPackExporter::ExportOptions options;
+    options.platform = HarkenTest::platformIdString("Windows");
+    const auto result = ProjectPackExporter().ExportAllPacks(project, output.path(), options);
+    ASSERT_TRUE(result.success) << result.error.toStdString();
+    const auto content = readFileBytes(output.filePath("Play.bytes"));
+    build::PackCanonicalImage image;
+    ASSERT_EQ(VN_OK, build::ParsePackCanonicalImage(reinterpret_cast<const uint8_t*>(content.constData()),
+        static_cast<uint64_t>(content.size()), &image));
+    ASSERT_EQ(1u, image.media.size());
+    ASSERT_EQ(HK_PACK_SAMPLE_FORMAT_VORBIS_RESIDENT, image.media.front().sampleFormat);
+    const auto packs = readPublication(output.path());
+    const QByteArray paths[] = {output.filePath("Init.bytes").toUtf8(), output.filePath("Play.bytes").toUtf8()};
+    VnCanonicalPackSetMemberV1 members[2]{};
+    for (size_t i = 0; i < 2; ++i) {
+        auto& member = members[i];
+        member.structSize = sizeof(member);
+        member.packKind = i == 0 ? VN_CANONICAL_PACK_SET_MEMBER_INIT : VN_CANONICAL_PACK_SET_MEMBER_CONTENT;
+        member.packStableId = findByName(packs, i == 0 ? "Init" : "Play").value("packStableId").toString().toULongLong();
+        ASSERT_NE(member.packStableId, 0u);
+        member.utf8Path = paths[i].constData();
+    }
+    VnConfig config{};
+    config.structSize = sizeof(config);
+    config.deviceMode = VN_DEVICE_NULL;
+    config.sampleRate = rate;
+    config.blockFrames = block;
+    ASSERT_EQ(VN_OK, Vn_Init(&config));
+    const auto terminate = qScopeGuard([] { Vn_Term(); });
+    VnCanonicalPackSetMemberResultV1 rows[2]{};
+    for (auto& row : rows) row.structSize = sizeof(row);
+    VnCanonicalPackSetActivationDescV1 load{};
+    load.structSize = sizeof(load);
+    load.setRevision = 1;
+    load.memberCount = load.outputMemberCapacity = 2;
+    load.memberStructSize = sizeof(members[0]);
+    load.outputMemberStructSize = sizeof(rows[0]);
+    load.members = members;
+    load.outputMembers = rows;
+    VnCanonicalPackSetActivationReportV1 report{};
+    report.structSize = sizeof(report);
+    ASSERT_EQ(VN_OK, Vn_ActivateCanonicalPackSetV1(&load, &report));
+    ASSERT_EQ(VN_OK, VnPreview_EnableChannelPeakMetering());
+    VnPostActionDesc post{};
+    post.structSize = sizeof(post);
+    post.actionId = harkentest::ObjectId(kStableIdBias + 21);
+    ASSERT_EQ(VN_OK, Vn_CreateEmitter(&post.emitter));
+    VnActionFiringHandle firing{};
+    ASSERT_EQ(VN_OK, Vn_PostAction(&post, &firing));
+
+    // Drain the meter after each block so a previous landmark cannot satisfy the next one.
+    const auto renderPeak = [&]() -> float {
+        EXPECT_EQ(VN_OK, Vn_Update());
+        VnPreview_PumpNullMixer(1);
+        VnPreviewChannelPeaksV1 levels{};
+        levels.structSize = sizeof(levels);
+        EXPECT_EQ(VN_OK, VnPreview_TakeChannelPeaks(&levels));
+        for (uint32_t bus = 0; bus < levels.busCount; ++bus)
+            if (levels.busIds[bus] == VN_BUS_MASTER)
+                return levels.channelPeaks[bus * VN_MAX_CHANNELS];
+        ADD_FAILURE() << "Missing master bus";
+        return 0.0f;
+    };
+    float startPeak = 0.0f;
+    for (int i = 0; i < 8; ++i) startPeak = renderPeak();
+    ASSERT_GT(startPeak, 0.03f);
+
+    VnActionSeekDescV1 seek{};
+    seek.structSize = sizeof(seek);
+    seek.firing = firing;
+    seek.positionMs = 1000.0 * seekFrame / rate;
+    seek.mode = VN_ACTION_SEEK_ABSOLUTE;
+    VnActionSeekTicket ticket{};
+    ASSERT_EQ(VN_OK, Vn_SeekActionFiring(&seek, &ticket));
+    renderPeak();
+    VnActionSeekInfoV1 info{};
+    info.structSize = sizeof(info);
+    ASSERT_EQ(VN_OK, Vn_QueryActionSeek(ticket, &info));
+    ASSERT_EQ(VN_ACTION_SEEK_APPLIED, info.state);
+    ASSERT_EQ(seekFrame, info.minimumAppliedSourceFrame);
+    ASSERT_EQ(VN_OK, Vn_ReleaseActionSeek(ticket));
+
+    // From the requested frame the first wrap falls exactly 14 blocks later.
+    // Check both sides of that wrap and the following one, one full loop later.
+    constexpr unsigned firstWrap = (loopEnd - seekFrame) / block;
+    constexpr unsigned secondWrap = firstWrap + (loopEnd - loopStart) / block;
+    for (unsigned i = 1; i <= secondWrap + 2; ++i) {
+        const float peak = renderPeak();
+        if (i == 4 || i == firstWrap - 2 || i == secondWrap - 2)
+            EXPECT_NEAR(peak / startPeak, 3.0f, 0.35f) << "seek marker, block " << i;
+        if (i == firstWrap + 2 || i == secondWrap + 2)
+            EXPECT_NEAR(peak / startPeak, 6.0f, 0.6f) << "loop marker, block " << i;
+    }
 }
 
 TEST(ProjectPackExport, EffectiveMediaChangesRebuildOnlyTheirConsumers)
