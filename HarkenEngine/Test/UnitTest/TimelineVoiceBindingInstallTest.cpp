@@ -2162,7 +2162,7 @@ TEST(TimelineVoiceInstall, PendingStopBeforeInstallationReleasesReaderAndAllowsF
     CheckPendingSoundEarlyReleaseAndReuse(false);
 }
 
-TEST(TimelineVoiceInstall, PendingReadCutCapacityRefusalRollsBackAndKeepsAcceptedWrite) {
+TEST(TimelineVoiceInstall, PendingReadCutAllocationFailureRollsBackAndHeldSnapshotsAllowPlayback) {
     EngineSession session(TimelineInstallConfig(1, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
@@ -2189,18 +2189,11 @@ TEST(TimelineVoiceInstall, PendingReadCutCapacityRefusalRollsBackAndKeepsAccepte
     EXPECT_EQ(freeTargets, engine.variableSlices.FreeTargetCapacity());
     EXPECT_EQ(0u, BindingInstanceCount(&engine));
     EXPECT_EQ(0u, harken::detail::VoicePoolReleaseTestAccess::OriginalOwnerCount(engine.voices));
-    std::vector<harken::VariableReadCutRef> held(engine.variables.ReadCutCapacity());
+    std::vector<harken::VariableReadCutRef> held(engine.variables.NativeStartBudgetPerQuantum() + 1u);
     for (auto& cut : held) ASSERT_TRUE(engine.variables.CaptureReadCut(0, 8 * kBlock,
         engine.logicCommits.Current() + 1u, 0, &cut));
-    EXPECT_EQ(VN_BACKPRESSURE, Vn_PostAction(&desc, &firing));
-    EXPECT_EQ(0u, firing);
-    EXPECT_EQ(commandHead, engine.commands.PublishedHead());
-    EXPECT_EQ(freeRows, engine.variableSlices.FreeRowCount());
-    EXPECT_EQ(freeTargets, engine.variableSlices.FreeTargetCapacity());
-    EXPECT_EQ(0u, BindingInstanceCount(&engine));
-    EXPECT_EQ(0u, harken::detail::VoicePoolReleaseTestAccess::OriginalOwnerCount(engine.voices));
-    for (const auto cut : held) ASSERT_TRUE(engine.variables.ReleaseReadCut(cut));
     ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
+    for (const auto cut : held) ASSERT_TRUE(engine.variables.ReleaseReadCut(cut));
     bool produced = false;
     for (std::uint32_t block = 0; block < 16 && !produced; ++block) {
         ASSERT_EQ(VN_OK, Vn_Update());

@@ -3,7 +3,7 @@
 
 #include "harken/core/ActionFiringTable.h"
 #include "harken/core/DeferredIntentPool.h"
-#include "harken/core/StableRowStorage.h"
+#include "harken/core/GrowingRowStorage.h"
 
 #include <cstdint>
 #include <utility>
@@ -169,7 +169,11 @@ public:
     bool ProvePreparedPair(ActionDeferredRecordToken token, DeferredIntentPool& pool,
                            DeferredIntentToken poolToken, PreparedPairCommitProof* out) noexcept;
     void ConsumePreparedPair(PreparedPairCommitProof&& proof) noexcept;
-    bool Reset(std::uint32_t capacity);
+    bool Reset();
+    void SetRowPreparation(void* context, bool (*prepare)(void*, std::uint32_t) noexcept) noexcept {
+        preparationContext_ = context;
+        prepareRows_ = prepare;
+    }
     ActionDeferredRecordPrepareResult Prepare(
         const ActionDeferredRecord& record) noexcept;
     bool Abandon(ActionDeferredRecordToken* token) noexcept;
@@ -226,7 +230,7 @@ public:
     ActionDeferredRecordState State(
         ActionDeferredRecordToken token) const noexcept;
     std::uint32_t Capacity() const noexcept {
-        return rows_.Capacity();
+        return rows_.ConstructedCount();
     }
     std::uint32_t PreparedCount() const noexcept { return preparedCount_; }
     std::uint32_t LiveCount() const noexcept { return liveCount_; }
@@ -269,7 +273,9 @@ private:
 
     std::uint64_t nextPreparedPairMarker_ = 0;
     std::uint32_t preparedPairLoans_ = 0;
-    StableRowStorage<Row> rows_;
+    void* preparationContext_ = nullptr;
+    bool (*prepareRows_)(void*, std::uint32_t) noexcept = nullptr;
+    GrowingRowStorage<Row> rows_;
     std::uint32_t preparedCount_ = 0;
     std::uint32_t liveCount_ = 0;
     std::uint32_t highWater_ = 0;

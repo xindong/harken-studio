@@ -46,6 +46,14 @@ extern "C" __declspec(dllexport) VnResult HarkenSdkTest_CaptureAcceptedSpatial(
     return VN_OK;
 }
 
+extern "C" __declspec(dllexport) VnResult HarkenSdkTest_RefuseFiringResultStorage(std::uint32_t refuse) noexcept {
+    auto* engine = harken::detail::ActiveEngine();
+    if (engine == nullptr) return VN_NOT_INITIALIZED;
+    if (!engine->config.nullDevice) return VN_INVALID_ARG;
+    engine->actionFirings.SetResultAllocationFailureForTests(refuse != 0);
+    return VN_OK;
+}
+
 extern "C" __declspec(dllexport) VnResult HarkenSdkTest_PumpNull(std::uint32_t blocks) noexcept {
     auto* engine = harken::detail::ActiveEngine();
     if (engine == nullptr) return VN_NOT_INITIALIZED;

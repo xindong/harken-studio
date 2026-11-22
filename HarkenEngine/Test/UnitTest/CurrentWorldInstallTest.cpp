@@ -848,8 +848,7 @@ TEST(CurrentWorldInstall, TypedRowsAreValidatedDeepOwnedAndIdempotent) {
     ASSERT_EQ(2u, engine->variables.PlayablePropertyProgramCount());
     ASSERT_EQ(1u, engine->variables.PlayableOccurrencePropertyCount());
     ASSERT_EQ(1u, engine->variables.ContainerProgramCount());
-    EXPECT_EQ(engine->config.maxPlayableInstances,
-              engine->playableInstances.Capacity());
+    EXPECT_EQ(0u, engine->playableInstances.ConstructedEntryCount());
     EXPECT_EQ(0u, engine->selectionMemory.RowCount());
     const harken::PlayableWorldViewV1 current =
         engine->variables.CurrentPlayableWorld();

@@ -6,7 +6,7 @@
 #include "harken/core/MonitorLifecycleSink.h"
 #include "harken/core/MonitorRequest.h"
 #include "harken/core/PackReadinessContract.h"
-#include "harken/core/StableRowStorage.h"
+#include "harken/core/GrowingRowStorage.h"
 
 #include <cstdint>
 #include <memory>
@@ -138,6 +138,12 @@ struct ActionFiringSnapshot {
     std::uint32_t livePlayableCount = 0;
 };
 
+// Owned by the root firing until it settles or is abandoned. The playback
+// engine supplies the storage and returns it through the same owner.
+struct ActionTreeBacking {
+    virtual ~ActionTreeBacking() = default;
+};
+
 struct ActionVariableResultBacking {
     StableStoragePreparation outcomes;
     StableStoragePreparation queries;
@@ -204,7 +210,7 @@ public:
         PreparedChildIdentity identity_{};
     };
 
-    bool Reset(std::uint32_t capacity);
+    bool Reset();
     bool PrepareRoot(VnObjectId actionId,
                      const ActionFiringOwnerStamp& owner,
                      std::uint32_t directStepCount,
@@ -239,6 +245,10 @@ public:
         ChildActivationReceipt* out = nullptr) noexcept;
     bool SetPreparedProgramFingerprint(const PreparedActionFiring& prepared,
                                         std::uint64_t fingerprint) noexcept;
+    bool AdoptPreparedPlayableBacking(const PreparedActionFiring& prepared,
+        StableStoragePreparation&& backing, std::unique_ptr<ActionTreeBacking> trees = {}) noexcept;
+    const ActionTreeBacking* TreeBackingFor(ActionFiringHandle firing) const noexcept;
+    StableStoragePreparedUse UsePlayableBacking(ActionFiringHandle firing) const noexcept;
     bool AdoptPreparedVariableResultBacking(const PreparedActionFiring& prepared,
         std::unique_ptr<ActionVariableResultBacking> backing) noexcept;
     const ActionVariableResultBacking* VariableResultBackingFor(
@@ -313,7 +323,7 @@ public:
     void ObserveStepExecution(ActionFiringHandle handle, std::uint32_t index) noexcept;
 
     std::uint32_t Capacity() const noexcept {
-        return rows_.Capacity();
+        return rows_.ConstructedCount();
     }
     std::uint32_t LiveCount() const noexcept { return liveCount_; }
     std::uint32_t ConstructedRowCount() const noexcept { return rows_.ConstructedCount(); }
@@ -379,12 +389,15 @@ private:
         std::uint32_t ownedDeferredCount = 0;
         // The serialized control owner constructs this before publishing the row.
         std::vector<ActionFiringStepResult> results;
+        StableStoragePreparation playableBacking;
+        std::unique_ptr<ActionTreeBacking> treeBacking;
         std::unique_ptr<ActionVariableResultBacking> variableResultBacking;
     };
 
     static ActionFiringHandle MakeHandle(std::uint32_t slot,
                                          std::uint64_t generation) noexcept;
-    static std::uint32_t SlotOf(ActionFiringHandle handle) noexcept;
+    Row* AcquireFreeRow(std::uint32_t& slot) noexcept;
+    std::uint32_t ResolveSlot(ActionFiringHandle handle) const noexcept;
     static std::uint64_t GenerationOf(ActionFiringHandle handle) noexcept;
     Row* Resolve(ActionFiringHandle handle) noexcept;
     const Row* Resolve(ActionFiringHandle handle) const noexcept;
@@ -408,7 +421,11 @@ private:
     void ObserveCommittedSubtree(ActionFiringHandle handle) noexcept;
     void ObserveActionTerminal(Row& row) noexcept;
 
-    StableRowStorage<Row> rows_;
+    template<class Visit>
+    bool VisitPublishedTree(const Row& row, const Visit& visit) const noexcept;
+
+    GrowingRowStorage<Row> rows_;
+    std::uint32_t firstFree_ = 0;
     std::uint32_t liveCount_ = 0;
     std::uint32_t highWater_ = 0;
     std::uint32_t quarantinedCount_ = 0;

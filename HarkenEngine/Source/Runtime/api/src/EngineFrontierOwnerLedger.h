@@ -79,6 +79,25 @@ public:
         } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return false; }
     }
 
+    std::uint32_t DomainCapacity(FrontierOwnerKind kind) const noexcept {
+        const auto index = static_cast<std::size_t>(kind);
+        return index < kDomainCount ? limits_[index] : 0;
+    }
+    bool PrepareDomain(FrontierOwnerKind kind, std::uint32_t required) noexcept {
+        const auto index = static_cast<std::size_t>(kind);
+        if (index >= kDomainCount) return false;
+        if (required <= limits_[index]) return true;
+        const auto extra = required - limits_[index];
+        if (extra > UINT32_MAX - capacity_ || memguard::IsAudioTagged()) return false;
+        capacity_ += extra;
+        if (!PrepareStorage(capacity_)) {
+            capacity_ -= extra;
+            return false;
+        }
+        limits_[index] = required;
+        return true;
+    }
+
     bool Begin(std::uint64_t generation) noexcept {
         if (unresolved_ != 0 || generation == 0 || generation <= generation_)
             return false;

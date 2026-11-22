@@ -5,18 +5,20 @@
 #include "harken/core/StableRowStorage.h"
 
 #include <algorithm>
+#include <array>
+#include <bit>
 
 namespace harken {
 
 // One control owner prepares pages before publishing any row on them.
 // Pages remain charged and address-stable until quiescent destruction.
 template <class T>
-class SparseRowStorage {
+class SparseRowSegment {
 public:
-    SparseRowStorage() = default;
-    SparseRowStorage(const SparseRowStorage&) = delete;
-    SparseRowStorage& operator=(const SparseRowStorage&) = delete;
-    ~SparseRowStorage() {
+    SparseRowSegment() = default;
+    SparseRowSegment(const SparseRowSegment&) = delete;
+    SparseRowSegment& operator=(const SparseRowSegment&) = delete;
+    ~SparseRowSegment() {
         if (memguard::IsAudioTagged() && capacity_ != 0) std::terminate();
         for (std::uint32_t page = 0; page < pageCount_; ++page) {
             if (!PageConstructed(page)) continue;
@@ -124,6 +126,127 @@ private:
     std::uint32_t capacity_ = 0;
     std::uint32_t prefix_ = 0;
     std::atomic<std::uint32_t> constructed_{0};
+};
+
+// A segment is published once and survives until both users are quiescent.
+// Each segment retains the sparse page map, including its acquire/release publication.
+template<class T, class Segment = SparseRowSegment<T>>
+class SparseRowStorage {
+public:
+    template<class Visit>
+    void ForEachConstructed(Visit&& visit) noexcept {
+        for (auto& owner : owners_)
+            if (owner) for (auto& row : *owner) visit(row);
+    }
+    // Used with StableSlotStorage when each individual row has a distinct lifetime.
+    bool Emplace(std::uint32_t slot) noexcept {
+        if (slot == UINT32_MAX || memguard::IsAudioTagged()) return IsConstructed(slot);
+        const auto index = SegmentFor(slot);
+        auto* segment = EnsureSegment(index);
+        if (!segment) return false;
+        const auto previous = segment->CommittedBytes();
+        segment->SetCommitPageLimitForTests(remainingPages_);
+        const bool ready = segment->Emplace(slot - SegmentBegin(index));
+        Account(*segment, previous);
+        return ready;
+    }
+    std::uint32_t ConstructedCount() const noexcept {
+        std::uint32_t count = 0;
+        for (const auto& entry : published_)
+            if (const auto* segment = entry.load(std::memory_order_acquire)) count += segment->ConstructedCount();
+        return count;
+    }
+    bool ConstructPageFor(std::uint32_t slot) noexcept {
+        if (slot == UINT32_MAX || memguard::IsAudioTagged()) return IsConstructed(slot);
+        const auto index = SegmentFor(slot);
+        auto* segment = EnsureSegment(index);
+        if (!segment) return false;
+        const auto before = segment->CommittedBytes();
+        segment->SetCommitPageLimitForTests(remainingPages_);
+        const bool ok = segment->ConstructPageFor(slot - SegmentBegin(index));
+        Account(*segment, before);
+        return ok;
+    }
+
+    bool ConstructThrough(std::uint32_t count) noexcept {
+        if (memguard::IsAudioTagged()) return false;
+        while (prefix_ < count) {
+            const auto index = SegmentFor(prefix_);
+            auto* segment = EnsureSegment(index);
+            if (!segment) return false;
+            const auto begin = SegmentBegin(index);
+            const auto end = std::min(count - begin, segment->Capacity());
+            const auto before = segment->CommittedBytes();
+            segment->SetCommitPageLimitForTests(remainingPages_);
+            const bool ok = segment->ConstructThrough(end);
+            Account(*segment, before);
+            if (!ok) return false;
+            prefix_ = begin + end;
+        }
+        return true;
+    }
+
+    bool IsConstructed(std::uint32_t slot) const noexcept {
+        if (slot == UINT32_MAX) return false;
+        const auto index = SegmentFor(slot);
+        const auto* segment = published_[index].load(std::memory_order_acquire);
+        return segment && segment->IsConstructed(slot - SegmentBegin(index));
+    }
+
+    T& operator[](std::uint32_t slot) noexcept {
+        const auto index = SegmentFor(slot);
+        return (*published_[index].load(std::memory_order_acquire))[slot - SegmentBegin(index)];
+    }
+    const T& operator[](std::uint32_t slot) const noexcept {
+        return const_cast<SparseRowStorage&>(*this)[slot];
+    }
+    std::size_t RequestedBytes() const noexcept { return Sum(&Segment::RequestedBytes); }
+    std::size_t DirectoryBytes() const noexcept { return Sum(&Segment::DirectoryBytes); }
+    std::size_t CommittedBytes() const noexcept { return Sum(&Segment::CommittedBytes); }
+    std::size_t ReservedBytes() const noexcept { return Sum(&Segment::ReservedBytes); }
+    void SetCommitPageLimitForTests(std::size_t pages) noexcept { remainingPages_ = pages; }
+
+private:
+
+    static constexpr unsigned baseShift = std::countr_zero(std::bit_floor(
+        static_cast<unsigned>(std::max<std::size_t>(1, 4096 / sizeof(T)))));
+    static unsigned SegmentFor(std::uint32_t slot) noexcept {
+        return std::bit_width((std::uint64_t{slot} >> baseShift) + 1u) - 1u;
+    }
+    static std::uint32_t SegmentBegin(unsigned index) noexcept {
+        return static_cast<std::uint32_t>(((UINT64_C(1) << index) - 1u) << baseShift);
+    }
+    Segment* EnsureSegment(unsigned index) noexcept {
+        if (owners_[index]) return owners_[index].get();
+        try {
+            auto segment = std::make_unique<Segment>();
+            const auto count = std::min<std::uint64_t>(UINT32_MAX - SegmentBegin(index),
+                UINT64_C(1) << (index + baseShift));
+            if (!segment->Reserve(static_cast<std::uint32_t>(count))) return nullptr;
+            owners_[index] = std::move(segment);
+            published_[index].store(owners_[index].get(), std::memory_order_release);
+            return owners_[index].get();
+        } catch (...) {
+            detail::RecordCurrentLogicAllocFailure(detail::LogicAllocSite::EngineStorage);
+            return nullptr;
+        }
+    }
+    void Account(const Segment& segment, std::size_t before) noexcept {
+        if (remainingPages_ != SIZE_MAX)
+            remainingPages_ -= (segment.CommittedBytes() - before) / detail::StablePageReservation::SystemPageBytes();
+    }
+    std::size_t Sum(std::size_t (Segment::*metric)() const noexcept) const noexcept {
+        std::size_t total = 0;
+        for (const auto& entry : published_) {
+            const auto* segment = entry.load(std::memory_order_acquire);
+            if (segment) total += (segment->*metric)();
+        }
+        return total;
+    }
+    std::array<std::unique_ptr<Segment>, 32> owners_{};
+    std::array<std::atomic<Segment*>, 32> published_{};
+    std::uint32_t prefix_ = 0;
+    std::size_t remainingPages_ = SIZE_MAX;
 };
 
 } // namespace harken

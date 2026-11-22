@@ -49,7 +49,6 @@ namespace Harken.Unity
         [SerializeField, HideInInspector] private bool nullDevice;
         [SerializeField] private bool persistAcrossScenes = true;
         [SerializeField, HideInInspector] private uint maxVoices = 32;
-        [SerializeField, HideInInspector] private uint maxActionFirings = 64;
         [SerializeField, HideInInspector] private bool suppressUnityAudio;
         [SerializeField] private bool shutdownWhenDisabled;
         [SerializeField, HideInInspector] private bool unityAudioCaptured;
@@ -87,8 +86,11 @@ namespace Harken.Unity
         private bool collectingPacks;
         private readonly List<EmitterCleanup> emitterCleanup = new List<EmitterCleanup>();
         private bool collectingEmitters;
-        private ManagedFiring[] managedFirings = Array.Empty<ManagedFiring>();
+        private ManagedFiringTable managedFirings;
         private bool collectingManagedFirings;
+#if HARKEN_SDK_TEST_NULL_PUMP
+        private int managedVisitsLastPass;
+#endif
         private ulong managedCallerSeed;
         private readonly HarkenSpatialSources spatialSources = new HarkenSpatialSources();
         private string runtimeFailureOperation;
@@ -111,13 +113,63 @@ namespace Harken.Unity
             public ActionFiring Firing;
             public HarkenSpatialSource Source;
             public ActionPreparation Resources;
-            public bool Reserved;
+            public int Previous, Next;
+            public bool Collectible;
             public bool Observed;
             public VnResult LastResult;
             public bool LastWasRelease;
             public bool ResourcesObserved;
             public VnResult LastResourcesResult;
         }
+        private sealed class ManagedFiringTable
+        {
+            private const int PageSize = 32;
+            private readonly List<ManagedFiring[]> pages = new List<ManagedFiring[]>();
+            private int free = -1;
+            private int first = -1, last = -1;
+            internal int First => first;
+            internal int Last => last;
+            internal int Count { get; private set; }
+            internal ref ManagedFiring this[int index] => ref pages[index / PageSize][index % PageSize];
+
+            internal int Reserve()
+            {
+                if (free < 0)
+                {
+                    if (pages.Count >= int.MaxValue / PageSize) throw new OutOfMemoryException();
+                    int start = pages.Count * PageSize;
+                    var page = new ManagedFiring[PageSize];
+                    for (int i = 0; i < PageSize - 1; ++i) page[i].Next = start + i + 1;
+                    page[PageSize - 1].Next = -1;
+                    pages.Add(page);
+                    free = start;
+                }
+                int index = free;
+                ref ManagedFiring row = ref this[index];
+                free = row.Next;
+                row.Previous = last;
+                row.Next = -1;
+                if (last >= 0) this[last].Next = index;
+                else first = index;
+                last = index;
+                ++Count;
+                return index;
+            }
+
+            internal void Return(int index)
+            {
+                ref ManagedFiring row = ref this[index];
+                if (row.Previous >= 0) this[row.Previous].Next = row.Next;
+                else first = row.Next;
+                if (row.Next >= 0) this[row.Next].Previous = row.Previous;
+                else last = row.Previous;
+                row = default;
+                row.Next = free;
+                free = index;
+                --Count;
+            }
+        }
+
         private struct EmitterCleanup
         {
             public Emitter Emitter;
@@ -270,20 +322,30 @@ namespace Harken.Unity
                 return ObserveResult(operation, VnResult.VN_NOT_INITIALIZED);
             if (!IsPreparationComplete) return ObserveResult(operation, VnResult.VN_CONTENT_NOT_LOADED);
             CaptureUnityAudio();
-            ManagedFiring[] slots = managedFirings;
-            int slot = -1;
-            for (int i = 0; i < slots.Length; ++i)
-                if (!slots[i].Reserved) { slot = i; break; }
-            if (slot < 0) return ObserveResult(operation, VnResult.VN_NO_ACTION);
+            ManagedFiringTable slots = managedFirings;
+            int slot;
+            try { slot = slots.Reserve(); }
+            catch (OutOfMemoryException) { return ObserveResult(operation, VnResult.VN_OUT_OF_MEMORY); }
             if (source != null)
             {
                 VnResult retained = source.Retain(this, owner);
-                if (retained != VnResult.VN_OK) return ObserveResult(operation, retained);
+                if (retained != VnResult.VN_OK)
+                {
+                    slots.Return(slot);
+                    return ObserveResult(operation, retained);
+                }
             }
-            slots[slot].Reserved = true;
             slots[slot].Source = source;
-            VnResult result = owner.PrepareActions(new[] { actionName }, projectId, out ActionPreparation resources);
-            slots[slot].Resources = resources;
+            VnResult result;
+            try
+            {
+                result = owner.PrepareActions(new[] { actionName }, projectId, out slots[slot].Resources);
+            }
+            catch (OutOfMemoryException)
+            {
+                ReleaseManagedResources(slots, slot);
+                return ObserveResult(operation, VnResult.VN_OUT_OF_MEMORY);
+            }
             if (!owner.IsActive || !ReferenceEquals(owner, session))
                 return ObserveResult(operation, VnResult.VN_NOT_INITIALIZED);
             if (!IsReady || shuttingDown || !IsPreparationComplete)
@@ -315,6 +377,7 @@ namespace Harken.Unity
                 return ObserveResult(operation, VnResult.VN_NOT_INITIALIZED);
             }
             if (result != VnResult.VN_OK) ReleaseManagedResources(slots, slot);
+            else slots[slot].Collectible = true;
             NotifySpatialPost(in publication);
             if (!SpatialSessionIsCurrent(owner))
             {
@@ -330,17 +393,19 @@ namespace Harken.Unity
             return result;
         }
 
-        private void ReleaseManagedResources(ManagedFiring[] slots, int index)
+        private void ReleaseManagedResources(ManagedFiringTable slots, int index)
         {
+            slots[index].Collectible = false;
             ManagedFiring pending = slots[index];
             VnResult result = pending.Resources?.Release() ?? VnResult.VN_OK;
             if (result == VnResult.VN_OK)
             {
                 pending.Source?.Release();
-                slots[index] = default;
+                slots.Return(index);
             }
             else
             {
+                slots[index].Collectible = true;
                 slots[index].ResourcesObserved = true;
                 slots[index].LastResourcesResult = result;
             }
@@ -354,15 +419,24 @@ namespace Harken.Unity
             if (collectingManagedFirings || session == null || !session.IsActive) return;
             collectingManagedFirings = true;
             PackBootstrapSession owner = session;
-            ManagedFiring[] slots = managedFirings;
+            ManagedFiringTable slots = managedFirings;
             try
             {
-                for (int i = 0; i < slots.Length; ++i)
+                // Capture the last row so playback started by a listener waits until the next pass.
+                int last = slots.Last;
+#if HARKEN_SDK_TEST_NULL_PUMP
+                managedVisitsLastPass = 0;
+#endif
+                for (int i = slots.First, next; i >= 0; i = next)
                 {
+#if HARKEN_SDK_TEST_NULL_PUMP
+                    ++managedVisitsLastPass;
+#endif
                     ManagedFiring pending = slots[i];
+                    next = i == last ? -1 : pending.Next;
+                    if (!pending.Collectible) continue;
                     if (!pending.Firing.IsValid)
                     {
-                        // A reserved slot without a scope is still inside preparation/provider work.
                         if (pending.Resources != null) ReleaseManagedResources(slots, i);
                         if (!owner.IsActive || !ReferenceEquals(owner, session)) break;
                         continue;
@@ -627,8 +701,7 @@ namespace Harken.Unity
             HarkenProjectSettings.ApplyStartupCapacity(ref config);
             try
             {
-                // Bootstrap recommendations do not change firing capacity. Allocate before native startup.
-                managedFirings = new ManagedFiring[checked((int)config.maxActionFirings)];
+                managedFirings = new ManagedFiringTable();
                 RuntimeFaultDiagnostics.Reported -= HandleRuntimeFault;
                 RuntimeFaultDiagnostics.Reported += HandleRuntimeFault;
                 notificationRegistration = HarkenCallbacks.InstallNotification(
@@ -657,7 +730,7 @@ namespace Harken.Unity
             }
             else
             {
-                managedFirings = Array.Empty<ManagedFiring>();
+                managedFirings = null;
                 State = HarkenRuntimeState.Failed;
                 DisposeCallbackRegistrations();
             }
@@ -1245,7 +1318,7 @@ namespace Harken.Unity
         {
             try
             {
-                managedFirings = Array.Empty<ManagedFiring>();
+                managedFirings = null;
                 spatialSources.ClearEndedSession();
                 ResetSpatialSession();
                 firingCleanup.Clear();

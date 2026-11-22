@@ -129,9 +129,6 @@ void ContainerPlaybackTable::ConsumePreparedCommit(PreparedCommitProof&& proof) 
     proof.original_ = nullptr;
 }
 
-ContainerPlaybackTable::ContainerPlaybackTable(std::uint32_t capacity)
-    : rows_(capacity) {}
-
 ContainerPlaybackRow* ContainerPlaybackTable::Find(
     PlayableInstanceHandle instance) noexcept {
     if (instance == 0) {
@@ -201,6 +198,8 @@ bool ContainerPlaybackTable::PrepareInternal(PlayableInstanceTable* instanceOwne
         if (row.instance == instance && (row.live || row.phase == ContainerPlaybackPhase::Preparing ||
             row.phase == ContainerPlaybackPhase::PreparedCommitHeld)) return false;
     }
+    const auto occupied = liveCount_ + preparedCount_;
+    if (occupied == UINT32_MAX || !PrepareStorage(occupied + 1u)) return false;
     for (std::uint32_t index = 0; index < rows_.size(); ++index) {
         ContainerPlaybackRow& row = rows_[index];
         if (row.live || row.phase == ContainerPlaybackPhase::Preparing ||
@@ -1304,11 +1303,11 @@ bool PlayableTreeExecutor::ProveInstanceCommits(PlayableInstanceTable* expectedO
 bool PlayableTreeExecutor::IssueOriginalPreparedInstanceLifetimes(
     PlayableInstanceTable& expectedOwner,
     std::span<const PreparedPlayableInstance* const> originals,
-    std::span<PlayableInstanceTable::OriginalLifetimePin> stableBaselines) noexcept {
+    GrowingRowStorage<PlayableInstanceTable::OriginalLifetimePin>& stableBaselines) noexcept {
     const auto stepCount = step_.instances_.size() + step_.adoptedInstanceCount_;
     const auto count = stepCount + (externalInstance_ == nullptr ? 0u : 1u);
     if (step_.Committed() || !step_.instanceCommitProofsRequired_ || !Validate() ||
-        count == 0 || originals.size() != count || stableBaselines.size() > expectedOwner.Capacity() ||
+        count == 0 || originals.size() != count ||
         (externalInstance_ != nullptr && (instanceTable_ != &expectedOwner ||
             !externalInstanceCommitProof_.AssociatedWith(*externalInstance_)))) return false;
     const auto originalAt = [&](std::size_t index) -> const PreparedPlayableInstance* {
@@ -1338,6 +1337,16 @@ bool PlayableTreeExecutor::IssueOriginalPreparedInstanceLifetimes(
     if (issued == count) return true;
     while (issued != 0)
         stableBaselines[static_cast<std::uint32_t>(originalAt(--issued)->Handle())].Release();
+    return false;
+}
+
+bool PlayableTreeExecutor::PrepareReservationCount(std::uint32_t count) noexcept {
+    if (count <= step_.maxReservations_) return true;
+    if (!CanGrowReservations()) return false;
+    const auto previous = step_.maxReservations_;
+    step_.maxReservations_ = count;
+    if (step_.PrepareStorage()) return true;
+    step_.maxReservations_ = previous;
     return false;
 }
 

@@ -1,6 +1,5 @@
 #include "harken/core/EngineConfig.h"
 #include "TimelineCapacityOverrideForTest.h"
-#include "harken/core/ActionCooldownTable.h"
 #if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
 #include "harken/core/ScheduledTransactionPool.h"
 #endif
@@ -84,7 +83,6 @@ constexpr std::uint64_t kMaxPackReplacementPeakBytesCeiling =
 // plainly nonsensical capacities before construction attempts an allocation.
 // These bound logic-side pools; none of them approach the delay-line or ring
 // footprints that need a byte-level ceiling.
-constexpr std::uint32_t kMaxActionFiringsCeiling = 4096;
 constexpr std::uint32_t kMaxContainersCeiling = 1 << 16;
 constexpr std::uint32_t kMaxContainerChildrenCeiling = 1 << 20;
 constexpr std::uint32_t kMaxContainerCursorCeiling = 1 << 20;
@@ -457,9 +455,6 @@ VnResult ResolveConfigForInitialDevice(const VnConfig* config,
                 config->maxControlCommandsPerQuantum;
         }
     }
-    if (hasActionFiringFields && config->maxActionFirings != 0) {
-        resolved.maxActionFirings = config->maxActionFirings;
-    }
     if (hasPackBudgetFields) {
         if (config->maxCatalogEntries != 0) {
             resolved.maxCatalogEntries = config->maxCatalogEntries;
@@ -483,9 +478,6 @@ VnResult ResolveConfigForInitialDevice(const VnConfig* config,
             resolved.maxPackReplacementPeakBytes =
                 config->maxPackReplacementPeakBytes;
         }
-    }
-    if (hasActionCooldownFields && config->maxActionCooldownRows != 0) {
-        resolved.maxActionCooldownRows = config->maxActionCooldownRows;
     }
 
 #if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
@@ -577,8 +569,6 @@ VnResult ResolveConfigForInitialDevice(const VnConfig* config,
             kMaxPackDecodeStagingBytesCeiling ||
         resolved.maxPackReplacementPeakBytes >
             kMaxPackReplacementPeakBytesCeiling ||
-        resolved.maxActionFirings > kMaxActionFiringsCeiling ||
-        resolved.maxActionCooldownRows > kMaxActionCooldownRowsHard ||
         resolved.maxContainers > kMaxContainersCeiling ||
         resolved.maxContainerChildren > kMaxContainerChildrenCeiling ||
         resolved.containerCursorCapacity > kMaxContainerCursorCeiling ||
@@ -836,8 +826,6 @@ VnResult ResolveConfigForInitialDevice(const VnConfig* config,
         return VN_INVALID_CONFIG;
     }
 
-    resolved.maxPlayableInstances = std::max(
-        resolved.maxPlayableInstances, resolved.voiceCapacity.Logical());
     *out = resolved;
     return VN_OK;
 }

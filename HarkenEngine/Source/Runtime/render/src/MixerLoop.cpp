@@ -44,16 +44,6 @@ void SetSeekCancellationCleanupHookForTest(void (*hook)(void*), void* context) n
 
 namespace {
 
-std::size_t CurrentSliceScratchCapacity(
-    const EngineConfig& config) {
-    const std::uint64_t count = static_cast<std::uint64_t>(config.maxEventsPerQuantum) +
-        config.maxPlayableInstances + config.voiceCapacity.Logical() + config.maxDeferredIntents;
-    if (count > std::numeric_limits<std::size_t>::max() / 2 / sizeof(ConsumedCurrentSlice)) {
-        throw std::bad_array_new_length{};
-    }
-    return static_cast<std::size_t>(count) * 2;
-}
-
 float ClampDeviceSample(float sample) {
     if (std::isnan(sample)) {
         return 0.0f;
@@ -137,9 +127,6 @@ MixerLoop::MixerLoop(const EngineConfig& config, VoicePool& voices,
       m_deviceLayout(config.deviceChannelLayout),
       m_sampleRate(config.mixRate.SampleRate()),
       m_cpuTicksPerSecond(CpuClockTicksPerSecond()) {
-    if (!m_currentSliceScratch.Reserve(timelinePool != nullptr ? CurrentSliceScratchCapacity(config) : 0))
-        throw harken::detail::LogicPreparationFailure{};
-    m_currentSliceScratchLimitForTest = m_currentSliceScratch.Capacity();
     m_buses.AttachActivitySnapshots(&m_snapshots);
     if (!m_voices.AttachSlotStoragePreparation(m_arenaStorageRegistration, this,
         [](void* context, std::uint32_t count) noexcept {
@@ -546,7 +533,7 @@ MixerLoop::CurrentSliceStagePlan MixerLoop::StageCurrentSlices(
         m_timelinePool->ConsumerFrontier().load(std::memory_order_acquire);
     const std::size_t capacity = EffectiveCurrentSliceCapacity();
     std::uint64_t page = plan.expectedFrontier;
-    while (plan.stagedPageCount < 2 && page <= blockIndex) {
+    while (plan.stagedPageCount < std::size(plan.sliceEndAfterPage) && page <= blockIndex) {
         if (m_timelinePool->PageStamp(page) != page) {
             plan.stopReason = TimelinePagePrefixStopReason::Unpublished;
             return plan;
@@ -574,7 +561,7 @@ MixerLoop::CurrentSliceStagePlan MixerLoop::StageCurrentSlices(
         ++page;
     }
     plan.stopReason =
-        plan.stagedPageCount == 2 && page <= blockIndex
+        plan.stagedPageCount == std::size(plan.sliceEndAfterPage) && page <= blockIndex
             ? TimelinePagePrefixStopReason::PageLimit
             : TimelinePagePrefixStopReason::ReachedCurrentQuantum;
     return plan;
@@ -604,6 +591,18 @@ void MixerLoop::InitializeVariableSliceConsumptionStorage() {
         });
     }
     if (m_timelinePool != nullptr && m_timelinePool->Valid()) {
+        // One callback stages at most two legal pages. The pool owns the page
+        // limits, including native start calendars that do not use an event slot.
+        const auto pages = std::size(CurrentSliceStagePlan{}.sliceEndAfterPage);
+        const auto perPage = m_timelinePool->MaxCurrentSlicesPerQuantum();
+        if (perPage > SIZE_MAX / pages) throw harken::detail::LogicPreparationFailure{};
+        const auto required = pages * perPage;
+        if (required != m_currentSliceScratch.Capacity()) {
+            decltype(m_currentSliceScratch) replacement;
+            if (!replacement.Reserve(required)) throw harken::detail::LogicPreparationFailure{};
+            replacement.Swap(m_currentSliceScratch);
+            m_currentSliceScratchLimitForTest = required;
+        }
         if (!PrepareCurrentSliceStorage(m_timelinePool->PreparedCurrentSliceRowCount()))
             throw harken::detail::LogicPreparationFailure{};
         m_timelinePool->AttachCurrentSliceStorage(m_currentSliceStorageRegistration, this,

@@ -107,6 +107,7 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <set>
 #include <vector>
 
 #include "harken/core/MonitorRequest.h"
@@ -1239,7 +1240,11 @@ public:
         EnginePlayableServiceToken owner_{};
     };
 
-    explicit EnginePlayablePartitionPool(std::uint32_t capacity) : slots_(capacity) {}
+    explicit EnginePlayablePartitionPool(std::uint32_t memberStride = 1) noexcept
+        : maxAddressableRows_(UINT32_MAX / std::max(1u, memberStride)) {}
+    bool PrepareStorage(std::uint32_t count) noexcept {
+        return count <= maxAddressableRows_ && slots_.ConstructThrough(count);
+    }
     ~EnginePlayablePartitionPool() {
         for (const auto& slot : slots_) assert(slot.originalStorageLoans == 0);
     }
@@ -1256,40 +1261,44 @@ public:
         for (const auto& slot : slots_) {
             if (slot.occupied && slot.owner == owner) return {};
         }
-        for (std::size_t offset = 0; offset < slots_.size(); ++offset) {
-            const auto index = (next_ + offset) % slots_.size();
-            auto& slot = slots_[index];
-            if (slot.occupied || slot.quarantined) continue;
-            slot.owner = owner;
-            slot.occupied = true;
-            slot.committed = false;
-            slot.published = false;
-            slot.retiring = false;
-            slot.retirementSequence = 0;
-            slot.commitHeld = false;
-            slot.preparingCommitOwned = true;
-            slot.originalOwner = owner;
-            assert(slot.originalStorageLoans == 0);
-            slot.originalStorageMarker = original == nullptr ? 0 : ++nextOriginalStorageMarker_;
-            slot.originalStorageLoans = original == nullptr ? 0 : 1;
-            next_ = (index + 1u) % slots_.size();
-            const EnginePlayablePartitionToken token{static_cast<std::uint32_t>(index), slot.generation};
-            if (output != nullptr) {
-                output->pool_ = this;
-                output->token_ = token;
-                output->owner_ = owner;
-            }
-            if (original != nullptr) {
-                original->pool_ = this;
-                original->slot_ = &slot;
-                original->token_ = token;
-                original->owner_ = owner;
-                original->marker_ = slot.originalStorageMarker;
-                original->baseline_ = true;
-            }
-            return token;
+        const auto count = slots_.size();
+        auto index = next_;
+        for (std::uint32_t visited = 0; visited < count; ++visited) {
+            const auto& candidate = slots_[index];
+            if (!candidate.occupied && !candidate.quarantined) break;
+            index = (index + 1u) % count;
+            if (visited + 1u == count) index = count;
         }
-        return {};
+        if (index == count && (count == UINT32_MAX || !PrepareStorage(count + 1u))) return {};
+        auto& slot = slots_[index];
+        slot.owner = owner;
+        slot.occupied = true;
+        slot.committed = false;
+        slot.published = false;
+        slot.retiring = false;
+        slot.retirementSequence = 0;
+        slot.commitHeld = false;
+        slot.preparingCommitOwned = true;
+        slot.originalOwner = owner;
+        assert(slot.originalStorageLoans == 0);
+        slot.originalStorageMarker = original == nullptr ? 0 : ++nextOriginalStorageMarker_;
+        slot.originalStorageLoans = original == nullptr ? 0 : 1;
+        next_ = (index + 1u) % slots_.size();
+        const EnginePlayablePartitionToken token{static_cast<std::uint32_t>(index), slot.generation};
+        if (output != nullptr) {
+            output->pool_ = this;
+            output->token_ = token;
+            output->owner_ = owner;
+        }
+        if (original != nullptr) {
+            original->pool_ = this;
+            original->slot_ = &slot;
+            original->token_ = token;
+            original->owner_ = owner;
+            original->marker_ = slot.originalStorageMarker;
+            original->baseline_ = true;
+        }
+        return token;
     }
 
     bool BorrowOriginalStorage(const OriginalStoragePin& original,
@@ -1443,7 +1452,7 @@ public:
     }
 
     std::uint32_t Capacity() const noexcept { return static_cast<std::uint32_t>(slots_.size()); }
-    std::size_t StorageBytes() const noexcept { return slots_.capacity() * sizeof(Slot); }
+    std::size_t StorageBytes() const noexcept { return slots_.RequestedBytes(); }
 
 private:
     friend struct detail::EnginePlayablePartitionTestAccess;
@@ -1478,7 +1487,8 @@ private:
         if (slot.generation == UINT64_MAX) slot.quarantined = true;
         else ++slot.generation;
     }
-    std::vector<Slot> slots_;
+    const std::uint32_t maxAddressableRows_;
+    GrowingRowStorage<Slot> slots_;
     std::size_t next_ = 0;
     std::uint64_t nextOriginalStorageMarker_ = 0;
 };
@@ -1607,6 +1617,7 @@ struct EnginePlayableStartRow {
     std::uint32_t serviceCount = 0;
     EnginePlayableServiceToken rootService{};
     bool quarantined = false;
+    ActionFiringHandle deferredTreeOwner = 0;
     VnEmitterHandle invocationEmitter = 0;
     ActionFiringHandle actionFiring = 0;
     std::uint32_t actionExecutionOrdinal = UINT32_MAX;
@@ -3550,19 +3561,7 @@ struct PlayableStorageLayout {
           initialProgramStride(
               CheckedStride(1u, knownLeaves, 1u, liveRows)),
           endpointStride(knownLeaves),
-          continuousStride(liveRows),
-          memberCount(CheckedCount(config.maxPlayableInstances,
-                                   memberStride)),
-          pairedCount(CheckedCount(config.maxPlayableInstances,
-                                   pairedStride)),
-          currentEventCount(CheckedCount(config.maxPlayableInstances,
-                                         currentEventStride)),
-          initialProgramCount(CheckedCount(config.maxPlayableInstances,
-                                           initialProgramStride)),
-          endpointCount(CheckedCount(config.maxPlayableInstances,
-                                     endpointStride)),
-          continuousCount(CheckedCount(config.maxPlayableInstances,
-                                       continuousStride)) {}
+          continuousStride(liveRows) {}
 
     std::size_t MemberBase(std::size_t rowIndex) const noexcept {
         return rowIndex * memberStride;
@@ -3596,12 +3595,6 @@ struct PlayableStorageLayout {
     const std::uint32_t initialProgramStride;
     const std::uint32_t endpointStride;
     const std::uint32_t continuousStride;
-    const std::size_t memberCount;
-    const std::size_t pairedCount;
-    const std::size_t currentEventCount;
-    const std::size_t initialProgramCount;
-    const std::size_t endpointCount;
-    const std::size_t continuousCount;
 
 private:
     static std::uint32_t CheckedStride(
@@ -3617,14 +3610,6 @@ private:
         return static_cast<std::uint32_t>(value);
     }
 
-    static std::size_t CheckedCount(std::uint32_t rows,
-                                    std::uint32_t stride) {
-        if (stride != 0 &&
-            rows > std::numeric_limits<std::size_t>::max() / stride) {
-            throw harken::detail::LogicPreparationFailure{};
-        }
-        return static_cast<std::size_t>(rows) * stride;
-    }
 };
 
 class TimelineServiceCoordinator {
@@ -3876,7 +3861,6 @@ struct EngineDecisionRetirement {
 };
 
 static_assert(sizeof(EngineDecisionRetirement) <= 80u);
-static_assert(kMaxDecisionRowsHard <= SIZE_MAX / sizeof(EngineDecisionRetirement));
 
 class EngineOriginalQueueSourcePreparation {
 public:
@@ -4310,8 +4294,7 @@ struct EngineFrontierWorkItem {
 };
 
 struct EngineFrontierExpansionScratch {
-    explicit EngineFrontierExpansionScratch(std::uint32_t capacity) : nodes(capacity) {}
-    std::vector<EngineFrontierWorkItem> nodes;
+    GrowingRowStorage<EngineFrontierWorkItem> nodes;
     std::uint32_t count = 0;
     bool occupied = false;
 };
@@ -4794,6 +4777,53 @@ struct EngineActionPlayStorage {
             playableTreeExecutor(std::in_place, nodeCapacity, false) {
         if (ownerLimits != nullptr) ownerLedger.Initialize(*ownerLimits, 2u);
         if (needsContainerState && !PrepareContainerStorage()) throw harken::detail::LogicPreparationFailure{};
+    }
+    bool FitsControlTree(std::uint32_t rows) const noexcept {
+        return rows <= containerChildCapacity && rows <= playableTreeExecutor->ReservationCapacity() &&
+            rows <= ownerLedger.DomainCapacity(FrontierOwnerKind::Mode);
+    }
+    bool PrepareControlChildren(std::uint32_t count) noexcept {
+        if (count <= containerChildCapacity) return true;
+        if (memguard::IsAudioTagged()) return false;
+        try {
+            const auto prepare = [count](auto& column) {
+                detail::CheckedGrow(column, count, detail::LogicAllocSite::ActionPlayContainerStorage);
+                column.resize(count);
+            };
+            prepare(variableControlChildren);
+            prepare(variableControlScheduleOwned);
+            prepare(variableControlChildKinds);
+            prepare(variableControlLeafChildren);
+            prepare(variableControlContainerRows);
+            prepare(variableControlNestedParentIndices);
+            prepare(variableControlNestedPathOrdinals);
+            prepare(variableControlNestedModes);
+            containerChildCapacity = count;
+            return true;
+        } catch (...) {
+            detail::RecordCurrentLogicAllocFailure(detail::LogicAllocSite::ActionPlayContainerStorage);
+            return false;
+        }
+    }
+    bool PrepareQueueLinks(std::uint32_t count) noexcept {
+        if (count <= queueRoleCapacity && queueFutureAttempts.size() >= count && queueFutureOwners.size() >= count)
+            return true;
+        if (phase != EngineFrontierAttemptPhase::Free || memguard::IsAudioTagged()) return false;
+        try {
+            const auto grow = [count](auto& column) {
+                if (column.size() >= count) return;
+                detail::CheckedGrow(column, count, detail::LogicAllocSite::ActionPlayContainerStorage);
+                column.resize(count);
+            };
+            // Only idle storage can move. Active owners keep their callback addresses until reset.
+            grow(queueFutureAttempts);
+            grow(queueFutureOwners);
+            queueRoleCapacity = std::max(queueRoleCapacity, count);
+            return true;
+        } catch (...) {
+            detail::RecordCurrentLogicAllocFailure(detail::LogicAllocSite::ActionPlayContainerStorage);
+            return false;
+        }
     }
     bool PrepareContainerStorage() noexcept {
         if (containerStoragePrepared) return true;
@@ -5794,6 +5824,32 @@ struct VariableControlRetargetTreeScratch {
           containerServices(capacity),
           containerQueues(capacity) {}
 
+    bool PrepareRows(std::uint32_t rows) noexcept {
+        if (nestedCount || containerCount || memguard::IsAudioTagged()) return false;
+        try {
+            // All columns are idle here. A failed allocation leaves existing cells reusable.
+            const auto prepare = [rows](auto& column) {
+                if (column.size() >= rows) return;
+                detail::LogicAllocCheckpoint(detail::LogicAllocSite::VariableControlRetargetStorage);
+                std::remove_reference_t<decltype(column)>(rows).swap(column);
+            };
+            prepare(nestedInstances);
+            prepare(nestedParents);
+            prepare(nestedOrdinals);
+            prepare(nestedKinds);
+            prepare(containerRows);
+            prepare(containerInstances);
+            prepare(containerPrograms);
+            prepare(containerActiveChildren);
+            prepare(containerServices);
+            prepare(containerQueues);
+            return true;
+        } catch (...) {
+            detail::RecordCurrentLogicAllocFailure(detail::LogicAllocSite::VariableControlRetargetStorage);
+            return false;
+        }
+    }
+
     VariableControlRetargetTreeScratch(
         const VariableControlRetargetTreeScratch&) = delete;
     VariableControlRetargetTreeScratch& operator=(
@@ -5957,14 +6013,6 @@ inline std::size_t ActionPreparationSlotCapacity(
            config.maxTriggerDepth;
 }
 
-inline std::size_t QueueProgramBankCapacity(const EngineConfig& config) {
-    const auto count = 2ull * config.maxPlayableInstances + config.maxScheduledTransactions;
-    if (count > std::numeric_limits<std::size_t>::max() / sizeof(EngineQueueProgramBank)) {
-        throw std::length_error("Queue program bank capacity overflow");
-    }
-    return static_cast<std::size_t>(count);
-}
-
 inline std::size_t QueueContinuationRecordCapacity(
     const EngineConfig& config) {
     if (config.maxScheduledTransactions == 0 ||
@@ -6002,7 +6050,7 @@ struct EngineHandleGenerationFloors {
 
 struct Engine {
     // Outlives every preparation that holds physical relation backing.
-    StableRowStorage<EnginePlayableMemberRelation> memberRelations;
+    GrowingRowStorage<EnginePlayableMemberRelation> memberRelations;
     std::uint32_t freeMemberRelation = UINT32_MAX;
     std::uint32_t occupiedMemberRelations = 0;
     enum class OriginalPlayableServicePackDuty : std::uint8_t {
@@ -6135,9 +6183,9 @@ struct Engine {
         VoiceLedger::BackingPreparation nativeLedgerBacking;
         VoiceLedger::MonitorSelectionBacking nativeMonitorBacking;
         StableSlotStorage<EngineActionPlayScratch>::Preparation nativePlayBacking;
-        StableSlotStorage<EnginePlayableMemberRecord>::Preparation nativeMemberBacking;
+        StableStoragePreparation nativeMemberBacking;
         StableStoragePreparation nativeRelationBacking;
-        StableSlotStorage<EngineQueueProgramBank>::Preparation nativeProgramBacking;
+        StableStoragePreparation nativeProgramBacking;
         EngineQueueScheduleStorage::Preparation nativeScheduleBacking;
         EngineFrontierAttemptToken replacement{};
         std::array<EnginePlayableServiceReference, kSelectionPathNodeCapacity> retiredServices{};
@@ -6213,7 +6261,16 @@ struct Engine {
         VariableControlSide side = VariableControlSide::Discrete;
         std::uint32_t topIndex = UINT32_MAX;
     };
-    struct NativeRuntimeBacking {
+    using DeferredTreeWidths = std::multiset<std::uint32_t>;
+    struct PreparedTreeWidth {
+        DeferredTreeWidths* widths = nullptr;
+        DeferredTreeWidths::iterator widthEntry;
+        std::uint32_t width = 0;
+        ~PreparedTreeWidth() {
+            if (widths != nullptr) widths->erase(widthEntry);
+        }
+    };
+    struct NativeRuntimeBacking : PreparedTreeWidth {
         struct RootInitialArms {
             EnginePlayableServiceToken service{};
             EngineVariableInitialArms arms;
@@ -6245,12 +6302,15 @@ struct Engine {
         ScheduledTransactionPool::ImmediateLaneBackingPreparation laneGroups;
         StableStoragePreparation laneEntries;
         StableStoragePreparation laneAttempts;
+        StableStoragePreparation instances;
         StableStoragePreparation services;
         StableSlotStorage<EngineActionPlayScratch>::Preparation actionPlays;
-        StableSlotStorage<EngineMemberProgramRecord>::Preparation memberPrograms;
-        StableSlotStorage<EnginePlayableMemberRecord>::Preparation members;
+        StableStoragePreparation memberPrograms;
+        StableStoragePreparation members;
         StableStoragePreparation relations;
-        StableSlotStorage<EngineQueueProgramBank>::Preparation queueBanks;
+        StableStoragePreparation queueFutures;
+        StableStoragePreparation transitions;
+        StableStoragePreparation queueBanks;
         EngineQueueScheduleStorage::Preparation queueSchedules;
         QueueInstanceTable::BackingPreparation queues;
         QueueCheckpointTable::BackingPreparation checkpoints;
@@ -6261,17 +6321,20 @@ struct Engine {
     };
     NativeRuntimeBacking* nativeRuntimeBackingInUse = nullptr;
     struct NativeRuntimeBackingUse {
-        std::array<StableStoragePreparedUse, 13> columns;
+        std::array<StableStoragePreparedUse, 8> columns;
+        CompositeCompletionOwnerPool::PreparedUse composites;
         VoiceLedger::BackingUse ledger;
         VoiceLedger::MonitorSelectionUse monitor;
         SelectionMemoryTableV1::BackingUse selectionHistory;
         ArmGroupTable::PreparedUse groups;
         ScheduledTransactionPool::ImmediateLaneBackingUse laneGroups;
         StableSlotStorage<EngineActionPlayScratch>::PreparedUse actionPlays;
-        StableSlotStorage<EngineMemberProgramRecord>::PreparedUse memberPrograms;
-        StableSlotStorage<EnginePlayableMemberRecord>::PreparedUse members;
+        StableStoragePreparedUse memberPrograms;
+        StableStoragePreparedUse members;
         StableStoragePreparedUse relations;
-        StableSlotStorage<EngineQueueProgramBank>::PreparedUse queueBanks;
+        StableStoragePreparedUse queueFutures;
+        StableStoragePreparedUse transitions;
+        StableStoragePreparedUse queueBanks;
         EngineQueueScheduleStorage::PreparedUse queueSchedules;
         QueueInstanceTable::BackingUse queues;
         QueueCheckpointTable::BackingUse checkpoints;
@@ -6281,9 +6344,9 @@ struct Engine {
         Engine& owner;
         NativeRuntimeBacking* previous;
         NativeRuntimeBackingUse(Engine& engine, NativeRuntimeBacking* backing) noexcept
-            : columns{Use(backing, 0), Use(backing, 1), Use(backing, 2), Use(backing, 3),
-                      Use(backing, 4), Use(backing, 5), Use(backing, 6), Use(backing, 7), Use(backing, 8),
-                      Use(backing, 9), Use(backing, 10), Use(backing, 11), Use(backing, 12)},
+            : columns{backing == nullptr ? StableStoragePreparedUse{} : backing->decisions.Use(), Use(backing, 7), Use(backing, 8),
+                      Use(backing, 9), Use(backing, 10), Use(backing, 11), Use(backing, 12), Use(backing, 13)},
+              composites(engine.compositeCompletionOwners, backing == nullptr ? nullptr : &backing->completions),
               ledger(backing == nullptr ? VoiceLedger::BackingUse{} : backing->ledger.Use()),
               monitor(backing == nullptr ? VoiceLedger::MonitorSelectionUse{} : backing->monitor.Use()),
               selectionHistory(backing == nullptr ? SelectionMemoryTableV1::BackingUse{} : backing->selectionHistory.Use()),
@@ -6291,12 +6354,14 @@ struct Engine {
               laneGroups(engine.timelinePool, backing == nullptr ? nullptr : &backing->laneGroups),
               actionPlays(backing == nullptr ? StableSlotStorage<EngineActionPlayScratch>::PreparedUse{}
                   : backing->actionPlays.Use()),
-              memberPrograms(backing == nullptr ? StableSlotStorage<EngineMemberProgramRecord>::PreparedUse{}
+              memberPrograms(backing == nullptr ? StableStoragePreparedUse{}
                   : backing->memberPrograms.Use()),
-              members(backing == nullptr ? StableSlotStorage<EnginePlayableMemberRecord>::PreparedUse{}
+              members(backing == nullptr ? StableStoragePreparedUse{}
                   : backing->members.Use()),
               relations(backing == nullptr ? StableStoragePreparedUse{} : backing->relations.Use()),
-              queueBanks(backing == nullptr ? StableSlotStorage<EngineQueueProgramBank>::PreparedUse{}
+              queueFutures(backing == nullptr ? StableStoragePreparedUse{} : backing->queueFutures.Use()),
+              transitions(backing == nullptr ? StableStoragePreparedUse{} : backing->transitions.Use()),
+              queueBanks(backing == nullptr ? StableStoragePreparedUse{}
                   : backing->queueBanks.Use()),
               queueSchedules(backing == nullptr ? EngineQueueScheduleStorage::PreparedUse{}
                   : backing->queueSchedules.Use()),
@@ -6311,13 +6376,12 @@ struct Engine {
     private:
         static StableStoragePreparedUse Use(NativeRuntimeBacking* backing, std::uint32_t index) noexcept {
             if (backing == nullptr) return {};
-            if (index < 3u) return backing->decisions[index].Use();
-            if (index < 7u) return backing->completions[index - 3u].Use();
             if (index == 7u) return backing->voices.Use();
             if (index == 8u) return backing->queueOrigins.Use();
             if (index == 9u) return backing->laneEntries.Use();
             if (index == 10u) return backing->laneAttempts.Use();
             if (index == 12u) return backing->services.Use();
+            if (index == 13u) return backing->instances.Use();
             return backing->arms.Use();
         }
     };
@@ -6441,6 +6505,7 @@ struct Engine {
             nativeReplacementSlots = std::move(other.nativeReplacementSlots);
             queueRoleReservations = std::move(other.queueRoleReservations);
             nativeRuntimeBacking = std::move(other.nativeRuntimeBacking);
+            replacementControls = std::move(other.replacementControls);
             leafRetirementReceipts.swap(other.leafRetirementReceipts);
             initialSides = std::move(other.initialSides);
             initialDecisionInputs = std::exchange(other.initialDecisionInputs, {});
@@ -6463,7 +6528,7 @@ struct Engine {
                 !reprepare_.replacementCommandsReserved && reprepare_.replacementCommandCount == 0 &&
                 !reprepare_.replacementLane.Valid() && reprepare_.replacementDemand.events == 0 &&
                 !selectionReservations[0].Valid() && !selectionReservations[1].Valid() && !topology_.sealed &&
-                nativeReplacementSlots.empty() && queueRoleReservations.empty() && !nativeRuntimeBacking &&
+                nativeReplacementSlots.empty() && queueRoleReservations.empty() && !nativeRuntimeBacking && !replacementControls.Valid() &&
                 leafArms.capacity() == 0 && leafRetained.capacity() == 0 &&
                 leafRetirementReceipts.capacity() == 0 && reprepare_.StorageBytes() == 0 &&
                 boundAbort.queues.capacity() == 0 &&
@@ -6531,6 +6596,7 @@ struct Engine {
         std::vector<NativeReplacementSlot> nativeReplacementSlots;
         std::vector<QueueRoleReservationSlot> queueRoleReservations;
         std::unique_ptr<NativeRuntimeBacking> nativeRuntimeBacking;
+        StableStoragePreparation replacementControls;
         std::vector<OriginalSourceSubmissionRegistry::PendingInstalledSourceRetirementReceipt>
             leafRetirementReceipts;
         std::array<VariableControlInstanceTable::OriginalInitialSideReceipt, 2> initialSides{};
@@ -6820,6 +6886,7 @@ struct Engine {
         std::vector<NativeReplacementSlot>().swap(group.nativeReplacementSlots);
         std::vector<QueueRoleReservationSlot>().swap(group.queueRoleReservations);
         group.nativeRuntimeBacking.reset();
+        group.replacementControls.Release();
         return true;
     }
     bool EnsurePendingVariableNativeBacking(EngineActionPlayScratch& producer,
@@ -7057,15 +7124,14 @@ public:
           packs(handleFloors.pack),
           streams(resolved),
           effectBank(resolved),
-          decisions(resolved.maxDecisionRows,
+          decisions(UINT32_MAX,
                     resolved.maxParticipantsPerDecision),
-          transitionInstances(resolved.maxTransitionInstances),
-          armGroups(resolved.maxArmGroups,
+          armGroups(UINT32_MAX,
                     resolved.maxArmsPerGroup),
-          timelineArms(TimelineArmCapacity(resolved)),
+          timelineArms(TimelineArmCapacity(resolved), true),
           initialRootArmPublicationRows(TimelineArmCapacity(resolved), nullptr),
-          initialRootActivationPublicationProofs(resolved.maxDecisionRows),
-          queueInstances(resolved.maxContainerInstances, originalConditionalCapacity),
+          queueInstances(UINT32_MAX, originalConditionalCapacity),
+          compositeCompletionOwners(UINT32_MAX, resolved.maxKnownScheduleLeaves),
           topologyPlans(resolved.topologyPlanPoolCapacity, resolved.maxBuses,
                         resolved.busSendSlotsPerBus),
           preparedTopologyPlans(resolved.topologyPlanPoolCapacity,
@@ -7078,7 +7144,6 @@ public:
               resolved.topologyPlanPoolCapacity,
               ProjectGenerationInstallAckIdentityV1{}),
           projectGenerationInstallAckRing(resolved.topologyPlanPoolCapacity),
-          queueCheckpoints(resolved.maxQueueCheckpoints),
           dynamicRoutes(resolved),
           dynamicRouteCaptureScratch(
               resolved.dynamicRouteCapacity == 0
@@ -7086,38 +7151,28 @@ public:
                   : resolved.dynamicRouteCapacity),
           influenceVisited(resolved.maxBuses, 0),
           influenceStack(resolved.maxBuses, 0),
-          sourceTerminals(resolved.maxPlayableInstances),
-          sourcePlayableMembers(resolved.maxPlayableInstances),
-          timelineOccurrences(resolved.maxDeferredIntents),
           voices(resolved, &tables, &multirateTables, &biquadTrig, effectBank,
                  dynamicRoutes, &timelineArms),
           buses(resolved, topologyPlans, effectBank, dynamicRoutes,
                 &biquadTrig),
           actionCommitBundle(16),
           playableInstances(resolved.maxPlayableInstances, handleFloors.playable),
-          authoredStopRoots(resolved.maxPlayableInstances),
           params(resolved, 0),
           variables(resolved.maxEmitters + 1u, resolved.emitterVariableSlots,
                      resolved.maxPropertiesPerCurrentSlice,
                      resolved.maxActions, logicCommits, transportEpochOwner,
                      variableSlices, timelinePool,
-                     static_cast<std::uint64_t>(resolved.maxPlayableInstances) +
+                     static_cast<std::uint64_t>(std::max(resolved.maxPlayableInstances, resolved.voiceCapacity.Logical())) +
                          resolved.voiceCapacity.Logical() +
                          resolved.maxDeferredIntents,
                      voices.Capacity(), resolved.maxVariableSliceTargetsTotal),
           actionFiringPlanScratch(1),
-          actionFiringOwnerReleaseScratch(resolved.maxActionFirings),
-          originalActionFiringPackHolders(resolved.maxActionFirings),
           actionStepPlanScratch(1),
           actionVariableWriteScratch(1),
           actionSelectionResetScratch(1),
           actionFixedSelectionCommitInputs(1),
           actionQueueResetScratch(1),
            actionQueueCheckpointResetScratch(1),
-           actionDeferredScratch(resolved.maxDeferredIntents),
-           originalDeferredPackHolders(resolved.maxDeferredIntents),
-          containerPlayback(resolved.maxPlayableInstances),
-          variableControlInstances(resolved.maxContainerInstances),
           // A bounded diagnostic budget, independent of playback admission.
           ledger(resolved.voiceCapacity.Logical(),
                  resolved.voiceCapacity.Render(),
@@ -7127,14 +7182,9 @@ public:
                      auto& engine = *static_cast<Engine*>(context);
                      return engine.pendingStarts.Emplace(slot) && engine.parkRecords.Emplace(slot);
                  }, this, handleFloors.voice),
-          playablePartitions(resolved.maxPlayableInstances),
-           actionPlayAttemptTokens(1),
+           playablePartitions(playableStorage.memberStride),
+          actionPlayAttemptTokens(1),
            initialPendingVariableOwnerScratch(1),
-           initialQueueEntryDecisionOwnersScratch(
-               resolved.maxPlayableInstances),
-           initialQueueCoordinatorParticipantsScratch(
-               resolved.maxPlayableInstances),
-          actionStopScratch(resolved.maxPlayableInstances),
           actionPlayFrameScratch(resolved.commandQueueDepth),
           initialLaneDemandEventQuantaScratch(std::max(
               resolved.maxTransactionEvents,
@@ -7142,11 +7192,6 @@ public:
           initialLaneDemandGroupQuantaScratch(std::max(
               resolved.maxTransactionEvents,
               resolved.maxKnownScheduleLeaves * 4u)),
-          decisionRetirements(decisions.Capacity()),
-          playableStarts(resolved.maxPlayableInstances),
-          frontierExpansion(resolved.maxPlayableInstances),
-          ordinaryRetiringSources(resolved.maxPlayableInstances),
-          ordinaryRetiringLeaves(resolved.maxPlayableInstances),
           queueSelectionChildScratch(resolved.maxQueueChildren),
           queueRemainingScratch(resolved.maxQueueChildren),
           queuePermutationScratch(resolved.maxQueueChildren),
@@ -7173,9 +7218,6 @@ public:
                                        : resolved.randomSeed),
           commands(resolved.commandQueueDepth, &timelineArms),
           originalSourceSubmissions(timelineArms, voices, commands, effectBank),
-          originalSingleDecisionBaselines(decisions.Capacity()),
-          originalSingleOccurrenceBaselines(timelineOccurrences.Capacity()),
-          originalSingleOccurrenceCommitProofs(timelineOccurrences.Capacity()),
           actionPlayCommandScratch(commands.Capacity()),
           actionSeekCommandScratch(commands.Capacity()),
           actionSeekPreparationScratch(commands.Capacity()),
@@ -7191,13 +7233,6 @@ public:
                        resolved.voiceCapacity.Logical()),
           logicNotifications(resolved.voiceCapacity.Logical()),
           sourceCursors(resolved.voiceCapacity.Render()),
-          compositeCompletionOwners(
-              resolved.maxCompositeCompletionOwners,
-              resolved.maxKnownScheduleLeaves),
-          originalCompositeCompletionPreparations(resolved.maxCompositeCompletionOwners),
-          originalOccurrencePreparations(resolved.maxDeferredIntents),
-          timelineDeferred(resolved.maxDeferredIntents,
-                           resolved.maxDeferredIntents),
           timelinePrograms(2),
            timelineSink(voices, timelineArms),
            mixer(resolved, voices, buses, dynamicRoutes, commands, actionSeeks,
@@ -7210,8 +7245,30 @@ public:
                     projectGenerationInstallAckSideTable.size()),
                 &projectGenerationInstallAckRing, &originalSourceSubmissions),
            nullBackend(mixer, resolved) {
-        monitorPlaybackEvents.reserve(static_cast<std::size_t>(timelineArms.Capacity()) +
-            playableInstances.Capacity());
+        playableInstances.SetStoragePreparation(this, [](void* context, std::uint32_t count) noexcept {
+            auto& engine = *static_cast<Engine*>(context);
+            try {
+                const auto needed = static_cast<std::size_t>(engine.timelineArms.Capacity()) + count;
+                if (needed > engine.monitorPlaybackEvents.capacity()) {
+                    engine.monitorPlaybackEvents.reserve(std::max(needed,
+                        engine.monitorPlaybackEvents.capacity() + engine.monitorPlaybackEvents.capacity() / 2));
+                }
+            } catch (const std::bad_alloc&) {
+                detail::RecordCurrentLogicAllocFailure(detail::LogicAllocSite::MonitorStorage);
+                return false;
+            }
+            return engine.sourceTerminals.PrepareStorage(count) &&
+                engine.sourcePlayableMembers.ConstructThrough(count) &&
+                engine.actionStopScratch.ConstructThrough(count) &&
+                engine.authoredStopRoots.ConstructThrough(count) &&
+                engine.ordinaryRetiringSources.ConstructThrough(count) &&
+                engine.ordinaryRetiringLeaves.ConstructThrough(count) &&
+                (!engine.playableInstances.HasPreparedBacking() ||
+                    (engine.containerPlayback.PrepareStorage(count) &&
+                     engine.PrepareOriginalSingleCurrentStorage(count))) &&
+                engine.originalPlayableLifetimeHolders.ConstructThrough(count);
+        });
+        monitorPlaybackEvents.reserve(timelineArms.Capacity());
         voices.AttachTimelineVariableStartAuthority({&variables,
             [](void* context, VariableTimelineReadUseRef use, std::uint64_t nativeHandle) noexcept {
                 return static_cast<VariableServiceV1*>(context)->TimelineReadUseStartStatus(use, nativeHandle);
@@ -7259,47 +7316,21 @@ public:
             [](void* context, const ConsumedCurrentSlice& consumed) noexcept {
                 return static_cast<VariableServiceV1*>(context)->ConsumeNativeReadCutCalendar(consumed);
             });
-        for (std::size_t index = 0; index < playableStarts.size(); ++index) {
-            playableStarts[index].slot = static_cast<std::uint32_t>(index);
-        }
-        if (!originalPlayableLifetimeHolders.Reserve(resolved.maxPlayableInstances) ||
-            !originalPlayableServiceLifetimeHolders.Reserve(resolved.maxPlayableInstances) ||
-            !originalSingleCurrentHolders.Reserve(resolved.maxPlayableInstances) ||
-            !authoredStopResources.Reserve(resolved.maxScheduledTransactions) ||
+        if (!authoredStopResources.Reserve(resolved.maxScheduledTransactions) ||
             !queueContinuationRecords.Reserve(static_cast<std::uint32_t>(QueueContinuationRecordCapacity(resolved))) ||
-            !queueFutureRecords.Reserve(resolved.maxPlayableInstances) ||
-            !pendingVariableLeafSources.Reserve(timelineArms.Capacity()) ||
-            !pendingVariableFutureSources.Reserve(timelineArms.Capacity()) ||
-            !playableServices.Reserve(resolved.maxPlayableInstances) ||
             !timelineStartScratch.starts.Reserve(kMaxKnownScheduleLeaves) ||
             !timelineStartScratch.transactions.Reserve(2u * kMaxKnownScheduleLeaves + 2u) ||
             !timelineStartScratch.extraCommands.Reserve(kMaxKnownScheduleLeaves) ||
-            !timelineStartScratch.queueEvents.Reserve(EngineQueueProgramBank::kEventCapacity) ||
-            !acceptedPendingVariableGroups.Reserve(resolved.maxPlayableInstances)) throw harken::detail::LogicPreparationFailure{};
+            !timelineStartScratch.queueEvents.Reserve(EngineQueueProgramBank::kEventCapacity)) throw harken::detail::LogicPreparationFailure{};
         const auto playSlotCapacity = ActionPreparationSlotCapacity(resolved);
-        const auto queueBankCapacity = QueueProgramBankCapacity(resolved);
-        const auto playableMemberCapacity = static_cast<std::uint64_t>(playableStorage.memberCount) +
-            static_cast<std::uint64_t>(queueBankCapacity) * EngineQueueProgramBankBody::kProgramCapacity;
         const auto privateLaneMetadataCapacity = std::max(resolved.maxTransactionEvents,
             resolved.maxKnownScheduleLeaves * 4u);
-        if (playSlotCapacity > UINT32_MAX || queueBankCapacity > UINT32_MAX ||
-            !queueScheduleStorage.Configure(static_cast<std::uint32_t>(queueBankCapacity)) ||
-            !queueProgramBanks.Reserve(static_cast<std::uint32_t>(queueBankCapacity)) ||
+        if (playSlotCapacity > UINT32_MAX ||
             !actionPlayStorage.Reserve(static_cast<std::uint32_t>(playSlotCapacity)) ||
             !pendingOrdinarySelections.Reserve(static_cast<std::uint32_t>(playSlotCapacity)) ||
             !preparedPendingVariableGroups.Reserve(static_cast<std::uint32_t>(playSlotCapacity)) ||
             !actionPlayScratch.Reserve(static_cast<std::uint32_t>(playSlotCapacity))) throw harken::detail::LogicPreparationFailure{};
-        if (playableMemberCapacity > UINT32_MAX || playableStorage.initialProgramCount > UINT32_MAX ||
-            playableStorage.continuousCount > UINT32_MAX ||
-            !memberProgramRecords.Reserve(static_cast<std::uint32_t>(playableStorage.initialProgramCount)) ||
-            !playableMemberRecords.Reserve(static_cast<std::uint32_t>(playableMemberCapacity)) ||
-            !memberRelations.Reserve(static_cast<std::uint32_t>(playableStorage.memberCount)) ||
-            !variableControlRetargetPrograms.Reserve(resolved.maxScheduledTransactions) ||
-            !memberOnsets.Reserve(static_cast<std::uint32_t>(playableMemberCapacity)) ||
-            !playableServiceWork.Reserve(resolved.maxPlayableInstances) ||
-            !scheduleAggregateDue.Reserve(resolved.maxPlayableInstances) ||
-            !originalSinglePreparationHolders.Reserve(timelineArms.Capacity()) ||
-            !originalQueueSourcePreparationHolders.Reserve(timelineArms.Capacity()))
+        if (!variableControlRetargetPrograms.Reserve(resolved.maxScheduledTransactions))
             throw harken::detail::LogicPreparationFailure{};
         if (!timelineArms.AttachRowStoragePreparation(this,
             [](void* context, std::uint32_t count, bool fullSourceCommandBacking) noexcept {
@@ -7311,6 +7342,22 @@ public:
         (void)originalPlayableResolver;
         const bool originalDecisionResolver = decisions.RegisterOriginalLifetimeBaselineResolver(
             this, &ResolveOriginalSingleDecisionBaseline);
+        decisions.SetRowPreparation(this, [](void* context, std::uint32_t required) noexcept {
+            auto& engine = *static_cast<Engine*>(context);
+            return engine.decisionRetirements.ConstructThrough(required) &&
+                engine.originalSingleDecisionBaselines.ConstructThrough(required) &&
+                engine.initialRootActivationPublicationProofs.ConstructThrough(required) &&
+                engine.timelinePool.PrepareImmediateLaneDecisionGates(required);
+        });
+        timelineOccurrences.SetRowPreparation(this, [](void* context, std::uint32_t required) noexcept {
+            auto& engine = *static_cast<Engine*>(context);
+            return engine.originalSingleOccurrenceBaselines.ConstructThrough(required) &&
+                engine.originalSingleOccurrenceCommitProofs.ConstructThrough(required) &&
+                engine.originalOccurrencePreparations.ConstructThrough(required);
+        });
+        actionDeferredRecords.SetRowPreparation(this, [](void* context, std::uint32_t required) noexcept {
+            return static_cast<Engine*>(context)->originalDeferredPackHolders.ConstructThrough(required);
+        });
         const bool originalOccurrenceResolvers = timelineOccurrences.RegisterOriginalSingleOwnerResolvers(
             this, &ResolveOriginalSingleOccurrenceBaseline, &ResolveOriginalSingleOccurrenceCommit);
         const bool originalOccurrenceStorageResolver = timelineOccurrences.RegisterOriginalStorageBaselineResolver(
@@ -7324,6 +7371,9 @@ public:
         assert(originalDecisionResolver && originalOccurrenceResolvers);
         (void)originalDecisionResolver;
         (void)originalOccurrenceResolvers;
+        compositeCompletionOwners.SetRowPreparation(this, [](void* context, std::uint32_t required) noexcept {
+            return static_cast<Engine*>(context)->originalCompositeCompletionPreparations.ConstructThrough(required);
+        });
         const bool originalCompositeResolver = compositeCompletionOwners.RegisterOriginalLifetimeBaselineResolver(
             this, &ResolveOriginalCompositeBaseline);
         assert(originalCompositeResolver);
@@ -7337,8 +7387,10 @@ public:
         timelinePoolConfig.scheduleHorizonFrames =
             resolved.scheduleHorizonFrames;
         timelinePoolConfig.publishLeadQuanta = resolved.publishLeadQuanta;
-        timelinePoolConfig.maxScheduledTransactions =
-            resolved.maxScheduledTransactions;
+        // Every transaction must own at least one event in the scheduling window.
+        timelinePoolConfig.maxScheduledTransactions = static_cast<std::uint32_t>(std::min<std::uint64_t>(
+            UINT32_MAX, (resolved.scheduleHorizonFrames / resolved.blockFrames) *
+                static_cast<std::uint64_t>(resolved.maxEventsPerQuantum)));
         timelinePoolConfig.maxTransactionSpanFrames =
             resolved.maxTransactionSpanFrames;
         timelinePoolConfig.maxIngressTransactionsPerQuantum =
@@ -7350,7 +7402,7 @@ public:
             resolved.maxTransactionEvents;
         timelinePoolConfig.maxCurrentSlicesPerQuantum =
             resolved.maxEventsPerQuantum;
-        timelinePoolConfig.maxNativeStartCalendarsPerQuantum = variables.ReadCutCapacity();
+        timelinePoolConfig.maxNativeStartCalendarsPerQuantum = variables.NativeStartBudgetPerQuantum();
         timelinePoolConfig.maxPlan03GroupHeadersPerPage =
             resolved.maxPlan03GroupHeadersPerPage;
         timelinePoolConfig.maxArmsPerGroup = resolved.maxArmsPerGroup;
@@ -7368,20 +7420,16 @@ public:
             static_cast<std::uint32_t>(
                 (laneHorizonQuanta + resolved.maxDeferredIntents) *
                 groupsPerBucket);
-        timelinePoolConfig.maxImmediateLaneOwnerGates = resolved.maxPlayableInstances;
-        timelinePoolConfig.maxImmediateLaneDecisionGates = resolved.maxDecisionRows;
-        const auto laneAttempts = static_cast<std::uint64_t>(resolved.maxActionFirings) + timelineArms.Capacity();
-        if (laneAttempts > UINT32_MAX) throw harken::detail::LogicPreparationFailure{};
         if (!decisions.Valid() || !transitionInstances.Valid() ||
             !armGroups.Valid() ||
             !timelinePool.Reset(timelinePoolConfig, 0,
                                 transportEpochOwner.Current()) ||
             !immediateActionLane.Reset({
-                static_cast<std::uint32_t>(laneAttempts),
+                1u,
                 privateLaneMetadataCapacity,
                 resolved.maxEventsPerQuantum,
                 resolved.blockFrames, true,
-                resolved.maxPlan03GroupHeadersPerPage}) ||
+                resolved.maxPlan03GroupHeadersPerPage, true}) ||
             !timelineSink.AttachImmediateLane(immediateActionLane, resolved.blockFrames) ||
             !timelineSink.AttachPlan03ScratchAuthority(decisions,
                                                        timelinePool) ||
@@ -7424,23 +7472,9 @@ public:
                 static_cast<Engine*>(context)->params.NoteVariableWrite(variable, emitter);
             });
         mixer.InitializeVariableSliceConsumptionStorage();
-        if (!initialQueueTimingMembersScratch.Reserve(resolved.maxPlayableInstances) ||
-            !initialQueueTransitionTimingProofsScratch.Reserve(resolved.maxPlayableInstances) ||
-            !initialQueueConditionalTimingProofsScratch.Reserve(resolved.maxPlayableInstances) ||
-            !initialQueueCurrentCompositeProofsScratch.Reserve(resolved.maxPlayableInstances) ||
-            !initialQueueSuccessorCompositeProofsScratch.Reserve(resolved.maxPlayableInstances) ||
-            !actionQueueReplacementScratch.Reserve(resolved.maxPlayableInstances))
-            throw harken::detail::LogicPreparationFailure{};
-        if (!originalQueueBankHolders.Reserve(queueProgramBanks.size()) ||
-            !originalQueueLifetimeHolders.Reserve(queueInstances.Capacity()) ||
-            !originalQueueFactoryLifetimeHolders.Reserve(queueInstances.Capacity()))
-            throw harken::detail::LogicPreparationFailure{};
-        if (queueInstances.originalConditionalCapacity_ != 0) {
-            if (!originalQueueConditionalHolders.Reserve(queueInstances.Capacity()) ||
-                !originalQueueReplacementHolders.Reserve(queueInstances.Capacity()))
-                throw harken::detail::LogicPreparationFailure{};
+        if (queueInstances.SupportsOriginalConditionals()) {
             originalQueueReplacementSpans =
-                std::make_unique<PrivateSelectedQueueFutureSpanPool>(queueInstances.Capacity());
+                std::make_unique<PrivateSelectedQueueFutureSpanPool>(UINT32_MAX);
             originalQueueReplacementBatch =
                 std::make_unique<OriginalConditionalReplacementBatch>(queueInstances.originalConditionalCapacity_);
             const bool registered = queueInstances.RegisterOriginalConditionalOwner(this,
@@ -7458,14 +7492,7 @@ public:
         if (timelinePool.MaxArmsPerGroup() == 0)
             throw harken::detail::LogicPreparationFailure{};
         if (!pendingVariableQueueNativeOrigins.Reserve(originalQueueGroupCapacity)) throw harken::detail::LogicPreparationFailure{};
-        if (!pendingVariableFutureNodes.Reserve(playableInstances.Capacity())) throw harken::detail::LogicPreparationFailure{};
         timelinePool.SetImmediateLaneGroupDisposalObserver(this, &ObservePendingVariableQueueNativeDisposal);
-        const auto plainCapacity = immediateActionLane.EventsPerAttempt();
-        const auto plainRows = static_cast<std::uint64_t>(resolved.maxActionFirings) * plainCapacity;
-        if (plainRows > std::numeric_limits<std::size_t>::max() / sizeof(EnginePlainImmediateSource) ||
-            plainRows > std::numeric_limits<std::size_t>::max() / sizeof(EnginePlainImmediateStopRef))
-            throw harken::detail::LogicPreparationFailure{};
-        if (!immediateEntryAttempts.Reserve(resolved.maxActionFirings)) throw harken::detail::LogicPreparationFailure{};
         const auto pageGroupRows = static_cast<std::uint64_t>(timelinePool.PageCount()) *
             resolved.maxPlan03GroupHeadersPerPage;
         if (pageGroupRows >
@@ -7514,22 +7541,20 @@ public:
                         engine.initialQueueLaneGroupsScratch.ConstructThrough(required) &&
                         engine.originalQueueGroupHolders.ConstructThrough(required);
                 })) throw harken::detail::LogicPreparationFailure{};
-        if (!initialFrontierEvents.Reserve(4ull * resolved.maxPlayableInstances + 1u) ||
-            !initialFrontierRequests.Reserve(initialFrontierEvents.Capacity())) throw harken::detail::LogicPreparationFailure{};
         const std::uint64_t frontierNodes = resolved.maxPlayableInstances;
         const auto boundedFrontierCount = [](std::uint64_t proposed, std::uint32_t limit) {
             return static_cast<std::uint32_t>(std::min<std::uint64_t>(proposed, limit));
         };
         const EngineFrontierOwnerLedger::Limits frontierOwnerLimits{
             boundedFrontierCount(frontierNodes, resolved.maxPendingSelectionDeltasTotal),
-            boundedFrontierCount(2u * frontierNodes + 1u, resolved.maxDecisionRows),
-            boundedFrontierCount(2u * frontierNodes, timelineOccurrences.Capacity()),
-            boundedFrontierCount(frontierNodes, resolved.maxCompositeCompletionOwners),
+            boundedFrontierCount(2u * frontierNodes + 1u, UINT32_MAX),
+            boundedFrontierCount(2u * frontierNodes, UINT32_MAX),
+            boundedFrontierCount(frontierNodes, UINT32_MAX),
             boundedFrontierCount(frontierNodes, resolved.voiceCapacity.Render()),
             resolved.maxPlayableInstances, resolved.maxPlayableInstances,
             resolved.maxScheduledTransactions,
             EngineActionPlayScratch::kFrontierExposureOwnerCapacity,
-            resolved.maxTransitionInstances};
+            boundedFrontierCount(frontierNodes, UINT32_MAX)};
         actionPlayOwnerLimits = frontierOwnerLimits;
         SelectionMemoryConfigV1 selectionConfig{};
         selectionConfig.maxChildren = kHardContainerChildCapacity;
@@ -7547,34 +7572,22 @@ public:
         cutConfig.maxEffectParams =
             cutConfig.maxEffectNodes * kMaxEffectParamCount;
         cutConfig.maxEffectEdges = cutConfig.maxEffectNodes;
-        if (resolved.maxPlayableInstances == 0 ||
-            resolved.maxPlayableInstances > kMaxPlayableInstances ||
-            resolved.maxKnownScheduleLeaves == 0 ||
+        if (resolved.maxKnownScheduleLeaves == 0 ||
             resolved.maxKnownScheduleLeaves > kMaxKnownScheduleLeaves ||
             resolved.maxVariableControlActiveRows == 0 ||
             resolved.maxVariableControlActiveRows > 64 ||
             resolved.maxVariableControlLiveRows <
                 resolved.maxVariableControlActiveRows ||
             resolved.maxVariableControlLiveRows > 64 ||
-            resolved.maxTransitionInstances == 0 ||
-            resolved.maxTransitionInstances >
-                kMaxTransitionInstancesHard ||
-            resolved.maxCompositeCompletionOwners == 0 ||
-            resolved.maxCompositeCompletionOwners >
-                kMaxCompositeCompletionOwners ||
             resolved.maxContainerInstances == 0 ||
             resolved.maxContainerInstances > kMaxContainerInstances ||
-            resolved.maxQueueCheckpoints == 0 ||
-            resolved.maxQueueCheckpoints > kMaxQueueCheckpoints ||
             resolved.maxQueueChildren == 0 ||
             resolved.maxQueueChildren > kMaxQueueChildren ||
             !queueInstances.Valid() ||
-            !queueCheckpoints.Valid() ||
-            !actionFirings.Reset(resolved.maxActionFirings) ||
-            !actionSeeks.Reset(resolved.maxActionFirings) ||
+            !actionFirings.Reset() ||
+            !actionSeeks.Reset() ||
             !streamSeekHandoffs.Reset(resolved.maxStreams) ||
-            !actionDeferredRecords.Reset(resolved.maxDeferredIntents) ||
-            !actionCooldowns.Reset(resolved.maxActionCooldownRows) ||
+            !actionDeferredRecords.Reset() ||
             !selectionMemory.Reset(selectionConfig) ||
             !variables.NoteEmitterCreated(emitters.DefaultState()) ||
             !playablePropertyCutScratch.Reset(cutConfig)) {
@@ -7589,8 +7602,6 @@ public:
             }
         }
         TimelinePlanner::Config timelinePlannerConfig{};
-        timelinePlannerConfig.maxRollingOccurrences =
-            resolved.maxDeferredIntents;
         if (!timelinePlanner.Reset(timelinePlannerConfig, &timelinePool,
                                    &timelineDeferred, &playableInstances,
                                    &timelineOccurrences, &timelineArms) ||
@@ -7937,11 +7948,22 @@ public:
         return false;
     }
 
-    bool OriginalActionFiringCapacity(std::uint32_t count) const noexcept {
+    bool PrepareActionFiringOwners(std::uint32_t count) noexcept {
+        const auto issued = actionFirings.ConstructedRowCount();
+        try {
+            if (actionFiringOwnerReleaseScratch.size() < issued)
+                actionFiringOwnerReleaseScratch.resize(issued);
+        } catch (const std::bad_alloc&) {
+            detail::RecordCurrentLogicAllocFailure(detail::LogicAllocSite::EngineStorage);
+            return false;
+        }
         std::uint32_t free = 0;
         for (const auto& holder : originalActionFiringPackHolders)
             if (holder.firing_ == 0 && !holder.original_.Valid()) ++free;
-        return count <= free;
+        if (free >= count) return true;
+        const auto existing = originalActionFiringPackHolders.size();
+        return count - free <= UINT32_MAX - existing &&
+            originalActionFiringPackHolders.ConstructThrough(existing + (count - free));
     }
 
     bool AdoptOriginalActionFiringPack(ActionFiringHandle firing,
@@ -7957,7 +7979,7 @@ public:
             return false;
         ActionFiringHandle root = firing;
         for (std::size_t depth = 0; actual.parent != 0; ++depth) {
-            if (depth >= originalActionFiringPackHolders.size()) return false;
+            if (depth >= actionFirings.ConstructedRowCount()) return false;
             root = actual.parent;
             if (!actionFirings.Capture(root, &actual)) return false;
         }
@@ -8263,8 +8285,10 @@ public:
     }
     bool EnsureImmediateEntryAttempt(std::uint32_t slot) noexcept {
         if (slot < immediateEntryAttempts.size()) return true;
-        if (slot != immediateEntryAttempts.size()) return false;
-        return immediateEntryAttempts.EmplaceBack();
+        if (slot != immediateEntryAttempts.size() || slot == UINT32_MAX || memguard::IsAudioTagged()) return false;
+        if (immediateEntryAttempts.ConstructThrough(slot + 1u)) return true;
+        detail::RecordLogicAllocFailure(detail::LogicAllocSite::EngineStorage);
+        return false;
     }
     std::size_t ImmediateEntryAttemptStorageBytes() const noexcept {
         auto bytes = immediateEntryAttempts.RequestedBytes();
@@ -8280,6 +8304,172 @@ public:
         return bytes;
     }
 
+    DeferredTreeWidths deferredTreeWidths;
+    std::uint32_t borrowedTreeWidth = 0;
+    ActionFiringHandle preparingDeferredTreeOwner = 0;
+    struct DeferredTreeBacking final : ActionTreeBacking, PreparedTreeWidth {
+        StableStoragePreparation arms;
+        std::uint32_t armCount = 0;
+        bool AddArms(std::uint64_t count) noexcept {
+            if (count > UINT32_MAX - armCount) return false;
+            armCount += static_cast<std::uint32_t>(count);
+            return true;
+        }
+        StableSlotStorage<EngineActionPlayScratch>::Preparation attempts;
+        StableStoragePreparation variableControls;
+        std::uint32_t controlCount = 0;
+        QueueInstanceTable::BackingPreparation queues;
+        std::uint32_t queueCount = 0;
+        std::uint32_t conditionalCount = 0;
+        StableStoragePreparation banks;
+        EngineQueueScheduleStorage::Preparation schedules;
+        QueueScheduleShape scheduleShape{};
+        std::uint32_t bankCount = 0;
+        bool AddQueueBanks(std::uint32_t queues, std::uint32_t continuations, QueueScheduleShape shape) noexcept {
+            const auto count = static_cast<std::uint64_t>(queues) + continuations;
+            if (count > UINT32_MAX - bankCount) return false;
+            bankCount += static_cast<std::uint32_t>(count);
+            scheduleShape = QueueScheduleShape::Maximum(scheduleShape, shape);
+            return true;
+        }
+        DecisionTable::BackingPreparation decisions;
+        ArmGroupTable::BackingPreparation groups;
+        std::uint32_t groupCount = 0;
+        std::uint32_t groupMembers = 0;
+        std::vector<std::uint32_t> completionWidths;
+        CompositeCompletionOwnerPool::BackingPreparation completions;
+        std::uint32_t count = 0;
+        bool Include(std::uint32_t additional, std::uint32_t rows, std::uint32_t controls,
+                     std::uint32_t queueRows, std::uint32_t conditionalRows,
+                     std::uint64_t groupsNeeded, std::uint64_t membersNeeded) noexcept {
+            if (additional > UINT32_MAX - count || controls > UINT32_MAX - controlCount ||
+                queueRows > UINT32_MAX - queueCount || conditionalRows > UINT32_MAX - conditionalCount) return false;
+            if (groupsNeeded > UINT32_MAX - groupCount || membersNeeded > UINT32_MAX - groupMembers) return false;
+            groupCount += static_cast<std::uint32_t>(groupsNeeded);
+            groupMembers += static_cast<std::uint32_t>(membersNeeded);
+            queueCount += queueRows;
+            conditionalCount += conditionalRows;
+            controlCount += controls;
+            count += additional;
+            width = std::max(width, rows);
+            return true;
+        }
+    };
+    std::uint32_t RequiredDeferredTreeWidth() const noexcept {
+        return deferredTreeWidths.empty() ? 0 : *deferredTreeWidths.rbegin();
+    }
+    bool FitsDeferredTree(const EngineActionPlayStorage& storage, std::uint32_t width) const noexcept {
+        return storage.containerStoragePrepared && storage.frontierPolicies.size() >= width &&
+            storage.queueRoleCapacity >= width && storage.FitsControlTree(width) &&
+            storage.ownerLedger.DomainCapacity(FrontierOwnerKind::Voice) >= std::min(width, config.voiceCapacity.Render());
+    }
+    bool CanPrepareIdleTree(const EngineActionPlayScratch& scratch, std::uint32_t width) const noexcept {
+        return ActionPlaySlotReusable(scratch) && (width == 0 || FitsDeferredTree(scratch.storage, width) ||
+            scratch.playableTreeExecutor.CanGrowReservations());
+    }
+    bool PrepareIdleTree(std::uint32_t slot, std::uint32_t width) noexcept {
+        if (!EnsureActionPlaySlot(slot)) return false;
+        auto& storage = actionPlayStorage[slot];
+        if (width == 0) return true;
+        if (storage.phase != EngineFrontierAttemptPhase::Free) return false;
+        if (storage.frontierPolicies.size() < width) {
+            try {
+                detail::CheckedGrow(storage.frontierPolicies, width, detail::LogicAllocSite::ActionPlayContainerStorage);
+                storage.frontierPolicies.resize(width);
+            } catch (...) {
+                detail::RecordCurrentLogicAllocFailure(detail::LogicAllocSite::ActionPlayContainerStorage);
+                return false;
+            }
+        }
+        return storage.PrepareQueueLinks(width) && storage.PrepareControlChildren(width) &&
+            storage.playableTreeExecutor->PrepareReservationCount(width) &&
+            storage.ownerLedger.PrepareDomain(FrontierOwnerKind::Mode, width) &&
+            storage.ownerLedger.PrepareDomain(FrontierOwnerKind::Voice, std::min(width, config.voiceCapacity.Render()));
+    }
+    bool PrepareDeferredTrees(DeferredTreeBacking& backing) noexcept {
+        if (backing.armCount && !timelineArms.PrepareBacking(backing.armCount, &backing.arms)) return false;
+        if (backing.bankCount && (!PrepareQueueProgramBankBacking(backing.bankCount, &backing.banks) ||
+            !queueScheduleStorage.Prepare(backing.scheduleShape, backing.bankCount, &backing.schedules,
+                [this]() noexcept { return AllowNativeBackingAllocation(); }))) return false;
+        if (backing.count == 0) return true;
+        if (!backing.completionWidths.empty() &&
+            !compositeCompletionOwners.PrepareBacking(backing.completionWidths, &backing.completions)) return false;
+        if (backing.groupCount != 0 &&
+            (!decisions.PrepareBacking(backing.groupCount, &backing.decisions) ||
+             !armGroups.PrepareBacking(backing.groupCount, backing.groupMembers, &backing.groups))) return false;
+        if (backing.queueCount != 0 && !queueInstances.PrepareBacking(backing.queueCount,
+                backing.conditionalCount, &backing.queues)) return false;
+        if (backing.controlCount != 0 && !variableControlInstances.PrepareBacking(
+                backing.controlCount, &backing.variableControls)) return false;
+        const auto width = std::max(RequiredDeferredTreeWidth(), backing.width);
+        if (!actionPlayScratch.PrepareBacking(backing.count, backing.count,
+                [this, width](const auto& scratch) noexcept { return CanPrepareIdleTree(scratch, width); },
+                [this, width](std::uint32_t slot) noexcept { return PrepareIdleTree(slot, width); },
+                &backing.attempts, true)) return false;
+        try {
+            backing.widthEntry = deferredTreeWidths.insert(backing.width);
+            backing.widths = &deferredTreeWidths;
+            return true;
+        } catch (...) {
+            detail::RecordCurrentLogicAllocFailure(detail::LogicAllocSite::ActionPlayContainerStorage);
+            return false;
+        }
+    }
+    struct BorrowedTree {
+        std::uint32_t& active;
+        const std::uint32_t previous;
+        StableSlotStorage<EngineActionPlayScratch>::PreparedUse use;
+        ActionFiringHandle& controlOwner;
+        const ActionFiringHandle previousOwner;
+        std::optional<CompositeCompletionOwnerPool::PreparedUse> composites;
+        std::optional<ArmGroupTable::PreparedUse> groups;
+        std::optional<StableStoragePreparedUse> decisions;
+        std::optional<StableStoragePreparedUse> arms;
+        std::optional<StableStoragePreparedUse> banks;
+        std::optional<EngineQueueScheduleStorage::PreparedUse> schedules;
+        BorrowedTree(Engine& engine, const DeferredTreeBacking* held, ActionFiringHandle owner, bool stopping) noexcept
+            : active(engine.borrowedTreeWidth), previous(active), use(held ? held->attempts.Use() : decltype(use){}),
+              controlOwner(engine.preparingDeferredTreeOwner), previousOwner(controlOwner) {
+            if (held) {
+                if (owner && held->bankCount && !engine.nativeRuntimeBackingInUse) {
+                    banks.emplace(held->banks.Use());
+                    schedules.emplace(held->schedules.Use());
+                }
+                if ((owner || stopping) && held->arms.Valid() && !engine.nativeRuntimeBackingInUse)
+                    arms.emplace(held->arms.Use());
+                active = held->width;
+                controlOwner = held->controlCount != 0 || held->queueCount != 0 || held->groupCount != 0 ? owner : 0;
+                if (owner && !held->completionWidths.empty() && !engine.nativeRuntimeBackingInUse)
+                    composites.emplace(engine.compositeCompletionOwners, &held->completions);
+                if (owner && held->groups.Valid() && !engine.nativeRuntimeBackingInUse) {
+                    groups.emplace(engine.armGroups, &held->groups);
+                    decisions.emplace(held->decisions.Use());
+                }
+            }
+        }
+        BorrowedTree(const BorrowedTree&) = delete;
+        ~BorrowedTree() {
+            active = previous;
+            controlOwner = previousOwner;
+        }
+    };
+    BorrowedTree UseDeferredTrees(ActionFiringHandle firing, ActionFiringHandle controlOwner, bool stopping = false) noexcept {
+        return {*this, static_cast<const DeferredTreeBacking*>(actionFirings.TreeBackingFor(firing)), controlOwner, stopping};
+    }
+    const DeferredTreeBacking* DeferredBackingFor(const EnginePlayableServiceRow* service) const noexcept {
+        const auto owner = service && service->InvocationValid() ? service->Invocation().deferredTreeOwner : 0;
+        return owner ? static_cast<const DeferredTreeBacking*>(actionFirings.TreeBackingFor(owner)) : nullptr;
+    }
+    QueueInstanceTable::BackingUse UseDeferredQueueRows(const EnginePlayableServiceRow* service) const noexcept {
+        const auto* backing = DeferredBackingFor(service);
+        return QueueInstanceTable::BackingUse(backing ? &backing->queues : nullptr);
+    }
+    VariableControlInstanceStatus PrepareVariableControlInstance(const EnginePlayableServiceRow& service,
+        const VariableControlInstanceCreateRequest& request, PreparedVariableControlInstance* result) noexcept {
+        const auto* backing = DeferredBackingFor(&service);
+        auto use = backing ? backing->variableControls.Use() : StableStoragePreparedUse{};
+        return variableControlInstances.PrepareAcquire(request, result);
+    }
     bool EnsureActionPlaySlot(std::uint32_t slot, bool needsContainerState = true) noexcept {
         needsContainerState |= actionPlayScratch.HasPreparedBacking();
         if (actionPlayScratch.IsConstructed(slot) &&
@@ -8326,7 +8516,7 @@ public:
         return scratch.storage.phase == EngineFrontierAttemptPhase::Free && scratch.storage.generation != UINT64_MAX;
     }
     bool PrepareActionPlayBacking(std::uint32_t low, std::uint32_t high,
-        StableSlotStorage<EngineActionPlayScratch>::Preparation* out) noexcept {
+        StableSlotStorage<EngineActionPlayScratch>::Preparation* out, PreparedTreeWidth* tree = nullptr) noexcept {
         if (out == nullptr || out->Valid() || memguard::IsAudioTagged() ||
             actionPlayScratch.PreparedUseActive()) return false;
         // Generic allowances promise full storage, including existing Sound rows
@@ -8335,12 +8525,26 @@ public:
             if (!scratch.storage.PrepareContainerStorage()) return false;
             scratch.PrepareQueueScratchArrays();
         }
-        return actionPlayScratch.PrepareBacking(low, high, ActionPlaySlotReusable,
-            [this](std::uint32_t slot) noexcept { return EnsureActionPlaySlot(slot); }, out);
+        const auto width = std::max(RequiredDeferredTreeWidth(), tree ? tree->width : 0u);
+        if (!actionPlayScratch.PrepareBacking(low, high,
+                [this, width](const auto& scratch) noexcept { return CanPrepareIdleTree(scratch, width); },
+                [this, width](std::uint32_t slot) noexcept { return PrepareIdleTree(slot, width); }, out, width != 0))
+            return false;
+        if (!tree || !tree->width) return true;
+        try {
+            tree->widthEntry = deferredTreeWidths.insert(tree->width);
+            tree->widths = &deferredTreeWidths;
+            return true;
+        } catch (...) {
+            detail::RecordCurrentLogicAllocFailure(detail::LogicAllocSite::ActionPlayContainerStorage);
+            return false;
+        }
     }
     bool ProtectActionPlayBackingForAcquire(std::uint32_t slot) noexcept {
-        return actionPlayScratch.ProtectBackingForAcquire(slot, ActionPlaySlotReusable,
-            [this](std::uint32_t next) noexcept { return EnsureActionPlaySlot(next); });
+        const auto width = RequiredDeferredTreeWidth();
+        return actionPlayScratch.ProtectBackingForAcquire(slot,
+            [this, width](const auto& scratch) noexcept { return CanPrepareIdleTree(scratch, width); },
+            [this, width](std::uint32_t next) noexcept { return PrepareIdleTree(next, width); }, width != 0);
     }
     std::size_t ActionPlayStorageBytes() const noexcept {
         return actionPlayStorage.RequestedBytes() + actionPlayScratch.RequestedBytes();
@@ -8470,7 +8674,10 @@ public:
         row.invocation = &invocation;
         row.invocationGeneration = invocation.generation;
         ++invocation.serviceCount;
-        if (rootService) invocation.rootService = row.identity;
+        if (rootService) {
+            invocation.rootService = row.identity;
+            invocation.deferredTreeOwner = preparingDeferredTreeOwner;
+        }
         row.partition = partition;
         row.ownerInstance = owner;
         row.ownerEpoch = epoch;
@@ -8697,7 +8904,7 @@ public:
             batch = &storage.initialSelectionBatch;
         } else {
             auto* prepared = PreparedPendingVariableGroupFor(storage);
-            if (prepared == nullptr || !acceptedPendingVariableGroups.IsConstructed(row->identity.slot)) return nullptr;
+            if (prepared == nullptr || (row->identity.slot >= acceptedPendingVariableGroups.size())) return nullptr;
             auto& accepted = acceptedPendingVariableGroups[row->identity.slot];
             const bool hasPrepared = !prepared->Empty();
             const bool hasAccepted = !accepted.Empty();
@@ -9569,7 +9776,7 @@ public:
             scratch.row == nullptr || !scratch.row->InvocationValid() ||
             scratch.storage.phase != EngineFrontierAttemptPhase::Preparing) return false;
         auto& row = *scratch.row;
-        if (!acceptedPendingVariableGroups.Emplace(row.identity.slot) ||
+        if (!acceptedPendingVariableGroups.ConstructThrough(row.identity.slot + 1u) ||
             !acceptedPendingVariableGroups[row.identity.slot].Empty()) return false;
         if (scratch.variableControlNestedVariableControlCount > scratch.variableControlNestedServices.size()) return false;
         std::uint32_t nestedSideCount = 0;
@@ -9695,7 +9902,7 @@ public:
             prepared->reference.owner != scratch.row->ownerInstance ||
             prepared->reference.epoch != scratch.row->ownerEpoch ||
             prepared->reference.invocationGeneration != scratch.row->invocationGeneration ||
-            !acceptedPendingVariableGroups.IsConstructed(scratch.row->identity.slot)) return false;
+            (scratch.row->identity.slot >= acceptedPendingVariableGroups.size())) return false;
         auto& accepted = acceptedPendingVariableGroups[scratch.row->identity.slot];
         if (!accepted.Empty() || prepared->initialSelectionBatch.ReplacementPending() ||
             !CanMovePendingVariableGroupSources(*prepared)) return false;
@@ -9745,7 +9952,7 @@ public:
                 !ClosePendingOrdinarySelection(ordinary)) return false;
         }
         if (row.identity.slot >= playableServices.size()) return false;
-        if (!acceptedPendingVariableGroups.IsConstructed(row.identity.slot)) return true;
+        if ((row.identity.slot >= acceptedPendingVariableGroups.size())) return true;
         auto& holder = acceptedPendingVariableGroups[row.identity.slot];
         if (holder.Empty()) return true;
         return holder.reference.token == row.identity && holder.reference.owner == row.ownerInstance &&
@@ -9828,7 +10035,7 @@ public:
             row.controlLifecycle != PlayableControlLifecycle::Preparing ||
             row.pendingImmediateTimeDomain != ImmediateLaneTimeDomain::RelativeToAnchor ||
             (row.Invocation().actionTerminalReason != ActionTerminalReason::None && !retirementAbort) ||
-            !acceptedPendingVariableGroups.IsConstructed(row.identity.slot)) return nullptr;
+            (row.identity.slot >= acceptedPendingVariableGroups.size())) return nullptr;
         auto& group = acceptedPendingVariableGroups[row.identity.slot];
         const auto& original = scratch.storage.originalPendingVariableProducer;
         const auto service = group.service.FactoryReference();
@@ -10719,7 +10926,7 @@ public:
             (void)sourceReturned;
             bank.chain.following = nullptr;
         }
-        if (originalQueueReplacementHolders.data() != nullptr)
+        if (originalQueueReplacementHolders.size() != 0)
             for (std::uint32_t i = 0; i < originalQueueReplacementHolders.size(); ++i) {
                 auto& holder = originalQueueReplacementHolders[i];
                 if (holder.phase == OriginalQueueReplacementHolder::Phase::Empty) continue;
@@ -10781,8 +10988,8 @@ public:
         // factory outputs before their Source/Body receivers are shut down.
         for (auto& proof : originalSingleOccurrenceCommitProofs) proof.Release();
         compositeCompletionOwners.ReleaseOriginalPreparedLeafCommitProofsForQuiescentOwnerTeardown();
-        for (auto& original : originalQueueSourcePreparationHolders) original.ReturnAfterJoinedTerm();
-        for (auto& original : originalSinglePreparationHolders) original.ReturnAfterJoinedTerm();
+        originalQueueSourcePreparationHolders.ForEachConstructed([](auto& original) { original.ReturnAfterJoinedTerm(); });
+        originalSinglePreparationHolders.ForEachConstructed([](auto& original) { original.ReturnAfterJoinedTerm(); });
         for (auto& original : originalSingleOccurrenceBaselines) original.Release();
         for (auto& original : originalSingleDecisionBaselines) original.Release();
         // Actual callback/worker join permits own structural Return, never a
@@ -10791,7 +10998,7 @@ public:
         for (auto& original : originalOccurrencePreparations) original.original_.Release();
         // Pool backing outlives the genuine conditional group-loan returns.
         queueInstances.EndOriginalConditionalsForQuiescentOwnerTeardown();
-        if (originalQueueConditionalHolders.data() != nullptr)
+        if (originalQueueConditionalHolders.size() != 0)
             for (std::uint32_t index = 0; index < originalQueueConditionalHolders.size(); ++index)
                 assert(queueInstances.OriginalConditionalOwnerEmpty(
                     originalQueueConditionalHolders[index].baseline,
@@ -10946,7 +11153,21 @@ public:
             a.renderSlot == b.renderSlot && a.renderGeneration == b.renderGeneration;
     }
     bool PrepareOriginalSourceRowBacking(std::uint32_t count, bool fullSourceCommandBacking) noexcept {
-        if (count > timelineArms.Capacity()) return false;
+        if (count > timelineArms.Capacity()) {
+            try {
+                if (initialRootArmPublicationRows.size() < count) initialRootArmPublicationRows.resize(count);
+                if (!initialFrontierArmPins.empty() && initialFrontierArmPins.size() < count)
+                    initialFrontierArmPins.resize(count);
+                if (!initialRootArmPublicationInputs.empty() && initialRootArmPublicationInputs.size() < count)
+                    initialRootArmPublicationInputs.resize(count);
+                monitorPlaybackEvents.reserve(static_cast<std::size_t>(count) + playableInstances.ConstructedEntryCount());
+            } catch (...) {
+                detail::RecordCurrentLogicAllocFailure(detail::LogicAllocSite::EngineStorage);
+                return false;
+            }
+            if ((pendingVariableLeafSources.size() != 0 && !pendingVariableLeafSources.ConstructThrough(count)) ||
+                (pendingVariableFutureSources.size() != 0 && !pendingVariableFutureSources.ConstructThrough(count))) return false;
+        }
         // Ordinary construction prepares the record; the actual private capture
         // prepares only the holder it needs before issuing its original loans.
         for (; originalSourceBackingPrefix < count; ++originalSourceBackingPrefix)
@@ -10992,7 +11213,7 @@ public:
         const auto arm = originalArm.OriginalPreparedToken();
         const auto render = originalVoice.OriginalPreparedHandle();
         if (originalArm.Owner() != &timelineArms || originalVoice.Owner() != &voices ||
-            !arm.Valid() || arm.slot >= originalSinglePreparationHolders.size() ||
+            !arm.Valid() || arm.slot >= timelineArms.ConstructedRowCount() ||
             render == 0 || render != ((static_cast<std::uint64_t>(arm.renderGeneration) << 32) | arm.renderSlot)) return false;
         if (!originalSinglePreparationHolders.Emplace(arm.slot)) return false;
         auto& holder = originalSinglePreparationHolders[arm.slot];
@@ -11068,7 +11289,7 @@ public:
         const auto render = originalVoice.OriginalPreparedHandle();
         if ((issued != nullptr && *issued != nullptr) ||
             originalArm.Owner() != &timelineArms || originalVoice.Owner() != &voices ||
-            !arm.Valid() || arm.slot >= originalQueueSourcePreparationHolders.size() ||
+            !arm.Valid() || arm.slot >= timelineArms.ConstructedRowCount() ||
             render == 0 || render != ((static_cast<std::uint64_t>(arm.renderGeneration) << 32) | arm.renderSlot)) return false;
         if (!originalQueueSourcePreparationHolders.Emplace(arm.slot)) return false;
         auto& holder = originalQueueSourcePreparationHolders[arm.slot];
@@ -11108,12 +11329,12 @@ public:
     }
     void ServiceOriginalQueueSourcePreparations() noexcept {
         if (!originalQueueSourcePreparationSeen) return;
-        for (auto& holder : originalQueueSourcePreparationHolders) {
+        originalQueueSourcePreparationHolders.ForEachConstructed([&](auto& holder) {
             if (holder.receiver_ == this && !holder.returned_)
                 (void)ReturnOriginalQueueSourcePreparationAfterPhysicalRelease(holder.arm_);
             if (holder.receiver_ == this && holder.compositeLedgerOriginal_.Valid())
                 (void)ReturnOriginalCompositeLedgerAfterNativeEnd(&holder);
-        }
+        });
     }
     bool MatchesOriginalCompositeLedgerPreparation(const EnginePreparedTimelineVoiceStart& voice) const noexcept {
         const auto* holder = voice.originalQueueSource;
@@ -11462,7 +11683,7 @@ public:
     }
     bool RecordInitialSoundQueueCohortFromPreparedFactories(EngineImmediateEntryAttempt& attempt,
         EngineActionPlayScratch& sound, EngineActionPlayScratch& queue) noexcept {
-        if (originalQueueConditionalHolders.size() == 0 || attempt.soundQueueCohort.receiver_ != nullptr ||
+        if (!queueInstances.SupportsOriginalConditionals() || attempt.soundQueueCohort.receiver_ != nullptr ||
             !attempt.active || !attempt.lane.Valid() || attempt.root == 0 ||
             attempt.gate.Observe(attempt.generation) != ImmediateEntryAttemptState::Preparing ||
             !sound.prepared || !queue.prepared || !sound.instance.Valid() || !queue.instance.Valid() ||
@@ -11827,11 +12048,12 @@ public:
     void ServiceOriginalSingleSourcePreparations() noexcept {
         if (!originalSingleSourcePreparationSeen) return;
         bool retained = false;
-        for (auto& holder : originalSinglePreparationHolders)
+        originalSinglePreparationHolders.ForEachConstructed([&](auto& holder) {
             if (holder.receiver_ == this && !holder.returned_) {
                 (void)ReturnOriginalSingleSourcePreparationAfterPhysicalRelease(holder.arm_);
                 retained = retained || !holder.returned_;
             }
+        });
         originalSingleSourcePreparationSeen = retained;
     }
 
@@ -11927,7 +12149,7 @@ public:
         return originalPlayableLifetimeHolders.ConstructThrough(playableInstances.ConstructedEntryCount()) &&
             (!needsCurrentHolders || PrepareOriginalSingleCurrentStorage()) &&
             playableInstances.IssueOriginalPreparedLifetimeBaselines(original,
-                {originalPlayableLifetimeHolders.data(), originalPlayableLifetimeHolders.size()});
+                originalPlayableLifetimeHolders);
     }
     bool IssueOriginalPlayableTreeLifetimes(PlayableTreeExecutor& tree,
         bool needsCurrentHolders = true) noexcept {
@@ -11961,7 +12183,6 @@ public:
         auto* arrangingOriginal = ResolveOriginalPlayableBaseline(this, playableInstances, arranging);
         const auto slot = static_cast<std::uint32_t>(arranging);
         if (rootOriginal == nullptr || arrangingOriginal == nullptr ||
-            slot >= originalSingleCurrentHolders.Capacity() ||
             !PrepareOriginalSingleCurrentStorage(slot + 1u)) return false;
         auto& holder = originalSingleCurrentHolders[slot];
         if (holder.state == OriginalSingleCurrentHolder::State::Ending && !holder.ResetAfterNativeRetirement(*this)) return false;
@@ -12419,8 +12640,8 @@ public:
         const EngineQueueProgramBank* bank) noexcept {
         if (bank == nullptr ||
             queueProgramBanks.size() == 0) return nullptr;
-        const auto index = queueProgramBanks.IndexOf(*bank);
-        if (index == UINT32_MAX || !originalQueueBankHolders.IsConstructed(index) ||
+        const auto index = queueProgramBanks.IndexOf(bank);
+        if (index == UINT32_MAX || index >= originalQueueBankHolders.size() ||
             &queueProgramBanks[index] != bank) return nullptr;
         return &originalQueueBankHolders[index];
     }
@@ -12430,48 +12651,48 @@ public:
     }
 
     bool PrepareQueueProgramBankBacking(std::uint32_t count,
-        StableSlotStorage<EngineQueueProgramBank>::Preparation* out) noexcept {
-        return queueProgramBanks.PrepareBacking(count, 0, QueueProgramBankReusable,
-            [this](std::uint32_t slot) noexcept { return PrepareQueueProgramBankSlot(slot); }, out);
-    }
-
-    bool PrepareQueueProgramBankSlot(std::uint32_t slot) noexcept {
-        return originalQueueBankHolders.Emplace(slot) && queueProgramBanks.Emplace(slot);
+        StableStoragePreparation* out) noexcept {
+        std::uint32_t occupied = 0;
+        if (count != 0) {
+            for (const auto& bank : queueProgramBanks)
+                occupied += !QueueProgramBankReusable(bank);
+        }
+        return queueProgramBanks.PrepareBacking(count, occupied, out, [this](std::uint32_t rows) noexcept {
+            return originalQueueBankHolders.ConstructThrough(rows);
+        });
     }
 
     bool PrepareQueueInstanceHolders(std::uint32_t count) noexcept {
-        const auto workspaces = std::min(count, config.maxPlayableInstances);
-        return initialQueueTimingMembersScratch.ConstructThrough(workspaces) &&
-            initialQueueTransitionTimingProofsScratch.ConstructThrough(workspaces) &&
-            initialQueueConditionalTimingProofsScratch.ConstructThrough(workspaces) &&
-            initialQueueCurrentCompositeProofsScratch.ConstructThrough(workspaces) &&
-            initialQueueSuccessorCompositeProofsScratch.ConstructThrough(workspaces) &&
-            actionQueueReplacementScratch.ConstructThrough(workspaces) &&
+        return queueResetSelectionWords.ConstructThrough(count / 64u + (count % 64u != 0)) &&
+            initialQueueTimingMembersScratch.ConstructThrough(count) &&
+            initialQueueTransitionTimingProofsScratch.ConstructThrough(count) &&
+            initialQueueConditionalTimingProofsScratch.ConstructThrough(count) &&
+            initialQueueCurrentCompositeProofsScratch.ConstructThrough(count) &&
+            initialQueueSuccessorCompositeProofsScratch.ConstructThrough(count) &&
+            actionQueueReplacementScratch.ConstructThrough(count) &&
             originalQueueLifetimeHolders.ConstructThrough(count) &&
             originalQueueFactoryLifetimeHolders.ConstructThrough(count) &&
-            (queueInstances.originalConditionalCapacity_ == 0 ||
+            (!queueInstances.SupportsOriginalConditionals() ||
                 (originalQueueConditionalHolders.ConstructThrough(count) &&
                  originalQueueReplacementHolders.ConstructThrough(count)));
     }
 
     EngineQueueProgramBank* ReserveOriginalQueueBank() noexcept {
-        for (std::uint32_t index = 0; index < queueProgramBanks.size(); ++index) {
-            if (!queueProgramBanks.IsConstructed(index)) {
-                if (queueProgramBanks.PreparedUseActive()) continue;
-                if (!PrepareQueueProgramBankSlot(index)) return nullptr;
-            }
-            auto& bank = queueProgramBanks[index];
-            if (!QueueProgramBankReusable(bank)) continue;
-            if (!queueProgramBanks.ProtectBackingForAcquire(index, QueueProgramBankReusable,
-                    [this](std::uint32_t slot) noexcept { return PrepareQueueProgramBankSlot(slot); })) return nullptr;
-            auto& original = originalQueueBankHolders[index];
-            if (!bank.TryReserve(&original.reservation)) continue;
-            if (bank.IssueLifetimePin(original.reservation, &original.baseline)) return &bank;
-            original.reservation.Release();
-            const bool reset = bank.TryResetStorage();
-            assert(reset);
-            (void)reset;
-        }
+        const auto index = queueProgramBanks.FindFreeSlot(UINT32_MAX, QueueProgramBankReusable,
+            [this](std::uint32_t count) noexcept {
+                return queueProgramBanks.ConstructThrough(count, [this](std::uint32_t rows) noexcept {
+                    return originalQueueBankHolders.ConstructThrough(rows);
+                });
+            });
+        if (index == UINT32_MAX) return nullptr;
+        auto& bank = queueProgramBanks[index];
+        auto& original = originalQueueBankHolders[index];
+        if (!bank.TryReserve(&original.reservation)) return nullptr;
+        if (bank.IssueLifetimePin(original.reservation, &original.baseline)) return &bank;
+        original.reservation.Release();
+        const bool reset = bank.TryResetStorage();
+        assert(reset);
+        (void)reset;
         return nullptr;
     }
 
@@ -13140,6 +13361,8 @@ public:
         if (!queueInstances.OriginalConditionalOwnerEmpty(holder.baseline, holder.clock) ||
             !queueInstances.IsOriginalLifetimePinFor(parent, queue)) return false;
         // No post-prepare fallible tail: the real factory writes the stable cap.
+        const auto* service = originalQueueFactoryLifetimeHolders[queue.slot].service_;
+        auto queueUse = UseDeferredQueueRows(service ? service->service_ : nullptr);
         if (!queueInstances.PrepareConditional(queue, request, out, parent, &holder.baseline)) return false;
         if (issued != nullptr) *issued = &holder.baseline;
         return true;
@@ -13433,7 +13656,7 @@ public:
             if (checkpointOwner != nullptr) {
                 borrower = NativeBackingTokenFor(*checkpointOwner);
                 if (!borrower.Valid() || !checkpointOwner->queueRolesBorrowed ||
-                    !checkpointOwner->queueCheckpointBacking.Split(1, 0, &checkpoint)) return false;
+                    !checkpointOwner->queueCheckpointBacking.Split(1, &checkpoint)) return false;
             } else if (!queueCheckpoints.PrepareBacking(1, &checkpoint)) return false;
         }
         const auto returnCheckpoint = [&]() noexcept {
@@ -13445,6 +13668,7 @@ public:
         QueueInstanceTable::OriginalLifetimePin original;
         auto observedCreate = create;
         observedCreate.monitorIdentity = CaptureMonitorOwner(create.rootInstance);
+        auto queueUse = UseDeferredQueueRows(service == nullptr ? nullptr : service->service_);
         if (!queueInstances.PrepareAcquire(observedCreate, prepared, &original)) {
             returnCheckpoint();
             return false;
@@ -13488,6 +13712,9 @@ public:
             key.world != create.world || key.containerStableId != create.containerStableId ||
             key.programSemanticFingerprint != create.programSemanticFingerprint || key.resetEpoch != create.resetEpoch ||
             key.emitterSlot != create.emitterSlot || key.emitterGeneration != create.emitterGeneration) return false;
+        // An emitter can disappear while its last queued sound is still finishing.
+        if (key.emitterSlot != UINT32_MAX && !emitters.IsLive(
+                (static_cast<std::uint64_t>(key.emitterGeneration) << 32) | key.emitterSlot)) return true;
         const auto use = factory.checkpointBacking_.Use();
         return queueCheckpoints.Store(key, image);
     }
@@ -13785,6 +14012,15 @@ public:
     };
     std::vector<MonitorPlaybackEvent> monitorPlaybackEvents;
     const PlayableStorageLayout playableStorage;
+    std::size_t PlayableMemberCount() const noexcept {
+        return playableStorage.MemberBase(playablePartitions.Capacity());
+    }
+    std::size_t PlayablePairedCount() const noexcept {
+        return playableStorage.PairedBase(playablePartitions.Capacity());
+    }
+    std::size_t PlayableEndpointCount() const noexcept {
+        return playableStorage.EndpointBase(playablePartitions.Capacity());
+    }
     ResampleTables tables;
     MultirateResampleTables multirateTables;
     BiquadTrigTable biquadTrig;
@@ -13812,10 +14048,10 @@ public:
     std::vector<EngineInitialFrontierArmPin> initialFrontierArmPins;
     std::vector<TimelineArmTable::BoundArmPublicationInput> initialRootArmPublicationInputs;
     std::vector<TimelineArmTable::Row*> initialRootArmPublicationRows;
-    std::vector<DecisionTable::FrontierPublicationProof> initialRootActivationPublicationProofs;
+    GrowingRowStorage<DecisionTable::FrontierPublicationProof> initialRootActivationPublicationProofs;
     // Original bank storage outlives every genuine Engine-held loan.
     EngineQueueScheduleStorage queueScheduleStorage;
-    StableSlotStorage<EngineQueueProgramBank> queueProgramBanks;
+    GrowingRowStorage<EngineQueueProgramBank> queueProgramBanks;
     // Original Queue storage outlives every genuine Engine-held loan.
     QueueInstanceTable queueInstances;
     // Bus-topology plan pool: logic constructs plans, the audio thread consumes
@@ -13845,8 +14081,9 @@ public:
     std::vector<std::uint8_t> influenceVisited;
     std::vector<std::uint32_t> influenceStack;
     SourceTerminalRecords sourceTerminals;
-    std::vector<EnginePlayableMemberToken> sourcePlayableMembers;
+    GrowingRowStorage<EnginePlayableMemberToken> sourcePlayableMembers;
     OccurrenceStatePool timelineOccurrences;
+    CompositeCompletionOwnerPool compositeCompletionOwners;
     VoicePool voices;
     StableRowStorage<EngineTimelineVoiceInstallIdentity> timelineVoiceInstallIdentities;
     BusTree buses;
@@ -13857,15 +14094,15 @@ public:
     QueueCheckpointTable queueCheckpoints;
     // Fixed, producer-only storage. Copy/reset of service or scratch rows cannot
     // move these native loans. Destruction precedes Pool, Queue table, and banks.
-    StableSlotStorage<OriginalQueueBankHolder> originalQueueBankHolders;
-    StableRowStorage<QueueInstanceTable::OriginalLifetimePin> originalQueueLifetimeHolders;
-    StableRowStorage<OriginalQueueFactoryLifetimeHolder> originalQueueFactoryLifetimeHolders;
+    GrowingRowStorage<OriginalQueueBankHolder> originalQueueBankHolders;
+    GrowingRowStorage<QueueInstanceTable::OriginalLifetimePin> originalQueueLifetimeHolders;
+    GrowingRowStorage<OriginalQueueFactoryLifetimeHolder> originalQueueFactoryLifetimeHolders;
     void (*originalQueueFactoryLifetimeHookForTest)(Engine&,
         const OriginalQueueFactoryLifetimeHolder&, void*) = nullptr;
     void* originalQueueFactoryLifetimeContextForTest = nullptr;
-    StableRowStorage<OriginalQueueConditionalHolder> originalQueueConditionalHolders;
+    GrowingRowStorage<OriginalQueueConditionalHolder> originalQueueConditionalHolders;
     std::unique_ptr<PrivateSelectedQueueFutureSpanPool> originalQueueReplacementSpans;
-    StableRowStorage<OriginalQueueReplacementHolder> originalQueueReplacementHolders;
+    GrowingRowStorage<OriginalQueueReplacementHolder> originalQueueReplacementHolders;
     std::unique_ptr<OriginalConditionalReplacementBatch> originalQueueReplacementBatch;
     std::uint32_t originalQueueReplacementAbandonCount = 0;
     std::uint32_t originalQueueReplacementCount = 0;
@@ -13874,7 +14111,7 @@ public:
     // Stop cancellation holders must return before their native table dies.
     PlayableInstanceTable playableInstances;
     // Lane fence references must be destroyed before their original backing.
-    std::vector<EngineAuthoredStopRoot> authoredStopRoots;
+    GrowingRowStorage<EngineAuthoredStopRoot> authoredStopRoots;
     std::uint32_t authoredStopRootPrefixCount = 0;
     StableRowStorage<EngineAuthoredStopResource> authoredStopResources;
     ImmediateActionLane immediateActionLane;
@@ -13884,7 +14121,7 @@ public:
     std::vector<EngineActionFiringPlanRow> actionFiringPlanScratch;
     std::vector<ActionFiringOwnerStamp> actionFiringOwnerReleaseScratch;
     OriginalPackIdentityLease originalActionFiringPreparation;
-    std::vector<EngineOriginalActionFiringPackHolder> originalActionFiringPackHolders;
+    GrowingRowStorage<EngineOriginalActionFiringPackHolder> originalActionFiringPackHolders;
     std::vector<EngineActionStepPlanRow> actionStepPlanScratch;
     std::vector<PreparedVariableWriteToken> actionVariableWriteScratch;
     std::vector<PreparedSelectionResetV1> actionSelectionResetScratch;
@@ -13895,11 +14132,11 @@ public:
     // The first Stop/Reset lease waits here until actual root capture allocates its record.
     // A failed native Return retains the same cap until joined shutdown.
     EngineOriginalPackIdentityLease originalDeferredTargetPreparation;
-    std::vector<EngineActionDeferredScratch> actionDeferredScratch;
-    std::vector<EngineOriginalDeferredPackHolder> originalDeferredPackHolders;
+    GrowingRowStorage<EngineActionDeferredScratch> actionDeferredScratch;
+    GrowingRowStorage<EngineOriginalDeferredPackHolder> originalDeferredPackHolders;
     // Stable backing. Native tables outlive every genuine cap and bundle.
-    StableRowStorage<PlayableInstanceTable::OriginalLifetimePin> originalPlayableLifetimeHolders;
-    StableRowStorage<OriginalSingleCurrentHolder> originalSingleCurrentHolders;
+    GrowingRowStorage<PlayableInstanceTable::OriginalLifetimePin> originalPlayableLifetimeHolders;
+    GrowingRowStorage<OriginalSingleCurrentHolder> originalSingleCurrentHolders;
     std::uint32_t originalSingleCurrentCount = 0;
     void (*originalPlayableTreePreparationHookForTest)(Engine&, PlayableTreeExecutor&, void*) = nullptr;
     void* originalPlayableTreePreparationContextForTest = nullptr;
@@ -13915,28 +14152,28 @@ public:
     EngineActionPlayScratch::NativeVoiceSide ordinarySingleVoiceBacking;
     std::vector<EngineFrontierAttemptToken> actionPlayAttemptTokens;
     std::vector<OriginalPendingVariableGroupHolder*> initialPendingVariableOwnerScratch;
-    std::vector<EngineInitialQueueEntryDecisionOwner>
-        initialQueueEntryDecisionOwnersScratch;
+    GrowingRowStorage<EngineInitialQueueEntryDecisionOwner> initialQueueEntryDecisionOwnersScratch;
     std::vector<DecisionParticipantRef>
         initialQueueCoordinatorParticipantsScratch;
     std::uint32_t initialQueueEntryDecisionOwnerCount = 0;
     std::unique_ptr<VariableControlRetargetTreeScratch> variableControlRetargetScratch;
     // Serial logic-side service preparation, separate from Action start scratch.
     bool servicePreparedScheduleLeavesInUse = false;
-    std::vector<EngineActionStopScratch> actionStopScratch;
+    GrowingRowStorage<EngineActionStopScratch> actionStopScratch;
     std::vector<std::uint64_t> actionPlayFrameScratch;
     std::vector<ImmediateLaneEvent> pendingImmediateLaneEventsScratch;
     std::vector<EngineImmediateLaneDemandQuantum> initialLaneDemandEventQuantaScratch;
     std::vector<EngineImmediateLaneDemandQuantum> initialLaneDemandGroupQuantaScratch;
-    StableRowStorage<EngineInitialQueueTimingMember>
+    GrowingRowStorage<std::uint64_t> queueResetSelectionWords;
+    GrowingRowStorage<EngineInitialQueueTimingMember>
         initialQueueTimingMembersScratch;
-    StableRowStorage<TransitionInstancePool::PrivateTimingProof>
+    GrowingRowStorage<TransitionInstancePool::PrivateTimingProof>
         initialQueueTransitionTimingProofsScratch;
-    StableRowStorage<QueueInstanceTable::PrivateConditionalTimingProof>
+    GrowingRowStorage<QueueInstanceTable::PrivateConditionalTimingProof>
         initialQueueConditionalTimingProofsScratch;
-    StableRowStorage<CompositeCompletionOwnerPool::PrivateReanchorProof>
+    GrowingRowStorage<CompositeCompletionOwnerPool::PrivateReanchorProof>
         initialQueueCurrentCompositeProofsScratch;
-    StableRowStorage<CompositeCompletionOwnerPool::PrivateReanchorProof>
+    GrowingRowStorage<CompositeCompletionOwnerPool::PrivateReanchorProof>
         initialQueueSuccessorCompositeProofsScratch;
     StableRowStorage<EngineInitialQueueTimingProgram>
         initialQueueTimingProgramsScratch;
@@ -13946,7 +14183,7 @@ public:
         initialQueueTimingGroupsScratch;
     StableRowStorage<Plan03ImmediateLaneGroupDescriptor>
         initialQueueLaneGroupsScratch;
-    StableRowStorage<EngineImmediateEntryAttempt> immediateEntryAttempts;
+    GrowingRowStorage<EngineImmediateEntryAttempt> immediateEntryAttempts;
     std::uint32_t activeImmediateEntryAttemptCount = 0;
     void SetImmediateEntryAttemptActive(EngineImmediateEntryAttempt& attempt,
                                         bool active) noexcept {
@@ -13960,27 +14197,37 @@ public:
         attempt.active = active;
     }
     StableRowStorage<EngineQueueContinuationRecord> queueContinuationRecords;
-    StableRowStorage<EngineQueueFutureRecord> queueFutureRecords;
+    GrowingRowStorage<EngineQueueFutureRecord> queueFutureRecords;
+    static bool QueueFutureReusable(const EngineQueueFutureRecord& record) noexcept {
+        return !record.occupied && record.generation != UINT64_MAX &&
+            !record.coordinatorReservation.Valid() && !record.coordinator.Valid() &&
+            !record.coordinatorArmGroup.Valid() && !record.primaryGroup.Exact() &&
+            !record.prerequisiteMemberPin.Valid() && !record.parentPin.Valid() &&
+            !record.sourceTransitionBinding.Valid() && !record.bindingArmPinEntry.Valid();
+    }
+    bool PrepareQueueFutureBacking(std::uint32_t count, StableStoragePreparation* out) noexcept {
+        return queueFutureRecords.PrepareBacking(count, UnavailableRows(queueFutureRecords, QueueFutureReusable), out);
+    }
     void (*voiceCommandBatchPublishHookForTest)(Engine&, void*) = nullptr;
     void* voiceCommandBatchPublishHookContextForTest = nullptr;
     void (*immediateEntryAfterPublishHookForTest)(Engine&, void*) = nullptr;
     void* immediateEntryAfterPublishContextForTest = nullptr;
-    StableRowStorage<EngineActionQueueReplacementScratch>
+    GrowingRowStorage<EngineActionQueueReplacementScratch>
         actionQueueReplacementScratch;
     // Tokens and descriptor pins must be destroyed before their owning tables.
-    std::vector<EngineDecisionRetirement> decisionRetirements;
-    std::vector<EnginePlayableStartRow> playableStarts;
-    StableRowStorage<EnginePlayableServiceRow> playableServices;
+    GrowingRowStorage<EngineDecisionRetirement> decisionRetirements;
+    GrowingRowStorage<EnginePlayableStartRow> playableStarts;
+    GrowingRowStorage<EnginePlayableServiceRow> playableServices;
     std::vector<EngineScheduleSourceServiceWork> scheduleSourceSettlementWork;
     std::vector<EnginePlayableServiceReference> scheduleSourcePublicationWork;
     EngineScheduleSourceServicePhase scheduleSourceServicePhase = EngineScheduleSourceServicePhase::Idle;
     std::uint64_t scheduleSourceObservedAudioSequence = 0;
-    StableSlotStorage<EngineMemberProgramRecord> memberProgramRecords;
+    GrowingRowStorage<EngineMemberProgramRecord> memberProgramRecords;
     std::uint32_t retiredMemberProgramCount = 0;
-    StableSlotStorage<EnginePlayableMemberRecord> playableMemberRecords;
+    GrowingRowStorage<EnginePlayableMemberRecord> playableMemberRecords;
 
     EnginePlayableServiceRow* MemberRelationOwner(std::size_t logicalSlot) noexcept {
-        if (logicalSlot >= playableStorage.memberCount || playableStorage.memberStride == 0) return nullptr;
+        if (logicalSlot >= PlayableMemberCount() || playableStorage.memberStride == 0) return nullptr;
         const auto partition = static_cast<std::uint32_t>(logicalSlot / playableStorage.memberStride);
         const auto token = playablePartitions.CaptureOwner(partition);
         if (!token.Valid() || token.slot >= playableServices.size()) return nullptr;
@@ -14030,7 +14277,7 @@ public:
     bool PrepareMemberRelationBacking(std::uint32_t count, StableStoragePreparation* out) noexcept {
         const auto previous = memberRelations.ConstructedCount();
         const bool prepared = memberRelations.PrepareBacking(
-            std::min(count, memberRelations.Capacity()), occupiedMemberRelations, out,
+            count, occupiedMemberRelations, out,
             [&](std::uint32_t required) noexcept {
                 return required <= previous || AllowNativeBackingAllocation();
             });
@@ -14055,8 +14302,8 @@ public:
         while (row.memberRelationHead != UINT32_MAX) RemoveMemberRelation(row, &row.memberRelationHead);
     }
     void ClearPlayableMemberReferences(std::size_t base, std::size_t count) noexcept {
-        if (count == 0 || base >= playableStorage.memberCount) return;
-        const auto end = base + std::min(count, playableStorage.memberCount - base);
+        if (count == 0 || base >= PlayableMemberCount()) return;
+        const auto end = base + std::min(count, PlayableMemberCount() - base);
         while (base < end) {
             const auto partitionBase = base - base % playableStorage.memberStride;
             const auto limit = std::min(end, partitionBase + playableStorage.memberStride);
@@ -14085,7 +14332,7 @@ public:
             target.ownerEpoch != reference.service.epoch || target.invocationGeneration != reference.service.invocationGeneration ||
             target.partition.generation != reference.partitionGeneration) return false;
         if (!existing) {
-            if (occupiedMemberRelations == memberRelations.Capacity()) return false;
+            if (occupiedMemberRelations == UINT32_MAX) return false;
             const auto previous = memberRelations.ConstructedCount();
             if (!memberRelations.ConstructThrough(occupiedMemberRelations + 1u,
                     [&](std::uint32_t required) noexcept {
@@ -14159,18 +14406,17 @@ public:
     static bool PlayableMemberReusable(const EnginePlayableMemberRecord& record) noexcept {
         return !record.occupied && record.generation != UINT64_MAX;
     }
-    bool PreparePlayableMemberRecord(std::uint32_t slot) noexcept {
-        // Prepare the observation page before constructing a reusable record.
-        // A failed page preparation must not leave a falsely ready record.
-        return memberOnsets.Prepare({1, slot, 0}) && playableMemberRecords.Emplace(slot);
+    bool PrepareMemberOnsets(std::uint32_t required) noexcept {
+        for (auto slot = playableMemberRecords.size(); slot < required; ++slot)
+            if (!memberOnsets.Prepare({1, slot, 0})) return false;
+        return true;
     }
-    bool PreparePlayableMemberBacking(std::uint32_t count,
-        StableSlotStorage<EnginePlayableMemberRecord>::Preparation* out) noexcept {
-        return playableMemberRecords.PrepareBacking(count, 0, PlayableMemberReusable,
-            [this](std::uint32_t slot) noexcept { return PreparePlayableMemberRecord(slot); }, out);
+    bool PreparePlayableMemberBacking(std::uint32_t count, StableStoragePreparation* out) noexcept {
+        return playableMemberRecords.PrepareBacking(count, UnavailableRows(playableMemberRecords, PlayableMemberReusable),
+            out, [this](std::uint32_t required) noexcept { return PrepareMemberOnsets(required); });
     }
     EnginePlayableMemberRecord* FindPlayableMember(EnginePlayableMemberToken token) noexcept {
-        if (!token.Valid() || !playableMemberRecords.IsConstructed(token.slot)) return nullptr;
+        if (!token.Valid() || token.slot >= playableMemberRecords.size()) return nullptr;
         auto& record = playableMemberRecords[token.slot];
         return record.occupied && record.generation == token.generation ? &record : nullptr;
     }
@@ -14185,7 +14431,7 @@ public:
             record->render == source.render ? record : nullptr;
     }
     bool SetPlayableMemberSource(EnginePlayableMemberRecord& record, SourceTerminalToken source) noexcept {
-        const EnginePlayableMemberToken token{playableMemberRecords.IndexOf(record), record.generation};
+        const EnginePlayableMemberToken token{playableMemberRecords.IndexOf(&record), record.generation};
         if (FindPlayableMember(token) != &record ||
             (source.Valid() && source.slot >= sourcePlayableMembers.size())) {
             RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
@@ -14223,7 +14469,7 @@ public:
             record->physicalSlot == playableStorage.MemberBase(row.partition.slot) + offset ? record : nullptr;
     }
     EnginePlayableMemberRecord* FindPlayableMember(std::size_t physicalSlot) noexcept {
-        if (physicalSlot >= playableStorage.memberCount || playableStorage.memberStride == 0) return nullptr;
+        if (physicalSlot >= PlayableMemberCount() || playableStorage.memberStride == 0) return nullptr;
         const auto partition = static_cast<std::uint32_t>(physicalSlot / playableStorage.memberStride);
         const auto owner = playablePartitions.CaptureOwner(partition);
         if (!owner.Valid() || owner.slot >= playableServices.size()) return nullptr;
@@ -14241,21 +14487,28 @@ public:
         assert(record != nullptr);
         return *record;
     }
+    template<class Rows, class Reusable>
+    static std::uint32_t UnavailableRows(const Rows& rows, Reusable reusable) noexcept {
+        return static_cast<std::uint32_t>(rows.size() - std::count_if(rows.begin(), rows.end(), reusable));
+    }
+    template<class T, class Reusable, class Prepare>
+    static T* AcquireReusableRow(GrowingRowStorage<T>& rows, Reusable reusable, Prepare prepare) noexcept {
+        const auto available = std::find_if(rows.begin(), rows.end(), reusable);
+        const auto slot = static_cast<std::uint32_t>(available - rows.begin());
+        // Other accepted work must keep its promised free rows, even when this
+        // acquisition reuses a hole below the last occupied row.
+        const auto needed = rows.HeldRows() != 0 && !rows.PreparedUseActive()
+            ? UnavailableRows(rows, reusable) : slot;
+        if (needed == UINT32_MAX || !rows.ConstructThrough(needed + 1u, prepare)) return nullptr;
+        return rows.TryAt(slot);
+    }
     EnginePlayableMemberToken AcquirePlayableMemberRecord() noexcept {
-        for (std::uint32_t slot = 0; slot < playableMemberRecords.size(); ++slot) {
-            if (!playableMemberRecords.IsConstructed(slot)) {
-                if (playableMemberRecords.PreparedUseActive()) continue;
-                if (!PreparePlayableMemberRecord(slot)) return {};
-            }
-            auto& record = playableMemberRecords[slot];
-            if (!PlayableMemberReusable(record)) continue;
-            if (!playableMemberRecords.ProtectBackingForAcquire(slot, PlayableMemberReusable,
-                    [this](std::uint32_t next) noexcept { return PreparePlayableMemberRecord(next); })) return {};
-            record.occupied = true;
-            ++record.generation;
-            return {slot, record.generation};
-        }
-        return {};
+        auto* record = AcquireReusableRow(playableMemberRecords, PlayableMemberReusable,
+            [this](std::uint32_t required) noexcept { return PrepareMemberOnsets(required); });
+        if (record == nullptr) return {};
+        record->occupied = true;
+        ++record->generation;
+        return {playableMemberRecords.IndexOf(record), record->generation};
     }
     static void RecyclePlayableMember(EnginePlayableMemberRecord& record) noexcept {
         if (record.primaryOwned || record.programOwners != 0) return;
@@ -14394,15 +14647,14 @@ public:
         return !record.occupied && record.generation != UINT64_MAX;
     }
     bool PrepareMemberProgramBacking(std::uint32_t count,
-        StableSlotStorage<EngineMemberProgramRecord>::Preparation* out) noexcept {
-        return memberProgramRecords.PrepareBacking(count, 0, MemberProgramReusable,
-            [this](std::uint32_t slot) noexcept { return memberProgramRecords.Emplace(slot); }, out);
+        StableStoragePreparation* out) noexcept {
+        return memberProgramRecords.PrepareBacking(count, UnavailableRows(memberProgramRecords, MemberProgramReusable), out);
     }
     EngineMemberProgramRecord* FindMemberProgram(const EnginePlayableServiceRow& row,
         std::uint32_t offset) noexcept {
         if (offset >= row.memberPrograms.size()) return nullptr;
         const auto token = row.memberPrograms[offset];
-        if (!token.Valid() || !memberProgramRecords.IsConstructed(token.slot)) return nullptr;
+        if (!token.Valid() || token.slot >= memberProgramRecords.size()) return nullptr;
         auto& record = memberProgramRecords[token.slot];
         const auto& reference = record.member;
         return record.occupied && record.directoryOwned && record.generation == token.generation &&
@@ -14428,25 +14680,17 @@ public:
         }
         auto* member = FindPlayableMember(row, reference.memberOffset);
         if (member == nullptr || member->programOwners == UINT32_MAX) return nullptr;
-        for (std::uint32_t slot = 0; slot < memberProgramRecords.size(); ++slot) {
-            if (!memberProgramRecords.IsConstructed(slot)) {
-                if (memberProgramRecords.PreparedUseActive()) continue;
-                if (!memberProgramRecords.Emplace(slot)) return nullptr;
-            }
-            auto& record = memberProgramRecords[slot];
-            if (!MemberProgramReusable(record)) continue;
-            if (!memberProgramRecords.ProtectBackingForAcquire(slot, MemberProgramReusable,
-                    [this](std::uint32_t next) noexcept { return memberProgramRecords.Emplace(next); })) return nullptr;
-            record.member = reference;
-            record.memberToken = row.members[reference.memberOffset];
-            ++member->programOwners;
-            record.directoryOwned = true;
-            record.occupied = true;
-            ++record.generation;
-            token = {slot, record.generation};
-            return &record;
-        }
-        return nullptr;
+        auto* record = AcquireReusableRow(memberProgramRecords, MemberProgramReusable,
+            [](std::uint32_t) noexcept { return true; });
+        if (record == nullptr) return nullptr;
+        record->member = reference;
+        record->memberToken = row.members[reference.memberOffset];
+        ++member->programOwners;
+        record->directoryOwned = true;
+        record->occupied = true;
+        ++record->generation;
+        token = {memberProgramRecords.IndexOf(record), record->generation};
+        return record;
     }
     EngineMemberProgramRecord* ResolveMemberProgram(const EnginePlayableMemberReference& reference) noexcept {
         EnginePlayableServiceRow* owner = nullptr;
@@ -14565,13 +14809,13 @@ public:
              scratch.queueEvents.ConstructThrough(scratch.queueEvents.Capacity())));
     }
     bool PrepareOriginalSingleCurrentStorage(std::size_t count) noexcept {
-        if (count > originalSingleCurrentHolders.Capacity()) return false;
+        if (count > UINT32_MAX) return false;
         if (originalSingleCurrentHolders.size() >= count) return true;
         if (memguard::IsAudioTagged() || playableServices.PreparedUseActive()) return false;
         return originalSingleCurrentHolders.ConstructThrough(count);
     }
     bool PrepareOriginalSingleCurrentStorage() noexcept {
-        return PrepareOriginalSingleCurrentStorage(originalSingleCurrentHolders.Capacity());
+        return PrepareOriginalSingleCurrentStorage(playableInstances.ConstructedEntryCount());
     }
     bool PreparePlayableFeatureBacking() noexcept {
         if (!PrepareOriginalSingleCurrentStorage() || !PreparePlayablePublicationStorage() ||
@@ -14584,8 +14828,7 @@ public:
     }
     bool PrepareOriginalPlayableStorage(bool needsCompleteInstanceStorage = true,
         std::uint32_t independentRoots = 1u) noexcept {
-        return (needsCompleteInstanceStorage ? playableInstances.PrepareStorage()
-                : playableInstances.PrepareStorageForAcquire(independentRoots)) &&
+        return playableInstances.PrepareStorageForAcquire(independentRoots) &&
             originalPlayableLifetimeHolders.ConstructThrough(playableInstances.ConstructedEntryCount());
     }
     bool PreparePlayablePublicationStorage(bool needsContainerState = true,
@@ -14628,23 +14871,54 @@ public:
         catch (...) { detail::RecordCurrentLogicAllocFailure(detail::LogicAllocSite::BindingStorage); return false; }
         return true;
     }
+    bool PrepareInitialFrontierStorage(std::uint32_t count, bool assembling = false) noexcept {
+        if (count <= initialFrontierEvents.size() && count <= initialFrontierRequests.size()) return true;
+        if (memguard::IsAudioTagged() || actionPlayScratch.PreparedUseActive() ||
+            (initialFrontierWorkspaceOccupied && !assembling)) return false;
+        try {
+            const auto grow = [count](auto& rows, detail::LogicAllocSite site) {
+                if (rows.size() >= count) return;
+                detail::CheckedGrow(rows, count, site);
+                rows.resize(count);
+            };
+            grow(initialFrontierEvents, detail::LogicAllocSite::InitialFrontierEvents);
+            grow(initialFrontierRequests, detail::LogicAllocSite::InitialFrontierRequests);
+            return true;
+        } catch (...) {
+            detail::RecordCurrentLogicAllocFailure(detail::LogicAllocSite::EngineStorage);
+            return false;
+        }
+    }
     bool PreparePlayableStateStorage(bool needsContainerState = true,
         std::uint32_t independentRoots = 1u, bool needsCurrentHolders = true) noexcept {
         return PrepareTimelineStartStorage(needsContainerState, independentRoots) &&
             PrepareOriginalPlayableStorage(needsContainerState, independentRoots) &&
             (!needsContainerState || !needsCurrentHolders || PrepareOriginalSingleCurrentStorage()) &&
             (!needsContainerState ||
-                (initialFrontierEvents.ConstructThrough(initialFrontierEvents.Capacity()) &&
-                 initialFrontierRequests.ConstructThrough(initialFrontierRequests.Capacity()) &&
-                 pendingVariableLeafSources.ConstructThrough(pendingVariableLeafSources.Capacity()) &&
-                 pendingVariableFutureSources.ConstructThrough(pendingVariableFutureSources.Capacity()) &&
-                 pendingVariableFutureNodes.ConstructThrough(pendingVariableFutureNodes.Capacity()))) &&
+                (PrepareInitialFrontierStorage(1) &&
+                 pendingVariableLeafSources.ConstructThrough(timelineArms.Capacity()) &&
+                 pendingVariableFutureSources.ConstructThrough(timelineArms.Capacity()))) &&
             (!needsContainerState || spatial.PrepareVoiceStorage(config.voiceCapacity.Render())) &&
             PreparePlayablePublicationStorage(needsContainerState, independentRoots);
     }
     bool PreparePlayableServiceDependencies(std::uint32_t required,
                                             bool requireQueueTiming = true) noexcept {
-        if (!originalPlayableServiceLifetimeHolders.ConstructThrough(required)) return false;
+        const auto previousStarts = playableStarts.size();
+        if (!playableStarts.ConstructThrough(required)) return false;
+        for (auto slot = previousStarts; slot < required; ++slot) playableStarts[slot].slot = slot;
+        if (!originalPlayableServiceLifetimeHolders.ConstructThrough(required) ||
+            !playablePartitions.PrepareStorage(required) ||
+            !timelinePool.PrepareImmediateLaneOwnerGates(required) ||
+            !initialQueueEntryDecisionOwnersScratch.ConstructThrough(required)) return false;
+        if (initialQueueCoordinatorParticipantsScratch.size() < required) {
+            if (memguard::IsAudioTagged() || playableServices.PreparedUseActive()) return false;
+            try {
+                initialQueueCoordinatorParticipantsScratch.resize(required);
+            } catch (...) {
+                detail::RecordCurrentLogicAllocFailure(detail::LogicAllocSite::EngineStorage);
+                return false;
+            }
+        }
         if (!requireQueueTiming) return true;
         // One service contributes one selected future. Its source and successor
         // programs contain at most Start/Envelope or Envelope/Stop events.
@@ -14662,7 +14936,7 @@ public:
     EnginePlayableServiceRow* PrepareFreePlayableService(bool requireQueueTiming = true) noexcept {
         const auto free = std::find_if(playableServices.begin(), playableServices.end(), PlayableServiceReusable);
         const auto slot = free == playableServices.end() ? playableServices.size() : free->identity.slot;
-        if (slot >= playableServices.Capacity()) return nullptr;
+        if (slot == UINT32_MAX) return nullptr;
         const auto previous = playableServices.size();
         if (!playableServices.ConstructThrough(slot + 1u,
                 [this, requireQueueTiming](std::uint32_t required) noexcept {
@@ -14685,8 +14959,12 @@ public:
             out->Release();
             return false;
         }
-        for (auto& row : playableServices)
-            if (!PrepareMemberProgramDirectory(row) || !PreparePlayableMemberDirectory(row)) return false;
+        for (auto& row : playableServices) {
+            if (!PrepareMemberProgramDirectory(row) || !PreparePlayableMemberDirectory(row)) {
+                out->Release();
+                return false;
+            }
+        }
         return true;
     }
     struct PlayableServiceWorkFamily {};
@@ -14803,7 +15081,7 @@ public:
     EnginePlayableServiceRow* NextOccupiedPlayableCohortService(
         ActionFiringHandle root, PlayableCohortCursor* cursor) noexcept {
         // Exhaustion is sticky, even if a callback later inserts another row.
-        if (cursor == nullptr || cursor->nextSlot >= playableServices.Capacity()) return nullptr;
+        if (cursor == nullptr || cursor->nextSlot == UINT32_MAX) return nullptr;
         auto slot = playableCohortBuckets_[PlayableCohortBucket(root)].head;
         if (cursor->previous.Valid() && cursor->previous.slot < playableServices.size()) {
             const auto& previous = playableServices[cursor->previous.slot];
@@ -14823,7 +15101,7 @@ public:
             }
             slot = row.cohortNext_;
         }
-        cursor->nextSlot = playableServices.Capacity();
+        cursor->nextSlot = UINT32_MAX;
         return nullptr;
     }
 private:
@@ -14877,17 +15155,17 @@ private:
     }
 public:
     // Production Current borrowing remains closed while this seed is collecting.
-    StableRowStorage<OriginalPlayableServiceLifetimeHolder> originalPlayableServiceLifetimeHolders;
+    GrowingRowStorage<OriginalPlayableServiceLifetimeHolder> originalPlayableServiceLifetimeHolders;
     StableRowStorage<OriginalPendingVariableQueueNativeOrigin> pendingVariableQueueNativeOrigins;
     StableSlotStorage<OriginalPendingOrdinarySelectionHolder> pendingOrdinarySelections;
     StableSlotStorage<OriginalPendingVariableGroupHolder> preparedPendingVariableGroups;
-    StableSlotStorage<OriginalPendingVariableGroupHolder> acceptedPendingVariableGroups;
+    GrowingRowStorage<OriginalPendingVariableGroupHolder> acceptedPendingVariableGroups;
     bool pendingVariableGroupReplacementActive = false;
     bool deferRegisteredPendingVariableSelectionReplacementForTest = false;
     bool deferPendingImmediateEntriesForTest = false;
-    StableRowStorage<OriginalPendingVariableLeafSource> pendingVariableLeafSources;
+    GrowingRowStorage<OriginalPendingVariableLeafSource> pendingVariableLeafSources;
     std::uint32_t pendingVariableLeafSourceCount = 0;
-    StableRowStorage<OriginalPendingVariableFutureSource> pendingVariableFutureSources;
+    GrowingRowStorage<OriginalPendingVariableFutureSource> pendingVariableFutureSources;
     bool PreparePendingVariableQueueOriginBacking(std::uint32_t count,
         StableStoragePreparation* out) noexcept {
         auto occupied = pendingVariableQueueNativeOrigins.ConstructedCount();
@@ -14895,7 +15173,7 @@ public:
         return pendingVariableQueueNativeOrigins.PrepareBacking(
             std::min(count, pendingVariableQueueNativeOrigins.Capacity()), occupied, out);
     }
-    StableRowStorage<OriginalPendingVariableFutureNode> pendingVariableFutureNodes;
+    GrowingRowStorage<OriginalPendingVariableFutureNode> pendingVariableFutureNodes;
     void (*pendingVariableGroupPlacementHookForTest)(Engine&, EngineActionPlayScratch&,
         EngineImmediateEntryAttempt&, const PrivateImmediateLanePlacementProof&,
         VariableReadCutReader, void*) noexcept = nullptr;
@@ -14975,7 +15253,7 @@ public:
     }
 
     bool ResolvePlayableMemberSlot(std::size_t logicalSlot, std::size_t* physicalSlot) noexcept {
-        if (physicalSlot == nullptr || logicalSlot >= playableStorage.memberCount) return false;
+        if (physicalSlot == nullptr || logicalSlot >= PlayableMemberCount()) return false;
         const auto& reference = ReadPlayableMemberReference(logicalSlot);
         if (!reference.service.token.Valid()) {
             *physicalSlot = logicalSlot;
@@ -15038,15 +15316,15 @@ public:
         if (offset > (std::numeric_limits<std::size_t>::max)() - row.scheduleStorageBase) return nullptr;
         std::size_t slot = 0;
         if (!ResolvePlayableMemberSlot(row.scheduleStorageBase + offset, &slot) ||
-            slot >= playableStorage.memberCount || !ReadPlayableMember(slot).voice.Valid()) return nullptr;
+            slot >= PlayableMemberCount() || !ReadPlayableMember(slot).voice.Valid()) return nullptr;
         return &ReadPlayableMember(slot).voice;
     }
 
     template <std::size_t Capacity>
     bool ResolvePlayableMemberSlots(std::size_t logicalBase, std::size_t count,
                                    std::array<std::size_t, Capacity>& physicalSlots) noexcept {
-        if (count > Capacity || logicalBase > playableStorage.memberCount ||
-            count > playableStorage.memberCount - logicalBase) return false;
+        if (count > Capacity || logicalBase > PlayableMemberCount() ||
+            count > PlayableMemberCount() - logicalBase) return false;
         for (std::size_t index = 0; index < count; ++index) {
             if (!ResolvePlayableMemberSlot(logicalBase + index, &physicalSlots[index])) return false;
         }
@@ -15057,7 +15335,7 @@ public:
                                        std::size_t logicalSlot,
                                        EnginePlayableMemberReference* output) noexcept {
         if (output == nullptr || !playablePartitions.Owns(service.partition, service.identity) ||
-            logicalSlot >= playableStorage.memberCount) return false;
+            logicalSlot >= PlayableMemberCount()) return false;
         if (ReadPlayableMemberReference(logicalSlot).service.token.Valid()) {
             EnginePlayableServiceRow* owner = nullptr;
             std::size_t physicalSlot = 0;
@@ -15091,24 +15369,24 @@ public:
         return true;
     }
     std::vector<TimelineTransactionProgramRef> publishedFrontierProgramRefsScratch;
-    StableRowStorage<ScheduledEventInput, std::size_t> initialFrontierEvents;
-    StableRowStorage<TransactionRequest, std::size_t> initialFrontierRequests;
+    std::vector<ScheduledEventInput> initialFrontierEvents;
+    std::vector<TransactionRequest> initialFrontierRequests;
     bool initialFrontierWorkspaceOccupied = false;
     // Serial producer leaves delegate before acquiring this exclusive scratch.
     EngineTimelineStartScratch timelineStartScratch{};
-    std::vector<EngineOrdinaryRetiringSource> ordinaryRetiringSources;
+    GrowingRowStorage<EngineOrdinaryRetiringSource> ordinaryRetiringSources;
     std::uint32_t ordinaryRetiringSourceCount = 0;
-    std::vector<EngineOrdinaryRetiringLeaf> ordinaryRetiringLeaves;
+    GrowingRowStorage<EngineOrdinaryRetiringLeaf> ordinaryRetiringLeaves;
     struct MemberOnsetFamily {};
     using MemberOnsetIdentity = RuntimeIndexIdentity<MemberOnsetFamily>;
     RuntimeActivityIndex<MemberOnsetFamily> memberOnsets;
 
     EnginePlayableMemberRecord* FindPlayableMemberOnset(std::uint32_t recordSlot) noexcept {
-        if (!playableMemberRecords.IsConstructed(recordSlot)) return nullptr;
+        if (recordSlot >= playableMemberRecords.size()) return nullptr;
         auto& record = playableMemberRecords[recordSlot];
         if (!record.occupied || !record.primaryOwned || !record.service.Valid() ||
             record.service.slot >= playableServices.size() ||
-            record.physicalSlot >= playableStorage.memberCount) return nullptr;
+            record.physicalSlot >= PlayableMemberCount()) return nullptr;
         auto& row = playableServices[record.service.slot];
         const auto base = playableStorage.MemberBase(row.partition.slot);
         if (record.physicalSlot < base) return nullptr;
@@ -15130,7 +15408,7 @@ public:
     void RefreshPlayableMemberOnset(std::size_t slot) noexcept {
         const auto* record = FindPlayableMember(slot);
         if (record == nullptr) return;
-        const auto recordSlot = playableMemberRecords.IndexOf(*record);
+        const auto recordSlot = playableMemberRecords.IndexOf(record);
         const auto identity = PlayableMemberOnsetIdentity(recordSlot, *record);
         if (!identity.Valid()) return;
         const auto& member = record->completion;
@@ -15146,7 +15424,7 @@ public:
     void RemovePlayableMemberOnset(std::size_t slot) noexcept {
         const auto* record = FindPlayableMember(slot);
         if (record == nullptr) return;
-        const auto previous = PlayableMemberOnsetIdentity(playableMemberRecords.IndexOf(*record), *record);
+        const auto previous = PlayableMemberOnsetIdentity(playableMemberRecords.IndexOf(record), *record);
         if (previous.Valid()) {
             const bool removed = memberOnsets.SetMembership(previous, RuntimeActivitySet::Active,
                 false, [&](MemberOnsetIdentity current) noexcept {
@@ -15285,8 +15563,8 @@ public:
     }
     OriginalSourceSubmissionRegistry originalSourceSubmissions;
     // Fixed actual Arm factory slots; every Source/Body receiver outlives them.
-    StableSlotStorage<OriginalSinglePreparationHolder> originalSinglePreparationHolders;
-    StableSlotStorage<OriginalQueueSourcePreparationHolder> originalQueueSourcePreparationHolders;
+    SparseRowStorage<OriginalSinglePreparationHolder, StableSlotStorage<OriginalSinglePreparationHolder>> originalSinglePreparationHolders;
+    SparseRowStorage<OriginalQueueSourcePreparationHolder, StableSlotStorage<OriginalQueueSourcePreparationHolder>> originalQueueSourcePreparationHolders;
     bool originalSingleSourcePreparationSeen = false;
     bool originalQueueSourcePreparationSeen = false;
     std::uint32_t originalSourceBackingPrefix = 0;
@@ -15298,12 +15576,12 @@ public:
     // Each late native fence keeps its own table slot, independent of Arm reuse.
     // Native Decision lifetime outputs cover actual Queue Current and Future
     // reservations. Completion-kind and ordinary Single equality stay strict.
-    std::vector<OriginalDecisionLifetimePin> originalSingleDecisionBaselines;
+    GrowingRowStorage<OriginalDecisionLifetimePin> originalSingleDecisionBaselines;
     void (*originalQueueDecisionPreparationHookForTest)(Engine&, const PreparedDecisionReservation&,
         const OriginalDecisionLifetimePin&, void*) = nullptr;
     void* originalQueueDecisionPreparationContextForTest = nullptr;
-    std::vector<OccurrenceStatePool::OriginalSingleCompletionOwnerPin> originalSingleOccurrenceBaselines;
-    std::vector<OccurrenceStatePool::PreparedSingleCompletionCommitProof> originalSingleOccurrenceCommitProofs;
+    GrowingRowStorage<OccurrenceStatePool::OriginalSingleCompletionOwnerPin> originalSingleOccurrenceBaselines;
+    GrowingRowStorage<OccurrenceStatePool::PreparedSingleCompletionCommitProof> originalSingleOccurrenceCommitProofs;
     // Must outlive the proof, whose cancellation releases all prepared seeds.
     std::vector<EffectParamTargetStore::PreparedSeedToken> preparedVoiceEffectSeeds;
     CommandQueue::PreparedBatchProof preparedVoiceCommandBatchProof;
@@ -15353,15 +15631,14 @@ public:
     // mixer holds a reference and publishes into it). One row per configured
     // voice slot.
     SourceCursorMirror sourceCursors;
-    CompositeCompletionOwnerPool compositeCompletionOwners;
     // Same native capacity; receiver outlives all own factory output holders.
-    std::vector<EngineOriginalCompositeCompletionPreparation> originalCompositeCompletionPreparations;
+    GrowingRowStorage<EngineOriginalCompositeCompletionPreparation> originalCompositeCompletionPreparations;
     void (*originalCompositePreparationHookForTest)(Engine&, const EngineOriginalCompositeCompletionPreparation&, void*) = nullptr;
     void* originalCompositePreparationContextForTest = nullptr;
     void (*originalCompositeLeafPreparationHookForTest)(Engine&, const EngineOriginalCompositeCompletionPreparation&, void*) = nullptr;
     void* originalCompositeLeafPreparationContextForTest = nullptr;
-    // Same capacity as actual native Occurrence storage; never grown at runtime.
-    std::vector<EngineOriginalOccurrencePreparation> originalOccurrencePreparations;
+    // Prepared before the corresponding occurrence row becomes visible.
+    GrowingRowStorage<EngineOriginalOccurrencePreparation> originalOccurrencePreparations;
     void (*originalOccurrencePreparationHookForTest)(Engine&, const EngineOriginalOccurrencePreparation&, void*) = nullptr;
     void* originalOccurrencePreparationContextForTest = nullptr;
     DeferredIntentPool timelineDeferred;

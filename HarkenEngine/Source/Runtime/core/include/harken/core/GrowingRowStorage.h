@@ -35,6 +35,29 @@ public:
         return ConstructThrough(count, [](std::uint32_t) noexcept { return true; });
     }
 
+    // Reuse the first free identity. Only outstanding promises require counting
+    // the remaining live rows before granting storage to a different producer.
+    template<class Available, class Prepare>
+    std::uint32_t FindFreeSlot(std::uint32_t limit, Available&& available, Prepare&& prepare) noexcept {
+        const auto size = ConstructedCount();
+        std::uint32_t slot = 0;
+        while (slot < size && !available((*this)[slot])) ++slot;
+        if (slot >= limit) return UINT32_MAX;
+        auto required = slot + 1u;
+        if (!PreparedUseActive() && HeldRows() != 0) {
+            std::uint64_t free = 0;
+            for (auto next = slot; next < size; ++next) {
+                if (available((*this)[next]) && ++free > HeldRows()) return slot;
+            }
+            const auto occupied = size - static_cast<std::uint32_t>(free);
+            if (HeldRows() >= limit - occupied) return UINT32_MAX;
+            required = occupied + 1u;
+        } else if (slot < size) {
+            return slot;
+        }
+        return prepare(required) ? slot : UINT32_MAX;
+    }
+
     template<class PrepareDependencies>
     bool PrepareBacking(std::uint32_t count, std::uint32_t occupiedPrefix,
         StableStoragePreparation* out, PrepareDependencies&& prepare) noexcept {
@@ -87,16 +110,17 @@ public:
         return *row;
     }
 
-    // Resolve a row held by a control-side owner without assuming contiguity.
+    // Only directories covered by the acquired prefix are visible to a concurrent reader.
     std::uint32_t IndexOf(const T* row) const noexcept {
         const auto address = reinterpret_cast<std::uintptr_t>(row);
-        for (std::uint32_t i = 0; i < segments_.size(); ++i) {
-            if (!segments_[i]) continue;
+        const auto published = ConstructedCount();
+        if (published == 0) return UINT32_MAX;
+        for (std::uint32_t i = 0; i <= SegmentFor(published - 1u); ++i) {
             const auto begin = reinterpret_cast<std::uintptr_t>(segments_[i]->data());
             const auto bytes = std::uint64_t{segments_[i]->ConstructedCount()} * sizeof(T);
             if (address >= begin && address - begin < bytes && (address - begin) % sizeof(T) == 0) {
                 const auto index = SegmentBegin(i) + static_cast<std::uint32_t>((address - begin) / sizeof(T));
-                if (index < ConstructedCount()) return index;
+                if (index < published) return index;
             }
         }
         return UINT32_MAX;

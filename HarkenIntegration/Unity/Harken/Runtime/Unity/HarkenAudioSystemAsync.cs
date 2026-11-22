@@ -69,7 +69,7 @@ namespace Harken.Unity
                 {
                     if (session == null || !session.IsActive)
                     {
-                        managedFirings = Array.Empty<ManagedFiring>();
+                        managedFirings = null;
                         DisposeCallbackRegistrations();
                     }
                     companionStartup = null;

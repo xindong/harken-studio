@@ -55,7 +55,7 @@ namespace Harken.Unity.Tests
         {
             try
             {
-                using (var fixture = new Fixture(2))
+                using (var fixture = new Fixture())
                 {
                     fixture.Start();
                     PackBootstrapSession previous = fixture.Runtime.Session;
@@ -98,33 +98,46 @@ namespace Harken.Unity.Tests
         }
 
         [UnityTest]
-        public IEnumerator ManagedPostsOverlapAndRefusalDoesNotGrowOwnership()
+        public IEnumerator ManagedPostsGrowAcrossPagesAndKeepEveryOwner()
         {
-            using (var fixture = new Fixture(2))
+            using (var fixture = new Fixture())
             {
+                HarkenProjectSettings.ActiveForStartup().SetMaxVoices(512);
                 fixture.Start();
                 ActionFiring first = fixture.Play();
                 ActionFiring second = fixture.Play();
                 Assert.That(first.Handle, Is.Not.EqualTo(second.Handle));
                 Assert.That(Pending(fixture.Runtime), Is.EqualTo(2));
-                ExpectPlayFailure(VnResult.VN_NO_ACTION);
-                Assert.That(fixture.TryPlay(out ActionFiring refused), Is.EqualTo(VnResult.VN_NO_ACTION));
-                Assert.That(refused.IsValid, Is.False);
+                for (int i = 2; i < 257; ++i) fixture.Play();
                 for (int i = 0; i < 3; ++i) yield return null;
-                Assert.That(Pending(fixture.Runtime), Is.EqualTo(2));
+                Assert.That(Pending(fixture.Runtime), Is.EqualTo(257));
                 Assert.That(first.Query(out VnActionFiringInfo firstInfo), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(second.Query(out VnActionFiringInfo secondInfo), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(firstInfo.state, Is.Not.EqualTo((uint)VnActionFiringState.VN_ACTION_FIRING_TERMINAL_RETAINED));
                 Assert.That(secondInfo.state, Is.Not.EqualTo((uint)VnActionFiringState.VN_ACTION_FIRING_TERMINAL_RETAINED));
+#if HARKEN_SDK_TEST_NULL_PUMP
+                PumpUntilTerminal(fixture.Runtime.Session, first, second);
+                for (int i = 0; i < 128 && Pending(fixture.Runtime) != 0; ++i)
+                {
+                    AdvanceNullAudioAndNormalService(fixture);
+                    Invoke(fixture.Runtime, "CollectManagedFirings");
+                }
+                Assert.That(Pending(fixture.Runtime), Is.Zero);
+                ActionFiring survivor = fixture.Play();
+                Invoke(fixture.Runtime, "CollectManagedFirings");
+                Assert.That(survivor.Query(out _), Is.EqualTo(VnResult.VN_OK));
+                Assert.That(Get<int>(fixture.Runtime, "managedVisitsLastPass"), Is.EqualTo(1));
+#endif
                 Assert.That(Get<ICollection>(fixture.Runtime, "firingCleanup").Count, Is.Zero);
             }
             yield return null;
         }
 
+#if HARKEN_SDK_TEST_NULL_PUMP
         [UnityTest]
         public IEnumerator NativeCapacityRefusalLeavesTheManagedSlotAvailable()
         {
-            using (var fixture = new Fixture(2))
+            using (var fixture = new Fixture())
             {
                 fixture.Start();
                 Assert.That(Actions.Resolve(fixture.Action.Name, fixture.Publication.ProjectId,
@@ -132,9 +145,11 @@ namespace Harken.Unity.Tests
                 Assert.That(Actions.Post(in resolved, Emitter.None, 44, out ActionFiring external),
                     Is.EqualTo(VnResult.VN_OK));
                 fixture.Play();
+                Assert.That(HarkenSdkTest_RefuseFiringResultStorage(1), Is.EqualTo(VnResult.VN_OK));
                 ExpectPlayFailure(VnResult.VN_NO_ACTION);
                 Assert.That(fixture.TryPlay(out ActionFiring refused), Is.EqualTo(VnResult.VN_NO_ACTION));
                 Assert.That(refused.IsValid, Is.False);
+                Assert.That(HarkenSdkTest_RefuseFiringResultStorage(0), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(Pending(fixture.Runtime), Is.EqualTo(1));
                 for (int i = 0; i < 3; ++i) yield return null;
                 Assert.That(Pending(fixture.Runtime), Is.EqualTo(1));
@@ -143,10 +158,12 @@ namespace Harken.Unity.Tests
             yield return null;
         }
 
+#endif
+
         [UnityTest]
         public IEnumerator InitOnlyManagedTriggerPreparesAndPostsImmediately()
         {
-            using (var fixture = new Fixture(2, false))
+            using (var fixture = new Fixture(false))
             {
                 fixture.Start();
                 ActionFiring firing = fixture.Play();
@@ -159,7 +176,7 @@ namespace Harken.Unity.Tests
         [UnityTest]
         public IEnumerator DemandSourceRejectsInvalidTriggersWithoutReservingSlots()
         {
-            using (var fixture = new Fixture(1, false))
+            using (var fixture = new Fixture(false))
             {
                 var source = new DemandSource(fixture);
                 fixture.Start(source.Prepared);
@@ -173,10 +190,9 @@ namespace Harken.Unity.Tests
                 Assert.That(Pending(fixture.Runtime), Is.Zero);
                 fixture.Play();
                 Assert.That(source.Calls.Count, Is.EqualTo(1));
-                ExpectPlayFailure(VnResult.VN_NO_ACTION);
                 Assert.That(fixture.Runtime.PlayAction("Play_U4_B", fixture.Publication.ProjectId, out _),
-                    Is.EqualTo(VnResult.VN_NO_ACTION));
-                Assert.That(source.Calls.Count, Is.EqualTo(1));
+                    Is.EqualTo(VnResult.VN_OK));
+                Assert.That(source.Calls.Count, Is.EqualTo(2));
             }
             yield return null;
         }
@@ -185,7 +201,7 @@ namespace Harken.Unity.Tests
         [UnityTest]
         public IEnumerator ReusableActionScopesDeduplicateNamesAndShareReferences()
         {
-            using (var fixture = new Fixture(2, false))
+            using (var fixture = new Fixture(false))
             {
                 var source = new DemandSource(fixture);
                 fixture.Start(source.Prepared);
@@ -217,7 +233,7 @@ namespace Harken.Unity.Tests
         [UnityTest]
         public IEnumerator DemandFailureDoesNotPublishOrReplay()
         {
-            using (var fixture = new Fixture(2, false))
+            using (var fixture = new Fixture(false))
             {
                 fixture.Publication.TryFindAction("Play_U4_B", out CompanionTestAction dependency);
                 fixture.Publication.TryFindAction("Play_U4_Caller", out CompanionTestAction caller);
@@ -249,7 +265,7 @@ namespace Harken.Unity.Tests
         [UnityTest]
         public IEnumerator DemandCallbackCannotReenterSamePackOrConsumeReservedSlot()
         {
-            using (var fixture = new Fixture(1, false))
+            using (var fixture = new Fixture(false))
             {
                 var source = new DemandSource(fixture);
                 fixture.Start(source.Prepared);
@@ -257,8 +273,8 @@ namespace Harken.Unity.Tests
                 {
                     Assert.That(fixture.Runtime.Session.AcquirePack(id, out _), Is.EqualTo(VnResult.VN_IN_USE));
                     Invoke(fixture.Runtime, "AdvanceFrame");
-                    ExpectPlayFailure(VnResult.VN_NO_ACTION);
-                    Assert.That(fixture.TryPlay(out _), Is.EqualTo(VnResult.VN_NO_ACTION));
+                    ExpectPlayFailure(VnResult.VN_IN_USE);
+                    Assert.That(fixture.TryPlay(out _), Is.EqualTo(VnResult.VN_IN_USE));
                 };
                 fixture.Play();
                 Assert.That(source.Calls.Count, Is.EqualTo(1));
@@ -270,7 +286,7 @@ namespace Harken.Unity.Tests
         [UnityTest]
         public IEnumerator DemandCallbackRestartCannotLoadIntoTheNewSession()
         {
-            using (var fixture = new Fixture(2, false))
+            using (var fixture = new Fixture(false))
             {
                 var source = new DemandSource(fixture);
                 fixture.Start(source.Prepared);
@@ -296,7 +312,7 @@ namespace Harken.Unity.Tests
         [UnityTest]
         public IEnumerator DemandReplaceCallbackRestartCannotLoadIntoTheNewSession()
         {
-            using (var fixture = new Fixture(2, false))
+            using (var fixture = new Fixture(false))
             {
                 var source = new DemandSource(fixture);
                 fixture.Start(source.Prepared);
@@ -328,7 +344,7 @@ namespace Harken.Unity.Tests
         [UnityTest]
         public IEnumerator PreparationPublishesOnlyAfterCompletionAndRejectsReentryDuringReuse()
         {
-            using (var fixture = new Fixture(2, false))
+            using (var fixture = new Fixture(false))
             {
                 var source = new DemandSource(fixture);
                 fixture.Start(source.Prepared);
@@ -359,7 +375,7 @@ namespace Harken.Unity.Tests
         [UnityTest]
         public IEnumerator ComponentDemandCallbackDisableCannotPostOrRetainItsPreparedContent()
         {
-            using (var fixture = new Fixture(2, false))
+            using (var fixture = new Fixture(false))
             {
                 var source = new DemandSource(fixture);
                 fixture.Start(source.Prepared);
@@ -424,7 +440,7 @@ namespace Harken.Unity.Tests
         [UnityTest]
         public IEnumerator NativeCapacityRefusalReleasesNewPreparationWithoutReplay()
         {
-            using (var fixture = new Fixture(1, false))
+            using (var fixture = new Fixture(false))
             {
                 var source = new DemandSource(fixture);
                 fixture.Start(source.Prepared);
@@ -433,12 +449,14 @@ namespace Harken.Unity.Tests
                 Assert.That(Actions.Resolve(fixture.Action.Name, fixture.Publication.ProjectId, out ActionResolved resolved),
                     Is.EqualTo(VnResult.VN_OK));
                 Assert.That(Actions.Post(in resolved, Emitter.None, 0, out ActionFiring external), Is.EqualTo(VnResult.VN_OK));
+                Assert.That(HarkenSdkTest_RefuseFiringResultStorage(1), Is.EqualTo(VnResult.VN_OK));
                 ExpectPlayFailure(VnResult.VN_NO_ACTION);
                 Assert.That(fixture.Runtime.PlayAction("Play_U4_B", fixture.Publication.ProjectId, out ActionFiring refused),
                     Is.EqualTo(VnResult.VN_NO_ACTION));
                 Assert.That(refused.IsValid, Is.False);
                 Assert.That(Pending(fixture.Runtime), Is.Zero);
-                // Capacity is occupied externally; a fresh preparation proves the refused call released B.
+                Assert.That(HarkenSdkTest_RefuseFiringResultStorage(0), Is.EqualTo(VnResult.VN_OK));
+                // A fresh preparation must load B again after the refused post.
                 Assert.That(source.Calls.Count, Is.EqualTo(2));
                 AdvanceNullAudioAndNormalService(fixture);
                 Assert.That(external.Query(out VnActionFiringInfo externalInfo), Is.EqualTo(VnResult.VN_OK));
@@ -467,7 +485,7 @@ namespace Harken.Unity.Tests
             {
                 AudioListener.pause = false;
                 AudioListener.volume = 0.37f;
-                using (var fixture = new Fixture(2))
+                using (var fixture = new Fixture())
                 {
                     Assert.That(fixture.Runtime.ConfigureLifecycleBeforeStartup(true, true), Is.EqualTo(VnResult.VN_OK));
                     fixture.Start();
@@ -516,10 +534,10 @@ namespace Harken.Unity.Tests
         {
             bool originalPause = AudioListener.pause;
             float originalVolume = AudioListener.volume;
-            using (var fixture = new Fixture(0))
+            using (var fixture = new Fixture())
             {
                 fixture.Start();
-                Assert.That(Get<Array>(fixture.Runtime, "managedFirings").Length, Is.EqualTo(256));
+                Assert.That(Pending(fixture.Runtime), Is.Zero);
                 fixture.Play();
                 fixture.Runtime.enabled = false;
                 Assert.That(fixture.Runtime.Session.IsActive, Is.True);
@@ -534,7 +552,7 @@ namespace Harken.Unity.Tests
         {
             bool originalPause = AudioListener.pause;
             float originalVolume = AudioListener.volume;
-            using (var fixture = new Fixture(2))
+            using (var fixture = new Fixture())
             {
                 Assert.That(fixture.Runtime.ConfigureLifecycleBeforeStartup(true, true), Is.EqualTo(VnResult.VN_OK));
                 fixture.Start();
@@ -575,7 +593,7 @@ namespace Harken.Unity.Tests
         [UnityTest]
         public IEnumerator ResumeObserverShutdownCannotPublishReadyForTheEndedSession()
         {
-            using (var fixture = new Fixture(2))
+            using (var fixture = new Fixture())
             {
                 fixture.Start();
                 Assert.That(fixture.Runtime.SetSuspended(true), Is.EqualTo(VnResult.VN_OK));
@@ -596,7 +614,7 @@ namespace Harken.Unity.Tests
         [UnityTest]
         public IEnumerator InactiveHostAllowsConfigurationButRequiresActivationBeforeStartup()
         {
-            using (var fixture = new Fixture(2, true, false))
+            using (var fixture = new Fixture(true, false))
             {
                 Assert.That(fixture.Runtime.ConfigureLifecycleBeforeStartup(true, true), Is.EqualTo(VnResult.VN_OK));
                 LogAssert.Expect(LogType.Error, new Regex("Harken operation failed: PackBootstrap.Start: VN_ALREADY_INITIALIZED"));
@@ -622,7 +640,7 @@ namespace Harken.Unity.Tests
 
         private static IEnumerator HostExitRejectsRestart(string exit)
         {
-            using (var fixture = new Fixture(2))
+            using (var fixture = new Fixture())
             {
                 fixture.Runtime.ConfigureLifecycleBeforeStartup(true, true);
                 fixture.Start();
@@ -658,6 +676,9 @@ namespace Harken.Unity.Tests
         private static extern VnResult HarkenSdkTest_PumpNull(uint blocks);
 
         [DllImport(HarkenNative.LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern VnResult HarkenSdkTest_RefuseFiringResultStorage(uint refuse);
+
+        [DllImport(HarkenNative.LibraryName, CallingConvention = CallingConvention.Cdecl)]
         private static extern VnResult HarkenSdkTest_PumpAndCopy(
             [In, Out] float[] samples, uint capacity, out uint frames, out uint channels);
 
@@ -667,7 +688,7 @@ namespace Harken.Unity.Tests
         [UnityTest]
         public IEnumerator NativePcmCaptureRefusesSuspendedLastBlockAndResumesFresh()
         {
-            using (var fixture = new Fixture(2))
+            using (var fixture = new Fixture())
             {
                 fixture.Start();
                 var samples = new float[4096];
@@ -715,7 +736,7 @@ namespace Harken.Unity.Tests
         [UnityTest]
         public IEnumerator ManagedFirstServiceBeforeSourceApplyWaitsForNextNormalService()
         {
-            using (var fixture = new Fixture(2))
+            using (var fixture = new Fixture())
             {
                 fixture.Start();
                 var samples = new float[4096];
@@ -734,7 +755,7 @@ namespace Harken.Unity.Tests
 
         private static IEnumerator ImmediatePostAcrossNormalUpdate(bool component)
         {
-            using (var fixture = new Fixture(2))
+            using (var fixture = new Fixture())
             {
                 fixture.Start();
                 var samples = new float[4096];
@@ -767,7 +788,7 @@ namespace Harken.Unity.Tests
 
         private static IEnumerator ImmediateVeryLatePost(bool component)
         {
-            using (var fixture = new Fixture(2))
+            using (var fixture = new Fixture())
             {
                 fixture.Start();
                 var samples = new float[4096];
@@ -837,7 +858,7 @@ namespace Harken.Unity.Tests
         [UnityTest]
         public IEnumerator NativePcmCaptureRejectsInvalidBufferWithoutRendering()
         {
-            using (var fixture = new Fixture(2))
+            using (var fixture = new Fixture())
             {
                 fixture.Start();
                 var samples = new float[4096];
@@ -926,7 +947,7 @@ namespace Harken.Unity.Tests
 
         private static IEnumerator ImmediatePostBeforeNormalUpdate(bool component)
         {
-            using (var fixture = new Fixture(2))
+            using (var fixture = new Fixture())
             {
                 fixture.Start();
                 Assert.That(fixture.Owner.GetComponent<HarkenLateActionService>(), Is.Null);
@@ -958,7 +979,7 @@ namespace Harken.Unity.Tests
 
         private static IEnumerator ImmediatePostDuringLateUpdate(bool component)
         {
-            using (var fixture = new Fixture(2))
+            using (var fixture = new Fixture())
             {
                 fixture.Start();
                 Assert.That(fixture.Owner.GetComponent<HarkenLateActionService>(), Is.Null);
@@ -1044,7 +1065,7 @@ namespace Harken.Unity.Tests
         {
             bool originalPause = AudioListener.pause;
             float originalVolume = AudioListener.volume;
-            using (var fixture = new Fixture(2))
+            using (var fixture = new Fixture())
             {
                 fixture.Runtime.ConfigureLifecycleBeforeStartup(true, true);
                 fixture.Start();
@@ -1138,9 +1159,9 @@ namespace Harken.Unity.Tests
         }
 
         [UnityTest]
-        public IEnumerator NaturalCompletionReclaimsSlotsWithoutStoppingOrReplayingRefusedPosts()
+        public IEnumerator NaturalCompletionReclaimsEveryOverlappingPlayback()
         {
-            using (var fixture = new Fixture(2))
+            using (var fixture = new Fixture())
             {
                 fixture.Start();
                 PackBootstrapSession owner = fixture.Runtime.Session;
@@ -1149,9 +1170,8 @@ namespace Harken.Unity.Tests
                 {
                     ActionFiring first = fixture.Play();
                     ActionFiring second = fixture.Play();
-                    ExpectPlayFailure(VnResult.VN_NO_ACTION);
-                    Assert.That(fixture.TryPlay(out _), Is.EqualTo(VnResult.VN_NO_ACTION));
-                    PumpUntilTerminal(owner, first, second);
+                    ActionFiring third = fixture.Play();
+                    PumpUntilTerminal(owner, first, second, third);
                     Assert.That(CaptureBlock(), Is.GreaterThan(baseline));
                     baseline = CaptureBlock();
                     Invoke(fixture.Runtime, "AdvanceFrame");
@@ -1171,7 +1191,7 @@ namespace Harken.Unity.Tests
         [UnityTest]
         public IEnumerator CleanupObserverRestartCannotTransferAnOldTriggerToTheNewSession()
         {
-            using (var fixture = new Fixture(2))
+            using (var fixture = new Fixture())
             {
                 fixture.Start();
                 PackBootstrapSession previous = fixture.Runtime.Session;
@@ -1223,7 +1243,7 @@ namespace Harken.Unity.Tests
         [UnityTest]
         public IEnumerator NaturalCompletionReleasesDemandBytesAndColdPlaybackFetchesAgain()
         {
-            using (var fixture = new Fixture(2, false))
+            using (var fixture = new Fixture(false))
             {
                 var source = new DemandSource(fixture);
                 fixture.Start(source.Prepared);
@@ -1249,7 +1269,7 @@ namespace Harken.Unity.Tests
         [UnityTest]
         public IEnumerator NaturalFiringCleanupPreservesPreloadUntilItsOwnRelease()
         {
-            using (var fixture = new Fixture(2, false))
+            using (var fixture = new Fixture(false))
             {
                 var source = new DemandSource(fixture);
                 fixture.Start(source.Prepared);
@@ -1276,7 +1296,7 @@ namespace Harken.Unity.Tests
         [UnityTest]
         public IEnumerator ComponentNaturalCompletionReleasesResourcesAndReusesItsPlan()
         {
-            using (var fixture = new Fixture(2, false))
+            using (var fixture = new Fixture(false))
             {
                 var source = new DemandSource(fixture);
                 fixture.Start(source.Prepared);
@@ -1299,7 +1319,7 @@ namespace Harken.Unity.Tests
         [UnityTest]
         public IEnumerator WarmComponentPlayKeepsZeroAllocationWithOwnedPreparationOnNullDevice()
         {
-            using (var fixture = new Fixture(2))
+            using (var fixture = new Fixture())
             {
                 var source = new DemandSource(fixture);
                 fixture.Start(source.Prepared);
@@ -1349,7 +1369,7 @@ namespace Harken.Unity.Tests
         [UnityTest]
         public IEnumerator DisabledComponentTransfersFiringAndResourcesAsOneCleanupOwner()
         {
-            using (var fixture = new Fixture(2, false))
+            using (var fixture = new Fixture(false))
             {
                 var source = new DemandSource(fixture);
                 fixture.Start(source.Prepared);
@@ -1382,10 +1402,9 @@ namespace Harken.Unity.Tests
 
         private static int Pending(HarkenAudioSystem runtime)
         {
-            int count = 0;
-            foreach (object slot in Get<Array>(runtime, "managedFirings"))
-                if ((bool)slot.GetType().GetField("Reserved").GetValue(slot)) ++count;
-            return count;
+            object table = Get<object>(runtime, "managedFirings");
+            return table == null ? 0 : (int)table.GetType()
+                .GetProperty("Count", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(table);
         }
 
         [UnityTest]
@@ -1394,7 +1413,7 @@ namespace Harken.Unity.Tests
             var actor = new GameObject("Managed spatial actor");
             try
             {
-                using (var fixture = new Fixture(4))
+                using (var fixture = new Fixture())
                 {
                     fixture.Start();
                     Assert.That(fixture.Runtime.CreateSpatialSource(actor.transform, out var source), Is.EqualTo(VnResult.VN_OK));
@@ -1448,7 +1467,7 @@ namespace Harken.Unity.Tests
             private HarkenProjectSettingsLease settingsLease;
             private readonly bool prepare;
 
-            public Fixture(uint capacity, bool prepare = true, bool activate = true)
+            public Fixture(bool prepare = true, bool activate = true)
             {
                 this.prepare = prepare;
                 Owner.SetActive(false);
@@ -1456,7 +1475,6 @@ namespace Harken.Unity.Tests
                 Set(Runtime, "autoInitialize", false);
                 Set(Runtime, "persistAcrossScenes", false);
                 settingsLease = HarkenProjectSettingsLease.Acquire();
-                settingsLease.Settings.SetMaxActionFirings(capacity);
                 Assert.That(CompanionTestPublication.Read(Root, null, out Publication, out string error),
                     Is.EqualTo(VnResult.VN_OK), error);
                 Assert.That(Publication.TryFindAction("Play_U4_A", out Action), Is.True);

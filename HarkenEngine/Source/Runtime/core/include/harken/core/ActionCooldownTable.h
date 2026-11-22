@@ -5,11 +5,9 @@
 #include "harken/core/CurrentWorld.h"
 
 #include <cstdint>
-#include <vector>
+#include "harken/core/GrowingRowStorage.h"
 
 namespace harken {
-
-inline constexpr std::uint32_t kMaxActionCooldownRowsHard = 4096;
 
 enum class ActionDefinitionOwnerKind : std::uint8_t {
     World = 1,
@@ -66,7 +64,7 @@ struct ActionCooldownPrepareResult {
 
 class ActionCooldownTable {
 public:
-    bool Reset(std::uint32_t capacity);
+    void SetCommitPageLimitForTests(std::size_t pages) noexcept { rows_.SetCommitPageLimitForTests(pages); }
 
     ActionCooldownPrepareResult Prepare(const ActionCooldownKey& key,
                                         std::uint64_t nowFrame,
@@ -114,7 +112,7 @@ private:
     bool RecycleLive(Row& row) noexcept;
     void NoteOccupancy() noexcept;
 
-    std::vector<Row> rows_;
+    GrowingRowStorage<Row> rows_;
     std::uint32_t liveCount_ = 0;
     std::uint32_t preparedCount_ = 0;
     std::uint32_t highWater_ = 0;

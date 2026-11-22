@@ -1338,7 +1338,7 @@ TEST(MonitorIdentitySnapshot, CopiesCommittedSlotsAndDefaultEmitterWithoutPublis
 
 TEST(MonitorIdentitySnapshot, ActionChildrenRemainIdentifiableUntilNativeRelease) {
     ActionFiringTable table;
-    ASSERT_TRUE(table.Reset(2));
+    ASSERT_TRUE(table.Reset());
     PreparedActionFiring root{}, child{};
     ASSERT_TRUE(table.PrepareRoot(harkentest::ObjectId(1), 7, 1, &root));
     ActionFiringSnapshot snapshot{};
@@ -1781,6 +1781,7 @@ TEST(MonitorIdentityHub, OldWorldPlayableAndTerminalActionStayInBaselineUntilAct
     PreparedActionFiring firing{};
     auto& actions = engine.Engine()->actionFirings;
     ASSERT_TRUE(actions.PrepareRoot(harkentest::ObjectId(8), 5, 0, &firing));
+    ASSERT_TRUE(engine.Engine()->PrepareActionFiringOwners(0));
     ASSERT_TRUE(actions.Commit(&firing, 19));
     ActionFiringSnapshot retained{};
     ASSERT_TRUE(actions.Capture(firing.Handle(), &retained));

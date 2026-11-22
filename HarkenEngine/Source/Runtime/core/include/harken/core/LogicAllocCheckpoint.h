@@ -47,6 +47,8 @@ enum class LogicAllocSite : unsigned int {
     PlaybackPathStorage,
     VariableControlRetargetStorage,
     ActionPlayContainerStorage,
+    InitialFrontierEvents,
+    InitialFrontierRequests,
     PlayableTreeStorage,
     FrontierOwnerLedgerStorage,
     BusSendStorage,
@@ -101,6 +103,8 @@ inline const char* LogicAllocSiteName(LogicAllocSite site) noexcept {
     case LogicAllocSite::PrivateVcLaneStorage: return "PrivateVcLaneStorage";
     case LogicAllocSite::PlaybackPathStorage: return "PlaybackPathStorage";
     case LogicAllocSite::VariableControlRetargetStorage: return "VariableControlRetargetStorage";
+    case LogicAllocSite::InitialFrontierEvents: return "InitialFrontierEvents";
+    case LogicAllocSite::InitialFrontierRequests: return "InitialFrontierRequests";
     case LogicAllocSite::ActionPlayContainerStorage: return "ActionPlayContainerStorage";
     case LogicAllocSite::PlayableTreeStorage: return "PlayableTreeStorage";
     case LogicAllocSite::FrontierOwnerLedgerStorage: return "FrontierOwnerLedgerStorage";

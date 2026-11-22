@@ -218,7 +218,7 @@ private:
     TimelineDigestSink* digestSink_ = nullptr;
     StableRowStorage<ConsumedEvent, std::size_t> decoded_;
     StableRowStorage<std::uint32_t, std::size_t> nextEvent_;
-    std::vector<TransactionScratch> transactions_;
+    GrowingRowStorage<TransactionScratch> transactions_;
     std::vector<std::uint32_t> touchedTransactions_;
     std::vector<TimelineSinkEvent> sinkEvents_;
     std::vector<Plan03PageGroupView> pageGroups_;

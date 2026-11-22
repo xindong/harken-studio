@@ -7,7 +7,14 @@ namespace harken {
 
 DeferredIntentPool::DeferredIntentPool(std::uint32_t capacity,
                                        std::uint32_t maxPerOwner)
-    : m_entries(capacity), m_maxPerOwner(maxPerOwner) {}
+    : m_limit(capacity), m_maxPerOwner(maxPerOwner) {
+    if (!m_entries.ConstructThrough(capacity)) throw detail::LogicPreparationFailure{};
+}
+
+bool DeferredIntentPool::PrepareAvailable(std::uint32_t count) noexcept {
+    const auto required = static_cast<std::uint64_t>(m_count) + m_preparedCount + m_quarantined + count;
+    return required <= m_limit && m_entries.ConstructThrough(static_cast<std::uint32_t>(required));
+}
 
 DeferredIntentPool::~DeferredIntentPool() {
     for (const auto& entry : m_entries) assert(entry.preparedPairOwner == nullptr);
@@ -49,7 +56,7 @@ std::uint32_t DeferredIntentPool::OccupancyForOwner(
 
 bool DeferredIntentPool::SetGenerationForTests(
     std::uint32_t slot, std::uint64_t generation) {
-    if (slot >= m_entries.size() || generation == 0 ||
+    if (slot >= m_limit || generation == 0 || !m_entries.ConstructThrough(slot + 1u) ||
         m_entries[slot].state != DeferredIntentEntryState::Free) {
         return false;
     }
@@ -93,6 +100,10 @@ DeferredIntentAddResult DeferredIntentPool::AddPrepared(
         OccupancyForOwner(intent.ownerDomain, intent.ownerHandle) >=
             m_maxPerOwner) {
         return {DeferredIntentRefusal::OwnerCapReached, {}};
+    }
+    if (!PrepareAvailable(1)) {
+        const auto occupied = static_cast<std::uint64_t>(m_count) + m_preparedCount + m_quarantined;
+        return {occupied >= m_limit ? DeferredIntentRefusal::PoolFull : DeferredIntentRefusal::OutOfMemory, {}};
     }
     for (std::uint32_t slot = 0; slot < m_entries.size(); ++slot) {
         Entry& entry = m_entries[slot];
@@ -163,6 +174,7 @@ DeferredIntentPool::Entry* DeferredIntentPool::Validate(
 void DeferredIntentPool::FreeEntry(Entry& entry) {
     entry.retryReservation = {};
     if (entry.generation == UINT64_MAX) {
+        ++m_quarantined;
         entry.state = DeferredIntentEntryState::Quarantined;
         entry.intent = {};
     } else {
@@ -178,7 +190,7 @@ std::uint32_t DeferredIntentPool::ClaimDue(
     DeferredIntentClaim* out, std::uint32_t capacity,
     std::uint32_t* staleDropped, std::uint32_t* dueCount,
     std::uint64_t currentQuantum,
-    std::vector<DeferredIntentClaim>* staleClaims) {
+    StaleIntentSink stale) {
     std::uint32_t claimed = 0;
     std::uint32_t dropped = 0;
     std::uint32_t due = 0;
@@ -206,8 +218,8 @@ std::uint32_t DeferredIntentPool::ClaimDue(
                 DeferredIntentOwnerDomain::Playable &&
             !instances.ValidateStamp(entry.intent.ownerHandle,
                                      entry.intent.ownerEpoch)) {
-            if (staleClaims != nullptr)
-                staleClaims->push_back({{slot, entry.generation}, entry.intent});
+            if (stale.release != nullptr)
+                stale.release(stale.context, {{slot, entry.generation}, entry.intent});
             FreeEntry(entry);
             ++dropped;
             continue;
@@ -395,7 +407,7 @@ std::uint32_t DeferredIntentPool::Materialize(
 std::uint32_t DeferredIntentPool::DropStale(
     const PlayableInstanceTable& instances,
     std::vector<std::uint64_t>* droppedPayloads,
-    std::vector<DeferredIntentClaim>* staleClaims) {
+    StaleIntentSink stale) {
     if (m_count == 0) return 0;
     std::uint32_t dropped = 0;
     for (Entry& entry : m_entries) {
@@ -410,9 +422,8 @@ std::uint32_t DeferredIntentPool::DropStale(
         if (droppedPayloads != nullptr) {
             droppedPayloads->push_back(entry.intent.payload);
         }
-        if (staleClaims != nullptr)
-            staleClaims->push_back({{static_cast<std::uint32_t>(
-                &entry - m_entries.data()), entry.generation}, entry.intent});
+        if (stale.release != nullptr)
+            stale.release(stale.context, {{m_entries.IndexOf(&entry), entry.generation}, entry.intent});
         FreeEntry(entry);
         ++dropped;
     }

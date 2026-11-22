@@ -2596,7 +2596,6 @@ TEST(PackComposition,
         WriteTemp("f3-cross-post-refuse-b.pack", packBBytes);
 
     VnConfig config = MakeNullConfig();
-    config.maxActionFirings = 1;
     EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
     VnCanonicalPackSetMemberV1 members[3]{};
@@ -2619,7 +2618,9 @@ TEST(PackComposition,
     post.structSize = sizeof(post);
     post.actionId = harkentest::ObjectId(2002);
     VnActionFiringHandle firing = 99;
-    ASSERT_EQ(VN_NO_ACTION, Vn_PostAction(&post, &firing));
+    session.Engine()->actionFirings.SetRowCommitPageLimitForTests(0);
+    ASSERT_EQ(VN_OUT_OF_MEMORY, Vn_PostAction(&post, &firing));
+    session.Engine()->actionFirings.SetRowCommitPageLimitForTests(SIZE_MAX);
     EXPECT_EQ(0u, firing);
     EXPECT_EQ(0u, session.Engine()->actionFirings.LiveCount());
     ASSERT_GE(session.Engine()->actionFiringPlanScratch.size(), 2u);
@@ -11497,7 +11498,7 @@ static void CheckPackQueueSuccessorOutsideWindow(bool lateFirstUpdate,
         ASSERT_EQ(0u, before.participantCount);
         ASSERT_EQ(1u, before.sliceCount);
         ASSERT_EQ(0u, before.consumedSlices);
-        const auto attempts = engine.immediateEntryAttempts.data();
+        const auto attempts = engine.immediateEntryAttempts.begin();
         const auto end = attempts + engine.immediateEntryAttempts.size();
         const auto attempt = std::find_if(attempts, end,
             [firing](const auto& candidate) { return candidate.active && candidate.root == firing; });
@@ -11591,14 +11592,14 @@ static void CheckPackQueueSuccessorOutsideWindow(bool lateFirstUpdate,
     } publicationReset{session.Engine()};
     if (failAfterC0Publication) {
         if (holdPublishedReaderThroughRelease) {
-            const auto attempts = session.Engine()->immediateEntryAttempts.data();
+            const auto attempts = session.Engine()->immediateEntryAttempts.begin();
             const auto held = std::find_if(attempts,
                 attempts + session.Engine()->immediateEntryAttempts.size(),
                 [firing](const auto& attempt) { return attempt.active && attempt.root == firing; });
             ASSERT_NE(attempts + session.Engine()->immediateEntryAttempts.size(), held);
             publication.coordinator = held->QueueCoordinators().initialQueueCoordinator;
             publication.primary = held->QueueCoordinators().initialQueuePrimaryGroup;
-            publication.attempt = held;
+            publication.attempt = &*held;
             ASSERT_TRUE(session.Engine()->timelinePool.AcquirePlan03GroupReader(
                 publication.primary, &publication.reader));
         }
@@ -11652,10 +11653,10 @@ static void CheckPackQueueSuccessorOutsideWindow(bool lateFirstUpdate,
         const auto ticket = row->ticket;
         const auto transaction = row->schedule.transactionId;
         const auto sequence = event.logicCommitSequence;
-        const auto attempt = std::find_if(session.Engine()->immediateEntryAttempts.data(),
-            session.Engine()->immediateEntryAttempts.data() + session.Engine()->immediateEntryAttempts.size(),
+        const auto attempt = std::find_if(session.Engine()->immediateEntryAttempts.begin(),
+            session.Engine()->immediateEntryAttempts.end(),
             [firing](const auto& attempt) { return attempt.active && attempt.root == firing; });
-        ASSERT_NE(session.Engine()->immediateEntryAttempts.data() + session.Engine()->immediateEntryAttempts.size(), attempt);
+        ASSERT_NE(session.Engine()->immediateEntryAttempts.end(), attempt);
         ASSERT_TRUE(attempt->QueueCoordinators().initialQueueCoordinator.Valid());
         for (unsigned identity = 0; identity < 8u; ++identity) {
             SCOPED_TRACE(identity);
@@ -11687,11 +11688,12 @@ static void CheckPackQueueSuccessorOutsideWindow(bool lateFirstUpdate,
     harken::DecisionToken heldCoordinator{};
     harken::Plan03GroupSliceIdentity heldPrimary{};
     if (holdPrivateReaderThroughRelease) {
-        const auto attempts = session.Engine()->immediateEntryAttempts.data();
+        const auto attempts = session.Engine()->immediateEntryAttempts.begin();
         const auto end = attempts + session.Engine()->immediateEntryAttempts.size();
-        heldAttempt = std::find_if(attempts, end,
+        const auto held = std::find_if(attempts, end,
             [firing](const auto& candidate) { return candidate.active && candidate.root == firing; });
-        ASSERT_NE(end, heldAttempt);
+        ASSERT_NE(end, held);
+        heldAttempt = &*held;
         heldCoordinator = heldAttempt->QueueCoordinators().initialQueueCoordinator;
         heldPrimary = heldAttempt->QueueCoordinators().initialQueuePrimaryGroup;
         ASSERT_TRUE(session.Engine()->timelinePool.AcquirePlan03GroupReader(heldPrimary, &heldPrivateReader));
@@ -15360,12 +15362,14 @@ TEST(PackComposition, PackActionDelayedPlayBackpressureRetryDoesNotDoubleOccupy)
                                    "f5-delayed-backpressure");
     ASSERT_EQ(VN_OK, fixture.session.InitResult());
     std::vector<PreparedPlayableInstance> held;
-    held.resize(fixture.session.Engine()->playableInstances.FreeCount());
-    for (auto& prepared : held) {
-        ASSERT_TRUE(fixture.session.Engine()->playableInstances.PrepareAcquire(
-            PlayableKind::Sound, 0, &prepared));
+    auto& instances = fixture.session.Engine()->playableInstances;
+    instances.SetCommitPageLimitForTests(0);
+    while (instances.PrepareStorageForAcquire(1)) {
+        PreparedPlayableInstance prepared{};
+        ASSERT_TRUE(instances.PrepareAcquire(PlayableKind::Sound, 0, &prepared));
+        held.push_back(prepared);
     }
-    EXPECT_EQ(0u, fixture.session.Engine()->playableInstances.FreeCount());
+    EXPECT_EQ(1u, instances.FreeCount());
     PackIdentityLookup extraSharedBefore;
     EXPECT_EQ(VN_OK, fixture.session.Engine()->packComposition.PrepareLookup(
                          fixture.targetStableId, &extraSharedBefore));
@@ -15383,11 +15387,12 @@ TEST(PackComposition, PackActionDelayedPlayBackpressureRetryDoesNotDoubleOccupy)
     fixture.session.Engine()->packComposition.AbandonPreparedLease(
         extraSharedAfter.lease);
     for (auto& prepared : held) {
-        ASSERT_TRUE(fixture.session.Engine()->playableInstances.CancelPrepared(
-            &prepared));
+        ASSERT_TRUE(instances.CancelPrepared(&prepared));
     }
-    ASSERT_EQ(VN_OK, Vn_StopActionFiring(fixture.firing, 0));
-    EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(fixture.firing));
+    fixture.PumpUntilDeferredGone();
+    ASSERT_NE(nullptr, fixture.LiveStartRow());
+    EXPECT_EQ(fixture.leaseToken, fixture.LiveStartRow()->Invocation().packLease.leaseToken);
+    fixture.PumpUntilFiringTerminal();
 }
 
 TEST(PackComposition, PackActionDelayedPlayableSliceFullRetriesWithoutRetag) {
@@ -19646,7 +19651,7 @@ struct OriginalDeferredOperationFixture {
 
     explicit OriginalDeferredOperationFixture(ActionOpcodeV1 opcode,
         bool pendingLocalStop = false, bool immediatePost = false,
-        bool nestedDeferredChild = false) {
+        bool nestedDeferredChild = false, bool useContainer = false) {
         EXPECT_EQ(VN_OK, session.InitResult());
         if (session.InitResult() != VN_OK) return;
         const std::vector<float> pcm(96000, 0.25f);
@@ -19658,10 +19663,12 @@ struct OriginalDeferredOperationFixture {
             ContainerMatrixChild::Sound, revision, revision, false, 1, 0,
             MemoryScopeV1::Emitter);
         ActionStepProgramViewV1 play = image.step;
-        play.target.kind = ActionTargetKindV1::Sound;
-        play.target.stableId = ContainerMatrixWorld::kFirstSound;
-        play.target.expectedProgramSemanticFingerprint =
-            image.properties[0].programSemanticFingerprint;
+        if (!useContainer) {
+            play.target.kind = ActionTargetKindV1::Sound;
+            play.target.stableId = ContainerMatrixWorld::kFirstSound;
+            play.target.expectedProgramSemanticFingerprint =
+                image.properties[0].programSemanticFingerprint;
+        }
         ActionStepProgramViewV1 nestedPost = play;
         std::array<ActionProgramViewV1, 3> actions{image.action, image.action, image.action};
         actions[0].steps = &play;
@@ -19906,6 +19913,7 @@ TEST(PackComposition, DeferredStopPartialCapturePoolRefusalRollsBackWithoutTarge
     ASSERT_NO_FATAL_FAILURE(fixture.PostPlay());
     ASSERT_NO_FATAL_FAILURE(fixture.PostPlay());
     auto& engine = *fixture.session.Engine();
+    ASSERT_TRUE(harkentest::LimitDeferredIntentPoolToFirstPage(engine.timelineDeferred));
     std::vector<DeferredIntentToken> fillers;
     for (std::uint32_t i = 0; i + 1u < engine.timelineDeferred.Capacity(); ++i) {
         DeferredIntent intent{};
@@ -19933,7 +19941,7 @@ TEST(PackComposition, DeferredStopPartialCapturePoolRefusalRollsBackWithoutTarge
         }
     };
     engine.originalPackResourceAcquiredContextForTest = &capture;
-    EXPECT_EQ(VN_BACKPRESSURE, fixture.PostOperation());
+    EXPECT_EQ(VN_OUT_OF_MEMORY, fixture.PostOperation());
     engine.originalPackResourceAcquiredHookForTest = nullptr;
     engine.originalPackResourceAcquiredContextForTest = nullptr;
     EXPECT_EQ(0u, fixture.operation);
@@ -19981,8 +19989,8 @@ TEST(PackComposition, DeferredPendingStopCancellationReclaimsPairWithoutTargetLe
     ASSERT_NO_FATAL_FAILURE(CheckDeferredPendingStopSettlement(true));
 }
 
-TEST(PackComposition, DeferredStopMaterializationStopsActualPcmWithoutTargetLease) {
-    OriginalDeferredOperationFixture fixture(ActionOpcodeV1::Stop);
+static void VerifyDeferredPackStopPcm(bool useContainer) {
+    OriginalDeferredOperationFixture fixture(ActionOpcodeV1::Stop, false, false, false, useContainer);
     ASSERT_NO_FATAL_FAILURE(fixture.PostPlay());
     ASSERT_EQ(VN_OK, fixture.PostOperation());
     std::vector<ActionDeferredRecordToken> tokens;
@@ -20023,13 +20031,21 @@ TEST(PackComposition, DeferredStopMaterializationStopsActualPcmWithoutTargetLeas
     EXPECT_EQ(0u, engine.decisions.LiveCount());
 }
 
+TEST(PackComposition, DeferredStopMaterializationStopsActualPcmWithoutTargetLease) {
+    VerifyDeferredPackStopPcm(false);
+}
+
+TEST(PackComposition, DeferredContainerStopUsesPlayingPackAndStopsActualPcm) {
+    VerifyDeferredPackStopPcm(true);
+}
+
 #if defined(HARKEN_TEST_PACK_RESOURCE_OBSERVATION)
 static void CheckOriginalDeferredPreparationCapacityExit(ActionOpcodeV1 opcode, bool fault) {
     OriginalDeferredOperationFixture fixture(opcode);
     auto& engine = *fixture.session.Engine();
-    // A deliberate zero staging capacity exercises the pre-record exit. It
-    // neither clears a live cap nor supplies replacement ownership evidence.
-    engine.actionDeferredScratch.clear();
+    // Refuse the first scratch page before the deferred record exists.
+    ASSERT_EQ(0u, engine.actionDeferredScratch.size());
+    engine.actionDeferredScratch.SetCommitPageLimitForTests(0);
     struct Prefix { PackPartitionLease lease{}; PackResourceClosureToken resource = 0;
         unsigned calls = 0; bool fault = false; PackPartitionLease definition{};
         unsigned definitionCalls = 0; } prefix;
@@ -20051,7 +20067,7 @@ static void CheckOriginalDeferredPreparationCapacityExit(ActionOpcodeV1 opcode, 
         if (state.fault) EXPECT_EQ(VN_OK, actual.packs.ReleaseResourceClosure(resource));
     };
     engine.originalPackResourceAcquiredContextForTest = &prefix;
-    EXPECT_EQ(fault && opcode != ActionOpcodeV1::Stop ? VN_RUNTIME_RECREATE_REQUIRED : VN_BACKPRESSURE, fixture.PostOperation());
+    EXPECT_EQ(fault && opcode != ActionOpcodeV1::Stop ? VN_RUNTIME_RECREATE_REQUIRED : VN_OUT_OF_MEMORY, fixture.PostOperation());
     engine.originalPackResourceAcquiredHookForTest = nullptr;
     engine.originalPackResourceAcquiredContextForTest = nullptr;
     ASSERT_EQ(opcode == ActionOpcodeV1::Stop ? 0u : 1u, prefix.calls);
@@ -20207,14 +20223,15 @@ struct OriginalActionFiringCapacityFill {
         EXPECT_EQ(VN_OK, engine.AcquirePackIdentityLease(ContainerMatrixWorld::kAction, &owner));
         const auto stamp = ActionFiringOwnerStamp::Pack(owner.lease,
             engine.packComposition.ProjectIdAtLease(owner.lease));
-        for (;;) {
+        engine.actionFirings.SetRowCommitPageLimitForTests(0);
+        for (std::uint32_t i = 0; i <= engine.actionFirings.RowCommittedBytes(); ++i) {
             PreparedActionFiring row;
             if (!engine.actionFirings.PrepareRoot(ContainerMatrixWorld::kAction, stamp, 0, &row)) break;
             prepared.push_back(row);
         }
-        EXPECT_FALSE(prepared.empty());
     }
     void Return() {
+        engine.actionFirings.SetRowCommitPageLimitForTests(SIZE_MAX);
         for (auto& row : prepared) EXPECT_TRUE(engine.actionFirings.Abandon(&row));
         prepared.clear();
         EXPECT_EQ(VN_OK, engine.ReleasePackIdentityLease(owner.lease));
@@ -20236,7 +20253,7 @@ static void CheckOriginalActionDefinitionCapacityReturn(bool fault) {
         ++out.acquired; out.lease = lease; out.lease.resourceClosureToken = closure;
         if (out.fault) EXPECT_EQ(VN_OK, actual.packs.ReleaseResourceClosure(closure));
     };
-    EXPECT_EQ(fault ? VN_RUNTIME_RECREATE_REQUIRED : VN_NO_ACTION, fixture.PostOperation());
+    EXPECT_EQ(fault ? VN_RUNTIME_RECREATE_REQUIRED : VN_OUT_OF_MEMORY, fixture.PostOperation());
     engine.originalPackResourceAcquiredHookForTest = nullptr;
     engine.originalPackResourceAcquiredContextForTest = nullptr;
     ASSERT_EQ(1u, observed.acquired);
@@ -20621,7 +20638,7 @@ void ExpectVariableControlNaturalCompletion(ContainerMatrixEntry entry, bool con
     const auto controls = engine.variableControlInstances.LiveCount();
     const auto decisions = engine.decisions.LiveCount();
     const auto arms = engine.timelineArms.LiveCount();
-    const auto groups = engine.armGroups.FreeCount();
+    const auto groups = engine.armGroups.OccupiedCount();
     const auto occurrences = engine.timelineOccurrences.OccupiedCount();
     const auto compositeOwners = engine.compositeCompletionOwners.OccupiedCount();
     const auto ledger = engine.ledger.AvailableEntryCount();
@@ -20774,7 +20791,7 @@ void ExpectVariableControlNaturalCompletion(ContainerMatrixEntry entry, bool con
     EXPECT_EQ(controls, engine.variableControlInstances.LiveCount());
     EXPECT_EQ(decisions, engine.decisions.LiveCount());
     EXPECT_EQ(arms, engine.timelineArms.LiveCount());
-    EXPECT_EQ(groups, engine.armGroups.FreeCount());
+    EXPECT_EQ(groups, engine.armGroups.OccupiedCount());
     EXPECT_EQ(occurrences, engine.timelineOccurrences.OccupiedCount());
     EXPECT_EQ(compositeOwners, engine.compositeCompletionOwners.OccupiedCount());
     EXPECT_EQ(ledger, engine.ledger.AvailableEntryCount());
@@ -20941,7 +20958,7 @@ void ExpectShortVariableControlTargetPromotion(ContainerMatrixEntry entry, bool 
     auto& engine = *session.Engine();
     ASSERT_EQ(workers, engine.voices.RenderWorkerCount());
     ::testing::Test::RecordProperty("member_completion_bytes", std::to_string(sizeof(VariableControlMemberCompletion)));
-    ::testing::Test::RecordProperty("member_completion_count", std::to_string(engine.playableStorage.memberCount));
+    ::testing::Test::RecordProperty("member_completion_count", std::to_string(engine.PlayableMemberCount()));
     if (entry == ContainerMatrixEntry::PackAction) {
         ImageBuilder builder(kPackKindCanonicalContent);
         builder.AddEntry(kPackEntryKindPackRequirementBlock, 22, RequirementPayload(22, 1, 1));
@@ -20981,9 +20998,9 @@ void ExpectShortVariableControlTargetPromotion(ContainerMatrixEntry entry, bool 
         for (std::uint32_t index = 0; index < engine.sourceTerminals.Capacity(); ++index)
             sources += engine.sourceTerminals.At(index)->occupied ? 1u : 0u;
         return std::array<std::uint32_t, 13>{
-            engine.playableInstances.FreeCount(), engine.containerPlayback.FreeCount(),
+            engine.playableInstances.UnavailableRowCount(), engine.containerPlayback.OccupiedCount(),
             engine.variableControlInstances.LiveCount(), engine.decisions.LiveCount(),
-            engine.timelineArms.LiveCount(), engine.armGroups.FreeCount(),
+            engine.timelineArms.LiveCount(), engine.armGroups.OccupiedCount(),
             engine.timelineOccurrences.OccupiedCount(), engine.compositeCompletionOwners.OccupiedCount(),
             engine.ledger.AvailableEntryCount(), engine.timelinePool.LiveTransactionCount(),
             engine.transitionInstances.LiveCount(), engine.voices.ActiveCount(), sources};
@@ -21359,8 +21376,8 @@ void ExpectOrdinaryNavigationDepth(ContainerMatrixEntry entry, std::uint32_t dep
     auto* engine = session.Engine();
     ASSERT_NE(nullptr, engine);
     const auto baseline = engine->playableInstances.LiveCount();
-    const auto instanceFreeBaseline = engine->playableInstances.FreeCount();
-    const auto containerFreeBaseline = engine->containerPlayback.FreeCount();
+    const auto instanceBaseline = engine->playableInstances.UnavailableRowCount();
+    const auto occupiedContainerBaseline = engine->containerPlayback.OccupiedCount();
     const auto selectionFreeBaseline = engine->selectionMemory.FreeDeltaCount();
     if (entry == ContainerMatrixEntry::PackAction) {
         ImageBuilder builder(kPackKindCanonicalContent);
@@ -21429,8 +21446,8 @@ void ExpectOrdinaryNavigationDepth(ContainerMatrixEntry entry, std::uint32_t dep
             EXPECT_EQ(PlayableStartStatus::Capacity, started.status);
             EXPECT_EQ(baseline, engine->playableInstances.LiveCount());
             EXPECT_EQ(0u, engine->containerPlayback.LiveCount());
-            EXPECT_EQ(instanceFreeBaseline, engine->playableInstances.FreeCount());
-            EXPECT_EQ(containerFreeBaseline, engine->containerPlayback.FreeCount());
+            EXPECT_EQ(instanceBaseline, engine->playableInstances.UnavailableRowCount());
+            EXPECT_EQ(occupiedContainerBaseline, engine->containerPlayback.OccupiedCount());
             EXPECT_EQ(selectionFreeBaseline, engine->selectionMemory.FreeDeltaCount());
             return;
         }
@@ -21446,8 +21463,8 @@ void ExpectOrdinaryNavigationDepth(ContainerMatrixEntry entry, std::uint32_t dep
             EXPECT_EQ(VN_NO_VOICE, posted);
             EXPECT_EQ(baseline, engine->playableInstances.LiveCount());
             EXPECT_EQ(0u, engine->containerPlayback.LiveCount());
-            EXPECT_EQ(instanceFreeBaseline, engine->playableInstances.FreeCount());
-            EXPECT_EQ(containerFreeBaseline, engine->containerPlayback.FreeCount());
+            EXPECT_EQ(instanceBaseline, engine->playableInstances.UnavailableRowCount());
+            EXPECT_EQ(occupiedContainerBaseline, engine->containerPlayback.OccupiedCount());
             EXPECT_EQ(selectionFreeBaseline, engine->selectionMemory.FreeDeltaCount());
             return;
         }
@@ -21577,8 +21594,8 @@ void ExpectOrdinaryNavigationDepth(ContainerMatrixEntry entry, std::uint32_t dep
     EXPECT_EQ(0u, engine->voices.ActiveCount());
     EXPECT_EQ(0u, engine->timelineOccurrences.OccupiedCount());
     EXPECT_EQ(0u, engine->compositeCompletionOwners.OccupiedCount());
-    EXPECT_EQ(instanceFreeBaseline, engine->playableInstances.FreeCount());
-    EXPECT_EQ(containerFreeBaseline, engine->containerPlayback.FreeCount());
+    EXPECT_EQ(instanceBaseline, engine->playableInstances.UnavailableRowCount());
+    EXPECT_EQ(occupiedContainerBaseline, engine->containerPlayback.OccupiedCount());
     EXPECT_EQ(selectionFreeBaseline, engine->selectionMemory.FreeDeltaCount());
 }
 
@@ -22194,7 +22211,7 @@ void ExpectQueueSequenceBranchesAcrossEntry(ContainerMatrixEntry entry, std::uin
                 const auto& heard = actual.heard[checkedPropertyVoices++];
                 if (laterControl ? heard.subject == harkentest::ObjectId(2300u) : heard.subject >= harkentest::ObjectId(2302u)) continue;
                 bool found = false;
-                for (std::size_t slot = 0; slot < engine.playableStorage.memberCount; ++slot) {
+                for (std::size_t slot = 0; slot < engine.PlayableMemberCount(); ++slot) {
                     const auto& arm = engine.ReadPlayableMember(slot).arm;
                     if (arm.slot != heard.token.slot || arm.generation != heard.token.generation) continue;
                     EXPECT_FLOAT_EQ(-6.0f, engine.ReadPlayableMember(slot).voice.Facts().volumeDb);
@@ -22911,8 +22928,9 @@ void ExpectMultiLeafContainerLoopCompletesAndReclaims(
 
     std::vector<PlayableInstanceHandle> capacityOccupants;
     if (availableInstances != 0) {
-        ASSERT_GT(engine->playableInstances.FreeCount(), availableInstances);
-        while (engine->playableInstances.FreeCount() > availableInstances) {
+        ASSERT_TRUE(engine->playableInstances.PrepareStorageForAcquire(availableInstances + 1u));
+        engine->playableInstances.SetCommitPageLimitForTests(0);
+        while (engine->playableInstances.PrepareStorageForAcquire(availableInstances + 1u)) {
             const auto occupant = engine->playableInstances.Acquire(PlayableKind::Sound, 0);
             ASSERT_NE(0u, occupant);
             capacityOccupants.push_back(occupant);
@@ -25470,10 +25488,15 @@ TEST(PackComposition, VariableControlNativeRetargetNaturalEndKeepsAuthoredBounda
 }
 
 TEST(PackComposition, NestedVariableTrackQueueCompletesWithPreparingPackLease) {
-    for (unsigned scenario = 0; scenario < 3; ++scenario) {
+    std::array<unsigned, 3> referenceStart{};
+    unsigned lateClipStart = 0;
+    const auto play = [&](unsigned scenario, bool referenceScan, std::vector<float>& pcm) {
         const bool deferred = scenario != 0;
-        const bool trackRoot = scenario == 2;
-        SCOPED_TRACE(::testing::Message() << "deferred=" << deferred << " trackRoot=" << trackRoot);
+        const bool lateClip = scenario >= 7;
+        const bool twoRequests = scenario >= 9;
+        const bool competingPlayback = scenario == 5 || scenario == 6 || scenario == 8 || scenario == 10;
+        const bool trackRoot = scenario == 2 || scenario == 4 || lateClip;
+        SCOPED_TRACE(::testing::Message() << "deferred=" << deferred << " trackRoot=" << trackRoot << " scenario=" << scenario);
         const std::vector<float> first(960, 0.125f), second(960, -0.25f);
         const float* firstChannels[] = {first.data()};
         const float* secondChannels[] = {second.data()};
@@ -25506,6 +25529,7 @@ TEST(PackComposition, NestedVariableTrackQueueCompletesWithPreparingPackLease) {
         image.children[2].playable = queue;
         image.children[2].frequencyWeight = 0;
         image.placements[0].content = nested;
+        if (lateClip) image.placements[0].authoredStart = INT64_C(20000000);
         image.placements[0].authoredDuration = INT64_C(100000000);
         image.track.placementCount = 1;
         image.track.scheduleSemanticFingerprint = ComputeTrackScheduleFingerprintV1(image.track);
@@ -25560,10 +25584,27 @@ TEST(PackComposition, NestedVariableTrackQueueCompletesWithPreparingPackLease) {
             image.step.target.stableId = track.stableId;
             image.step.target.expectedProgramSemanticFingerprint = track.expectedProgramSemanticFingerprint;
         }
+        const auto immediateStep = image.step;
+        const bool mixed = scenario == 6;
+        std::array<ActionStepProgramViewV1, 2> mixedSteps{};
+        std::array<ActionProgramViewV1, 2> actions{image.action, image.action};
         if (deferred) {
             SetAbsoluteTime(&image.step.delay, INT64_C(1000000000));
             image.action.directFeatureMask = image.action.transitiveFeatureMask = 1u;
             image.action.programSemanticFingerprint = ComputeActionProgramFingerprintV1(image.action);
+            actions[0] = image.action;
+            if (mixed) {
+                mixedSteps = {immediateStep, image.step};
+                mixedSteps[1].authoredEventIndex = 1;
+                actions[0].steps = mixedSteps.data();
+                actions[0].stepCount = actions[0].expandedStepOccurrenceCount = 2;
+                actions[0].programSemanticFingerprint = ComputeActionProgramFingerprintV1(actions[0]);
+            }
+            actions[1].actionStableId = harkentest::ObjectId(72101);
+            actions[1].steps = &immediateStep;
+            actions[1].programSemanticFingerprint = ComputeActionProgramFingerprintV1(actions[1]);
+            image.world.actions = actions.data();
+            image.world.actionCount = actions.size();
         }
         image.world.identity.capabilityMask = detail::ComputeCurrentWorldLocalCapabilityMaskV1(image.world);
         image.world.identity.runtimeSemanticFingerprint = ComputeCurrentWorldFingerprintV4(image.world);
@@ -25578,9 +25619,13 @@ TEST(PackComposition, NestedVariableTrackQueueCompletesWithPreparingPackLease) {
         const auto init = BuildInit();
         const auto initPath = WriteTemp("nested-variable-track-queue-init.pack", init);
         const auto path = WriteTemp("nested-variable-track-queue.pack", bytes);
+        harkentest::PlayableCapacityScope legacyPlaybackLimit(1, 0);
         EngineSession session(MakeNullConfig(16, 64, 48000));
         ASSERT_EQ(VN_OK, session.InitResult());
         auto& engine = *session.Engine();
+#if !defined(HARKEN_RT_QUALIFICATION)
+        engine.immediateActionLane.UseFullCaptureScanForTest(referenceScan);
+#endif
         VnCanonicalPackSetMemberV1 members[2]{};
         VnCanonicalPackSetMemberResultV1 rows[2]{};
         const char* paths[] = {initPath.c_str(), path.c_str()};
@@ -25599,11 +25644,127 @@ TEST(PackComposition, NestedVariableTrackQueueCompletesWithPreparingPackLease) {
         post.structSize = sizeof(post);
         post.actionId = ContainerMatrixWorld::kAction;
         post.emitter = emitter;
-        VnActionFiringHandle firing = 0;
+        VnActionFiringHandle firing = 0, immediate = 0;
+        auto now = post;
+        now.actionId = actions[1].actionStableId;
+        if (trackRoot) ASSERT_EQ(VN_OK, Vn_PostAction(&now, &immediate));
         ASSERT_EQ(VN_OK, Vn_PostAction(&post, &firing));
+        if (deferred) {
+            VnActionFiringHandle cancelled = 0;
+            if (!mixed) {
+                ASSERT_EQ(VN_OK, Vn_PostAction(&post, &cancelled));
+                if (!trackRoot) ASSERT_EQ(VN_OK, Vn_PostAction(&now, &immediate));
+                ASSERT_EQ(VN_OK, Vn_StopActionFiring(cancelled, 0));
+            } else {
+                const auto service = std::find_if(engine.playableServices.begin(), engine.playableServices.end(),
+                    [&](const auto& row) { return row.InvocationValid() && row.Invocation().actionFiring == firing; });
+                ASSERT_NE(engine.playableServices.end(), service);
+                // The immediate step shares the firing with a delayed step but owns no future control rows.
+                auto& controls = engine.variableControlInstances;
+                controls.SetCommitPageLimitForTests(0);
+                VariableControlInstanceCreateRequest request{1, 1, ContainerMatrixWorld::kRoot, 1};
+                std::vector<VariableControlInstanceToken> live;
+                VariableControlInstanceToken token{};
+                while (controls.Acquire(request, &token) == VariableControlInstanceStatus::Ok) live.push_back(token);
+                PreparedVariableControlInstance attempted;
+                EXPECT_EQ(VariableControlInstanceStatus::Capacity,
+                    engine.PrepareVariableControlInstance(*service, request, &attempted));
+                if (attempted.Valid()) EXPECT_TRUE(controls.CancelPreparedAcquire(&attempted));
+                for (auto occupied : live) ASSERT_TRUE(controls.Release(occupied));
+                controls.SetCommitPageLimitForTests(SIZE_MAX);
+            }
+            unsigned immediateFrames[2]{};
+            for (unsigned block = 0; block < 128; ++block) {
+                ASSERT_EQ(VN_OK, Vn_Update());
+                engine.nullBackend.Pump(1);
+                const auto* samples = engine.nullBackend.LastBlock();
+                ASSERT_NE(nullptr, samples);
+                pcm.insert(pcm.end(), samples, samples + 128);
+                for (unsigned frame = 0; frame < 64; ++frame) {
+                    immediateFrames[0] += std::abs(samples[2u * frame] - 0.125f) < 1e-6f;
+                    immediateFrames[1] += std::abs(samples[2u * frame] + 0.25f) < 1e-6f;
+                }
+            }
+            EXPECT_EQ(first.size(), immediateFrames[0]);
+            EXPECT_EQ(second.size(), immediateFrames[1]);
+            VnActionFiringInfo stopped{};
+            stopped.structSize = sizeof(stopped);
+            if (!mixed) {
+                ASSERT_EQ(VN_OK, Vn_QueryActionFiring(cancelled, &stopped));
+                EXPECT_EQ(VN_ACTION_OUTCOME_CANCELLED, stopped.outcome);
+                ASSERT_EQ(VN_OK, Vn_ReleaseActionFiring(cancelled));
+                ASSERT_EQ(VN_OK, Vn_ReleaseActionFiring(immediate));
+            }
+        }
+        VnActionFiringHandle laterFiring = 0;
+        VnEmitterHandle laterEmitter = 0;
+        if (twoRequests) {
+            ASSERT_EQ(VN_OK, Vn_CreateEmitter(&laterEmitter));
+            post.emitter = laterEmitter;
+            ASSERT_EQ(VN_OK, Vn_PostAction(&post, &laterFiring));
+        }
+        std::vector<VariableControlInstanceToken> competing;
+        if (competingPlayback) {
+            auto& controls = engine.variableControlInstances;
+            VariableControlInstanceCreateRequest request{1, 1, ContainerMatrixWorld::kRoot, 1};
+            VariableControlInstanceToken token{};
+            for (unsigned i = 0; i < 257; ++i) {
+                ASSERT_EQ(VariableControlInstanceStatus::Ok, controls.Acquire(request, &token));
+                competing.push_back(token);
+            }
+            controls.SetCommitPageLimitForTests(0);
+            while (controls.Acquire(request, &token) == VariableControlInstanceStatus::Ok)
+                competing.push_back(token);
+        }
+        std::vector<QueueInstanceToken> competingQueues;
+        std::vector<ArmGroupToken> competingGroups;
+        std::vector<DecisionToken> competingDecisions;
+        if (competingPlayback) {
+            QueueInstanceCreateRequest request{};
+            request.world = 1;
+            request.rootInstance = 1;
+            request.containerStableId = ContainerMatrixWorld::kRoot;
+            request.programSemanticFingerprint = 1;
+            request.childCount = 1;
+            request.initial.version = 1;
+            request.emitterSlot = UINT32_MAX;
+            engine.queueInstances.SetRowCommitPageLimitForTests(0);
+            engine.queueInstances.SetConditionalRowCommitPageLimitForTests(0);
+            QueueInstanceToken token{};
+            while (engine.queueInstances.Acquire(request, &token)) competingQueues.push_back(token);
+            engine.armGroups.SetRowCommitPageLimitForTests(0);
+            engine.armGroups.SetMemberAllocationLimitForTests(0);
+            DecisionReserveRequest decision{};
+            decision.ticket.sequence = 1;
+            decision.world = engine.variables.CurrentWorldGeneration();
+            decision.transport = engine.timelinePool.Epoch();
+            decision.expectedContinuationGeneration = 1;
+            decision.sliceCount = 1;
+            DecisionToken decisionToken{};
+            for (unsigned i = 0; i < 513; ++i) {
+                ASSERT_TRUE(engine.decisions.Reserve(decision, &decisionToken));
+                competingDecisions.push_back(decisionToken);
+            }
+            engine.decisions.SetRowCommitPageLimitForTests(0);
+            while (engine.decisions.Reserve(decision, &decisionToken)) competingDecisions.push_back(decisionToken);
+            ArmGroupToken group{};
+            while (engine.armGroups.Reserve({1, 1}, nullptr, 0, &group)) competingGroups.push_back(group);
+        }
+        struct ResetFault {
+            ~ResetFault() { detail::DisarmLogicAllocFaultForTests(); }
+        } resetFault;
+        if (deferred && scenario < 5) {
+            const auto site = scenario <= 2 ? detail::LogicAllocSite::PlayableTreeStorage :
+                scenario == 3 ? detail::LogicAllocSite::ActionPlayContainerStorage :
+                detail::LogicAllocSite::FrontierOwnerLedgerStorage;
+            detail::ArmLogicAllocFaultForTests(1, site);
+        }
         std::array<unsigned, 2> audible{};
         std::array<unsigned, 2> onsets{};
-        bool secondStarted = false;
+        std::array<unsigned, 2> laterAudible{};
+        std::array<unsigned, 2> laterOnsets{};
+        // The second request was posted after the 128 captured blocks above.
+        const auto laterStart = lateClipStart + 128u * 64u;
         for (unsigned block = 0; block < (deferred ? 1024u : 128u); ++block) {
             ASSERT_EQ(VN_OK, Vn_Update());
             ASSERT_FALSE(engine.runtimeRecreateRequired);
@@ -25612,22 +25773,37 @@ TEST(PackComposition, NestedVariableTrackQueueCompletesWithPreparingPackLease) {
             ASSERT_EQ(before + 1u, engine.mixer.BlocksRendered());
             const auto* output = engine.nullBackend.LastBlock();
             ASSERT_NE(nullptr, output);
+            pcm.insert(pcm.end(), output, output + 128);
             for (unsigned frame = 0; frame < 64; ++frame) {
                 const auto outputFrame = block * 64u + frame;
                 const auto sample = output[2u * frame];
+                auto& frames = twoRequests && outputFrame >= laterStart ? laterAudible : audible;
+                auto& start = twoRequests && outputFrame >= laterStart ? laterOnsets : onsets;
                 if (std::abs(sample - 0.125f) < 1e-6f) {
-                    ASSERT_FALSE(secondStarted);
-                    if (audible[0] == 0) onsets[0] = outputFrame;
-                    ASSERT_EQ(onsets[0] + audible[0], outputFrame);
-                    ++audible[0];
+                    ASSERT_EQ(0u, frames[1]);
+                    if (frames[0] == 0) start[0] = outputFrame;
+                    ASSERT_EQ(start[0] + frames[0], outputFrame);
+                    ++frames[0];
                 } else if (std::abs(sample + 0.25f) < 1e-6f) {
-                    secondStarted = true;
-                    if (audible[1] == 0) onsets[1] = outputFrame;
-                    ASSERT_EQ(onsets[1] + audible[1], outputFrame);
-                    ++audible[1];
+                    if (frames[1] == 0) start[1] = outputFrame;
+                    ASSERT_EQ(start[1] + frames[1], outputFrame);
+                    ++frames[1];
                 } else ASSERT_NEAR(0.0f, sample, 1e-6f);
             }
         }
+        for (auto token : competingDecisions) {
+            ASSERT_TRUE(engine.decisions.Cancel(token));
+            ASSERT_TRUE(engine.decisions.ReclaimCancelled(token));
+        }
+        for (auto group : competingGroups) EXPECT_TRUE(engine.armGroups.CancelBeforePublication(group));
+        for (auto token : competingQueues) EXPECT_TRUE(engine.queueInstances.Release(token));
+        for (auto token : competing) EXPECT_TRUE(engine.variableControlInstances.Release(token));
+        if (scenario == 7) lateClipStart = onsets[0];
+        else if (lateClip) EXPECT_EQ(lateClipStart, onsets[0]);
+        else if (scenario <= 2) referenceStart[scenario] = onsets[0];
+        else EXPECT_EQ(referenceStart[trackRoot ? 2u : 1u], onsets[0]);
+        if (scenario == 1 || scenario == 2 || scenario == 4)
+            EXPECT_EQ(1u, detail::g_logicAllocFault.remaining);
         EXPECT_EQ(first.size(), audible[0]);
         EXPECT_EQ(second.size(), audible[1]);
         EXPECT_EQ(onsets[0] + first.size(), onsets[1]);
@@ -25637,6 +25813,18 @@ TEST(PackComposition, NestedVariableTrackQueueCompletesWithPreparingPackLease) {
         EXPECT_EQ(VN_ACTION_FIRING_TERMINAL_RETAINED, info.state);
         EXPECT_EQ(VN_ACTION_OUTCOME_SUCCEEDED, info.outcome);
         EXPECT_EQ(VN_ACTION_TERMINAL_NATURAL, info.terminalReason);
+        if (twoRequests) {
+            EXPECT_EQ(laterStart, laterOnsets[0]);
+            EXPECT_EQ(laterStart + first.size(), laterOnsets[1]);
+            EXPECT_EQ(first.size(), laterAudible[0]);
+            EXPECT_EQ(second.size(), laterAudible[1]);
+            ASSERT_EQ(VN_OK, Vn_QueryActionFiring(laterFiring, &info));
+            EXPECT_EQ(VN_ACTION_FIRING_TERMINAL_RETAINED, info.state);
+            EXPECT_EQ(VN_ACTION_OUTCOME_SUCCEEDED, info.outcome);
+            EXPECT_EQ(VN_ACTION_TERMINAL_NATURAL, info.terminalReason);
+            ASSERT_EQ(VN_OK, Vn_ReleaseActionFiring(laterFiring));
+            ASSERT_EQ(VN_OK, Vn_DestroyEmitter(laterEmitter));
+        }
         EXPECT_EQ(0u, engine.playableInstances.LiveCount());
         EXPECT_EQ(0u, engine.playablePartitions.OccupiedCount());
         EXPECT_EQ(0u, engine.sourceTerminals.OccupiedCount());
@@ -25647,6 +25835,17 @@ TEST(PackComposition, NestedVariableTrackQueueCompletesWithPreparingPackLease) {
         ASSERT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
         EXPECT_EQ(VN_OK, Vn_UnloadPackEx(rows[1].handle, VN_PACK_UNLOAD_REFUSE_IF_USED));
         EXPECT_EQ(VN_OK, Vn_DestroyEmitter(emitter));
+    };
+    for (unsigned scenario = 0; scenario < 11; ++scenario) {
+        std::vector<float> actual;
+        ASSERT_NO_FATAL_FAILURE(play(scenario, false, actual));
+#if !defined(HARKEN_RT_QUALIFICATION)
+        std::vector<float> reference;
+        ASSERT_NO_FATAL_FAILURE(play(scenario, true, reference));
+        ASSERT_EQ(reference.size(), actual.size());
+        EXPECT_EQ(0, std::memcmp(reference.data(), actual.data(), actual.size() * sizeof(float)))
+            << "capture scan changed the rendered samples in scenario " << scenario;
+#endif
     }
 }
 

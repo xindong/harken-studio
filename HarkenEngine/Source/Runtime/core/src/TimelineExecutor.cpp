@@ -64,15 +64,16 @@ bool TimelineExecutor::Reset(std::uint32_t quantumFrames,
     if (!decoded.Reserve(decodedCapacity) || !digest.Reserve(decodedCapacity) ||
         !nextEvent.Reserve(decodedCapacity) || !decoded.ConstructThrough(initialCount) ||
         !digest.ConstructThrough(initialCount) || !nextEvent.ConstructThrough(initialCount)) return false;
-    std::vector<TransactionScratch> transactions(pool->MaxScheduledTransactions());
-    std::vector<std::uint32_t> touchedTransactions(pool->MaxScheduledTransactions());
+    GrowingRowStorage<TransactionScratch> transactions;
+    if (!transactions.ConstructThrough(pool->TransactionSlotCount())) return false;
+    std::vector<std::uint32_t> touchedTransactions(decodedCapacity);
     std::vector<TimelineSinkEvent> sinkEvents(kTimelineMaxEventsPerVoiceQuantum);
     std::vector<Plan03PageGroupView> pageGroups(pool->MaxPlan03GroupHeadersPerPage());
     eventStorageRegistration_.Detach();
     decoded_.Swap(decoded);
     deferredDigest_.Swap(digest);
     nextEvent_.Swap(nextEvent);
-    transactions_.swap(transactions);
+    transactions_.Swap(transactions);
     touchedTransactions_.swap(touchedTransactions);
     sinkEvents_.swap(sinkEvents);
     pageGroups_.swap(pageGroups);
@@ -84,6 +85,8 @@ bool TimelineExecutor::Reset(std::uint32_t quantumFrames,
     pool->AttachPendingEventStorage(eventStorageRegistration_, this,
         [](void* context, ScheduledTransactionPool::PendingEventStorageDemand demand) noexcept {
             return static_cast<TimelineExecutor*>(context)->PrepareEventStorage(demand);
+        }, [](void* context, std::uint32_t rows) noexcept {
+            return static_cast<TimelineExecutor*>(context)->transactions_.ConstructThrough(rows);
         });
     deferredDigestCount_ = 0;
     deferDigest_ = false;

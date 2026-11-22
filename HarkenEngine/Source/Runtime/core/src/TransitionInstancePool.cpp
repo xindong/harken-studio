@@ -15,10 +15,6 @@ struct Reservation {
     std::atomic_flag* flag;
 };
 
-bool ValidCapacity(std::uint32_t capacity) noexcept {
-    return capacity != 0 && capacity <= kMaxTransitionInstancesHard;
-}
-
 std::uint64_t PackIdentity(std::uint32_t slot,
                            std::uint32_t generation) noexcept {
     return (static_cast<std::uint64_t>(generation) << 32) | slot;
@@ -27,9 +23,28 @@ std::uint64_t PackIdentity(std::uint32_t slot,
 } // namespace
 
 TransitionInstancePool::TransitionInstancePool(std::uint32_t capacity)
-    : rows_(ValidCapacity(capacity) ? std::make_unique<Row[]>(capacity)
-                                    : nullptr),
-      capacity_(ValidCapacity(capacity) ? capacity : 0) {}
+    : limit_(capacity) {
+    if (!rows_.ConstructThrough(capacity)) throw detail::LogicPreparationFailure{};
+}
+
+bool TransitionInstancePool::PrepareAvailable(std::uint32_t count) noexcept {
+    const auto occupied = Capacity() - FreeCount();
+    if (count > limit_ - occupied ||
+        (!rows_.PreparedUseActive() && rows_.HeldRows() > limit_ - occupied - count)) return false;
+    if (rows_.ConstructThrough(occupied + count)) return true;
+    if (!rows_.PreparedUseActive() && !memguard::IsAudioTagged())
+        detail::RecordLogicAllocFailure(detail::LogicAllocSite::EngineStorage);
+    return false;
+}
+
+bool TransitionInstancePool::PrepareBacking(std::uint32_t count, StableStoragePreparation* out) noexcept {
+    const auto occupied = Capacity() - FreeCount();
+    if (out == nullptr || out->Valid() || rows_.PreparedUseActive() || memguard::IsAudioTagged() ||
+        count > limit_ - occupied || rows_.HeldRows() > limit_ - occupied - count) return false;
+    if (rows_.PrepareBacking(count, occupied, out)) return true;
+    detail::RecordLogicAllocFailure(detail::LogicAllocSite::EngineStorage);
+    return false;
+}
 
 void TransitionInstancePool::FrontierProof::Release() noexcept {
     if (row_ != nullptr) row_->reservation.clear(std::memory_order_release);
@@ -168,7 +183,7 @@ bool TransitionInstancePool::ReleaseFrontierBinding(TransitionInstanceToken toke
 
 std::uint32_t TransitionInstancePool::LiveCount() const noexcept {
     std::uint32_t count = 0;
-    for (std::uint32_t slot = 0; slot < capacity_; ++slot) {
+    for (std::uint32_t slot = 0; slot < Capacity(); ++slot) {
         if (rows_[slot].slotState.load(std::memory_order_acquire) ==
             SlotState::Live) {
             ++count;
@@ -179,7 +194,7 @@ std::uint32_t TransitionInstancePool::LiveCount() const noexcept {
 
 std::uint32_t TransitionInstancePool::FreeCount() const noexcept {
     std::uint32_t count = 0;
-    for (std::uint32_t slot = 0; slot < capacity_; ++slot) {
+    for (std::uint32_t slot = 0; slot < Capacity(); ++slot) {
         if (rows_[slot].slotState.load(std::memory_order_acquire) ==
             SlotState::Free) {
             ++count;
@@ -190,7 +205,7 @@ std::uint32_t TransitionInstancePool::FreeCount() const noexcept {
 
 std::uint32_t TransitionInstancePool::QuarantinedCount() const noexcept {
     std::uint32_t count = 0;
-    for (std::uint32_t slot = 0; slot < capacity_; ++slot) {
+    for (std::uint32_t slot = 0; slot < Capacity(); ++slot) {
         if (rows_[slot].slotState.load(std::memory_order_acquire) ==
             SlotState::Quarantined) {
             ++count;
@@ -214,10 +229,8 @@ bool TransitionInstancePool::PrepareAcquire(
 bool TransitionInstancePool::AcquireInternal(
     const TransitionInstanceCreateRequest& request,
     TransitionInstanceToken* outToken, bool prepared) noexcept {
-    if (outToken == nullptr) {
-        return false;
-    }
-    for (std::uint32_t slot = 0; slot < capacity_; ++slot) {
+    if (outToken == nullptr || !PrepareAvailable(1)) return false;
+    for (std::uint32_t slot = 0; slot < Capacity(); ++slot) {
         Row& row = rows_[slot];
         if (row.slotState.load(std::memory_order_acquire) != SlotState::Free ||
             row.reservation.test_and_set(std::memory_order_acquire)) {
@@ -257,7 +270,7 @@ bool TransitionInstancePool::AcquireInternal(
 
 TransitionInstancePool::Row* TransitionInstancePool::ResolvePrepared(
     TransitionInstanceToken token) noexcept {
-    if (!token.Valid() || token.slot >= capacity_) {
+    if (!token.Valid() || token.slot >= Capacity()) {
         return nullptr;
     }
     Row& row = rows_[token.slot];
@@ -370,7 +383,7 @@ bool TransitionInstancePool::CancelBeforePublication(
 
 TransitionInstancePool::Row* TransitionInstancePool::Resolve(
     TransitionInstanceToken token) noexcept {
-    if (!token.Valid() || token.slot >= capacity_) {
+    if (!token.Valid() || token.slot >= Capacity()) {
         return nullptr;
     }
     Row& row = rows_[token.slot];
@@ -516,7 +529,7 @@ bool TransitionInstancePool::Capture(
 
 bool TransitionInstancePool::SetGenerationForTests(
     std::uint32_t slot, std::uint32_t generation) noexcept {
-    if (slot >= capacity_ || generation == 0 ||
+    if (slot >= Capacity() || generation == 0 ||
         generation > kMaxTransitionInstanceGeneration ||
         rows_[slot].slotState.load(std::memory_order_acquire) !=
             SlotState::Free) {

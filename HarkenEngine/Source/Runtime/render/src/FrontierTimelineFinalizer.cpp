@@ -251,7 +251,7 @@ struct FrontierTimelineFinalizer::Impl {
     std::unique_ptr<Group[]> groups;
     StableRowStorage<OrderRef> order;
     std::unique_ptr<ImmediateLaneFrontierClaim[]> laneClaims;
-    StableRowStorage<PendingEvent> pendingEvents;
+    GrowingRowStorage<PendingEvent> pendingEvents;
     struct PendingEventSnapshot {
         std::uint64_t count = 0;
         std::uint64_t retiredEvents = 0;
@@ -261,7 +261,7 @@ struct FrontierTimelineFinalizer::Impl {
     PinnedSnapshot3<PendingEventSnapshot> pendingEventSnapshot;
     PendingEventSnapshot capturedPendingEvents{};
     ScheduledTransactionPool::PendingEventStorageRegistration pendingEventRegistration;
-    StableRowStorage<PendingGroup> pendingGroups;
+    GrowingRowStorage<PendingGroup> pendingGroups;
     std::uint32_t pendingEventCount = 0;
     std::uint32_t pendingGroupCount = 0;
     std::uint64_t nextPendingWork = 1;
@@ -302,8 +302,8 @@ struct FrontierTimelineFinalizer::Impl {
                 demand.nativeEvents, demand.retiredEvents);
         };
         const auto eventCount = requiredEvents(self.events.Capacity());
-        return self.pendingEvents.ConstructThrough(requiredEvents(self.pendingEvents.Capacity())) &&
-            self.pendingGroups.ConstructThrough(required(self.pendingGroups.Capacity(),
+        return self.pendingEvents.ConstructThrough(requiredEvents(UINT32_MAX)) &&
+            self.pendingGroups.ConstructThrough(required(UINT32_MAX,
                 captured.groups, captured.retiredGroups, demand.nativeGroups, demand.retiredGroups)) &&
             self.order.ConstructThrough(std::max(eventCount, self.events.ConstructedCount()) +
                 self.groupCapacity) && self.events.ConstructThrough(eventCount);
@@ -3538,32 +3538,22 @@ bool FrontierTimelineFinalizer::Attach(DecisionTable& decisions,
         (laneOnly ? 1u : 2u);
     const auto groupCapacity = static_cast<std::uint64_t>(pool.MaxPlan03GroupHeadersPerPage()) *
         (laneOnly ? 1u : 2u);
-    const auto pendingEventCapacity = laneOnly ? 0ull :
-        static_cast<std::uint64_t>(pool.MaxScheduledTransactions()) * pool.MaxTransactionEvents();
-    const auto pendingGroupCapacity = laneOnly ? 0ull :
-        static_cast<std::uint64_t>(pool.PageCount()) * pool.MaxPlan03GroupHeadersPerPage();
     if (!decisions.Valid() || !pool.Valid() || eventCapacity == 0 || groupCapacity == 0 ||
         eventCapacity + groupCapacity > UINT32_MAX || eventCapacity > SIZE_MAX / sizeof(Impl::Event) ||
         groupCapacity > SIZE_MAX / sizeof(Impl::Group) ||
-        eventCapacity + groupCapacity > SIZE_MAX / sizeof(Impl::OrderRef) ||
-        pendingEventCapacity > UINT32_MAX || pendingGroupCapacity > UINT32_MAX ||
-        pendingEventCapacity > SIZE_MAX / sizeof(Impl::PendingEvent) ||
-        pendingGroupCapacity > SIZE_MAX / sizeof(Impl::PendingGroup)) return false;
+        eventCapacity + groupCapacity > SIZE_MAX / sizeof(Impl::OrderRef)) return false;
     auto& self = *impl_;
-    StableRowStorage<Impl::PendingEvent> pendingEvents;
-    StableRowStorage<Impl::PendingGroup> pendingGroups;
+    GrowingRowStorage<Impl::PendingEvent> pendingEvents;
+    GrowingRowStorage<Impl::PendingGroup> pendingGroups;
     StableRowStorage<Impl::Event> events;
     StableRowStorage<Impl::StagedLaneStart> stagedLaneStarts;
     StableRowStorage<Impl::OrderRef> order;
     const auto demand = pool.CapturePendingEventStorageDemand();
     const auto preparedEvents = static_cast<std::uint32_t>(laneOnly ? 0u :
         std::min<std::uint64_t>(eventCapacity, demand.nativeEvents));
-    if (!pendingEvents.Reserve(static_cast<std::uint32_t>(pendingEventCapacity)) ||
-        !pendingEvents.ConstructThrough(static_cast<std::uint32_t>(
-            std::min<std::uint64_t>(pendingEventCapacity, demand.nativeEvents))) ||
-        !pendingGroups.Reserve(static_cast<std::uint32_t>(pendingGroupCapacity)) ||
-        !pendingGroups.ConstructThrough(static_cast<std::uint32_t>(
-            std::min<std::uint64_t>(pendingGroupCapacity, demand.nativeGroups))) ||
+    if ((!laneOnly && (demand.nativeEvents > UINT32_MAX || demand.nativeGroups > UINT32_MAX ||
+            !pendingEvents.ConstructThrough(static_cast<std::uint32_t>(demand.nativeEvents)) ||
+            !pendingGroups.ConstructThrough(static_cast<std::uint32_t>(demand.nativeGroups)))) ||
         !events.Reserve(static_cast<std::uint32_t>(eventCapacity)) ||
         !events.ConstructThrough(preparedEvents) ||
         !stagedLaneStarts.Reserve(laneOnly ? static_cast<std::uint32_t>(eventCapacity) : 0u) ||

@@ -4385,6 +4385,25 @@ TEST(GrowingRowStorage, FailedReservationAndCommitDoNotPublishIncompletePrefix) 
     EXPECT_FALSE(impossible.Valid());
 }
 
+TEST(GrowingRowStorage, QueueAdmissionWithOneHeldSlotIgnoresRetiredPeak) {
+    const auto visits = [](std::uint32_t peak) {
+        harken::GrowingRowStorage<unsigned> storage;
+        if (!storage.ConstructThrough(peak)) return UINT32_MAX;
+        harken::StableStoragePreparation hold;
+        if (!storage.PrepareBacking(1, 0, &hold)) return UINT32_MAX;
+        std::uint32_t visited = 0;
+        const auto slot = storage.FindFreeSlot(UINT32_MAX, [&](unsigned row) {
+            ++visited;
+            return row == 0;
+        }, [](std::uint32_t) { return false; });
+        EXPECT_EQ(0u, slot);
+        return visited;
+    };
+    const auto cold = visits(2);
+    EXPECT_LT(cold, 5u);
+    EXPECT_EQ(cold, visits(4097));
+}
+
 TEST(CurrentSelectionMemory, PreparedShapesPreserveOtherHoldsAndOrdinaryAdmissions) {
     using Status = harken::SelectionMemoryStatusV1;
     using Table = harken::SelectionMemoryTableV1;

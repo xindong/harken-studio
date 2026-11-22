@@ -75,6 +75,7 @@
 #include "harken/core/TimelineArmTable.h"
 #include "harken/core/AudioSliceLease.h"
 #include "harken/core/TimelineProgram.h"
+#include "harken/core/GrowingRowStorage.h"
 #include "harken/core/StableRowStorage.h"
 
 #include <array>
@@ -1244,6 +1245,12 @@ public:
     bool PrepareImmediateLaneBacking(std::uint32_t groupCount, std::uint64_t totalMembers,
         ImmediateLaneBackingPreparation* out) noexcept;
     // Attach before preparing rows; the producer callback must not re-enter this pool.
+    bool PrepareImmediateLaneDecisionGates(std::uint32_t count) noexcept {
+        return immediateLaneDecisionGates_.ConstructThrough(count);
+    }
+    bool PrepareImmediateLaneOwnerGates(std::uint32_t count) noexcept {
+        return immediateLaneOwnerGates_.ConstructThrough(count);
+    }
     bool AttachImmediateLaneRowStoragePreparation(void* context,
         bool (*prepare)(void*, std::uint32_t) noexcept) noexcept;
     void DetachImmediateLaneRowStoragePreparation() noexcept {
@@ -1321,8 +1328,8 @@ public:
         std::uint32_t maxPlan03GroupHeadersPerPage = 0;
         std::uint32_t maxArmsPerGroup = 0;
         std::uint32_t maxImmediateLaneGroupRows = 0;
-        std::uint32_t maxImmediateLaneOwnerGates = 0;
-        std::uint32_t maxImmediateLaneDecisionGates = 0;
+        std::uint32_t initialImmediateLaneOwnerGates = 0;
+        std::uint32_t initialImmediateLaneDecisionGates = 0;
     };
 
     ScheduledTransactionPool() = default;
@@ -1342,6 +1349,7 @@ public:
     class PendingEventStorageRegistration {
     public:
         using Prepare = bool (*)(void*, PendingEventStorageDemand) noexcept;
+        using PrepareTransactions = bool (*)(void*, std::uint32_t) noexcept;
         PendingEventStorageRegistration() = default;
         ~PendingEventStorageRegistration() { Detach(); }
         PendingEventStorageRegistration(const PendingEventStorageRegistration&) = delete;
@@ -1354,11 +1362,13 @@ public:
         PendingEventStorageRegistration* next_ = nullptr;
         void* context_ = nullptr;
         Prepare prepare_ = nullptr;
+        PrepareTransactions prepareTransactions_ = nullptr;
     };
     // Control-only. Prepare this existing demand before attaching a consumer.
     PendingEventStorageDemand CapturePendingEventStorageDemand() const noexcept;
     void AttachPendingEventStorage(PendingEventStorageRegistration& registration,
-        void* context, PendingEventStorageRegistration::Prepare prepare) const noexcept;
+        void* context, PendingEventStorageRegistration::Prepare prepare,
+        PendingEventStorageRegistration::PrepareTransactions prepareTransactions = nullptr) const noexcept;
     class CurrentSliceStorageRegistration {
     public:
         using Prepare = bool (*)(void*, std::size_t) noexcept;
@@ -1419,8 +1429,12 @@ public:
     std::uint32_t MaxEventsPerQuantum() const {
         return config_.maxEventsPerQuantum;
     }
-    std::uint32_t MaxScheduledTransactions() const {
-        return config_.maxScheduledTransactions;
+    std::uint32_t TransactionSlotCount() const noexcept { return transactions_.size(); }
+    bool PrepareAvailableTransactionsForTests(std::uint32_t count) noexcept {
+        return PrepareTransactionSlots(count, 0u);
+    }
+    void SetTransactionCommitPageLimitForTests(std::size_t pages) noexcept {
+        transactions_.SetCommitPageLimitForTests(pages);
     }
     std::uint32_t MaxCurrentSlicesPerQuantum() const {
         return currentSliceStorageCapacity_;
@@ -2248,7 +2262,7 @@ private:
         std::atomic<std::uint64_t> ownerGeneration{0};
         // High bit invalidates, next six bits retain reasons, low bits count
         // audio claims. One word gives cancellation and claim one linearization point.
-        std::atomic<std::uint32_t> state{0};
+        mutable std::atomic<std::uint32_t> state{0};
         std::uint32_t references = 0; // Logic thread only.
     };
     struct InitialSoundQueueCompanionAssociation {
@@ -2653,17 +2667,21 @@ private:
     void* immediateLaneRowStorageContext_ = nullptr;
     bool (*prepareImmediateLaneRowStorage_)(void*, std::uint32_t) noexcept = nullptr;
     StableRowStorage<LaneGroupRow> immediateLaneGroups_;
-    std::unique_ptr<LaneFrontierGate[]> immediateLaneOwnerGates_;
-    std::unique_ptr<LaneFrontierGate[]> immediateLaneDecisionGates_;
+    GrowingRowStorage<LaneFrontierGate> immediateLaneOwnerGates_;
+    GrowingRowStorage<LaneFrontierGate> immediateLaneDecisionGates_;
     const TimelineArmTable* plan03ArmTable_ = nullptr;
     bool plan03ArmTableEstablishedByPrepared_ = false;
     std::vector<std::uint32_t> pageBatchCount_;
     std::vector<std::uint32_t> pageBatchOccupiedCount_;
     StableRowStorage<FrameBatchRow, std::size_t> pageBatchRows_;
 
-    std::vector<TransactionRecord> transactions_;
+    bool PrepareTransactionSlots(std::size_t transactions, std::size_t claims, bool accepted = false) noexcept;
+    std::uint64_t AvailableTransactionSlots() const noexcept {
+        return config_.maxScheduledTransactions - (transactions_.size() - freeTransactions_.size());
+    }
+    GrowingRowStorage<TransactionRecord> transactions_;
     std::vector<std::uint32_t> freeTransactions_; // stack of free slot indices
-    std::vector<PreparedTransactionClaim> preparedTransactionClaims_;
+    GrowingRowStorage<PreparedTransactionClaim> preparedTransactionClaims_;
     std::vector<std::uint32_t> freePreparedTransactionClaims_;
 
     struct UnplacedCreditRow {

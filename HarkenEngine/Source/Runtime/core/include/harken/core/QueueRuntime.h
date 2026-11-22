@@ -14,6 +14,7 @@
 #include "harken/core/PlayableInstanceTable.h"
 #include "harken/core/TimelineArmTable.h"
 #include "harken/core/ScheduledTransactionPool.h"
+#include "harken/core/GrowingRowStorage.h"
 #include "harken/core/StableSlotStorage.h"
 
 #include <atomic>
@@ -41,8 +42,6 @@ class PreparedQueueReplacementOrder;
 struct ImmediateLaneBucket;
 struct Engine;
 
-inline constexpr std::uint32_t kMaxQueueInstancesHard = 16384;
-inline constexpr std::uint32_t kMaxQueueCheckpointRowsHard = 65536;
 inline constexpr std::uint32_t kMaxQueueAvoidHistoryHard = 64;
 
 struct QueueInstanceToken {
@@ -259,17 +258,12 @@ private:
 class QueueCheckpointTable {
     struct Row;
 public:
-    explicit QueueCheckpointTable(std::uint32_t capacity);
-
-    bool Valid() const noexcept { return capacity_ != 0; }
-    std::uint32_t Capacity() const noexcept { return capacity_; }
-    using BackingPreparation = StableSlotStorage<Row>::Preparation;
-    using BackingUse = StableSlotStorage<Row>::PreparedUse;
+    using BackingPreparation = StableStoragePreparation;
+    using BackingUse = StableStoragePreparedUse;
     bool PrepareBacking(std::uint32_t count, BackingPreparation* out) noexcept;
     std::uint32_t ConstructedRowCount() const noexcept { return rows_.ConstructedCount(); }
     std::size_t RowStorageBytes() const noexcept { return rows_.RequestedBytes(); }
     std::size_t RowCommittedBytes() const noexcept { return rows_.CommittedBytes(); }
-    std::size_t RowDirectoryBytes() const noexcept { return rows_.DirectoryBytes(); }
     void SetRowCommitPageLimitForTests(std::size_t pages) noexcept {
         rows_.SetCommitPageLimitForTests(pages);
     }
@@ -287,19 +281,26 @@ public:
         LogicCommitSequence sequence) noexcept;
     QueueResetStatusV1 CancelPreparedReset(
         PreparedQueueCheckpointResetV1* prepared) noexcept;
+    void RetireEmitter(std::uint32_t slot, std::uint32_t generation) noexcept;
     void ClearWorld(WorldGeneration world) noexcept;
     void ClearAll() noexcept;
 
 private:
     struct Row {
+        std::uint32_t previous = UINT32_MAX;
+        std::uint32_t next = UINT32_MAX;
         bool live = false;
         bool resetReserved = false;
         QueueCheckpointKey key{};
         QueueCheckpointImage image{};
     };
 
-    StableSlotStorage<Row> rows_;
-    std::uint32_t capacity_ = 0;
+    void Remove(std::uint32_t slot) noexcept;
+    GrowingRowStorage<Row> rows_;
+    std::uint32_t first_ = UINT32_MAX;
+    std::uint32_t firstFree_ = 0;
+    std::uint32_t occupied_ = 0;
+    std::uint32_t live_ = 0;
 };
 
 struct QueueInstanceCreateRequest {
@@ -705,19 +706,19 @@ class QueueInstanceTable {
     struct OriginalConditionalRow;
 public:
     struct BackingPreparation {
-        StableSlotStorage<Row>::Preparation instances;
-        StableSlotStorage<OriginalConditionalRow>::Preparation conditionals;
+        StableStoragePreparation instances;
+        StableStoragePreparation conditionals;
     };
     class BackingUse {
     public:
         explicit BackingUse(const BackingPreparation* backing = nullptr) noexcept
-            : instances_(backing == nullptr ? StableSlotStorage<Row>::PreparedUse{}
+            : instances_(backing == nullptr ? StableStoragePreparedUse{}
                   : backing->instances.Use()),
-              conditionals_(backing == nullptr ? StableSlotStorage<OriginalConditionalRow>::PreparedUse{}
+              conditionals_(backing == nullptr ? StableStoragePreparedUse{}
                   : backing->conditionals.Use()) {}
     private:
-        StableSlotStorage<Row>::PreparedUse instances_;
-        StableSlotStorage<OriginalConditionalRow>::PreparedUse conditionals_;
+        StableStoragePreparedUse instances_;
+        StableStoragePreparedUse conditionals_;
     };
     bool PrepareBacking(std::uint32_t instances, std::uint32_t conditionals,
         BackingPreparation* out) noexcept;
@@ -731,8 +732,6 @@ public:
     std::size_t ConditionalRowStorageBytes() const noexcept { return originalConditionalRows_.RequestedBytes(); }
     std::size_t RowCommittedBytes() const noexcept { return rows_.CommittedBytes(); }
     std::size_t ConditionalRowCommittedBytes() const noexcept { return originalConditionalRows_.CommittedBytes(); }
-    std::size_t RowDirectoryBytes() const noexcept { return rows_.DirectoryBytes(); }
-    std::size_t ConditionalRowDirectoryBytes() const noexcept { return originalConditionalRows_.DirectoryBytes(); }
     void SetRowCommitPageLimitForTests(std::size_t pages) noexcept {
         rows_.SetCommitPageLimitForTests(pages);
     }
@@ -1038,7 +1037,8 @@ public:
     ~QueueInstanceTable();
 
     bool Valid() const noexcept;
-    std::uint32_t Capacity() const noexcept { return capacity_; }
+    bool SupportsOriginalConditionals() const noexcept { return originalConditionalCapacity_ != 0; }
+    std::uint32_t Capacity() const noexcept { return rows_.ConstructedCount(); }
     std::uint32_t LiveCount() const noexcept;
     std::uint32_t QuarantinedCount() const noexcept;
 
@@ -1639,10 +1639,13 @@ private:
     }
 
     bool PrepareInstanceSlot(std::uint32_t slot) noexcept;
+    bool PrepareDependencies(std::uint32_t count) noexcept {
+        return prepareRowStorage_ == nullptr || prepareRowStorage_(rowStorageContext_, count);
+    }
     bool PrepareConditionalSlot(std::uint32_t slot) noexcept;
-    StableSlotStorage<Row> rows_;
+    GrowingRowStorage<Row> rows_;
     // Noncopyable loans live in fixed separate storage, never in resettable Row.
-    StableSlotStorage<OriginalConditionalRow> originalConditionalRows_;
+    GrowingRowStorage<OriginalConditionalRow> originalConditionalRows_;
     void* rowStorageContext_ = nullptr;
     bool (*prepareRowStorage_)(void*, std::uint32_t) noexcept = nullptr;
     std::uint32_t originalConditionalCapacity_ = 0;

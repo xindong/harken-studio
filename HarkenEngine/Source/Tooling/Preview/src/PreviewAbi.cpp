@@ -67,6 +67,7 @@ VnPreviewResult MapStart(harken::PlayableStartStatus status) noexcept {
             return VN_PREVIEW_BACKPRESSURE;
         case harken::PlayableStartStatus::CapabilityUnavailable:
             return VN_PREVIEW_NOT_SUPPORTED;
+        case harken::PlayableStartStatus::OutOfMemory:
         case harken::PlayableStartStatus::RuntimeRecreateRequired:
         case harken::PlayableStartStatus::NotInitialized:
             return VN_PREVIEW_HOST_ERROR;

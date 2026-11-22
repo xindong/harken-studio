@@ -181,12 +181,12 @@ namespace Harken.Unity.Tests
             yield return null;
         }
 
+#if HARKEN_SDK_TEST_NULL_PUMP
         [UnityTest]
         public IEnumerator AutomaticAdmissionRefusalDoesNotRetryOrAdvanceSeed()
         {
             using (var fixture = new NameFirstFixture())
             {
-                HarkenProjectSettings.ActiveForStartup().SetMaxActionFirings(1);
                 fixture.Start(true);
                 yield return null;
                 Assert.That(Actions.Resolve(fixture.Name, fixture.ProjectId, out ActionResolved resolved),
@@ -202,6 +202,7 @@ namespace Harken.Unity.Tests
                 {
                     if (operation == "Actions.PostResolved" || operation.StartsWith("Action '")) ++attempts;
                 };
+                Assert.That(HarkenManagedPlaybackTests.HarkenSdkTest_RefuseFiringResultStorage(1), Is.EqualTo(VnResult.VN_OK));
                 ExpectActionFailure(VnResult.VN_NO_ACTION);
                 for (int i = 0; i < 5; ++i) yield return null;
                 Assert.That(attempts, Is.EqualTo(1));
@@ -211,6 +212,8 @@ namespace Harken.Unity.Tests
             }
             yield return null;
         }
+
+#endif
 
         [UnityTest]
         public IEnumerator ExplicitPackRequestsShareUntilTheirLastRelease()

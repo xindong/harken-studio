@@ -8,7 +8,7 @@
 #include "harken/core/PlayableInstanceTable.h"
 #include "harken/core/WeightSegment.h"
 #include "harken/core/FrontierActivation.h"
-#include "harken/core/StableRowStorage.h"
+#include "harken/core/GrowingRowStorage.h"
 
 #include <atomic>
 #include <array>
@@ -231,8 +231,10 @@ public:
     bool ProveFrontierSide(const FrontierGroupBinding& binding,
         AudioSliceLease& lease, FrontierSideProof* out) noexcept;
     void ApplyFrontierSide(FrontierSideProof& proof) noexcept;
-    explicit VariableControlInstanceTable(std::uint32_t capacity);
-    std::uint32_t Capacity() const noexcept { return capacity_; }
+    VariableControlInstanceTable() = default;
+    explicit VariableControlInstanceTable(std::uint32_t limit) noexcept : limit_(limit) {}
+    bool PrepareBacking(std::uint32_t count, StableStoragePreparation* out) noexcept;
+    void SetCommitPageLimitForTests(std::size_t pages) noexcept { entries_.SetCommitPageLimitForTests(pages); }
     std::uint32_t ConstructedCount() const noexcept { return entries_.ConstructedCount(); }
     std::size_t StorageBytes() const noexcept { return entries_.RequestedBytes(); }
 
@@ -394,8 +396,9 @@ private:
     static void ResetEntry(Entry& entry) noexcept;
     static bool MayMutateSide(SideRow& side) noexcept;
 
-    StableRowStorage<Entry> entries_;
-    std::uint32_t capacity_ = 0;
+    std::uint32_t OccupiedRows() const noexcept;
+    GrowingRowStorage<Entry> entries_;
+    std::uint32_t limit_ = UINT32_MAX;
     std::atomic<std::uint32_t> liveCount_{0};
     std::atomic<std::uint32_t> highWater_{0};
 };

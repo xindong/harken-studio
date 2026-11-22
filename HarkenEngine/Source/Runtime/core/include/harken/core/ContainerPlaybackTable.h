@@ -85,7 +85,8 @@ private:
 
 class ContainerPlaybackTable {
 public:
-    explicit ContainerPlaybackTable(std::uint32_t capacity);
+    ContainerPlaybackTable() = default;
+    bool PrepareStorage(std::uint32_t rows) noexcept { return rows_.ConstructThrough(rows); }
     ContainerPlaybackTable(const ContainerPlaybackTable&) = delete;
     ContainerPlaybackTable& operator=(const ContainerPlaybackTable&) = delete;
     ContainerPlaybackTable(ContainerPlaybackTable&&) = delete;
@@ -119,6 +120,7 @@ public:
         return static_cast<std::uint32_t>(rows_.size());
     }
     std::uint32_t LiveCount() const noexcept { return liveCount_; }
+    std::uint32_t OccupiedCount() const noexcept { return liveCount_ + preparedCount_; }
     std::uint32_t FreeCount() const noexcept {
         return Capacity() - liveCount_ - preparedCount_;
     }
@@ -182,7 +184,7 @@ private:
     ContainerPlaybackRow* FindPrepared(
         const PreparedContainerPlaybackRow& prepared) noexcept;
 
-    std::vector<ContainerPlaybackRow> rows_;
+    GrowingRowStorage<ContainerPlaybackRow> rows_;
     std::uint32_t liveCount_ = 0;
     std::uint32_t preparedCount_ = 0;
 
@@ -340,6 +342,12 @@ public:
           ownerTokens_(prepareFullStorage ? kOwnerTokenCapacity : 3u),
           committedOwnerTokens_(prepareFullStorage ? kOwnerTokenCapacity : 3u) {}
     bool PrepareStorage() noexcept;
+    bool PrepareReservationCount(std::uint32_t count) noexcept;
+    bool CanGrowReservations() const noexcept {
+        return !step_.CommitProofsRequired() && !step_.committed_ && step_.instances_.empty() &&
+            step_.containers_.empty() && !memguard::IsAudioTagged();
+    }
+    std::uint32_t ReservationCapacity() const noexcept { return step_.maxReservations_; }
 
     PlayableTreeExecutor(const PlayableTreeExecutor&) = delete;
     PlayableTreeExecutor& operator=(const PlayableTreeExecutor&) = delete;
@@ -410,7 +418,7 @@ public:
     // The caller must separately authenticate the arranging parent and tree edges.
     bool IssueOriginalPreparedInstanceLifetimes(PlayableInstanceTable& expectedOwner,
         std::span<const PreparedPlayableInstance* const> originals,
-        std::span<PlayableInstanceTable::OriginalLifetimePin> stableBaselines) noexcept;
+        GrowingRowStorage<PlayableInstanceTable::OriginalLifetimePin>& stableBaselines) noexcept;
     bool ProveParentLinks(PlayableInstanceTable& expectedOwner,
         const PreparedPlayableInstance* requiredRoot = nullptr) noexcept;
     void ReleaseParentLinkProof() noexcept { step_.ReleaseParentLinkProof(); }

@@ -64,14 +64,14 @@ namespace Harken.Unity.Tests
             {
                 Assert.That(fresh.EnableCommunicationInBuilds, Is.True);
                 Assert.That(fresh.MaxVoices, Is.EqualTo(HarkenProjectSettings.DefaultMaxVoices));
-                Assert.That(fresh.MaxActionFirings, Is.EqualTo(256u));
+                Assert.That(new SerializedObject(fresh).FindProperty("maxActionFirings"), Is.Null);
                 Assert.That(fresh.SuppressUnityAudio, Is.False);
             }
             finally { UnityEngine.Object.DestroyImmediate(fresh); }
         }
 
         [Test]
-        public void FreshAssetPersistsConcurrentAndPackCapacitiesAt256()
+        public void FreshAssetPersistsTheVoiceCountWithoutPlaybackOrPackQuotas()
         {
             if (!existed)
             {
@@ -82,13 +82,13 @@ namespace Harken.Unity.Tests
                 Assert.That(generated.FindProperty("maxActions"), Is.Null);
                 Assert.That(generated.FindProperty("emitterVariableSlots"), Is.Null);
                 Assert.That(generated.FindProperty("maxEmitters"), Is.Null);
-                Assert.That(generated.FindProperty("maxActionFirings").longValue, Is.EqualTo(256L));
+                Assert.That(generated.FindProperty("maxActionFirings"), Is.Null);
                 var config = new VnConfig();
                 HarkenProjectSettings.ApplyStartupCapacity(ref config);
                 Assert.That(config.maxVoices, Is.EqualTo(256u));
                 Assert.That(config.maxPacks, Is.Zero);
                 Assert.That(config.maxActions, Is.Zero);
-                Assert.That(config.maxActionFirings, Is.EqualTo(256u));
+                Assert.That(config.maxActionFirings, Is.Zero);
             }
             string path = Path.GetDirectoryName(settingsPath)?.Replace('\\', '/') +
                 "/FreshCapacity_" + Guid.NewGuid().ToString("N") + ".asset";
@@ -104,7 +104,7 @@ namespace Harken.Unity.Tests
                 Assert.That(serialized.FindProperty("maxVoices").longValue, Is.EqualTo(256L));
                 Assert.That(serialized.FindProperty("maxPacks"), Is.Null);
                 Assert.That(serialized.FindProperty("maxActions"), Is.Null);
-                Assert.That(serialized.FindProperty("maxActionFirings").longValue, Is.EqualTo(256L));
+                Assert.That(serialized.FindProperty("maxActionFirings"), Is.Null);
             }
             finally { AssetDatabase.DeleteAsset(path); }
         }
@@ -132,7 +132,6 @@ namespace Harken.Unity.Tests
             Assert.That(migrated.maxEmitters, Is.Zero);
             var serialized = new SerializedObject(settings);
             serialized.FindProperty("maxVoices").longValue = 111;
-            serialized.FindProperty("maxActionFirings").longValue = 114;
             serialized.ApplyModifiedPropertiesWithoutUndo();
             AssetDatabase.SaveAssetIfDirty(settings);
             AssetDatabase.ImportAsset(settingsPath,
@@ -143,7 +142,7 @@ namespace Harken.Unity.Tests
             Assert.That(config.maxVoices, Is.EqualTo(111u));
             Assert.That(config.maxPacks, Is.Zero);
             Assert.That(config.maxActions, Is.Zero);
-            Assert.That(config.maxActionFirings, Is.EqualTo(114u));
+            Assert.That(config.maxActionFirings, Is.Zero);
         }
 
         [Test]
@@ -155,7 +154,7 @@ namespace Harken.Unity.Tests
             Assert.That(config.maxActions, Is.Zero);
             Assert.That(config.maxVoices, Is.EqualTo(111u));
             Assert.That(config.maxPacks, Is.Zero);
-            Assert.That(config.maxActionFirings, Is.EqualTo(114u));
+            Assert.That(config.maxActionFirings, Is.Zero);
         }
 
         [Test]
@@ -483,9 +482,7 @@ namespace Harken.Unity.Tests
                 settings.SetMaxVoices(20000);
                 HarkenProjectSettings.ApplyStartupCapacity(ref config);
                 Assert.That(config.maxVoices, Is.EqualTo(20000u));
-                settings.SetMaxActionFirings(0);
-                HarkenProjectSettings.ApplyStartupCapacity(ref config);
-                Assert.That(config.maxActionFirings, Is.EqualTo(HarkenProjectSettings.UnlimitedActionFirings));
+                Assert.That(config.maxActionFirings, Is.Zero);
             }
             finally { UnityEngine.Object.DestroyImmediate(owner); }
         }

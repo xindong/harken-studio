@@ -127,17 +127,46 @@ protected:
     Pin original;
 };
 
+TEST_F(OriginalCompositeStorageTest, TwoPendingRequestsKeepSeparateRowsAcrossTheFormerHardLimit) {
+    harken::CompositeCompletionOwnerPool owners{UINT32_MAX, 2};
+    harken::CompositeCompletionOwnerPool::BackingPreparation first, second;
+    ASSERT_TRUE(owners.PrepareBacking({2}, &first));
+    ASSERT_TRUE(owners.PrepareBacking({2}, &second));
+    std::vector<harken::CompositeCompletionOwnerToken> fillers(16385);
+    for (auto& held : fillers)
+        ASSERT_EQ(harken::CompositeCompletionAcquireStatus::Ok,
+            owners.PrepareAcquire(composed, 47, leaves.data(), 1, occurrences, &held));
+    owners.SetRowCommitPageLimitForTests(0);
+    harken::CompositeCompletionOwnerToken one{}, two{}, denied{};
+    {
+        harken::CompositeCompletionOwnerPool::PreparedUse use(owners, &first);
+        ASSERT_EQ(harken::CompositeCompletionAcquireStatus::Ok,
+            owners.PrepareAcquire(composed, 47, leaves.data(), 2, occurrences, &one));
+        EXPECT_EQ(harken::CompositeCompletionAcquireStatus::Capacity,
+            owners.PrepareAcquire(composed, 47, leaves.data(), 2, occurrences, &denied));
+    }
+    {
+        harken::CompositeCompletionOwnerPool::PreparedUse use(owners, &second);
+        ASSERT_EQ(harken::CompositeCompletionAcquireStatus::Ok,
+            owners.PrepareAcquire(composed, 47, leaves.data(), 2, occurrences, &two));
+    }
+    EXPECT_NE(one.slot, two.slot);
+    ASSERT_TRUE(owners.CancelPrepared(one));
+    ASSERT_TRUE(owners.CancelPrepared(two));
+    for (auto held : fillers) ASSERT_TRUE(owners.CancelPrepared(held));
+}
+
 TEST_F(OriginalCompositeStorageTest, SamePrepareLoanAllowsActualCommitAndPreservesEveryStrictFence) {
     EXPECT_EQ(0u, pool.StorageBytes());
     EXPECT_EQ(0u, pool.CommittedBytes());
-    EXPECT_GT(pool.ReservedBytes(), 0u);
+    EXPECT_EQ(0u, pool.ReservedBytes());
     pool.SetRowCommitPageLimitForTests(0);
     EXPECT_EQ(harken::CompositeCompletionAcquireStatus::Capacity, Prepare(&original, &token));
     EXPECT_FALSE(token.Valid());
     EXPECT_FALSE(original.Valid());
-    EXPECT_EQ(1u, pool.FreeCount());
+    EXPECT_EQ(0u, pool.FreeCount());
     EXPECT_EQ(0u, pool.ConstructedRowCount());
-    EXPECT_GT(pool.CommittedBytes(), 0u);
+    EXPECT_EQ(0u, pool.CommittedBytes());
     pool.SetRowCommitPageLimitForTests(SIZE_MAX);
     ASSERT_EQ(harken::CompositeCompletionAcquireStatus::Ok, Prepare(&original, &token));
     EXPECT_FALSE(pool.IsOriginalLifetimePinned(original));

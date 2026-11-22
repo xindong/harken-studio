@@ -47,24 +47,6 @@ bool operator==(const ActionCooldownKey& left,
            left.scope == right.scope;
 }
 
-bool ActionCooldownTable::Reset(std::uint32_t capacity) {
-    if (capacity == 0 || capacity > kMaxActionCooldownRowsHard) {
-        return false;
-    }
-    try {
-        std::vector<Row> rows(capacity);
-        rows_ = std::move(rows);
-    } catch (const std::bad_alloc&) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage);
-        return false;
-    }
-    liveCount_ = 0;
-    preparedCount_ = 0;
-    highWater_ = 0;
-    quarantinedCount_ = 0;
-    refusalCount_ = 0;
-    return true;
-}
-
 void ActionCooldownTable::NoteOccupancy() noexcept {
     highWater_ = std::max(highWater_, liveCount_ + preparedCount_);
 }
@@ -132,7 +114,8 @@ ActionCooldownPrepareResult ActionCooldownTable::Prepare(
             return {ActionCooldownPrepareStatus::Suppressed, {}};
         }
     }
-    for (std::uint32_t slot = 0; slot < rows_.size(); ++slot) {
+    for (std::uint32_t slot = 0; slot < UINT32_MAX; ++slot) {
+        if (slot == rows_.size() && !rows_.ConstructThrough(slot + 1u)) break;
         Row& row = rows_[slot];
         if (row.state != State::Free) {
             continue;
@@ -238,7 +221,7 @@ bool ActionCooldownTable::ClearAll() noexcept {
 
 bool ActionCooldownTable::SetFreeGenerationForTests(
     std::uint32_t slot, std::uint64_t generation) noexcept {
-    if (slot >= rows_.size() || generation == 0 ||
+    if (slot == UINT32_MAX || generation == 0 || !rows_.ConstructThrough(slot + 1u) ||
         rows_[slot].state != State::Free) {
         return false;
     }

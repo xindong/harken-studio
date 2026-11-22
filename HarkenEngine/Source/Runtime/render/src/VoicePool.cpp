@@ -860,8 +860,7 @@ bool VoicePool::AdmitTimelineQuantum(
     std::uint32_t currentSliceCount,
     const std::uint32_t* controlRenderGenerations,
     std::uint32_t controlRenderCount) const noexcept {
-    const bool decisionScratch = decisions != nullptr && currentSlices != nullptr &&
-        currentSliceCount != 0;
+    const bool decisionScratch = decisions != nullptr && currentSlices != nullptr;
     if (!decisionScratch && (controlRenderGenerations == nullptr || controlRenderCount == 0)) {
         return AdmitTimelineQuantum(arenaAvailableBytes, blockFrames);
     }
@@ -902,11 +901,11 @@ bool VoicePool::AdmitTimelineQuantum(
                      AudioGroupState::PostStartInvalidated ||
                  decision.audioState ==
                      AudioGroupState::PostStartDeadlineInvalidated)) {
-                const bool sliceClaimed =
-                    parent.slot < currentSliceCount &&
-                    currentSlices[parent.slot].generation ==
-                        parent.generation &&
-                    currentSlices[parent.slot].currentSliceClaimed;
+                const auto* end = currentSlices + currentSliceCount;
+                const auto* found = std::lower_bound(currentSlices, end, parent.slot,
+                    [](const auto& slice, std::uint32_t slot) { return slice.decision.slot < slot; });
+                const bool sliceClaimed = found != end && found->decision.slot == parent.slot &&
+                    found->decision.generation == parent.generation && found->currentSliceClaimed;
                 exclude = !sliceClaimed;
             }
         }

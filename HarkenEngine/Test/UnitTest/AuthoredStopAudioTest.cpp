@@ -224,8 +224,8 @@ struct FrontierAudioHarness {
         config.maxArmsPerGroup = 2;
         if (laneBackedEntry) {
             config.maxImmediateLaneGroupRows = 4;
-            config.maxImmediateLaneOwnerGates = 4;
-            config.maxImmediateLaneDecisionGates = 4;
+            config.initialImmediateLaneOwnerGates = 4;
+            config.initialImmediateLaneDecisionGates = 4;
         }
         ASSERT_TRUE(pool.Reset(config, 0, 1));
         if (laneBackedEntry) {
@@ -2685,10 +2685,10 @@ TEST(AuthoredStopAudio, FenceScratchDeduplicatesExactIdentitiesAndHonorsCancella
     FenceRecord root(op);
     ASSERT_TRUE(h.sink.BeginQuantum(0));
     ASSERT_TRUE(h.sink.ApplyAuthoredStopFence(a.descriptor, 0));
-    for (int i = 0; i < 16; ++i)
+    for (std::uint32_t i = 0; i <= 2u * h.pool.MaxEventsPerQuantum(); ++i)
         ASSERT_TRUE(h.sink.ApplyAuthoredStopFence(duplicate.descriptor, 0));
     ASSERT_TRUE(h.sink.ApplyAuthoredStopFence(b.descriptor, 0));
-    EXPECT_FALSE(h.sink.ApplyAuthoredStopFence(root.descriptor, 0));
+    ASSERT_TRUE(h.sink.ApplyAuthoredStopFence(root.descriptor, 0));
     op.Cancel();
     h.sink.EndQuantum(0);
     for (auto token : {first, second}) {

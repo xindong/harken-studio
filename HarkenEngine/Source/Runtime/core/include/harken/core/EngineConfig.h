@@ -180,7 +180,7 @@ struct EngineConfig {
     // stored for the features that own them, and their defaults keep behavior
     // identical when left unset.
     std::uint32_t maxActions = 0; // Legacy config value; no definition-count quota.
-    std::uint32_t maxActionFirings = 256;
+    // Action firing storage grows on demand; the public vintage field is ignored.
     std::uint32_t maxContainers = 64;
     std::uint32_t maxContainerChildren = 1024;
     std::uint32_t containerCursorCapacity = 256;
@@ -258,10 +258,8 @@ struct EngineConfig {
     std::uint32_t maxKnownScheduleLeaves = 64;
     std::uint32_t maxVariableControlActiveRows = 16;
     std::uint32_t maxVariableControlLiveRows = 32;
-    std::uint32_t maxTransitionInstances = 32;
     std::uint32_t maxCompositeCompletionOwners = 256;
     std::uint32_t maxContainerInstances = 256;
-    std::uint32_t maxQueueCheckpoints = 256;
     std::uint32_t maxQueueChildren = 64;
     std::uint32_t maxPendingSelectionDeltasTotal = 512;
     std::uint32_t maxPendingSelectionDeltasGlobalPerRow = 512;
@@ -273,7 +271,6 @@ struct EngineConfig {
     // rather than being dropped.
     std::uint32_t maxDeferredMaterializationsPerQuantum = 32;
     std::uint32_t maxDeferredIntents = 256;
-    std::uint32_t maxActionCooldownRows = 256;
     std::uint32_t maxDecisionRows = 512;
     std::uint32_t maxParticipantsPerDecision = 128;
     std::uint32_t maxPlan03GroupHeadersPerPage = 64;
@@ -353,7 +350,6 @@ inline constexpr std::uint32_t kMaxPlayableInstances = 2u * (1u << 14);
 inline constexpr std::uint32_t kMaxKnownScheduleLeaves = 64;
 inline constexpr std::uint32_t kMaxCompositeCompletionOwners = 16384;
 inline constexpr std::uint32_t kMaxContainerInstances = 16384;
-inline constexpr std::uint32_t kMaxQueueCheckpoints = 65536;
 inline constexpr std::uint32_t kMaxQueueChildren = 1024;
 
 // Validates the caller-provided config and resolves zeros to defaults.
