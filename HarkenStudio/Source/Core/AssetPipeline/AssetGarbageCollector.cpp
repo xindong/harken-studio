@@ -1,5 +1,6 @@
 
 #include "AssetGarbageCollector.h"
+#include "../ProjectPlatform.h"
 #include "../ProjectPlatformActivity.h"
 #include "PathUtils.h"
 
