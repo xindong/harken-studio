@@ -336,7 +336,7 @@ namespace Harken
                         owner.ByteCount == input.ByteCount
                         ? VnConstants.VN_PACK_MEMBER_KEEP : VnConstants.VN_PACK_MEMBER_CONTENT;
                     members[i + 1] = new PackMetadataMember(ids[i], VnConstants.VN_CANONICAL_PACK_SET_MEMBER_CONTENT,
-                        expected, operation, input.Bytes, input.Names);
+                        expected, operation, input.Bytes);
                 }
                 else members[i + 1] = new PackMetadataMember(ids[i], VnConstants.VN_CANONICAL_PACK_SET_MEMBER_CONTENT, expected);
             }
@@ -741,7 +741,7 @@ namespace Harken
                 NameTable.Table names = NameTable.PrepareInit(init.Facts.projectId, init.Names);
                 candidate.BindPackSource(source, names);
                 var members = new[] { new PackMetadataMember(init.Facts.packStableId,
-                    VnConstants.VN_CANONICAL_PACK_SET_MEMBER_INIT, default, VnConstants.VN_PACK_MEMBER_CONTENT, init.Bytes, init.Names) };
+                    VnConstants.VN_CANONICAL_PACK_SET_MEMBER_INIT, default, VnConstants.VN_PACK_MEMBER_CONTENT, init.Bytes) };
                 result = source.Validate(init);
                 if (result != VnResult.VN_OK) return result;
                 cancellation.ThrowIfCancellationRequested();
