@@ -69,7 +69,7 @@ inline void ExpectTransferredDecisionsReclaimed(harken::Engine& engine, std::uin
     ASSERT_EQ(VN_OK, Vn_Update());
     if (engine.decisions.LiveCount() != baseline) {
         auto& groups = engine.timelineGroupCaptureScratch;
-        const auto count = engine.timelinePool.CaptureLivePlan03Groups(groups.data(), groups.size());
+        const auto count = engine.timelinePool.CaptureLiveScheduleGroups(groups.data(), groups.size());
         ASSERT_GT(count, 0u);
         ASSERT_LE(count, groups.size());
         auto boundary = engine.mixer.BlocksRendered();

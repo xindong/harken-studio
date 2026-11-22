@@ -1888,7 +1888,7 @@ int ExecuteCall(std::uint16_t callId, ByteReader& r, BlobStore& blobs,
         break;
     }
     case harken::kTraceCallUnloadCanonicalPackSet:
-    case harken::kTraceCallUnloadCompanionPack: {
+    case harken::kTraceCallUnloadPackV2: {
         const auto vintage = r.U32();
         const auto handle = RemapPackHandle(packHandles, r.U64());
         VnCanonicalPackSetUnloadDescV1 desc{};

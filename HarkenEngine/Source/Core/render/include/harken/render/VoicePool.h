@@ -78,7 +78,7 @@ struct VariableTimelineStartAuthority {
     bool Valid() const noexcept { return ready != nullptr; }
 };
 
-struct Plan03ScratchDecisionState {
+struct ScratchDecisionState {
     std::uint32_t generation = 0;
     bool currentSliceClaimed = false;
 };
@@ -495,7 +495,7 @@ public:
     bool AdmitTimelineQuantum(
         std::uint32_t arenaAvailableBytes, std::uint32_t blockFrames,
         const DecisionTable* decisions,
-        const Plan03ScratchDecisionState* currentSlices,
+        const ScratchDecisionState* currentSlices,
         std::uint32_t currentSliceCount,
         const std::uint32_t* controlRenderGenerations = nullptr,
         std::uint32_t controlRenderCount = 0) const noexcept;

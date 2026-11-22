@@ -991,7 +991,7 @@ public:
         AudioSliceLease* lease_ = nullptr;
     };
     bool ProveFrontierInitialCompletion(const FrontierGroupBinding& binding,
-        const Plan03PageGroupView& source, AudioSliceLease& lease,
+        const SchedulePageGroupView& source, AudioSliceLease& lease,
         const ScheduledTransactionPool& pool, std::uint64_t sourceSequence,
         const OccurrenceStatePool& occurrences, const CompositeCompletionOwnerPool* composites,
         std::uint64_t quantumStartFrame, std::uint64_t quantumEndFrame,
@@ -1146,7 +1146,7 @@ public:
     };
     bool ProveFollowingPageSource(const OriginalConditionalFutureReservation& predecessor,
         const DecisionTable& decisions, const DecisionFuturePin& lifetime,
-        const Plan03GroupReaderPin& reader, const ScheduledTransactionPool& pool,
+        const ScheduleGroupReaderPin& reader, const ScheduledTransactionPool& pool,
         const FrontierOwnerIdentity& dependent, ContinuationSourceBinding* out) const noexcept;
     // A following node retains its actual predecessor and source admission.
     bool PrepareFollowingConditional(

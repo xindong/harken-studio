@@ -5974,7 +5974,7 @@ bool VariableServiceV1::PrepareFrontierEntryReadUse(VariableReadCutRef ref,
     auto* cut = ResolveReadCut(ref);
     const auto* activation = decisions.ResolveFrontierActivation(descriptor.entry.coordinator);
     DecisionCommittedSnapshot coordinator{};
-    Plan03PageGroupView group{};
+    SchedulePageGroupView group{};
     if (cut == nullptr || !descriptor.Valid() || !(descriptor.initialVariables == ref) ||
         cut->entryUse.load(std::memory_order_acquire) != EntryReadUseState::None || cut->entryPin.Valid() ||
         cut->state.load(std::memory_order_acquire) != ReadCutState::Published || cut->timelineOwnershipTransferred ||
@@ -5987,8 +5987,8 @@ bool VariableServiceV1::PrepareFrontierEntryReadUse(VariableReadCutRef ref,
         coordinator.ticket.sequence != cut->sequence || coordinator.world != descriptor.worldGeneration ||
         coordinator.transport != cut->transport || coordinator.audioState != AudioGroupState::Pending ||
         coordinator.participantCount != descriptor.expectedMemberCount || coordinator.consumedSlices != 0 ||
-        !pool.PrivatePlan03GroupBindable(descriptor.primary) ||
-        !pool.ResolvePlan03GroupSliceProducer(descriptor.primary, &group) || group.frontier == nullptr ||
+        !pool.PrivateScheduleGroupBindable(descriptor.primary) ||
+        !pool.ResolveScheduleGroupSliceProducer(descriptor.primary, &group) || group.frontier == nullptr ||
         !group.frontier->Valid() || group.frontier->role != FrontierGroupRole::Coordinator ||
         !(group.frontier->entry == descriptor.entry) || !(group.frontier->primary == descriptor.primary) ||
         !(group.frontier->operation.group == descriptor.primary) ||
@@ -6009,10 +6009,10 @@ bool VariableServiceV1::CommitFrontierEntryReadUse(VariableReadCutRef ref) noexc
     if (cut == nullptr || cut->entryUse.load(std::memory_order_acquire) != EntryReadUseState::Prepared ||
         !cut->entryPin.Valid() || cut->entryDecisions == nullptr || cut->entryPool == nullptr) return false;
     const auto* activation = cut->entryDecisions->ResolveFrontierActivation(cut->entryDescriptor.entry.coordinator);
-    Plan03PageGroupView group{};
+    SchedulePageGroupView group{};
     if (activation == nullptr || activation->State() != FrontierReceiptState::Prepared ||
         !(activation->Descriptor() == cut->entryDescriptor) ||
-        !cut->entryPool->ResolvePlan03GroupSliceProducer(cut->entryDescriptor.primary, &group) ||
+        !cut->entryPool->ResolveScheduleGroupSliceProducer(cut->entryDescriptor.primary, &group) ||
         group.frontier == nullptr || !(group.frontier->initialVariables == ref) ||
         !(group.frontier->entry == cut->entryDescriptor.entry) || group.lease == nullptr ||
         group.lease->Capture().state != AudioSliceState::Ready) return false;
@@ -6030,8 +6030,8 @@ bool VariableServiceV1::CanCommitFrontierEntryReadUse(VariableReadCutRef ref,
         !cut->entryDecisions->IsFrontierPublicationProofFor(activation, cut->entryDescriptor) ||
         !cut->entryPool->IsPrivateImmediateLaneGroupsPublicationProofFor(
             groups, cut->entryDescriptor.primary, cut->entryDescriptor.entry)) return false;
-    Plan03PageGroupView group{};
-    return cut->entryPool->ResolvePlan03GroupSliceProducer(cut->entryDescriptor.primary, &group) &&
+    SchedulePageGroupView group{};
+    return cut->entryPool->ResolveScheduleGroupSliceProducer(cut->entryDescriptor.primary, &group) &&
         group.frontier != nullptr && group.frontier->initialVariables == ref &&
         group.frontier->primary == cut->entryDescriptor.primary;
 }

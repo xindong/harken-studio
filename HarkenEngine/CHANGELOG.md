@@ -11,3 +11,7 @@
 - The monitor measurement names `VN_MONITOR_MEASURE_LUFS_SHORT_TERM` and `VN_MONITOR_MEASURE_LUFS_INTEGRATED` are deprecated. Their IDs 10 and 11 are permanently reserved.
 
 These declarations enter their deprecation period in this release. Removal of an exported function requires an ABI major version change.
+
+### Host CLI
+
+- The streaming music, ambience and one-shot playback command has been renamed from `m2-scene` to `scene-mix`.

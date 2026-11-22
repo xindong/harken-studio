@@ -1450,7 +1450,7 @@ typedef struct VnCanonicalPackSetMemberV2 {
 /* The complete desired set, Init first, remaining members ordered by pack ID.
  * Keep has only source identity/kind/expectedHandle, with no source bytes.
  * Content captures the source bytes. Omitted owners are unloaded atomically.
- * V1 layouts and legacy semantics remain unchanged. A companion Init accepts
+ * V1 layouts and legacy semantics remain unchanged. An Init activated through V2 accepts
  * only V2 mutations until unloaded; legacy catalog writes cannot replace it. */
 typedef struct VnCanonicalPackSetActivationDescV2 {
     uint32_t structSize;
@@ -1516,8 +1516,7 @@ typedef struct VnPackLabelFactV1 {
     uint32_t reserved0;
 } VnPackLabelFactV1;
 
-/* Facts about the converted Pack media, independent of preview classification.
- * Source waveform rate/trim coordinates come from companion JSON and VKD. */
+/* Facts about the converted Pack media, independent of preview classification. */
 typedef struct VnPackMediaFactV1 {
     VnSoundId soundId;
     uint64_t mediaChecksum;

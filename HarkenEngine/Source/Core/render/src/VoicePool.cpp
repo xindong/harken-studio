@@ -878,7 +878,7 @@ bool VoicePool::AdmitTimelineQuantum(
 bool VoicePool::AdmitTimelineQuantum(
     std::uint32_t arenaAvailableBytes, std::uint32_t blockFrames,
     const DecisionTable* decisions,
-    const Plan03ScratchDecisionState* currentSlices,
+    const ScratchDecisionState* currentSlices,
     std::uint32_t currentSliceCount,
     const std::uint32_t* controlRenderGenerations,
     std::uint32_t controlRenderCount) const noexcept {

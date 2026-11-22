@@ -68,7 +68,7 @@
 
 #include "harken/core/CurrentSliceBacking.h"
 #include "harken/core/LogicCommitCoordinator.h"
-#include "harken/core/Plan03GroupIdentity.h"
+#include "harken/core/ScheduleGroupIdentity.h"
 #include "harken/core/OccurrenceStatePool.h"
 #include "harken/core/PlayableInstanceTable.h"
 #include "harken/core/TimeCoordinates.h"
@@ -361,7 +361,7 @@ struct UnpublishedFrontierEntryEventExpected {
     std::uint64_t ownerScheduleEpoch = 0;
     PlayableInstanceHandle frontierOwnerInstance = 0;
     std::uint64_t frontierOwnerEpoch = 0;
-    Plan03GroupSliceIdentity group{};
+    ScheduleGroupSliceIdentity group{};
     TimelineArmToken arm{};
     std::uint32_t serviceSlot = UINT32_MAX;
     std::uint64_t serviceGeneration = 0;
@@ -369,7 +369,7 @@ struct UnpublishedFrontierEntryEventExpected {
 
 struct UnpublishedFrontierEntryExpected {
     FrontierActivationDescriptor descriptor{};
-    Plan03GroupSliceIdentity member{};
+    ScheduleGroupSliceIdentity member{};
     std::uint64_t executeFrame = 0;
     std::array<UnpublishedFrontierEntryEventExpected, 3> events{};
 };
@@ -389,11 +389,11 @@ struct HorizonPageHeader {
     std::uint64_t pageGeneration = 0;
     std::uint64_t publishCutoffFrame = 0; // cutoff in force when frozen; 0 while open
     std::uint32_t committedTransactionCount = 0;
-    std::uint32_t plan03GroupCount = 0;
+    std::uint32_t scheduleGroupCount = 0;
     bool frozen = false;
 };
 
-struct Plan03GroupSliceInput {
+struct ScheduleGroupSliceInput {
     std::uint64_t executeFrame = 0;
     DecisionToken decision{};
     std::uint16_t sliceIndex = 0;
@@ -403,7 +403,7 @@ struct Plan03GroupSliceInput {
     ImmediateEntryAttemptRef immediateEntry{};
 };
 
-enum class Plan03GroupReserveStatus : std::uint8_t {
+enum class ScheduleGroupReserveStatus : std::uint8_t {
     Committed = 0,
     Invalid = 1,
     OutsideWindow = 2,
@@ -415,8 +415,8 @@ enum class Plan03GroupReserveStatus : std::uint8_t {
     DuplicateSlice = 8,
 };
 
-struct Plan03PageGroupView {
-    Plan03GroupSliceIdentity identity{};
+struct SchedulePageGroupView {
+    ScheduleGroupSliceIdentity identity{};
     std::uint16_t memberCount = 0;
     std::uint16_t sourceControlCount = 0;
     const TimelineArmToken* members = nullptr;
@@ -426,8 +426,8 @@ struct Plan03PageGroupView {
 };
 
 // Logic-thread observation of one exact Horizon group and its actual Page row.
-struct Plan03ExactGroupSnapshot {
-    Plan03GroupSliceIdentity identity{};
+struct ScheduleExactGroupSnapshot {
+    ScheduleGroupSliceIdentity identity{};
     HorizonPageHeader page{};
     std::uint64_t pageStamp = UINT64_MAX;
     std::uint64_t emptyPageStamp = UINT64_MAX;
@@ -445,25 +445,25 @@ struct Plan03ExactGroupSnapshot {
     AudioSliceLeaseSnapshot effectiveLease{};
 };
 
-enum class Plan03UnpublishedRetirementResult : std::uint8_t {
+enum class ScheduleUnpublishedRetirementResult : std::uint8_t {
     Ready, Pending, NotEligible, Stale, Fault,
 };
 
-struct Plan03UnpublishedRetirementToken {
-    Plan03GroupSliceIdentity member{};
-    Plan03GroupSliceIdentity primary{};
+struct ScheduleUnpublishedRetirementToken {
+    ScheduleGroupSliceIdentity member{};
+    ScheduleGroupSliceIdentity primary{};
     FrontierEntryReceiptRef entry{};
 
     bool Valid() const noexcept {
         return member.Exact() && primary.Exact() && entry.Valid();
     }
-    bool operator==(const Plan03UnpublishedRetirementToken& other) const noexcept {
+    bool operator==(const ScheduleUnpublishedRetirementToken& other) const noexcept {
         return member == other.member && primary == other.primary && entry == other.entry;
     }
 };
 
-struct Plan03ImmediateLaneGroupDescriptor {
-    Plan03GroupSliceIdentity identity{};
+struct ScheduleImmediateLaneGroupDescriptor {
+    ScheduleGroupSliceIdentity identity{};
     std::uint64_t dueQuantum = UINT64_MAX;
     bool futureDependent = false;
     std::uint32_t laneSlot = UINT32_MAX;
@@ -506,8 +506,8 @@ public:
     ~OriginalQueueFutureGroupLifetimePin() { Release(); }
 
     bool Valid() const noexcept;
-    Plan03GroupSliceIdentity Identity() const noexcept {
-        return Valid() ? identity_ : Plan03GroupSliceIdentity{};
+    ScheduleGroupSliceIdentity Identity() const noexcept {
+        return Valid() ? identity_ : ScheduleGroupSliceIdentity{};
     }
     bool Borrow(OriginalQueueFutureGroupLifetimePin* out) const noexcept;
     void Release() noexcept;
@@ -517,11 +517,11 @@ private:
     friend class OriginalQueueFutureGroupRegistration;
     void Take(OriginalQueueFutureGroupLifetimePin& other) noexcept {
         owner_ = std::exchange(other.owner_, nullptr);
-        identity_ = std::exchange(other.identity_, Plan03GroupSliceIdentity{});
+        identity_ = std::exchange(other.identity_, ScheduleGroupSliceIdentity{});
         marker_ = std::exchange(other.marker_, 0);
     }
     ScheduledTransactionPool* owner_ = nullptr;
-    Plan03GroupSliceIdentity identity_{};
+    ScheduleGroupSliceIdentity identity_{};
     std::uint64_t marker_ = 0;
 };
 
@@ -529,7 +529,7 @@ struct OriginalQueueFutureGroupScope {
     std::uint64_t cohortRoot = 0;
     std::uint64_t provisionalAnchorFrame = 0;
     std::uint64_t selectedFutureDomain = 0;
-    Plan03GroupSliceInput input{};
+    ScheduleGroupSliceInput input{};
 };
 
 class OriginalQueueFutureGroupRegistration {
@@ -542,13 +542,13 @@ public:
     ~OriginalQueueFutureGroupRegistration() = default;
 
     bool Valid() const noexcept { return lifetime_.Valid(); }
-    Plan03GroupSliceIdentity Identity() const noexcept { return lifetime_.Identity(); }
+    ScheduleGroupSliceIdentity Identity() const noexcept { return lifetime_.Identity(); }
     bool BorrowLifetime(OriginalQueueFutureGroupLifetimePin* out) const noexcept {
         return lifetime_.Borrow(out);
     }
     void Release() noexcept { lifetime_.Release(); }
     bool MatchesOriginalScope(std::uint64_t cohortRoot,
-        std::uint64_t provisionalAnchorFrame, const Plan03GroupSliceInput& input,
+        std::uint64_t provisionalAnchorFrame, const ScheduleGroupSliceInput& input,
         const TimelineArmTable& armTable) const noexcept;
     // Producer-only borrowed observation. It adds no loan or publication rights.
     bool CaptureOriginalScope(const ScheduledTransactionPool& pool,
@@ -594,10 +594,10 @@ public:
     bool IsOldC0Original(const OriginalQueueFutureGroupRegistration& original) const noexcept;
     bool ReserveCalendar(ImmediateLaneDemand demand, ImmediateLaneHandle* out,
         OriginalImmediateLaneAttemptLifetimePin* original) noexcept;
-    bool ReserveGroup(std::uint64_t anchor, const Plan03GroupSliceInput& input,
-        const TimelineArmTable& arms, Plan03GroupSliceIdentity* out,
+    bool ReserveGroup(std::uint64_t anchor, const ScheduleGroupSliceInput& input,
+        const TimelineArmTable& arms, ScheduleGroupSliceIdentity* out,
         PreparedPrivateImmediateLaneGroup* original) noexcept;
-    bool BindGroup(const Plan03GroupSliceIdentity& group,
+    bool BindGroup(const ScheduleGroupSliceIdentity& group,
         std::uint32_t slot, std::uint32_t generation) noexcept;
     bool Rebase(std::uint64_t anchor) noexcept;
     bool PublishGroups() noexcept;
@@ -629,12 +629,12 @@ public:
     PreparedPrivateImmediateLaneGroup& operator=(PreparedPrivateImmediateLaneGroup&& other) noexcept;
     bool Valid() const noexcept;
     bool Held() const noexcept;
-    const Plan03GroupSliceIdentity& Identity() const noexcept { return identity_; }
+    const ScheduleGroupSliceIdentity& Identity() const noexcept { return identity_; }
 
 private:
     friend class ScheduledTransactionPool;
     ScheduledTransactionPool* owner_ = nullptr;
-    Plan03GroupSliceIdentity identity_{};
+    ScheduleGroupSliceIdentity identity_{};
     std::uint64_t cohortRoot_ = 0;
     std::uint64_t selectedFutureDomain_ = 0;
     std::uint64_t provisionalAnchorFrame_ = 0;
@@ -656,12 +656,12 @@ public:
     PrivateImmediateLaneGroupTransferProof(PrivateImmediateLaneGroupTransferProof&& other) noexcept;
     PrivateImmediateLaneGroupTransferProof& operator=(PrivateImmediateLaneGroupTransferProof&& other) noexcept;
     bool Valid() const noexcept;
-    Plan03GroupSliceIdentity Identity() const noexcept {
-        return Valid() ? identity_ : Plan03GroupSliceIdentity{};
+    ScheduleGroupSliceIdentity Identity() const noexcept {
+        return Valid() ? identity_ : ScheduleGroupSliceIdentity{};
     }
     bool MatchesOriginalScope(const PreparedPrivateImmediateLaneGroup& original,
         std::uint64_t cohortRoot, std::uint64_t provisionalAnchorFrame,
-        const Plan03GroupSliceInput& input, const TimelineArmTable& armTable) const noexcept;
+        const ScheduleGroupSliceInput& input, const TimelineArmTable& armTable) const noexcept;
     void Release() noexcept;
 
 private:
@@ -669,7 +669,7 @@ private:
     ScheduledTransactionPool* owner_ = nullptr;
     void* row_ = nullptr;
     PreparedPrivateImmediateLaneGroup* original_ = nullptr;
-    Plan03GroupSliceIdentity identity_{};
+    ScheduleGroupSliceIdentity identity_{};
 };
 
 // Retains every actual private group and lease until the original Lane proof
@@ -694,25 +694,25 @@ private:
 };
 
 // Release is explicit because a destructor cannot manufacture a completed block.
-class Plan03GroupReaderPin {
+class ScheduleGroupReaderPin {
 public:
-    Plan03GroupReaderPin() = default;
-    Plan03GroupReaderPin(const Plan03GroupReaderPin&) = delete;
-    Plan03GroupReaderPin& operator=(const Plan03GroupReaderPin&) = delete;
-    Plan03GroupReaderPin(Plan03GroupReaderPin&& other) noexcept
+    ScheduleGroupReaderPin() = default;
+    ScheduleGroupReaderPin(const ScheduleGroupReaderPin&) = delete;
+    ScheduleGroupReaderPin& operator=(const ScheduleGroupReaderPin&) = delete;
+    ScheduleGroupReaderPin(ScheduleGroupReaderPin&& other) noexcept
         : owner_(other.owner_), identity_(other.identity_) {
         other.owner_ = nullptr;
         other.identity_ = {};
     }
-    Plan03GroupReaderPin& operator=(Plan03GroupReaderPin&&) = delete;
+    ScheduleGroupReaderPin& operator=(ScheduleGroupReaderPin&&) = delete;
     bool Valid() const noexcept { return owner_ != nullptr; }
-    const Plan03GroupSliceIdentity& Identity() const noexcept { return identity_; }
+    const ScheduleGroupSliceIdentity& Identity() const noexcept { return identity_; }
     bool Release(std::uint64_t completedAudioSequence) noexcept;
 
 private:
     friend class ScheduledTransactionPool;
     ScheduledTransactionPool* owner_ = nullptr;
-    Plan03GroupSliceIdentity identity_{};
+    ScheduleGroupSliceIdentity identity_{};
 };
 
 struct PreparedPageGroupTransferScope {
@@ -732,17 +732,17 @@ struct PreparedPageGroupTransferScope {
 class PreparedPageGroupTransferProof;
 class PreparedPageFrontierBindingsProof;
 
-class PreparedPlan03GroupSlice {
+class PreparedScheduleGroupSlice {
 public:
-    PreparedPlan03GroupSlice() = default;
-    ~PreparedPlan03GroupSlice();
-    PreparedPlan03GroupSlice(const PreparedPlan03GroupSlice&) = delete;
-    PreparedPlan03GroupSlice& operator=(const PreparedPlan03GroupSlice&) = delete;
-    PreparedPlan03GroupSlice(PreparedPlan03GroupSlice&& other) noexcept;
-    PreparedPlan03GroupSlice& operator=(PreparedPlan03GroupSlice&& other) noexcept;
+    PreparedScheduleGroupSlice() = default;
+    ~PreparedScheduleGroupSlice();
+    PreparedScheduleGroupSlice(const PreparedScheduleGroupSlice&) = delete;
+    PreparedScheduleGroupSlice& operator=(const PreparedScheduleGroupSlice&) = delete;
+    PreparedScheduleGroupSlice(PreparedScheduleGroupSlice&& other) noexcept;
+    PreparedScheduleGroupSlice& operator=(PreparedScheduleGroupSlice&& other) noexcept;
     bool Valid() const noexcept;
     bool Held() const noexcept;
-    bool CaptureProspectiveIdentity(Plan03GroupSliceIdentity* out) const noexcept;
+    bool CaptureProspectiveIdentity(ScheduleGroupSliceIdentity* out) const noexcept;
 
 private:
     friend class ScheduledTransactionPool;
@@ -762,8 +762,8 @@ public:
     PreparedPageGroupTransferProof(PreparedPageGroupTransferProof&& other) noexcept;
     PreparedPageGroupTransferProof& operator=(PreparedPageGroupTransferProof&& other) noexcept;
     bool Valid() const noexcept;
-    bool MatchesOriginalScope(const PreparedPlan03GroupSlice& original,
-        const PreparedPageGroupTransferScope& scope, const Plan03GroupSliceInput& input,
+    bool MatchesOriginalScope(const PreparedScheduleGroupSlice& original,
+        const PreparedPageGroupTransferScope& scope, const ScheduleGroupSliceInput& input,
         const TimelineArmTable& armTable) const noexcept;
     void Release() noexcept;
 
@@ -771,24 +771,24 @@ private:
     friend class ScheduledTransactionPool;
     ScheduledTransactionPool* owner_ = nullptr;
     void* row_ = nullptr;
-    PreparedPlan03GroupSlice* original_ = nullptr;
+    PreparedScheduleGroupSlice* original_ = nullptr;
 };
 
 class PrivateUnboundPageArmRetirementProof;
 class UnpublishedGroupArmCancellationProof;
 
-class CommittedPlan03GroupSlice {
+class CommittedScheduleGroupSlice {
 public:
-    CommittedPlan03GroupSlice() = default;
-    ~CommittedPlan03GroupSlice();
-    CommittedPlan03GroupSlice(const CommittedPlan03GroupSlice&) = delete;
-    CommittedPlan03GroupSlice& operator=(
-        const CommittedPlan03GroupSlice&) = delete;
-    CommittedPlan03GroupSlice(CommittedPlan03GroupSlice&& other) noexcept {
+    CommittedScheduleGroupSlice() = default;
+    ~CommittedScheduleGroupSlice();
+    CommittedScheduleGroupSlice(const CommittedScheduleGroupSlice&) = delete;
+    CommittedScheduleGroupSlice& operator=(
+        const CommittedScheduleGroupSlice&) = delete;
+    CommittedScheduleGroupSlice(CommittedScheduleGroupSlice&& other) noexcept {
         *this = std::move(other);
     }
-    CommittedPlan03GroupSlice& operator=(
-        CommittedPlan03GroupSlice&& other) noexcept {
+    CommittedScheduleGroupSlice& operator=(
+        CommittedScheduleGroupSlice&& other) noexcept {
         if (this != &other && !Held() && !other.Held()) {
             owner_ = other.owner_;
             rowIndex_ = other.rowIndex_;
@@ -842,8 +842,8 @@ public:
     UnpublishedGroupCancellationHold& operator=(const UnpublishedGroupCancellationHold&) = delete;
 private:
     friend class ScheduledTransactionPool;
-    CommittedPlan03GroupSlice* original_ = nullptr;
-    Plan03GroupSliceIdentity identity_{};
+    CommittedScheduleGroupSlice* original_ = nullptr;
+    ScheduleGroupSliceIdentity identity_{};
     AudioSliceLease* lease_ = nullptr;
     UnpublishedGroupArmCancellationProof* heldBy_ = nullptr;
 };
@@ -906,8 +906,8 @@ private:
     friend class ScheduledTransactionPool;
     ScheduledTransactionPool* owner_ = nullptr;
     std::array<PreparedPageGroupTransferProof*, 3> groupProofs_{};
-    std::array<CommittedPlan03GroupSlice*, 3> outputs_{};
-    std::array<Plan03GroupSliceIdentity, 3> identities_{};
+    std::array<CommittedScheduleGroupSlice*, 3> outputs_{};
+    std::array<ScheduleGroupSliceIdentity, 3> identities_{};
     std::array<FrontierGroupBinding, 3> bindings_{};
     std::array<bool, 3> minted_{};
 };
@@ -928,8 +928,8 @@ private:
     ScheduledTransactionPool* owner_ = nullptr;
     TimelineArmTable* armTable_ = nullptr;
     std::uint64_t armTableIncarnation_ = 0;
-    std::array<CommittedPlan03GroupSlice*, 2> originals_{};
-    std::array<Plan03GroupSliceIdentity, 2> identities_{};
+    std::array<CommittedScheduleGroupSlice*, 2> originals_{};
+    std::array<ScheduleGroupSliceIdentity, 2> identities_{};
     std::array<TimelineArmToken, 2> arms_{};
     std::array<TimelineArmTable::Row*, 2> rows_{};
     std::array<AudioSliceLease*, 2> leases_{};
@@ -940,19 +940,19 @@ private:
 };
 
 struct ConsumedPreparedPageGroup {
-    CommittedPlan03GroupSlice owner{};
-    Plan03GroupSliceIdentity identity{};
+    CommittedScheduleGroupSlice owner{};
+    ScheduleGroupSliceIdentity identity{};
 };
 
-class PreparedPlan03GroupSliceReplacement {
+class PreparedScheduleGroupSliceReplacement {
 public:
-    PreparedPlan03GroupSliceReplacement() = default;
-    PreparedPlan03GroupSliceReplacement(
-        const PreparedPlan03GroupSliceReplacement&) = delete;
-    PreparedPlan03GroupSliceReplacement& operator=(
-        const PreparedPlan03GroupSliceReplacement&) = delete;
-    PreparedPlan03GroupSliceReplacement(
-        PreparedPlan03GroupSliceReplacement&& other) noexcept
+    PreparedScheduleGroupSliceReplacement() = default;
+    PreparedScheduleGroupSliceReplacement(
+        const PreparedScheduleGroupSliceReplacement&) = delete;
+    PreparedScheduleGroupSliceReplacement& operator=(
+        const PreparedScheduleGroupSliceReplacement&) = delete;
+    PreparedScheduleGroupSliceReplacement(
+        PreparedScheduleGroupSliceReplacement&& other) noexcept
         : owner_(other.owner_), rowIndex_(other.rowIndex_),
           expected_(other.expected_), replacement_(other.replacement_),
           prepared_(other.prepared_) {
@@ -962,8 +962,8 @@ public:
         other.replacement_ = {};
         other.prepared_ = false;
     }
-    PreparedPlan03GroupSliceReplacement& operator=(
-        PreparedPlan03GroupSliceReplacement&& other) noexcept {
+    PreparedScheduleGroupSliceReplacement& operator=(
+        PreparedScheduleGroupSliceReplacement&& other) noexcept {
         if (this != &other) {
             owner_ = other.owner_;
             rowIndex_ = other.rowIndex_;
@@ -985,8 +985,8 @@ private:
     friend class ScheduledTransactionPool;
     ScheduledTransactionPool* owner_ = nullptr;
     std::size_t rowIndex_ = 0;
-    Plan03GroupSliceIdentity expected_{};
-    Plan03GroupSliceInput replacement_{};
+    ScheduleGroupSliceIdentity expected_{};
+    ScheduleGroupSliceInput replacement_{};
     bool prepared_ = false;
 };
 
@@ -1192,11 +1192,11 @@ struct UnplacedBatchCohortMember {
     UnplacedBatchCredit* credit = nullptr;
     const TransactionRequest* requests = nullptr;
     std::size_t requestCount = 0;
-    const Plan03GroupSliceInput* groups = nullptr;
+    const ScheduleGroupSliceInput* groups = nullptr;
     std::size_t groupCount = 0;
 };
-inline constexpr std::uint32_t kMaxPlan03GroupHeadersPerPageHard = 1024;
-inline constexpr std::uint32_t kMaxPlan03ArmsPerGroupHard = 1024;
+inline constexpr std::uint32_t kMaxScheduleGroupHeadersPerPageHard = 1024;
+inline constexpr std::uint32_t kMaxScheduleArmsPerGroupHard = 1024;
 namespace detail {
 struct ScheduledTransactionPoolTestAccess;
 #if !defined(HARKEN_RT_QUALIFICATION)
@@ -1279,10 +1279,10 @@ public:
         PreparedTransactionBatch* Transactions() noexcept {
             return &transactions_;
         }
-        PreparedPlan03GroupSlice* Group(std::size_t index) noexcept {
+        PreparedScheduleGroupSlice* Group(std::size_t index) noexcept {
             return index < groupCount_ ? &groups_[index] : nullptr;
         }
-        const CommittedPlan03GroupSlice* CommittedGroup(
+        const CommittedScheduleGroupSlice* CommittedGroup(
             std::size_t index) const noexcept {
             return index < groupCount_ ? &committedGroups_[index] : nullptr;
         }
@@ -1297,8 +1297,8 @@ public:
         UnplacedBatchCredit** cohortCredits_ = nullptr;
         std::uint32_t cohortCreditCount_ = 0;
         PreparedTransactionBatch transactions_{};
-        PreparedPlan03GroupSlice* groups_ = nullptr;
-        CommittedPlan03GroupSlice* committedGroups_ = nullptr;
+        PreparedScheduleGroupSlice* groups_ = nullptr;
+        CommittedScheduleGroupSlice* committedGroups_ = nullptr;
         std::uint32_t groupCount_ = 0;
         bool committed_ = false;
     };
@@ -1318,7 +1318,7 @@ public:
         std::uint32_t maxTransactionEvents = 0;
         std::uint32_t maxCurrentSlicesPerQuantum = 0;
         std::uint32_t maxNativeStartCalendarsPerQuantum = 0;
-        std::uint32_t maxPlan03GroupHeadersPerPage = 0;
+        std::uint32_t maxScheduleGroupHeadersPerPage = 0;
         std::uint32_t maxArmsPerGroup = 0;
         std::uint32_t maxImmediateLaneGroupRows = 0;
         std::uint32_t maxImmediateLaneOwnerGates = 0;
@@ -1450,8 +1450,8 @@ public:
     }
     std::size_t GroupDirectoryStorageBytes() const noexcept {
         return pageGroupSlots_.capacity() * sizeof(std::size_t) +
-            pagePlan03GroupRowStates_.capacity() * sizeof(Plan03GroupRowState) +
-            pagePlan03GroupClaimGenerations_.capacity() * sizeof(std::uint32_t);
+            pageScheduleGroupRowStates_.capacity() * sizeof(ScheduleGroupRowState) +
+            pageScheduleGroupClaimGenerations_.capacity() * sizeof(std::uint32_t);
     }
     std::size_t PageEventDirectoryStorageBytes() const noexcept {
         return pageEventSlots_.RequestedBytes() + pageEventOrder_.RequestedBytes() +
@@ -1468,8 +1468,8 @@ public:
     std::uint64_t CurrentSliceCommittedBytes() const noexcept;
     std::uint64_t CurrentSliceReservedBytes() const noexcept;
     bool PrepareCurrentSliceBacking(CurrentSliceBacking* out) noexcept;
-    std::uint32_t MaxPlan03GroupHeadersPerPage() const {
-        return config_.maxPlan03GroupHeadersPerPage;
+    std::uint32_t MaxScheduleGroupHeadersPerPage() const {
+        return config_.maxScheduleGroupHeadersPerPage;
     }
     std::uint32_t MaxArmsPerGroup() const {
         return config_.maxArmsPerGroup;
@@ -1484,27 +1484,27 @@ public:
     bool PreflightUnplacedBatchMaterialization(
         const UnplacedBatchCredit& credit,
         const TransactionRequest* requests, std::size_t requestCount,
-        const Plan03GroupSliceInput* groups, std::size_t groupCount,
+        const ScheduleGroupSliceInput* groups, std::size_t groupCount,
         const TimelineArmTable& armTable,
         std::uint64_t publicationFrontier,
         ReserveRefusal* transactionRefusal,
-        Plan03GroupReserveStatus* groupStatus) noexcept;
+        ScheduleGroupReserveStatus* groupStatus) noexcept;
     bool TryMaterializeUnplacedBatch(
         UnplacedBatchCredit* credit,
         const TransactionRequest* requests, std::size_t requestCount,
-        const Plan03GroupSliceInput* groups, std::size_t groupCount,
+        const ScheduleGroupSliceInput* groups, std::size_t groupCount,
         const TimelineArmTable& armTable,
         std::uint64_t publicationFrontier,
         PrivateMaterializationTransaction* out,
         ReserveRefusal* transactionRefusal,
-        Plan03GroupReserveStatus* groupStatus) noexcept;
+        ScheduleGroupReserveStatus* groupStatus) noexcept;
     bool TryMaterializeUnplacedCohort(
         const UnplacedBatchCohortMember* members,
         std::size_t memberCount, const TimelineArmTable& armTable,
         std::uint64_t publicationFrontier,
         PrivateMaterializationTransaction* out,
         ReserveRefusal* transactionRefusal,
-        Plan03GroupReserveStatus* groupStatus) noexcept;
+        ScheduleGroupReserveStatus* groupStatus) noexcept;
     void SetPrivateMaterializationFaultStepForTest(
         std::uint32_t step) noexcept {
         privateMaterializationFaultStepForTest_ = step;
@@ -1520,7 +1520,7 @@ public:
         PrivateMaterializationSnapshotForTest snapshot{};
         for (const auto count : pagePreparedEventCount_)
             snapshot.preparedEvents += count;
-        for (const auto count : pagePreparedPlan03GroupCount_)
+        for (const auto count : pagePreparedScheduleGroupCount_)
             snapshot.preparedGroups += count;
         for (const auto count : pagePublicationHolds_)
             snapshot.publicationHolds += count;
@@ -1579,14 +1579,14 @@ public:
     bool CaptureUnpublishedFrontierStartRowSequence(
         const TransactionRequest& expected,
         const FrontierEntryReceiptRef& entry,
-        const Plan03GroupSliceIdentity& member,
+        const ScheduleGroupSliceIdentity& member,
         std::uint64_t* outRowSequence) const noexcept;
     CancelledFrontierStartResult CancelUnpublishedFrontierStartExact(
         const TimelineTransactionProgramRef* relatedPrograms,
         std::size_t relatedProgramCount,
         const TransactionRequest& expected,
         const FrontierEntryReceiptRef& entry,
-        const Plan03GroupSliceIdentity& member,
+        const ScheduleGroupSliceIdentity& member,
         std::uint64_t expectedRowSequence,
         const PlayableInstanceTable& instances) noexcept;
     CancelledFrontierStartResult CancelUnpublishedFrontierEntryExact(
@@ -1674,19 +1674,19 @@ public:
     bool ReleaseHeldCurrentSlice(HeldCurrentSliceToken* token) noexcept;
     bool CancelHeldCurrentSlice(HeldCurrentSliceToken* token,
         CurrentSliceBacking* restoreBacking = nullptr) noexcept;
-    Plan03GroupReserveStatus PreflightPlan03GroupSlices(
+    ScheduleGroupReserveStatus PreflightScheduleGroupSlices(
         std::uint64_t executeFrame,
         std::uint32_t additionalGroupCount) const noexcept;
-    Plan03GroupReserveStatus ReservePlan03GroupSlice(
-        const Plan03GroupSliceInput& input,
+    ScheduleGroupReserveStatus ReserveScheduleGroupSlice(
+        const ScheduleGroupSliceInput& input,
         const TimelineArmTable& armTable) noexcept;
-    Plan03GroupReserveStatus PreparePlan03GroupSlice(
-        const Plan03GroupSliceInput& input,
+    ScheduleGroupReserveStatus PrepareScheduleGroupSlice(
+        const ScheduleGroupSliceInput& input,
         const TimelineArmTable& armTable,
-        PreparedPlan03GroupSlice* out,
+        PreparedScheduleGroupSlice* out,
         const PreparedPageGroupTransferScope* transferScope = nullptr) noexcept;
-    bool ProvePreparedPageGroupTransfer(PreparedPlan03GroupSlice& original,
-        const PreparedPageGroupTransferScope& scope, const Plan03GroupSliceInput& input,
+    bool ProvePreparedPageGroupTransfer(PreparedScheduleGroupSlice& original,
+        const PreparedPageGroupTransferScope& scope, const ScheduleGroupSliceInput& input,
         const TimelineArmTable& armTable, PreparedPageGroupTransferProof* out) noexcept;
     static ConsumedPreparedPageGroup ConsumePreparedPageGroupTransfer(
         PreparedPageGroupTransferProof&& proof) noexcept;
@@ -1694,30 +1694,30 @@ public:
         const std::array<PreparedPageGroupTransferProof*, 3>& groups,
         const PreparedPageBatchTransferProof& batch,
         const std::array<FrontierGroupBinding, 3>& bindings,
-        const std::array<CommittedPlan03GroupSlice*, 3>& outputs,
+        const std::array<CommittedScheduleGroupSlice*, 3>& outputs,
         PreparedPageFrontierBindingsProof* out) noexcept;
     static void ConsumePreparedPageGroupIntoFrontierBindings(
         PreparedPageGroupTransferProof&& group,
         PreparedPageFrontierBindingsProof& bindings,
-        CommittedPlan03GroupSlice& output) noexcept;
+        CommittedScheduleGroupSlice& output) noexcept;
     static void ConsumePreparedPageFrontierBindings(
         PreparedPageFrontierBindingsProof&& proof) noexcept;
-    bool CommitPreparedPlan03GroupSlice(
-        PreparedPlan03GroupSlice* prepared) noexcept;
-    bool CommitPreparedPlan03GroupSlice(
-        PreparedPlan03GroupSlice* prepared,
-        CommittedPlan03GroupSlice* committed,
+    bool CommitPreparedScheduleGroupSlice(
+        PreparedScheduleGroupSlice* prepared) noexcept;
+    bool CommitPreparedScheduleGroupSlice(
+        PreparedScheduleGroupSlice* prepared,
+        CommittedScheduleGroupSlice* committed,
         bool retainPublicationHold = false) noexcept;
-    bool CancelPreparedPlan03GroupSlice(
-        PreparedPlan03GroupSlice* prepared) noexcept;
-    bool MatchesCommittedPlan03GroupSlice(const CommittedPlan03GroupSlice& committed,
-        const Plan03GroupSliceIdentity& identity) const noexcept;
-    bool RollbackCommittedPlan03GroupSlice(
-        CommittedPlan03GroupSlice* committed) noexcept;
+    bool CancelPreparedScheduleGroupSlice(
+        PreparedScheduleGroupSlice* prepared) noexcept;
+    bool MatchesCommittedScheduleGroupSlice(const CommittedScheduleGroupSlice& committed,
+        const ScheduleGroupSliceIdentity& identity) const noexcept;
+    bool RollbackCommittedScheduleGroupSlice(
+        CommittedScheduleGroupSlice* committed) noexcept;
     // Begin is an explicit cancellation request. Its native page protection
     // remains owned by the original committed cap across Busy and Release.
     UnpublishedGroupArmCancellationStatus BeginUnpublishedGroupArmCancellation(
-        std::span<CommittedPlan03GroupSlice* const> originals, TimelineArmTable& arms,
+        std::span<CommittedScheduleGroupSlice* const> originals, TimelineArmTable& arms,
         std::span<UnpublishedGroupCancellationHold> groupStorage,
         std::span<UnpublishedArmCancellationHold> armStorage,
         UnpublishedGroupArmCancellationProof* out) noexcept;
@@ -1725,24 +1725,24 @@ public:
         UnpublishedGroupArmCancellationProof& proof,
         std::span<const TimelineArmTable::OriginalUnpublishedSourceDisposition* const> sources) noexcept;
     bool ProvePrivateUnboundPageArmRetirement(
-        CommittedPlan03GroupSlice& first, CommittedPlan03GroupSlice& second,
+        CommittedScheduleGroupSlice& first, CommittedScheduleGroupSlice& second,
         TimelineArmTable& arms, const std::array<TimelineArmToken, 2>& members,
         std::uint64_t executeFrame, PrivateUnboundPageArmRetirementProof* out) noexcept;
     static void ConsumePrivateUnboundPageArmRetirement(
         PrivateUnboundPageArmRetirementProof&& proof) noexcept;
-    bool CanReleaseCommittedPlan03GroupSliceOwnership(
-        const CommittedPlan03GroupSlice& committed) const noexcept;
-    bool ReleaseCommittedPlan03GroupSliceOwnership(
-        CommittedPlan03GroupSlice* committed) noexcept;
-    Plan03GroupReserveStatus PreparePlan03GroupSliceReplacement(
-        const Plan03GroupSliceIdentity& expected,
-        const Plan03GroupSliceInput& replacement,
+    bool CanReleaseCommittedScheduleGroupSliceOwnership(
+        const CommittedScheduleGroupSlice& committed) const noexcept;
+    bool ReleaseCommittedScheduleGroupSliceOwnership(
+        CommittedScheduleGroupSlice* committed) noexcept;
+    ScheduleGroupReserveStatus PrepareScheduleGroupSliceReplacement(
+        const ScheduleGroupSliceIdentity& expected,
+        const ScheduleGroupSliceInput& replacement,
         const TimelineArmTable& armTable,
-        PreparedPlan03GroupSliceReplacement* out) noexcept;
-    bool CommitPreparedPlan03GroupSliceReplacement(
-        PreparedPlan03GroupSliceReplacement* prepared) noexcept;
-    bool CancelPreparedPlan03GroupSliceReplacement(
-        PreparedPlan03GroupSliceReplacement* prepared) noexcept;
+        PreparedScheduleGroupSliceReplacement* out) noexcept;
+    bool CommitPreparedScheduleGroupSliceReplacement(
+        PreparedScheduleGroupSliceReplacement* prepared) noexcept;
+    bool CancelPreparedScheduleGroupSliceReplacement(
+        PreparedScheduleGroupSliceReplacement* prepared) noexcept;
 
     // Appends a page's live events to out in the total sort order, skipping every
     // event whose transaction fails the one-per-transaction stale check against
@@ -1761,22 +1761,22 @@ public:
     std::size_t ConsumeCurrentSlicesRt(
         std::uint64_t absoluteQuantum, ConsumedCurrentSlice* out,
         std::size_t outCapacity) const noexcept;
-    std::size_t CapturePlan03PageGroupsRt(
-        std::uint64_t absoluteQuantum, Plan03PageGroupView* out,
+    std::size_t CaptureSchedulePageGroupsRt(
+        std::uint64_t absoluteQuantum, SchedulePageGroupView* out,
         std::size_t outCapacity) const noexcept;
-    std::size_t CaptureLivePlan03Groups(
-        Plan03PageGroupView* out, std::size_t outCapacity) const noexcept;
-    bool CaptureExactPlan03Group(
-        const Plan03GroupSliceIdentity& identity,
-        Plan03ExactGroupSnapshot* out) const noexcept;
-    Plan03UnpublishedRetirementResult BeginUnpublishedFrontierRetirement(
-        const Plan03GroupSliceIdentity& member,
-        const Plan03GroupSliceIdentity& primary,
+    std::size_t CaptureLiveScheduleGroups(
+        SchedulePageGroupView* out, std::size_t outCapacity) const noexcept;
+    bool CaptureExactScheduleGroup(
+        const ScheduleGroupSliceIdentity& identity,
+        ScheduleExactGroupSnapshot* out) const noexcept;
+    ScheduleUnpublishedRetirementResult BeginUnpublishedFrontierRetirement(
+        const ScheduleGroupSliceIdentity& member,
+        const ScheduleGroupSliceIdentity& primary,
         const FrontierEntryReceiptRef& entry,
         const FrontierActivationReceipt& receipt,
-        Plan03UnpublishedRetirementToken* out) noexcept;
-    Plan03UnpublishedRetirementResult FinishUnpublishedFrontierRetirement(
-        const Plan03UnpublishedRetirementToken& token) noexcept;
+        ScheduleUnpublishedRetirementToken* out) noexcept;
+    ScheduleUnpublishedRetirementResult FinishUnpublishedFrontierRetirement(
+        const ScheduleUnpublishedRetirementToken& token) noexcept;
     bool PreparePrivateSelectedQueueFutureDomain(
         const OriginalQueueFutureGroupRegistration& oldC0,
         const OriginalQueueFutureGroupRegistration& oldC1,
@@ -1796,15 +1796,15 @@ public:
     // Lane groups are owned by the initial Action cohort and never occupy a
     // horizon Page. Their exact identity remains stable when its anchor moves.
     bool ReserveImmediateLaneGroup(std::uint64_t cohortRoot,
-        std::uint64_t provisionalAnchorFrame, const Plan03GroupSliceInput& input,
-        const TimelineArmTable& armTable, Plan03GroupSliceIdentity* out,
+        std::uint64_t provisionalAnchorFrame, const ScheduleGroupSliceInput& input,
+        const TimelineArmTable& armTable, ScheduleGroupSliceIdentity* out,
         PreparedPrivateImmediateLaneGroup* original = nullptr) noexcept;
     bool ProvePrivateImmediateLaneGroupsPublication(
         PrivateImmediateLanePublicationProof& lane,
         PrivateImmediateLaneGroupsPublicationProof* out) noexcept;
     bool IsPrivateImmediateLaneGroupsPublicationProofFor(
         const PrivateImmediateLaneGroupsPublicationProof& proof,
-        const Plan03GroupSliceIdentity& identity, const FrontierEntryReceiptRef& entry) const noexcept;
+        const ScheduleGroupSliceIdentity& identity, const FrontierEntryReceiptRef& entry) const noexcept;
     static void ApplyPrivateImmediateLaneGroupsPublication(
         PrivateImmediateLaneGroupsPublicationProof&& proof) noexcept;
     bool OwnsPrivateImmediateLaneGroupOriginal(
@@ -1812,29 +1812,29 @@ public:
     bool PrivateImmediateLaneGroupTransferHeld(
         const PreparedPrivateImmediateLaneGroup& original) const noexcept;
     bool PrivateImmediateLaneGroupTransferHeld(
-        const Plan03GroupSliceIdentity& identity) const noexcept;
+        const ScheduleGroupSliceIdentity& identity) const noexcept;
     bool MatchesHeldPrivateImmediateLaneGroupOriginal(
         const PreparedPrivateImmediateLaneGroup& original,
         const PrivateImmediateLaneGroupTransferProof& proof,
         std::uint64_t cohortRoot, std::uint64_t provisionalAnchorFrame,
-        const Plan03GroupSliceInput& input,
+        const ScheduleGroupSliceInput& input,
         const TimelineArmTable& armTable) const noexcept;
     bool ProvePrivateImmediateLaneGroupTransfer(
         PreparedPrivateImmediateLaneGroup& original, std::uint64_t cohortRoot,
-        std::uint64_t provisionalAnchorFrame, const Plan03GroupSliceInput& input,
+        std::uint64_t provisionalAnchorFrame, const ScheduleGroupSliceInput& input,
         const TimelineArmTable& armTable,
         PrivateImmediateLaneGroupTransferProof* out) noexcept;
-    static Plan03GroupSliceIdentity ConsumePrivateImmediateLaneGroupTransfer(
+    static ScheduleGroupSliceIdentity ConsumePrivateImmediateLaneGroupTransfer(
         PrivateImmediateLaneGroupTransferProof&& proof) noexcept;
     bool ConsumePrivateImmediateLaneGroupTransfer(
         PrivateImmediateLaneGroupTransferProof&& proof,
         OriginalQueueFutureGroupRegistration* out) noexcept;
     bool IsOriginalQueueFutureGroupRegistrationFor(
         const OriginalQueueFutureGroupRegistration& original,
-        const Plan03GroupSliceIdentity& expected) const noexcept;
+        const ScheduleGroupSliceIdentity& expected) const noexcept;
     bool IsOriginalQueueFutureGroupRegistrationFor(
         const OriginalQueueFutureGroupRegistration& original,
-        const Plan03GroupSliceIdentity& expected,
+        const ScheduleGroupSliceIdentity& expected,
         std::uint64_t originalCohortRoot) const noexcept;
     bool IsOriginalQueueFutureGroupFamily(
         const OriginalQueueFutureGroupRegistration& first,
@@ -1874,26 +1874,26 @@ public:
         const OriginalQueueFutureGroupRegistration& second) const noexcept;
     // Observes only a relation issued by the same private Engine factories.
     bool IsInitialSoundQueueCompanionC0(
-        const Plan03GroupSliceIdentity& primary, const Plan03GroupSliceIdentity& member,
+        const ScheduleGroupSliceIdentity& primary, const ScheduleGroupSliceIdentity& member,
         const FrontierOwnerIdentity& sound, const FrontierOwnerIdentity& queue) const noexcept;
     bool IsInitialSoundQueueCompanionC1(
-        const Plan03GroupSliceIdentity& primary, const Plan03GroupSliceIdentity& member,
-        const Plan03GroupSliceIdentity& prerequisiteMember,
+        const ScheduleGroupSliceIdentity& primary, const ScheduleGroupSliceIdentity& member,
+        const ScheduleGroupSliceIdentity& prerequisiteMember,
         const FrontierOwnerIdentity& sound, const FrontierOwnerIdentity& queue) const noexcept;
     bool CancelPrivateImmediateLaneGroup(
         PreparedPrivateImmediateLaneGroup* original,
-        Plan03GroupSliceIdentity* rawHolder) noexcept;
+        ScheduleGroupSliceIdentity* rawHolder) noexcept;
     bool BindImmediateLaneGroupOwner(
-        const Plan03GroupSliceIdentity& identity,
+        const ScheduleGroupSliceIdentity& identity,
         const ImmediateActionLane& lane, std::uint64_t cohortRoot,
         std::uint32_t laneSlot, std::uint32_t laneGeneration) noexcept;
     bool RebaseImmediateLaneGroups(std::uint64_t cohortRoot,
         std::uint64_t anchorFrame) noexcept;
     bool PublishImmediateLaneGroups(std::uint64_t cohortRoot) noexcept;
     bool CancelPrivateImmediateLaneGroup(std::uint64_t cohortRoot,
-        const Plan03GroupSliceIdentity& identity,
+        const ScheduleGroupSliceIdentity& identity,
         OriginalQueueFutureGroupRegistration* originalBaseline = nullptr) noexcept;
-    using ImmediateLaneGroupDisposalObserver = void (*)(void*, Plan03GroupSliceIdentity,
+    using ImmediateLaneGroupDisposalObserver = void (*)(void*, ScheduleGroupSliceIdentity,
         std::uint64_t, std::uint64_t) noexcept;
     // Producer-only. The observer must not re-enter or mutate this pool.
     void SetImmediateLaneGroupDisposalObserver(void* context,
@@ -1906,39 +1906,39 @@ public:
         OriginalQueueFutureGroupRegistration* originalBaselines = nullptr,
         std::size_t originalBaselineCapacity = 0) noexcept;
     std::size_t CaptureImmediateLaneCohortGroups(
-        std::uint64_t cohortRoot, Plan03ImmediateLaneGroupDescriptor* out,
+        std::uint64_t cohortRoot, ScheduleImmediateLaneGroupDescriptor* out,
         std::size_t outCapacity) const noexcept;
     // Logic-only observation; includes private and published rows without transferring ownership.
     std::size_t CaptureLiveImmediateLaneCohortGroups(
-        std::uint64_t cohortRoot, Plan03ImmediateLaneGroupDescriptor* out,
+        std::uint64_t cohortRoot, ScheduleImmediateLaneGroupDescriptor* out,
         std::size_t outCapacity) const noexcept;
     std::size_t CaptureImmediateLaneGroupsRt(std::uint64_t absoluteQuantum,
-        Plan03PageGroupView* out, std::size_t outCapacity) const noexcept;
-    bool PrivatePlan03GroupBindable(const Plan03GroupSliceIdentity& identity) const noexcept;
-    bool PrivateImmediateLaneGroupRetirementReady(const Plan03GroupSliceIdentity& identity,
+        SchedulePageGroupView* out, std::size_t outCapacity) const noexcept;
+    bool PrivateScheduleGroupBindable(const ScheduleGroupSliceIdentity& identity) const noexcept;
+    bool PrivateImmediateLaneGroupRetirementReady(const ScheduleGroupSliceIdentity& identity,
         std::uint64_t completedAudioSequence) const noexcept;
     bool PrivateImmediateLaneFrontierRollbackReady(
-        const Plan03GroupSliceIdentity& identity) const noexcept;
-    bool MatchesPrivateImmediateLaneGroupPlacement(const Plan03GroupSliceIdentity& identity,
+        const ScheduleGroupSliceIdentity& identity) const noexcept;
+    bool MatchesPrivateImmediateLaneGroupPlacement(const ScheduleGroupSliceIdentity& identity,
         const ImmediateActionLane& lane, const PrivateImmediateLanePlacementProof& placement) const noexcept;
-    bool ClaimImmediateLaneFrontier(const Plan03GroupSliceIdentity& identity,
+    bool ClaimImmediateLaneFrontier(const ScheduleGroupSliceIdentity& identity,
         ImmediateLaneFrontierClaim* out) const noexcept;
     bool ValidateImmediateLaneGroupClaim(
-        const Plan03GroupSliceIdentity& identity,
+        const ScheduleGroupSliceIdentity& identity,
         const AudioSliceLease* lease,
         const ImmediateLaneBucketClaimReceipt& receipt) const noexcept;
     bool ProveImmediateLaneGroupBeforeClaim(
-        const Plan03GroupSliceIdentity& identity,
+        const ScheduleGroupSliceIdentity& identity,
         const AudioSliceLease* lease, const ImmediateActionLane& lane,
         ImmediateLaneHandle handle,
         const ImmediateLaneBucket* bucket) const noexcept;
     bool BindImmediateLaneGroupBuckets(
-        const Plan03ImmediateLaneGroupDescriptor* groups,
+        const ScheduleImmediateLaneGroupDescriptor* groups,
         std::uint32_t count, const ImmediateActionLane& lane,
         std::uint32_t laneSlot,
         std::uint32_t laneGeneration) noexcept;
     bool ClaimPrivateImmediateLaneFrontier(
-        const Plan03GroupSliceIdentity& identity,
+        const ScheduleGroupSliceIdentity& identity,
         ImmediateLaneFrontierClaim* out) const noexcept;
     bool ReleaseImmediateLaneFrontier(ImmediateLaneFrontierClaim* claim) const noexcept;
     // Logic thread: transfer audio-side O(1) gate invalidations to their leases.
@@ -1947,34 +1947,34 @@ public:
                      std::uint32_t) noexcept = nullptr,
         void* context = nullptr) noexcept;
     void DropPreparedOccupancy() noexcept;
-    bool ResolvePlan03GroupSliceRt(
-        const Plan03GroupSliceIdentity& identity,
-        Plan03PageGroupView* out) const noexcept;
-    bool ResolvePlan03GroupSliceProducer(
-        const Plan03GroupSliceIdentity& identity,
-        Plan03PageGroupView* out) const noexcept;
-    bool AcquirePlan03GroupReader(const Plan03GroupSliceIdentity& identity,
-                                 Plan03GroupReaderPin* out) noexcept;
-    bool ClonePlan03GroupReader(const Plan03GroupReaderPin& source,
-                               Plan03GroupReaderPin* out) noexcept;
-    bool IsPlan03GroupReaderFor(const Plan03GroupReaderPin& pin,
-        const Plan03GroupSliceIdentity& identity) const noexcept {
+    bool ResolveScheduleGroupSliceRt(
+        const ScheduleGroupSliceIdentity& identity,
+        SchedulePageGroupView* out) const noexcept;
+    bool ResolveScheduleGroupSliceProducer(
+        const ScheduleGroupSliceIdentity& identity,
+        SchedulePageGroupView* out) const noexcept;
+    bool AcquireScheduleGroupReader(const ScheduleGroupSliceIdentity& identity,
+                                 ScheduleGroupReaderPin* out) noexcept;
+    bool CloneScheduleGroupReader(const ScheduleGroupReaderPin& source,
+                               ScheduleGroupReaderPin* out) noexcept;
+    bool IsScheduleGroupReaderFor(const ScheduleGroupReaderPin& pin,
+        const ScheduleGroupSliceIdentity& identity) const noexcept {
         return pin.owner_ == this && pin.identity_ == identity;
     }
-    bool NotePlan03GroupReadRt(const Plan03GroupSliceIdentity& identity,
+    bool NoteScheduleGroupReadRt(const ScheduleGroupSliceIdentity& identity,
                               std::uint64_t audioSequence) const noexcept;
-    bool IsInvalidatedPlan03GroupAudioReadComplete(
-        const Plan03GroupSliceIdentity& identity, std::uint32_t expectedReasonBit,
+    bool IsInvalidatedScheduleGroupAudioReadComplete(
+        const ScheduleGroupSliceIdentity& identity, std::uint32_t expectedReasonBit,
         std::uint64_t completedAudioSequence) const noexcept;
-    std::uint64_t Plan03GroupReaderStorageBytes() const noexcept;
-    bool BindPlan03GroupFrontier(const Plan03GroupSliceIdentity& identity,
+    std::uint64_t ScheduleGroupReaderStorageBytes() const noexcept;
+    bool BindScheduleGroupFrontier(const ScheduleGroupSliceIdentity& identity,
                                 const FrontierGroupBinding& binding) noexcept;
-    bool DetachPlan03GroupFrontier(const Plan03GroupSliceIdentity& identity,
+    bool DetachScheduleGroupFrontier(const ScheduleGroupSliceIdentity& identity,
                                   std::uint64_t completedAudioSequence) noexcept;
     bool AcquireImmediateLaneFutureDependent(
-        const Plan03GroupSliceIdentity& identity) noexcept;
+        const ScheduleGroupSliceIdentity& identity) noexcept;
     bool ReleaseImmediateLaneFutureDependent(
-        const Plan03GroupSliceIdentity& identity) noexcept;
+        const ScheduleGroupSliceIdentity& identity) noexcept;
     bool PageReplacementScopeReady(const FrontierOwnerIdentity& owner, DecisionToken scope,
         const QueuePageConditionalReceiver* receiver, DecisionToken replaced, std::uint16_t expectedSlices,
         std::uint64_t completedAudioSequence,
@@ -1985,11 +1985,11 @@ public:
         const FrontierOwnerIdentity& owner, DecisionToken decision,
         AudioSliceInvalidateReason reason) const noexcept;
     bool HasFrontierOwnerOperations(const FrontierOwnerIdentity& owner, DecisionToken decision = {}) const noexcept;
-    bool FrontierMemberBindingDetached(const Plan03GroupSliceIdentity& identity,
+    bool FrontierMemberBindingDetached(const ScheduleGroupSliceIdentity& identity,
         const FrontierEntryReceiptRef& entry, std::uint64_t completedAudioSequence) const noexcept;
-    bool FrontierCoordinatorDetached(const Plan03GroupSliceIdentity& identity,
+    bool FrontierCoordinatorDetached(const ScheduleGroupSliceIdentity& identity,
         const FrontierEntryReceiptRef& entry, std::uint64_t completedAudioSequence,
-        const Plan03GroupReaderPin* activationReader = nullptr) const noexcept;
+        const ScheduleGroupReaderPin* activationReader = nullptr) const noexcept;
     std::uint64_t PageStamp(std::uint64_t absoluteQuantum) const noexcept;
     // Producer-only: confirms every attempt-owned entry record was frozen valid.
     bool VerifyImmediateEntryPage(
@@ -2053,9 +2053,9 @@ private:
     bool PreparePrivateMaterializationBacking(const UnplacedBatchCreditRequest& request) noexcept;
     bool PrepareGroupStorage(std::size_t additionalGroups,
         bool consumeAcceptedBacking = false) noexcept;
-    Plan03GroupReserveStatus PreparePlan03GroupSliceImpl(
-        const Plan03GroupSliceInput& input, const TimelineArmTable& armTable,
-        PreparedPlan03GroupSlice* out, const PreparedPageGroupTransferScope* transferScope,
+    ScheduleGroupReserveStatus PrepareScheduleGroupSliceImpl(
+        const ScheduleGroupSliceInput& input, const TimelineArmTable& armTable,
+        PreparedScheduleGroupSlice* out, const PreparedPageGroupTransferScope* transferScope,
         bool consumeAcceptedBacking) noexcept;
     ReserveRefusal PrepareTransactionBatchImpl(
         const TransactionRequest* requests, std::size_t requestCount,
@@ -2066,7 +2066,7 @@ private:
     void RecordRetiredPageGroups(std::uint64_t count) noexcept;
     bool IsOrdinaryOriginalQueueFutureGroupRegistrationFor(
         const OriginalQueueFutureGroupRegistration& original,
-        const Plan03GroupSliceIdentity& expected, std::uint64_t root) const noexcept {
+        const ScheduleGroupSliceIdentity& expected, std::uint64_t root) const noexcept {
         return original.selectedFutureDomain_ == 0 &&
             IsOriginalQueueFutureGroupRegistrationFor(original, expected, root);
     }
@@ -2088,16 +2088,16 @@ private:
     void SpendPreparedPageBatchOriginal(std::size_t slot) noexcept;
     void DetachPreparedPageBatchTransfer(std::size_t slot) noexcept;
     void DropPreparedPageBatchOriginal(PreparedTransactionBatch* original) noexcept;
-    friend class PreparedPlan03GroupSlice;
+    friend class PreparedScheduleGroupSlice;
     friend class PreparedPageGroupTransferProof;
     friend class PrivateUnboundPageArmRetirementProof;
     friend class UnpublishedGroupArmCancellationProof;
-    friend class CommittedPlan03GroupSlice;
+    friend class CommittedScheduleGroupSlice;
     void ReleaseUnpublishedGroupArmCancellation(UnpublishedGroupArmCancellationProof& proof) noexcept;
     void ConsumeHeldUnpublishedGroupArmCancellation(UnpublishedGroupArmCancellationProof& proof) noexcept;
     bool CompleteJointGroupMemberCoverage(const UnpublishedGroupArmCancellationProof& proof,
         TimelineArmToken arm) const noexcept;
-    void DropUnpublishedCancellationOriginal(CommittedPlan03GroupSlice& original) noexcept;
+    void DropUnpublishedCancellationOriginal(CommittedScheduleGroupSlice& original) noexcept;
     UnpublishedGroupArmCancellationProof* unpublishedGroupArmCancellations_ = nullptr;
     friend class PreparedPageFrontierBindingsProof;
     bool PreparedPageFrontierBindingsHeld(const PreparedPageFrontierBindingsProof& proof) const noexcept;
@@ -2106,14 +2106,14 @@ private:
     std::size_t preparedPageFrontierBindingHolds_ = 0;
     void ReleasePrivateUnboundPageArmRetirement(PrivateUnboundPageArmRetirementProof& proof) noexcept;
     PrivateUnboundPageArmRetirementProof* privateUnboundPageArmRetirements_ = nullptr;
-    bool OwnsPreparedPageGroupOriginal(const PreparedPlan03GroupSlice& original) const noexcept;
-    bool PreparedPageGroupHeld(const PreparedPlan03GroupSlice& original) const noexcept;
-    bool MatchesPreparedPageGroupInput(const PreparedPlan03GroupSlice& original,
-        const PreparedPageGroupTransferScope& scope, const Plan03GroupSliceInput& input,
+    bool OwnsPreparedPageGroupOriginal(const PreparedScheduleGroupSlice& original) const noexcept;
+    bool PreparedPageGroupHeld(const PreparedScheduleGroupSlice& original) const noexcept;
+    bool MatchesPreparedPageGroupInput(const PreparedScheduleGroupSlice& original,
+        const PreparedPageGroupTransferScope& scope, const ScheduleGroupSliceInput& input,
         const TimelineArmTable& armTable) const noexcept;
     void DetachPreparedPageGroupTransfer(std::size_t rowIndex) noexcept;
     void ReleasePreparedPageGroupTransferLease(PreparedPageGroupTransferProof* proof) noexcept;
-    void DropPreparedPageGroupOriginal(PreparedPlan03GroupSlice* original) noexcept;
+    void DropPreparedPageGroupOriginal(PreparedScheduleGroupSlice* original) noexcept;
     friend class PrivateOriginalQueueGroupClockProof;
     bool MatchesPrivateOriginalQueueGroupClockProof(
         const PrivateOriginalQueueGroupClockProof& proof) const noexcept;
@@ -2134,7 +2134,7 @@ private:
     bool ResolveRetainedHiddenConditionalGroup(
         const OriginalQueueFutureGroupLifetimePin& primary,
         const OriginalQueueFutureGroupLifetimePin& member,
-        Plan03PageGroupView* out) const noexcept;
+        SchedulePageGroupView* out) const noexcept;
     friend class PrivateSelectedQueueFutureDomain;
     bool ReturnPrivateSelectedQueueFutureDomain(PrivateSelectedQueueFutureDomain& domain) noexcept;
     friend class QueueContinuationLane;
@@ -2142,17 +2142,17 @@ private:
     std::uint32_t selectedFutureDomains_ = 0;
     bool ReserveImmediateLaneGroupInDomain(
     std::uint64_t cohortRoot, std::uint64_t provisionalAnchorFrame,
-    const Plan03GroupSliceInput& input, const TimelineArmTable& armTable,
-    Plan03GroupSliceIdentity* out, PreparedPrivateImmediateLaneGroup* original, std::uint64_t domain) noexcept;
+    const ScheduleGroupSliceInput& input, const TimelineArmTable& armTable,
+    ScheduleGroupSliceIdentity* out, PreparedPrivateImmediateLaneGroup* original, std::uint64_t domain) noexcept;
     bool CancelImmediateLaneGroupsInDomain(
     std::uint64_t cohortRoot, std::uint64_t completedAudioSequence,
     OriginalQueueFutureGroupRegistration* originalBaselines,
     std::size_t originalBaselineCapacity, std::uint64_t domain) noexcept;
     bool CancelPrivateImmediateLaneGroupInDomain(
-    std::uint64_t cohortRoot, const Plan03GroupSliceIdentity& identity,
+    std::uint64_t cohortRoot, const ScheduleGroupSliceIdentity& identity,
     OriginalQueueFutureGroupRegistration* originalBaseline, std::uint64_t domain) noexcept;
     bool BindImmediateLaneGroupOwnerInDomain(
-    const Plan03GroupSliceIdentity& identity,
+    const ScheduleGroupSliceIdentity& identity,
     const ImmediateActionLane& lane, std::uint64_t cohortRoot,
     std::uint32_t laneSlot, std::uint32_t laneGeneration, std::uint64_t domain) noexcept;
     bool RebaseImmediateLaneGroupsInDomain(
@@ -2160,7 +2160,7 @@ private:
     bool PublishImmediateLaneGroupsInDomain(
     std::uint64_t cohortRoot, std::uint64_t domain) noexcept;
     bool OriginalQueueFutureGroupRetirementReady(
-        const Plan03GroupSliceIdentity& identity,
+        const ScheduleGroupSliceIdentity& identity,
         const OriginalQueueFutureGroupRegistration* originalBaseline) const noexcept;
     bool BorrowOriginalQueueFutureGroupLifetime(
         const OriginalQueueFutureGroupLifetimePin& original,
@@ -2170,11 +2170,11 @@ private:
     bool MatchesOriginalQueueFutureGroupScope(
         const OriginalQueueFutureGroupRegistration& original,
         std::uint64_t cohortRoot, std::uint64_t provisionalAnchorFrame,
-        const Plan03GroupSliceInput& input, const TimelineArmTable& armTable) const noexcept;
+        const ScheduleGroupSliceInput& input, const TimelineArmTable& armTable) const noexcept;
     bool MatchesOriginalQueueFutureGroupScopeImpl(
         const OriginalQueueFutureGroupRegistration& original,
         std::uint64_t cohortRoot, std::uint64_t provisionalAnchorFrame,
-        const Plan03GroupSliceInput& input, const TimelineArmTable& armTable,
+        const ScheduleGroupSliceInput& input, const TimelineArmTable& armTable,
         bool retiredSounds) const noexcept;
     bool CaptureOriginalQueueFutureGroupScope(
         const OriginalQueueFutureGroupRegistration& original,
@@ -2196,7 +2196,7 @@ private:
     bool MatchesPrivateImmediateLaneGroupInput(
         const PreparedPrivateImmediateLaneGroup& original,
         std::uint64_t cohortRoot, std::uint64_t provisionalAnchorFrame,
-        const Plan03GroupSliceInput& input, const TimelineArmTable& armTable) const noexcept;
+        const ScheduleGroupSliceInput& input, const TimelineArmTable& armTable) const noexcept;
     friend struct detail::ScheduledTransactionPoolTestAccess;
 #if !defined(HARKEN_RT_QUALIFICATION)
     friend struct detail::ScheduledTransactionPoolCancelTestAccess;
@@ -2205,7 +2205,7 @@ private:
     friend struct detail::ScheduledTransactionPoolOriginalTestAccess;
 #endif
     bool ClaimImmediateLaneFrontierBound(
-        const Plan03GroupSliceIdentity& identity,
+        const ScheduleGroupSliceIdentity& identity,
         ImmediateLaneFrontierClaim* out, bool producerPrivate) const noexcept;
     bool RollbackPrivateMaterialization(
         PrivateMaterializationTransaction* transaction) noexcept;
@@ -2215,23 +2215,23 @@ private:
         const PrivateMaterializationTransaction& transaction,
         LogicCommitSequence sequence) const noexcept;
     bool PreflightMaterializationGroups(
-        const Plan03GroupSliceInput* groups, std::size_t groupCount,
+        const ScheduleGroupSliceInput* groups, std::size_t groupCount,
         const TimelineArmTable& armTable,
         std::uint64_t publicationFrontier,
-        Plan03GroupReserveStatus* groupStatus) const noexcept;
+        ScheduleGroupReserveStatus* groupStatus) const noexcept;
     ReserveRefusal CheckUnplacedPageBudget(std::uint64_t additionalEvents,
                                            std::uint64_t additionalBatches) const noexcept;
     bool HasUnplacedGroupBudget(std::uint32_t additionalGroups) const noexcept;
-    friend class Plan03GroupReaderPin;
-    bool ReleasePlan03GroupReader(Plan03GroupReaderPin* pin,
+    friend class ScheduleGroupReaderPin;
+    bool ReleaseScheduleGroupReader(ScheduleGroupReaderPin* pin,
                                  std::uint64_t completedAudioSequence) noexcept;
-    bool HasPlan03GroupReaders() const noexcept;
+    bool HasScheduleGroupReaders() const noexcept;
     void FinishPreparedTransactionClaim(PreparedTransactionBatch* prepared) noexcept;
-    bool MatchesPlan03GroupRow(const Plan03GroupSliceIdentity& identity,
+    bool MatchesScheduleGroupRow(const ScheduleGroupSliceIdentity& identity,
                               std::size_t rowIndex) const noexcept;
     bool IsUnpublishedRetirementParticipant(
-        const Plan03GroupSliceIdentity& identity) const noexcept;
-    struct Plan03GroupReaderState {
+        const ScheduleGroupSliceIdentity& identity) const noexcept;
+    struct ScheduleGroupReaderState {
         std::atomic<std::uint32_t> pins{0};
         mutable std::atomic<std::uint64_t> lastAudioSequence{0};
     };
@@ -2256,13 +2256,13 @@ private:
         FrontierOwnerIdentity queue{};
         FrontierQueueInitialIdentity initial{};
         FrontierQueueConditionalIdentity conditional{};
-        std::array<Plan03GroupSliceIdentity, 4> groups{};
+        std::array<ScheduleGroupSliceIdentity, 4> groups{};
         std::array<std::uint64_t, 4> markers{};
     };
     bool MatchesInitialSoundQueueCompanionRows(
         const InitialSoundQueueCompanionAssociation& original, bool audio) const noexcept;
     bool MatchesInitialSoundQueueCompanionBinding(
-        const Plan03GroupSliceIdentity& identity, const FrontierGroupBinding& binding,
+        const ScheduleGroupSliceIdentity& identity, const FrontierGroupBinding& binding,
         bool audio = false) const noexcept;
     bool MatchesInitialSoundQueueCompanionPublished(
         const InitialSoundQueueCompanionAssociation& original) const noexcept;
@@ -2358,7 +2358,7 @@ private:
         bool frontierPinsOwned = false;
         std::uint32_t frontierDependents = 0;
         AudioSliceLease lease{};
-        Plan03GroupReaderState readers{};
+        ScheduleGroupReaderState readers{};
     };
     static bool CanReuseImmediateLaneRow(const LaneGroupRow& row) noexcept;
     bool PrepareImmediateLaneMembers(LaneGroupRow& row, std::uint16_t count) noexcept;
@@ -2369,15 +2369,15 @@ private:
     // It does not issue a lifetime, admission, selector or audio read permission.
     std::size_t CapturePrivateSelectedLaneGroupsForPinning(
         const ImmediateActionLane& lane, ImmediateLaneHandle handle,
-        std::uint64_t cohortRoot, Plan03ImmediateLaneGroupDescriptor* out,
+        std::uint64_t cohortRoot, ScheduleImmediateLaneGroupDescriptor* out,
         std::size_t outCapacity) const noexcept;
-    bool ResolveImmediateLaneGroup(const Plan03GroupSliceIdentity& identity,
-        Plan03PageGroupView* out, bool audio) const noexcept;
+    bool ResolveImmediateLaneGroup(const ScheduleGroupSliceIdentity& identity,
+        SchedulePageGroupView* out, bool audio) const noexcept;
     std::size_t CaptureImmediateLaneCohortGroupsImpl(
-        std::uint64_t cohortRoot, Plan03ImmediateLaneGroupDescriptor* out,
+        std::uint64_t cohortRoot, ScheduleImmediateLaneGroupDescriptor* out,
         std::size_t outCapacity, bool includePublished) const noexcept;
     AudioSliceLease* EffectiveImmediateLaneGroupLease(std::size_t row) const noexcept;
-    bool ReleaseImmediateLaneGroupReader(Plan03GroupReaderPin* pin,
+    bool ReleaseImmediateLaneGroupReader(ScheduleGroupReaderPin* pin,
         std::uint64_t completedAudioSequence) noexcept;
     // A filed transaction. remainingBatches falls as its pages leave the window;
     // the record is reclaimed when it reaches zero. The consume cache turns the
@@ -2493,16 +2493,16 @@ private:
         std::uint32_t* ring, std::size_t* index) const noexcept;
     bool HasHeldCurrentSlices() const noexcept;
 
-    struct Plan03GroupSliceRow {
+    struct ScheduleGroupSliceRow {
         UnpublishedGroupArmCancellationProof* jointCancellation = nullptr;
-        CommittedPlan03GroupSlice* cancellationOriginal = nullptr;
+        CommittedScheduleGroupSlice* cancellationOriginal = nullptr;
         PrivateUnboundPageArmRetirementProof* privateUnboundArmRetirement = nullptr;
         PreparedPageFrontierBindingsProof* frontierBindings = nullptr;
         // Factory-issued association and immutable scope for selected original groups.
-        PreparedPlan03GroupSlice* transferOriginal = nullptr;
+        PreparedScheduleGroupSlice* transferOriginal = nullptr;
         PreparedPageGroupTransferProof* transferProof = nullptr;
-        Plan03GroupSliceIdentity transferPreparedIdentity{};
-        Plan03GroupSliceIdentity transferProspectiveIdentity{};
+        ScheduleGroupSliceIdentity transferPreparedIdentity{};
+        ScheduleGroupSliceIdentity transferProspectiveIdentity{};
         PreparedPageGroupTransferScope transferScope{};
         std::uint64_t transferExecuteFrame = 0;
         const TimelineArmTable* transferArmTable = nullptr;
@@ -2519,12 +2519,12 @@ private:
         bool frontierPinsOwned = false;
         bool publicationHeld = false;
         std::uint8_t unpublishedRetirementStage = 0;
-        Plan03GroupSliceIdentity unpublishedRetirementMember{};
+        ScheduleGroupSliceIdentity unpublishedRetirementMember{};
         FrontierEntryReceiptRef unpublishedRetirementEntry{};
         std::uint64_t unpublishedRetirementArmTableIncarnation = 0;
     };
 
-    enum class Plan03GroupRowState : std::uint8_t {
+    enum class ScheduleGroupRowState : std::uint8_t {
         Free = 0,
         Prepared = 1,
         Live = 2,
@@ -2532,9 +2532,9 @@ private:
     };
 
     struct NativeGroupRow {
-        Plan03GroupSliceRow value{};
+        ScheduleGroupSliceRow value{};
         mutable AudioSliceLease lease{};
-        Plan03GroupReaderState readers{};
+        ScheduleGroupReaderState readers{};
         TimelineArmTable::OriginalGroupIdentity identity{};
         PageGroupMemberSlot members{};
         std::size_t nextFree = SIZE_MAX;
@@ -2563,7 +2563,7 @@ private:
     void AcquirePageEvent(std::size_t index) noexcept;
     void ReleasePageEvent(std::size_t index) noexcept;
     std::uint32_t RingIndex(std::uint32_t page) const;
-    AudioSliceLease* EffectivePlan03GroupLease(std::size_t rowIndex) const noexcept;
+    AudioSliceLease* EffectiveScheduleGroupLease(std::size_t rowIndex) const noexcept;
     // Sorts one page's live event indices into the total order, in place.
     void SortPage(std::uint32_t ringIndex);
     // Validates one transaction record against the current stamps, memoized for
@@ -2618,9 +2618,9 @@ private:
     std::size_t occupiedCurrentSliceRows_ = 0;
     std::size_t issuedCurrentSliceRows_ = 0;
     std::size_t freeCurrentSliceRow_ = SIZE_MAX;
-    std::vector<std::uint32_t> pagePlan03GroupCount_;
-    std::vector<std::uint32_t> pagePreparedPlan03GroupCount_;
-    bool IssueGroupMemberOriginals(const Plan03GroupSliceIdentity& group,
+    std::vector<std::uint32_t> pageScheduleGroupCount_;
+    std::vector<std::uint32_t> pagePreparedScheduleGroupCount_;
+    bool IssueGroupMemberOriginals(const ScheduleGroupSliceIdentity& group,
         const TimelineArmTable& table, const TimelineArmToken* members,
         std::uint16_t count, TimelineArmTable::OriginalGroupMember* originals,
         TimelineArmTable::OriginalGroupIdentity& identity) noexcept;
@@ -2637,8 +2637,8 @@ private:
     std::size_t freeGroupSlot_ = SIZE_MAX;
     std::unique_ptr<TimelineArmTable::OriginalGroupMember[]> replacementGroupMemberOriginals_;
     TimelineArmTable::OriginalGroupIdentity replacementGroupIdentity_{};
-    std::vector<Plan03GroupRowState> pagePlan03GroupRowStates_;
-    std::vector<std::uint32_t> pagePlan03GroupClaimGenerations_;
+    std::vector<ScheduleGroupRowState> pageScheduleGroupRowStates_;
+    std::vector<std::uint32_t> pageScheduleGroupClaimGenerations_;
     std::uint64_t nextOriginalLaneGroupFactoryMarker_ = 0;
     std::size_t immediateMemberBytes_ = 0;
     std::uint32_t immediateBackingHolds_ = 0;
@@ -2649,8 +2649,8 @@ private:
     StableRowStorage<LaneGroupRow> immediateLaneGroups_;
     std::unique_ptr<LaneFrontierGate[]> immediateLaneOwnerGates_;
     std::unique_ptr<LaneFrontierGate[]> immediateLaneDecisionGates_;
-    const TimelineArmTable* plan03ArmTable_ = nullptr;
-    bool plan03ArmTableEstablishedByPrepared_ = false;
+    const TimelineArmTable* scheduleArmTable_ = nullptr;
+    bool scheduleArmTableEstablishedByPrepared_ = false;
     std::vector<std::uint32_t> pageBatchCount_;
     std::vector<std::uint32_t> pageBatchOccupiedCount_;
     StableRowStorage<FrameBatchRow, std::size_t> pageBatchRows_;
@@ -2670,11 +2670,11 @@ private:
         bool materializing = false;
     };
     StableRowStorage<UnplacedCreditRow, std::size_t> unplacedCredits_;
-    StableRowStorage<PreparedPlan03GroupSlice, std::size_t> privatePreparedGroups_;
-    StableRowStorage<CommittedPlan03GroupSlice, std::size_t> privateCommittedGroups_;
+    StableRowStorage<PreparedScheduleGroupSlice, std::size_t> privatePreparedGroups_;
+    StableRowStorage<CommittedScheduleGroupSlice, std::size_t> privateCommittedGroups_;
     StableRowStorage<UnplacedBatchCredit*, std::size_t> privateCohortCredits_;
     StableRowStorage<TransactionRequest, std::size_t> privateCohortRequests_;
-    StableRowStorage<Plan03GroupSliceInput, std::size_t> privateCohortGroups_;
+    StableRowStorage<ScheduleGroupSliceInput, std::size_t> privateCohortGroups_;
     bool privateMaterializationActive_ = false;
     std::uint64_t nextUnplacedCreditGeneration_ = 1;
     std::uint64_t unplacedTransactions_ = 0;

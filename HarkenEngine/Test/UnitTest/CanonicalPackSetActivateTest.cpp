@@ -347,7 +347,7 @@ TEST(CanonicalPackSetActivate, FileBudgetRefusalPrecedesWholeFileAllocationAndCa
     }
 }
 
-namespace companionfixture {
+namespace v2activation {
 
 constexpr VnObjectId project{0x0102030405060708, 0x090a0b0c0d0e0f10};
 constexpr VnObjectId action = harkentest::ObjectId(harkentest::packfoundation::kActionBase);
@@ -562,10 +562,10 @@ std::vector<std::uint8_t> BuildPreview(bool random, bool multipleSteps = false,
     return image.Build();
 }
 
-} // namespace companionfixture
+} // namespace v2activation
 
 TEST(CanonicalPackSetActivate, ProviderMembersShareDecodeBudgetAndPreservePriorPublication) {
-    using namespace companionfixture;
+    using namespace v2activation;
     using namespace harken;
     Provider init{Build(true, PackId("Init"))};
     Provider content{Build(false, PackId("content"))};
@@ -650,8 +650,8 @@ TEST(CanonicalPackSetActivate, ProviderMembersShareDecodeBudgetAndPreservePriorP
     }
 }
 
-TEST(CanonicalPackSetActivate, CompanionInspectionDiscoversProjectWithoutWeakeningActivation) {
-    using namespace companionfixture;
+TEST(CanonicalPackSetActivate, V2ActivationInspectionDiscoversProjectWithoutWeakeningActivation) {
+    using namespace v2activation;
     Provider init{Build(true, PackId("Init"))};
     VnPackInspectDescV1 desc{};
     desc.structSize = sizeof(desc);
@@ -667,7 +667,7 @@ TEST(CanonicalPackSetActivate, CompanionInspectionDiscoversProjectWithoutWeakeni
 }
 
 TEST(CanonicalPackSetActivate, RemoteCatalogListsActionsOfActivatedPacks) {
-    using namespace companionfixture;
+    using namespace v2activation;
     EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     Provider init{Build(true, PackId("Init"))};
@@ -719,7 +719,7 @@ TEST(CanonicalPackSetActivate, RemoteCatalogListsActionsOfActivatedPacks) {
 }
 
 TEST(CanonicalPackSetActivate, MonitorV3MatchesActualOccurrenceAndRetainsOlderConsumers) {
-    using namespace companionfixture;
+    using namespace v2activation;
     using namespace harken::monitor;
     for (bool random : {false, true}) {
         SCOPED_TRACE(random);
@@ -832,8 +832,8 @@ TEST(CanonicalPackSetActivate, MonitorV3MatchesActualOccurrenceAndRetainsOlderCo
     }
 }
 
-TEST(CanonicalPackSetActivate, CompanionInspectionKeepsMediaAndOccurrenceFactsDistinct) {
-    using namespace companionfixture;
+TEST(CanonicalPackSetActivate, V2ActivationInspectionKeepsMediaAndOccurrenceFactsDistinct) {
+    using namespace v2activation;
     auto init = Build(true, PackId("Init"));
     for (const bool random : {false, true}) {
         SCOPED_TRACE(random ? "Random" : "Sound");
@@ -2052,7 +2052,7 @@ TEST(CanonicalPackSetActivate, TraceStartActivateWritesCall135) {
     EXPECT_NE(0u, outputHandle);
 }
 
-int ReplayCompanionTrace(const std::filesystem::path& tracePath, std::string& output) {
+int ReplayV2ActivationTrace(const std::filesystem::path& tracePath, std::string& output) {
     std::string command = std::string("\"") + HARKEN_HOST_PATH +
         "\" trace-replay \"" + tracePath.string() + "\" 2>&1";
 #ifdef _WIN32
@@ -2071,9 +2071,9 @@ int ReplayCompanionTrace(const std::filesystem::path& tracePath, std::string& ou
 #endif
 }
 
-TEST(CanonicalPackSetActivate, CompanionTraceOwnsInputsAndReplaysReplacement) {
-    using namespace companionfixture;
-    const auto directory = std::filesystem::path(HARKEN_TEMP_DIR) / "companion-trace";
+TEST(CanonicalPackSetActivate, V2ActivationTraceOwnsInputsAndReplaysReplacement) {
+    using namespace v2activation;
+    const auto directory = std::filesystem::path(HARKEN_TEMP_DIR) / "v2-activation-trace";
     const auto tracePath = directory / "session.vtrc";
     const auto contentPath = (directory / "Play_A.bytes").string();
     std::filesystem::create_directories(directory);
@@ -2123,18 +2123,18 @@ TEST(CanonicalPackSetActivate, CompanionTraceOwnsInputsAndReplaysReplacement) {
     }
     EXPECT_EQ(3u, resourceCount);
     std::string output;
-    EXPECT_EQ(0, ReplayCompanionTrace(tracePath, output)) << output;
+    EXPECT_EQ(0, ReplayV2ActivationTrace(tracePath, output)) << output;
     ASSERT_NE(0u, firstResource);
     bytes[firstResource + 8] ^= 1;
     const auto corrupt = directory / "corrupt.vtrc";
     ASSERT_TRUE(harkentest::WriteBytes(corrupt, bytes));
     output.clear();
-    EXPECT_NE(0, ReplayCompanionTrace(corrupt, output)) << output;
+    EXPECT_NE(0, ReplayV2ActivationTrace(corrupt, output)) << output;
 }
 
-TEST(CanonicalPackSetActivate, CompanionTraceRechecksBadBytesBeforeUnreadMembers) {
-    using namespace companionfixture;
-    const auto directory = std::filesystem::path(HARKEN_TEMP_DIR) / "companion-trace-bad-bytes";
+TEST(CanonicalPackSetActivate, V2ActivationTraceRechecksBadBytesBeforeUnreadMembers) {
+    using namespace v2activation;
+    const auto directory = std::filesystem::path(HARKEN_TEMP_DIR) / "v2-activation-trace-bad-bytes";
     std::filesystem::create_directories(directory);
     const auto trace = directory / "bad-bytes.vtrc";
     EngineSession session(CanonicalActivationConfig());
@@ -2157,7 +2157,7 @@ TEST(CanonicalPackSetActivate, CompanionTraceRechecksBadBytesBeforeUnreadMembers
     EXPECT_EQ(1u, session.Engine()->packComposition.Published()->ledger.setRevision);
     ASSERT_EQ(VN_OK, Vn_TraceStop());
     std::string output;
-    EXPECT_EQ(0, ReplayCompanionTrace(trace, output)) << output;
+    EXPECT_EQ(0, ReplayV2ActivationTrace(trace, output)) << output;
 
     // A different recorded result must be rejected by replaying the captured bad bytes.
     std::ifstream stream(trace, std::ios::binary);
@@ -2180,12 +2180,12 @@ TEST(CanonicalPackSetActivate, CompanionTraceRechecksBadBytesBeforeUnreadMembers
     const auto changed = directory / "changed-result.vtrc";
     ASSERT_TRUE(harkentest::WriteBytes(changed, bytes));
     output.clear();
-    EXPECT_NE(0, ReplayCompanionTrace(changed, output)) << output;
+    EXPECT_NE(0, ReplayV2ActivationTrace(changed, output)) << output;
 }
 
-TEST(CanonicalPackSetActivate, CompanionTraceReplaysEmbeddedMediaAfterSourceLoss) {
-    using namespace companionfixture;
-    const auto directory = std::filesystem::path(HARKEN_TEMP_DIR) / "companion-trace-media";
+TEST(CanonicalPackSetActivate, V2ActivationTraceReplaysEmbeddedMediaAfterSourceLoss) {
+    using namespace v2activation;
+    const auto directory = std::filesystem::path(HARKEN_TEMP_DIR) / "v2-activation-trace-media";
     std::filesystem::create_directories(directory);
     const auto trace = directory / "media.vtrc";
     EngineSession session(CanonicalActivationConfig(8, 64, 48000));
@@ -2211,14 +2211,14 @@ TEST(CanonicalPackSetActivate, CompanionTraceReplaysEmbeddedMediaAfterSourceLoss
     init.bytes.clear();
     content.bytes.clear();
     std::string output;
-    EXPECT_EQ(0, ReplayCompanionTrace(trace, output)) << output;
+    EXPECT_EQ(0, ReplayV2ActivationTrace(trace, output)) << output;
 }
 
-TEST(CanonicalPackSetActivate, CompanionTraceFailureDoesNotChangeActivationResult) {
-    using namespace companionfixture;
+TEST(CanonicalPackSetActivate, V2ActivationTraceFailureDoesNotChangeActivationResult) {
+    using namespace v2activation;
     EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
-    const auto tracePath = std::filesystem::path(HARKEN_TEMP_DIR) / "companion-trace-failure.vtrc";
+    const auto tracePath = std::filesystem::path(HARKEN_TEMP_DIR) / "v2-activation-trace-failure.vtrc";
     ASSERT_EQ(VN_OK, Vn_TraceStart(tracePath.string().c_str()));
     const auto initId = PackId("Init");
     Provider init{Build(true, initId)};
@@ -3113,7 +3113,7 @@ TEST(CanonicalPackSetActivate, ReplaceCanonicalPackSwapsContentBindings) {
                                                           report));
     const VnPackHandle contentHandle = rows[1].handle;
     const auto* publication = session.Engine()->packComposition.Published();
-    companionfixture::Provider oversized;
+    v2activation::Provider oversized;
     oversized.bytes.resize(4u * 1024u * 1024u);
     ASSERT_TRUE(harkentest::WriteBytes(directory / "Content.pack", oversized.bytes));
     VnPackLoadDesc replace{};
@@ -3124,8 +3124,8 @@ TEST(CanonicalPackSetActivate, ReplaceCanonicalPackSwapsContentBindings) {
         if (source == 1) {
             replace.flags = VN_PACK_LOAD_FLAG_PROVIDER;
             replace.providerUserData = &oversized;
-            replace.provide = companionfixture::Provider::Read;
-            replace.release = companionfixture::Provider::Release;
+            replace.provide = v2activation::Provider::Read;
+            replace.release = v2activation::Provider::Release;
         }
         allocation_probe::bytes = 0;
         allocation_probe::enabled = true;
@@ -3392,7 +3392,7 @@ TEST(CanonicalPackSetActivate, KeepContentManifestUnloadsAfterInitReplace) {
 
 namespace packstream {
 
-using namespace companionfixture;
+using namespace v2activation;
 
 constexpr VnObjectId kSound = harkentest::ObjectId(8300);
 constexpr std::uint64_t kFrames = 2 * harken::kPackMediaRangeChunkFrames + 123;
@@ -3834,12 +3834,12 @@ TEST(CanonicalPackSetActivate, ProviderMediaStreamsForAnotherMembersDefinitionAn
 TEST(CanonicalPackSetActivate, LargeInitProjects257VariablesAndUses65thAttenuation) {
     using namespace harken;
     using namespace harkentest::packfoundation;
-    const auto initId = companionfixture::PackId("Init");
+    const auto initId = v2activation::PackId("Init");
     std::vector<VariableDefinitionV1> variables;
     for (unsigned i = 0; i < 257; ++i)
         variables.push_back(harkentest::MakeVariableDefinition(harkentest::ObjectId(10000+i), VariableKindV1::Smooth, 0, 8, 2));
     ContainerWorldInstallViewV1 world{};
-    world.identity.projectId = companionfixture::project;
+    world.identity.projectId = v2activation::project;
     world.variables = variables.data();
     world.variableCount = variables.size();
     world.capacity.maxVariableDefinitions = variables.size();
@@ -3894,19 +3894,19 @@ TEST(CanonicalPackSetActivate, LargeInitProjects257VariablesAndUses65thAttenuati
         cursor += kPackBytes<HkPackVariableLabelHeader>;
     }
     builder.AddEntry(HK_PACK_ENTRY_KIND_VARIABLE_POLICY_OVERLAY, 0, std::move(overlay));
-    companionfixture::Provider provider{builder.Build()};
+    v2activation::Provider provider{builder.Build()};
     VnCanonicalPackSetMemberV1 member{};
     member.structSize = sizeof(member);
     member.packStableId = initId;
     member.packKind = VN_CANONICAL_PACK_SET_MEMBER_INIT;
     member.flags = VN_CANONICAL_PACK_SET_MEMBER_PROVIDER;
     member.providerUserData = &provider;
-    member.provide = companionfixture::Provider::Read;
-    member.release = companionfixture::Provider::Release;
+    member.provide = v2activation::Provider::Read;
+    member.release = v2activation::Provider::Release;
     const auto atten = harkentest::ObjectId(1064);
-    companionfixture::Provider content{companionfixture::BuildPreview(false, false, atten, world.capacity)};
+    v2activation::Provider content{v2activation::BuildPreview(false, false, atten, world.capacity)};
     auto contentMember = member;
-    contentMember.packStableId = companionfixture::PackId("action_" + ObjectIdString(companionfixture::action));
+    contentMember.packStableId = v2activation::PackId("action_" + ObjectIdString(v2activation::action));
     contentMember.packKind = VN_CANONICAL_PACK_SET_MEMBER_CONTENT;
     contentMember.providerUserData = &content;
     const std::array members{member, contentMember};
@@ -3937,7 +3937,7 @@ TEST(CanonicalPackSetActivate, LargeInitProjects257VariablesAndUses65thAttenuati
         ASSERT_NE(0u, generation);
         VnPostActionDesc post{};
         post.structSize = sizeof(post);
-        post.actionId = companionfixture::action;
+        post.actionId = v2activation::action;
         ASSERT_EQ(VN_OK, Vn_CreateEmitter(&post.emitter));
         ASSERT_EQ(VN_OK, Vn_SetEmitterPosition(post.emitter, {0, 0, -5.5f}));
         VnActionFiringHandle firing = 0;
@@ -3962,9 +3962,9 @@ TEST(CanonicalPackSetActivate, LargeInitProjects257VariablesAndUses65thAttenuati
         EXPECT_EQ(1u, observed);
     }
     const auto mapRows = 65ull * sizeof(PackAttenuationBindingMapV1::Binding);
-    for (const bool companion : {false, true}) {
+    for (const bool hasMemberOperations : {false, true}) {
         for (const auto allowance : {2ull * mapRows, 4ull * mapRows - 1u, 4ull * mapRows}) {
-            SCOPED_TRACE(testing::Message() << "companion=" << companion << " rows=" << allowance);
+            SCOPED_TRACE(testing::Message() << "hasMemberOperations=" << hasMemberOperations << " rows=" << allowance);
             auto config = CanonicalActivationConfig(2, 256, 48000);
             config.maxPackDecodeStagingBytes = provider.bytes.size() + sizeof(PackAttenuationBindingMapV1)*4 +
                 allowance;
@@ -3977,17 +3977,17 @@ TEST(CanonicalPackSetActivate, LargeInitProjects257VariablesAndUses65thAttenuati
             allocation_probe::count = 0;
             allocation_probe::bytes = 0;
             allocation_probe::enabled = true;
-            if (companion) {
+            if (hasMemberOperations) {
                 std::vector<VnCanonicalPackSetMemberV2> named{
-                    companionfixture::Member(initId, true, &provider)};
-                result = companionfixture::Activate(named, report);
+                    v2activation::Member(initId, true, &provider)};
+                result = v2activation::Activate(named, report);
             } else {
                 result = harkentest::ActivateCanonicalMembersV1(&member, 1, &row, report);
             }
             allocation_probe::enabled = false;
             const auto requestedBytes = allocation_probe::bytes;
             const auto allocationCount = allocation_probe::count;
-            const auto key = std::string(companion ? "v2_" : "v1_") + std::to_string(allowance);
+            const auto key = std::string(hasMemberOperations ? "v2_" : "v1_") + std::to_string(allowance);
             RecordProperty(key + "_requested_bytes", std::to_string(requestedBytes));
             RecordProperty(key + "_allocation_count", std::to_string(allocationCount));
             RecordProperty(key + "_budget", std::to_string(config.maxPackDecodeStagingBytes));
@@ -4004,14 +4004,14 @@ TEST(CanonicalPackSetActivate, LargeInitProjects257VariablesAndUses65thAttenuati
         EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());
         VnCanonicalPackSetActivationReportV1 report{};
-        if (companion) {
+        if (hasMemberOperations) {
             std::vector<VnCanonicalPackSetMemberV2> named{
-                companionfixture::Member(initId, true, &provider)};
-            ASSERT_EQ(VN_OK, companionfixture::Activate(named, report));
+                v2activation::Member(initId, true, &provider)};
+            ASSERT_EQ(VN_OK, v2activation::Activate(named, report));
             std::vector<VnCanonicalPackSetMemberV2> kept{
-                companionfixture::Member(initId, true, nullptr,
+                v2activation::Member(initId, true, nullptr,
                     report.initHandle, VN_PACK_MEMBER_KEEP)};
-            ASSERT_EQ(VN_OK, companionfixture::Activate(kept, report, report.resultSetRevision));
+            ASSERT_EQ(VN_OK, v2activation::Activate(kept, report, report.resultSetRevision));
         } else {
             VnCanonicalPackSetMemberResultV1 row{};
             row.structSize = sizeof(row);

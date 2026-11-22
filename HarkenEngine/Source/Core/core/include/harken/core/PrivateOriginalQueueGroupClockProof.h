@@ -25,7 +25,7 @@ private:
     ScheduledTransactionPool* owner_ = nullptr;
     PrivateImmediateLanePlacementProof placement_{};
     std::array<OriginalQueueFutureGroupLifetimePin, 2> originals_{};
-    std::array<Plan03GroupSliceIdentity, 4> rows_{};
+    std::array<ScheduleGroupSliceIdentity, 4> rows_{};
     std::array<AudioSliceLease*, 2> leases_{};
     std::uint32_t rowCount_ = 0;
     std::uint32_t leaseCount_ = 0;

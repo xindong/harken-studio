@@ -2532,7 +2532,7 @@ bool TimelineArmTable::ProveLaneFutureStart(TimelineArmToken token,
             std::memory_order_acquire)) return false;
     const bool valid = row->sourcePublicationSequence <= acceptedSourceTail_ &&
         row->authoredControl.operation == nullptr && binding.role == FrontierGroupRole::EntryMember &&
-        binding.operation.group.backing == Plan03GroupBacking::ImmediateLane &&
+        binding.operation.group.backing == ScheduleGroupBacking::ImmediateLane &&
         row->frontierReaderPins.load(std::memory_order_acquire) != 0 &&
         row->frontierAdmission == &binding &&
         row->frontierAdmissionLease != nullptr &&
@@ -2571,7 +2571,7 @@ bool TimelineArmTable::MatchesHeldLaneFutureStart(const LaneAudioProof& proof,
         audioSequence != 0 && proof.audioSequence_ == audioSequence &&
         row->sourcePublicationSequence <= acceptedSourceTail_ &&
         row->authoredControl.operation == nullptr && binding.role == FrontierGroupRole::EntryMember &&
-        binding.operation.group.backing == Plan03GroupBacking::ImmediateLane &&
+        binding.operation.group.backing == ScheduleGroupBacking::ImmediateLane &&
         row->frontierReaderPins.load(std::memory_order_acquire) != 0 &&
         row->frontierAdmission == &binding && row->frontierAdmissionLease != nullptr &&
         row->frontierAdmissionLease->Capture().state == (entryInSameBucket
@@ -2805,7 +2805,7 @@ const TimelineArmTable::Row* TimelineArmTable::CapturePrivatePendingFrontierStar
     const ScheduledTransactionPool& pool, const DecisionTable& decisions,
     const ImmediateActionLane& lane, const PrivateImmediateLanePlacementProof& placement,
     std::uint32_t eventOrdinal, std::uint64_t* startFrame) const noexcept {
-    Plan03PageGroupView native{};
+    SchedulePageGroupView native{};
     ImmediateLaneEvent placed{};
     std::uint64_t anchor = 0;
     if (ownedReader.owner_ != this || !binding.Valid() || binding.role != FrontierGroupRole::EntryMember ||
@@ -2816,7 +2816,7 @@ const TimelineArmTable::Row* TimelineArmTable::CapturePrivatePendingFrontierStar
             binding.entry.coordinator, &binding) ||
         !pool.PrivateImmediateLaneFrontierRollbackReady(binding.operation.group) ||
         !pool.MatchesPrivateImmediateLaneGroupPlacement(binding.operation.group, lane, placement) ||
-        !pool.ResolvePlan03GroupSliceProducer(binding.operation.group, &native) ||
+        !pool.ResolveScheduleGroupSliceProducer(binding.operation.group, &native) ||
         native.frontier != &binding || native.lease != &lease || native.members == nullptr || native.sourceControlCount != 0 ||
         !placement.CaptureAnchorFrame(&anchor) || anchor != binding.operation.order.executeFrame ||
         !lane.CapturePrivatePlacedEvent(placement, eventOrdinal, &placed)) return nullptr;
@@ -2841,7 +2841,7 @@ const TimelineArmTable::Row* TimelineArmTable::CapturePrivatePendingQueueFrontie
     const OriginalQueueFutureGroupRegistration& original, const OriginalQueueFutureGroupRegistration& outer,
     const ImmediateActionLane& lane, const PrivateImmediateLanePlacementProof& placement,
     std::uint32_t eventOrdinal, bool control, std::uint64_t* frame) const noexcept {
-    Plan03PageGroupView native{};
+    SchedulePageGroupView native{};
     ImmediateLaneEvent placed{};
     OriginalQueueFutureGroupScope memberScope{}, outerScope{};
     std::uint64_t anchor = 0;
@@ -2859,7 +2859,7 @@ const TimelineArmTable::Row* TimelineArmTable::CapturePrivatePendingQueueFrontie
         !pool.MatchesPrivateImmediateLaneGroupPlacement(binding.operation.group, lane, placement) ||
         !pool.MatchesPrivateImmediateLaneGroupPlacement(binding.primary, lane, placement) ||
         !pool.MatchesPrivateImmediateLaneGroupPlacement(outer.Identity(), lane, placement) ||
-        !pool.ResolvePlan03GroupSliceProducer(binding.operation.group, &native) || native.frontier != &binding ||
+        !pool.ResolveScheduleGroupSliceProducer(binding.operation.group, &native) || native.frontier != &binding ||
         native.lease != &lease || native.members == nullptr || native.sourceControlCount >= native.memberCount ||
         !placement.CaptureAnchorFrame(&anchor) || !lane.CapturePrivatePlacedEvent(placement, eventOrdinal, &placed) ||
         placed.futureGroupedStart == control || placed.event.frontier.kind != FrontierOperationKind::Dependent ||
@@ -2909,7 +2909,7 @@ const TimelineArmTable::Row* TimelineArmTable::CapturePrivatePendingQueueFrontie
 }
 
 const TimelineArmTable::Row* TimelineArmTable::CapturePrivatePendingFrontierStartRow(const TimelineArmReaderPin& ownedReader,
-    const FrontierGroupBinding& binding, AudioSliceLease& lease, const Plan03PageGroupView& native,
+    const FrontierGroupBinding& binding, AudioSliceLease& lease, const SchedulePageGroupView& native,
     const ImmediateLaneEvent& placed, std::uint64_t anchor, std::uint64_t* startFrame) const noexcept {
     const auto token = ownedReader.token_;
     const auto& event = placed.event;
@@ -3002,18 +3002,18 @@ bool TimelineArmTable::DetachPrivateInstalledPageSource(const OriginalArmRowOwne
         (pins == 0 && reader != nullptr && reader->Valid())) return false;
     if (row->frontierAdmission != nullptr) {
         const auto& binding = *row->frontierAdmission;
-        Plan03PageGroupView group{};
-        Plan03ExactGroupSnapshot snapshot{};
+        SchedulePageGroupView group{};
+        ScheduleExactGroupSnapshot snapshot{};
         if (pins != 1 || state != ArmState::Armed || !binding.Valid() ||
             binding.role != FrontierGroupRole::EntryMember || binding.operation.kind != FrontierOperationKind::Entry ||
-            binding.operation.group.backing != Plan03GroupBacking::Page ||
+            binding.operation.group.backing != ScheduleGroupBacking::Page ||
             !decisions.MatchesPreparedFrontierActivationPool(binding.entry, pool) ||
             !decisions.CanRollbackPreparedFrontierDecision(binding.operation.group.decision,
                 binding.entry.coordinator, &binding) ||
-            !pool.ResolvePlan03GroupSliceProducer(binding.operation.group, &group) ||
+            !pool.ResolveScheduleGroupSliceProducer(binding.operation.group, &group) ||
             group.frontier != &binding || group.lease == nullptr || group.lease != row->frontierAdmissionLease ||
             group.lease->Capture().state != AudioSliceState::Ready ||
-            !pool.CaptureExactPlan03Group(binding.operation.group, &snapshot) ||
+            !pool.CaptureExactScheduleGroup(binding.operation.group, &snapshot) ||
             !snapshot.publicationHeld || snapshot.pagePublicationHolds == 0 || snapshot.page.frozen ||
             snapshot.lastAudioSequence != 0 || group.members == nullptr ||
             row->memberIndex >= group.memberCount || !SameArm(group.members[row->memberIndex], original.token_) ||
@@ -3037,18 +3037,18 @@ bool TimelineArmTable::BindPrivatePendingPageFrontierStart(const OriginalArmRowO
     const ScheduledTransactionPool& pool, const DecisionTable& decisions,
     const PreparedTransactionBatch& batch, std::uint32_t requestIndex,
     std::uint32_t eventOrdinal) noexcept {
-    Plan03PageGroupView native{};
+    SchedulePageGroupView native{};
     ConsumedEvent event{};
     if (original.owner_ != this || !original.Valid() || ownedReader.owner_ != this ||
         !SameArm(original.token_, ownedReader.token_) || original.row_ != Resolve(ownedReader.token_) ||
         !binding.Valid() || binding.role != FrontierGroupRole::EntryMember ||
         binding.operation.kind != FrontierOperationKind::Entry ||
-        binding.operation.group.backing != Plan03GroupBacking::Page ||
+        binding.operation.group.backing != ScheduleGroupBacking::Page ||
         !decisions.MatchesPreparedFrontierActivationPool(binding.entry, pool) ||
         !decisions.IsFrontierDecisionBindingFor(binding.operation.group.decision, binding, pool) ||
         !decisions.CanRollbackPreparedFrontierDecision(binding.operation.group.decision,
             binding.entry.coordinator, &binding) ||
-        !pool.ResolvePlan03GroupSliceProducer(binding.operation.group, &native) ||
+        !pool.ResolveScheduleGroupSliceProducer(binding.operation.group, &native) ||
         native.frontier != &binding || native.lease != &lease || native.members == nullptr ||
         lease.Capture().state != AudioSliceState::Ready ||
         !pool.CapturePrivatePreparedTransactionStart(batch, requestIndex, eventOrdinal, &event)) return false;
@@ -3170,10 +3170,10 @@ bool TimelineArmTable::PrivatePendingQueueFrontierControlReady(const TimelineArm
 bool TimelineArmTable::UnbindPrivatePendingQueueFrontierAdmission(TimelineArmReaderPin& ownedReader,
     const FrontierGroupBinding& binding, AudioSliceLease& lease,
     const ScheduledTransactionPool& pool, const DecisionTable& decisions, const PrivatePendingQueueFrontierBinding& queue) noexcept {
-    Plan03PageGroupView native{};
+    SchedulePageGroupView native{};
     if (ownedReader.owner_ != this || !queue.Matches(binding, pool) ||
         !decisions.CanRollbackPrivatePendingQueueFrontierDecision(binding, pool, queue) ||
-        !pool.ResolvePlan03GroupSliceProducer(binding.operation.group, &native) || native.frontier != &binding ||
+        !pool.ResolveScheduleGroupSliceProducer(binding.operation.group, &native) || native.frontier != &binding ||
         native.lease != &lease || native.members == nullptr || lease.Capture().state != AudioSliceState::Ready) return false;
     return UnbindPrivatePendingFrontierAdmissionRow(ownedReader, binding, lease, native);
 }
@@ -3181,7 +3181,7 @@ bool TimelineArmTable::UnbindPrivatePendingQueueFrontierAdmission(TimelineArmRea
 bool TimelineArmTable::UnbindPrivatePendingFrontierAdmission(TimelineArmReaderPin& ownedReader,
     const FrontierGroupBinding& binding, AudioSliceLease& lease,
     const ScheduledTransactionPool& pool, const DecisionTable& decisions) noexcept {
-    Plan03PageGroupView native{};
+    SchedulePageGroupView native{};
     if (ownedReader.owner_ != this || !binding.Valid() || binding.role != FrontierGroupRole::EntryMember ||
         binding.operation.kind != FrontierOperationKind::Entry || !binding.variableSide.Valid() ||
         !decisions.MatchesPreparedFrontierActivationPool(binding.entry, pool) ||
@@ -3189,14 +3189,14 @@ bool TimelineArmTable::UnbindPrivatePendingFrontierAdmission(TimelineArmReaderPi
         !pool.PrivateImmediateLaneFrontierRollbackReady(binding.operation.group) ||
         !decisions.CanRollbackPreparedFrontierDecision(binding.operation.group.decision,
             binding.entry.coordinator, &binding) ||
-        !pool.ResolvePlan03GroupSliceProducer(binding.operation.group, &native) ||
+        !pool.ResolveScheduleGroupSliceProducer(binding.operation.group, &native) ||
         native.frontier != &binding || native.lease != &lease || native.members == nullptr ||
         native.sourceControlCount != 0 || lease.Capture().state != AudioSliceState::Ready) return false;
     return UnbindPrivatePendingFrontierAdmissionRow(ownedReader, binding, lease, native);
 }
 
 bool TimelineArmTable::UnbindPrivatePendingFrontierAdmissionRow(TimelineArmReaderPin& ownedReader,
-    const FrontierGroupBinding& binding, AudioSliceLease& lease, const Plan03PageGroupView& native) noexcept {
+    const FrontierGroupBinding& binding, AudioSliceLease& lease, const SchedulePageGroupView& native) noexcept {
     const auto token = ownedReader.token_;
     Row* row = Resolve(token);
     if (row == nullptr || row->reservation.test_and_set(std::memory_order_acquire)) return false;
@@ -3337,15 +3337,15 @@ bool TimelineArmTable::ProveBoundFrontierArm(TimelineArmToken token,
 bool TimelineArmTable::ProveInitialAdmissionDeferredStart(TimelineArmToken token,
     const FrontierGroupBinding& binding, AudioSliceLease& lease, const ScheduledTransactionPool& pool,
     std::uint64_t audioSequence, BoundAudioProof* out) noexcept {
-    Plan03PageGroupView group{};
+    SchedulePageGroupView group{};
     if (!binding.Valid() || binding.role != FrontierGroupRole::EntryMember ||
         binding.operation.kind != FrontierOperationKind::Entry ||
         (static_cast<unsigned>(binding.variableSide.Valid()) + static_cast<unsigned>(binding.queueSignal.Valid()) +
             static_cast<unsigned>(binding.queueInitial.Valid()) != 1u) ||
         binding.transition.Valid() || binding.queueConditional.Valid() ||
-        !pool.ResolvePlan03GroupSliceRt(binding.operation.group, &group) ||
+        !pool.ResolveScheduleGroupSliceRt(binding.operation.group, &group) ||
         group.frontier != &binding || group.lease != &lease || group.members == nullptr ||
-        !pool.NotePlan03GroupReadRt(group.identity, audioSequence) ||
+        !pool.NoteScheduleGroupReadRt(group.identity, audioSequence) ||
         !ProveBoundFrontierArm(token, binding.entry, audioSequence, false, out, &binding)) return false;
     auto& row = *out->row_;
     const bool valid = IdentityMatches(row, token) && row.startFrame > binding.operation.order.executeFrame &&
@@ -3365,10 +3365,10 @@ bool TimelineArmTable::ProveInitialAdmissionDeferredStart(TimelineArmToken token
 bool TimelineArmTable::ProveGroupedFrontierOperation(TimelineArmToken token, const FrontierGroupBinding& binding,
     AudioSliceLease& lease, const ScheduledTransactionPool& pool,
     std::uint64_t audioSequence, bool starts, BoundAudioProof* out) noexcept {
-    Plan03PageGroupView group{};
-    if (!pool.ResolvePlan03GroupSliceRt(binding.operation.group, &group) ||
+    SchedulePageGroupView group{};
+    if (!pool.ResolveScheduleGroupSliceRt(binding.operation.group, &group) ||
         group.frontier != &binding || group.lease != &lease ||
-        !pool.NotePlan03GroupReadRt(binding.operation.group, audioSequence)) return false;
+        !pool.NoteScheduleGroupReadRt(binding.operation.group, audioSequence)) return false;
     Row* row = Resolve(token);
     if (row == nullptr || out == nullptr || out->Valid() || !binding.Valid() ||
         binding.role != FrontierGroupRole::Future || audioSequence == 0 ||
@@ -3406,7 +3406,7 @@ bool TimelineArmTable::ProveLaneGroupedFutureStart(TimelineArmToken token,
     const ScheduledTransactionPool& pool, std::uint64_t audioSequence,
     std::uint16_t memberIndex, ProgramGeneration programGeneration,
     const TimelineSemanticTarget& target, BoundAudioProof* out) noexcept {
-    if (binding.operation.group.backing != Plan03GroupBacking::ImmediateLane ||
+    if (binding.operation.group.backing != ScheduleGroupBacking::ImmediateLane ||
         !binding.queueInitial.Valid() || binding.queueConditional.Valid() ||
         binding.variableSide.Valid() || binding.operation.group.sliceIndex != 1u ||
         memberIndex != 1u || programGeneration == 0 ||
@@ -3611,7 +3611,7 @@ TimelineArmOperationDisposition TimelineArmTable::BeginFrontierOperation(
     const bool transientControl = kind == TimelineArmOperationKind::TransientControl;
     if (row.parentGroup.Valid()) {
         const auto* admission = row.frontierAdmission;
-        Plan03PageGroupView prior{};
+        SchedulePageGroupView prior{};
         const bool initialAdmissionStart = admission != nullptr &&
             admission->role == FrontierGroupRole::EntryMember &&
             (static_cast<unsigned>(admission->variableSide.Valid()) +
@@ -3634,12 +3634,12 @@ TimelineArmOperationDisposition TimelineArmTable::BeginFrontierOperation(
                 (row.startFrame <= admission->operation.order.executeFrame || row.frontierOperation.Valid())) ||
             (transientControl && (!(row.frontierOperation.group == admission->operation.group) ||
                 row.frontierOperation.order.logicCommitSequence != operation.order.logicCommitSequence)) ||
-            !pool->ResolvePlan03GroupSliceRt(admission->operation.group, &prior) ||
+            !pool->ResolveScheduleGroupSliceRt(admission->operation.group, &prior) ||
             prior.frontier != admission || prior.lease != row.frontierAdmissionLease || prior.lease == nullptr ||
             prior.lease->Capture().state != AudioSliceState::SliceApplied ||
             (initialAdmissionStart && (prior.members == nullptr || row.memberIndex < prior.sourceControlCount ||
                 row.memberIndex >= prior.memberCount || !SameArm(prior.members[row.memberIndex], token))) ||
-            !pool->NotePlan03GroupReadRt(admission->operation.group, audioSequence))
+            !pool->NoteScheduleGroupReadRt(admission->operation.group, audioSequence))
             return reject(TimelineArmOperationDisposition::Stale);
     } else if (transientControl) {
         return reject(TimelineArmOperationDisposition::Ineligible);

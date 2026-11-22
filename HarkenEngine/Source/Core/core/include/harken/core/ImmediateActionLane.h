@@ -140,10 +140,10 @@ struct PlainAuthoredControlLayoutInput {
     std::uint64_t fadeStartFrame = 0;
 };
 
-using ImmediateLaneGroupRef = Plan03ImmediateLaneGroupDescriptor;
+using ImmediateLaneGroupRef = ScheduleImmediateLaneGroupDescriptor;
 
 struct ImmediateLaneDeclaredGroup {
-    Plan03GroupSliceIdentity identity{};
+    ScheduleGroupSliceIdentity identity{};
     std::uint64_t relativeFrame = 0;
     ImmediateLaneTimeDomain timeDomain = ImmediateLaneTimeDomain::RelativeToAnchor;
     std::uint64_t fixedFrame = 0;
@@ -157,8 +157,8 @@ enum class ImmediateLaneMemberKind : std::uint8_t {
 };
 
 struct ImmediateLaneMemberManifest {
-    Plan03GroupSliceIdentity group{};
-    Plan03GroupSliceIdentity relatedGroup{};
+    ScheduleGroupSliceIdentity group{};
+    ScheduleGroupSliceIdentity relatedGroup{};
     TimelineArmToken arm{};
     std::uint32_t eventOrdinal = UINT32_MAX;
     std::uint16_t eventSpanCount = 1;
@@ -184,7 +184,7 @@ struct ImmediateLanePrivateVariableControlEntryScope {
     std::uint32_t firstMember = UINT32_MAX;
     std::uint32_t memberCount = 0;
     const ImmediateLaneMemberManifest* members = nullptr;
-    std::array<Plan03GroupSliceInput, 3> groups{};
+    std::array<ScheduleGroupSliceInput, 3> groups{};
 };
 
 // Accepted factories remain owned by their original producers. Declaration
@@ -202,7 +202,7 @@ struct ImmediateLaneAcceptedPrivateEntryScope {
     std::uint32_t firstMember = UINT32_MAX;
     std::uint32_t memberCount = 0;
     const ImmediateLaneMemberManifest* members = nullptr;
-    std::array<Plan03GroupSliceIdentity, 3> outerGroups{};
+    std::array<ScheduleGroupSliceIdentity, 3> outerGroups{};
     const ImmediateLaneAcceptedPrivateGroup* groups = nullptr;
     std::uint32_t groupCount = 0;
 };
@@ -458,7 +458,7 @@ struct ImmediateLaneAttempt {
     bool conditionalProjectionCancelIssued = false;
     bool conditionalProjectionCancelled = false;
     bool conditionalProjectionReferencesReturned = false;
-    std::array<Plan03GroupSliceIdentity, 2> conditionalProjectionGroups{};
+    std::array<ScheduleGroupSliceIdentity, 2> conditionalProjectionGroups{};
     mutable std::atomic<std::uint64_t> conditionalProjectionAdmission{0};
     std::atomic<std::uint64_t> conditionalProjectionLastUse{0};
     bool capturedConditionalProjection = false;
@@ -736,7 +736,7 @@ public:
     std::uint32_t PrivatePinGroupCount(ImmediateLaneHandle handle) const noexcept;
     bool CapturePrivatePinGroup(ImmediateLaneHandle handle,
                                 std::uint32_t index,
-                                Plan03GroupSliceIdentity* out) const noexcept;
+                                ScheduleGroupSliceIdentity* out) const noexcept;
     // Logic producer observation after successful TryPlace and before Publish.
     // The complete installed event/group layout determines the horizon.
     bool CapturePrivatePlacedLastQuantum(ImmediateLaneHandle handle,
@@ -852,7 +852,7 @@ public:
     // Called before the first native C1 staging or claim, while its actual
     // capture is held. Current C0 and unrelated groups do not join Reset.
     bool BeforeConditionalProjectionNativeWrite(ImmediateLaneHandle handle,
-        const Plan03GroupSliceIdentity& group) const noexcept;
+        const ScheduleGroupSliceIdentity& group) const noexcept;
     // Borrows the actual installed reader only while the original capture is held.
     const TimelineArmReaderPin* CapturedArmReader(ImmediateLaneHandle handle,
         const ImmediateLaneBucket* bucket, std::uint32_t eventIndex) const noexcept;
@@ -870,7 +870,7 @@ public:
                               const ImmediateLaneBucket* bucket) const noexcept;
     bool ValidateGroupClaimReceipt(
         const ImmediateLaneBucketClaimReceipt& receipt,
-        const Plan03GroupSliceIdentity& group,
+        const ScheduleGroupSliceIdentity& group,
         std::uint32_t bucketOrdinal,
         std::uint32_t groupIndex) const noexcept;
     bool CapturePublishedGroupDescriptor(
@@ -880,7 +880,7 @@ public:
                                     std::uint32_t* out) const noexcept;
     bool ProvePrivateGroupPlacement(
         ImmediateLaneHandle handle,
-        const Plan03GroupSliceIdentity& group,
+        const ScheduleGroupSliceIdentity& group,
         std::uint32_t bucketOrdinal,
         std::uint32_t groupIndex) const noexcept;
     bool ReleaseCapture(std::uint32_t slot,
@@ -914,14 +914,14 @@ public:
                                         const ImmediateLaneBucket* bucket) const noexcept;
     bool FutureMember(std::uint32_t slot,
                       std::uint32_t attemptGeneration,
-                      const Plan03GroupSliceIdentity& group,
+                      const ScheduleGroupSliceIdentity& group,
                       std::uint16_t memberIndex,
                       TimelineArmToken arm,
                       const ImmediateLaneEvent** event,
                       std::uint16_t* eventSpanCount = nullptr) const noexcept;
     bool CaptureFrozenFutureTarget(ImmediateLaneHandle handle,
-                                  const Plan03GroupSliceIdentity& source,
-                                  const Plan03GroupSliceIdentity& target,
+                                  const ScheduleGroupSliceIdentity& source,
+                                  const ScheduleGroupSliceIdentity& target,
                                   ImmediateLaneMemberManifest* out,
                                   std::uint16_t memberIndex = UINT16_MAX) const noexcept;
     bool EntryApplied(std::uint32_t slot,
@@ -1029,7 +1029,7 @@ private:
         ImmediateLaneEvent* events = nullptr;
         ImmediateLaneGroupRef* groups = nullptr;
         ImmediateLaneDeclaredGroup* declaredGroups = nullptr;
-        Plan03GroupReaderPin* groupPins = nullptr;
+        ScheduleGroupReaderPin* groupPins = nullptr;
         EventState* eventState = nullptr;
         GroupState* groupState = nullptr;
         MemberState* memberState = nullptr;
@@ -1066,7 +1066,7 @@ private:
         std::uint64_t provisionalFrame = 0;
         std::uint32_t firstMember = UINT32_MAX;
         std::uint32_t memberCount = 0;
-        std::array<Plan03GroupSliceIdentity, 3> groups{};
+        std::array<ScheduleGroupSliceIdentity, 3> groups{};
         std::uint32_t firstOwnedGroup = UINT32_MAX;
         std::uint32_t ownedGroupCount = 0;
         ImmediateLanePrivateVariableControlEntryMapping mapping{};

@@ -59,7 +59,7 @@ struct FrontierTimelineFinalizer::Impl {
         bool resumed = false;
     };
     struct Group {
-        Plan03PageGroupView view{};
+        SchedulePageGroupView view{};
         FrontierDecisionApplyProof decisionProof;
         VariableControlInstanceTable::FrontierSideProof sideProof;
         QueueInstanceTable::FrontierInitialProof queueProof;
@@ -138,7 +138,7 @@ struct FrontierTimelineFinalizer::Impl {
     };
     struct PendingGroup {
         std::uint64_t work = 0;
-        Plan03GroupSliceIdentity identity{};
+        ScheduleGroupSliceIdentity identity{};
         TimelineExecutionOrder order{};
         const FrontierGroupBinding* original = nullptr;
     };
@@ -171,7 +171,7 @@ struct FrontierTimelineFinalizer::Impl {
     void (*queueFutureAppliedHook)(void*, std::uint16_t) = nullptr;
     void* queueFutureHookContext = nullptr;
     bool queueFutureBeforeBucketClaim = false;
-    Plan03GroupSliceIdentity queueLaneProbeGroup{};
+    ScheduleGroupSliceIdentity queueLaneProbeGroup{};
 
     Group* SelectedLaneQueueProbe(bool continuation) noexcept {
         if (!continuation || !laneMode || !queueLaneProbeGroup.Exact() ||
@@ -182,7 +182,7 @@ struct FrontierTimelineFinalizer::Impl {
             if (!(group.view.identity == queueLaneProbeGroup)) continue;
             const auto* binding = group.view.frontier;
             if (selected != nullptr || binding == nullptr ||
-                group.view.identity.backing != Plan03GroupBacking::ImmediateLane ||
+                group.view.identity.backing != ScheduleGroupBacking::ImmediateLane ||
                 (binding->role != FrontierGroupRole::EntryMember &&
                  !(binding->role == FrontierGroupRole::Future && group.initialQueueCompletion)) ||
                 binding->operation.order.executeFrame / frames != DueQuantum() ||
@@ -217,7 +217,7 @@ struct FrontierTimelineFinalizer::Impl {
     }
 
     static bool QueueFutureProbe(const Group& group) noexcept {
-        return !group.owner->laneMode && group.view.identity.backing == Plan03GroupBacking::Page &&
+        return !group.owner->laneMode && group.view.identity.backing == ScheduleGroupBacking::Page &&
             group.view.frontier != nullptr && group.view.frontier->role == FrontierGroupRole::Future &&
             group.view.frontier->queueConditional.Valid() && group.failure == FrontierReceiptReason::None;
     }
@@ -453,9 +453,9 @@ struct FrontierTimelineFinalizer::Impl {
         if (!laneSourceResumed || immediateLane == nullptr || pool == nullptr) return false;
         if (immediateLane->CapturedEntrySourceWait(immediateLaneSlot, immediateLaneBucket, binding.entry))
             return true;
-        Plan03PageGroupView primary{};
+        SchedulePageGroupView primary{};
         return binding.queueConditional.Valid() && binding.primary.Exact() &&
-            pool->ResolvePlan03GroupSliceRt(binding.primary, &primary) && primary.frontier != nullptr &&
+            pool->ResolveScheduleGroupSliceRt(binding.primary, &primary) && primary.frontier != nullptr &&
             primary.frontier->role == FrontierGroupRole::Coordinator &&
             primary.frontier->entry == binding.entry && primary.frontier->prerequisiteMember.Exact() &&
             immediateLane->CapturedEntrySourceWait(immediateLaneSlot, immediateLaneBucket,
@@ -489,8 +489,8 @@ struct FrontierTimelineFinalizer::Impl {
         if (local == UINT32_MAX) return true;
         const auto& eventGroup = groups[local];
         const auto& binding = *eventGroup.view.frontier;
-        Plan03PageGroupView actual{};
-        if (!pool->ResolvePlan03GroupSliceRt(eventGroup.view.identity, &actual) ||
+        SchedulePageGroupView actual{};
+        if (!pool->ResolveScheduleGroupSliceRt(eventGroup.view.identity, &actual) ||
             actual.frontier != &binding || actual.lease != eventGroup.view.lease ||
             actual.members != eventGroup.view.members || actual.memberCount != eventGroup.view.memberCount ||
             actual.sourceControlCount != eventGroup.view.sourceControlCount ||
@@ -621,7 +621,7 @@ struct FrontierTimelineFinalizer::Impl {
             const auto* program = event.program.program;
             const auto* payload = program != nullptr && program->payloads != nullptr &&
                 event.payload < program->payloadCount ? &program->payloads[event.payload] : nullptr;
-            Plan03PageGroupView group{};
+            SchedulePageGroupView group{};
             if (original.armProgramGeneration == 0u ||
                 payload == nullptr || program->role != TimelineProgramRole::Voice ||
                 program->generation != event.program.programGeneration ||
@@ -642,7 +642,7 @@ struct FrontierTimelineFinalizer::Impl {
                 continue;
             }
             if (!event.frontier.Valid() || event.frontier.kind != FrontierOperationKind::Dependent ||
-                !pool->ResolvePlan03GroupSliceRt(event.frontier.group, &group) ||
+                !pool->ResolveScheduleGroupSliceRt(event.frontier.group, &group) ||
                 group.frontier == nullptr || group.lease == nullptr || group.members == nullptr ||
                 group.frontier->role != FrontierGroupRole::EntryMember ||
                 !(group.frontier->operation.group == group.identity) ||
@@ -740,9 +740,9 @@ struct FrontierTimelineFinalizer::Impl {
         if (!binding.prerequisite.Valid())
             return binding.prerequisiteMember.Valid() ? VariableReadCutStatus::Failed : VariableReadCutStatus::Applied;
         if (laneMode || binding.role != FrontierGroupRole::Coordinator ||
-            child.view.identity.backing != Plan03GroupBacking::Page ||
+            child.view.identity.backing != ScheduleGroupBacking::Page ||
             !binding.prerequisiteMember.Exact() ||
-            binding.prerequisiteMember.backing != Plan03GroupBacking::Page || pool == nullptr)
+            binding.prerequisiteMember.backing != ScheduleGroupBacking::Page || pool == nullptr)
             return VariableReadCutStatus::Failed;
         if (binding.appliedPrerequisite != nullptr) {
             const bool applied = decisions != nullptr &&
@@ -752,13 +752,13 @@ struct FrontierTimelineFinalizer::Impl {
             return applied ? VariableReadCutStatus::Applied : VariableReadCutStatus::Failed;
         }
         const auto* activation = decisions->ResolveFrontierActivation(binding.prerequisite.coordinator);
-        Plan03PageGroupView primary{}, signal{};
+        SchedulePageGroupView primary{}, signal{};
         if (binding.prerequisiteKind == FrontierEntryPrerequisiteKind::SourceCohortChild) {
             if (activation == nullptr || !activation->Descriptor().sourceCohort ||
-                !pool->ResolvePlan03GroupSliceRt(activation->Descriptor().primary, &primary) ||
-                !pool->ResolvePlan03GroupSliceRt(binding.prerequisiteMember, &signal) ||
-                !pool->NotePlan03GroupReadRt(primary.identity, quantum + 1u) ||
-                !pool->NotePlan03GroupReadRt(signal.identity, quantum + 1u) ||
+                !pool->ResolveScheduleGroupSliceRt(activation->Descriptor().primary, &primary) ||
+                !pool->ResolveScheduleGroupSliceRt(binding.prerequisiteMember, &signal) ||
+                !pool->NoteScheduleGroupReadRt(primary.identity, quantum + 1u) ||
+                !pool->NoteScheduleGroupReadRt(signal.identity, quantum + 1u) ||
                 primary.frontier == nullptr || signal.frontier == nullptr ||
                 primary.lease == nullptr || signal.lease == nullptr ||
                 !decisions->ValidateSourceCohortPrerequisite(binding, *primary.frontier, *signal.frontier))
@@ -779,10 +779,10 @@ struct FrontierTimelineFinalizer::Impl {
                 ? VariableReadCutStatus::Applied : VariableReadCutStatus::Failed;
         }
         if (activation == nullptr || !(activation->Descriptor().entry == binding.prerequisite) ||
-            !pool->ResolvePlan03GroupSliceRt(activation->Descriptor().primary, &primary) ||
-            !pool->ResolvePlan03GroupSliceRt(binding.prerequisiteMember, &signal) ||
-            !pool->NotePlan03GroupReadRt(primary.identity, quantum + 1u) ||
-            !pool->NotePlan03GroupReadRt(signal.identity, quantum + 1u) ||
+            !pool->ResolveScheduleGroupSliceRt(activation->Descriptor().primary, &primary) ||
+            !pool->ResolveScheduleGroupSliceRt(binding.prerequisiteMember, &signal) ||
+            !pool->NoteScheduleGroupReadRt(primary.identity, quantum + 1u) ||
+            !pool->NoteScheduleGroupReadRt(signal.identity, quantum + 1u) ||
             primary.frontier == nullptr || signal.frontier == nullptr ||
             primary.lease == nullptr || signal.lease != primary.lease ||
             primary.frontier->role != FrontierGroupRole::Coordinator ||
@@ -1123,8 +1123,8 @@ struct FrontierTimelineFinalizer::Impl {
                 const auto& pending = pendingGroups[i];
                 if (pending.work != work) continue;
                 ++groupTotal;
-                Plan03PageGroupView view{};
-                valid = pool->ResolvePlan03GroupSliceRt(pending.identity, &view) &&
+                SchedulePageGroupView view{};
+                valid = pool->ResolveScheduleGroupSliceRt(pending.identity, &view) &&
                     view.frontier == pending.original && view.frontier != nullptr &&
                     view.frontier->operation.order == pending.order && valid;
             }
@@ -1151,14 +1151,14 @@ struct FrontierTimelineFinalizer::Impl {
             if (!valid) { RemovePending(work); continue; }
             if (eventTotal > events.ConstructedCount() - eventCount ||
                 eventTotal > pool->MaxEventsPerQuantum() - eventCount ||
-                groupTotal > pool->MaxPlan03GroupHeadersPerPage() - groupCount) break;
+                groupTotal > pool->MaxScheduleGroupHeadersPerPage() - groupCount) break;
             const auto originalGroupCount = groupCount;
             for (std::uint32_t i = 0; i < pendingGroupCount; ++i) {
                 const auto& pending = pendingGroups[i];
                 if (pending.work != work) continue;
-                Plan03PageGroupView view{};
-                if (!pool->ResolvePlan03GroupSliceRt(pending.identity, &view) ||
-                    !pool->NotePlan03GroupReadRt(pending.identity, quantum + 1u)) { valid = false; break; }
+                SchedulePageGroupView view{};
+                if (!pool->ResolveScheduleGroupSliceRt(pending.identity, &view) ||
+                    !pool->NoteScheduleGroupReadRt(pending.identity, quantum + 1u)) { valid = false; break; }
                 auto& group = groups[groupCount];
                 group.view = view;
                 group.owner = this;
@@ -1202,7 +1202,7 @@ struct FrontierTimelineFinalizer::Impl {
         return false;
     }
 
-    std::uint32_t FindGroup(const Plan03GroupSliceIdentity& identity) const noexcept {
+    std::uint32_t FindGroup(const ScheduleGroupSliceIdentity& identity) const noexcept {
         for (std::uint32_t i = 0; i < groupCount; ++i)
             if (groups[i].view.identity == identity) return i;
         return UINT32_MAX;
@@ -1383,9 +1383,9 @@ struct FrontierTimelineFinalizer::Impl {
     bool InitialMediaWaitAllowed(const ConsumedEvent& event) const noexcept {
         if (decisions == nullptr || pool == nullptr || !event.frontier.Valid() ||
             event.frontier.kind != FrontierOperationKind::Entry) return false;
-        Plan03PageGroupView member{};
+        SchedulePageGroupView member{};
         if (!event.frontier.group.Exact() ||
-            !pool->ResolvePlan03GroupSliceRt(event.frontier.group, &member) || member.frontier == nullptr)
+            !pool->ResolveScheduleGroupSliceRt(event.frontier.group, &member) || member.frontier == nullptr)
             return false;
         const auto& binding = *member.frontier;
         if ((binding.role != FrontierGroupRole::Coordinator && binding.role != FrontierGroupRole::EntryMember) ||
@@ -1740,7 +1740,7 @@ struct FrontierTimelineFinalizer::Impl {
         else queues->ApplyFrontierConditional(member.conditionalProof);
     }
 
-    std::uint32_t ConditionalTargetEventCount(const Plan03PageGroupView& view,
+    std::uint32_t ConditionalTargetEventCount(const SchedulePageGroupView& view,
         const ImmediateActionLane& lane, std::uint32_t slot, std::uint32_t generation) const noexcept {
         if (view.members == nullptr || view.sourceControlCount >= view.memberCount) return 0;
         std::uint32_t count = 0;
@@ -1754,10 +1754,10 @@ struct FrontierTimelineFinalizer::Impl {
         return count;
     }
 
-    bool HasConditionalTargetSpans(const Plan03PageGroupView& view,
+    bool HasConditionalTargetSpans(const SchedulePageGroupView& view,
         const ImmediateActionLane& lane, std::uint32_t slot, std::uint32_t generation) const noexcept {
         if (view.frontier == nullptr || view.members == nullptr || view.memberCount == 0u ||
-            view.sourceControlCount != 0u || view.identity.backing != Plan03GroupBacking::ImmediateLane)
+            view.sourceControlCount != 0u || view.identity.backing != ScheduleGroupBacking::ImmediateLane)
             return false;
         const auto& binding = *view.frontier;
         DecisionCommittedSnapshot decision{};
@@ -1783,10 +1783,10 @@ struct FrontierTimelineFinalizer::Impl {
         return true;
     }
 
-    std::uint16_t InitialQueueTargetEventCount(const Plan03PageGroupView& view,
+    std::uint16_t InitialQueueTargetEventCount(const SchedulePageGroupView& view,
         const ImmediateActionLane& lane, std::uint32_t slot, std::uint32_t generation) const noexcept {
         if (view.frontier == nullptr || view.members == nullptr || view.memberCount != 2u ||
-            view.sourceControlCount != 1u || view.identity.backing != Plan03GroupBacking::ImmediateLane ||
+            view.sourceControlCount != 1u || view.identity.backing != ScheduleGroupBacking::ImmediateLane ||
             view.identity.sliceIndex != 1u) return 0;
         const auto& binding = *view.frontier;
         if (binding.role != FrontierGroupRole::Future || !binding.queueInitial.Valid() ||
@@ -1799,19 +1799,19 @@ struct FrontierTimelineFinalizer::Impl {
         return span;
     }
 
-    bool LaneQueueCompletionShape(const Plan03PageGroupView& view,
+    bool LaneQueueCompletionShape(const SchedulePageGroupView& view,
         const ImmediateActionLane& lane, const ImmediateLaneBucket* bucket,
         std::uint32_t slot, std::uint32_t generation,
         std::uint32_t* targetMembers, std::uint32_t* targetEvents) const noexcept {
         if (view.frontier == nullptr || view.lease == nullptr || frames == 0u || bucket == nullptr ||
             view.frontier->role != FrontierGroupRole::Future || view.identity.sliceIndex != 1u ||
-            view.identity.backing != Plan03GroupBacking::ImmediateLane ||
+            view.identity.backing != ScheduleGroupBacking::ImmediateLane ||
             view.frontier->operation.kind != FrontierOperationKind::Dependent ||
             view.frontier->operation.group != view.identity ||
             view.frontier->operation.order.executeFrame / frames != DueQuantum()) return false;
         std::uint32_t expectedEvents = InitialQueueTargetEventCount(view, lane, slot, generation);
         if (expectedEvents == 0u) {
-            Plan03PageGroupView target{};
+            SchedulePageGroupView target{};
             if (!HasConditionalNaturalSpans(view, lane, slot, generation, nullptr, &target) ||
                 target.identity != view.identity) return false;
             expectedEvents = ConditionalTargetEventCount(view, lane, slot, generation);
@@ -1949,15 +1949,15 @@ struct FrontierTimelineFinalizer::Impl {
         return matchedEvents == targetEvents;
     }
 
-    bool HasConditionalNaturalSpans(const Plan03PageGroupView& view,
+    bool HasConditionalNaturalSpans(const SchedulePageGroupView& view,
         const ImmediateActionLane& lane, std::uint32_t slot, std::uint32_t generation,
-        Plan03PageGroupView* sourceOut = nullptr, Plan03PageGroupView* targetOut = nullptr) const noexcept {
+        SchedulePageGroupView* sourceOut = nullptr, SchedulePageGroupView* targetOut = nullptr) const noexcept {
         if (pool == nullptr || decisions == nullptr || view.frontier == nullptr || view.lease == nullptr ||
             view.members == nullptr || view.memberCount < 2u || view.sourceControlCount != 1u ||
-            view.identity.backing != Plan03GroupBacking::ImmediateLane ||
+            view.identity.backing != ScheduleGroupBacking::ImmediateLane ||
             !view.frontier->queueConditional.Valid() || !view.frontier->transition.Valid() ||
             view.frontier->queueInitial.Valid() || view.frontier->variableSide.Valid()) return false;
-        Plan03PageGroupView source{}, target{};
+        SchedulePageGroupView source{}, target{};
         std::uint32_t published = 0, sourceCount = 0, targetCount = 0;
         if (!lane.CapturePublishedGroupCount({slot, generation}, &published)) return false;
         for (std::uint32_t index = 0; index < published; ++index) {
@@ -1967,10 +1967,10 @@ struct FrontierTimelineFinalizer::Impl {
                 descriptor.identity.decision.generation != view.identity.decision.generation) continue;
             if (descriptor.identity.sliceIndex == 0u) {
                 ++sourceCount;
-                if (!pool->ResolvePlan03GroupSliceRt(descriptor.identity, &source)) return false;
+                if (!pool->ResolveScheduleGroupSliceRt(descriptor.identity, &source)) return false;
             } else if (descriptor.identity.sliceIndex == 1u) {
                 ++targetCount;
-                if (!pool->ResolvePlan03GroupSliceRt(descriptor.identity, &target)) return false;
+                if (!pool->ResolveScheduleGroupSliceRt(descriptor.identity, &target)) return false;
             } else return false;
         }
         if (sourceCount != 1u || targetCount != 1u || source.frontier == nullptr || target.frontier == nullptr ||
@@ -2174,7 +2174,7 @@ struct FrontierTimelineFinalizer::Impl {
             }
             if (laneMode && queue && decision.sliceCount == 2) {
                 if (binding.variableSide.Valid() || binding.queueConditional.Valid() ||
-                    member.view.identity.backing != Plan03GroupBacking::ImmediateLane ||
+                    member.view.identity.backing != ScheduleGroupBacking::ImmediateLane ||
                     member.view.memberCount != 2u || member.view.sourceControlCount != 1u)
                     return false;
                 member.initialQueuePrelude = binding.role == FrontierGroupRole::EntryMember &&
@@ -2327,7 +2327,7 @@ struct FrontierTimelineFinalizer::Impl {
             std::uint32_t publishedCount = 0;
             if (!immediateLane->CapturePublishedGroupCount(
                     {immediateLaneSlot, immediateLaneGeneration}, &publishedCount)) return false;
-            Plan03PageGroupView source{};
+            SchedulePageGroupView source{};
             std::uint32_t matches = 0;
             for (std::uint32_t index = 0; index < publishedCount; ++index) {
                 ImmediateLaneGroupRef descriptor{};
@@ -2341,13 +2341,13 @@ struct FrontierTimelineFinalizer::Impl {
                 if (!immediateLane->CaptureFrozenFutureTarget(
                         {immediateLaneSlot, immediateLaneGeneration}, descriptor.identity,
                         member.view.identity, &manifest) ||
-                    !pool->ResolvePlan03GroupSliceRt(descriptor.identity, &source) ||
+                    !pool->ResolveScheduleGroupSliceRt(descriptor.identity, &source) ||
                     source.memberCount != member.view.memberCount ||
                     source.sourceControlCount != member.view.sourceControlCount ||
                     !SameArm(source.members[0], member.view.members[0]) ||
                     !SameArm(source.members[1], member.view.members[1]) ||
                     !SameArm(manifest.arm, member.view.members[1]) ||
-                    !pool->NotePlan03GroupReadRt(descriptor.identity, quantum + 1u)) return false;
+                    !pool->NoteScheduleGroupReadRt(descriptor.identity, quantum + 1u)) return false;
             }
             const auto sourceWait = SourceWaitContext();
             QueueConditionalProof completion{};
@@ -2372,12 +2372,12 @@ struct FrontierTimelineFinalizer::Impl {
             return true;
         }
         if (member.conditionalQueueCompletion) {
-            Plan03PageGroupView source{};
+            SchedulePageGroupView source{};
             TimelineArmObservation historical{};
             if (decision.consumedSlices != 1u || decision.lastAudioSequence == 0u || decision.lastAudioSequence > quantum ||
                 !HasConditionalNaturalSpans(member.view, *immediateLane, immediateLaneSlot, immediateLaneGeneration, &source) ||
                 source.lease->Capture().state != AudioSliceState::SliceApplied ||
-                !pool->NotePlan03GroupReadRt(source.identity, quantum + 1u) ||
+                !pool->NoteScheduleGroupReadRt(source.identity, quantum + 1u) ||
                 !arms.Observe(member.view.members[0], &historical))
                 return false;
             if (historical.state == ArmState::Tombstoned) {
@@ -2480,7 +2480,7 @@ struct FrontierTimelineFinalizer::Impl {
     }
 
     bool ProveFrozenQueueChild(const Group& parent, const Group& side,
-        const ImmediateLaneGroupRef& controlGroup, const Plan03PageGroupView& controlView,
+        const ImmediateLaneGroupRef& controlGroup, const SchedulePageGroupView& controlView,
         std::uint32_t publishedCount) noexcept {
         const auto& control = *controlView.frontier;
         const auto& prerequisite = *side.view.frontier;
@@ -2522,7 +2522,7 @@ struct FrontierTimelineFinalizer::Impl {
             descriptor.primary.transportEpoch != control.operation.transport ||
             descriptor.expectedMemberCount != 1u || descriptor.expectedEntryEventCount != 2u)
             return false;
-        Plan03PageGroupView source{}, target{};
+        SchedulePageGroupView source{}, target{};
         std::uint32_t controls = 0, sources = 0, targets = 0, sideParticipants = 0;
         for (std::uint32_t index = 0; index < parent.activation->Descriptor().expectedMemberCount; ++index)
             sideParticipants += participants[index].kind == DecisionParticipantKind::Subdecision &&
@@ -2532,9 +2532,9 @@ struct FrontierTimelineFinalizer::Impl {
         const ImmediateLaneHandle lane{immediateLaneSlot, immediateLaneGeneration};
         for (std::uint32_t index = 0; index < publishedCount; ++index) {
             ImmediateLaneGroupRef declaration{};
-            Plan03PageGroupView view{};
+            SchedulePageGroupView view{};
             if (!immediateLane->CapturePublishedGroupDescriptor(lane, index, &declaration) ||
-                !pool->ResolvePlan03GroupSliceRt(declaration.identity, &view) ||
+                !pool->ResolveScheduleGroupSliceRt(declaration.identity, &view) ||
                 view.frontier == nullptr) return false;
             const auto& binding = *view.frontier;
             if (!(binding.entry == control.entry)) continue;
@@ -2554,7 +2554,7 @@ struct FrontierTimelineFinalizer::Impl {
             if (!binding.queueInitial.Valid() || binding.variableSide.Valid() ||
                 binding.queueConditional.Valid() || !binding.transition.Valid() ||
                 binding.operation.kind != FrontierOperationKind::Dependent ||
-                declaration.identity.backing != Plan03GroupBacking::ImmediateLane ||
+                declaration.identity.backing != ScheduleGroupBacking::ImmediateLane ||
                 view.memberCount != 2u || view.sourceControlCount != 1u || view.members == nullptr ||
                 binding.operation.order < descriptor.order) return false;
             if (binding.role == FrontierGroupRole::EntryMember) {
@@ -2694,10 +2694,10 @@ struct FrontierTimelineFinalizer::Impl {
                 for (std::uint32_t published = 0; published < publishedCount;
                      ++published) {
                     ImmediateLaneGroupRef declaredGroup{};
-                    Plan03PageGroupView declaredView{};
+                    SchedulePageGroupView declaredView{};
                     if (!immediateLane->CapturePublishedGroupDescriptor(
                             laneHandle, published, &declaredGroup) ||
-                        !pool->ResolvePlan03GroupSliceRt(
+                        !pool->ResolveScheduleGroupSliceRt(
                             declaredGroup.identity, &declaredView) ||
                         declaredView.frontier == nullptr) {
                         group.failure = FrontierReceiptReason::Identity;
@@ -2734,10 +2734,10 @@ struct FrontierTimelineFinalizer::Impl {
                         for (std::uint32_t candidate = 0;
                              candidate < publishedCount; ++candidate) {
                             ImmediateLaneGroupRef dependentGroup{};
-                            Plan03PageGroupView dependentView{};
+                            SchedulePageGroupView dependentView{};
                             if (!immediateLane->CapturePublishedGroupDescriptor(
                                     laneHandle, candidate, &dependentGroup) ||
-                                !pool->ResolvePlan03GroupSliceRt(
+                                !pool->ResolveScheduleGroupSliceRt(
                                     dependentGroup.identity, &dependentView) ||
                                 dependentView.frontier == nullptr) {
                                 group.failure = FrontierReceiptReason::Identity;
@@ -2789,15 +2789,15 @@ struct FrontierTimelineFinalizer::Impl {
                             declaredActivation->Descriptor().expectedMemberCount != 1u ||
                             (declaredActivation->Descriptor().expectedEntryEventCount != 1u &&
                              !([&]() noexcept {
-                                 Plan03PageGroupView target{};
-                                 return pool->ResolvePlan03GroupSliceRt(dependentDeclaration.identity, &target) &&
+                                 SchedulePageGroupView target{};
+                                 return pool->ResolveScheduleGroupSliceRt(dependentDeclaration.identity, &target) &&
                                      HasConditionalTargetSpans(target, *immediateLane, immediateLaneSlot, immediateLaneGeneration) &&
                                      declaredActivation->Descriptor().expectedEntryEventCount == 1u +
                                          ConditionalTargetEventCount(target, *immediateLane, immediateLaneSlot, immediateLaneGeneration);
                              })() &&
                              !([&]() noexcept {
-                                 Plan03PageGroupView prelude{};
-                                 return pool->ResolvePlan03GroupSliceRt(dependentDeclaration.identity, &prelude) &&
+                                 SchedulePageGroupView prelude{};
+                                 return pool->ResolveScheduleGroupSliceRt(dependentDeclaration.identity, &prelude) &&
                                      HasConditionalNaturalSpans(prelude, *immediateLane, immediateLaneSlot, immediateLaneGeneration) &&
                                      declaredActivation->Descriptor().expectedEntryEventCount == 2u;
                              })()) ||
@@ -2867,10 +2867,10 @@ struct FrontierTimelineFinalizer::Impl {
                     for (std::uint32_t candidate = 0;
                          candidate < publishedCount; ++candidate) {
                         ImmediateLaneGroupRef coordinatorGroup{};
-                        Plan03PageGroupView coordinatorView{};
+                        SchedulePageGroupView coordinatorView{};
                         if (!immediateLane->CapturePublishedGroupDescriptor(
                                 laneHandle, candidate, &coordinatorGroup) ||
-                            !pool->ResolvePlan03GroupSliceRt(
+                            !pool->ResolveScheduleGroupSliceRt(
                                 coordinatorGroup.identity,
                                 &coordinatorView) ||
                             coordinatorView.frontier == nullptr) {
@@ -2896,8 +2896,8 @@ struct FrontierTimelineFinalizer::Impl {
                         group.failure = FrontierReceiptReason::Identity;
                         continue;
                     }
-                    Plan03PageGroupView member{};
-                    if (!pool->ResolvePlan03GroupSliceRt(declaredGroup.identity, &member) ||
+                    SchedulePageGroupView member{};
+                    if (!pool->ResolveScheduleGroupSliceRt(declaredGroup.identity, &member) ||
                         member.frontier == nullptr) {
                         group.failure = FrontierReceiptReason::MissingMember;
                         continue;
@@ -2963,14 +2963,14 @@ struct FrontierTimelineFinalizer::Impl {
                         for (std::uint32_t candidate = 0;
                              candidate < publishedCount; ++candidate) {
                             ImmediateLaneGroupRef sideGroup{};
-                            Plan03PageGroupView sideView{};
+                            SchedulePageGroupView sideView{};
                             if (!immediateLane->CapturePublishedGroupDescriptor(
                                     laneHandle, candidate, &sideGroup) ||
                                 !(sideGroup.identity ==
                                     descendant.selectedSideMember.Expand()) ||
                                 sideGroup.dueQuantum !=
                                     declaredGroup.dueQuantum ||
-                                !pool->ResolvePlan03GroupSliceRt(
+                                !pool->ResolveScheduleGroupSliceRt(
                                     sideGroup.identity, &sideView) ||
                                 sideView.frontier == nullptr ||
                                 sideView.lease == nullptr) continue;
@@ -3005,10 +3005,10 @@ struct FrontierTimelineFinalizer::Impl {
                         for (std::uint32_t candidate = 0;
                              candidate < publishedCount; ++candidate) {
                             ImmediateLaneGroupRef nextGroup{};
-                            Plan03PageGroupView nextView{};
+                            SchedulePageGroupView nextView{};
                             if (!immediateLane->CapturePublishedGroupDescriptor(
                                     laneHandle, candidate, &nextGroup) ||
-                                !pool->ResolvePlan03GroupSliceRt(
+                                !pool->ResolveScheduleGroupSliceRt(
                                     nextGroup.identity, &nextView) ||
                                 nextView.frontier == nullptr) continue;
                             const auto& next = *nextView.frontier;
@@ -3028,11 +3028,11 @@ struct FrontierTimelineFinalizer::Impl {
                                      conditionalIndex < publishedCount;
                                      ++conditionalIndex) {
                                     ImmediateLaneGroupRef conditionalGroup{};
-                                    Plan03PageGroupView conditionalView{};
+                                    SchedulePageGroupView conditionalView{};
                                     if (!immediateLane->CapturePublishedGroupDescriptor(
                                             laneHandle, conditionalIndex,
                                             &conditionalGroup) ||
-                                        !pool->ResolvePlan03GroupSliceRt(
+                                        !pool->ResolveScheduleGroupSliceRt(
                                             conditionalGroup.identity,
                                             &conditionalView) ||
                                         conditionalView.frontier == nullptr)
@@ -3097,9 +3097,9 @@ struct FrontierTimelineFinalizer::Impl {
                     std::uint32_t successors = 0;
                     for (std::uint32_t published = 0; published < publishedCount; ++published) {
                         ImmediateLaneGroupRef declaredGroup{};
-                        Plan03PageGroupView declaredView{};
+                        SchedulePageGroupView declaredView{};
                         if (!immediateLane->CapturePublishedGroupDescriptor(laneHandle, published, &declaredGroup) ||
-                            !pool->ResolvePlan03GroupSliceRt(declaredGroup.identity, &declaredView) ||
+                            !pool->ResolveScheduleGroupSliceRt(declaredGroup.identity, &declaredView) ||
                             declaredView.frontier == nullptr) {
                             group.failure = FrontierReceiptReason::Identity;
                             continue;
@@ -3526,7 +3526,7 @@ void FrontierTimelineFinalizer::SetQueueFutureSliceHooksForTest(
     impl_->queueFutureBeforeBucketClaim = beforeBucketClaim;
 }
 
-void FrontierTimelineFinalizer::SetQueueLaneProbeGroupForTest(Plan03GroupSliceIdentity group) noexcept {
+void FrontierTimelineFinalizer::SetQueueLaneProbeGroupForTest(ScheduleGroupSliceIdentity group) noexcept {
     impl_->queueLaneProbeGroup = group;
 }
 
@@ -3536,12 +3536,12 @@ bool FrontierTimelineFinalizer::Attach(DecisionTable& decisions,
     const ScheduledTransactionPool& pool, bool laneOnly) {
     const auto eventCapacity = static_cast<std::uint64_t>(pool.MaxEventsPerQuantum()) *
         (laneOnly ? 1u : 2u);
-    const auto groupCapacity = static_cast<std::uint64_t>(pool.MaxPlan03GroupHeadersPerPage()) *
+    const auto groupCapacity = static_cast<std::uint64_t>(pool.MaxScheduleGroupHeadersPerPage()) *
         (laneOnly ? 1u : 2u);
     const auto pendingEventCapacity = laneOnly ? 0ull :
         static_cast<std::uint64_t>(pool.MaxScheduledTransactions()) * pool.MaxTransactionEvents();
     const auto pendingGroupCapacity = laneOnly ? 0ull :
-        static_cast<std::uint64_t>(pool.PageCount()) * pool.MaxPlan03GroupHeadersPerPage();
+        static_cast<std::uint64_t>(pool.PageCount()) * pool.MaxScheduleGroupHeadersPerPage();
     if (!decisions.Valid() || !pool.Valid() || eventCapacity == 0 || groupCapacity == 0 ||
         eventCapacity + groupCapacity > UINT32_MAX || eventCapacity > SIZE_MAX / sizeof(Impl::Event) ||
         groupCapacity > SIZE_MAX / sizeof(Impl::Group) ||
@@ -3760,9 +3760,9 @@ VariableReadCutStatus FrontierTimelineFinalizer::LaneEventTimingStatus(const Con
     if (!self.laneSourceResumed || !event.frontier.Present()) return VariableReadCutStatus::Applied;
     if (self.decisions == nullptr || self.pool == nullptr || !event.frontier.Valid() || self.frames == 0 ||
         self.quantum >= UINT64_MAX / self.frames) return VariableReadCutStatus::Failed;
-    Plan03PageGroupView group{};
+    SchedulePageGroupView group{};
     if (event.frontier.group.Valid() &&
-        (!self.pool->ResolvePlan03GroupSliceRt(event.frontier.group, &group) || group.frontier == nullptr ||
+        (!self.pool->ResolveScheduleGroupSliceRt(event.frontier.group, &group) || group.frontier == nullptr ||
          !(group.frontier->entry == event.frontier.entry))) return VariableReadCutStatus::Failed;
     const bool retained = self.immediateLane->CapturedEntrySourceWait(self.immediateLaneSlot,
         self.immediateLaneBucket, event.frontier.entry);
@@ -3806,13 +3806,13 @@ VariableReadCutStatus FrontierTimelineFinalizer::LaneEventTimingStatus(const Con
     return effective >= self.quantum * self.frames ? VariableReadCutStatus::Applied : VariableReadCutStatus::Failed;
 }
 
-bool FrontierTimelineFinalizer::CollectGroup(const Plan03PageGroupView& group) noexcept {
+bool FrontierTimelineFinalizer::CollectGroup(const SchedulePageGroupView& group) noexcept {
     auto& self = *impl_;
     if (self.pool == nullptr || group.frontier == nullptr || !group.frontier->Valid() ||
         !(group.frontier->operation.group == group.identity) || group.lease == nullptr) return false;
     if (self.FindGroup(group.identity) != UINT32_MAX) return true;
     if (self.groupCount == self.groupCapacity) return false;
-    if (!self.pool->NotePlan03GroupReadRt(group.identity, self.quantum + 1u)) return false;
+    if (!self.pool->NoteScheduleGroupReadRt(group.identity, self.quantum + 1u)) return false;
     auto& target = self.groups[self.groupCount];
     target.view = group;
     target.owner = &self;
@@ -3833,9 +3833,9 @@ bool FrontierTimelineFinalizer::PendingBindingValid(const ConsumedEvent& event,
         &event.program.program->payloads[event.payload] != &payload ||
         payload.kind != TimelineEventKind::Start) return false;
     const auto* arm = self.arms.Resolve(event.armToken);
-    Plan03PageGroupView member{};
+    SchedulePageGroupView member{};
     if (arm == nullptr || arm->frontierAdmission == nullptr ||
-        !self.pool->ResolvePlan03GroupSliceRt(arm->frontierAdmission->operation.group, &member) ||
+        !self.pool->ResolveScheduleGroupSliceRt(arm->frontierAdmission->operation.group, &member) ||
         member.frontier != arm->frontierAdmission) return false;
     const auto& binding = *member.frontier;
     const auto* activation = self.decisions->ResolveFrontierActivation(binding.entry.coordinator);
@@ -4034,11 +4034,11 @@ bool FrontierTimelineFinalizer::RejectLaneBucket(
     for (std::uint32_t index = 0; index < bucket->groupCount; ++index) {
         if (!lane.IsGroupAdmitted(laneSlot, bucket, bucket->firstGroup + index)) continue;
         const auto& original = declared[index];
-        Plan03PageGroupView view{};
+        SchedulePageGroupView view{};
         if (original.laneSlot != laneSlot || original.laneGeneration != laneGeneration ||
             original.dueQuantum != bucket->quantum ||
             original.groupIndex != bucket->firstGroup + index ||
-            !self.pool->ResolvePlan03GroupSliceRt(original.identity, &view) ||
+            !self.pool->ResolveScheduleGroupSliceRt(original.identity, &view) ||
             view.frontier == nullptr || view.lease == nullptr ||
             !self.pool->ProveImmediateLaneGroupBeforeClaim(
                 original.identity, view.lease, lane, handle, bucket)) return false;
@@ -4076,19 +4076,19 @@ bool FrontierTimelineFinalizer::RejectLaneBucket(
     for (std::uint32_t index = 0; index < bucket->groupCount; ++index) {
         if (!lane.IsGroupAdmitted(laneSlot, bucket, bucket->firstGroup + index)) continue;
         if (!lane.BeforeConditionalProjectionNativeWrite(handle, declared[index].identity) ||
-            !self.pool->NotePlan03GroupReadRt(declared[index].identity, sequence)) return false;
+            !self.pool->NoteScheduleGroupReadRt(declared[index].identity, sequence)) return false;
     }
     for (std::uint32_t index = 0; index < bucket->groupCount; ++index) {
         if (!lane.IsGroupAdmitted(laneSlot, bucket, bucket->firstGroup + index)) continue;
-        Plan03PageGroupView view{};
-        if (!self.pool->ResolvePlan03GroupSliceRt(declared[index].identity, &view)) return false;
+        SchedulePageGroupView view{};
+        if (!self.pool->ResolveScheduleGroupSliceRt(declared[index].identity, &view)) return false;
         (void)view.lease->Invalidate(AudioSliceInvalidateReason::Cancel);
     }
     // Refusal publishes no execution proof and cannot turn malformed members into work.
     for (std::uint32_t index = 0; index < bucket->groupCount; ++index) {
         if (!lane.IsGroupAdmitted(laneSlot, bucket, bucket->firstGroup + index)) continue;
-        Plan03PageGroupView view{};
-        if (!self.pool->ResolvePlan03GroupSliceRt(declared[index].identity, &view)) return false;
+        SchedulePageGroupView view{};
+        if (!self.pool->ResolveScheduleGroupSliceRt(declared[index].identity, &view)) return false;
         const auto& binding = *view.frontier;
         if (binding.role != FrontierGroupRole::Coordinator) continue;
         auto* activation = self.decisions->ResolveFrontierActivation(binding.entry.coordinator);
@@ -4124,8 +4124,8 @@ bool FrontierTimelineFinalizer::FinishLaneContinuationBucket(
             laneGeneration, &localEvents, &localMembers)) return false;
     for (std::uint32_t index = 0; index < self.groupCount; ++index) {
         const auto& observed = self.groups[index].view;
-        Plan03PageGroupView original{};
-        if (!self.pool->ResolvePlan03GroupSliceRt(observed.identity, &original) ||
+        SchedulePageGroupView original{};
+        if (!self.pool->ResolveScheduleGroupSliceRt(observed.identity, &original) ||
             observed.frontier != original.frontier || observed.lease != original.lease ||
             observed.members != original.members || observed.memberCount != original.memberCount ||
             observed.sourceControlCount != original.sourceControlCount) return false;
@@ -4198,8 +4198,8 @@ bool FrontierTimelineFinalizer::FinishLaneContinuationBucket(
                 source.operation.world != control.operation.world ||
                 source.operation.transport != control.operation.transport)
                 return false;
-            Plan03PageGroupView initial{};
-            if (!self.pool->ResolvePlan03GroupSliceRt(
+            SchedulePageGroupView initial{};
+            if (!self.pool->ResolveScheduleGroupSliceRt(
                     control.prerequisiteMember, &initial) ||
                 initial.frontier == nullptr || initial.lease == nullptr ||
                 initial.lease->Capture().state != AudioSliceState::SliceApplied ||
@@ -4274,7 +4274,7 @@ bool FrontierTimelineFinalizer::FinishLaneContinuationBucket(
             const auto* activation = self.decisions->ResolveFrontierActivation(control.entry.coordinator);
             const auto* prerequisite = self.decisions->ResolveFrontierActivation(control.prerequisite.coordinator);
             FrontierActivationReceipt prior{};
-            Plan03PageGroupView initial{};
+            SchedulePageGroupView initial{};
             QueueInstanceSnapshot queue{};
             const bool natural = member->view.sourceControlCount == 1u &&
                 self.HasConditionalNaturalSpans(member->view, *lane, laneSlot, laneGeneration);
@@ -4293,7 +4293,7 @@ bool FrontierTimelineFinalizer::FinishLaneContinuationBucket(
                 prerequisite->Read(control.prerequisite, self.quantum + 1u, &prior) != FrontierReceiptRead::Ready ||
                 prior.outcome != FrontierReceiptOutcome::Applied || prior.audioSequence == 0u ||
                 prior.audioSequence > self.quantum + 1u || !(prior.order < control.operation.order) ||
-                !self.pool->ResolvePlan03GroupSliceRt(control.prerequisiteMember, &initial) ||
+                !self.pool->ResolveScheduleGroupSliceRt(control.prerequisiteMember, &initial) ||
                 initial.frontier == nullptr || initial.lease == nullptr ||
                 initial.lease->Capture().state != AudioSliceState::SliceApplied ||
                 initial.frontier->role != FrontierGroupRole::EntryMember ||
@@ -4530,10 +4530,10 @@ bool FrontierTimelineFinalizer::FinishLaneContinuationBucket(
         const bool companionOwner = self.pool->IsInitialSoundQueueCompanionC1(
             group.view.identity, member->view.identity, control.prerequisiteMember, prerequisiteOwner, owner);
         const bool deepOwner = !sameOwner && !childOwner && !companionOwner;
-        Plan03PageGroupView initial{};
+        SchedulePageGroupView initial{};
         if ((childOwner || deepOwner || companionOwner || zeroStartQueuePair) &&
             (!control.prerequisiteMember.Exact() ||
-             !self.pool->ResolvePlan03GroupSliceRt(
+             !self.pool->ResolveScheduleGroupSliceRt(
                  control.prerequisiteMember, &initial) ||
              initial.frontier == nullptr || initial.lease == nullptr ||
              initial.lease->Capture().state != AudioSliceState::SliceApplied ||
@@ -4558,9 +4558,9 @@ bool FrontierTimelineFinalizer::FinishLaneContinuationBucket(
             return false;
         if (deepOwner) {
             const auto& descendant = initial.frontier->queueDescendant;
-            Plan03PageGroupView side{};
+            SchedulePageGroupView side{};
             if (!descendant.Valid() ||
-                !self.pool->ResolvePlan03GroupSliceRt(
+                !self.pool->ResolveScheduleGroupSliceRt(
                     descendant.selectedSideMember.Expand(), &side) ||
                 side.frontier == nullptr || side.lease == nullptr ||
                 side.lease->Capture().state !=
@@ -4639,7 +4639,7 @@ bool FrontierTimelineFinalizer::FinishLaneBucketImpl(
         auto& group = self.groups[i];
         self.laneClaims[i] = {};
         const auto& binding = *group.view.frontier;
-        valid = binding.operation.group.backing == Plan03GroupBacking::ImmediateLane && valid;
+        valid = binding.operation.group.backing == ScheduleGroupBacking::ImmediateLane && valid;
         if (binding.role == FrontierGroupRole::Coordinator) {
             self.order[coordinatorCount++] = {binding.operation.order, i, true};
         } else if (binding.role != FrontierGroupRole::EntryMember &&

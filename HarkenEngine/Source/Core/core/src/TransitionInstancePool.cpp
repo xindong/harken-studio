@@ -99,13 +99,13 @@ bool TransitionInstancePool::BindFrontier(TransitionInstanceToken token,
     const FrontierGroupBinding& binding, const ScheduledTransactionPool& pool) noexcept {
     auto* row = Resolve(token);
     if (row == nullptr) row = ResolvePrepared(token);
-    Plan03PageGroupView group{};
+    SchedulePageGroupView group{};
     const auto& identity = binding.transition;
     if (row == nullptr || !binding.Valid() || !identity.Valid() ||
         token.slot != identity.slot || token.generation != identity.generation ||
         identity.audibleFrame != row->audibleFrame ||
-        !pool.PrivatePlan03GroupBindable(binding.operation.group) ||
-        !pool.ResolvePlan03GroupSliceProducer(binding.operation.group, &group) || group.frontier != &binding ||
+        !pool.PrivateScheduleGroupBindable(binding.operation.group) ||
+        !pool.ResolveScheduleGroupSliceProducer(binding.operation.group, &group) || group.frontier != &binding ||
         group.lease == nullptr || group.lease->Capture().state != AudioSliceState::Ready) return false;
     Reservation guard(row->reservation);
     if (guard.flag == nullptr || row->gateState.load(std::memory_order_acquire) !=
@@ -127,14 +127,14 @@ bool TransitionInstancePool::ProveFrontier(const FrontierGroupBinding& binding, 
         (expected != TransitionAudibleGateState::Replaceable && expected != TransitionAudibleGateState::Locked) ||
         (locks && expected != TransitionAudibleGateState::Replaceable) ||
         row->reservation.test_and_set(std::memory_order_acquire)) return false;
-    Plan03PageGroupView group{};
+    SchedulePageGroupView group{};
     if (row->frontierPool == nullptr || !(row->frontierOwner == binding.operation.owner) ||
         row->frontierDecision.slot != binding.operation.group.decision.slot ||
         row->frontierDecision.generation != binding.operation.group.decision.generation ||
         row->audibleFrame != binding.transition.audibleFrame ||
         row->gateState.load(std::memory_order_acquire) != expected ||
         (locks && binding.operation.order.executeFrame != row->audibleFrame) ||
-        !row->frontierPool->ResolvePlan03GroupSliceRt(binding.operation.group, &group) ||
+        !row->frontierPool->ResolveScheduleGroupSliceRt(binding.operation.group, &group) ||
         group.frontier != &binding || group.lease != &lease || lease.Capture().state != AudioSliceState::Ready) {
         row->reservation.clear(std::memory_order_release);
         return false;

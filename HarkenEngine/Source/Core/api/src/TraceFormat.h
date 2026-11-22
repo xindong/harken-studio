@@ -323,7 +323,7 @@ enum : std::uint16_t {
     kTraceCallReservedSetGameplayCatalog = 136,
     kTraceCallActivateCanonicalPackSetV2 = 137,
     kTraceCallUnloadCanonicalPackSet = 138,
-    kTraceCallUnloadCompanionPack = 139,
+    kTraceCallUnloadPackV2 = 139,
     kTraceCallBeginStreamSource = 140, // local callback lease, unreplayable
     kTraceCallBeginStreamFile = 141, // asynchronous request identity, unreplayable
     kTraceCallCancelStreamSource = 142,
