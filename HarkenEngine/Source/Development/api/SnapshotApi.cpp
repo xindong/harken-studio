@@ -31,6 +31,7 @@ using harken::detail::TraceQuery;
 
 extern "C" {
 
+#if HARKEN_ENGINE_DEV
 VnResult Vn_CaptureBusStates(uint32_t firstBusIndex, VnBusState* states,
                            uint32_t capacity, uint32_t* outCount,
                            uint32_t* outNextBusIndex) {
@@ -60,6 +61,8 @@ VnResult Vn_CaptureBusStates(uint32_t firstBusIndex, VnBusState* states,
     return VN_OK;
     });
 }
+
+#endif
 
 VnResult Vn_CaptureSnapshot(VnSnapshot* outSnapshot) {
     return harken::detail::InvokeApi([&]() -> VnResult {
