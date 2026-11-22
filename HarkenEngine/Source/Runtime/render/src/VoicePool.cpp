@@ -71,7 +71,7 @@ bool VoicePool::PrepareRenderSlotBacking(std::uint32_t count, std::uint32_t chan
     for (std::uint32_t ch = 0; ch < channelCount; ++ch) {
         if (!m_ringStorage[ch].ConstructThrough(count) ||
             (monitorPrepared &&
-             !m_monitorPreChainStorage[ch].ConstructThrough(count * m_blockFrames))) return false;
+             !m_monitorPreChainStorage[ch].ConstructThrough(count * m_monitorStride))) return false;
     }
     highRatioChannels = std::max(channelCount, highRatioChannels);
     for (std::uint32_t ch = 0; ch < highRatioChannels; ++ch)
@@ -93,7 +93,7 @@ bool VoicePool::PrepareMonitorPreChainBacking() noexcept {
     // Include every held source prefix before capture can become live.
     for (std::uint32_t ch = 0; ch < kMaxChannels; ++ch) {
         if (!m_monitorPreChainStorage[ch].ConstructThrough(
-                m_ringStorage[ch].ConstructedCount() * m_blockFrames)) return false;
+                m_ringStorage[ch].ConstructedCount() * m_monitorStride)) return false;
     }
     m_monitorPreChainPrepared.store(true, std::memory_order_release);
     return true;
@@ -107,7 +107,7 @@ bool VoicePool::RenderSlotBackingReady(std::uint32_t count, std::uint32_t channe
     for (std::uint32_t ch = 0; ch < channelCount; ++ch) {
         if (m_ringStorage[ch].ConstructedCount() < count ||
             (monitorPrepared &&
-             m_monitorPreChainStorage[ch].ConstructedCount() < count * m_blockFrames)) return false;
+             m_monitorPreChainStorage[ch].ConstructedCount() < count * m_monitorStride)) return false;
     }
     highRatioChannels = std::max(channelCount, highRatioChannels);
     for (std::uint32_t ch = 0; ch < highRatioChannels; ++ch)
@@ -118,18 +118,20 @@ bool VoicePool::RenderSlotBackingReady(std::uint32_t count, std::uint32_t channe
 void VoicePool::BindHighRatioBacking(std::uint32_t slot) noexcept {
     // Construction always extends a channel prefix and never shrinks it.
     std::uint32_t channels = 0;
-    while (channels < kMaxChannels && m_highRatioStorage[channels].ConstructedCount() > slot)
+    auto& native = m_slots[slot];
+    while (channels < kMaxChannels && m_highRatioStorage[channels].ConstructedCount() > slot) {
+        native.highRatioColumns.channels[channels] = &m_highRatioStorage[channels][slot];
         ++channels;
-    m_slots[slot].render.resampler.BindHighRatioColumns(m_highRatioColumns, slot, channels);
+    }
+    native.render.resampler.BindHighRatioColumns(native.highRatioColumns, 0, channels);
 }
 
 void VoicePool::BindMonitorPreChainBacking(std::uint32_t slot) noexcept {
     auto& render = m_slots[slot].render;
-    // Reserved addresses and source width stay fixed for this voice generation.
-    // A later capture plan constructs the backing before publishing live audio.
+    // A capture started after the voice binds these stable pointers on its first monitored block.
     for (std::uint32_t ch = 0; ch < kMaxChannels; ++ch) {
         render.monitorPreChain[ch] = ch < render.pcm.channelCount
-            ? m_monitorPreChainStorage[ch].data() + static_cast<std::size_t>(slot) * m_blockFrames
+            ? m_monitorPreChainStorage[ch].TryAt(slot * m_monitorStride)
             : nullptr;
     }
 }
@@ -244,6 +246,7 @@ VoicePool::VoicePool(const EngineConfig& config, const ResampleTables* tables,
     : m_sampleRate(config.mixRate.SampleRate()),
       m_pitchRampFrames(BiquadSmoothingFrames(config.mixRate.SampleRate())),
       m_blockFrames(config.blockFrames),
+      m_monitorStride(std::bit_ceil(config.blockFrames)),
       m_fxSlotsPerVoice(config.fxSlotsPerVoice),
       m_starvationCooldownBlocks(config.starvationCooldownBlocks),
       m_mixChannels(config.mixChannelCount),
@@ -261,25 +264,9 @@ VoicePool::VoicePool(const EngineConfig& config, const ResampleTables* tables,
         !m_jobSlots.Reserve(config.voiceCapacity.Render()) ||
         !m_jobGenerations.Reserve(config.voiceCapacity.Render()) ||
         !m_slots.Reserve(config.voiceCapacity.Render()) ||
-        !m_professionalStorage.Reserve(config.voiceCapacity.Render()) ||
-        !m_variableWeightStorage.Reserve(config.voiceCapacity.Render()) ||
-        !m_timelineEnvelopeCurves.Reserve(config.voiceCapacity.Render()) ||
         !m_streamParkTokens.Reserve(config.voiceCapacity.Virtual())) throw harken::detail::LogicPreparationFailure{};
     m_firstOutputStride = kFirstOutputBuiltinEndpoints + config.fxSlotsPerVoice * kMaxEffectParamCount;
-    const auto monitorCapacity = static_cast<std::uint64_t>(config.voiceCapacity.Render()) * m_blockFrames;
-    const auto endpointCapacity = static_cast<std::uint64_t>(config.voiceCapacity.Render()) * m_firstOutputStride;
-    const auto weightCapacity = static_cast<std::uint64_t>(config.voiceCapacity.Render()) * kSelectionPathNodeCapacity;
-    if (monitorCapacity > UINT32_MAX || endpointCapacity > UINT32_MAX || weightCapacity > UINT32_MAX ||
-        !m_firstOutputEndpoints.Reserve(static_cast<std::uint32_t>(endpointCapacity)) ||
-        !m_firstOutputWeights.Reserve(static_cast<std::uint32_t>(weightCapacity)) ||
-        !m_pendingTimelineVariableEvents.Reserve(config.voiceCapacity.Render())) throw harken::detail::LogicPreparationFailure{};
-    for (std::uint32_t ch = 0; ch < kMaxChannels; ++ch) {
-        if (!m_ringStorage[ch].Reserve(config.voiceCapacity.Render()) ||
-            !m_highRatioStorage[ch].Reserve(config.voiceCapacity.Render()) ||
-            !m_monitorPreChainStorage[ch].Reserve(static_cast<std::uint32_t>(monitorCapacity)))
-            throw harken::detail::LogicPreparationFailure{};
-        m_highRatioColumns.channels[ch] = m_highRatioStorage[ch].data();
-    }
+    for (auto& channel : m_monitorPreChainStorage) channel.AlignSegments(m_monitorStride);
     // Create the fixed worker set on the logic thread. Real-device workers stay
     // disabled until the backend binds them to its callback scheduling domain
     // and validates that callback. The Null backend explicitly selects offline
@@ -4985,6 +4972,8 @@ VoicePool::RenderAllResult VoicePool::RenderAll(
             slot.render.monitorRenderSlot = i;
             slot.render.monitorRenderGeneration =
                 slot.generation.load(std::memory_order_relaxed);
+            if (!slot.render.monitorPreChain[0] && m_monitorPreChainPrepared.load(std::memory_order_acquire))
+                BindMonitorPreChainBacking(i);
             slot.render.monitorPreChainFrames = 0;
             slot.render.dynamicVoiceTapActive =
                 m_dynamicRoutes.HasVoiceTap(slot.render.dynamicSourceIdentity);
@@ -5056,6 +5045,8 @@ VoicePool::RenderAllResult VoicePool::RenderAll(
             slot.render.monitorRenderSlot = i;
             slot.render.monitorRenderGeneration =
                 slot.generation.load(std::memory_order_relaxed);
+            if (!slot.render.monitorPreChain[0] && m_monitorPreChainPrepared.load(std::memory_order_acquire))
+                BindMonitorPreChainBacking(i);
             slot.render.monitorPreChainFrames = 0;
             slot.render.dynamicVoiceTapActive =
                 m_dynamicRoutes.HasVoiceTap(slot.render.dynamicSourceIdentity);

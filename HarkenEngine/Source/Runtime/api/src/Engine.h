@@ -7166,8 +7166,8 @@ public:
                      resolved.maxPropertiesPerCurrentSlice,
                      resolved.maxActions, logicCommits, transportEpochOwner,
                      variableSlices, timelinePool,
-                     static_cast<std::uint64_t>(std::max(resolved.maxPlayableInstances, resolved.voiceCapacity.Logical())) +
-                         resolved.voiceCapacity.Logical() +
+                     static_cast<std::uint64_t>(std::max(resolved.maxPlayableInstances, resolved.InitialRenderVoices() + resolved.voiceCapacity.Virtual())) +
+                         resolved.InitialRenderVoices() + resolved.voiceCapacity.Virtual() +
                          resolved.maxDeferredIntents,
                      voices.Capacity(), resolved.maxVariableSliceTargetsTotal),
           actionFiringPlanScratch(1),
@@ -7230,7 +7230,7 @@ public:
           notifications(resolved.notificationQueueDepth),
           voiceManager(resolved.voiceCapacity.Render(), resolved.voiceCapacity.Logical(),
                        resolved.InitialRenderVoices()),
-          logicNotifications(resolved.voiceCapacity.Logical()),
+          logicNotifications(resolved.InitialRenderVoices() + resolved.voiceCapacity.Virtual()),
           sourceCursors(resolved.voiceCapacity.Render()),
           timelinePrograms(2),
            timelineSink(voices, timelineArms),
@@ -15985,7 +15985,8 @@ public:
     bool PrepareLogicVoiceStorage(std::uint32_t count) noexcept {
         if (heldRenderScratch > borrowedRenderScratch &&
             !PrepareDeferredMixerScratch(count, heldRenderScratch - borrowedRenderScratch)) return false;
-        if (!ledger.PrepareRenderOwners(count) || !voiceManager.PrepareRenderSlots(count) ||
+        if ((config.automaticRenderVoices && !logicNotifications.GrowOnLogicThread(count + config.voiceCapacity.Virtual() + 1u)) ||
+            !ledger.PrepareRenderOwners(count) || !voiceManager.PrepareRenderSlots(count) ||
             !streamResyncs.ConstructThrough(count) || !spatialPropertyGroupIndices.ConstructThrough(count) ||
             !toneSectionCommandsPublished.ConstructThrough(count) || !toneSectionPublishedRampMs.ConstructThrough(4u * count) ||
             !sourceCursors.Prepare(count) ||
