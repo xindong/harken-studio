@@ -469,6 +469,8 @@ VnResult ResolveConfigForInitialDevice(const VnConfig* config,
         if (config->maxCompositeIndexBytes != 0) {
             resolved.maxCompositeIndexBytes = config->maxCompositeIndexBytes;
         }
+        if (config->maxPackDecodeStagingBytes > kMaxPackDecodeStagingBytesCeiling)
+            return VN_INVALID_CONFIG;
         if (config->maxPackDecodeStagingBytes != 0) {
             resolved.maxPackDecodeStagingBytes =
                 config->maxPackDecodeStagingBytes;
@@ -565,8 +567,6 @@ VnResult ResolveConfigForInitialDevice(const VnConfig* config,
         resolved.maxResidentDefinitionBytes >
             kMaxResidentDefinitionBytesCeiling ||
         resolved.maxCompositeIndexBytes > kMaxCompositeIndexBytesCeiling ||
-        resolved.maxPackDecodeStagingBytes >
-            kMaxPackDecodeStagingBytesCeiling ||
         resolved.maxPackReplacementPeakBytes >
             kMaxPackReplacementPeakBytesCeiling ||
         resolved.maxContainers > kMaxContainersCeiling ||

@@ -416,7 +416,7 @@ typedef struct VnConfig {
     uint64_t maxCompositeIndexBytes;       /* published identity-index budget;
                                             * 0 = 2 MiB */
     uint64_t maxPackDecodeStagingBytes;    /* encoded Pack + decode staging;
-                                            * 0 = 64 MiB */
+                                            * 0 = grow as needed during loading */
     uint64_t maxPackResourceBytes;         /* resident resource budget;
                                             * 0 = existing pack/media limits */
     uint64_t maxPackReplacementPeakBytes;  /* old + retiring + staging peak;
