@@ -15,7 +15,9 @@ class SourceRangeThumb : public PreviewField
     Q_OBJECT
 
 public:
-    explicit SourceRangeThumb(QWidget* parent = nullptr);
+    enum class Mode { Editable, ReadOnly };
+
+    explicit SourceRangeThumb(QWidget* parent = nullptr, Mode mode = Mode::Editable);
 
     void setSource(const SoundSourceDef& source, const AssetInfo* asset);
     void clearSource(const QString& text = {});

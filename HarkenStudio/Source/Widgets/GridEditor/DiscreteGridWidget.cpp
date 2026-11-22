@@ -1,6 +1,6 @@
 #include "DiscreteGridWidget.h"
 #include "GridEditorWidget.h"
-#include "SelectionWaveform.h"
+#include "ActiveSourcePreview.h"
 
 #include "Core/ActionManager.h"
 #include "Core/Components/VSelection.h"
@@ -423,7 +423,7 @@ void DiscreteGridWidget::rebuildTable()
     QList<TableColumn> columns{
         {QStringLiteral("index"), QStringLiteral("#"), 0},
         {QStringLiteral("target"), tr("Child"), 250},
-        {QStringLiteral("waveform"), tr("Waveform"), 250}};
+        {QStringLiteral("activeSource"), tr("Active Source"), 250}};
     for (const auto& axis : grid_.axes)
         columns.append({axis.toString(QUuid::WithoutBraces), {}, 500});
     if (grid_.axes.empty()) columns.append({QStringLiteral("empty"), {}, 500});
@@ -459,9 +459,9 @@ void DiscreteGridWidget::rebuildTable()
         auto* target = new QTableWidgetItem();
         target->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
         table_->setItem(r, 1, target);
-        auto* waveform = new QTableWidgetItem();
-        waveform->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
-        table_->setItem(r, 2, waveform);
+        auto* activeSource = new QTableWidgetItem();
+        activeSource->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
+        table_->setItem(r, 2, activeSource);
         if (axisCount == 0) {
             auto* cell = new QTableWidgetItem();
             cell->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
@@ -844,10 +844,10 @@ void DiscreteGridWidget::rebuildReferenceWidgets()
         table_->setCellWidget(row, 1, ref);
         targetRefs_.push_back(ref);
         if (!item || item->type != ProjectItem::Type::Sound) continue;
-        auto* waveform = new SelectionWaveform(target, table_);
-        connect(waveform, &SelectionWaveform::fileViewerRequested,
-                this, &DiscreteGridWidget::fileViewerRequested);
-        table_->setCellWidget(row, 2, waveform);
+        auto* activeSource = new ActiveSourcePreview(target, table_);
+        connect(activeSource, &ActiveSourcePreview::sourceEditorRequested,
+                this, &DiscreteGridWidget::sourceEditorRequested);
+        table_->setCellWidget(row, 2, activeSource);
     }
 }
 

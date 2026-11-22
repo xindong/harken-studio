@@ -89,7 +89,7 @@ void writeWavF32(const QString& path, const std::vector<float>& samples)
     ASSERT_EQ(file.write(bytes), bytes.size());
 }
 
-class ProjectExplorerSourcesTabTest : public ::testing::Test
+class ProjectExplorerResourcesTest : public ::testing::Test
 {
 protected:
     void SetUp() override
@@ -97,7 +97,7 @@ protected:
         ensureApp();
         ASSERT_TRUE(tempDir_.isValid());
         ProjectConfig config;
-        config.name = QStringLiteral("SourcesTabProject");
+        config.name = QStringLiteral("ResourcesProject");
         config.location = tempDir_.path();
         ASSERT_TRUE(ProjectManager::instance().createProject(config));
     }
@@ -121,13 +121,13 @@ protected:
 }
 
 #ifdef Q_OS_WIN
-TEST_F(ProjectExplorerSourcesTabTest, ImportUndoRollsBackFileLocksAcrossDestinationsAndKeepsRedoCopies)
+TEST_F(ProjectExplorerResourcesTest, ImportUndoRollsBackFileLocksAcrossDestinationsAndKeepsRedoCopies)
 {
     auto& manager = ProjectManager::instance();
     auto& registry = AssetRegistry::instance();
     auto& undo = UndoRedoManager::instance();
     MediaPool::instance();
-    for (const QString& mode : {QStringLiteral("Sources"), QStringLiteral("Root"),
+    for (const QString& mode : {QStringLiteral("Resources"), QStringLiteral("Root"),
                                QStringLiteral("Layer"), QStringLiteral("Sound")}) {
         SCOPED_TRACE(mode.toStdString());
         auto* layer = manager.createItem(nullptr, mode, ProjectItem::Type::Layer);
@@ -142,8 +142,8 @@ TEST_F(ProjectExplorerSourcesTabTest, ImportUndoRollsBackFileLocksAcrossDestinat
         QList<uint32_t> ids;
         if (mode == QLatin1String("Sound"))
             ids = ImportSoundSourcesCommand::pushImport(paths, binding, target)->importedIDs();
-        else if (mode == QLatin1String("Sources"))
-            ids = ImportAssetsCommand::pushImportSources(paths)->importedIDs();
+        else if (mode == QLatin1String("Resources"))
+            ids = ImportAssetsCommand::pushImportResources(paths)->importedIDs();
         else if (mode == QLatin1String("Root"))
             ids = ImportAssetsCommand::pushImportAtRoot(paths)->importedIDs();
         else
@@ -183,7 +183,7 @@ TEST_F(ProjectExplorerSourcesTabTest, ImportUndoRollsBackFileLocksAcrossDestinat
 #endif
 
 #ifdef Q_OS_WIN
-TEST_F(ProjectExplorerSourcesTabTest, ReplacementReplayFailurePreservesContentReferencesAndHistory)
+TEST_F(ProjectExplorerResourcesTest, ReplacementReplayFailurePreservesContentReferencesAndHistory)
 {
     auto& registry = AssetRegistry::instance();
     auto& manager = ProjectManager::instance();
@@ -197,7 +197,7 @@ TEST_F(ProjectExplorerSourcesTabTest, ReplacementReplayFailurePreservesContentRe
     for (const QString& name : names) {
         const QString file = tempDir_.filePath(name);
         writeWavF32(file, {0.0f, 0.5f, -0.5f, 0.0f});
-        auto* command = ImportAssetsCommand::pushImportSources({file});
+        auto* command = ImportAssetsCommand::pushImportResources({file});
         ASSERT_EQ(command->successCount(), 1);
         ids.append(command->importedIDs().first());
         files.append(file);
@@ -207,7 +207,7 @@ TEST_F(ProjectExplorerSourcesTabTest, ReplacementReplayFailurePreservesContentRe
         newHashes.append(AssetImporter::computeContentHash(file));
     }
     ASSERT_TRUE(manager.saveProject());
-    ASSERT_EQ(ImportAssetsCommand::pushImportSources(files, {}, replacements)->successCount(), 2);
+    ASSERT_EQ(ImportAssetsCommand::pushImportResources(files, {}, replacements)->successCount(), 2);
     for (bool redo : {false, true}) {
         const int index = undo.undoStack()->index();
         const QString blocked = SourceFileSystem::absolutePath(redo ? names.last() : names.first());
@@ -230,7 +230,7 @@ TEST_F(ProjectExplorerSourcesTabTest, ReplacementReplayFailurePreservesContentRe
 }
 #endif
 
-TEST_F(ProjectExplorerSourcesTabTest, BatchReplayFailureRestoresFilesReferencesAndHistoryBeforeRetry)
+TEST_F(ProjectExplorerResourcesTest, BatchReplayFailureRestoresFilesReferencesAndHistoryBeforeRetry)
 {
     auto& manager = ProjectManager::instance();
     auto& registry = AssetRegistry::instance();
@@ -243,7 +243,7 @@ TEST_F(ProjectExplorerSourcesTabTest, BatchReplayFailureRestoresFilesReferencesA
     for (const QString& name : names) {
         const QString input = tempDir_.filePath(name);
         writeWavF32(input, {0.0f, 0.25f + ids.size() * 0.25f, -0.5f, 0.0f});
-        auto* command = ImportAssetsCommand::pushImportSources({input});
+        auto* command = ImportAssetsCommand::pushImportResources({input});
         ASSERT_EQ(command->successCount(), 1);
         ids.append(command->importedIDs().first());
         sounds.append(manager.createRootAudioItem(name, name, ids.last()));
@@ -294,7 +294,7 @@ TEST_F(ProjectExplorerSourcesTabTest, BatchReplayFailureRestoresFilesReferencesA
     }
 }
 
-TEST_F(ProjectExplorerSourcesTabTest, BatchFolderUndoRestoresEarlierFoldersWhenALaterSourceIsMissing)
+TEST_F(ProjectExplorerResourcesTest, BatchFolderUndoRestoresEarlierFoldersWhenALaterSourceIsMissing)
 {
     auto& undo = UndoRedoManager::instance();
     auto& manager = ProjectManager::instance();
@@ -317,7 +317,7 @@ TEST_F(ProjectExplorerSourcesTabTest, BatchFolderUndoRestoresEarlierFoldersWhenA
 }
 
 #ifdef Q_OS_WIN
-TEST_F(ProjectExplorerSourcesTabTest, InitialBatchFileLockRollsBackWithoutPublishingOrRecordingChanges)
+TEST_F(ProjectExplorerResourcesTest, InitialBatchFileLockRollsBackWithoutPublishingOrRecordingChanges)
 {
     auto& manager = ProjectManager::instance();
     auto& registry = AssetRegistry::instance();
@@ -328,7 +328,7 @@ TEST_F(ProjectExplorerSourcesTabTest, InitialBatchFileLockRollsBackWithoutPublis
     for (const QString& name : names) {
         const QString input = tempDir_.filePath(name);
         writeWavF32(input, {0.0f, 0.25f + ids.size() * 0.25f, -0.5f, 0.0f});
-        auto* command = ImportAssetsCommand::pushImportSources({input});
+        auto* command = ImportAssetsCommand::pushImportResources({input});
         ASSERT_EQ(command->successCount(), 1);
         ids.append(command->importedIDs().first());
     }
@@ -352,7 +352,7 @@ TEST_F(ProjectExplorerSourcesTabTest, InitialBatchFileLockRollsBackWithoutPublis
 #endif
 
 #ifdef Q_OS_WIN
-TEST_F(ProjectExplorerSourcesTabTest, FailedClosePreservesSavedSourceEditsAndTheirUndoCopies)
+TEST_F(ProjectExplorerResourcesTest, FailedClosePreservesSavedSourceEditsAndTheirUndoCopies)
 {
     auto& manager = ProjectManager::instance();
     auto& registry = AssetRegistry::instance();
@@ -360,7 +360,7 @@ TEST_F(ProjectExplorerSourcesTabTest, FailedClosePreservesSavedSourceEditsAndThe
     const QString input = tempDir_.filePath(QStringLiteral("Keep.wav"));
     writeWavF32(input, {0.0f, 0.25f, -0.25f, 0.0f});
     const QString savedHash = AssetImporter::computeContentHash(input);
-    auto* imported = ImportAssetsCommand::pushImportSources({input});
+    auto* imported = ImportAssetsCommand::pushImportResources({input});
     ASSERT_EQ(imported->successCount(), 1);
     const uint32_t id = imported->importedIDs().first();
     const QString savedPath = registry.getAsset(id)->absolutePath;
@@ -369,7 +369,7 @@ TEST_F(ProjectExplorerSourcesTabTest, FailedClosePreservesSavedSourceEditsAndThe
     ASSERT_TRUE(SourceFileSystem::move({QStringLiteral("Keep.wav")}, QStringLiteral("Edited")));
     writeWavF32(input, {0.0f, 0.75f, -0.75f, 0.0f});
     const QString editedHash = AssetImporter::computeContentHash(input);
-    ASSERT_EQ(ImportAssetsCommand::pushImportSources({input}, QStringLiteral("Edited"),
+    ASSERT_EQ(ImportAssetsCommand::pushImportResources({input}, QStringLiteral("Edited"),
         {{QStringLiteral("Edited/Keep.wav"), input}})->successCount(), 1);
     ASSERT_TRUE(SourceFileSystem::createFolder({}, QStringLiteral("Scratch")));
     const QString editedPath = registry.getAsset(id)->absolutePath;
@@ -403,25 +403,25 @@ TEST_F(ProjectExplorerSourcesTabTest, FailedClosePreservesSavedSourceEditsAndThe
 #endif
 
 #ifdef Q_OS_WIN
-TEST_F(ProjectExplorerSourcesTabTest, FailedCloseRollsBackImportCleanupWhenSavedSourceRestoreIsLocked)
+TEST_F(ProjectExplorerResourcesTest, FailedCloseRollsBackImportCleanupWhenSavedSourceRestoreIsLocked)
 {
     auto& manager = ProjectManager::instance();
     auto& registry = AssetRegistry::instance();
     auto& undo = UndoRedoManager::instance();
     const QString input = tempDir_.filePath(QStringLiteral("Saved.wav"));
     writeWavF32(input, {0.0f, 0.25f, -0.25f, 0.0f});
-    auto* savedImport = ImportAssetsCommand::pushImportSources({input});
+    auto* savedImport = ImportAssetsCommand::pushImportResources({input});
     ASSERT_EQ(savedImport->successCount(), 1);
     const uint32_t savedId = savedImport->importedIDs().first();
     const QString savedPath = registry.getAsset(savedId)->absolutePath;
     ASSERT_TRUE(manager.saveProject());
     writeWavF32(input, {0.0f, 0.75f, -0.75f, 0.0f});
     const QString editedHash = AssetImporter::computeContentHash(input);
-    ASSERT_EQ(ImportAssetsCommand::pushImportSources({input}, {},
+    ASSERT_EQ(ImportAssetsCommand::pushImportResources({input}, {},
         {{QStringLiteral("Saved.wav"), input}})->successCount(), 1);
     const QString extra = tempDir_.filePath(QStringLiteral("Unsaved.wav"));
     writeWavF32(extra, {0.0f, 0.5f, -0.5f, 0.0f});
-    auto* pendingImport = ImportAssetsCommand::pushImportSources({extra});
+    auto* pendingImport = ImportAssetsCommand::pushImportResources({extra});
     ASSERT_EQ(pendingImport->successCount(), 1);
     const AssetInfo pending = *registry.getAsset(pendingImport->importedIDs().first());
     const auto* project = manager.currentProject();

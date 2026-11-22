@@ -59,13 +59,13 @@ const PropertySchema& soundInspectorSchema()
         sources.section = PropertySection::Source;
         sources.flags.serialize = false;
         sources.elementSchema = {
-            {.field="sourceId", .type=PropType::ObjectRef, .label="Audio"},
-            {.field="range", .type=PropType::Struct, .label="Waveform",
+            {.field="range", .type=PropType::Struct, .label="Source",
              .elementSchema={
                  {.field="trimStartFrame", .type=PropType::Int, .label="Trim Start"},
                  {.field="trimEndFrame", .type=PropType::Int, .label="Trim End"},
                  {.field="loopRegion", .type=PropType::Struct, .label="Loop Region"},
              }},
+            {.field="sourceId", .type=PropType::ObjectRef, .label="Original"},
             {.field="active", .type=PropType::Bool, .label="Active",
              .flags={.serialize=false, .settableByName=false, .state=true}},
         };

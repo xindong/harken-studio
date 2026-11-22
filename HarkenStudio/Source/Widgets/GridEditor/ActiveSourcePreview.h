@@ -4,15 +4,15 @@
 
 namespace VNX {
 
-class SelectionWaveform final : public SourceRangeThumb
+class ActiveSourcePreview final : public SourceRangeThumb
 {
     Q_OBJECT
 
 public:
-    explicit SelectionWaveform(const QUuid& targetGuid, QWidget* parent = nullptr);
+    explicit ActiveSourcePreview(const QUuid& targetGuid, QWidget* parent = nullptr);
 
 signals:
-    void fileViewerRequested(const QUuid& soundGuid, const QUuid& entryId);
+    void sourceEditorRequested(const QUuid& soundGuid, const QUuid& entryId);
 
 private:
     void refresh();

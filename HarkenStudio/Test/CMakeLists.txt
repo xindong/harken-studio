@@ -73,7 +73,7 @@ add_executable(harken_studio_tests
     UnitTest/ListPropertyTest.cpp
     UnitTest/ObjectRefDropTest.cpp
     UnitTest/RefIdMimeTest.cpp
-    UnitTest/ProjectExplorerSourcesTabTest.cpp
+    UnitTest/ProjectExplorerResourcesTest.cpp
     UnitTest/ProjectTreeDragDropTest.cpp
     UnitTest/FolderAddressingTest.cpp
     UnitTest/BucketFolderStoreTest.cpp

@@ -122,8 +122,8 @@ QJsonObject FileProperties::toJson() const
 QJsonObject SourceResult::toJson() const
 {
     QJsonObject result{{QStringLiteral("sound"), soundGuid.toString(QUuid::WithoutBraces)},
-        {QStringLiteral("sound_name"), soundName}, {QStringLiteral("source_id"), static_cast<qint64>(sourceId)},
-        {QStringLiteral("source_entry"), entryId.toString(QUuid::WithoutBraces)},
+        {QStringLiteral("sound_name"), soundName}, {QStringLiteral("source_id"), static_cast<qint64>(source.sourceId)},
+        {QStringLiteral("source_entry"), source.entryId.toString(QUuid::WithoutBraces)},
         {QStringLiteral("source_path"), sourcePath}, {QStringLiteral("language"), language},
         {QStringLiteral("conversion"), presetGuid.isNull() ? QJsonValue(QJsonValue::Null)
             : QJsonValue(presetGuid.toString(QUuid::WithoutBraces))},
@@ -147,8 +147,7 @@ std::optional<SourceResult> inspectSource(const ProjectData& project,
     if (error) error->clear();
     SourceResult result;
     result.soundGuid = sound.guid;
-    result.entryId = source.entryId;
-    result.sourceId = source.sourceId;
+    result.source = source;
     result.soundName = sound.name;
     result.sourcePath = asset.relativePath;
     result.language = language;

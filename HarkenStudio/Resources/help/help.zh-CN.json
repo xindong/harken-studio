@@ -145,7 +145,7 @@
     },
     "selection.selections": {
       "title": "Selections",
-      "body": "Random 的 Frequency 控制抽中概率（0 表示不参与），Order 影响打乱后的先后顺序；Sequence 按列表顺序播放。Match 用 Variable 条件选中一行。\n\nBlend 的每个混合行为子对象设置独立的 0–100% 增益曲线，不做归一化；曲线横向范围之外增益为 0%，未设置 Variable 的行贡献 100%。所有成员同时播放，0% 时也保持进度；同一子对象出现在多行时共用一份播放，各行增益相乘。"
+      "body": "Active Source 显示子 Sound 在当前平台和语言下使用的音源。\n\nRandom 的 Frequency 控制抽中概率（0 表示不参与），Order 影响打乱后的先后顺序；Sequence 按列表顺序播放。Match 用 Variable 条件选中一行。\n\nBlend 的每个混合行为子对象设置独立的 0–100% 增益曲线，不做归一化；曲线横向范围之外增益为 0%，未设置 Variable 的行贡献 100%。所有成员同时播放，0% 时也保持进度；同一子对象出现在多行时共用一份播放，各行增益相乘。"
     },
     "selection.behavior": {
       "title": "Behavior",
@@ -157,7 +157,7 @@
     },
     "sound.sources": {
       "title": "Sources",
-      "body": "导入或拖入音频，点击波形编辑该音源的裁剪和循环区域。Active 指定当前平台播放的音源；选中全部平台时修改 Active，会替换共用选择并清除各平台覆盖。"
+      "body": "导入或拖入音频后，点击 Source 列的波形可编辑该音源的裁剪和循环区域。Original 列用于选择 Resources 中的原始音频文件。Active 指定当前平台播放的音源。选中全部平台时修改 Active，会替换共用选择并清除各平台覆盖。"
     },
     "action.steps": {
       "title": "Steps",
@@ -307,7 +307,7 @@
     },
     "Explorer": {
       "title": "Explorer",
-      "body": "浏览和整理工程对象与源文件，选中对象后查看其属性。"
+      "body": "在 Assets 中浏览工程对象，在 Resources 中整理原始音频文件。选中对象可查看其属性。"
     },
     "Inspector": {
       "title": "Inspector",

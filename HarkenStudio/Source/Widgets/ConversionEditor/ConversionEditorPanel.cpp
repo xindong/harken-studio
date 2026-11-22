@@ -17,6 +17,7 @@
 #include "Widgets/Common/ParameterBinding.h"
 #include "Widgets/Common/ParameterControlHost.h"
 #include "Widgets/Common/ProportionalTreeWidget.h"
+#include "Widgets/Common/SourceRangeThumb.h"
 #include "Widgets/Common/TableItemDelegate.h"
 #include "Widgets/Common/TableWidget.h"
 #include "Widgets/Selector/ObjectRefNavigation.h"
@@ -163,7 +164,7 @@ ConversionEditorPanel::ConversionEditorPanel(QWidget* parent) : QWidget(parent)
     auto* resultsTable = new TableWidget(TableOptions::display(), result->content());
     result->setContentWidget(resultsTable);
     results_ = resultsTable->createItemView(QStringLiteral("conversionResults"),
-        {tr("Sound"), tr("Source"), tr("Language"), tr("Original format"), tr("Original rate"),
+        {tr("Sound"), tr("Active Source"), tr("Language"), tr("Original format"), tr("Original rate"),
          tr("Original size"), tr("Converted format"), tr("Converted rate"), tr("Converted size"),
          tr("Ratio")}, {170, 195, 70, 100, 85, 85, 110, 95, 95, 55});
     auto* header = results_->headerItem();
@@ -486,7 +487,7 @@ void ConversionEditorPanel::refreshResults()
     const auto rows = ConversionResults::query(*project, itemGuid_, platform, &error);
     if (!error.isEmpty()) { qWarning().noquote() << error; return; }
     for (const auto& row : rows) {
-        auto* item = new QTreeWidgetItem(results_, {QString(), row.sourcePath, row.language,
+        auto* item = new QTreeWidgetItem(results_, {QString(), QString(), row.language,
             row.original.format, tr("%1 Hz").arg(row.original.sampleRate),
             sizeText(row.original.bytes), row.converted ? row.converted->format : QString(),
             row.converted ? tr("%1 Hz").arg(row.converted->sampleRate) : QString(),
@@ -502,6 +503,11 @@ void ConversionEditorPanel::refreshResults()
         if (const auto* sound = ProjectManager::instance().findItemByGuid(row.soundGuid))
             reference->setCurrentObjectID(sound->objectID);
         results_->setItemWidget(item, 0, reference);
+        auto* preview = new SourceRangeThumb(results_, SourceRangeThumb::Mode::ReadOnly);
+        preview->setSource(row.source, AssetRegistry::instance().getAsset(row.source.sourceId));
+        preview->setAccessibleName(row.sourcePath);
+        item->setToolTip(1, row.sourcePath);
+        results_->setItemWidget(item, 1, preview);
     }
 }
 

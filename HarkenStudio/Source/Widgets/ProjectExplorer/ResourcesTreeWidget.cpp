@@ -1,4 +1,4 @@
-#include "SourcesTreeWidget.h"
+#include "ResourcesTreeWidget.h"
 
 #include "Core/AssetPipeline/AssetRegistry.h"
 #include "Core/AssetPipeline/AssetImporter.h"
@@ -43,13 +43,13 @@
 namespace VNX {
 namespace {
 
-constexpr auto kSourcePathsMime = "application/x-harken-source-paths";
+constexpr auto kResourcePathsMime = "application/x-harken-source-paths";
 
-QStringList sourcePaths(const QMimeData* mime)
+QStringList resourcePaths(const QMimeData* mime)
 {
-    if (!mime || !mime->hasFormat(QLatin1String(kSourcePathsMime)))
+    if (!mime || !mime->hasFormat(QLatin1String(kResourcePathsMime)))
         return {};
-    const auto object = QJsonDocument::fromJson(mime->data(QLatin1String(kSourcePathsMime))).object();
+    const auto object = QJsonDocument::fromJson(mime->data(QLatin1String(kResourcePathsMime))).object();
     if (object.value(QStringLiteral("projectRoot")).toString() != AssetRegistry::instance().projectRoot())
         return {};
     QStringList paths;
@@ -64,21 +64,23 @@ QStringList sourcePaths(const QMimeData* mime)
 
 }
 
-SourcesTreeWidget::SourcesTreeWidget(QWidget* parent)
+ResourcesTreeWidget::ResourcesTreeWidget(QWidget* parent)
     : TreeExpansionWidget(parent)
 {
     auto* delegate = new TreeRowStyle::ItemRowDelegate(this);
     delegate->setRenameEditorFactory([this](QWidget* parent, const QModelIndex& index) {
-        const QString path = index.data(kSourcePathRole).toString();
-        const QString original = QFileInfo(path).fileName();
-        auto* editor = new InlineRenameEdit(original,
-            [this, path, original](const QString& name, bool commit) {
+        const QString path = index.data(kResourcePathRole).toString();
+        const QString displayName = index.data(Qt::DisplayRole).toString();
+        const QString hiddenExtension = QFileInfo(path).fileName().mid(displayName.size());
+        return new InlineRenameEdit(displayName,
+            [this, path, displayName, hiddenExtension](const QString& name, bool commit) {
+                if (!SourceFileSystem::validName(name)) return tr("Enter a valid file or folder name.");
+                const QString fileName = name + hiddenExtension;
                 QString error;
-                if (!SourceFileSystem::validateRename(path, name, &error)) return error;
-                if (commit && name != original) return renameSource(path, name);
+                if (!SourceFileSystem::validateRename(path, fileName, &error)) return error;
+                if (commit && name != displayName) return renameResource(path, fileName);
                 return error;
             }, parent);
-        return editor;
     });
     setItemDelegate(delegate);
     setEditTriggers(QAbstractItemView::EditKeyPressed);
@@ -90,19 +92,7 @@ SourcesTreeWidget::SourcesTreeWidget(QWidget* parent)
         [this]() { deleteCurrentFolder(); }, Qt::WidgetWithChildrenShortcut);
 }
 
-bool SourcesTreeWidget::edit(const QModelIndex& index, EditTrigger trigger, QEvent* event)
-{
-    if (!QTreeWidget::edit(index, trigger, event)) return false;
-    if (!index.data(kSourceFolderRole).toBool()) {
-        if (auto* editor = qobject_cast<InlineRenameEdit*>(indexWidget(index))) {
-            const QString name = QFileInfo(index.data(kSourcePathRole).toString()).completeBaseName();
-            editor->setSelection(0, name.size());
-        }
-    }
-    return true;
-}
-
-QString SourcesTreeWidget::renameSource(const QString& path, const QString& name)
+QString ResourcesTreeWidget::renameResource(const QString& path, const QString& name)
 {
     const int slash = path.lastIndexOf(QLatin1Char('/'));
     const QString prefix = slash < 0 ? QString() : path.left(slash + 1);
@@ -117,8 +107,8 @@ QString SourcesTreeWidget::renameSource(const QString& path, const QString& name
         const QString destination = missing->relativePath;
         const QString projectRoot = registry.projectRoot();
         BaseDialog dialog(this);
-        dialog.setObjectName(QStringLiteral("sourceRenameRestoreDialog"));
-        dialog.setWindowTitle(tr("Restore Missing Audio Source"));
+        dialog.setObjectName(QStringLiteral("resourceRenameRestoreDialog"));
+        dialog.setWindowTitle(tr("Restore Missing Audio Resource"));
         auto* layout = new QVBoxLayout(&dialog);
         auto* summary = new QLabel(tr("'%1' is missing.\n\n"
             "Rename '%2' to '%1' and use its audio to restore the missing source references?\n"
@@ -136,7 +126,7 @@ QString SourcesTreeWidget::renameSource(const QString& path, const QString& name
         missing = registry.getAsset(missingID);
         if (registry.projectRoot() != projectRoot || !source || !missing
             || source->relativePath != path || missing->relativePath != destination)
-            return tr("The sources changed while the rename was being confirmed. Review them and try again.");
+            return tr("The resources changed while the rename was being confirmed. Review them and try again.");
         if (SourceFileSystem::restoreByRename(sourceID, missingID, &error)) selectPath(destination);
     } else {
         QString renamedName;
@@ -145,7 +135,7 @@ QString SourcesTreeWidget::renameSource(const QString& path, const QString& name
     return error;
 }
 
-QMimeData* SourcesTreeWidget::mimeData(const QList<QTreeWidgetItem*>& items) const
+QMimeData* ResourcesTreeWidget::mimeData(const QList<QTreeWidgetItem*>& items) const
 {
     auto* mime = new QMimeData;
     QList<uint32_t> ids;
@@ -158,10 +148,10 @@ QMimeData* SourcesTreeWidget::mimeData(const QList<QTreeWidgetItem*>& items) con
         for (auto* parent = item->parent(); parent; parent = parent->parent())
             ancestorSelected |= items.contains(parent);
         if (ancestorSelected) continue;
-        const uint32_t id = item->data(0, kSourceIdRole).toUInt();
+        const uint32_t id = item->data(0, kResourceIdRole).toUInt();
         if (id != 0)
             ids.append(id);
-        const QString path = item->data(0, kSourcePathRole).toString();
+        const QString path = item->data(0, kResourcePathRole).toString();
         const QString absolute = SourceFileSystem::absolutePath(path);
         if (!path.isEmpty() && !absolute.isEmpty()) {
             paths.append(path);
@@ -173,13 +163,13 @@ QMimeData* SourcesTreeWidget::mimeData(const QList<QTreeWidgetItem*>& items) con
     if (!urls.isEmpty())
         mime->setUrls(urls);
     if (!paths.isEmpty())
-        mime->setData(QLatin1String(kSourcePathsMime), QJsonDocument(QJsonObject{
+        mime->setData(QLatin1String(kResourcePathsMime), QJsonDocument(QJsonObject{
             {QStringLiteral("projectRoot"), AssetRegistry::instance().projectRoot()},
             {QStringLiteral("paths"), paths}}).toJson(QJsonDocument::Compact));
     return mime;
 }
 
-void SourcesTreeWidget::startDrag(Qt::DropActions)
+void ResourcesTreeWidget::startDrag(Qt::DropActions)
 {
     const auto items = selectedItems();
     if (items.isEmpty())
@@ -192,21 +182,21 @@ void SourcesTreeWidget::startDrag(Qt::DropActions)
     clearDropHighlight();
 }
 
-QString SourcesTreeWidget::folderForItem(QTreeWidgetItem* item) const
+QString ResourcesTreeWidget::folderForItem(QTreeWidgetItem* item) const
 {
     if (!item)
         return {};
-    if (item->data(0, kSourceFolderRole).toBool())
-        return item->data(0, kSourcePathRole).toString();
+    if (item->data(0, kResourceFolderRole).toBool())
+        return item->data(0, kResourcePathRole).toString();
     return folderForItem(item->parent());
 }
 
-QString SourcesTreeWidget::currentFolder() const
+QString ResourcesTreeWidget::currentFolder() const
 {
     return folderForItem(currentItem());
 }
 
-bool SourcesTreeWidget::importDroppedAudio(const QMimeData* mimeData, const QString& folder)
+bool ResourcesTreeWidget::importDroppedAudio(const QMimeData* mimeData, const QString& folder)
 {
     if (SourceFileSystem::absolutePath({}).isEmpty()
         || RefIdMime::has(mimeData, RefDomain::AudioAsset))
@@ -269,8 +259,8 @@ bool SourcesTreeWidget::importDroppedAudio(const QMimeData* mimeData, const QStr
     }
 
     BaseDialog dialog(this);
-    dialog.setObjectName(QStringLiteral("sourceImportConflictDialog"));
-    dialog.setWindowTitle(tr("Import Audio Sources"));
+    dialog.setObjectName(QStringLiteral("resourceImportConflictDialog"));
+    dialog.setWindowTitle(tr("Import Audio Resources"));
     const auto& metrics = ThemeManager::instance().metrics().dialog;
     dialog.resize(metrics.wideWidth, metrics.preferredHeight);
     auto* layout = new QVBoxLayout(&dialog);
@@ -331,13 +321,13 @@ bool SourcesTreeWidget::importDroppedAudio(const QMimeData* mimeData, const QStr
     }
     if (selected.isEmpty())
         return true;
-    auto* command = ImportAssetsCommand::pushImportSources(selected, folder, replacements);
+    auto* command = ImportAssetsCommand::pushImportResources(selected, folder, replacements);
     return command->successCount() > 0 || command->duplicateCount() > 0;
 }
 
-bool SourcesTreeWidget::moveDroppedSources(const QMimeData* mime, const QString& folder)
+bool ResourcesTreeWidget::moveDroppedResources(const QMimeData* mime, const QString& folder)
 {
-    const QStringList paths = sourcePaths(mime);
+    const QStringList paths = resourcePaths(mime);
     if (paths.isEmpty())
         return false;
     QString error;
@@ -349,7 +339,7 @@ bool SourcesTreeWidget::moveDroppedSources(const QMimeData* mime, const QString&
             const QString destination = folder.isEmpty() ? QFileInfo(path).fileName()
                 : folder + QLatin1Char('/') + QFileInfo(path).fileName();
             for (QTreeWidgetItemIterator it(this); *it; ++it) {
-                if ((*it)->data(0, kSourcePathRole).toString() == destination) {
+                if ((*it)->data(0, kResourcePathRole).toString() == destination) {
                     for (auto* parent = (*it)->parent(); parent; parent = parent->parent())
                         parent->setExpanded(true);
                     (*it)->setSelected(true);
@@ -365,12 +355,12 @@ bool SourcesTreeWidget::moveDroppedSources(const QMimeData* mime, const QString&
     return moved;
 }
 
-bool SourcesTreeWidget::acceptsMime(const QMimeData* mime) const
+bool ResourcesTreeWidget::acceptsMime(const QMimeData* mime) const
 {
     if (!mime || SourceFileSystem::absolutePath({}).isEmpty())
         return false;
-    if (mime->hasFormat(QLatin1String(kSourcePathsMime)))
-        return !sourcePaths(mime).isEmpty();
+    if (mime->hasFormat(QLatin1String(kResourcePathsMime)))
+        return !resourcePaths(mime).isEmpty();
     if (RefIdMime::has(mime, RefDomain::AudioAsset))
         return false;
     if (AudioImportGate::mimeHasAudio(mime))
@@ -381,23 +371,23 @@ bool SourcesTreeWidget::acceptsMime(const QMimeData* mime) const
     return false;
 }
 
-Qt::DropAction SourcesTreeWidget::dropActionFor(const QMimeData* mime, const QString& folder) const
+Qt::DropAction ResourcesTreeWidget::dropActionFor(const QMimeData* mime, const QString& folder) const
 {
     if (!acceptsMime(mime))
         return Qt::IgnoreAction;
-    if (mime->hasFormat(QLatin1String(kSourcePathsMime)))
-        return SourceFileSystem::canMove(sourcePaths(mime), folder) ? Qt::MoveAction : Qt::IgnoreAction;
+    if (mime->hasFormat(QLatin1String(kResourcePathsMime)))
+        return SourceFileSystem::canMove(resourcePaths(mime), folder) ? Qt::MoveAction : Qt::IgnoreAction;
     return Qt::CopyAction;
 }
 
-void SourcesTreeWidget::setRootDropTarget(QWidget* target)
+void ResourcesTreeWidget::setRootDropTarget(QWidget* target)
 {
     rootDropTarget_ = target;
     target->setAcceptDrops(true);
     target->installEventFilter(this);
 }
 
-bool SourcesTreeWidget::eventFilter(QObject* watched, QEvent* event)
+bool ResourcesTreeWidget::eventFilter(QObject* watched, QEvent* event)
 {
     if (watched != rootDropTarget_)
         return QTreeWidget::eventFilter(watched, event);
@@ -425,7 +415,7 @@ bool SourcesTreeWidget::eventFilter(QObject* watched, QEvent* event)
     return QTreeWidget::eventFilter(watched, event);
 }
 
-void SourcesTreeWidget::clearDropHighlight()
+void ResourcesTreeWidget::clearDropHighlight()
 {
     dropFolder_ = QPersistentModelIndex();
     if (rootDropTarget_)
@@ -433,21 +423,21 @@ void SourcesTreeWidget::clearDropHighlight()
     viewport()->update();
 }
 
-void SourcesTreeWidget::dragEnterEvent(QDragEnterEvent* event)
+void ResourcesTreeWidget::dragEnterEvent(QDragEnterEvent* event)
 {
     if (!acceptsMime(event->mimeData())) {
         event->ignore();
         return;
     }
-    event->setDropAction(event->mimeData()->hasFormat(QLatin1String(kSourcePathsMime))
+    event->setDropAction(event->mimeData()->hasFormat(QLatin1String(kResourcePathsMime))
         ? Qt::MoveAction : Qt::CopyAction);
     event->accept();
 }
 
-void SourcesTreeWidget::dragMoveEvent(QDragMoveEvent* event)
+void ResourcesTreeWidget::dragMoveEvent(QDragMoveEvent* event)
 {
     auto* target = itemAt(event->position().toPoint());
-    if (target && !target->data(0, kSourceFolderRole).toBool())
+    if (target && !target->data(0, kResourceFolderRole).toBool())
         target = target->parent();
     const QString folder = folderForItem(target);
     const Qt::DropAction action = dropActionFor(event->mimeData(), folder);
@@ -467,23 +457,23 @@ void SourcesTreeWidget::dragMoveEvent(QDragMoveEvent* event)
     event->accept();
 }
 
-void SourcesTreeWidget::dragLeaveEvent(QDragLeaveEvent* event)
+void ResourcesTreeWidget::dragLeaveEvent(QDragLeaveEvent* event)
 {
     clearDropHighlight();
     QTreeWidget::dragLeaveEvent(event);
 }
 
-void SourcesTreeWidget::dropEvent(QDropEvent* event)
+void ResourcesTreeWidget::dropEvent(QDropEvent* event)
 {
     performDrop(event, folderForItem(itemAt(event->position().toPoint())));
 }
 
-void SourcesTreeWidget::performDrop(QDropEvent* event, const QString& folder)
+void ResourcesTreeWidget::performDrop(QDropEvent* event, const QString& folder)
 {
     clearDropHighlight();
     const Qt::DropAction action = dropActionFor(event->mimeData(), folder);
     if (action == Qt::IgnoreAction
-        || !(action == Qt::MoveAction ? moveDroppedSources(event->mimeData(), folder)
+        || !(action == Qt::MoveAction ? moveDroppedResources(event->mimeData(), folder)
                                      : importDroppedAudio(event->mimeData(), folder))) {
         event->ignore();
         return;
@@ -493,13 +483,13 @@ void SourcesTreeWidget::performDrop(QDropEvent* event, const QString& folder)
     emit contentRevealRequested();
 }
 
-void SourcesTreeWidget::drawBranches(QPainter* painter, const QRect& rect, const QModelIndex& index) const
+void ResourcesTreeWidget::drawBranches(QPainter* painter, const QRect& rect, const QModelIndex& index) const
 {
     TreeRowStyle::paintBranches(painter, rect, index, model(), indentation(), isExpanded(index),
                                rootIsDecorated());
 }
 
-void SourcesTreeWidget::drawRow(QPainter* painter, const QStyleOptionViewItem& options,
+void ResourcesTreeWidget::drawRow(QPainter* painter, const QStyleOptionViewItem& options,
                               const QModelIndex& index) const
 {
     QTreeWidget::drawRow(painter, options, index);
@@ -509,16 +499,16 @@ void SourcesTreeWidget::drawRow(QPainter* painter, const QStyleOptionViewItem& o
         TreeRowStyle::paintDropHighlight(painter, options.rect);
 }
 
-void SourcesTreeWidget::showError(const QString& message)
+void ResourcesTreeWidget::showError(const QString& message)
 {
     if (!message.isEmpty())
         LogPanel::logError(LogCategory::File, message);
 }
 
-void SourcesTreeWidget::selectPath(const QString& path)
+void ResourcesTreeWidget::selectPath(const QString& path)
 {
     for (QTreeWidgetItemIterator it(this); *it; ++it) {
-        if ((*it)->data(0, kSourcePathRole).toString() == path) {
+        if ((*it)->data(0, kResourcePathRole).toString() == path) {
             setCurrentItem(*it);
             scrollToItem(*it);
             return;
@@ -526,7 +516,7 @@ void SourcesTreeWidget::selectPath(const QString& path)
     }
 }
 
-void SourcesTreeWidget::newFolder()
+void ResourcesTreeWidget::newFolder()
 {
     const QString parent = currentFolder();
     const QString absolute = SourceFileSystem::absolutePath(parent);
@@ -547,21 +537,21 @@ void SourcesTreeWidget::newFolder()
     showError(error);
 }
 
-void SourcesTreeWidget::renameCurrent()
+void ResourcesTreeWidget::renameCurrent()
 {
     if (currentItem()) editItem(currentItem(), 0);
 }
 
-void SourcesTreeWidget::deleteCurrentFolder()
+void ResourcesTreeWidget::deleteCurrentFolder()
 {
-    if (!currentItem() || !currentItem()->data(0, kSourceFolderRole).toBool())
+    if (!currentItem() || !currentItem()->data(0, kResourceFolderRole).toBool())
         return;
     QString error;
-    SourceFileSystem::removeEmptyFolder(currentItem()->data(0, kSourcePathRole).toString(), &error);
+    SourceFileSystem::removeEmptyFolder(currentItem()->data(0, kResourcePathRole).toString(), &error);
     showError(error);
 }
 
-void SourcesTreeWidget::keyPressEvent(QKeyEvent* event)
+void ResourcesTreeWidget::keyPressEvent(QKeyEvent* event)
 {
     if (event->key() == Qt::Key_F2) {
         renameCurrent();
@@ -571,12 +561,12 @@ void SourcesTreeWidget::keyPressEvent(QKeyEvent* event)
     }
 }
 
-void SourcesTreeWidget::showRootContextMenu(const QPoint& globalPosition)
+void ResourcesTreeWidget::showRootContextMenu(const QPoint& globalPosition)
 {
     showContextMenu(nullptr, globalPosition);
 }
 
-void SourcesTreeWidget::showContextMenu(QTreeWidgetItem* item, const QPoint& globalPosition)
+void ResourcesTreeWidget::showContextMenu(QTreeWidgetItem* item, const QPoint& globalPosition)
 {
     if (item && !item->isSelected())
         setCurrentItem(item);
@@ -585,19 +575,19 @@ void SourcesTreeWidget::showContextMenu(QTreeWidgetItem* item, const QPoint& glo
         setCurrentItem(nullptr);
     }
     QMenu menu(this);
-    menu.addAction(tr("New Folder"), this, &SourcesTreeWidget::newFolder)
+    menu.addAction(tr("New Folder"), this, &ResourcesTreeWidget::newFolder)
         ->setEnabled(!SourceFileSystem::absolutePath({}).isEmpty());
     if (item) {
-        menu.addAction(tr("Rename"), this, &SourcesTreeWidget::renameCurrent);
-        if (item->data(0, kSourceFolderRole).toBool()) {
-            const QString absolute = SourceFileSystem::absolutePath(item->data(0, kSourcePathRole).toString());
-            menu.addAction(tr("Delete Folder"), this, &SourcesTreeWidget::deleteCurrentFolder)
+        menu.addAction(tr("Rename"), this, &ResourcesTreeWidget::renameCurrent);
+        if (item->data(0, kResourceFolderRole).toBool()) {
+            const QString absolute = SourceFileSystem::absolutePath(item->data(0, kResourcePathRole).toString());
+            menu.addAction(tr("Delete Folder"), this, &ResourcesTreeWidget::deleteCurrentFolder)
                 ->setEnabled(!absolute.isEmpty() && QDir(absolute).isEmpty());
         }
-        menu.addAction(tr("Move to Sources Root"), this, [this]() {
+        menu.addAction(tr("Move to Resources Root"), this, [this]() {
             QStringList paths;
             for (auto* selected : selectedItems())
-                paths.append(selected->data(0, kSourcePathRole).toString());
+                paths.append(selected->data(0, kResourcePathRole).toString());
             QString error;
             SourceFileSystem::move(paths, {}, &error);
             showError(error);

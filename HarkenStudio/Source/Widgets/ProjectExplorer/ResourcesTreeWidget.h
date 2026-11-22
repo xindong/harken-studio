@@ -12,20 +12,20 @@ class QMimeData;
 
 namespace VNX {
 
-constexpr int kSourceIdRole = Qt::UserRole + 32;
-constexpr int kSourcePathRole = Qt::UserRole + 33;
-constexpr int kSourceFolderRole = Qt::UserRole + 34;
+constexpr int kResourceIdRole = Qt::UserRole + 32;
+constexpr int kResourcePathRole = Qt::UserRole + 33;
+constexpr int kResourceFolderRole = Qt::UserRole + 34;
 
-class SourcesTreeWidget : public TreeExpansionWidget
+class ResourcesTreeWidget : public TreeExpansionWidget
 {
     Q_OBJECT
 
 public:
-    explicit SourcesTreeWidget(QWidget* parent = nullptr);
+    explicit ResourcesTreeWidget(QWidget* parent = nullptr);
 
     QMimeData* mimeData(const QList<QTreeWidgetItem*>& items) const override;
     bool importDroppedAudio(const QMimeData* mimeData, const QString& folder = {});
-    bool moveDroppedSources(const QMimeData* mimeData, const QString& folder);
+    bool moveDroppedResources(const QMimeData* mimeData, const QString& folder);
     QString currentFolder() const;
     void showRootContextMenu(const QPoint& globalPosition);
     void setRootDropTarget(QWidget* target);
@@ -38,7 +38,6 @@ signals:
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
-    bool edit(const QModelIndex& index, EditTrigger trigger, QEvent* event) override;
     void startDrag(Qt::DropActions actions) override;
     void dragEnterEvent(QDragEnterEvent* event) override;
     void dragMoveEvent(QDragMoveEvent* event) override;
@@ -50,7 +49,7 @@ protected:
 
 private:
     QString folderForItem(QTreeWidgetItem* item) const;
-    QString renameSource(const QString& path, const QString& name);
+    QString renameResource(const QString& path, const QString& name);
     void renameCurrent();
     void deleteCurrentFolder();
     void showContextMenu(QTreeWidgetItem* item, const QPoint& globalPosition);

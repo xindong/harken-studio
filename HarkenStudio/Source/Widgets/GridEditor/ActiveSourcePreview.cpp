@@ -1,4 +1,4 @@
-#include "SelectionWaveform.h"
+#include "ActiveSourcePreview.h"
 
 #include "Core/AssetPipeline/AssetRegistry.h"
 #include "Core/LanguageContextService.h"
@@ -8,13 +8,13 @@
 
 namespace VNX {
 
-SelectionWaveform::SelectionWaveform(const QUuid& targetGuid, QWidget* parent)
+ActiveSourcePreview::ActiveSourcePreview(const QUuid& targetGuid, QWidget* parent)
     : SourceRangeThumb(parent), targetGuid_(targetGuid)
 {
     connect(this, &SourceRangeThumb::clicked, this, [this] {
         if (isEnabled() && !entryId_.isNull()
             && AssetRegistry::instance().sourceFileExists(sourceId_))
-            emit fileViewerRequested(targetGuid_, entryId_);
+            emit sourceEditorRequested(targetGuid_, entryId_);
     });
     auto& manager = ProjectManager::instance();
     connect(&manager, &ProjectManager::itemPropertyChanged, this,
@@ -30,7 +30,7 @@ SelectionWaveform::SelectionWaveform(const QUuid& targetGuid, QWidget* parent)
     connect(&manager, &ProjectManager::itemDeleted, this, [this](ProjectItem* item) {
         if (item && item->guid == targetGuid_) clear();
     });
-    connect(&manager, &ProjectManager::projectClosed, this, &SelectionWaveform::clear);
+    connect(&manager, &ProjectManager::projectClosed, this, &ActiveSourcePreview::clear);
     connect(&manager, &ProjectManager::projectLanguagesChanged, this,
             [this] { refresh(); });
     connect(&PlatformContextService::instance(), &PlatformContextService::contextChanged,
@@ -47,7 +47,7 @@ SelectionWaveform::SelectionWaveform(const QUuid& targetGuid, QWidget* parent)
     refresh();
 }
 
-void SelectionWaveform::clear()
+void ActiveSourcePreview::clear()
 {
     entryId_ = QUuid{};
     sourceId_ = 0;
@@ -56,7 +56,7 @@ void SelectionWaveform::clear()
     hide();
 }
 
-void SelectionWaveform::refresh()
+void ActiveSourcePreview::refresh()
 {
     const auto* item = ProjectManager::instance().findItemByGuid(targetGuid_);
     if (!item || item->type != ProjectItem::Type::Sound) {
@@ -80,7 +80,7 @@ void SelectionWaveform::refresh()
             const auto* other = SoundSourceEditing::activeSource(*item, platform, language);
             if ((source ? source->entryId : QUuid{}) != (other ? other->entryId : QUuid{})) {
                 clearSource(tr("Mixed"));
-                setToolTip(tr("Active sources differ across platforms. Select a single platform to view its waveform."));
+                setToolTip(tr("The selected platforms use different sources. Select one platform to view its active source."));
                 return;
             }
         }
@@ -93,7 +93,7 @@ void SelectionWaveform::refresh()
     sourceId_ = source->sourceId;
     const auto* asset = AssetRegistry::instance().getAsset(sourceId_);
     setSource(*source, asset);
-    if (isEnabled()) setToolTip(tr("Open File Viewer"));
+    if (isEnabled()) setToolTip(tr("Edit Active Source"));
 }
 
 }

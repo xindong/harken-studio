@@ -2,6 +2,7 @@
 #include "Core/ThemeLayout.h"
 
 #include "Widgets/SourceEditor/SourceEditorWaveformView.h"
+#include "Widgets/Shared/AudioAssetLabels.h"
 #include "Core/AssetPipeline/AssetRegistry.h"
 #include "Core/AudioEngine.h"
 #include "Core/ProjectManager.h"
@@ -356,10 +357,11 @@ void FileViewerWidget::setAuditionManager(HarkenEditor::AuditionManager* auditio
 
 QString FileViewerWidget::auditionObjectName(const AssetInfo* asset) const
 {
-    if (asset && !asset->relativePath.isEmpty())
-        return asset->relativePath;
-    if (asset && !asset->absolutePath.isEmpty())
-        return QFileInfo(asset->absolutePath).fileName();
+    if (asset && (!asset->relativePath.isEmpty() || !asset->absolutePath.isEmpty())) {
+        QStringList segments = assetFolderSegments(*asset);
+        segments.append(assetDisplayName(*asset));
+        return segments.join(QLatin1Char('/'));
+    }
     return tr("Audio source %1").arg(sourceId_);
 }
 
@@ -606,7 +608,7 @@ void FileViewerWidget::refreshSourceIdentity(const AssetInfo* asset)
         : QString{};
     sourceTitle_->setText(path.isEmpty()
                               ? tr("Audio Source %1").arg(sourceId_)
-                              : QFileInfo(path).fileName());
+                              : assetDisplayName(*asset));
     QStringList context;
     if (!path.isEmpty() && QFileInfo(path).fileName() != path)
         context.push_back(path);

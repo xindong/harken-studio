@@ -5,10 +5,10 @@
 #                              Core/SelectionRouter.cpp, Core/BusController.cpp).
 # Depends on: harken_editor_foundation
 #             harken_editor_common   (ProjectExplorer.cpp includes Common/SearchField.h
-#                                   for the Sources tab filter)
+#                                   for the Resources section filter)
 #             harken_editor_shared   (ProjectItemMenuController via ProjectTreePanel)
 #             harken_editor_projecttree (ProjectExplorer subclasses ProjectTreePanel)
-# Sources tab lists AssetRegistry and emits fileViewerRequested(sourceId);
+# Resources section lists AssetRegistry and emits fileViewerRequested(sourceId);
 # it does not link harken_editor_file_viewer. MainWindow opens the standalone panel.
 # Note: requires add_subdirectory(Source/Widgets/Common), Shared, and ProjectTree
 #       BEFORE add_subdirectory(Source/Widgets/ProjectExplorer) in the parent
@@ -17,8 +17,8 @@
 add_library(harken_editor_explorer STATIC
     ProjectExplorer.cpp
     ProjectExplorer.h
-    SourcesTreeWidget.cpp
-    SourcesTreeWidget.h
+    ResourcesTreeWidget.cpp
+    ResourcesTreeWidget.h
 )
 
 set_target_properties(harken_editor_explorer PROPERTIES
@@ -31,7 +31,7 @@ target_include_directories(harken_editor_explorer PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/..
 )
 
-# Foundation brings Qt6::Widgets + Core headers; harken_editor_common brings SearchField for the Sources tab filter.
+# Foundation brings Qt6::Widgets + Core headers; harken_editor_common brings SearchField for the Resources section filter.
 # harken_editor_shared brings ProjectItemMenuController (S2 of factory-entry-unification).
 # harken_editor_projecttree brings the shared ProjectTreePanel/ProjectTreeWidget skeleton (Phase0 WP3 batch C).
 target_link_libraries(harken_editor_explorer PUBLIC

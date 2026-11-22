@@ -146,12 +146,12 @@ GridEditorWidget::GridEditorWidget(QWidget* parent)
             this, &GridEditorWidget::navigateToItem);
     connect(selectionList_, &SelectionListWidget::locateItem,
             this, &GridEditorWidget::locateItem);
-    connect(selectionList_, &SelectionListWidget::fileViewerRequested,
-            this, &GridEditorWidget::fileViewerRequested);
-    connect(discreteGrid_, &DiscreteGridWidget::fileViewerRequested,
-            this, &GridEditorWidget::fileViewerRequested);
-    connect(mixingEditor_, &MixingEditorWidget::fileViewerRequested,
-            this, &GridEditorWidget::fileViewerRequested);
+    connect(selectionList_, &SelectionListWidget::sourceEditorRequested,
+            this, &GridEditorWidget::sourceEditorRequested);
+    connect(discreteGrid_, &DiscreteGridWidget::sourceEditorRequested,
+            this, &GridEditorWidget::sourceEditorRequested);
+    connect(mixingEditor_, &MixingEditorWidget::sourceEditorRequested,
+            this, &GridEditorWidget::sourceEditorRequested);
     connect(&ThemeManager::instance(), &ThemeManager::themeChanged,
             this, [this]() { refreshChrome(); });
 

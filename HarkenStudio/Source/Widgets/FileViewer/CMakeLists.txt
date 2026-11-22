@@ -16,6 +16,7 @@ target_include_directories(harken_editor_file_viewer PUBLIC
 
 target_link_libraries(harken_editor_file_viewer PUBLIC
     harken_editor_source_editor
+    harken_editor_shared
 )
 
 if(MSVC)

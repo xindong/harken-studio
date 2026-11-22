@@ -401,7 +401,7 @@ add_subdirectory(Source/Widgets/Timeline)
 # ProjectTreeWidget); must come AFTER Common + Shared, BEFORE ProjectExplorer /
 # Hierarchy since both link it.
 add_subdirectory(Source/Widgets/ProjectTree)
-# Sources tab lists AssetRegistry and emits fileViewerRequested(sourceId);
+# Resources section lists AssetRegistry and emits fileViewerRequested(sourceId);
 # it does not link FileViewer. MainWindow opens the standalone panel.
 add_subdirectory(Source/Widgets/ProjectExplorer)
 # Hierarchy: independent clone of ProjectExplorer (initial mirror, may diverge).

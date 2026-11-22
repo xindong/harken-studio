@@ -440,7 +440,7 @@ void MainWindow::initializeStructure(
                 if (projectExplorer_ && projectExplorerDock_
                     && AssetRegistry::instance().contains(id)) {
                     revealDock(projectExplorerDock_);
-                    projectExplorer_->pingSource(id);
+                    projectExplorer_->pingResource(id);
                 }
                 break;
             }
@@ -714,7 +714,7 @@ void MainWindow::initializeStructure(
                     [this](const QUuid& target) {
                 setAuditionTarget(ProjectManager::instance().findItemByGuid(target));
             });
-            connect(ed, &GridEditorPanel::fileViewerRequested, this,
+            connect(ed, &GridEditorPanel::sourceEditorRequested, this,
                     [this](const QUuid& soundGuid, const QUuid& entryId) {
                 openExternalEditor(ExternalEditorSelection::source(soundGuid, entryId));
             });

@@ -28,9 +28,8 @@ struct FileProperties
 struct SourceResult
 {
     QUuid soundGuid;
-    QUuid entryId;
     QUuid presetGuid;
-    uint32_t sourceId = 0;
+    SoundSourceDef source;
     QString soundName;
     QString sourcePath;
     QString language;

@@ -513,7 +513,7 @@ QToolButton[paneRole="sectionToggle"]:disabled {
     color: @textDisabled@;
 }
 
-QTreeWidget#projectSourcesTree,
+QTreeWidget#projectResourcesTree,
 QWidget#Explorer QTreeWidget#ProjectTreeWidget {
     border: none;
     border-radius: 0;
@@ -1006,7 +1006,7 @@ QTreeView::item, QListView::item, QTableView::item {
 }
 
 QTreeWidget#ProjectTreeWidget::item,
-QTreeWidget#projectSourcesTree::item,
+QTreeWidget#projectResourcesTree::item,
 QTreeWidget#SelectorTreeWidget::item {
     padding: @rowInset@px @controlGap@px @rowInset@px 0px;
 }
@@ -1260,7 +1260,7 @@ QScrollBar[scrollRole="table"]::handle {
 }
 
 QTreeWidget#ProjectTreeWidget > QWidget > QScrollBar::handle,
-QTreeWidget#projectSourcesTree > QWidget > QScrollBar::handle,
+QTreeWidget#projectResourcesTree > QWidget > QScrollBar::handle,
 QPlainTextEdit#logTextView > QWidget > QScrollBar::handle,
 QListWidget#aiChatList > QWidget > QScrollBar::handle,
 QScrollBar[scrollRole="panel"]::handle,
@@ -1282,7 +1282,7 @@ QScrollBar::handle:vertical {
 
 QTreeWidget#ProjectTreeWidget QScrollBar::handle:vertical:disabled,
 QTreeWidget#SelectorTreeWidget QScrollBar::handle:vertical:disabled,
-QTreeWidget#projectSourcesTree QScrollBar::handle:vertical:disabled,
+QTreeWidget#projectResourcesTree QScrollBar::handle:vertical:disabled,
 QScrollBar[scrollRole="panel"]::handle:vertical:disabled,
 QPlainTextEdit[fieldRole="inspectorText"] QScrollBar::handle:vertical:disabled,
 QScrollBar#sourceWaveChannelScroll::handle:vertical:disabled,

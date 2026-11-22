@@ -5,7 +5,7 @@
 | 统计项 | 当前数量与范围 |
 |---|---|
 | 覆盖界面 | Explorer 的 Assets 对象树与 Hierarchy：对象行、工程 Folder、分类根、树内空白、键盘菜单及对应快捷键 |
-| 范围外 | Sources 文件树、主窗口菜单栏、Blueprint、Inspector、Timeline 等其他编辑面 |
+| 范围外 | Resources 文件树、主窗口菜单栏、Blueprint、Inspector、Timeline 等其他编辑面 |
 | 顶级入口 | 15 个定义，其中 Set Color... 隐藏；分隔线不计数 |
 | 顶级子菜单 | 4 个：Create / New Child、New Parent、New Action、Operation |
 | 顶级直接命令 | 11 个定义，其中 Set Color... 隐藏 |

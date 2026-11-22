@@ -52,10 +52,10 @@
 | `fieldHeight` | 20（控件高度档位） | 普通下拉框、输入框、数值框、按钮和行内重命名编辑框等基本控件等高。字段内的下拉箭头使用小图标 |
 | `rowInset` | 2 | 行内控件上下留白 |
 | `rowHeight` | 24 = 字段高 + 上下留白 | 树、列表、表格、表头的行；字体较高时取字体高加上下留白 |
-| `sectionHeaderHeight` | 26 = 行高 + 2 | Explorer 的 Assets / Sources、Inspector 与其他折叠分节（各层级一致）、Inspector 分类 Tab、GroupBox 标题区 |
+| `sectionHeaderHeight` | 26 = 行高 + 2 | Explorer 的 Assets / Resources、Inspector 与其他折叠分节（各层级一致）、Inspector 分类 Tab、GroupBox 标题区 |
 | `indent` | 24 = 图标 + 控件间距 | 折叠分节内容的缩进；分节标题左侧不缩进，chevron 贴左，字段名与分节标题文字左对齐，嵌套分节逐层增加一列 |
 
-Explorer 的 Assets / Sources 与 Selection Editor 的 Content / Transition 共用面板分区（`PaneSection` / `PaneSectionStack`）：带首要边界外框，标题居中，分区间 1px 边界可拖动调高，收起后让出空间并记住尺寸；标题只有底边线，首个分区上方由外框、其余由分隔边界提供上边线，切换按钮铺满标题栏，悬停底色 `background.tertiary` 上下贴边，鼠标为手形。Inspector 与设置表单按“块”排列：字段行高等于字段高，行与行之间、分节内容的上下边距都是控件间距，因此字段行与表格等块状内容离分节标题的距离一致，行距与树和表格的行高同为 24。蓝图节点行、标题栏窗口按钮宽、Fader 最小高度和 Timeline 标尺高度不随字段高收缩，分别取行高或较大控件高度推导。重命名编辑框高度为字段高并在行内居中，横向起点退回边框与 `QLineEdit` 固有文字边距，编辑时文字位置不变。
+Explorer 的 Assets / Resources 与 Selection Editor 的 Content / Transition 共用面板分区（`PaneSection` / `PaneSectionStack`）：带首要边界外框，标题居中，分区间 1px 边界可拖动调高，收起后让出空间并记住尺寸；标题只有底边线，首个分区上方由外框、其余由分隔边界提供上边线，切换按钮铺满标题栏，悬停底色 `background.tertiary` 上下贴边，鼠标为手形。Inspector 与设置表单按“块”排列：字段行高等于字段高，行与行之间、分节内容的上下边距都是控件间距，因此字段行与表格等块状内容离分节标题的距离一致，行距与树和表格的行高同为 24。蓝图节点行、标题栏窗口按钮宽、Fader 最小高度和 Timeline 标尺高度不随字段高收缩，分别取行高或较大控件高度推导。重命名编辑框高度为字段高并在行内居中，横向起点退回边框与 `QLineEdit` 固有文字边距，编辑时文字位置不变。
 
 主窗口、浮动窗口与对话框标题栏共用 `TitleBarBase`，由它负责背景绘制、标题栏与窗口按钮尺寸，以及主题、字体、屏幕和最大化状态变化。窗口按钮基于 `QAbstractButton`，尺寸只由标题栏根据主题壳层尺寸和内容高度设置，不继承表单 `QPushButton` 的字段高度限制；QSS 只声明其视觉状态。各类标题栏按菜单、项目名或对话框名称计算所需的内容高度。
 
@@ -127,15 +127,15 @@ PR 审查后补充修复：Assistant 在原消息和待确认控件上更新字�
 |---|---|---|
 | 首要文字 | `text.primary` | 字段名与字段值、只读有效值、普通正文、菜单文字、顶部项目名称、蓝图对象名称、AI 空状态气泡与提示文字，以及常态操作图标；节点字段名与值一致 |
 | 次要文字 | `text.secondary` | 注释说明、表格列头、输入占位提示、其他空状态、坐标刻度、单位、状态栏摘要、继承引用和面包屑 |
-| 标题文字 | `text.title` | 已加粗的分节与分组标题，包括 Inspector section、Explorer 的 Assets / Sources、设置与偏好标题、GroupBox、模板标题和表格内部的分组条目 |
+| 标题文字 | `text.title` | 已加粗的分节与分组标题，包括 Inspector section、Explorer 的 Assets / Resources、设置与偏好标题、GroupBox、模板标题和表格内部的分组条目 |
 | 禁用文字 | `text.disabled` | 控件不可用时的文字，独立于只读状态 |
 | 强调 | `accent.primary` | 控件激活、焦点与强调边框、滑条填充、曲线编辑点与手柄激活 |
 | 强调悬停 | `accent.hover` | 强调元素自身的悬停变化 |
 | 强调底上的文字 | `accent.text` | 高亮菜单和选择背景上的文字，不能直接用普通字段文字替代 |
 | 基础表面 | `background.primary/secondary/tertiary` | 节点主体在选中前后均使用 tertiary，选中时只高亮边框 |
-| 悬浮叠加 | `background.hoverOverlay` | Explorer 的 Assets / Sources 标题与树行、普通按钮、工具栏选择器、播放按钮和标签页共用。Alpha 为零时完整显示原底色 |
+| 悬浮叠加 | `background.hoverOverlay` | Explorer 的 Assets / Resources 标题与树行、普通按钮、工具栏选择器、播放按钮和标签页共用。Alpha 为零时完整显示原底色 |
 | 交互表面 | `background.hover/selected` | 菜单栏活动项使用 hover 底色，列表行和标签的选中状态使用 selected 底色 |
-| 拖放目标 | `background.dropTarget` | 可接收拖放的树行、Sources 分节标题和蓝图节点上叠加的半透明底色；行内文字与图标保持可见，不画左侧强调条 |
+| 拖放目标 | `background.dropTarget` | 可接收拖放的树行、Resources 分节标题和蓝图节点上叠加的半透明底色；行内文字与图标保持可见，不画左侧强调条 |
 | 首要边界 | `border.primary` | 界面框架排布分割、面板边界和内容分隔线；包括 Dock 面板、画布外框、声道分隔及面板滚动条 |
 | 次要边界 | `border.secondary` | 控件与按钮描边、表格完整外框、网格及行列分隔、控件内滚动条；禁用态控件描边仍属此类 |
 | 刻度线 | `border.tick` | 时间轴、曲线、波形与 Meter 的刻度短线和坐标网格；刻度文字仍使用次要文字 |
@@ -145,7 +145,7 @@ PR 审查后补充修复：Assistant 在原消息和待确认控件上更新字�
 
 字段名统一声明 `textRole=formLabel`，使用首要文字。普通文本标签可声明 `textRole=primary/secondary/title`；节点内容保留 `nodeContentRole=label/value`，两个绘制位置均绑定首要文字，节点辅助副标题使用次要文字。`roValue` 静态展示值使用首要文字；继承等运行时只读状态下，列表标签与数值随编辑状态禁用。公共禁用文字规则覆盖普通 QLabel、表格序号与列头、单位及上述文字角色，原生 palette 同步设置 Disabled WindowText。仍需支持查看导航的文字可通过 `dimmed=true` 使用同一禁用色；FX Custom 名称采用此方式，保留双击打开 Effect Editor 的能力。
 
-Sources 语言分组、Inspector 各级 section 与 Explorer 的 Assets / Sources 标题统一使用主题 Body 字号（默认 10 pt）、600 字重、无额外字距。字号统一以 pt 表达，Inspector 标题不再单独使用 11 px 或按嵌套层级改变字重和字距。
+Sources 语言分组、Inspector 各级 section 与 Explorer 的 Assets / Resources 标题统一使用主题 Body 字号（默认 10 pt）、600 字重、无额外字距。字号统一以 pt 表达，Inspector 标题不再单独使用 11 px 或按嵌套层级改变字重和字距。
 
 常态操作图标使用首要色，包括树节点、折叠分节、表格分组、下拉框和排序的 chevron，binding / attenuation 入口、添加与缩放、重置、新建会话和表格拖拽手柄。分节自定义指示色继续控制装饰边线，chevron 本身使用首要色。禁用图标保持禁用色，已有激活、选中和强调背景状态保留对应职责。普通 SVG 图标默认从应用级 `ButtonText` 获取首要色，局部文字的次要色不改变其图标归属。
 
