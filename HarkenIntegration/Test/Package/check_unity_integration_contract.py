@@ -31,9 +31,9 @@ REQUIRED_FILES = (
     "Runtime/Harken.Core.asmdef",
     "Runtime/Unity/Harken.Unity.asmdef",
     "Editor/Harken.Unity.Editor.asmdef",
-    "Runtime/Generated/HarkenAbi.g.cs",
-    "Runtime/Generated/HarkenNative.g.cs",
-    "Runtime/Generated/HarkenTypes.g.cs",
+    "Runtime/Generated/HarkenAbi.cs",
+    "Runtime/Generated/HarkenNative.cs",
+    "Runtime/Generated/HarkenTypes.cs",
 )
 VOICE_WRAPPER_CONTRACT = {
     "SetVolume": (
@@ -257,7 +257,7 @@ def verify_package(integration: Path, errors: list[str]) -> None:
 
 
 def verify_generated_binding(integration: Path, errors: list[str]) -> None:
-    for path in sorted((integration / "Runtime/Generated").glob("*.g.cs")):
+    for path in sorted((integration / "Runtime/Generated").glob("*.cs")):
         text = path.read_text(encoding="utf-8")
         for token in PREVIEW_TOKENS:
             if token in text:

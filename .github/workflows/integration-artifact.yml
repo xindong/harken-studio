@@ -82,7 +82,7 @@ jobs:
             done
           done
 
-          python3 HarkenIntegration/Unity/Binding/check_unity_integration_contract.py \
+          python3 HarkenIntegration/Test/Package/check_unity_integration_contract.py \
             --integration-root .temp/package/HarkenIntegration/Unity/Harken \
             --require-binaries
 
