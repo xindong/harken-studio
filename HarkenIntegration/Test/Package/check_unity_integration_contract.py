@@ -191,35 +191,24 @@ def verify_layout(
 
     native_files = set()
     for path in integration.rglob("*"):
-        if not path.is_file():
-            continue
         relative = path.relative_to(integration).as_posix()
         suffix = path.suffix.lower()
-        if suffix in FORBIDDEN_UNITY_ROOT_SUFFIXES:
+        if path.is_file() and suffix in FORBIDDEN_UNITY_ROOT_SUFFIXES:
             errors.append(f"Non-Unity source remains in Harken Integration Package: {relative}")
-        if suffix == ".meta":
-            normalized = relative.replace("\\", "/")
-            forbidden_meta = {
-                "README.md.meta",
-                "CHANGELOG.md.meta",
-                "LICENSE.md.meta",
-                "VERSION.meta",
-                "package.json.meta",
-            }
-            allowed = (
-                normalized not in forbidden_meta
-                and (normalized.startswith("Runtime/Plugins/")
-                     or normalized.startswith("Tests/")
-                     or normalized.endswith((".unity.meta", ".prefab.meta"))
-                     or normalized.endswith((".cs.meta", ".asmdef.meta")))
-            )
-            if not allowed:
-                errors.append(f"Invalid Unity .meta file in Integration Package: {relative}")
-        elif suffix in {".cs", ".asmdef"}:
-            if not path.with_name(path.name + ".meta").is_file():
-                errors.append(f"Unity source is missing metadata: {relative}.meta")
-        elif suffix in NATIVE_SUFFIXES:
+        if path.is_file() and suffix in NATIVE_SUFFIXES:
             native_files.add(relative)
+        asset = path.with_name(path.name[:-len(".meta")]) if suffix == ".meta" else path
+        if any(part.endswith("~") or part.startswith(".")
+               for part in asset.relative_to(integration).parts):
+            if suffix == ".meta":
+                errors.append(f"Unity ignores this asset; remove its .meta file: {relative}")
+            continue
+        if suffix == ".meta":
+            if not asset.exists():
+                errors.append(f"Unity .meta file has no matching asset: {relative}")
+        elif (relative != "Runtime/Plugins" and not relative.startswith("Runtime/Plugins/")
+              and not path.with_name(path.name + ".meta").is_file()):
+            errors.append(f"Unity asset is missing metadata: {relative}.meta")
 
     if require_binaries:
         missing = NATIVE_PLUGIN_PATHS - native_files

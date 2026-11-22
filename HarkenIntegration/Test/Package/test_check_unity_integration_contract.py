@@ -25,11 +25,44 @@ class UnityIntegrationContractTest(unittest.TestCase):
     def test_repository_source_contract_passes(self) -> None:
         MODULE.verify(REPOSITORY / "HarkenIntegration", False)
 
-    def test_unity_meta_is_rejected(self) -> None:
+    def test_package_file_without_meta_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             integration = self.copy_integration(directory)
-            (integration / "README.md.meta").write_text(
+            (integration / "README.md.meta").unlink()
+            with self.assertRaises(SystemExit):
+                MODULE.verify(integration, False)
+
+    def test_folder_without_meta_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            integration = self.copy_integration(directory)
+            (integration / "Runtime/API.meta").unlink()
+            with self.assertRaises(SystemExit):
+                MODULE.verify(integration, False)
+
+    def test_meta_without_asset_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            integration = self.copy_integration(directory)
+            (integration / "Runtime/Removed.cs.meta").write_text(
                 "fileFormatVersion: 2\n", encoding="utf-8"
+            )
+            with self.assertRaises(SystemExit):
+                MODULE.verify(integration, False)
+
+    def test_meta_for_ignored_folder_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            integration = self.copy_integration(directory)
+            (integration / "Tools~").mkdir(exist_ok=True)
+            (integration / "Tools~.meta").write_text(
+                "fileFormatVersion: 2\n", encoding="utf-8"
+            )
+            with self.assertRaises(SystemExit):
+                MODULE.verify(integration, False)
+
+    def test_plugin_exemption_does_not_cover_sibling_assets(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            integration = self.copy_integration(directory)
+            (integration / "Runtime/PluginsNotes.cs").write_text(
+                "// sibling\n", encoding="utf-8"
             )
             with self.assertRaises(SystemExit):
                 MODULE.verify(integration, False)
@@ -38,6 +71,15 @@ class UnityIntegrationContractTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             integration = self.copy_integration(directory)
             binary = integration / "Runtime/Plugins/x86_64/HarkenEngine.dll"
+            binary.parent.mkdir(parents=True, exist_ok=True)
+            binary.write_bytes(b"runtime")
+            with self.assertRaises(SystemExit):
+                MODULE.verify(integration, False)
+
+    def test_native_binary_in_ignored_folder_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            integration = self.copy_integration(directory)
+            binary = integration / "Tools~/unexpected.dll"
             binary.parent.mkdir(parents=True, exist_ok=True)
             binary.write_bytes(b"runtime")
             with self.assertRaises(SystemExit):
