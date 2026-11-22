@@ -593,7 +593,8 @@ TEST(CanonicalPackSetActivate, ProviderMembersShareDecodeBudgetAndPreservePriorP
     Provider content{Build(false, PackId("content"))};
     for (auto* provider : {&init, &content}) {
         // Trailing encoded padding is legal and belongs to the acquired owner.
-        provider->bytes.resize(64 * 1024, 0);
+        // Each member fits the former default; acquiring and decoding both exceeds it.
+        provider->bytes.resize(32u << 20, 0);
         PackFileHeader header;
         ASSERT_TRUE(ReadPackFileHeader(provider->bytes.data(), &header));
         header.fileBytes = provider->bytes.size();
@@ -634,7 +635,7 @@ TEST(CanonicalPackSetActivate, ProviderMembersShareDecodeBudgetAndPreservePriorP
             provider->bytes.size(), &image, nullptr, budget));
         EXPECT_LT(budget->live, limitedBytes);
     }
-    for (const auto limit : {limitedBytes, std::uint64_t{512 * 1024}}) {
+    for (const auto limit : {limitedBytes, std::uint64_t{128} << 20, std::uint64_t{0}}) {
         SCOPED_TRACE(limit);
         auto config = CanonicalActivationConfig();
         config.maxPackDecodeStagingBytes = limit;

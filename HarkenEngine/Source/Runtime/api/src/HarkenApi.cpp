@@ -77332,7 +77332,7 @@ PendingStartOutcome StartDeferredVoice(
             1000;
         const std::uint32_t prebufferFrames =
             static_cast<std::uint32_t>(std::min<std::uint64_t>(
-                prebufferFrames64, engine.streams.RingOf(streamSlot)->capacity));
+                prebufferFrames64, engine.streams.RingFrames()));
         const VnResult played = engine.voices.PlayStream(
             engine.streams.RingOf(streamSlot), facts.channelCount,
             facts.sampleRate, prebufferFrames, rec.baseVolumeDb, rec.ratio,
@@ -79112,7 +79112,7 @@ bool TryReturnParked(harken::Engine& engine, std::uint32_t ledgerSlot,
         const std::uint32_t prebufferFrames =
             static_cast<std::uint32_t>(std::min<std::uint64_t>(
                 prebufferFrames64,
-                engine.streams.RingOf(resumeStreamSlot)->capacity));
+                engine.streams.RingFrames()));
         r = engine.voices.PlayStream(
             engine.streams.RingOf(resumeStreamSlot),
             resumeStreamFacts.channelCount,
@@ -115553,7 +115553,7 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
         const std::uint32_t prebufferFrames =
             static_cast<std::uint32_t>(std::min<std::uint64_t>(
                 prebufferFrames64,
-                engine->streams.RingOf(streamSlot)->capacity));
+                engine->streams.RingFrames()));
         const VnResult played = engine->voices.PlayStream(
             engine->streams.RingOf(streamSlot), streamFacts.channelCount,
             streamFacts.sampleRate, prebufferFrames, desc->volumeDb, ratio,

@@ -34879,6 +34879,59 @@ TEST(ActionFiringApi, StreamLoopReplacementRefusesOldWorldAndAcceptsNewRevision)
     EXPECT_EQ(VN_OK, Vn_UnregisterStreamFile(CanonicalActionWorld::kFirstSound));
 }
 
+TEST(ActionFiringApi, SeventeenthPostedStreamAddsToAllSixteenPlaying) {
+    auto config = harkentest::MakeNullConfig(0, 64, 48000);
+    harkentest::EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    constexpr std::uint32_t frames = 32768, intro = 1024;
+    std::vector<float> samples(2u * frames);
+    std::fill(samples.begin() + intro, samples.begin() + frames, 1.0f / 64);
+    std::fill_n(samples.begin() + frames, intro, 0.125f);
+    harkentest::StreamSpec spec{};
+    spec.soundId = CanonicalActionWorld::kFirstSound;
+    spec.sampleRate = 48000;
+    spec.channelCount = 2;
+    spec.chunkFrames = 256;
+    const auto path = ActionStreamTempPath("action_stream_seventeen.stream");
+    harkentest::WriteFileBytes(path, harkentest::BuildStreamBytes(spec, samples));
+    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(spec.soundId, path.c_str()));
+    harken::StreamManager::StreamFacts facts{};
+    ASSERT_TRUE(engine.streams.FindFile(spec.soundId, &facts));
+    CanonicalActionWorld image(facts.contentRevision);
+    image.properties[0].payload.presentMask |= UINT64_C(0x10);
+    image.properties[0].payload.values[4].bits = 1;
+    image.RelinkFirstSound();
+    image.MakeImmediateSoundPlayAction();
+    ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(engine, image.world).status);
+    auto post = ValidPostDesc();
+    post.actionId = image.actions[9].actionStableId;
+    std::array<VnActionFiringHandle, 17> firings{};
+    for (std::uint32_t i = 0; i < 16; ++i)
+        ASSERT_EQ(VN_OK, Vn_PostAction(&post, &firings[i]));
+    const auto pump = [&] {
+        ASSERT_EQ(VN_OK, Vn_Update());
+        engine.streams.SyncServe();
+        engine.nullBackend.Pump(1);
+    };
+    for (std::uint32_t block = 0; block < 28; ++block) pump();
+    ASSERT_EQ(16u, engine.voices.ActiveCount());
+    ASSERT_EQ(VN_OK, Vn_PostAction(&post, &firings.back()));
+    std::uint32_t matched = 0;
+    for (std::uint32_t block = 0; block < 14; ++block) {
+        pump();
+        const auto* mixed = engine.nullBackend.LastBlock();
+        if (matched == 0 && mixed[1] < 0.12f) continue;
+        for (std::uint32_t i = 0; i < 64; ++i) {
+            ASSERT_NEAR(0.25f, mixed[2*i], 1e-5f) << block << ":" << i;
+            ASSERT_NEAR(0.125f, mixed[2*i+1], 1e-5f) << block << ":" << i;
+        }
+        ++matched;
+    }
+    EXPECT_GE(matched, 6u);
+    EXPECT_EQ(17u, engine.voices.ActiveCount());
+}
+
 TEST(ActionFiringApi, StreamSeekSwapsExactRingAndRendersRequestedSourceFrames) {
     (void)Vn_Term();
     VnConfig config = harkentest::MakeNullConfig(1, 64, 48000);

@@ -38,7 +38,7 @@ TEST(StreamConfig, OldVintageIgnoresStreamFieldGarbage) {
     ASSERT_EQ(VN_OK, session.InitResult());
     const harken::EngineConfig& resolved = session.Engine()->config;
     EXPECT_EQ(16384u, resolved.streamRingFrames);
-    EXPECT_EQ(16u, resolved.maxStreams);
+    EXPECT_EQ(0u, resolved.maxStreams);
     EXPECT_EQ(100u, resolved.prebufferMs);
     EXPECT_EQ(32u, resolved.starvationCooldownBlocks);
 }
@@ -67,7 +67,7 @@ TEST(StreamConfig, ZeroStreamFieldsSelectDefaults) {
     ASSERT_EQ(VN_OK, session.InitResult());
     const harken::EngineConfig& resolved = session.Engine()->config;
     EXPECT_EQ(16384u, resolved.streamRingFrames);
-    EXPECT_EQ(16u, resolved.maxStreams);
+    EXPECT_EQ(0u, resolved.maxStreams);
     EXPECT_EQ(100u, resolved.prebufferMs);
     EXPECT_EQ(32u, resolved.starvationCooldownBlocks);
 }
