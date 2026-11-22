@@ -48,6 +48,25 @@ class UnityIntegrationContractTest(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 MODULE.verify(integration, False)
 
+    def test_meta_for_ignored_folder_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            integration = self.copy_integration(directory)
+            (integration / "Tools~").mkdir(exist_ok=True)
+            (integration / "Tools~.meta").write_text(
+                "fileFormatVersion: 2\n", encoding="utf-8"
+            )
+            with self.assertRaises(SystemExit):
+                MODULE.verify(integration, False)
+
+    def test_plugin_exemption_does_not_cover_sibling_assets(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            integration = self.copy_integration(directory)
+            (integration / "Runtime/PluginsNotes.cs").write_text(
+                "// sibling\n", encoding="utf-8"
+            )
+            with self.assertRaises(SystemExit):
+                MODULE.verify(integration, False)
+
     def test_repository_native_binary_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             integration = self.copy_integration(directory)

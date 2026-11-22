@@ -192,20 +192,22 @@ def verify_layout(
     native_files = set()
     for path in integration.rglob("*"):
         relative = path.relative_to(integration).as_posix()
-        parts = path.relative_to(integration).parts
-        if any(part.endswith("~") or part.startswith(".") for part in parts):
-            if path.suffix.lower() == ".meta":
-                errors.append(f"Unity ignores this folder; remove its .meta file: {relative}")
-            continue
         suffix = path.suffix.lower()
+        asset = path.with_name(path.name[:-len(".meta")]) if suffix == ".meta" else path
+        if any(part.endswith("~") or part.startswith(".")
+               for part in asset.relative_to(integration).parts):
+            if suffix == ".meta":
+                errors.append(f"Unity ignores this asset; remove its .meta file: {relative}")
+            continue
         if path.is_file() and suffix in FORBIDDEN_UNITY_ROOT_SUFFIXES:
             errors.append(f"Non-Unity source remains in Harken Integration Package: {relative}")
         if path.is_file() and suffix in NATIVE_SUFFIXES:
             native_files.add(relative)
         if suffix == ".meta":
-            if not path.with_name(path.name[:-len(".meta")]).exists():
+            if not asset.exists():
                 errors.append(f"Unity .meta file has no matching asset: {relative}")
-        elif not relative.startswith("Runtime/Plugins") and not path.with_name(path.name + ".meta").is_file():
+        elif (relative != "Runtime/Plugins" and not relative.startswith("Runtime/Plugins/")
+              and not path.with_name(path.name + ".meta").is_file()):
             errors.append(f"Unity asset is missing metadata: {relative}.meta")
 
     if require_binaries:
