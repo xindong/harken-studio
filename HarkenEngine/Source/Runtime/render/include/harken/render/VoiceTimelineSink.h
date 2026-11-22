@@ -29,12 +29,14 @@ class VoiceTimelineSink final : public TimelineExecutorSink {
 public:
     VoiceTimelineSink(VoicePool& voices, TimelineArmTable& arms)
         : voices_(voices), arms_(arms), frontier_(voices, arms),
-          laneFrontier_(voices, arms), immediate_(voices, arms),
-          plainResults_(voices.Capacity() * 2u * kTimelineMaxEventsPerVoiceQuantum) {
-        if (!pendingVariableStarts_.Reserve(voices.Capacity()) ||
+          laneFrontier_(voices, arms), immediate_(voices, arms) {
+        if (!plainResults_.Reserve(voices.Capacity() * 2u * kTimelineMaxEventsPerVoiceQuantum) ||
+            !pendingVariableStarts_.Reserve(voices.Capacity()) ||
             !voices.AttachSlotStoragePreparation(slotStorageRegistration_, this,
                 [](void* context, std::uint32_t count) noexcept {
-                    return static_cast<VoiceTimelineSink*>(context)->pendingVariableStarts_.ConstructThrough(count);
+                    auto& sink = *static_cast<VoiceTimelineSink*>(context);
+                    return sink.pendingVariableStarts_.ConstructThrough(count) &&
+                        sink.plainResults_.ConstructThrough(count * 2u * kTimelineMaxEventsPerVoiceQuantum);
                 })) throw harken::detail::LogicPreparationFailure{};
         if (!arms_.AttachReader(this, [](void* context, std::uint32_t count) noexcept {
             auto& sink = *static_cast<VoiceTimelineSink*>(context);
@@ -1550,7 +1552,7 @@ private:
     StableRowStorage<PendingVariableStart> pendingVariableStarts_;
     bool pendingVariableStartSeen_ = false;
     VoicePool::SlotStorageRegistration slotStorageRegistration_;
-    std::vector<PlainTransactionResult> plainResults_;
+    StableRowStorage<PlainTransactionResult> plainResults_;
     GrowingRowStorage<PlainArmRetirement> retiringPlainArms_;
     GrowingRowStorage<std::uint32_t> retiringPlainArmSlots_;
     std::uint32_t retiringPlainArmCount_ = 0;

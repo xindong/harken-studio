@@ -63,6 +63,10 @@ bool VoicePool::PrepareRenderSlotBacking(std::uint32_t count, std::uint32_t chan
     bool firstOutput, std::uint32_t highRatioChannels) noexcept {
     if (count > m_slots.Capacity() || channelCount > kMaxChannels ||
         highRatioChannels > kMaxChannels) return false;
+    if (!m_originalCallbackStorage.ConstructThrough(count) ||
+        !m_streamParkMailboxes.ConstructThrough(count) ||
+        !m_signalMemberImages.ConstructThrough(count) ||
+        !m_jobSlots.ConstructThrough(count) || !m_jobGenerations.ConstructThrough(count)) return false;
     const bool monitorPrepared = m_monitorPreChainPrepared.load(std::memory_order_acquire);
     for (std::uint32_t ch = 0; ch < channelCount; ++ch) {
         if (!m_ringStorage[ch].ConstructThrough(count) ||
@@ -250,13 +254,13 @@ VoicePool::VoicePool(const EngineConfig& config, const ResampleTables* tables,
       m_biquadTrig(biquadTrig),
       m_effectBank(effectBank),
       m_dynamicRoutes(dynamicRoutes),
-      m_timelineArms(timelineArms),
-      m_originalCallbackStorage(config.voiceCapacity.Render()),
-      m_streamParkMailboxes(config.voiceCapacity.Render()),
-      m_signalMemberImages(config.voiceCapacity.Render()),
-      m_jobSlots(config.voiceCapacity.Render(), 0),
-      m_jobGenerations(config.voiceCapacity.Render(), 0) {
-    if (!m_slots.Reserve(config.voiceCapacity.Render()) ||
+      m_timelineArms(timelineArms) {
+    if (!m_originalCallbackStorage.Reserve(config.voiceCapacity.Render()) ||
+        !m_streamParkMailboxes.Reserve(config.voiceCapacity.Render()) ||
+        !m_signalMemberImages.Reserve(config.voiceCapacity.Render()) ||
+        !m_jobSlots.Reserve(config.voiceCapacity.Render()) ||
+        !m_jobGenerations.Reserve(config.voiceCapacity.Render()) ||
+        !m_slots.Reserve(config.voiceCapacity.Render()) ||
         !m_professionalStorage.Reserve(config.voiceCapacity.Render()) ||
         !m_variableWeightStorage.Reserve(config.voiceCapacity.Render()) ||
         !m_timelineEnvelopeCurves.Reserve(config.voiceCapacity.Render()) ||

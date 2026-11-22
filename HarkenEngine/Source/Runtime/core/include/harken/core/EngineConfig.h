@@ -92,6 +92,10 @@ private:
 // PendingStart, and Parked states.
 class VoiceCapacityModel {
 public:
+    // This is the existing platform admission range. The prefix actually used
+    // by a session is constructed on the logic thread as voices are accepted.
+    static constexpr std::uint32_t kMaxRenderVoices = 1u << 14;
+    static constexpr std::uint32_t kInitialRenderVoices = 256;
     constexpr VoiceCapacityModel() noexcept = default;
 
     // Forms the single authoritative relationship L = R + V. False means the
@@ -129,6 +133,10 @@ struct EngineConfig {
     std::uint32_t fxSlotsPerVoice = 8;
     std::uint32_t arenaBytes = UINT32_MAX;
     bool nullDevice = true;
+    bool automaticRenderVoices = false;
+    std::uint32_t InitialRenderVoices() const noexcept {
+        return automaticRenderVoices ? VoiceCapacityModel::kInitialRenderVoices : voiceCapacity.Render();
+    }
     std::uint32_t maxBuses = 1; // Initial Master directory; not an admission limit.
     std::uint32_t commandQueueDepth = 256;
     // Most control commands one MixQuantum will apply. The drain used to run

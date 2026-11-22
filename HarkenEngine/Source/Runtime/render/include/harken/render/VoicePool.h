@@ -1337,9 +1337,9 @@ private:
     static void FillSourceCursor(const Slot& slot, SlotState state,
         SourceCursorMirror::Row& row, std::uint64_t serial, bool captureParking) noexcept;
     SlotStorageRegistration* m_slotStorageRegistrations = nullptr;
-    std::vector<OriginalCallbackStorageLease> m_originalCallbackStorage;
+    StableRowStorage<OriginalCallbackStorageLease> m_originalCallbackStorage;
     bool m_originalSourceCallbackOpen = false;
-    std::vector<StreamParkMailbox> m_streamParkMailboxes;
+    StableRowStorage<StreamParkMailbox> m_streamParkMailboxes;
     std::uint32_t m_pendingStreamParkMailboxes = 0;
     StableRowStorage<StreamParkTokenSlot> m_streamParkTokens;
     bool PrepareRenderSlotBacking(std::uint32_t count, std::uint32_t channelCount,
@@ -1378,12 +1378,11 @@ private:
     // order (§8.2 determinism).
     RenderWorkerPool m_workers;
     // Per-block cascade job list, filled in slot order by the parallel path's
-    // serial pre-pass: m_jobSlots[j] is the voice slot of job j. Sized once at
-    // construction (Render capacity) so dispatch allocates nothing on the audio
-    // path.
-    std::vector<SignalMemberImage> m_signalMemberImages;
-    std::vector<std::uint32_t> m_jobSlots;
-    std::vector<std::uint32_t> m_jobGenerations;
+    // serial pre-pass: m_jobSlots[j] is the voice slot of job j. Their stable
+    // backing is committed before a render slot becomes visible.
+    StableRowStorage<SignalMemberImage> m_signalMemberImages;
+    StableRowStorage<std::uint32_t> m_jobSlots;
+    StableRowStorage<std::uint32_t> m_jobGenerations;
     std::uint32_t m_deferredJobCount = 0;
     std::uint64_t m_jobQuantumIndex = 0;
     std::uint32_t m_jobBlockFrames = 0; // block width for the in-flight batch

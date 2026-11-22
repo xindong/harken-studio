@@ -76673,7 +76673,7 @@ void EndParkedVoice(harken::Engine& engine, std::uint32_t ledgerSlot,
 
 void DrainStreamParkMailboxes(harken::Engine& engine) {
     if (!engine.voices.HasPendingStreamParkMailboxes()) return;
-    for (std::uint32_t slot = 0; slot < engine.voices.Capacity(); ++slot) {
+    for (std::uint32_t slot = 0; slot < engine.voices.ConstructedSlotCount(); ++slot) {
         harken::StreamParkOutcome outcome;
         bool cancelled = false;
         if (!engine.voices.ConsumeStreamParkOutcome(
@@ -86520,7 +86520,6 @@ engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         if ((futurePlays != 0 || futureTrees) && ((futureTrees && (futureEvents > UINT32_MAX ||
                 !engine.PrepareInitialFrontierStorage(static_cast<std::uint32_t>(futureEvents)) ||
                 !engine.PrepareDeferredTrees(*futureTrees))) ||
-                (futurePlays && !engine.mixer.PrepareVoiceBacking(engine.voices.Capacity())) ||
                 !engine.playableInstances.PrepareFutureAcquisitions(futurePlays, &futureInstances) ||
                 !engine.containerPlayback.PrepareStorage(engine.playableInstances.ConstructedEntryCount()) ||
                 !engine.PrepareOriginalSingleCurrentStorage() ||
@@ -86981,7 +86980,7 @@ VnResult CountDeferredInstanceRows(const ImmediateActionPlan& plan,
             harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage);
             return VN_OUT_OF_MEMORY;
         }
-        if (!trees->AddArms(1u)) return VN_OUT_OF_MEMORY;
+        if (!trees->AddArms(1u) || (!stop && !trees->AddRenderScratch(1u))) return VN_OUT_OF_MEMORY;
         if (!stop) ++rows;
         return VN_OK;
     }
@@ -87038,7 +87037,7 @@ VnResult CountDeferredInstanceRows(const ImmediateActionPlan& plan,
                                    : std::max(leaves + result.profile.Q, backing::DeferredArmMembers(result.profile));
             if (arms) {
                 if (!trees) trees = std::make_unique<harken::Engine::DeferredTreeBacking>();
-                if (!trees->AddArms(arms)) return VN_OUT_OF_MEMORY;
+                if (!trees->AddArms(arms) || (!stop && !trees->AddRenderScratch(leaves))) return VN_OUT_OF_MEMORY;
             }
             if (stop) return VN_OK;
             if (result.profile.instanceRows > UINT32_MAX - rows) return VN_OUT_OF_MEMORY;

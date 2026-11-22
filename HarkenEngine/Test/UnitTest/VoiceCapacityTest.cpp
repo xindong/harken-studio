@@ -30,9 +30,9 @@ TEST(VoiceCapacity, ResolvesDefaultExplicitAndLegacyVintageRelationships) {
 
     VnConfig defaults = harkentest::MakeNullConfig();
     ASSERT_EQ(VN_OK, harken::ResolveConfig(&defaults, &resolved));
-    EXPECT_EQ(256u, resolved.voiceCapacity.Render());
+    EXPECT_EQ(harken::VoiceCapacityModel::kMaxRenderVoices, resolved.voiceCapacity.Render());
     EXPECT_EQ(256u, resolved.voiceCapacity.Virtual());
-    EXPECT_EQ(512u, resolved.voiceCapacity.Logical());
+    EXPECT_EQ(resolved.voiceCapacity.Render() + 256u, resolved.voiceCapacity.Logical());
     EXPECT_EQ(UINT32_MAX, resolved.arenaBytes);
 
     VnConfig explicitConfig =
@@ -62,37 +62,52 @@ TEST(VoiceCapacity, ResolvesDefaultExplicitAndLegacyVintageRelationships) {
     EXPECT_EQ(5u, overflow.Logical());
 }
 
-TEST(VoiceCapacity, DefaultRenderCapacityHasStereoScratchForEveryVoice) {
-    VnConfig config = harkentest::MakeNullConfig();
-    harkentest::EngineSession session(config);
-    ASSERT_EQ(VN_OK, session.InitResult());
-    harken::Engine* engine = session.Engine();
-    ASSERT_EQ(256u, engine->config.voiceCapacity.Render());
-    ASSERT_EQ(UINT32_MAX, engine->config.arenaBytes);
+TEST(VoiceCapacity, DefaultCanMixAnotherVoiceWhileAll256Continue) {
+    for (const auto workers : {0u, 2u}) {
+        SCOPED_TRACE(workers);
+        VnConfig config = harkentest::MakeNullConfig();
+        config.renderWorkerCount = workers;
+        harkentest::EngineSession session(config);
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto& engine = *session.Engine();
+        ASSERT_EQ(0u, engine.voices.ConstructedSlotCount());
 
-    const std::vector<float> source(kBlockFrames * 8u * 2u, 0.001f);
-    const VnPCMDesc pcm =
-        harkentest::InterleavedDesc(source, 2u, kSampleRate);
-    ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSoundId, &pcm));
-    const VnPlayDesc play = harkentest::MakePlayDesc(kSoundId);
-
-    std::array<VnVoiceHandle, 256> handles{};
-    for (std::size_t i = 0; i < handles.size(); ++i) {
-        ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &handles[i])) << "voice=" << i;
-    }
-    engine->nullBackend.Pump(1);
-
-    VnSnapshot snapshot{};
-    snapshot.structSize = sizeof(VnSnapshot);
-    ASSERT_EQ(VN_OK, Vn_CaptureSnapshot(&snapshot));
-    EXPECT_EQ(256u, snapshot.activeVoiceCount);
-    EXPECT_EQ(0u, snapshot.arenaOverflowCount);
-    EXPECT_GE(snapshot.arenaHighWaterBytes,
-              static_cast<std::uint64_t>(256u * 2u * kBlockFrames *
-                                         sizeof(float)));
-    for (const VnVoiceHandle handle : handles) {
-        EXPECT_NE(0u, handle);
-        EXPECT_NE(0u, harkentest::RenderHandle(engine, handle));
+        // Exact powers of two keep the contribution of every voice identifiable.
+        // The new voice is on the right while all earlier voices stay on the left.
+        std::vector<float> bed(kBlockFrames * 16u, 0.0f), accent(bed);
+        for (std::size_t i = 0; i < bed.size(); i += 2) {
+            bed[i] = 1.0f / 1024.0f;
+            accent[i + 1] = 0.125f;
+        }
+        const auto extraId = harkentest::ObjectId(81003);
+        auto pcm = harkentest::InterleavedDesc(bed, 2u, kSampleRate);
+        ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSoundId, &pcm));
+        pcm = harkentest::InterleavedDesc(accent, 2u, kSampleRate);
+        ASSERT_EQ(VN_OK, Vn_RegisterPCM(extraId, &pcm));
+        auto play = harkentest::MakePlayDesc(kSoundId);
+        std::array<VnVoiceHandle, 257> handles{};
+        for (std::size_t i = 0; i < 256; ++i)
+            ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &handles[i])) << i;
+        engine.nullBackend.Pump(2);
+        ASSERT_EQ(256u, engine.voices.ActiveCount());
+        play = harkentest::MakePlayDesc(extraId);
+        ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &handles.back()));
+        engine.nullBackend.Pump(2);
+        ASSERT_EQ(257u, engine.voices.ActiveCount());
+        ASSERT_EQ(257u, engine.voices.ConstructedSlotCount());
+        const float* block = engine.nullBackend.LastBlock();
+        for (std::uint32_t i = 0; i < kBlockFrames; ++i) {
+            ASSERT_NEAR(0.25f, block[2 * i], 1e-5f) << i;
+            ASSERT_NEAR(0.125f, block[2 * i + 1], 1e-5f) << i;
+        }
+        for (const auto handle : handles)
+            ASSERT_NE(0u, harkentest::RenderHandle(&engine, handle));
+        VnSnapshot snapshot{};
+        snapshot.structSize = sizeof(snapshot);
+        ASSERT_EQ(VN_OK, Vn_CaptureSnapshot(&snapshot));
+        EXPECT_EQ(257u, snapshot.activeVoiceCount);
+        EXPECT_EQ(0u, snapshot.arenaOverflowCount);
+        EXPECT_GE(snapshot.arenaHighWaterBytes, 257u * 2u * kBlockFrames * sizeof(float));
     }
 }
 

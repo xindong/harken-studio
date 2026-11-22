@@ -6024,7 +6024,7 @@ inline std::size_t QueueContinuationRecordCapacity(
 }
 
 inline std::uint32_t TimelineArmCapacity(const EngineConfig& config) {
-    const std::uint64_t total = static_cast<std::uint64_t>(config.voiceCapacity.Render()) +
+    const std::uint64_t total = static_cast<std::uint64_t>(config.InitialRenderVoices()) +
         config.maxScheduledTransactions;
     if (total > UINT32_MAX) {
         throw std::length_error("timeline arm capacity overflow");
@@ -6051,6 +6051,10 @@ struct EngineHandleGenerationFloors {
 struct Engine {
     // Outlives every preparation that holds physical relation backing.
     GrowingRowStorage<EnginePlayableMemberRelation> memberRelations;
+    // The logic owner keeps mixer workspace for delayed sounds until their
+    // firing retires. Ordinary starts prepare any extra workspace before play.
+    std::uint64_t heldRenderScratch = 0;
+    std::uint32_t borrowedRenderScratch = 0;
     std::uint32_t freeMemberRelation = UINT32_MAX;
     std::uint32_t occupiedMemberRelations = 0;
     enum class OriginalPlayableServicePackDuty : std::uint8_t {
@@ -7181,7 +7185,7 @@ public:
                  [](void* context, std::uint32_t slot) noexcept {
                      auto& engine = *static_cast<Engine*>(context);
                      return engine.pendingStarts.Emplace(slot) && engine.parkRecords.Emplace(slot);
-                 }, this, handleFloors.voice),
+                 }, this, handleFloors.voice, resolved.InitialRenderVoices()),
            playablePartitions(playableStorage.memberStride),
           actionPlayAttemptTokens(1),
            initialPendingVariableOwnerScratch(1),
@@ -7223,14 +7227,9 @@ public:
           actionSeekPreparationScratch(commands.Capacity()),
           playLedBatchScratch(commands.Capacity()),
           propertyPublisher(commands.Capacity()),
-          spatialPropertyGroupIndices(resolved.voiceCapacity.Render(), ~0u),
-          toneSectionCommandsPublished(resolved.voiceCapacity.Render(), 0),
-          toneSectionPublishedRampMs(
-              static_cast<std::size_t>(resolved.voiceCapacity.Render()) * 4,
-              0),
           notifications(resolved.notificationQueueDepth),
-          voiceManager(resolved.voiceCapacity.Render(),
-                       resolved.voiceCapacity.Logical()),
+          voiceManager(resolved.voiceCapacity.Render(), resolved.voiceCapacity.Logical(),
+                       resolved.InitialRenderVoices()),
           logicNotifications(resolved.voiceCapacity.Logical()),
           sourceCursors(resolved.voiceCapacity.Render()),
           timelinePrograms(2),
@@ -7594,7 +7593,7 @@ public:
             throw harken::detail::LogicPreparationFailure{};
         }
         voices.AttachStreamSeekHandoffs(&streamSeekHandoffs);
-        streamResyncs.assign(voices.Capacity(), StreamResyncRow{});
+
         for (std::uint32_t bus = 0; bus < buses.BusCount(); ++bus) {
             if (buses.AliveAt(bus)) {
                 busTargets.InitializeBusGeneration(
@@ -7642,7 +7641,9 @@ public:
         const auto renderCapacity = resolved.voiceCapacity.Render();
         if (resolved.audibilityParkEnabled != 0 &&
             !audibilityCursorRows.Reserve(renderCapacity)) throw harken::detail::LogicPreparationFailure{};
-        if (!voiceOriginPlayable.Reserve(renderCapacity) ||
+        if (!streamResyncs.Reserve(renderCapacity) || !toneSectionCommandsPublished.Reserve(renderCapacity) ||
+            !spatialPropertyGroupIndices.Reserve(renderCapacity) || !toneSectionPublishedRampMs.Reserve(4u * renderCapacity) ||
+            !voiceOriginPlayable.Reserve(renderCapacity) ||
             !voicePlayFacts.Reserve(renderCapacity) || !playbackPaths.Reserve(renderCapacity) ||
             !timelineVoiceInstallIdentities.Reserve(renderCapacity) ||
             !effectSlotTypes.Reserve(renderCapacity) || !voiceEffectInstanceRefs.Reserve(renderCapacity) ||
@@ -8308,6 +8309,16 @@ public:
     std::uint32_t borrowedTreeWidth = 0;
     ActionFiringHandle preparingDeferredTreeOwner = 0;
     struct DeferredTreeBacking final : ActionTreeBacking, PreparedTreeWidth {
+        std::uint32_t renderScratch = 0;
+        std::uint64_t* heldRenderScratch = nullptr;
+        ~DeferredTreeBacking() override {
+            if (heldRenderScratch != nullptr) *heldRenderScratch -= renderScratch;
+        }
+        bool AddRenderScratch(std::uint64_t count) noexcept {
+            if (count > UINT32_MAX - renderScratch) return false;
+            renderScratch += static_cast<std::uint32_t>(count);
+            return true;
+        }
         StableStoragePreparation arms;
         std::uint32_t armCount = 0;
         bool AddArms(std::uint64_t count) noexcept {
@@ -8386,7 +8397,18 @@ public:
             storage.ownerLedger.PrepareDomain(FrontierOwnerKind::Mode, width) &&
             storage.ownerLedger.PrepareDomain(FrontierOwnerKind::Voice, std::min(width, config.voiceCapacity.Render()));
     }
+    bool PrepareDeferredMixerScratch(std::uint32_t slots, std::uint64_t future) noexcept {
+        const auto count = slots + std::min<std::uint64_t>(voices.Capacity() - slots, future);
+        return mixer.PrepareVoiceBacking(static_cast<std::uint32_t>(count));
+    }
     bool PrepareDeferredTrees(DeferredTreeBacking& backing) noexcept {
+        if (backing.renderScratch != 0) {
+            if (backing.renderScratch > UINT64_MAX - heldRenderScratch ||
+                !PrepareDeferredMixerScratch(voices.ConstructedSlotCount(), heldRenderScratch + backing.renderScratch))
+                return false;
+            heldRenderScratch += backing.renderScratch;
+            backing.heldRenderScratch = &heldRenderScratch;
+        }
         if (backing.armCount && !timelineArms.PrepareBacking(backing.armCount, &backing.arms)) return false;
         if (backing.bankCount && (!PrepareQueueProgramBankBacking(backing.bankCount, &backing.banks) ||
             !queueScheduleStorage.Prepare(backing.scheduleShape, backing.bankCount, &backing.schedules,
@@ -8421,6 +8443,8 @@ public:
         StableSlotStorage<EngineActionPlayScratch>::PreparedUse use;
         ActionFiringHandle& controlOwner;
         const ActionFiringHandle previousOwner;
+        std::uint32_t& borrowedScratch;
+        const std::uint32_t previousScratch;
         std::optional<CompositeCompletionOwnerPool::PreparedUse> composites;
         std::optional<ArmGroupTable::PreparedUse> groups;
         std::optional<StableStoragePreparedUse> decisions;
@@ -8429,7 +8453,9 @@ public:
         std::optional<EngineQueueScheduleStorage::PreparedUse> schedules;
         BorrowedTree(Engine& engine, const DeferredTreeBacking* held, ActionFiringHandle owner, bool stopping) noexcept
             : active(engine.borrowedTreeWidth), previous(active), use(held ? held->attempts.Use() : decltype(use){}),
-              controlOwner(engine.preparingDeferredTreeOwner), previousOwner(controlOwner) {
+              controlOwner(engine.preparingDeferredTreeOwner), previousOwner(controlOwner),
+              borrowedScratch(engine.borrowedRenderScratch), previousScratch(borrowedScratch) {
+            if (held != nullptr) borrowedScratch = held->renderScratch;
             if (held) {
                 if (owner && held->bankCount && !engine.nativeRuntimeBackingInUse) {
                     banks.emplace(held->banks.Use());
@@ -8449,6 +8475,7 @@ public:
         }
         BorrowedTree(const BorrowedTree&) = delete;
         ~BorrowedTree() {
+            borrowedScratch = previousScratch;
             active = previous;
             controlOwner = previousOwner;
         }
@@ -14898,7 +14925,7 @@ public:
                 (PrepareInitialFrontierStorage(1) &&
                  pendingVariableLeafSources.ConstructThrough(timelineArms.Capacity()) &&
                  pendingVariableFutureSources.ConstructThrough(timelineArms.Capacity()))) &&
-            (!needsContainerState || spatial.PrepareVoiceStorage(config.voiceCapacity.Render())) &&
+            (!needsContainerState || spatial.PrepareVoiceStorage(std::max(config.InitialRenderVoices(), voices.ConstructedSlotCount()))) &&
             PreparePlayablePublicationStorage(needsContainerState, independentRoots);
     }
     bool PreparePlayableServiceDependencies(std::uint32_t required,
@@ -15544,7 +15571,7 @@ public:
         std::uint64_t ticket = 0;
         std::uint64_t token = 0;
     };
-    std::vector<StreamResyncRow> streamResyncs;
+    StableRowStorage<StreamResyncRow> streamResyncs;
     std::uint64_t streamResyncTickets = 0;
     ActionDeferredRecordTable actionDeferredRecords;
     ActionDeferredPairState lastDeferredPairFault{};
@@ -15602,10 +15629,10 @@ public:
     // section-12 snapshot append (paramPublicationDeferredCount) surfaces
     // it. Logic thread only.
     PropertyPublisher propertyPublisher;
-    std::vector<std::uint32_t> spatialPropertyGroupIndices;
-    std::vector<std::uint8_t> toneSectionCommandsPublished;
+    StableRowStorage<std::uint32_t> spatialPropertyGroupIndices;
+    StableRowStorage<std::uint8_t> toneSectionCommandsPublished;
     CommandQueue::BatchReservation timelineBatchReservation{};
-    std::vector<std::uint32_t> toneSectionPublishedRampMs;
+    StableRowStorage<std::uint32_t> toneSectionPublishedRampMs;
     // Alternates scope priority when one fixed batch cannot serve both.
     bool propertyBusFirst = false;
     NotificationQueue notifications;
@@ -15956,7 +15983,12 @@ public:
         return true;
     }
     bool PrepareLogicVoiceStorage(std::uint32_t count) noexcept {
-        if (!sourceCursors.Prepare(count) ||
+        if (heldRenderScratch > borrowedRenderScratch &&
+            !PrepareDeferredMixerScratch(count, heldRenderScratch - borrowedRenderScratch)) return false;
+        if (!ledger.PrepareRenderOwners(count) || !voiceManager.PrepareRenderSlots(count) ||
+            !streamResyncs.ConstructThrough(count) || !spatialPropertyGroupIndices.ConstructThrough(count) ||
+            !toneSectionCommandsPublished.ConstructThrough(count) || !toneSectionPublishedRampMs.ConstructThrough(4u * count) ||
+            !sourceCursors.Prepare(count) ||
             (config.audibilityParkEnabled != 0 && !audibilityCursorRows.ConstructThrough(count)) ||
             !params.PrepareVoiceStorage(count) || !spatial.PrepareVoiceStorage(count) ||
             !voiceOriginPlayable.ConstructThrough(count) || !voicePlayFacts.ConstructThrough(count) ||
