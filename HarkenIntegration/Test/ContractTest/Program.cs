@@ -37,6 +37,8 @@ namespace Harken.Test
             string exportRoot = null;
             string archiveRoot = null;
             string residentBudgetRoot = null;
+            string residentMemberRoot = null;
+            string residentLanguageRoot = null;
             for (int i = 0; i < args.Length; i++)
             {
                 string arg = args[i];
@@ -50,6 +52,16 @@ namespace Harken.Test
                     archiveRoot = args[++i];
                     continue;
                 }
+                if (arg == "--resident-language-budget-root" && i + 1 < args.Length)
+                {
+                    residentLanguageRoot = args[++i];
+                    continue;
+                }
+                if (arg == "--resident-member-root" && i + 1 < args.Length)
+                {
+                    residentMemberRoot = args[++i];
+                    continue;
+                }
                 if (arg == "--resident-budget-root" && i + 1 < args.Length)
                 {
                     residentBudgetRoot = args[++i];
@@ -61,11 +73,13 @@ namespace Harken.Test
                     continue;
                 }
                 Console.Error.WriteLine("Unknown argument: " + arg);
-                Console.Error.WriteLine("Usage: dotnet run --project HarkenIntegration/Test/ContractTest -- [--require-native] [--export-root path | --archive-root path | --resident-budget-root path]");
+                Console.Error.WriteLine("Usage: dotnet run --project HarkenIntegration/Test/ContractTest -- [--require-native] [--export-root path | --archive-root path | --resident-budget-root path | --resident-member-root path | --resident-language-budget-root path]");
                 return 2;
             }
 
             InstallNativeResolver(requireNative);
+            if (residentLanguageRoot != null) return ExportedPackContract.RunResidentLanguageBudget(residentLanguageRoot) ? 0 : 1;
+            if (residentMemberRoot != null) return ExportedPackContract.RunResidentMember(residentMemberRoot) ? 0 : 1;
             if (residentBudgetRoot != null) return ExportedPackContract.RunResidentBudget(residentBudgetRoot) ? 0 : 1;
             if (archiveRoot != null) return ArchivePublicationContract.Run(archiveRoot) ? 0 : 1;
             if (exportRoot != null) return ExportedPackContract.Run(exportRoot) ? 0 : 1;

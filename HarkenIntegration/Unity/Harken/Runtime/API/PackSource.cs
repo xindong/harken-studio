@@ -62,6 +62,10 @@ namespace Harken
             string language = null, Func<ulong> revision = null)
             => new PackSource(language, asyncReader: reader ?? throw new ArgumentNullException(nameof(reader)), revision: revision);
 
+        internal PackSource WithResidentInputBudget(ulong budget) => IsResidentDirectory && budget != 0
+            ? new PackSource(Language, directory: new PackDirectorySource(Root, Language, true, budget))
+            : this;
+
         internal PackSource ForLanguage(string language)
         {
             if (snapshot != null) return null;
@@ -72,7 +76,7 @@ namespace Harken
         internal static bool HasControlContext => SynchronizationContext.Current != null &&
             SynchronizationContext.Current.GetType() != typeof(SynchronizationContext);
 
-        internal VnResult Capture(string name, VnObjectId project, byte[] init, out PackMetadataInput input)
+        internal VnResult Capture(string name, VnObjectId project, byte[] init, out PackMetadataInput input, ulong retained = 0)
         {
             input = null;
             if (IsAsync) return VnResult.VN_CAPABILITY_UNAVAILABLE;
@@ -82,7 +86,7 @@ namespace Harken
                 input = frozen.Input;
                 return frozen.Result;
             }
-            if (directory != null) return directory.Capture(name, project, init, out input);
+            if (directory != null) return directory.Capture(name, project, init, out input, retained);
             // The synchronous reader completes without scheduling a continuation.
             var captured = CaptureAsync(name, project, init, CancellationToken.None).GetAwaiter().GetResult();
             input = captured.Input;
@@ -157,7 +161,7 @@ namespace Harken
         }
 
         internal async Task<PackMetadataCapture> CaptureAsync(string name, VnObjectId project,
-            byte[] init, CancellationToken cancellation, Action<bool> readPhase = null)
+            byte[] init, CancellationToken cancellation, Action<bool> readPhase = null, ulong retained = 0)
         {
             if (name != null && (!PackMetadata.IsName(name) || name == "Init"))
                 return new PackMetadataCapture(VnResult.VN_INVALID_ARG);
@@ -167,7 +171,7 @@ namespace Harken
                 if (snapshot != null) return snapshot(name, project, init);
                 if (directory != null)
                 {
-                    VnResult result = directory.Capture(name, project, init, out PackMetadataInput file);
+                    VnResult result = directory.Capture(name, project, init, out PackMetadataInput file, retained);
                     return new PackMetadataCapture(result, file);
                 }
                 ulong version = ReadRevision(readPhase);

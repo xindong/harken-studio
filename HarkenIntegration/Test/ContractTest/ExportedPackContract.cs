@@ -59,6 +59,176 @@ namespace Harken.Test
             }
         }
 
+        // Each translated member must fit 12 MiB alone; their combined staging must exceed it.
+        public static bool RunResidentLanguageBudget(string root)
+        {
+            try
+            {
+                string language = Path.GetFileName(Directory.GetDirectories(root).Single());
+                string[] names = Directory.GetFiles(Path.Combine(root, language), "*.hrp")
+                    .Select(Path.GetFileNameWithoutExtension).OrderBy(n => n, StringComparer.Ordinal).ToArray();
+                if (names.Length < 2) throw new InvalidDataException("Supply multiple translated Action Packs.");
+                foreach (ulong budget in new[] { 0UL, 12UL * 1024 * 1024 })
+                foreach (bool switchLanguage in new[] { false, true })
+                {
+                    var config = HarkenEngine.DefaultConfig();
+                    config.deviceMode = (uint)VnDeviceMode.VN_DEVICE_NULL;
+                    config.maxPackDecodeStagingBytes = budget;
+                    Require(PackBootstrap.StartDirectory(root, switchLanguage ? null : language,
+                        ref config, out var session), "Start");
+                    using (session)
+                    {
+                        var result = session.PrepareActions(names, session.ProjectId, out var preparation);
+                        if (switchLanguage)
+                        {
+                            Require(result, "Prepare originals");
+                            result = session.SetLanguageAsync(language).GetAwaiter().GetResult();
+                        }
+                        Console.WriteLine($"[Resident language] budget={budget}, switch={switchLanguage}, result={result}");
+                        if (budget == 0)
+                        {
+                            Require(result, "Prepare all translations");
+                            Require(preparation.Release(), "Release");
+                        }
+                        else
+                        {
+                            if (result != VnResult.VN_PACK_RESIDENT_CAPACITY)
+                                throw new InvalidOperationException("Expected cumulative budget failure.");
+                            if (switchLanguage && session.Language.Length != 0)
+                                throw new InvalidOperationException("Failed switch changed the active language.");
+                            foreach (string name in names)
+                            {
+                                var resolved = Actions.Resolve(name, session.ProjectId, out var action);
+                                if (switchLanguage)
+                                {
+                                    Require(resolved, "Original still resolved");
+                                    Require(Actions.Post(in action, Emitter.None, 0, out var firing), "Post original");
+                                    if (!firing.IsValid) throw new InvalidOperationException("Missing firing.");
+                                }
+                                else if (resolved != VnResult.VN_UNKNOWN_ID)
+                                    throw new InvalidOperationException("Rejected batch published " + name);
+                            }
+                            if (switchLanguage) Require(preparation.Release(), "Release originals");
+                            foreach (string name in names)
+                            {
+                                Require(session.PrepareActions(new[] { name }, session.ProjectId, out var single), "Prepare one");
+                                if (switchLanguage) Require(session.SetLanguageAsync(language).GetAwaiter().GetResult(), "Switch one");
+                                Require(single.Release(), "Release one");
+                            }
+                        }
+                        Require(session.Shutdown(), "Shutdown");
+                    }
+                }
+                return true;
+            }
+            catch (Exception error)
+            {
+                Console.WriteLine("[Resident language] FAIL: " + error);
+                return false;
+            }
+        }
+
+        public static bool RunResidentMember(string root)
+        {
+            const uint oldLimit = 16 * 1024 * 1024;
+            try
+            {
+                var members = Directory.GetFiles(root, "*.hrp").Select(path =>
+                {
+                    using var header = new BinaryReader(File.OpenRead(path));
+                    uint version = header.ReadUInt32();
+                    if (version != 0x32505248 && version != 0x31505248)
+                        throw new InvalidDataException("Expected a Windows resident Pack: " + path);
+                    return (name: Path.GetFileNameWithoutExtension(path), bytes: header.ReadUInt32(), json: header.ReadUInt32());
+                }).ToArray();
+                var init = members.Single(m => m.name == "Init");
+                var names = members.Where(m => m.name != "Init").Select(m => m.name).ToArray();
+                if (!members.Any(m => m.bytes > oldLimit) || !members.Any(m => m.json > oldLimit))
+                    throw new InvalidDataException("Supply a Pack and metadata larger than 16 MiB.");
+                // A file-sized budget covers the stored file, but not its expanded arrays.
+                // Reject it from the header without allocating a full-size read buffer.
+                foreach (var member in members.Where(m => m.bytes > oldLimit || m.json > oldLimit))
+                {
+                    long stored = new FileInfo(Path.Combine(root, member.name + ".hrp")).Length;
+                    if (stored <= 1024 * 1024) continue;
+                    var source = new PackDirectorySource(root, null, true, (ulong)stored);
+                    string name = member.name == "Init" ? null : member.name;
+                    long before = GC.GetAllocatedBytesForCurrentThread();
+                    var result = source.Capture(name, default, null, out _);
+                    long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+                    Console.WriteLine($"[Resident member] {member.name}, {stored} stored bytes, {allocated} allocated on rejection.");
+                    if (result != VnResult.VN_PACK_RESIDENT_CAPACITY || allocated >= stored)
+                        throw new InvalidOperationException("Budget rejection allocated the full resident file.");
+                }
+                foreach (string language in new[] { "MissingTranslation", string.Empty })
+                {
+                    foreach (ulong budget in new[] { 0UL, (ulong)oldLimit })
+                    {
+                        var config = HarkenEngine.DefaultConfig();
+                        config.deviceMode = (uint)VnDeviceMode.VN_DEVICE_NULL;
+                        config.maxPackDecodeStagingBytes = budget;
+                        PackBootstrapSession session;
+                        VnResult result;
+                        if (language.Length == 0)
+                            result = PackBootstrap.StartDirectory(root, language, ref config, out session);
+                        else
+                        {
+                            var startup = PackBootstrap.StartAsync(PackSource.FromDirectory(root, language), config).GetAwaiter().GetResult();
+                            session = startup.Session;
+                            result = startup.Result;
+                        }
+                        Console.WriteLine($"[Resident member] language='{language}' budget={budget} StartDirectory={result}");
+                        if (budget != 0 && (init.bytes > budget || init.json > budget))
+                        {
+                            if (result != VnResult.VN_PACK_RESIDENT_CAPACITY || session != null)
+                                throw new InvalidOperationException("Oversized Init should exceed the explicit budget.");
+                            continue;
+                        }
+                        Require(result, "StartDirectory");
+                        using (session)
+                        {
+                            ActionPreparation preparation;
+                            if (language.Length == 0)
+                                result = session.PrepareActions(names, session.ProjectId, out preparation);
+                            else
+                            {
+                                var ready = session.PrepareActionsAsync(names, session.ProjectId).GetAwaiter().GetResult();
+                                preparation = ready.Preparation;
+                                result = ready.Result;
+                            }
+                            Console.WriteLine($"[Resident member] PrepareActions={result}");
+                            if (budget == 0)
+                            {
+                                Require(result, "Prepare");
+                                foreach (string name in names)
+                                {
+                                    Require(Actions.Resolve(name, session.ProjectId, out var action), "Resolve " + name);
+                                    Require(Actions.Post(in action, Emitter.None, 0, out var firing), "Post " + name);
+                                    if (!firing.IsValid) throw new InvalidOperationException("Missing firing: " + name);
+                                }
+                                Require(preparation.Release(), "Release");
+                            }
+                            else
+                            {
+                                if (result != VnResult.VN_PACK_RESIDENT_CAPACITY)
+                                    throw new InvalidOperationException("Oversized batch should exceed the explicit budget.");
+                                foreach (string name in names)
+                                    if (Actions.Resolve(name, session.ProjectId, out _) != VnResult.VN_UNKNOWN_ID)
+                                        throw new InvalidOperationException("Rejected batch published " + name);
+                            }
+                            Require(session.Shutdown(), "Shutdown");
+                        }
+                    }
+                }
+                return true;
+            }
+            catch (Exception error)
+            {
+                Console.WriteLine("[Resident member] FAIL: " + error);
+                return false;
+            }
+        }
+
         public static bool RunResidentBudget(string root)
         {
             const ulong budget = 64UL * 1024 * 1024;

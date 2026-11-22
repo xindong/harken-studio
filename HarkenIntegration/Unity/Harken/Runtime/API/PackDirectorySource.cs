@@ -10,6 +10,7 @@ namespace Harken
         internal PackMetadata Names;
         internal VnPackInspectReportV1 Facts;
         internal int ByteCount => Bytes.Length;
+        internal ulong RetainedResidentBytes => Selection == null ? 0 : (ulong)Bytes.Length + (ulong)Json.Length;
         internal ulong SourceRevision;
         internal PackDirectorySource.ResidentSelection Selection;
     }
@@ -19,16 +20,18 @@ namespace Harken
     {
         internal readonly string Root;
         internal readonly string Language;
+        private readonly ulong inputBudget;
         internal bool IsResidentDirectory => resident;
 
-        internal PackDirectorySource(string root, string language, bool? residentLayout = null)
+        internal PackDirectorySource(string root, string language, bool? residentLayout = null, ulong inputBudget = 0)
         {
+            this.inputBudget = inputBudget;
             Root = Path.GetFullPath(root);
             Language = language ?? string.Empty;
             resident = residentLayout ?? File.Exists(Path.Combine(Root, "Init.hrp"));
         }
 
-        internal PackDirectorySource ForLanguage(string language) => new PackDirectorySource(Root, language, resident);
+        internal PackDirectorySource ForLanguage(string language) => new PackDirectorySource(Root, language, resident, inputBudget);
 
         internal static bool ValidLanguage(string value)
         {
@@ -39,14 +42,14 @@ namespace Harken
             return true;
         }
 
-        internal VnResult Capture(string name, VnObjectId project, byte[] init, out PackMetadataInput input)
+        internal VnResult Capture(string name, VnObjectId project, byte[] init, out PackMetadataInput input, ulong retained = 0)
         {
             input = null;
             if ((name != null && (!PackMetadata.IsName(name) || name == "Init")) || !ValidLanguage(Language))
                 return VnResult.VN_INVALID_ARG;
             try
             {
-                if (resident) return CaptureResident(name, project, init, out input);
+                if (resident) return CaptureResident(name, project, init, retained, out input);
                 string scope = name == null ? string.Empty : Language;
                 VnResult result = CapturePair(name ?? "Init", scope, out byte[] bytes, out byte[] json);
                 bool fallback = name != null && scope.Length != 0 && result == VnResult.VN_CONTENT_NOT_LOADED;
@@ -66,7 +69,7 @@ namespace Harken
                 input = new PackMetadataInput { Bytes = bytes, Json = json, Names = names, Facts = facts };
                 return VnResult.VN_OK;
             }
-            catch (OutOfMemoryException) { return VnResult.VN_DEVICE_ERROR; }
+            catch (OutOfMemoryException) { return resident ? VnResult.VN_PACK_RESIDENT_CAPACITY : VnResult.VN_DEVICE_ERROR; }
             catch (PackStorage.InvalidMember) { return VnResult.VN_BAD_PACK; }
             catch (IOException) { return VnResult.VN_PACK_PROVIDER_FAILED; }
             catch (UnauthorizedAccessException) { return VnResult.VN_PACK_PROVIDER_FAILED; }
