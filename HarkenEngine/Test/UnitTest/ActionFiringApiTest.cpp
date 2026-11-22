@@ -36029,6 +36029,39 @@ TEST(ActionFiringApi, EmitterStopReclaimsSegment) { ExpectEmitterStopsPlayable(2
 TEST(ActionFiringApi, EmitterStopReclaimsQueueWithoutRestartingSuccessor) { ExpectEmitterStopsPlayable(3); }
 TEST(ActionFiringApi, EmitterStopReclaimsVariableControl) { ExpectEmitterStopsPlayable(4); }
 
+TEST(ActionFiringApi, StopExpandedGroupOfPostedSounds) {
+    for (const bool all : {false, true}) {
+        harkentest::EngineSession session(harkentest::MakeNullConfig(0, 64, 48000));
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto& engine = *session.Engine();
+        std::vector<float> samples(48000, 0.001f);
+        const auto pcm = harkentest::MonoDesc(samples, 48000);
+        ASSERT_EQ(VN_OK, Vn_RegisterPCM(CanonicalActionWorld::kFirstSound, &pcm));
+        CanonicalActionWorld world(engine.registry.Lookup(CanonicalActionWorld::kFirstSound).contentRevision);
+        world.MakeImmediateSoundPlayAction();
+        ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(engine, world.world).status);
+        auto desc = ValidPostDesc();
+        desc.actionId = world.actions[9].actionStableId;
+        ASSERT_EQ(VN_OK, Vn_CreateEmitter(&desc.emitter));
+        std::array<VnActionFiringHandle, 257> firings{};
+        for (std::uint32_t i = 0; i < firings.size(); ++i) {
+            ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firings[i])) << i;
+            if ((i + 1u) % 16u == 0) PumpEmitterTest(engine, 2);
+        }
+        PumpEmitterTest(engine, 4);
+        ASSERT_EQ(257u, engine.voices.ActiveCount());
+        EXPECT_GT(EmitterTestPeak(engine), 0.15f);
+        ASSERT_EQ(VN_OK, all ? Vn_StopAll(0) : Vn_StopEmitter(desc.emitter, 0));
+        VnActionFiringHandle later{};
+        ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &later));
+        PumpEmitterTest(engine, 8);
+        ASSERT_EQ(1u, engine.voices.ActiveCount());
+        EXPECT_EQ(VN_ACTION_FIRING_ACTIVE, EmitterFiringInfo(later).state);
+        for (auto old : firings)
+            EXPECT_EQ(VN_ACTION_FIRING_TERMINAL_RETAINED, EmitterFiringInfo(old).state);
+    }
+}
+
 TEST(ActionFiringApi, EmitterStopPreservesOtherEmittersAndUnscopedPlayback) {
     harkentest::EngineSession session(harkentest::MakeNullConfig(8, 64, 48000));
     ASSERT_EQ(VN_OK, session.InitResult());

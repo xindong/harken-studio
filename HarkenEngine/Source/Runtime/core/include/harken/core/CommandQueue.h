@@ -1357,8 +1357,16 @@ public:
 
     bool PublishGroupStop(std::uint32_t slot, std::vector<VnVoiceHandle>&& targets,
                           std::uint32_t fadeMs) {
+        // Consecutive identical fades in the same raw publication position
+        // share one pending command. A later cut or a new fade keeps its order.
+        if (m_lastGroupStop < m_groupStops.size()) {
+            const auto& last = m_groupStops[m_lastGroupStop];
+            if (last.frontier != 0 && last.frontier == PublishedHead() &&
+                last.fadeMs == fadeMs && last.targets == targets) return true;
+        }
         auto& group = m_groupStops[slot];
         group.targets = std::move(targets);
+        group.fadeMs = fadeMs;
         group.frontier = PublishedHead() + 1;
         CommandRecord stop{};
         stop.opcode = kOpcodeStop;
@@ -1370,6 +1378,7 @@ public:
             group = {};
             return false;
         }
+        m_lastGroupStop = slot;
         ++m_groupStopsInFlight;
         return true;
     }
@@ -2016,11 +2025,13 @@ private:
     std::uint64_t m_nextSourcePublication = 0;
     const TimelineArmTable* const m_controlReceiver;
     struct GroupStop {
+        std::uint32_t fadeMs = 0;
         std::vector<VnVoiceHandle> targets;
         std::uint64_t frontier = 0;
     };
     std::vector<GroupStop> m_groupStops;
     std::uint32_t m_groupStopsInFlight = 0;
+    std::uint32_t m_lastGroupStop = UINT32_MAX;
     std::vector<CommandRecord> m_publicationScratch;
     std::vector<OriginalBatchRange*> m_originalRanges;
     std::vector<BusActivityAttachment*> m_busActivities;

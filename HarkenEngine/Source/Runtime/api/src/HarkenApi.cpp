@@ -77776,26 +77776,28 @@ bool StopTargetSetTouchesGuardedVoice(harken::Engine& engine,
 struct CapturedGroupStop {
     std::vector<VnVoiceHandle> targets;
     std::uint32_t slot = UINT32_MAX;
+    std::uint32_t directTargets = 0;
 
     VnResult Prepare(harken::Engine& engine, VnEmitterHandle emitter,
                      std::uint32_t direct, std::uint32_t& commands) {
-        if (!engine.config.automaticStopTransport || direct < 2 ||
+        if (!engine.config.automaticStopTransport || commands < 2 ||
             AtomicBatchFitsCapacities(engine, commands)) return VN_OK;
         slot = engine.commands.PrepareGroupStop();
         if (slot == UINT32_MAX) return VN_BACKPRESSURE;
-        targets.reserve(direct);
+        directTargets = direct;
+        targets.reserve(commands);
         engine.ledger.ForEachLive([&](VnVoiceHandle render, std::uint32_t, std::uint64_t, bool) {
             if (emitter == 0 || engine.params.EmitterHandleOf(render) == emitter)
                 targets.push_back(render);
         });
         if (targets.size() != direct) return VN_DEVICE_ERROR;
-        commands -= direct - 1;
+        commands = 1;
         return VN_OK;
     }
 
     bool Publish(harken::Engine& engine, std::uint32_t fadeMs, const harken::MonitorControlCause& cause) {
         if (slot == UINT32_MAX) return false;
-        for (const auto render : targets) engine.ledger.MarkTerminating(render, cause);
+        for (std::uint32_t i = 0; i < directTargets; ++i) engine.ledger.MarkTerminating(targets[i], cause);
         if (!engine.commands.PublishGroupStop(slot, std::move(targets), fadeMs))
             engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         return true;
@@ -81852,7 +81854,8 @@ static PlayableControlStatus BeginPlayableCancellation(
     bool serviceRegisteredCapture = false,
     bool aggregatePreflight = false,
     const MonitorControlCause& requestCause = {},
-    PreparedPlayableStopCommands* externalCommands = nullptr) noexcept {
+    PreparedPlayableStopCommands* externalCommands = nullptr,
+    std::vector<VnVoiceHandle>* groupTargets = nullptr) noexcept {
     auto cause = requestCause;
     const auto requestedInstance = instance;
     assert(!aggregatePreflight || preflightOnly);
@@ -81883,6 +81886,11 @@ static PlayableControlStatus BeginPlayableCancellation(
         }
     }
     const auto publishStop = [&](const CommandRecord& command) noexcept {
+        if (groupTargets != nullptr) {
+            if (groupTargets->size() == groupTargets->capacity()) return false;
+            groupTargets->push_back(command.payload.stop.handle);
+            return true;
+        }
         if (externalCommands == nullptr) return engine.commands.TryPush(command);
         return std::any_of(externalCommands->commands.begin(), externalCommands->commands.end(),
             [&](const auto& frozen) noexcept { return frozen.payload.stop.handle == command.payload.stop.handle; });
@@ -82347,7 +82355,7 @@ static PlayableControlStatus BeginPlayableCancellation(
         engine.commands.NoteBackpressure();
         return PlayableControlStatus::Backpressure;
     }
-    if (externalCommands == nullptr && !aggregatePreflight && !AdmitCommandBatch(engine, liveChildCount)) {
+    if (externalCommands == nullptr && groupTargets == nullptr && !aggregatePreflight && !AdmitCommandBatch(engine, liveChildCount)) {
         engine.commands.NoteBackpressure();
         return PlayableControlStatus::Backpressure;
     }
@@ -122664,7 +122672,8 @@ VnResult StopEmitterPlayablesCore(harken::Engine& engine, VnEmitterHandle emitte
         auto& scratch = engine.actionStopScratch[index];
         if (scratch.treeCancellationRequired &&
             harken::BeginPlayableCancellation(engine, scratch.row->rootInstance, fadeMs,
-                harken::PlayableCancellationIntent::Stop, false, nullptr, true, nullptr, false, false, cause) !=
+                harken::PlayableCancellationIntent::Stop, false, nullptr, true, nullptr, false, false, cause, nullptr,
+                group.slot == UINT32_MAX ? nullptr : &group.targets) !=
                 harken::PlayableControlStatus::Ok) {
             engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
         }
@@ -122698,7 +122707,7 @@ VnResult StopAllPlayablesCore(harken::Engine &engine, std::uint32_t fadeMs,
         if (!cancellation) continue;
         const auto status = harken::BeginPlayableCancellation(
             engine, row.rootInstance, fadeMs, harken::PlayableCancellationIntent::Stop, true,
-            &scratch.commandCount, true, &scratch.treeCancellationRequired);
+            &scratch.commandCount, true, &scratch.treeCancellationRequired, false, true);
         if (status == harken::PlayableControlStatus::Backpressure)
             return VN_BACKPRESSURE;
         if (status != harken::PlayableControlStatus::Ok ||
@@ -122744,7 +122753,8 @@ VnResult StopAllPlayablesCore(harken::Engine &engine, std::uint32_t fadeMs,
         if (scratch.treeCancellationRequired &&
             harken::BeginPlayableCancellation(engine, scratch.row->rootInstance, fadeMs,
                                              harken::PlayableCancellationIntent::Stop, false,
-                                             nullptr, true, nullptr, false, false, cause) != harken::PlayableControlStatus::Ok)
+                                             nullptr, true, nullptr, false, false, cause, nullptr,
+                                             group.slot == UINT32_MAX ? nullptr : &group.targets) != harken::PlayableControlStatus::Ok)
             invariantFailed = true;
     }
     for (std::uint32_t slot = 0; slot < engine.actionFirings.Capacity(); ++slot) {
