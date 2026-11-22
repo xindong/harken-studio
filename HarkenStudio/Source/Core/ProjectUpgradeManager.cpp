@@ -211,7 +211,10 @@ QByteArray fileFingerprint(const QString& path)
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly))
         return {};
-    return QCryptographicHash::hash(file.readAll(), QCryptographicHash::Sha256);
+    QCryptographicHash hash(QCryptographicHash::Sha256);
+    if (!hash.addData(&file) || file.error() != QFileDevice::NoError)
+        return {};
+    return hash.result();
 }
 
 bool isIteratorDotEntry(const QString& relativePath)
