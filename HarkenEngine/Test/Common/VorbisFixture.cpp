@@ -69,7 +69,7 @@ std::vector<float> Linear(const std::vector<std::uint8_t>& ogg) {
 }
 
 VorbisFixture MakeVorbisFixture(unsigned channels, bool streaming,
-    std::uint64_t loopStart, std::uint64_t loopEnd, std::uint32_t granularity) {
+    std::uint64_t loopStart, std::uint64_t loopEnd, std::uint32_t granularity, bool packFormat, std::uint32_t leadingTrim) {
     Require(granularity != 0);
     const auto path = std::filesystem::path(__FILE__).parent_path().parent_path() /
         "Fixtures" / "Vorbis" / ("signal-" + std::to_string(channels) + ".ogg");
@@ -111,7 +111,7 @@ VorbisFixture MakeVorbisFixture(unsigned channels, bool streaming,
         offsets.push_back(data.size()); starts.push_back(produced);
         if (previous) produced += previous / 4 + block / 4;
         ends.push_back(produced); previous = block;
-        Put(data, packets[i].size(), 2); data.insert(data.end(), packets[i].begin(), packets[i].end());
+        Put(data, packets[i].size(), packFormat ? 4 : 2); data.insert(data.end(), packets[i].begin(), packets[i].end());
     }
     Require(produced >= frames && (!loopEnd || (loopStart < loopEnd && loopEnd <= frames)));
     auto containing = [&](std::uint64_t frame) {
@@ -121,6 +121,35 @@ VorbisFixture MakeVorbisFixture(unsigned channels, bool streaming,
         const auto i = containing(frame); Require(i > 0 && i < offsets.size());
         return VorbisSeekPoint{frame, offsets[i - 1], static_cast<std::uint32_t>(frame - starts[i])};
     };
+    if (packFormat) {
+        Require(frames > leadingTrim && !streaming && granularity == HK_PACK_VORBIS_SEEK_GRAIN);
+        const auto audible = frames - leadingTrim;
+        Require(loopEnd <= audible);
+        std::vector<std::uint64_t> targets;
+        for (std::uint64_t f = 0; f < audible; f += granularity) targets.push_back(f);
+        if (loopEnd && loopStart % granularity)
+            targets.insert(std::lower_bound(targets.begin(), targets.end(), loopStart), loopStart);
+        VorbisFixture result;
+        auto& out = result.media;
+        Put(out, HK_PACK_VORBIS_VERSION, 4); Put(out, headers.info.rate, 4); Put(out, channels, 2);
+        Put(out, vorbis_info_blocksize(&headers.info, 0), 2); Put(out, vorbis_info_blocksize(&headers.info, 1), 2);
+        Put(out, 0, 2); Put(out, audible, 8); Put(out, leadingTrim, 8); Put(out, produced - frames, 8);
+        Put(out, loopStart, 8); Put(out, loopEnd, 8);
+        Put(out, packets[0].size(), 4); Put(out, packets[2].size(), 4);
+        Put(out, targets.size(), 4); Put(out, granularity, 4);
+        Require(out.size() == sizeof(HkPackVorbisHeader));
+        out.insert(out.end(), packets[0].begin(), packets[0].end());
+        out.insert(out.end(), packets[2].begin(), packets[2].end());
+        const auto firstPacket = out.size() + targets.size() * sizeof(HkPackVorbisSeek);
+        for (const auto f : targets) {
+            const auto seek = point(f + leadingTrim);
+            Put(out, f, 8); Put(out, firstPacket + seek.packetOffset, 8); Put(out, seek.discardFrames, 4);
+        }
+        out.insert(out.end(), data.begin(), data.end());
+        result.reference = Linear(ogg);
+        result.reference.erase(result.reference.begin(), result.reference.begin() + leadingTrim * channels);
+        return result;
+    }
     std::vector<VorbisSeekPoint> seek;
     for (std::uint64_t frame = 0; frame < frames; frame += granularity) seek.push_back(point(frame));
     const auto loop = loopEnd ? point(loopStart) : VorbisSeekPoint{};
@@ -172,7 +201,7 @@ std::vector<float> DecodeReferencePackets(const VorbisMedia& media, std::uint64_
     std::uint64_t at = seek->packetOffset;
     std::vector<float> out;
     while (out.size() / media.channels < count) {
-        const std::uint8_t* bytes = nullptr; std::uint16_t size = 0;
+        const std::uint8_t* bytes = nullptr; std::uint32_t size = 0;
         Require(media.Packet(at, bytes, size));
         ogg_packet p{}; p.packet = const_cast<unsigned char*>(bytes); p.bytes = size; p.granulepos = -1;
         Require(vorbis_synthesis(&decoder.block, &p) == 0);
@@ -183,7 +212,7 @@ std::vector<float> DecodeReferencePackets(const VorbisMedia& media, std::uint64_
             if (out.size() / media.channels == count) break;
             for (unsigned ch = 0; ch < media.channels; ++ch) out.push_back(pcm[ch][i]);
         }
-        Require(vorbis_synthesis_read(&decoder.dsp, n) == 0); at += 2 + size;
+        Require(vorbis_synthesis_read(&decoder.dsp, n) == 0); at += std::uint64_t(media.packetPrefixBytes) + size;
     }
     return out;
 }

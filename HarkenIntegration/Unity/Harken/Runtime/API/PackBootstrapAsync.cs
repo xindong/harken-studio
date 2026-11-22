@@ -9,7 +9,9 @@ namespace Harken
     {
         public VnResult Result { get; }
         public PackBootstrapSession Session { get; }
-        internal PackStartupResult(VnResult result, PackBootstrapSession session = null) { Result = result; Session = session; }
+        public ActionPreparation Preparation { get; }
+        internal PackStartupResult(VnResult result, PackBootstrapSession session = null, ActionPreparation preparation = null)
+        { Result = result; Session = session; Preparation = preparation; }
     }
 
     public readonly struct ActionPreparationResult
@@ -52,6 +54,7 @@ namespace Harken
                 operation = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
                 languageSwitchCancellation = operation;
                 CancellationToken operationToken = operation.Token;
+                EnsureOwnerIndexes();
                 var nextPacks = new Dictionary<ulong, SharedPack>(packs);
                 var nextNames = new Dictionary<string, SharedPack>(companionNames, StringComparer.Ordinal);
                 var changes = new Dictionary<SharedPack, CompanionInput>();
@@ -85,6 +88,9 @@ namespace Harken
                     if (valid != VnResult.VN_OK) return valid;
                 }
                 operationToken.ThrowIfCancellationRequested();
+                VnResult locked = source.LockPublication(initSelection, captures, out var guards);
+                if (locked != VnResult.VN_OK) return locked;
+                using var held = guards;
                 if (changes.Count != 0)
                 {
                     VnResult result = CommitCompanions(nextPacks, nextNames, changes);
@@ -135,17 +141,11 @@ namespace Harken
             cancellation.ThrowIfCancellationRequested();
             VnResult allowed = CompanionMutationAllowed();
             if (allowed != VnResult.VN_OK) return new ActionPreparationResult(allowed);
-            if (names == null || !Guid.TryParseExact(projectId, "D", out Guid project) || project == Guid.Empty)
-                return new ActionPreparationResult(VnResult.VN_INVALID_ARG);
-            if (project.ToString("D") != ProjectId) return new ActionPreparationResult(VnResult.VN_GAMEPLAY_WRONG_PROJECT);
-            var unique = new HashSet<string>(StringComparer.Ordinal);
-            var requested = new List<string>(names.Length);
-            foreach (string name in names)
-            {
-                if (!PackCompanion.IsName(name) || name == "Init") return new ActionPreparationResult(VnResult.VN_INVALID_ARG);
-                if (unique.Add(name)) requested.Add(name);
-            }
-            var preparation = new ActionPreparation(this, requested.ToArray(), refresh);
+            VnResult valid = ValidateRequestProject(names, projectId);
+            if (valid != VnResult.VN_OK) return new ActionPreparationResult(valid);
+            string[] requested = UniqueNames(names);
+            if (requested == null) return new ActionPreparationResult(VnResult.VN_INVALID_ARG);
+            var preparation = new ActionPreparation(this, requested, refresh);
             VnResult result = await preparation.PrepareAsync(cancellation);
             return new ActionPreparationResult(result, preparation);
         }

@@ -146,6 +146,8 @@ public:
     // valid only after the worker pool has quiesced its domain.
     VnResult Prepare(MixerLoop& mixer, const EngineConfig& config,
                      const DeviceQueryResult* endpointObservation);
+    VnResult Prepare(const EngineConfig& config, const DeviceQueryResult* endpointObservation);
+    void BindPreparedMixer(MixerLoop& mixer) noexcept;
     VnResult StartPrepared(std::uint64_t* admissionGeneration);
     bool CommitRenderAdmission(std::uint64_t admissionGeneration) noexcept;
     void RevokeRenderAdmission() noexcept;
@@ -164,6 +166,7 @@ public:
 
     bool Prepared() const { return m_impl != nullptr; }
     bool Running() const;
+    bool UsesGameOutput() const noexcept;
     DeviceRateObservation RateObservation() const noexcept {
         return m_rateObservation;
     }

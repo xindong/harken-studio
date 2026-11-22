@@ -27,6 +27,8 @@ namespace harken {
 
 namespace detail {
 
+class PackDecodeCharge;
+
 struct PcmSampleDeleter {
     PcmSampleDeleter() noexcept = default;
     PcmSampleDeleter(const PcmSampleDeleter&) = delete;
@@ -65,9 +67,11 @@ struct PcmMediaFacts {
 };
 
 class VorbisCodec;
+class VorbisResident;
 
 class PCMRegistry {
 private:
+    VorbisCodec* codec_ = nullptr;
     struct Entry {
         PCMView view;                     // useCount wired to `uses` below;
                                           // invalid when only a range backs it
@@ -76,7 +80,7 @@ private:
         // Optional immutable Pack range. Resident storage may be added once,
         // at a transaction commit, to an entry backed only by this range.
         std::shared_ptr<const PackMediaRange> range;
-        std::shared_ptr<const EncodedMedia> encoded;
+        std::shared_ptr<VorbisResident> encoded;
         std::atomic<std::uint32_t> uses{0};
         std::uint64_t cookie = 0;         // provenance stamp of this
                                           // registration (see RegisterPCM)
@@ -86,9 +90,18 @@ private:
     using Map = std::unordered_map<VnSoundId, std::shared_ptr<Entry>>;
 
 public:
+    PCMRegistry() = default;
+    explicit PCMRegistry(VorbisCodec& codec) noexcept : codec_(&codec) {}
     class PackReference {
     public:
         bool Valid() const noexcept { return entry_ != nullptr; }
+        struct ResidentCost {
+            const void* resource = nullptr;
+            std::uint64_t privateBytes = 0;
+            const void* settings = nullptr;
+            std::uint64_t settingsBytes = 0;
+        };
+        ResidentCost Cost() const noexcept;
         // True when the backing does not borrow a Pack byte buffer.
         bool OwnsSamples() const noexcept {
             return entry_ != nullptr &&
@@ -164,7 +177,8 @@ public:
     private:
         friend class PCMRegistry;
         VnResult PrepareStorage();
-        VnResult Store(const float* samples, std::size_t count);
+        VnResult Append(const float* samples, std::size_t count, detail::PackDecodeCharge* staging);
+        VnResult Store(const float* samples, std::size_t count, detail::PackDecodeCharge* staging);
         void PrepareSampleView() noexcept;
         void MoveCompleted(PreparedPackSamples* out) noexcept;
         VnSoundId m_soundId{};
@@ -212,6 +226,7 @@ public:
             PreparedPackMutation&&) noexcept = default;
 
         bool IsPrepared() const noexcept { return m_owner != nullptr; }
+        void PreferWideVorbisCodebooks(std::size_t budget) noexcept;
         std::uint64_t CookieOf(VnSoundId soundId) const noexcept;
         PackReference ReferenceOf(VnSoundId soundId) const noexcept;
 
@@ -314,14 +329,18 @@ public:
 
     // Copy-policy input only. A nonempty output is refused without changing it.
     VnResult PreparePackSamples(VnSoundId soundId, const VnPCMDesc* desc,
-                               PreparedPackSamples* out, PcmLoopRegion loop = {});
+                               PreparedPackSamples* out, PcmLoopRegion loop = {},
+                               detail::PackDecodeCharge* staging = nullptr);
     // Shape validation does not access the descriptor's sample pointers.
     VnResult BeginPackSamples(VnSoundId soundId, const VnPCMDesc* shape,
                              PackSampleBuilder* out, PcmLoopRegion loop = {},
                              const PreparedPackSamples* equalCandidate = nullptr);
 
     VnResult PrepareVorbisSamples(VnSoundId soundId, VorbisCodec& codec,
-        std::vector<std::uint8_t> bytes, std::size_t budget, PreparedPackSamples* out);
+        std::vector<std::uint8_t> bytes, std::size_t budget, PreparedPackSamples* out, bool packFormat = false,
+        const std::uint64_t* verifiedChecksum = nullptr);
+    VnResult PrepareResidentVorbis(VnSoundId soundId, std::vector<std::uint8_t> bytes,
+        std::size_t budget, PreparedPackSamples* out, const std::uint64_t* verifiedChecksum = nullptr);
 
     // Range-only record. A caller that has proven bit-exact equality with an
     // earlier prepared record of the same id passes it to share that entry.

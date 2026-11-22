@@ -228,6 +228,9 @@ public:
         PreparedSetMutation& operator=(PreparedSetMutation&& other) noexcept;
 
         bool IsPrepared() const noexcept { return m_owner != nullptr; }
+        void PreferWideVorbisCodebooks(std::size_t budget) noexcept {
+            m_pcm.PreferWideVorbisCodebooks(budget);
+        }
         VnPackHandle HandleAt(std::size_t member) const noexcept;
         PackResourceRevisionToken ResourceTokenAt(std::size_t member) const noexcept;
 
@@ -272,6 +275,8 @@ public:
         const std::vector<VnPackHandle>& removed, PCMRegistry& registry,
         PreparedSetMutation* out,
         const std::vector<PackResourceRevisionToken>& retained = {});
+    bool FitsResidentMediaBudget(const PreparedSetMutation& prepared, std::uint64_t limit,
+                                 std::uint64_t newResidentPcmBytes) const;
     void CancelPreparedSet(PreparedSetMutation* prepared) noexcept;
     void CommitPreparedSet(PreparedSetMutation* prepared,
                            PCMRegistry& registry) noexcept;

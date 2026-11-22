@@ -412,6 +412,9 @@ def validate_params(table):
             if wire == "string":
                 if ctype != "const char*":
                     bad("string wants const char*")
+            elif wire == "utf16buf":
+                if ctype != "const uint16_t*":
+                    bad("UTF-16 buffer wants const uint16_t*")
             elif wire == "vec3":
                 if ctype != "VnVec3":
                     bad("vec3 wants VnVec3")
@@ -536,6 +539,8 @@ def cs_param(param):
         return "VnVec3 %s" % name
     if wire == "string":
         return "byte* %s" % name
+    if wire == "utf16buf":
+        return "ushort* %s" % name
     if wire == "desc":
         return "in %s %s" % (param["type"], name)
     if wire == "pathdesc":

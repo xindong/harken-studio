@@ -37,6 +37,9 @@ target_include_directories(harken_pack_format INTERFACE
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
 set_target_properties(harken_pack_format PROPERTIES EXPORT_NAME PackFormat)
 
+option(HARKEN_WINDOWS_GAME_LOW_LATENCY
+       "Use latency-tuned delivery on qualified Windows game playback endpoints" OFF)
+
 option(HARKEN_RT_PROBE_DEVICE_CALLBACK
        "Instrument Runtime-owned work inside the production device callback" OFF)
 option(HARKEN_RT_PROBE_MIX_PUBLICATION
@@ -64,6 +67,8 @@ endif()
 # Core is everything a shipping game needs; Development adds observation,
 # tracing, remote connection, inspection and live project editing.
 set(HARKEN_CORE_SOURCES
+    ${HARKEN_CORE_DIR}/api/src/ResidentPackDirectory.cpp
+    ${HARKEN_CORE_DIR}/api/src/ResidentDirectoryActivation.cpp
     ${HARKEN_CORE_DIR}/api/src/PackInspection.cpp
     ${HARKEN_CORE_DIR}/api/src/DeviceBackend.cpp
     ${HARKEN_CORE_DIR}/api/src/RealDeviceInitStage.cpp
@@ -383,6 +388,9 @@ function(harken_add_engine_edition target output_name export_name)
     add_library(${target} ${HARKEN_ENGINE_LIBRARY_TYPE} ${HARKEN_CORE_SOURCES} ${ARGN})
     add_library(Harken::${export_name} ALIAS ${target})
     target_link_libraries(${target} PRIVATE $<BUILD_INTERFACE:harken_buildinfo>)
+    if(WIN32 AND HARKEN_WINDOWS_GAME_LOW_LATENCY)
+        target_compile_definitions(${target} PRIVATE HARKEN_WINDOWS_GAME_LOW_LATENCY)
+    endif()
     target_sources(${target} PRIVATE $<TARGET_OBJECTS:harken_vorbis_decoder>)
     target_compile_features(${target} PUBLIC cxx_std_20)
     target_include_directories(${target}
@@ -487,6 +495,18 @@ foreach(_edition harken_engine_release harken_engine_dev)
         list(APPEND _harken_installed_editions ${_edition})
     endif()
 endforeach()
+# Keep the decoder and mixer visible to the Windows x64 Release linker.
+if(WIN32 AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(AMD64|amd64|x86_64)$"
+        AND CMAKE_C_COMPILER_ID STREQUAL "Clang" AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang"
+        AND NOT DEFINED CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE
+        AND NOT DEFINED CMAKE_INTERPROCEDURAL_OPTIMIZATION)
+    include(CheckIPOSupported)
+    check_ipo_supported(RESULT _harken_ipo_available LANGUAGES C CXX)
+    if(_harken_ipo_available)
+        set_property(TARGET harken_vorbis_decoder ${_harken_installed_editions}
+            PROPERTY INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
+    endif()
+endif()
 add_custom_target(harken_engine)
 add_dependencies(harken_engine ${_harken_installed_editions})
 install(TARGETS ${_harken_installed_editions} harken_pack_format

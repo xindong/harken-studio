@@ -180,29 +180,36 @@ static ogg_uint32_t bitreverse(ogg_uint32_t x){
 STIN long decode_packed_entry_number(codebook *book, oggpack_buffer *b){
   int  read=book->dec_maxlength;
   long lo,hi;
-  long lok = oggpack_look(b,book->dec_firsttablen);
+  long lok;
+  int have_window=b->endbyte<=b->storage-4;
+  ogg_uint32_t window=0;
+  if(have_window){
+    const unsigned char *p=b->ptr;
+    window=((ogg_uint32_t)p[0] | ((ogg_uint32_t)p[1]<<8) |
+            ((ogg_uint32_t)p[2]<<16) | ((ogg_uint32_t)p[3]<<24)) >> b->endbit;
+    lok=window & ((1u<<book->dec_firsttablen)-1u);
+  }else{
+    lok=oggpack_look(b,book->dec_firsttablen);
+  }
 
-  if (lok >= 0) {
-    long entry = book->dec_firsttable[lok];
-    if(entry&0x80000000UL){
-      lo=(entry>>15)&0x7fff;
-      hi=book->used_entries-(entry&0x7fff);
-    }else{
-      oggpack_adv(b, book->dec_codelengths[entry-1]);
-      return(entry-1);
+  if(lok>=0){
+    ogg_uint32_t entry=book->dec_firsttable[lok];
+    if(!(entry & 0x80000000u)){
+      /* A direct entry includes its bit length. The successful peek already
+         established that this many bits are available, including at the tail. */
+      unsigned cursor=b->endbit+(entry&15u);
+      b->ptr+=cursor>>3;
+      b->endbyte+=cursor>>3;
+      b->endbit=cursor&7u;
+      return entry>>4;
     }
+    lo=(entry>>15)&0x7fff;
+    hi=book->used_entries-(entry&0x7fff);
   }else{
     lo=0;
     hi=book->used_entries;
   }
-
-  /* Single entry codebooks use a firsttablen of 1 and a
-     dec_maxlength of 1.  If a single-entry codebook gets here (due to
-     failure to read one bit above), the next look attempt will also
-     fail and we'll correctly kick out instead of trying to walk the
-     underformed tree */
-
-  lok = oggpack_look(b, read);
+  lok = have_window && read<=24 ? (long)(window & ((1u<<read)-1u)) : oggpack_look(b,read);
 
   while(lok<0 && read>1)
     lok = oggpack_look(b, --read);
@@ -285,7 +292,51 @@ long vorbis_book_decodev_add(codebook *book,float *a,oggpack_buffer *b,int n){
     int i,j,entry;
     float *t;
 
-    for(i=0;i<n;){
+    if(book->dim==2 || book->dim==4){
+      const int dim=book->dim;
+
+      i=0;
+      while(i<=n-2*dim && b->endbyte<=b->storage-8) {
+        unsigned long long window=0;
+        unsigned used=0;
+        const unsigned mask=(1u<<book->dec_firsttablen)-1u;
+        const int begin=i;
+        const unsigned char *p=b->ptr;
+        for(unsigned k=0;k<8;k++) window|=((unsigned long long)p[k])<<(8*k);
+        window>>=b->endbit;
+        while(i<=n-dim && used+book->dec_firsttablen<=56) {
+          const ogg_uint32_t word=book->dec_firsttable[(unsigned)window & mask];
+          if(word&0x80000000u)break;
+          const unsigned length=word&15;
+          window>>=length;
+          used+=length;
+          t=book->valuelist+(word>>4)*dim;
+          a[i]+=t[0];a[i+1]+=t[1];
+          if(dim==4){a[i+2]+=t[2];a[i+3]+=t[3];}
+          i+=dim;
+        }
+        if(i==begin) {
+          entry=decode_packed_entry_number(book,b);
+          if(entry==-1)return -1;
+          t=book->valuelist+entry*dim;
+          a[i]+=t[0];a[i+1]+=t[1];
+          if(dim==4){a[i+2]+=t[2];a[i+3]+=t[3];}
+          i+=dim;
+        }else{
+          const unsigned next=b->endbit+used;
+          b->ptr+=next>>3;b->endbyte+=next>>3;b->endbit=next&7;
+        }
+      }
+      for(;i<=n-dim;i+=dim){
+        entry=decode_packed_entry_number(book,b);
+        if(entry==-1)return -1;
+        t=book->valuelist+entry*dim;
+        a[i]+=t[0];
+        a[i+1]+=t[1];
+        if(dim==4){ a[i+2]+=t[2]; a[i+3]+=t[3]; }
+      }
+    }else i=0;
+    for(;i<n;){
       entry = decode_packed_entry_number(book,b);
       if(entry==-1)return(-1);
       t     = book->valuelist+entry*book->dim;
@@ -322,6 +373,57 @@ long vorbis_book_decodev_set(codebook *book,float *a,oggpack_buffer *b,int n){
   return(0);
 }
 
+
+/* A complete stereo vector alternates left and right values. */
+STIN void hv_add_stereo(float* left,float* right,const float* values,int frames){
+  for(int frame=0;frame<frames;frame++){
+    left[frame]+=values[frame*2];
+    right[frame]+=values[frame*2+1];
+  }
+}
+STIN long hv_decode_stereo(codebook* book,float** planes,long start,long end,
+                           oggpack_buffer* reader,int framesPerEntry){
+  const unsigned mask=(1u<<book->dec_firsttablen)-1u;
+  long frame=start;
+  while(frame<=end-framesPerEntry && reader->endbyte<=reader->storage-8){
+    const unsigned char* source=reader->ptr;
+    unsigned long long window=0;
+    for(unsigned k=0;k<8;k++)window|=((unsigned long long)source[k])<<(8*k);
+    window>>=reader->endbit;
+    unsigned consumed=0;
+    while(frame<=end-framesPerEntry && consumed+book->dec_firsttablen<=56){
+      const ogg_uint32_t word=book->dec_firsttable[(unsigned)window&mask];
+      if(word&0x80000000u)break;
+      const unsigned length=word&15u;
+      hv_add_stereo(planes[0]+frame,planes[1]+frame,
+                    book->valuelist+(word>>4)*2u*framesPerEntry,framesPerEntry);
+      window>>=length;
+      consumed+=length;
+      frame+=framesPerEntry;
+    }
+    if(consumed){
+      const unsigned next=reader->endbit+consumed;
+      reader->ptr+=next>>3;
+      reader->endbyte+=next>>3;
+      reader->endbit=next&7;
+      continue;
+    }
+    const long entry=decode_packed_entry_number(book,reader);
+    if(entry<0)return -1;
+    hv_add_stereo(planes[0]+frame,planes[1]+frame,
+                  book->valuelist+entry*2*framesPerEntry,framesPerEntry);
+    frame+=framesPerEntry;
+  }
+  while(frame<end){
+    const long entry=decode_packed_entry_number(book,reader);
+    if(entry<0)return -1;
+    const int frames=end-frame<framesPerEntry?(int)(end-frame):framesPerEntry;
+    hv_add_stereo(planes[0]+frame,planes[1]+frame,
+                  book->valuelist+entry*2*framesPerEntry,frames);
+    frame+=frames;
+  }
+  return 0;
+}
 long vorbis_book_decodevv_add(codebook *book,float **a,long offset,int ch,
                               oggpack_buffer *b,int n){
 
@@ -329,6 +431,14 @@ long vorbis_book_decodevv_add(codebook *book,float **a,long offset,int ch,
   int chptr=0;
   if(book->used_entries>0){
     int m=(offset+n)/ch;
+    if(ch==2){
+      switch(book->dim){
+        case 2: return hv_decode_stereo(book,a,offset/2,m,b,1);
+        case 4: return hv_decode_stereo(book,a,offset/2,m,b,2);
+        case 8: return hv_decode_stereo(book,a,offset/2,m,b,4);
+        case 16: return hv_decode_stereo(book,a,offset/2,m,b,8);
+      }
+    }
     for(i=offset/ch;i<m;){
       entry = decode_packed_entry_number(book,b);
       if(entry==-1)return(-1);

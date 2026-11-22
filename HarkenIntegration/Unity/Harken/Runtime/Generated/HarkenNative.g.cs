@@ -40,6 +40,15 @@ namespace Harken
         [DllImport(LibraryName, EntryPoint = "Vn_Init", CallingConvention = CallingConvention.Cdecl)]
         public static extern VnResult Vn_Init(in VnConfig config);
 
+        [DllImport(LibraryName, EntryPoint = "Vn_BeginOutputPreparation", CallingConvention = CallingConvention.Cdecl)]
+        public static extern VnResult Vn_BeginOutputPreparation(in VnConfig config, out ulong outTicket);
+
+        [DllImport(LibraryName, EntryPoint = "Vn_InitWithOutputPreparation", CallingConvention = CallingConvention.Cdecl)]
+        public static extern VnResult Vn_InitWithOutputPreparation(in VnConfig config, ulong ticket);
+
+        [DllImport(LibraryName, EntryPoint = "Vn_CancelOutputPreparation", CallingConvention = CallingConvention.Cdecl)]
+        public static extern VnResult Vn_CancelOutputPreparation(ulong ticket);
+
         [DllImport(LibraryName, EntryPoint = "Vn_Term", CallingConvention = CallingConvention.Cdecl)]
         public static extern VnResult Vn_Term();
 
@@ -485,6 +494,18 @@ namespace Harken
 
         [DllImport(LibraryName, EntryPoint = "Vn_CommitStreamSource", CallingConvention = CallingConvention.Cdecl)]
         public static extern VnResult Vn_CommitStreamSource(ulong request);
+
+        [DllImport(LibraryName, EntryPoint = "Vn_VisitResidentPackDirectoryV1", CallingConvention = CallingConvention.Cdecl)]
+        public static extern VnResult Vn_VisitResidentPackDirectoryV1(in VnResidentPackVisitDescV1 desc);
+
+        [DllImport(LibraryName, EntryPoint = "Vn_ActivateResidentPackDirectoryV1", CallingConvention = CallingConvention.Cdecl)]
+        public static extern VnResult Vn_ActivateResidentPackDirectoryV1(in VnResidentDirectoryActivationV1 desc, ref VnCanonicalPackSetActivationReportV1 outReport);
+
+        [DllImport(LibraryName, EntryPoint = "Vn_ActivateNamedResidentDirectoryV1", CallingConvention = CallingConvention.Cdecl)]
+        public static extern VnResult Vn_ActivateNamedResidentDirectoryV1(in VnResidentDirectoryActivationV1 desc, ushort* directory, uint directoryUnits, ushort* names, uint nameUnits, void* keys, uint keyCapacity, ref VnCanonicalPackSetActivationReportV1 outReport);
+
+        [DllImport(LibraryName, EntryPoint = "Vn_PostNamedResidentActionV1", CallingConvention = CallingConvention.Cdecl)]
+        public static extern VnResult Vn_PostNamedResidentActionV1(in VnNamedResidentPostV1 desc, out ulong outFiring);
 
 #if HARKEN_ENGINE_DEV
         [DllImport(LibraryName, EntryPoint = "Vn_MonitorGetEventSessionStatus", CallingConvention = CallingConvention.Cdecl)]

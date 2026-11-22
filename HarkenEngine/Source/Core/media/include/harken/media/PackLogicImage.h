@@ -384,6 +384,12 @@ VnResult ParsePackCanonicalImageWithBudget(const std::uint8_t* bytes,
     std::uint64_t fileBytes, PackCanonicalImage* out,
     std::uint64_t* artifactHash, const detail::PackDecodeBudget& budget);
 
+// The caller must prepare every resident Vorbis row and compare its decoded
+// descriptor before publishing. The span parser still checks all physical hashes.
+VnResult ParsePackForResidentPreparation(const std::uint8_t* bytes, std::uint64_t fileBytes,
+    PackCanonicalImage* out, std::uint64_t* artifactHash, const detail::PackDecodeBudget& budget,
+    VnPackInspectReportV1* binding = nullptr);
+
 // Uses the same semantic parser, then verifies the cached metadata and all
 // physical bytes before returning immutable sample owners. Image and sample
 // outputs are unchanged on failure. Unsupported layouts request a byte-span retry.

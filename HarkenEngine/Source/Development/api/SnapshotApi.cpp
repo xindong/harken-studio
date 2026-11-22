@@ -336,7 +336,7 @@ VnResult Vn_CaptureSnapshot(VnSnapshot* outSnapshot) {
                 : 0u;
         const bool callbackActive =
             engine->config.nullDevice ||
-            engine->device.CallbackRealtimeDomainReady();
+            (!engine->gameOutputStartup.Opening() && engine->device.CallbackRealtimeDomainReady());
         outSnapshot->renderWorkerCount =
             callbackActive ? engine->voices.RenderWorkerCount() : 0u;
         // Worker busy peak rides the published payload (audio-thread-measured),

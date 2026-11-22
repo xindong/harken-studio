@@ -18,6 +18,8 @@ class VorbisResident;
 class VorbisCodec;
 enum class VorbisPrepareResult { Ok, Invalid, Unsupported, OutOfMemory };
 
+VorbisPrepareResult InspectResidentVorbis(const VorbisMedia& media, std::size_t budget) noexcept;
+
 class VorbisSettings {
 public:
     ~VorbisSettings();
@@ -27,7 +29,6 @@ public:
     unsigned LongBlock() const noexcept;
     std::size_t Bytes() const noexcept;
     std::size_t StateBytes() const noexcept;
-    long PacketBlock(const std::uint8_t* bytes, std::size_t count) const noexcept;
     bool ValidateResident(const VorbisMedia& media) const noexcept;
 private:
     friend class VorbisSettingsCache;
@@ -42,6 +43,20 @@ private:
 // includes identification and setup bytes; hashes only accelerate lookup.
 class VorbisSettingsCache {
 public:
+    explicit VorbisSettingsCache(bool compactCodebooks = false) noexcept : compactCodebooks_(compactCodebooks) {}
+    class CodebookScope {
+    public:
+        CodebookScope(VorbisSettingsCache& cache, bool compact) noexcept
+            : cache_(cache), previous_(cache.compactCodebooks_) { cache_.compactCodebooks_ = compact; }
+        ~CodebookScope() { cache_.compactCodebooks_ = previous_; }
+        CodebookScope(const CodebookScope&) = delete;
+        CodebookScope& operator=(const CodebookScope&) = delete;
+    private:
+        VorbisSettingsCache& cache_;
+        bool previous_;
+    };
+    bool PrefersCompact() const noexcept { return compactCodebooks_; }
+    std::uint64_t WideRequests() const noexcept { return wideRequests_; }
     bool Initialize(std::size_t tableBudget);
     std::shared_ptr<const VorbisSettings> Prepare(const VorbisMedia& media,
         std::size_t resourceBudget, VorbisPrepareResult& result);
@@ -49,6 +64,8 @@ public:
 private:
     std::shared_ptr<HvTables> tables_;
     std::unordered_multimap<std::uint64_t, std::weak_ptr<const VorbisSettings>> settings_;
+    bool compactCodebooks_;
+    std::uint64_t wideRequests_ = 0;
 };
 
 class VorbisWorkspace {
@@ -72,7 +89,7 @@ public:
                   std::uint32_t renderThread, PCMView& output) noexcept override;
         void Restart() noexcept;
         bool Decode(VorbisWorkspace& workspace, const std::uint8_t* packet, std::size_t bytes,
-                    const float* (&pcm)[8], unsigned& frames) noexcept;
+                    const float* (&pcm)[8], unsigned& frames, std::uint64_t generation = 0) noexcept;
         void Retire() noexcept override { retired.store(true, std::memory_order_release); }
     private:
         friend class VorbisStatePool;
@@ -99,7 +116,7 @@ public:
     State* Acquire(std::shared_ptr<const VorbisSettings> settings);
     void Collect() noexcept;
     std::size_t Bytes() const noexcept { return bytes_; }
-    std::size_t ActiveBytes() const noexcept { return activeBytes_; }
+    std::size_t ActiveBytes() const noexcept { return activeBytes_.load(std::memory_order_relaxed); }
     std::size_t HighWater() const noexcept { return highWater_; }
     static std::size_t RequiredBytes(const VorbisSettings& settings) noexcept;
 private:
@@ -107,14 +124,17 @@ private:
     State* all_ = nullptr;
     // Legal channel counts and power-of-two blocks determine the key domain.
     std::array<State*, 64> free_{};
-    std::size_t bytes_ = 0, activeBytes_ = 0, highWater_ = 0;
+    std::size_t bytes_ = 0;
+    std::atomic<std::size_t> activeBytes_{0};
+    std::size_t highWater_ = 0;
 };
 
 // Engine lifetime owns tables, reusable state and one workspace for
 // each render thread. Resources own only compressed bytes and shared setup.
 class VorbisCodec {
 public:
-    explicit VorbisCodec(unsigned renderWorkers);
+    explicit VorbisCodec(unsigned renderWorkers, bool compactCodebooks = false);
+    std::uint64_t nextGeneration = 1;
     VorbisSettingsCache settings;
     VorbisStatePool states;
     std::vector<std::unique_ptr<VorbisWorkspace>> workspaces;
@@ -123,13 +143,17 @@ public:
 class VorbisResident final : public EncodedMedia {
 public:
     static std::shared_ptr<VorbisResident> Prepare(VorbisCodec& codec,
-        std::vector<std::uint8_t> bytes, std::size_t budget, VorbisPrepareResult& result);
+        std::vector<std::uint8_t> bytes, std::size_t budget, VorbisPrepareResult& result, bool packFormat = false,
+        const std::uint64_t* verifiedChecksum = nullptr);
+    const VorbisSettings& Settings() const noexcept { return *settings_; }
+    std::size_t TryWidenUnpublished(std::size_t budget) noexcept;
     MediaDecoder* Acquire() const noexcept override;
     std::size_t ResidentBytes() const noexcept override;
     std::span<const std::uint8_t> ContentBytes() const noexcept override { return bytes_; }
     PCMView View() const noexcept;
 private:
     friend struct VorbisStatePool::State;
+    std::uint64_t generation_ = 0;
     VorbisCodec* codec_ = nullptr;
     std::vector<std::uint8_t> bytes_;
     VorbisMedia media_;

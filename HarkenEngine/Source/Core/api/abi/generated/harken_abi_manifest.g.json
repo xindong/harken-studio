@@ -165,6 +165,28 @@
             }
           ],
           "returnType": "uint32_t"
+        },
+        "VnResidentPackVisitorFn": {
+          "callingConvention": "cdecl",
+          "edition": "core",
+          "params": [
+            {
+              "ctype": "void*",
+              "kind": "ptr",
+              "name": "userData"
+            },
+            {
+              "ctype": "const VnResidentPackRowV1*",
+              "kind": "ptr",
+              "name": "rows"
+            },
+            {
+              "ctype": "uint32_t",
+              "kind": "u32",
+              "name": "memberCount"
+            }
+          ],
+          "returnType": "VnResult"
         }
       },
       "declarationOrder": {
@@ -175,7 +197,8 @@
           "VnPackByteReleaseFn",
           "VnReadIsCancelledFn",
           "VnByteSourceReadAtFn",
-          "VnByteSourceReleaseFn"
+          "VnByteSourceReleaseFn",
+          "VnResidentPackVisitorFn"
         ],
         "defines": [
           "VN_ABI_VERSION_MAJOR",
@@ -409,7 +432,8 @@
           ],
           "VnDeviceMode": [
             "VN_DEVICE_REAL",
-            "VN_DEVICE_NULL"
+            "VN_DEVICE_NULL",
+            "VN_DEVICE_REAL_BACKGROUND"
           ],
           "VnDynamicCapabilityFlags": [
             "VN_DYNAMIC_CAP_CONTROL_USES_BINDING",
@@ -1424,7 +1448,12 @@
           "VnPreviewBusEffectParameterV1",
           "VnPreviewProjectDescV4",
           "VnPreviewVoiceEffectEntryV1",
-          "VnPreviewVoiceEffectChainV1"
+          "VnPreviewVoiceEffectChainV1",
+          "VnResidentPackRowV1",
+          "VnResidentPackVisitDescV1",
+          "VnResidentDirectoryMemberV1",
+          "VnResidentDirectoryActivationV1",
+          "VnNamedResidentPostV1"
         ]
       },
       "defines": {
@@ -1436,7 +1465,7 @@
         "VN_ABI_VERSION_MINOR": {
           "edition": "core",
           "type": "u32",
-          "value": 0
+          "value": 5
         },
         "VN_ATTENUATION_MAX_CURVE_POINTS": {
           "edition": "core",
@@ -2209,7 +2238,8 @@
           "edition": "core",
           "values": {
             "VN_DEVICE_NULL": 1,
-            "VN_DEVICE_REAL": 0
+            "VN_DEVICE_REAL": 0,
+            "VN_DEVICE_REAL_BACKGROUND": 2
           }
         },
         "VnDynamicCapabilityFlags": {
@@ -3234,6 +3264,50 @@
             {
               "ctype": "const VnConfig*",
               "name": "config"
+            }
+          ],
+          "returnType": "VnResult"
+        },
+        {
+          "callingConvention": "cdecl",
+          "edition": "core",
+          "name": "Vn_BeginOutputPreparation",
+          "parameters": [
+            {
+              "ctype": "const VnConfig*",
+              "name": "config"
+            },
+            {
+              "ctype": "uint64_t*",
+              "name": "outTicket"
+            }
+          ],
+          "returnType": "VnResult"
+        },
+        {
+          "callingConvention": "cdecl",
+          "edition": "core",
+          "name": "Vn_InitWithOutputPreparation",
+          "parameters": [
+            {
+              "ctype": "const VnConfig*",
+              "name": "config"
+            },
+            {
+              "ctype": "uint64_t",
+              "name": "ticket"
+            }
+          ],
+          "returnType": "VnResult"
+        },
+        {
+          "callingConvention": "cdecl",
+          "edition": "core",
+          "name": "Vn_CancelOutputPreparation",
+          "parameters": [
+            {
+              "ctype": "uint64_t",
+              "name": "ticket"
             }
           ],
           "returnType": "VnResult"
@@ -6251,6 +6325,90 @@
             }
           ],
           "returnType": "VnResult"
+        },
+        {
+          "callingConvention": "cdecl",
+          "edition": "core",
+          "name": "Vn_VisitResidentPackDirectoryV1",
+          "parameters": [
+            {
+              "ctype": "const VnResidentPackVisitDescV1*",
+              "name": "desc"
+            }
+          ],
+          "returnType": "VnResult"
+        },
+        {
+          "callingConvention": "cdecl",
+          "edition": "core",
+          "name": "Vn_ActivateResidentPackDirectoryV1",
+          "parameters": [
+            {
+              "ctype": "const VnResidentDirectoryActivationV1*",
+              "name": "desc"
+            },
+            {
+              "ctype": "VnCanonicalPackSetActivationReportV1*",
+              "name": "outReport"
+            }
+          ],
+          "returnType": "VnResult"
+        },
+        {
+          "callingConvention": "cdecl",
+          "edition": "core",
+          "name": "Vn_ActivateNamedResidentDirectoryV1",
+          "parameters": [
+            {
+              "ctype": "const VnResidentDirectoryActivationV1*",
+              "name": "desc"
+            },
+            {
+              "ctype": "const uint16_t*",
+              "name": "directory"
+            },
+            {
+              "ctype": "uint32_t",
+              "name": "directoryUnits"
+            },
+            {
+              "ctype": "const uint16_t*",
+              "name": "names"
+            },
+            {
+              "ctype": "uint32_t",
+              "name": "nameUnits"
+            },
+            {
+              "ctype": "void*",
+              "name": "keys"
+            },
+            {
+              "ctype": "uint32_t",
+              "name": "keyCapacity"
+            },
+            {
+              "ctype": "VnCanonicalPackSetActivationReportV1*",
+              "name": "outReport"
+            }
+          ],
+          "returnType": "VnResult"
+        },
+        {
+          "callingConvention": "cdecl",
+          "edition": "core",
+          "name": "Vn_PostNamedResidentActionV1",
+          "parameters": [
+            {
+              "ctype": "const VnNamedResidentPostV1*",
+              "name": "desc"
+            },
+            {
+              "ctype": "uint64_t*",
+              "name": "outFiring"
+            }
+          ],
+          "returnType": "VnResult"
         }
       ],
       "monitorRecordEnvelope": [
@@ -6468,12 +6626,16 @@
         "VnPreview_TakeChannelPeaks",
         "Vn_ActivateCanonicalPackSetV1",
         "Vn_ActivateCanonicalPackSetV2",
+        "Vn_ActivateNamedResidentDirectoryV1",
+        "Vn_ActivateResidentPackDirectoryV1",
         "Vn_ApplyBusTopology",
         "Vn_ApplyVoiceBinding",
         "Vn_AttachBinding",
+        "Vn_BeginOutputPreparation",
         "Vn_BeginStreamFile",
         "Vn_BeginStreamSource",
         "Vn_BindVoiceAttenuation",
+        "Vn_CancelOutputPreparation",
         "Vn_CancelStreamSource",
         "Vn_CaptureCompressorRuntimeInfo",
         "Vn_CaptureEffectCapabilities",
@@ -6500,6 +6662,7 @@
         "Vn_DetachBinding",
         "Vn_DisconnectBusSend",
         "Vn_Init",
+        "Vn_InitWithOutputPreparation",
         "Vn_InspectCanonicalPackV1",
         "Vn_InspectInitPack",
         "Vn_LoadCurrentWorld",
@@ -6528,6 +6691,7 @@
         "Vn_MonitorStopCapture",
         "Vn_MonitorValidateCapturePlan",
         "Vn_PostAction",
+        "Vn_PostNamedResidentActionV1",
         "Vn_QueryAbiVersion",
         "Vn_QueryActionFiring",
         "Vn_QueryActionPlaybackReadiness",
@@ -6620,7 +6784,8 @@
         "Vn_UnregisterBinding",
         "Vn_UnregisterPCM",
         "Vn_UnregisterStreamFile",
-        "Vn_Update"
+        "Vn_Update",
+        "Vn_VisitResidentPackDirectoryV1"
       ],
       "results": {
         "backing": "i32",
@@ -18435,6 +18600,126 @@
           ],
           "size": 80
         },
+        "VnNamedResidentPostV1": {
+          "alignment": 8,
+          "edition": "core",
+          "fields": [
+            {
+              "alignment": 4,
+              "name": "structSize",
+              "offset": 0,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "rowCount",
+              "offset": 4,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "nameUnits",
+              "offset": 8,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "keyCapacity",
+              "offset": 12,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 8,
+              "name": "name",
+              "offset": 16,
+              "shape": {
+                "ctype": "const uint16_t*",
+                "kind": "pointer",
+                "storage": "opaque"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "keys",
+              "offset": 24,
+              "shape": {
+                "ctype": "const uint8_t*",
+                "kind": "pointer",
+                "storage": "opaque"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "rows",
+              "offset": 32,
+              "shape": {
+                "ctype": "const VnResidentDirectoryMemberV1*",
+                "kind": "pointer",
+                "storage": "opaque"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "initHandle",
+              "offset": 40,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "setRevision",
+              "offset": 48,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "emitter",
+              "offset": 56,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "callerSeed",
+              "offset": 64,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            }
+          ],
+          "size": 72
+        },
         "VnNotification": {
           "alignment": 8,
           "edition": "core",
@@ -22954,6 +23239,339 @@
           ],
           "size": 600
         },
+        "VnResidentDirectoryActivationV1": {
+          "alignment": 8,
+          "edition": "core",
+          "fields": [
+            {
+              "alignment": 4,
+              "name": "structSize",
+              "offset": 0,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "rowCapacity",
+              "offset": 4,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 8,
+              "name": "directory",
+              "offset": 8,
+              "shape": {
+                "kind": "struct",
+                "type": "VnResidentPackVisitDescV1"
+              },
+              "size": 112
+            },
+            {
+              "alignment": 8,
+              "name": "initStableId",
+              "offset": 120,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "initHandle",
+              "offset": 128,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "baseSetRevision",
+              "offset": 136,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "projectId",
+              "offset": 144,
+              "shape": {
+                "kind": "struct",
+                "type": "VnObjectId"
+              },
+              "size": 16
+            },
+            {
+              "alignment": 8,
+              "name": "rows",
+              "offset": 160,
+              "shape": {
+                "ctype": "VnResidentDirectoryMemberV1*",
+                "kind": "pointer",
+                "storage": "opaque"
+              },
+              "size": 8
+            }
+          ],
+          "size": 168
+        },
+        "VnResidentDirectoryMemberV1": {
+          "alignment": 8,
+          "edition": "core",
+          "fields": [
+            {
+              "alignment": 8,
+              "name": "packStableId",
+              "offset": 0,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "rootActionId",
+              "offset": 8,
+              "shape": {
+                "kind": "struct",
+                "type": "VnObjectId"
+              },
+              "size": 16
+            },
+            {
+              "alignment": 8,
+              "name": "contentHash",
+              "offset": 24,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "byteCount",
+              "offset": 32,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "executionFingerprint",
+              "offset": 40,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "handle",
+              "offset": 48,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            }
+          ],
+          "size": 56
+        },
+        "VnResidentPackRowV1": {
+          "alignment": 8,
+          "edition": "core",
+          "fields": [
+            {
+              "alignment": 8,
+              "name": "facts",
+              "offset": 0,
+              "shape": {
+                "kind": "struct",
+                "type": "VnPackInspectReportV1"
+              },
+              "size": 112
+            },
+            {
+              "alignment": 8,
+              "name": "provider",
+              "offset": 112,
+              "shape": {
+                "kind": "struct",
+                "type": "VnCanonicalPackSetMemberV1"
+              },
+              "size": 72
+            },
+            {
+              "alignment": 8,
+              "name": "byteCount",
+              "offset": 184,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            }
+          ],
+          "size": 192
+        },
+        "VnResidentPackVisitDescV1": {
+          "alignment": 8,
+          "edition": "core",
+          "fields": [
+            {
+              "alignment": 4,
+              "name": "structSize",
+              "offset": 0,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "memberCount",
+              "offset": 4,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 8,
+              "name": "utf8Directory",
+              "offset": 8,
+              "shape": {
+                "ctype": "const char*",
+                "kind": "pointer",
+                "storage": "string"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "utf8Names",
+              "offset": 16,
+              "shape": {
+                "ctype": "const char*",
+                "kind": "pointer",
+                "storage": "string"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "initVolumeId",
+              "offset": 24,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "initFileId",
+              "offset": 32,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "initFileSize",
+              "offset": 40,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "initWriteTime",
+              "offset": 48,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "initChangeTime",
+              "offset": 56,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "maxInputBytes",
+              "offset": 64,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "init",
+              "offset": 72,
+              "shape": {
+                "kind": "struct",
+                "type": "VnPackByteSpan"
+              },
+              "size": 24
+            },
+            {
+              "alignment": 8,
+              "name": "userData",
+              "offset": 96,
+              "shape": {
+                "ctype": "void*",
+                "kind": "pointer",
+                "storage": "opaque"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "visit",
+              "offset": 104,
+              "shape": {
+                "ctype": "VnResidentPackVisitorFn",
+                "kind": "pointer",
+                "storage": "opaque"
+              },
+              "size": 8
+            }
+          ],
+          "size": 112
+        },
         "VnSnapshot": {
           "alignment": 8,
           "edition": "development",
@@ -26023,6 +26641,15 @@
             "source": "default",
             "unknownSize": "reject"
           },
+          "VnNamedResidentPostV1": {
+            "acceptedSizes": [
+              72
+            ],
+            "currentSize": 72,
+            "mode": "exact-current",
+            "source": "default",
+            "unknownSize": "reject"
+          },
           "VnPCMDesc": {
             "acceptedSizes": [
               48
@@ -26265,6 +26892,24 @@
             "source": "default",
             "unknownSize": "reject"
           },
+          "VnResidentDirectoryActivationV1": {
+            "acceptedSizes": [
+              168
+            ],
+            "currentSize": 168,
+            "mode": "exact-current",
+            "source": "default",
+            "unknownSize": "reject"
+          },
+          "VnResidentPackVisitDescV1": {
+            "acceptedSizes": [
+              112
+            ],
+            "currentSize": 112,
+            "mode": "exact-current",
+            "source": "default",
+            "unknownSize": "reject"
+          },
           "VnSnapshot": {
             "acceptedSizes": [
               1832,
@@ -26451,7 +27096,7 @@
       }
     }
   },
-  "contractSha256": "efd650ca37c871bf82c7d79809bc1217a27db0d838e3e114bf2286044b7119ba",
+  "contractSha256": "4d2ac125828a0c4d05478a72d77ec5fd3d9529dde45d7baba3c92d4c0ac0121f",
   "kind": "harken-contract-suite-manifest",
   "schemaVersion": 1
 }

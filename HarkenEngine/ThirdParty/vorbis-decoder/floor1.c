@@ -306,31 +306,27 @@ static const float FLOOR1_fromdB_LOOKUP[256]={
 };
 
 static void render_line(int n, int x0,int x1,int y0,int y1,float *d){
-  int dy=y1-y0;
-  int adx=x1-x0;
-  int ady=abs(dy);
-  int base=dy/adx;
-  int sy=(dy<0?base-1:base+1);
-  int x=x0;
-  int y=y0;
-  int err=0;
-
-  ady-=abs(base*adx);
-
+  const int width=x1-x0;
+  const int dy=y1-y0;
+  int x;
   if(n>x1)n=x1;
-
-  if(x<n)
-    d[x]*=FLOOR1_fromdB_LOOKUP[y];
-
-  while(++x<n){
-    err=err+ady;
-    if(err>=adx){
-      err-=adx;
-      y+=sy;
-    }else{
-      y+=base;
-    }
-    d[x]*=FLOOR1_fromdB_LOOKUP[y];
+  if(x0>=n)return;
+  if(!dy){
+    const float gain=FLOOR1_fromdB_LOOKUP[y0];
+    for(x=x0;x<n;++x)d[x]*=gain;
+    return;
+  }
+  /* A floor segment spans at most 2^15 bins. Rounding its unsigned
+     Q32 slope upward changes every interior offset by less than 1/width,
+     so the integer lookup indices equal the Vorbis line exactly. */
+  {
+    const uint64_t unit=UINT64_C(1)<<32;
+    const uint64_t magnitude=((uint64_t)abs(dy)*unit+width-1)/width;
+    uint64_t position=(uint64_t)y0*unit;
+    uint64_t step=magnitude;
+    if(dy<0){position+=unit-1;step=0-magnitude;}
+    for(x=x0;x<n;++x,position+=step)
+      d[x]*=FLOOR1_fromdB_LOOKUP[position>>32];
   }
 }
 

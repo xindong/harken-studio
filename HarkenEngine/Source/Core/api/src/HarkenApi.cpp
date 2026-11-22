@@ -34,6 +34,7 @@
 #include "harken/core/MonitorLifecycleSink.h"
 #include "harken/media/PackFormat.h"
 #include "harken/media/PackLogicImage.h"
+#include "ResidentPackDirectory.h"
 #include "harken/media/CanonicalAttenuationFingerprint.h"
 #include "harken/core/PackComposition.h"
 #include "harken/core/PlayablePropertyRuntime.h"
@@ -6737,7 +6738,43 @@ bool CanonicalSetMutationBlocked() noexcept {
 }
 
 namespace {
+#if defined(_WIN32)
+bool HasFixedOutputFormat(const VnConfig& config) noexcept {
+    return config.structSize == sizeof(VnConfig) && config.sampleRate != 0 &&
+           config.mixChannelLayout != VN_CHANNEL_LAYOUT_DEFAULT &&
+           config.deviceChannelLayout != VN_CHANNEL_LAYOUT_DEFAULT;
+}
+
+struct PreparedOutputFormat {
+    std::uint32_t sampleRate, blockFrames, mixLayout, deviceLayout;
+
+    static PreparedOutputFormat From(const EngineConfig& config) noexcept {
+        return {config.mixRate.SampleRate(), config.blockFrames,
+                config.mixChannelLayout, config.deviceChannelLayout};
+    }
+    bool operator==(const PreparedOutputFormat&) const = default;
+};
+
+// Like g_engineOwner, a live ticket must be closed before unloading the DLL.
+// Destruction may join a WASAPI thread and cannot run under the loader lock.
+GameOutputResources* g_reservedOutput = nullptr;
+PreparedOutputFormat g_reservedFormat{};
+std::uint64_t g_outputGeneration = 0;
+thread_local std::uint64_t g_ownedOutputGeneration = 0;
+
+VnResult CheckOutputTicket(std::uint64_t ticket) noexcept {
+    if (g_reservedOutput == nullptr || ticket != g_outputGeneration) return VN_STALE_HANDLE;
+    return ticket == g_ownedOutputGeneration ? VN_OK : VN_IN_USE;
+}
+
+std::unique_ptr<GameOutputResources> TakeOutputReservation() noexcept {
+    g_ownedOutputGeneration = 0;
+    return std::unique_ptr<GameOutputResources>(std::exchange(g_reservedOutput, nullptr));
+}
+#endif
+
 struct EnginePageOwner {
+    std::unique_ptr<GameOutputResources> openingOutput;
     StablePageReservation pages;
     Engine* instance = nullptr;
 
@@ -6844,6 +6881,7 @@ VnResult StartRealDevice(Engine& engine,
 }
 
 VnResult StopRealDevice(Engine& engine) {
+    if (engine.gameOutputStartup.OwnsDevice()) return engine.gameOutputStartup.Stop();
     // Revoke the public render transaction first. A callback already admitted
     // may finish, while any later callback writes silence. Disable then closes
     // worker batch admission; StopCallback synchronously joins callback exit
@@ -8748,7 +8786,8 @@ void TrackStreamResync(harken::Engine& engine, VnVoiceHandle handle,
     const harken::TimelineVoiceInstallFacts& install, std::uint32_t sampleRate,
     std::uint32_t prebufferFrames) noexcept {
     const auto index = static_cast<std::uint32_t>(handle);
-    if (index >= engine.streamResyncs.size()) return;
+    if (index >= engine.voices.Capacity()) return;
+    if (index >= engine.streamResyncs.size()) engine.streamResyncs.resize(index + 1);
     auto& row = engine.streamResyncs[index];
     // A reused slot cannot still be rendering the previous voice.
     if (row.token != 0) (void)engine.streamSeekHandoffs.Abandon(row.token);
@@ -37830,6 +37869,9 @@ bool ScheduleSourcePreparationHorizon(harken::Engine& engine, std::uint64_t* hor
 // A boundary past the clip end leaves the voice silent until it ends.
 void ServiceStreamResyncs(harken::Engine& engine) noexcept {
     constexpr std::uint64_t kResyncTicketBit = UINT64_C(1) << 63;
+    // Keep the preallocated storage but scan only through the last registered owner.
+    while (!engine.streamResyncs.empty() && engine.streamResyncs.back().handle == 0)
+        engine.streamResyncs.pop_back();
     for (auto& row : engine.streamResyncs) {
         if (row.handle == 0) continue;
         harken::VoicePool::StreamResyncView view;
@@ -47148,6 +47190,21 @@ void ServiceImmediateLaneReceipts(harken::Engine& engine,
         }
         harken::ImmediateLaneObservation observation{};
         if (!engine.immediateActionLane.Observe(attempt.lane, &observation)) continue;
+        if (observation.committed && !observation.missed && !observation.cancelled) {
+            for (harken::Engine::PlayableCohortCursor cursor{};
+                 auto* row = engine.NextOccupiedPlayableCohortService(attempt.root, &cursor);) {
+                if (row->phase != harken::EnginePlayableStartPhase::PendingImmediateEntry ||
+                    !row->pendingImmediateEntry || row->immediateLane.slot != attempt.lane.slot ||
+                    row->immediateLane.generation != attempt.lane.generation) continue;
+                harken::TimelineArmObservation start{};
+                if (!engine.timelineArms.Observe(row->arm, &start) || start.startedBlockSequence == 0 ||
+                    start.startedBlockSequence > observedAudioSequence || start.actualStartFrame == UINT64_MAX) continue;
+                row->startFrame = start.actualStartFrame;
+                row->pendingImmediateEntry = false;
+                row->phase = harken::EnginePlayableStartPhase::Filed;
+                RebasePendingImmediateStopIntents(engine, *row);
+            }
+        }
         const bool registered = observation.committed && engine.immediateActionLane.HasRegisteredEntries(
             attempt.lane.slot, attempt.lane.generation);
         if (registered && (!observation.complete ||
@@ -53141,9 +53198,33 @@ void ServiceOriginalPlainEntry(harken::Engine& engine,
         }
 }
 
+#if defined(_WIN32) && defined(HARKEN_WINDOWS_GAME_LOW_LATENCY)
+bool IsIndependentRelativeSound(const harken::EnginePlayableServiceRow& row) noexcept {
+    return row.root.kind == harken::PlayableKindV1::Sound &&
+        row.pendingImmediateTimeDomain == harken::ImmediateLaneTimeDomain::RelativeToAnchor &&
+        row.pendingImmediateFixedEntryFrame == 0 && !row.parentService.Valid() &&
+        !row.pendingCancellationIntent;
+}
+
+bool OnlyWaitingRelativeSounds(harken::Engine& engine) noexcept {
+    std::uint32_t cursor = 0;
+    while (auto* row = engine.NextOccupiedPlayableService(&cursor)) {
+        harken::TimelineArmObservation arm{};
+        if (!row->pendingImmediateEntry ||
+            row->phase != harken::EnginePlayableStartPhase::PendingImmediateEntry ||
+            !IsIndependentRelativeSound(*row) || row->scheduleLeafCount > 1 ||
+            !engine.timelineArms.Observe(row->arm, &arm) ||
+            arm.state != harken::ArmState::PendingApply)
+            return false;
+    }
+    return true;
+}
+#endif
+
 void ServicePendingImmediateEntries(
     harken::Engine& engine,
-    std::uint64_t* requiredPublicationFrame) noexcept {
+    std::uint64_t* requiredPublicationFrame,
+    harken::EnginePlayableServiceRow* preparedSound = nullptr) noexcept {
     const std::uint64_t blockFrames = engine.config.blockFrames;
     if (blockFrames == 0) return;
     const auto serviceByToken = [&](harken::EnginePlayableServiceToken token)
@@ -53189,7 +53270,8 @@ void ServicePendingImmediateEntries(
         return ResolveInitialMemberProgram(engine, bases.member + leaf);
     };
     for (std::uint32_t serviceCursor = 0;
-         auto* service = NextPendingImmediateEntryService(engine, &serviceCursor);) {
+         auto* service = preparedSound != nullptr ? (serviceCursor++ == 0 ? preparedSound : nullptr)
+                                                 : NextPendingImmediateEntryService(engine, &serviceCursor);) {
         auto& row = *service;
         // A completed entry can leave this conservative work set until the next service.
         if (!row.pendingImmediateEntry) {
@@ -53812,12 +53894,18 @@ void ServicePendingImmediateEntries(
         }
         bool awaitingApply = false;
         bool invalidArm = false;
+#if defined(_WIN32) && defined(HARKEN_WINDOWS_GAME_LOW_LATENCY)
+        bool onlyRelativeSounds = engine.gameOutputStartup.Opening() || engine.device.UsesGameOutput();
+#endif
         for (harken::Engine::PlayableCohortCursor occupiedCursor{};
              auto* occupiedService = engine.NextOccupiedPlayableCohortService(root, &occupiedCursor);) {
             auto& member = *occupiedService;
             if (member.phase != harken::EnginePlayableStartPhase::PendingImmediateEntry ||
                 !member.pendingImmediateEntry ||
                 member.PendingImmediateCohortRoot() != root) continue;
+#if defined(_WIN32) && defined(HARKEN_WINDOWS_GAME_LOW_LATENCY)
+            onlyRelativeSounds &= IsIndependentRelativeSound(member);
+#endif
             for (std::uint32_t leaf = 0; leaf < leafCount(member); ++leaf) {
                 const auto* program = leafProgram(member, leaf);
                 harken::TimelineArmObservation arm{};
@@ -53831,7 +53919,7 @@ void ServicePendingImmediateEntries(
                 }
             }
         }
-        if (awaitingApply) {  continue; }
+        if (awaitingApply && preparedSound == nullptr) continue;
         if (invalidArm) {
             for (harken::Engine::PlayableCohortCursor occupiedCursor{};
                  auto* occupiedService = engine.NextOccupiedPlayableCohortService(root, &occupiedCursor);) {
@@ -53846,7 +53934,26 @@ void ServicePendingImmediateEntries(
             }
             continue;
         }
-        const std::uint64_t admittedFrame = ActionImmediateStartFrame(engine);
+        std::uint64_t admittedFrame = ActionImmediateStartFrame(engine);
+#if defined(_WIN32) && defined(HARKEN_WINDOWS_GAME_LOW_LATENCY)
+        // These arms have already been applied. Only advance a relative Sound
+        // cohort if the next block clears the published cutoff and the consumer
+        // can reach it. Keep the ordinary admission when the recheck fails.
+        if (onlyRelativeSounds && blockFrames != 0) {
+            const auto rendered = engine.mixer.BlocksRendered();
+            if (rendered < UINT64_MAX / blockFrames) {
+                const auto earliest = std::max(engine.timelinePool.PublishCutoffFrame(),
+                    (rendered + 1u) * blockFrames);
+                if (earliest < admittedFrame)
+                    (void)EnsurePlayableTimelineWindowAtFrame(engine, earliest, &admittedFrame, false);
+            }
+        }
+#endif
+        if (preparedSound != nullptr) {
+            const auto rendered = engine.mixer.BlocksRendered();
+            if (rendered > UINT64_MAX / blockFrames) continue;
+            admittedFrame = rendered * blockFrames;
+        }
         if (admittedFrame > UINT64_MAX - (blockFrames - 1u)) continue;
         std::uint64_t startFrame =
             ((admittedFrame + blockFrames - 1u) / blockFrames) * blockFrames;
@@ -54830,7 +54937,7 @@ void ServicePendingImmediateEntries(
                     if (!ResolvePendingImmediateLeafFrame(member, *program, startFrame,
                             &memberBase, &actual)) { filingFailed = true; break; }
                     if (!engine.timelineArms.BindPendingImmediateStart(
-                            program->armToken, actual, actual)) {
+                            program->armToken, actual, actual, preparedSound != nullptr)) {
                         filingFailed = true;
                         break;
                     }
@@ -55327,7 +55434,7 @@ void ServicePendingImmediateEntries(
                 engine.forceImmediateQueueArmPublishFailureAtForTest = UINT32_MAX;
                 return false;
             }
-            return engine.timelineArms.Publish(token);
+            return preparedSound != nullptr || engine.timelineArms.Publish(token);
         };
         if (!filingFailed) {
             ApplyInitialQueueSuccessorStartMirrors(engine, *attempt,
@@ -55430,7 +55537,7 @@ void ServicePendingImmediateEntries(
             if (engine.forceImmediateQueuePostC0PublishFailureForTest == 2u) {
                 engine.forceImmediateQueuePostC0PublishFailureForTest = 0;
                 filingFailed = true;
-            } else if (!engine.immediateActionLane.Publish(attempt->lane))
+            } else if (!engine.immediateActionLane.Publish(attempt->lane, preparedSound != nullptr))
                 filingFailed = true;
         }
         if (!filingFailed && ordinarySelection && !selectionPublication->Apply()) {
@@ -55679,13 +55786,15 @@ void ServicePendingImmediateEntries(
                 engine.ReflectOriginalQueueFiling(member);
                 member.immediateLane = attempt->lane;
                 member.queueInitialCohortEntryFrame = startFrame;
-                member.pendingImmediateEntry = false;
-                member.phase = harken::EnginePlayableStartPhase::Filed;
-                RebasePendingImmediateStopIntents(engine, member);
+                if (preparedSound == nullptr) {
+                    member.pendingImmediateEntry = false;
+                    member.phase = harken::EnginePlayableStartPhase::Filed;
+                    RebasePendingImmediateStopIntents(engine, member);
+                }
             }
         }
     }
-    DischargeInitialQueueTimingGates(engine);
+    if (preparedSound == nullptr) DischargeInitialQueueTimingGates(engine);
 }
 
 bool InitialVariableCohortMayPublishPending(harken::Engine& engine,
@@ -73902,6 +74011,17 @@ void TimelineServiceCoordinator::Service() {
         static_cast<std::uint64_t>(
             engine_.timelinePool.PublishLeadQuanta()) *
             engine_.timelinePool.QuantumFrames();
+#if defined(_WIN32) && defined(HARKEN_WINDOWS_GAME_LOW_LATENCY)
+    // A pending relative Sound has no fixed start until the audio thread
+    // acknowledges its arm. Keep empty pages writable through that wait.
+    if ((engine_.gameOutputStartup.Opening() || engine_.device.UsesGameOutput()) && requiredPublicationFrame == 0 &&
+        blockingFrame == UINT64_MAX && !engine_.runtimeTransportResetActive &&
+        engine_.timelinePool.LiveTransactionCount() == 0 &&
+        engine_.timelineDeferred.Count() == 0 && engine_.timelineDeferred.PreparedCount() == 0 &&
+        OnlyWaitingRelativeSounds(engine_)) {
+        desiredCutoff = std::min(desiredCutoff, engine_.timelinePool.WindowStartFrame() + std::uint64_t{2} * engine_.timelinePool.QuantumFrames());
+    }
+#endif
     if (requiredPublicationFrame != 0) {
         const std::uint64_t quantumFrames =
             engine_.timelinePool.QuantumFrames();
@@ -107792,6 +107912,22 @@ void CommitImmediateActionCommandHead(void* opaque, std::uint32_t count,
             }
         }
     }
+    if (!engine.deferPendingImmediateEntriesForTest && ownersCommitted && plan->playCommandsReserved && plan->stepCount == 1 &&
+        plan->firingCount == 1 && plan->preparedPlayCount == 1 && plan->deferredCount == 0 &&
+        !plan->materializingDeferred) {
+        auto* play = FindImmediateActionPlay(*plan, 0);
+        auto* row = play != nullptr ? play->row : nullptr;
+        if (row != nullptr && row->phase == harken::EnginePlayableStartPhase::PendingImmediateEntry &&
+            row->pendingImmediateEntry && row->root.kind == harken::PlayableKindV1::Sound &&
+            row->pendingImmediateTimeDomain == harken::ImmediateLaneTimeDomain::RelativeToAnchor &&
+            row->event.frameOffsetFromEntry == 0 && row->pendingImmediateFixedEntryFrame == 0 &&
+            !row->parentService.Valid() && !row->pendingCancellationIntent && row->capturedVoice.Valid() &&
+            !row->capturedVoice.Facts().streamed && row->capturedVoice.Input().bindings.empty() &&
+            row->schedule.eventCount == 1 && play->voiceStartCount == 1) {
+            std::uint64_t publicationFrame = 0;
+            ServicePendingImmediateEntries(engine, &publicationFrame, row);
+        }
+    }
     if (plan->playCommandsReserved) {
         if (ownersCommitted)
             PublishVoiceCommandBatch(engine, &plan->playCommands,
@@ -111487,9 +111623,61 @@ HARKEN_OPTIONAL_HOST_EXPORT VnResult Vn_MonitorRegisterHostV2(const VnMonitorHos
 
 #endif
 
-VnResult Vn_Init(const VnConfig* config) {
+VnResult Vn_BeginOutputPreparation(const VnConfig* config, uint64_t* outTicket) {
+    if (!outTicket) return VN_INVALID_ARG;
+    *outTicket = 0;
+#if defined(_WIN32)
+    using namespace harken::detail;
+    try {
+        if (CanonicalSetMutationBlocked()) return VN_IN_USE;
+        if (g_engine || g_termPending) return VN_ALREADY_INITIALIZED;
+        if (g_reservedOutput || harken::monitor::InitWouldExceedProcessCap()) return VN_IN_USE;
+        harken::EngineConfig resolved{};
+        const auto result = harken::ResolveConfig(config, &resolved);
+        if (result != VN_OK) return result;
+        if (config->deviceMode != VN_DEVICE_REAL || resolved.renderWorkerCount != 0 ||
+            !HasFixedOutputFormat(*config)) return VN_CAPABILITY_UNAVAILABLE;
+        if (g_outputGeneration == UINT64_MAX) return VN_IN_USE;
+        auto output = std::make_unique<harken::GameOutputResources>();
+        output->startup.Begin(output->device, resolved, nullptr);
+        g_reservedFormat = PreparedOutputFormat::From(resolved);
+        g_reservedOutput = output.release();
+        g_ownedOutputGeneration = ++g_outputGeneration;
+        *outTicket = g_outputGeneration;
+        return VN_OK;
+    } catch (...) { return VN_DEVICE_ERROR; }
+#else
+    (void)config;
+    return VN_CAPABILITY_UNAVAILABLE;
+#endif
+}
+
+VnResult Vn_CancelOutputPreparation(uint64_t ticket) {
+#if defined(_WIN32)
+    using namespace harken::detail;
+    const auto checked = CheckOutputTicket(ticket);
+    if (checked != VN_OK) return checked;
+    auto output = TakeOutputReservation();
+    return output->startup.Stop();
+#else
+    (void)ticket;
+    return VN_CAPABILITY_UNAVAILABLE;
+#endif
+}
+
+static VnResult InitEngine(const VnConfig* config, uint64_t ticket) {
     harken::ClearRealDeviceInitStage();
     try {
+#if defined(_WIN32)
+    if (ticket) {
+        const auto checked = harken::detail::CheckOutputTicket(ticket);
+        if (checked != VN_OK) return checked;
+    } else if (harken::detail::g_reservedOutput) {
+        return VN_IN_USE;
+    }
+#else
+    (void)ticket;
+#endif
     if (harken::detail::CanonicalSetMutationBlocked()) { return VN_IN_USE; }
     if (harken::detail::g_engine != nullptr) {
         return VN_ALREADY_INITIALIZED;
@@ -111514,7 +111702,16 @@ VnResult Vn_Init(const VnConfig* config) {
     // checks. Later opens use observations only and never enter this resolver.
     harken::DeviceQueryResult initialDeviceQuery{};
     const harken::DeviceQueryResult* initialEndpointObservation = nullptr;
-    if (!baseResolution.nullDevice &&
+    bool fixedDeviceFormat = false;
+#if defined(_WIN32)
+    fixedDeviceFormat = !baseResolution.nullDevice && harken::detail::HasFixedOutputFormat(*config);
+    if (ticket && (!fixedDeviceFormat || config->deviceMode != VN_DEVICE_REAL ||
+        baseResolution.renderWorkerCount != 0 ||
+        harken::detail::PreparedOutputFormat::From(baseResolution) != harken::detail::g_reservedFormat)) {
+        return VN_INVALID_CONFIG;
+    }
+#endif
+    if (!baseResolution.nullDevice && !fixedDeviceFormat &&
         harken::QueryDefaultDeviceFormat(&initialDeviceQuery)) {
         initialEndpointObservation = &initialDeviceQuery;
     }
@@ -111552,6 +111749,10 @@ VnResult Vn_Init(const VnConfig* config) {
     if (harken::monitor::InitWouldExceedProcessCap()) {
         return VN_IN_USE;
     }
+#if defined(_WIN32)
+    // Once validated, the local owner closes the reservation on every failed construction path.
+    auto preparedOutput = ticket ? harken::detail::TakeOutputReservation() : nullptr;
+#endif
     harken::memguard::Install();
     std::unique_ptr<harken::detail::EnginePageOwner> engineOwner;
     harken::Engine* engine = nullptr;
@@ -111574,13 +111775,28 @@ VnResult Vn_Init(const VnConfig* config) {
             originalConditionalRows = originalCapacity.originalConditionalRows;
 #endif
         engineOwner = std::make_unique<harken::detail::EnginePageOwner>();
+#if defined(_WIN32)
+        if (preparedOutput) {
+            engineOwner->openingOutput = std::move(preparedOutput);
+        } else if (config->deviceMode == VN_DEVICE_REAL_BACKGROUND && resolved.renderWorkerCount == 0) {
+            try {
+                auto opening = std::make_unique<harken::GameOutputResources>();
+                opening->startup.Begin(opening->device, resolved, initialEndpointObservation);
+                engineOwner->openingOutput = std::move(opening);
+            } catch (...) {
+                engineOwner.reset();
+                harken::memguard::Uninstall();
+                return VN_DEVICE_ERROR;
+            }
+        }
+#endif
         if (!engineOwner->pages.Reserve(sizeof(harken::Engine), alignof(harken::Engine)) ||
             !engineOwner->pages.CommitThrough(sizeof(harken::Engine))) {
             throw std::bad_alloc();
         }
         engine = std::construct_at(static_cast<harken::Engine*>(engineOwner->pages.Address()),
             resolved, harken::detail::g_lastPackGeneration, originalConditionalRows,
-            harken::detail::g_lastHandleGenerations);
+            harken::detail::g_lastHandleGenerations, engineOwner->openingOutput.get());
         engineOwner->instance = engine;
     } catch (...) {
         engineOwner.reset();
@@ -111599,6 +111815,17 @@ VnResult Vn_Init(const VnConfig* config) {
     engine->traceOrigin.requested.logUserData = nullptr;
     engine->traceOrigin.resolvedSampleRate = resolved.mixRate.SampleRate();
     engine->traceOrigin.resolvedDeviceLayout = resolved.deviceChannelLayout;
+#if defined(_WIN32)
+    if (engineOwner->openingOutput) {
+        engine->suspended = config->deviceMode == VN_DEVICE_REAL_BACKGROUND;
+        engine->gameOutputStartup.Attach(engine->mixer);
+        if (!engine->suspended && engine->gameOutputStartup.Finish(engine->device, true) != VN_OK) {
+            engineOwner.reset();
+            harken::memguard::Uninstall();
+            return VN_DEVICE_ERROR;
+        }
+    } else
+#endif
     if (!resolved.nullDevice) {
         // Real device: build and start the platform's shared-mode backend.
         // Any failure — including a build with no real backend — unwinds init
@@ -111621,8 +111848,7 @@ VnResult Vn_Init(const VnConfig* config) {
             return VN_DEVICE_ERROR;
         }
     }
-    // Publish only after the complete device/worker transaction and callback
-    // render admission commit succeed.
+    // Background output publishes a suspended engine for content preparation.
     harken::Engine* published = engine;
     const VnResult monitorInit = harken::monitor::OnEngineInit(published);
     if (monitorInit != VN_OK) {
@@ -111641,6 +111867,20 @@ VnResult Vn_Init(const VnConfig* config) {
         return VN_DEVICE_ERROR;
     }}
 
+VnResult Vn_Init(const VnConfig* config) {
+    return InitEngine(config, 0);
+}
+
+VnResult Vn_InitWithOutputPreparation(const VnConfig* config, uint64_t ticket) {
+#if defined(_WIN32)
+    return ticket ? InitEngine(config, ticket) : VN_STALE_HANDLE;
+#else
+    (void)config;
+    (void)ticket;
+    return VN_CAPABILITY_UNAVAILABLE;
+#endif
+}
+
 VnResult Vn_Suspend(void) {
     try {
     if (harken::detail::CanonicalSetMutationBlocked()) { return VN_IN_USE; }
@@ -111652,6 +111892,7 @@ VnResult Vn_Suspend(void) {
         return VN_NOT_INITIALIZED;
     }
     if (engine->suspended) {
+        if (engine->gameOutputStartup.Opening()) return engine->gameOutputStartup.Stop();
         return VN_OK;
     }
 
@@ -111680,6 +111921,15 @@ VnResult Vn_Resume(void) {
     }
     if (engine->callbackFatalSticky) {
         return VN_NOT_INITIALIZED;
+    }
+    if (engine->gameOutputStartup.Opening()) {
+        engine->suspended = false;
+        const auto ready = engine->gameOutputStartup.Finish(engine->device);
+        if (ready != VN_OK) {
+            engine->suspended = true;
+            if (ready != VN_IN_USE) engine->gameOutputStartup.Stop();
+        }
+        return ready;
     }
     if (!engine->suspended) {
         if (engine->config.nullDevice ||
@@ -111791,6 +112041,11 @@ VnResult Vn_Update(void) {
         // re-enter the drains mid-iteration.
         return VN_OK;
     }
+    // Until the first output admission the device only writes silence. Apply
+    // queued control at the frozen mixer frame so an immediate sound can be
+    // scheduled by this tick without losing its opening samples to a dummy sink.
+    if (engine->gameOutputStartup.Opening())
+        engine->mixer.DrainQueuedCommands(1);
     harken::detail::g_callbackExceptionPending = false;
     harken::VariableOperationScope variableOperation(engine, false);
     struct OrdinaryVariableReservationScope {
@@ -112182,11 +112437,10 @@ VnResult Vn_Update(void) {
      * re-stages (one command per target per tick). */
     harken::PropertyPublisher& publisher = engine->propertyPublisher;
     publisher.Restage();
-    std::fill(engine->spatialPropertyGroupIndices.begin(),
-              engine->spatialPropertyGroupIndices.end(), ~0u);
+    bool spatialIndicesPrepared = false;
     const auto flushVoices = [&]() {
         engine->params.FlushCommits(
-        [engine, &publisher](
+        [engine, &publisher, &spatialIndicesPrepared](
             const harken::ParamCommit& commit) -> harken::FlushOutcome {
             // The bank can still precede the captured start until EndService acknowledges it.
             if (engine->variables.HasNativePublicationHold(commit.handle))
@@ -112231,6 +112485,10 @@ VnResult Vn_Update(void) {
                     ? harken::kSpatialPropertyPan : harken::kSpatialPropertyWidth;
                 staged.spatialWidth = commit.targetId == harken::kTargetVoiceWidth
                     ? commit.resolved : 0.0f;
+                if (!spatialIndicesPrepared) {
+                    std::fill(engine->spatialPropertyGroupIndices.begin(), engine->spatialPropertyGroupIndices.end(), ~0u);
+                    spatialIndicesPrepared = true;
+                }
                 stagedOk = publisher.StageSpatial(staged,
                     engine->spatialPropertyGroupIndices[static_cast<std::uint32_t>(commit.handle)]);
             } else {
@@ -112315,10 +112573,8 @@ VnResult Vn_Update(void) {
         flushBuses();
     }
     engine->propertyBusFirst = !engine->propertyBusFirst;
-    std::fill(engine->toneSectionCommandsPublished.begin(),
-              engine->toneSectionCommandsPublished.end(), 0);
-    std::fill(engine->toneSectionPublishedRampMs.begin(),
-              engine->toneSectionPublishedRampMs.end(), 0);
+    if (publisher.StagedCount() != 0)
+        std::fill(engine->toneSectionCommandsPublished.begin(), engine->toneSectionCommandsPublished.end(), 0);
     (void)publisher.Publish(&CommandQueueFreeSlots, &PushPropertyCommit,
                             engine);
     /* Audibility parking runs after the combine flush so each voice's metric
@@ -120281,10 +120537,11 @@ static VnResult SetEmitterValuesObserved(VnEmitterHandle emitter,
 static VnResult PostActionObserved(const VnPostActionDesc* desc,
                        VnActionFiringHandle* outFiring,
                        const harken::MonitorRequestContext& request,
-                       harken::monitor::RequestObservation* observation) {
+                       harken::monitor::RequestObservation* observation,
+                       harken::detail::ActionAdmissionValidator validator, const void* context) {
     if (harken::detail::CanonicalSetMutationBlocked()) { return VN_IN_USE; }
     return harken::detail::PostActionWithValidation(
-        desc, outFiring, nullptr, nullptr, true, request, observation);
+        desc, outFiring, validator, context, true, request, observation);
 }
 
 } // extern "C"
@@ -129167,6 +129424,49 @@ void CollectCanonicalSetDemand(Engine& engine, const VnCanonicalPackSetActivatio
     for (const auto& member : *rows) out->incoming.push_back(&member);
 }
 
+// Prepare all rows of a mixed memory-backed member together. Pack publication
+// consumes either raw PCM bytes or a complete array of unpublished owners.
+VnResult PrepareCompressedMember(Engine& engine, const PackCanonicalImage& image,
+    const std::uint8_t* bytes, std::vector<PCMRegistry::PreparedPackSamples>& samples,
+    detail::PackDecodeCharge& staging) {
+    if (std::none_of(image.media.begin(), image.media.end(), [](const auto& row) {
+            return row.sampleFormat == HK_PACK_SAMPLE_FORMAT_VORBIS_RESIDENT;
+        })) return VN_OK;
+    detail::DecodeResize(samples, image.media.size(), staging);
+    for (std::size_t i = 0; i < image.media.size(); ++i) {
+        const auto& row = image.media[i];
+        const auto* blob = bytes + row.blobOffset;
+        VnResult result;
+        if (row.sampleFormat == HK_PACK_SAMPLE_FORMAT_VORBIS_RESIDENT) {
+            const auto available = staging.Budget()->limit - staging.Budget()->live;
+            if (row.blobBytes > available) return VN_PACK_RESIDENT_CAPACITY;
+            result = engine.registry.PrepareResidentVorbis(row.soundId,
+                {blob, blob + row.blobBytes}, static_cast<std::size_t>(available), &samples[i], &row.blobChecksum);
+            if (result == VN_OK) {
+                const auto view = samples[i].View();
+                if (view.sampleRate != row.sampleRate || view.channelCount != row.channelCount ||
+                    view.frames != row.frameCount || view.loop.startFrame != row.loopStartFrame ||
+                    view.loop.endFrame != row.loopEndFrame ||
+                    bool(view.loop.endFrame) != bool(row.flags & HK_PACK_MEDIA_FLAG_LOOPABLE))
+                    return VN_BAD_PACK;
+                staging.Add(view.encoded->ResidentBytes());
+            }
+        } else {
+            std::array<const float*, kMaxChannels> planes{};
+            for (std::uint32_t ch = 0; ch < row.channelCount; ++ch)
+                planes[ch] = reinterpret_cast<const float*>(blob) + ch * row.frameCount;
+            VnPCMDesc desc{};
+            desc.structSize = sizeof(desc); desc.sampleRate = row.sampleRate; desc.channels = row.channelCount;
+            desc.frames = row.frameCount; desc.layout = VN_PCM_LAYOUT_PLANAR; desc.policy = VN_PCM_POLICY_COPY;
+            desc.samplesPlanar = planes.data();
+            result = engine.registry.PreparePackSamples(row.soundId, &desc, &samples[i],
+                CanonicalPcmLoop(row), &staging);
+        }
+        if (result != VN_OK) return result;
+    }
+    return VN_OK;
+}
+
 VnResult AcquireCanonicalSetMember(Engine& engine, const VnPackLoadDesc& load,
     const detail::PackDecodeBudget& budget,
     AcquiredCanonicalSetMember* out, std::uint64_t* traceResource = nullptr,
@@ -129178,6 +129478,7 @@ VnResult AcquireCanonicalSetMember(Engine& engine, const VnPackLoadDesc& load,
     out->sampleStaging = detail::PackDecodeCharge(budget);
     VnResult parsed = VN_OK;
     CanonicalByteSpanGuard guard{load};
+    const std::uint8_t* preparedBytes = nullptr;
     if ((load.flags & VN_PACK_LOAD_FLAG_PROVIDER) == 0 && engine.trace == nullptr) {
         std::string path;
         const auto rooted = ResolveCanonicalFilePath(load, &path);
@@ -129214,19 +129515,42 @@ VnResult AcquireCanonicalSetMember(Engine& engine, const VnPackLoadDesc& load,
             return VN_PACK_PROVIDER_FAILED;
         }
         out->encodedStaging.Add(guard.span.byteCount);
-        const auto adopted = AdoptOwnedPackBytes(guard.span, &out->bytes);
-        if (adopted != VN_OK) return adopted;
         out->byteCount = guard.span.byteCount;
-        if (traceResource != nullptr && engine.trace != nullptr) {
+        const bool recording = traceResource != nullptr && engine.trace != nullptr;
+        const bool haveImage = !recording &&
+            TakeResidentDirectoryImage(load, guard.span, budget, out->image, out->hash);
+        // Directory bytes stay immutable until this visit ends. Vorbis preparation
+        // copies each blob into its final owner before releasing the provider.
+        if (haveImage && !out->image.media.empty() &&
+            std::all_of(out->image.media.begin(), out->image.media.end(), [](const auto& row) {
+                return row.sampleFormat == HK_PACK_SAMPLE_FORMAT_VORBIS_RESIDENT;
+            })) {
+            preparedBytes = guard.span.bytes;
+        } else {
+            const auto adopted = AdoptOwnedPackBytes(guard.span, &out->bytes);
+            if (adopted != VN_OK) return adopted;
+            preparedBytes = out->bytes.get();
+        }
+        if (recording) {
             out->hash = Fnv1a64(out->bytes.get(), static_cast<std::size_t>(out->byteCount));
             *traceResource = harken::tracing::RecordPackBytes(engine.trace.get(), out->bytes.get(), out->byteCount);
-            parsed = ParsePackCanonicalImageWithBudget(out->bytes.get(), out->byteCount, &out->image, nullptr, budget);
-        } else {
-            parsed = ParsePackCanonicalImageWithBudget(out->bytes.get(), out->byteCount,
+            parsed = ParsePackForResidentPreparation(out->bytes.get(), out->byteCount, &out->image, nullptr, budget);
+        } else if (!haveImage) {
+            parsed = ParsePackForResidentPreparation(out->bytes.get(), out->byteCount,
                                              &out->image, &out->hash, budget);
         }
     }
     if (parsed != VN_OK) { return parsed; }
+    if (!out->boundedFile) {
+        const auto prepared = PrepareCompressedMember(engine, out->image, preparedBytes,
+            out->samples, out->sampleStaging);
+        if (prepared != VN_OK) return prepared;
+        if (!out->samples.empty()) {
+            out->bytes.reset();
+            out->encodedStaging.Reset();
+            out->boundedFile = true;
+        }
+    }
     if (out->image.requirement.storageModelVersion != 2) { return VN_PACK_INCOMPATIBLE; }
     if (PackFault(PackStagingFault::AfterParse) || PackFault(PackStagingFault::PartitionDecode)) {
         return VN_BAD_PACK;
@@ -130225,6 +130549,10 @@ VnResult PrepareCanonicalSetActivation(Engine& engine,
                     upgraded = out->residentUpgrades.Add(engine, final, soundId, reference);
             });
         if (upgraded != VN_OK) return upgraded;
+        if (engine.config.maxPackResourceBytes != 0 &&
+            !engine.packs.FitsResidentMediaBudget(out->storage, engine.config.maxPackResourceBytes,
+                                                out->residentUpgrades.charge.Bytes()))
+            return VN_PACK_RESIDENT_CAPACITY;
     }
     for (std::uint32_t i = 0; i < desc.memberCount; ++i) {
         auto& member = out->members[i];
@@ -130444,12 +130772,12 @@ void JournalSuccessfulCanonicalPackSetActivation(
 }  // namespace
 
 
-VnResult ActivateCanonicalPackSetImpl(
+VnResult ActivateCanonicalPackSetAttempt(
     Engine& engine, const VnCanonicalPackSetActivationDescV1* descriptor,
     VnCanonicalPackSetActivationReportV1* outReport,
-    const std::vector<std::uint32_t>* operations = nullptr,
-    std::vector<std::uint64_t>* traceResources = nullptr,
-    bool* traceInputMissing = nullptr) {
+    const std::vector<std::uint32_t>* operations,
+    std::vector<std::uint64_t>* traceResources,
+    bool* traceInputMissing, bool widenPrepared) {
     VariableOperationScope variableOperation(&engine);
     if (descriptor == nullptr || outReport == nullptr ||
         descriptor->structSize != sizeof(VnCanonicalPackSetActivationDescV1) ||
@@ -130641,6 +130969,14 @@ VnResult ActivateCanonicalPackSetImpl(
             result = VN_DEVICE_ERROR;
         }
         if (commit) {
+            if (widenPrepared) {
+                // Provider spans have been released. Only new, unpublished
+                // registrations may spend the remaining transaction budget.
+                VorbisSettingsCache::CodebookScope wide(engine.vorbis.settings, false);
+                const auto available = prepared.budget->limit - prepared.budget->live;
+                prepared.storage.PreferWideVorbisCodebooks(static_cast<std::size_t>(
+                    std::min<std::uint64_t>(available, SIZE_MAX)));
+            }
             CommitCanonicalPackSet(engine, prepared);
         }
         engine.statefulCallSeen = true;
@@ -130667,6 +131003,54 @@ VnResult ActivateCanonicalPackSetImpl(
     } catch (const std::invalid_argument&) {
         return VN_INVALID_ARG;
     }
+}
+
+namespace {
+template<class F> VnResult WithPackCodebookFallback(Engine& engine, bool replayable, F&& attempt) {
+    auto& cache = engine.vorbis.settings;
+    if (cache.PrefersCompact()) return attempt();
+    if (!replayable || engine.trace || PackStagingFaultForTests() != PackStagingFault::None) {
+        VorbisSettingsCache::CodebookScope compact(cache, true);
+        return attempt();
+    }
+    const auto before = cache.WideRequests();
+    const auto result = attempt();
+    if (result != VN_PACK_RESIDENT_CAPACITY || cache.WideRequests() == before) return result;
+    // A capacity refusal precedes publication. The first attempt has released its
+    // staging owners. Re-open file inputs and validate the complete transaction.
+    VorbisSettingsCache::CodebookScope compact(cache, true);
+    return attempt();
+}
+} // namespace
+
+VnResult ActivateCanonicalPackSetImpl(
+    Engine& engine, const VnCanonicalPackSetActivationDescV1* descriptor,
+    VnCanonicalPackSetActivationReportV1* outReport,
+    const std::vector<std::uint32_t>* operations = nullptr,
+    std::vector<std::uint64_t>* traceResources = nullptr,
+    bool* traceInputMissing = nullptr) {
+    bool replayable = descriptor && descriptor->structSize == sizeof(*descriptor) &&
+        descriptor->members && descriptor->memberStructSize == sizeof(VnCanonicalPackSetMemberV1) &&
+        descriptor->memberCount <= engine.config.maxPacks;
+    if (replayable) {
+        for (std::uint32_t i = 0; i < descriptor->memberCount; ++i) {
+            const auto& member = descriptor->members[i];
+            if (operations && (*operations)[i] == VN_PACK_MEMBER_KEEP) continue;
+            if ((member.flags & VN_CANONICAL_PACK_SET_MEMBER_PROVIDER) &&
+                (engine.config.maxPackResourceBytes != 0 ||
+                 !IsResidentDirectorySource(member.provide, member.release, member.providerUserData))) {
+                replayable = false;
+                break;
+            }
+        }
+    }
+    const bool widenPrepared = operations != nullptr && !replayable &&
+        engine.config.maxPackResourceBytes == 0 && !engine.trace &&
+        PackStagingFaultForTests() == PackStagingFault::None;
+    return WithPackCodebookFallback(engine, replayable, [&] {
+        return ActivateCanonicalPackSetAttempt(engine, descriptor, outReport, operations,
+                                              traceResources, traceInputMissing, widenPrepared);
+    });
 }
 
 VnResult ActivateCanonicalPackSetV1(
@@ -131027,6 +131411,12 @@ VnResult LoadCanonicalPackImpl(Engine& engine, const VnPackLoadDesc* desc,
     std::vector<PackEntry> mediaEntries = MakeCanonicalMediaEntries(image.media);
     const PackRevisionKey revisionKey =
         MakeCanonicalRevisionKey(token.Handle(), image);
+    std::vector<PCMRegistry::PreparedPackSamples> decoded;
+    if (samples == nullptr) {
+        const auto result = PrepareCompressedMember(engine, image, owned.get(), decoded, staging);
+        if (result != VN_OK) return result;
+        if (!decoded.empty()) samples = &decoded;
+    }
     PackTable::AlignedBuffer noMediaBytes;
     const VnResult loaded = engine.packs.LoadPrepared(
         &token, samples ? noMediaBytes : owned, std::move(mediaEntries), image.media, engine.registry,
@@ -131110,8 +131500,10 @@ VnResult LoadCanonicalPackImpl(Engine& engine, const VnPackLoadDesc* desc,
 
 VnResult LoadCanonicalPack(Engine& engine, const VnPackLoadDesc* desc,
                            VnPackHandle* outHandle) {
-    return LoadCanonicalPackImpl(engine, desc, outHandle,
-                                 CanonicalLoadMode::Public);
+    const bool file = desc && desc->structSize == sizeof(*desc) && !(desc->flags & VN_PACK_LOAD_FLAG_PROVIDER);
+    return WithPackCodebookFallback(engine, file, [&] {
+        return LoadCanonicalPackImpl(engine, desc, outHandle, CanonicalLoadMode::Public);
+    });
 }
 
 VnResult LoadProvisionalCanonicalContentForTests(
@@ -131259,7 +131651,7 @@ VnResult UnloadCanonicalPack(Engine& engine, VnPackHandle handle,
 }
 
 
-VnResult ReplaceCanonicalPack(Engine& engine, VnPackHandle handle,
+static VnResult ReplaceCanonicalPackAttempt(Engine& engine, VnPackHandle handle,
                               const VnPackLoadDesc* desc) try {
     if (desc == nullptr) {
         return VN_INVALID_ARG;
@@ -131335,6 +131727,15 @@ VnResult ReplaceCanonicalPack(Engine& engine, VnPackHandle handle,
     if (!boundedFile) {
         const VnResult adopted = AdoptOwnedPackBytes(span, &owned);
         if (adopted != VN_OK) return adopted;
+    }
+    if (!boundedFile) {
+        const auto prepared = PrepareCompressedMember(engine, image, owned.get(), samples, sampleStaging);
+        if (prepared != VN_OK) return prepared;
+        if (!samples.empty()) {
+            owned.reset();
+            staging.Reset();
+            boundedFile = true;
+        }
     }
     std::vector<PackEntry> mediaEntries = MakeCanonicalMediaEntries(image.media);
     const VnResult canReplace = engine.packs.CanReplacePreparedV2(
@@ -131446,6 +131847,13 @@ VnResult ReplaceCanonicalPack(Engine& engine, VnPackHandle handle,
     return VN_PACK_RESIDENT_CAPACITY;
 }
 
+
+VnResult ReplaceCanonicalPack(Engine& engine, VnPackHandle handle, const VnPackLoadDesc* desc) {
+    const bool file = desc && desc->structSize == sizeof(*desc) && !(desc->flags & VN_PACK_LOAD_FLAG_PROVIDER);
+    return WithPackCodebookFallback(engine, file, [&] {
+        return ReplaceCanonicalPackAttempt(engine, handle, desc);
+    });
+}
 
 } // namespace harken
 
@@ -131781,11 +132189,19 @@ VnResult Vn_SetEmitterValues(VnEmitterHandle emitter, const VnVariableBatchDescV
     return result;
 }
 
-VnResult Vn_PostAction(const VnPostActionDesc* desc, VnActionFiringHandle* outFiring) {
+static VnResult PostWithMonitor(const VnPostActionDesc* desc, VnActionFiringHandle* outFiring,
+    harken::detail::ActionAdmissionValidator validator, const void* context,
+    uint64_t expectedInit = 0, uint64_t expectedRevision = 0) {
     const auto request = harken::detail::BeginMonitorRequest(
         harken::MonitorRequestOrigin::NativeAPI, harken::monitor::kOperationPostAction);
     harken::monitor::RequestObservation observation(request);
-    const auto result = PostActionObserved(desc, outFiring, request, &observation);
+    auto* engine = harken::detail::ActiveEngine();
+    const auto* current = expectedInit && engine ? engine->packComposition.Published() : nullptr;
+    const bool superseded = expectedInit && engine && !engine->callbackFatalSticky &&
+        !engine->runtimeRecreateRequired && !harken::detail::CanonicalSetMutationBlocked() &&
+        (!current || current->initHandle != expectedInit || current->ledger.setRevision != expectedRevision);
+    const auto result = superseded ? VN_STALE_HANDLE :
+        PostActionObserved(desc, outFiring, request, &observation, validator, context);
     const bool readable = desc && desc->structSize == sizeof(*desc);
     harken::monitor::ObserveOperation(harken::monitor::kOperationPostAction, result,
         harken::monitor::kEntityAction, readable ? desc->actionId : VnObjectId{},
@@ -131798,6 +132214,49 @@ VnResult Vn_PostAction(const VnPostActionDesc* desc, VnActionFiringHandle* outFi
 #endif
     }
     return observation.Returned(result);
+}
+
+VnResult Vn_PostAction(const VnPostActionDesc* desc, VnActionFiringHandle* outFiring) {
+    return PostWithMonitor(desc, outFiring, nullptr, nullptr);
+}
+
+VnResult Vn_PostNamedResidentActionV1(const VnNamedResidentPostV1* desc, uint64_t* outFiring) {
+    constexpr uint32_t width = 129;
+    if (!outFiring) return VN_INVALID_ARG;
+    *outFiring = 0;
+    if (!desc || desc->structSize != sizeof(*desc) || !desc->keys || !desc->rows || !desc->name ||
+        !desc->initHandle || !desc->setRevision || !desc->nameUnits || desc->nameUnits >= width ||
+        !desc->rowCount || desc->rowCount > 32 || desc->keyCapacity < desc->rowCount * width)
+        return VN_INVALID_ARG;
+    for (uint32_t i = 0; i < desc->nameUnits; ++i) {
+        const uint16_t c = desc->name[i];
+        const bool letter = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+        if (!letter && (!i || (c != '_' && (c < '0' || c > '9')))) return VN_INVALID_ARG;
+    }
+    for (uint32_t i = 0; i < desc->rowCount; ++i) {
+        const auto* slot = desc->keys + i * width;
+        if (slot[desc->nameUnits] != 0) continue;
+        uint32_t j = 0;
+        while (j < desc->nameUnits && desc->name[j] && slot[j] == desc->name[j]) ++j;
+        if (j != desc->nameUnits) continue;
+        const auto& row = desc->rows[i];
+        if (!row.handle) return VN_STALE_HANDLE;
+        struct Expected { uint64_t init, revision, pack, handle; };
+        const Expected expected{desc->initHandle, desc->setRevision, row.packStableId, row.handle};
+        const auto validate = [](const harken::detail::ActionAdmissionView& view, const void* context) noexcept -> VnResult {
+            const auto& e = *static_cast<const Expected*>(context);
+            return view.packBacked && view.publication && view.publication->initHandle == e.init &&
+                view.publication->ledger.setRevision == e.revision && view.lease.packStableId == e.pack &&
+                view.lease.handle == e.handle ? VN_OK : VN_STALE_HANDLE;
+        };
+        VnPostActionDesc post{};
+        post.structSize = sizeof(post);
+        post.actionId = row.rootActionId;
+        post.emitter = desc->emitter;
+        post.callerSeed = desc->callerSeed;
+        return PostWithMonitor(&post, outFiring, validate, &expected, expected.init, expected.revision);
+    }
+    return VN_UNKNOWN_ID;
 }
 
 } // extern "C"

@@ -26,6 +26,29 @@
         "type": "VnConfig"
       }
     ],
+    "Vn_BeginOutputPreparation": [
+      {
+        "wire": "desc",
+        "type": "VnConfig"
+      },
+      {
+        "wire": "out"
+      }
+    ],
+    "Vn_InitWithOutputPreparation": [
+      {
+        "wire": "desc",
+        "type": "VnConfig"
+      },
+      {
+        "wire": "u64"
+      }
+    ],
+    "Vn_CancelOutputPreparation": [
+      {
+        "wire": "u64"
+      }
+    ],
     "Vn_Term": [],
     "Vn_RegisterPCM": [
       {
@@ -1671,6 +1694,59 @@
       },
       {
         "wire": "u32"
+      }
+    ],
+    "Vn_VisitResidentPackDirectoryV1": [
+      {
+        "wire": "desc",
+        "type": "VnResidentPackVisitDescV1"
+      }
+    ],
+    "Vn_ActivateResidentPackDirectoryV1": [
+      {
+        "wire": "desc",
+        "type": "VnResidentDirectoryActivationV1"
+      },
+      {
+        "wire": "outstruct",
+        "type": "VnCanonicalPackSetActivationReportV1"
+      }
+    ],
+    "Vn_ActivateNamedResidentDirectoryV1": [
+      {
+        "wire": "desc",
+        "type": "VnResidentDirectoryActivationV1"
+      },
+      {
+        "wire": "utf16buf"
+      },
+      {
+        "wire": "u32"
+      },
+      {
+        "wire": "utf16buf"
+      },
+      {
+        "wire": "u32"
+      },
+      {
+        "wire": "outbuf"
+      },
+      {
+        "wire": "u32"
+      },
+      {
+        "wire": "outstruct",
+        "type": "VnCanonicalPackSetActivationReportV1"
+      }
+    ],
+    "Vn_PostNamedResidentActionV1": [
+      {
+        "wire": "desc",
+        "type": "VnNamedResidentPostV1"
+      },
+      {
+        "wire": "out"
       }
     ]
   },

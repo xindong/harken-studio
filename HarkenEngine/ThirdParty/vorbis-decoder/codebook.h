@@ -81,6 +81,7 @@ typedef struct codebook{
 
 extern void vorbis_staticbook_destroy(HvAllocator *allocator, static_codebook *b);
 extern int vorbis_book_init_encode(codebook *dest,const static_codebook *source);
+int hv_book_validate(const static_codebook *book);
 extern int vorbis_book_init_decode(HvAllocator *allocator, codebook *dest,const static_codebook *source);
 extern void vorbis_book_clear(HvAllocator *allocator, codebook *b);
 

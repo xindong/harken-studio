@@ -4686,10 +4686,12 @@ bool ScheduledTransactionPool::IsFrozen(std::uint32_t page) const {
 void ScheduledTransactionPool::Publish(
     std::uint64_t cutoffFrame, const PlayableInstanceTable* instances,
     const OccurrenceStatePool* occurrences, TimelineArmTable* armTable) {
-    if (!Valid()) return;
+    if (!Valid() || cutoffFrame <= publishCutoffFrame_) return;
     // Private promotion does not release a page to audio. Publish only the
     // contiguous prefix preceding the first still-owned reservation.
     for (std::uint32_t page = 0; page < pageCount_; ++page) {
+        const auto pageStart = baseFrame_ + static_cast<std::uint64_t>(page) * quantumFrames_;
+        if (pageStart >= cutoffFrame) break;
         const auto ring = RingIndex(page);
         if (pagePublicationHolds_[ring] != 0 || pagePreparedPlan03GroupCount_[ring] != 0) {
             cutoffFrame = std::min(cutoffFrame,
@@ -4705,7 +4707,8 @@ void ScheduledTransactionPool::Publish(
     for (std::uint32_t p = 0; p < pageCount_; ++p) {
         const std::uint64_t pageEnd =
             baseFrame_ + static_cast<std::uint64_t>(p + 1) * quantumFrames_;
-        if (pageEnd <= freezeCutoff) {
+        if (pageEnd > freezeCutoff) break;
+        {
             const std::uint32_t ring = RingIndex(p);
             if (!pageHeaders_[ring].frozen) {
                 pageHeaders_[ring].frozen = true;

@@ -248,6 +248,7 @@ namespace Harken
     {
         VN_DEVICE_REAL = 0,
         VN_DEVICE_NULL = 1,
+        VN_DEVICE_REAL_BACKGROUND = 2,
     }
 
     internal enum VnPcmLayout : uint
@@ -752,7 +753,7 @@ namespace Harken
     public static class VnConstants
     {
         public const uint VN_ABI_VERSION_MAJOR = 1u;
-        public const uint VN_ABI_VERSION_MINOR = 0u;
+        public const uint VN_ABI_VERSION_MINOR = 5u;
         internal const uint VN_EMITTER_CREATE_STATE_ONLY = 1u;
         public const uint VN_REMOTE_DEFAULT_DISCOVERY_PORT = 37840u;
         public static readonly VnObjectId VN_BUS_MASTER = new VnObjectId(0UL, 1UL);
@@ -814,6 +815,9 @@ namespace Harken
 
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     public delegate void VnByteSourceReleaseFn(IntPtr userData);
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    public delegate VnResult VnResidentPackVisitorFn(IntPtr userData, IntPtr rows, uint memberCount);
 
     [Serializable]
     [StructLayout(LayoutKind.Sequential)]
@@ -2419,6 +2423,72 @@ namespace Harken
     public uint state;
     public int result;
     public uint reserved0;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct VnResidentPackRowV1
+    {
+    public VnPackInspectReportV1 facts;
+    public VnCanonicalPackSetMemberV1 provider;
+    public ulong byteCount;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct VnResidentPackVisitDescV1
+    {
+    public uint structSize;
+    public uint memberCount;
+    public IntPtr utf8Directory;
+    public IntPtr utf8Names;
+    public ulong initVolumeId;
+    public ulong initFileId;
+    public ulong initFileSize;
+    public ulong initWriteTime;
+    public ulong initChangeTime;
+    public ulong maxInputBytes;
+    public VnPackByteSpan init;
+    public IntPtr userData;
+    public IntPtr visit;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct VnResidentDirectoryMemberV1
+    {
+    public ulong packStableId;
+    public VnObjectId rootActionId;
+    public ulong contentHash;
+    public ulong byteCount;
+    public ulong executionFingerprint;
+    public ulong handle;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct VnResidentDirectoryActivationV1
+    {
+    public uint structSize;
+    public uint rowCapacity;
+    public VnResidentPackVisitDescV1 directory;
+    public ulong initStableId;
+    public ulong initHandle;
+    public ulong baseSetRevision;
+    public VnObjectId projectId;
+    public IntPtr rows;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct VnNamedResidentPostV1
+    {
+    public uint structSize;
+    public uint rowCount;
+    public uint nameUnits;
+    public uint keyCapacity;
+    public IntPtr name;
+    public IntPtr keys;
+    public IntPtr rows;
+    public ulong initHandle;
+    public ulong setRevision;
+    public ulong emitter;
+    public ulong callerSeed;
     }
 
 }

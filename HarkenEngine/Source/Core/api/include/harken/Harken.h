@@ -163,7 +163,11 @@ enum {
 /* Values for VnConfig.deviceMode. */
 enum {
     VN_DEVICE_REAL = 0, /* real audio device output */
-    VN_DEVICE_NULL = 1  /* headless: blocks are pumped by the host/test clock */
+    VN_DEVICE_NULL = 1, /* headless: blocks are pumped by the host/test clock */
+    /* Windows game startup. Prepare content after Init, then call Resume before
+     * publishing readiness. Resume returns VN_IN_USE while the endpoint opens.
+     * Other platforms and parallel render configurations open synchronously. */
+    VN_DEVICE_REAL_BACKGROUND = 2
 };
 
 /* Notification record; the full definition appears after VnVoiceHandle
@@ -205,7 +209,7 @@ typedef struct VnConfig {
                               * 0 = 256 */
     uint32_t fxSlotsPerVoice;/* insert-effect slots per voice; 0 = 8 */
     uint32_t arenaBytes;     /* per-block bump arena size; 0 = 2097152 */
-    uint32_t deviceMode;     /* VN_DEVICE_REAL or VN_DEVICE_NULL */
+    uint32_t deviceMode;     /* One of the VN_DEVICE_* initialization modes. */
     uint32_t reserved0;      /* keeps 8-byte alignment for future fields */
     VnNotificationCallback onNotification; /* notification callback, or NULL
                                              * for none */
@@ -438,6 +442,27 @@ typedef struct VnConfig {
  * are logical quotas when nonzero; their backing is prepared on demand on the
  * logic thread. The audio thread never allocates. */
 VnResult Vn_Init(const VnConfig* config);
+
+/* Start opening the Windows output device before initializing the engine.
+ * Requires the current VnConfig size, VN_DEVICE_REAL, an explicit sample rate
+ * and mix/device channel layouts, and zero render workers. Other valid setups
+ * return VN_CAPABILITY_UNAVAILABLE and can use ordinary Vn_Init.
+ * On failure outTicket is zero. On success the calling thread owns the sole
+ * reservation and must initialize with it or cancel it before unloading the
+ * runtime. While reserved, ordinary Vn_Init returns VN_IN_USE. */
+VnResult Vn_BeginOutputPreparation(const VnConfig* config, uint64_t* outTicket);
+
+/* Initialize and wait for the prepared output to start. Use the same thread,
+ * device mode, render worker count, sample rate, block size and channel layouts
+ * as preparation. A configuration mismatch leaves the reservation intact.
+ * After an unsuccessful init the owner can always attempt cancellation:
+ * VN_STALE_HANDLE means init already consumed the ticket. */
+VnResult Vn_InitWithOutputPreparation(const VnConfig* config, uint64_t ticket);
+
+/* Cancel from the thread that began preparation and wait for device cleanup.
+ * An expired ticket returns VN_STALE_HANDLE. Another thread attempting to use
+ * the current reservation returns VN_IN_USE. */
+VnResult Vn_CancelOutputPreparation(uint64_t ticket);
 
 /* Release the platform audio device while preserving the engine, mixer,
  * voices, streams, and content state. Audio-frame time does not advance while
@@ -1314,7 +1339,7 @@ typedef void (*VnPackByteReleaseFn)(
     VnPackByteSpan span);
 
 #define VN_ABI_VERSION_MAJOR 1u
-#define VN_ABI_VERSION_MINOR 0u
+#define VN_ABI_VERSION_MINOR 5u
 
 typedef struct VnAbiVersionInfo {
     uint32_t structSize;
@@ -1582,6 +1607,92 @@ typedef struct VnPackInspectReportV1 {
  * Only flagged duration/gain fields are known. No decoder pointers escape. */
 VnResult Vn_InspectCanonicalPackV1(const VnPackInspectDescV1* desc,
                                   VnPackInspectReportV1* outReport);
+
+/* The directory visitor pins independently published Windows resident Packs
+ * during one synchronous game-thread callback. Only activation of CONTENT
+ * members performs the complete media and world validation. The visitor must
+ * not retain a row, provider or borrowed pointer after it returns. */
+typedef struct VnResidentPackRowV1 {
+    VnPackInspectReportV1 facts;
+    VnCanonicalPackSetMemberV1 provider;
+    uint64_t byteCount;
+} VnResidentPackRowV1;
+
+typedef VnResult (*VnResidentPackVisitorFn)(
+    void* userData, const VnResidentPackRowV1* rows, uint32_t memberCount);
+
+typedef struct VnResidentPackVisitDescV1 {
+    uint32_t structSize;
+    uint32_t memberCount;
+    const char* utf8Directory;
+    const char* utf8Names; /* Valid Action names separated by a single LF. */
+    uint64_t initVolumeId;
+    uint64_t initFileId;
+    uint64_t initFileSize;
+    uint64_t initWriteTime;
+    uint64_t initChangeTime;
+    uint64_t maxInputBytes;
+    VnPackByteSpan init;
+    void* userData;
+    VnResidentPackVisitorFn visit;
+} VnResidentPackVisitDescV1;
+
+VnResult Vn_VisitResidentPackDirectoryV1(const VnResidentPackVisitDescV1* desc);
+
+/* In request order. For a fresh binding, both input identities are zero.
+ * Otherwise both must match. Row outputs are written only on success. */
+typedef struct VnResidentDirectoryMemberV1 {
+    uint64_t packStableId;
+    VnObjectId rootActionId;
+    uint64_t contentHash;
+    uint64_t byteCount;
+    uint64_t executionFingerprint;
+    VnPackHandle handle;
+} VnResidentDirectoryMemberV1;
+
+typedef struct VnResidentDirectoryActivationV1 {
+    uint32_t structSize;
+    uint32_t rowCapacity;
+    VnResidentPackVisitDescV1 directory;
+    uint64_t initStableId;
+    VnPackHandle initHandle;
+    uint64_t baseSetRevision;
+    VnObjectId projectId;
+    VnResidentDirectoryMemberV1* rows;
+} VnResidentDirectoryActivationV1;
+
+/* Install the complete desired set at baseSetRevision + 1. Files stay
+ * locked through activation. The nested directory callback fields must be null. */
+VnResult Vn_ActivateResidentPackDirectoryV1(
+    const VnResidentDirectoryActivationV1* desc,
+    VnCanonicalPackSetActivationReportV1* outReport);
+
+/* Local Windows directory activation. Directory and LF-separated distinct Action names are UTF-16
+ * spans. Lengths are code units, excluding any terminator. On success each caller-owned 129-byte slot contains one ASCII
+ * name in input order. Directory/member file checks are identical to V1.
+ * directory.utf8Directory and directory.utf8Names must both be null.
+ * All borrowed inputs and outputs are synchronous; no pointer is retained. */
+VnResult Vn_ActivateNamedResidentDirectoryV1(const VnResidentDirectoryActivationV1* desc,
+    const uint16_t* directory, uint32_t directoryUnits, const uint16_t* names, uint32_t nameUnits,
+    void* keys, uint32_t keyCapacity, VnCanonicalPackSetActivationReportV1* outReport);
+
+typedef struct VnNamedResidentPostV1 {
+    uint32_t structSize;
+    uint32_t rowCount;
+    uint32_t nameUnits;
+    uint32_t keyCapacity;
+    const uint16_t* name;
+    const uint8_t* keys;
+    const VnResidentDirectoryMemberV1* rows;
+    uint64_t initHandle;
+    uint64_t setRevision;
+    uint64_t emitter;
+    uint64_t callerSeed;
+} VnNamedResidentPostV1;
+
+/* Post using the key slots and rows from one successful activation. Admission
+ * checks the live Init, set revision, and content Pack lease before posting. */
+VnResult Vn_PostNamedResidentActionV1(const VnNamedResidentPostV1* desc, uint64_t* outFiring);
 
 typedef uint32_t VnCurrentWorldLoadStatus;
 

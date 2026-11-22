@@ -7845,6 +7845,7 @@ struct ma_device
             /*HANDLE*/ ma_handle hEventCapture;                     /* Auto reset. Initialized to unsignaled. */
             ma_uint32 actualBufferSizeInFramesPlayback;             /* Value from GetBufferSize(). internalPeriodSizeInFrames is not set to the _actual_ buffer size when low-latency shared mode is being used due to the way the IAudioClient3 API works. */
             ma_uint32 actualBufferSizeInFramesCapture;
+            ma_uint32 endpointMixSampleRatePlayback;                /* Before WASAPI applies an explicit client rate. */
             ma_uint32 originalPeriodSizeInFrames;
             ma_uint32 originalPeriodSizeInMilliseconds;
             ma_uint32 originalPeriods;
@@ -22166,6 +22167,8 @@ typedef struct
     ma_uint32 periodSizeInFramesOut;
     ma_uint32 periodsOut;
     ma_bool32 usingAudioClient3;
+    ma_uint32 endpointMixSampleRate;
+    ma_uint32 actualBufferSizeInFrames;
     char deviceName[256];
     ma_device_id id;
 } ma_device_init_internal_data__wasapi;
@@ -22198,6 +22201,9 @@ static ma_result ma_device_init_internal__wasapi(ma_context* pContext, ma_device
     pData->pAudioClient = NULL;
     pData->pRenderClient = NULL;
     pData->pCaptureClient = NULL;
+    pData->deviceName[0] = '\0';
+    pData->endpointMixSampleRate = 0;
+    pData->actualBufferSizeInFrames = 0;
 
     streamFlags = MA_AUDCLNT_STREAMFLAGS_EVENTCALLBACK;
     if (!pData->noAutoConvertSRC && pData->sampleRateIn != 0 && pData->shareMode != ma_share_mode_exclusive) {    /* <-- Exclusive streams must use the native sample rate. */
@@ -22302,6 +22308,7 @@ static ma_result ma_device_init_internal__wasapi(ma_context* pContext, ma_device
             want to make sure we copy the whole WAVEFORMATEXTENSIBLE structure. Otherwise we'll have to be
             safe and only copy the WAVEFORMATEX part.
             */
+            pData->endpointMixSampleRate = pNativeFormat->nSamplesPerSec;
             if (pNativeFormat->wFormatTag == WAVE_FORMAT_EXTENSIBLE) {
                 MA_COPY_MEMORY(&wf, pNativeFormat, sizeof(MA_WAVEFORMATEXTENSIBLE));
             } else {
@@ -22551,6 +22558,7 @@ static ma_result ma_device_init_internal__wasapi(ma_context* pContext, ma_device
             errorMsg = "[WASAPI] Failed to get audio client's actual buffer size.", result = ma_result_from_HRESULT(hr);
             goto done;
         }
+        pData->actualBufferSizeInFrames = bufferSizeInFrames;
 
         /*
         When using process loopback mode, retrieval of the buffer size seems to result in totally
@@ -22590,7 +22598,10 @@ static ma_result ma_device_init_internal__wasapi(ma_context* pContext, ma_device
             ma_PropVariantInit(&varName);
             hr = ma_IPropertyStore_GetValue(pProperties, &MA_PKEY_Device_FriendlyName, &varName);
             if (SUCCEEDED(hr)) {
-                WideCharToMultiByte(CP_UTF8, 0, varName.pwszVal, -1, pData->deviceName, sizeof(pData->deviceName), 0, FALSE);
+                if (varName.vt != MA_VT_LPWSTR || varName.pwszVal == NULL ||
+                    WideCharToMultiByte(CP_UTF8, 0, varName.pwszVal, -1, pData->deviceName, sizeof(pData->deviceName), NULL, NULL) == 0) {
+                    pData->deviceName[0] = '\0';
+                }
                 ma_PropVariantClear(pContext, &varName);
             }
 
@@ -22764,7 +22775,11 @@ static ma_result ma_device_reinit__wasapi(ma_device* pDevice, ma_device_type dev
         ma_IAudioClient_SetEventHandle((ma_IAudioClient*)pDevice->wasapi.pAudioClientPlayback, (HANDLE)pDevice->wasapi.hEventPlayback);
 
         pDevice->wasapi.periodSizeInFramesPlayback = data.periodSizeInFramesOut;
-        ma_IAudioClient_GetBufferSize((ma_IAudioClient*)pDevice->wasapi.pAudioClientPlayback, &pDevice->wasapi.actualBufferSizeInFramesPlayback);
+        pDevice->wasapi.endpointMixSampleRatePlayback = data.endpointMixSampleRate;
+        pDevice->wasapi.actualBufferSizeInFramesPlayback = data.actualBufferSizeInFrames;
+        if (!pDevice->wasapi.actualBufferSizeInFramesPlayback) {
+            ma_IAudioClient_GetBufferSize((ma_IAudioClient*)pDevice->wasapi.pAudioClientPlayback, &pDevice->wasapi.actualBufferSizeInFramesPlayback);
+        }
 
         /* We must always have a valid ID because rerouting will look at it. */
         ma_strcpy_s_WCHAR(pDevice->playback.id.wasapi, sizeof(pDevice->playback.id.wasapi), data.id.wasapi);
@@ -22900,6 +22915,7 @@ static ma_result ma_device_init__wasapi(ma_device* pDevice, const ma_device_conf
 
         pDevice->wasapi.pAudioClientPlayback             = data.pAudioClient;
         pDevice->wasapi.pRenderClient                    = data.pRenderClient;
+        ma_strcpy_s(pDevice->playback.name, sizeof(pDevice->playback.name), data.deviceName);
         pDevice->wasapi.originalPeriodSizeInMilliseconds = pDescriptorPlayback->periodSizeInMilliseconds;
         pDevice->wasapi.originalPeriodSizeInFrames       = pDescriptorPlayback->periodSizeInFrames;
         pDevice->wasapi.originalPeriods                  = pDescriptorPlayback->periodCount;
@@ -22945,7 +22961,11 @@ static ma_result ma_device_init__wasapi(ma_device* pDevice, const ma_device_conf
         ma_IAudioClient_SetEventHandle((ma_IAudioClient*)pDevice->wasapi.pAudioClientPlayback, (HANDLE)pDevice->wasapi.hEventPlayback);
 
         pDevice->wasapi.periodSizeInFramesPlayback = data.periodSizeInFramesOut;
-        ma_IAudioClient_GetBufferSize((ma_IAudioClient*)pDevice->wasapi.pAudioClientPlayback, &pDevice->wasapi.actualBufferSizeInFramesPlayback);
+        pDevice->wasapi.endpointMixSampleRatePlayback = data.endpointMixSampleRate;
+        pDevice->wasapi.actualBufferSizeInFramesPlayback = data.actualBufferSizeInFrames;
+        if (!pDevice->wasapi.actualBufferSizeInFramesPlayback) {
+            ma_IAudioClient_GetBufferSize((ma_IAudioClient*)pDevice->wasapi.pAudioClientPlayback, &pDevice->wasapi.actualBufferSizeInFramesPlayback);
+        }
 
         /* We must always have a valid ID because rerouting will look at it. */
         ma_strcpy_s_WCHAR(pDevice->playback.id.wasapi, sizeof(pDevice->playback.id.wasapi), data.id.wasapi);
@@ -41261,7 +41281,9 @@ MA_API ma_result ma_device_post_init(ma_device* pDevice, ma_device_type deviceTy
             }
         }
 
-        if (deviceType == ma_device_type_playback || deviceType == ma_device_type_duplex) {
+        /* WASAPI already read the name of the endpoint it actually opened. */
+        if ((deviceType == ma_device_type_playback || deviceType == ma_device_type_duplex) &&
+            !(pDevice->pContext->backend == ma_backend_wasapi && pDevice->playback.name[0] != '\0')) {
             result = ma_device_get_info(pDevice, ma_device_type_playback, &deviceInfo);
             if (result == MA_SUCCESS) {
                 ma_strncpy_s(pDevice->playback.name, sizeof(pDevice->playback.name), deviceInfo.name, (size_t)-1);
@@ -42484,10 +42506,7 @@ MA_API ma_result ma_device_init(ma_context* pContext, const ma_device_config* pC
             }
         }
         if (pDevice->type == ma_device_type_playback || pDevice->type == ma_device_type_duplex) {
-            char name[MA_MAX_DEVICE_NAME_LENGTH + 1];
-            ma_device_get_name(pDevice, ma_device_type_playback, name, sizeof(name), NULL);
-
-            ma_log_postf(ma_device_get_log(pDevice), MA_LOG_LEVEL_INFO, "  %s (%s)\n", name, "Playback");
+            ma_log_postf(ma_device_get_log(pDevice), MA_LOG_LEVEL_INFO, "  %s (%s)\n", pDevice->playback.name, "Playback");
             ma_log_postf(ma_device_get_log(pDevice), MA_LOG_LEVEL_INFO, "    Format:      %s -> %s\n", ma_get_format_name(pDevice->playback.format), ma_get_format_name(pDevice->playback.internalFormat));
             ma_log_postf(ma_device_get_log(pDevice), MA_LOG_LEVEL_INFO, "    Channels:    %d -> %d\n", pDevice->playback.channels, pDevice->playback.internalChannels);
             ma_log_postf(ma_device_get_log(pDevice), MA_LOG_LEVEL_INFO, "    Sample Rate: %d -> %d\n", pDevice->sampleRate, pDevice->playback.internalSampleRate);

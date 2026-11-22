@@ -907,6 +907,25 @@ bool BusTree::AudioReadLimiterGainReduction(BusSlotRef ref, std::uint32_t slot,
                                    expected, epoch, sourceFrameBegin, out);
 }
 
+static float ParallelBusPeak(const float* const* planes, std::uint32_t channels,
+                             std::uint32_t offset, std::uint32_t frames, float* perChannel = nullptr) {
+    float peak = 0.0f;
+    for (std::uint32_t ch = 0; ch < channels; ++ch) {
+        float lanes[4]{};
+        const float* samples = planes[ch] + offset;
+        std::uint32_t i = 0;
+        for (; frames-i >= 4; i += 4) {
+            for (unsigned j=0; j<4; ++j)
+                lanes[j] = std::max(lanes[j], std::fabs(samples[i+j]));
+        }
+        float maximum = std::max(std::max(lanes[0], lanes[1]), std::max(lanes[2], lanes[3]));
+        for (; i < frames; ++i) maximum = std::max(maximum, std::fabs(samples[i]));
+        if (perChannel) perChannel[ch] = maximum;
+        peak = std::max(peak, maximum);
+    }
+    return peak;
+}
+
 void BusTree::FinalizeBus(Bus& bus, float* const* planes,
                           std::uint32_t blockFrames,
                           std::uint64_t blockEpoch,
@@ -920,6 +939,8 @@ void BusTree::FinalizeBus(Bus& bus, float* const* planes,
     const std::uint32_t busIndex =
         static_cast<std::uint32_t>(&bus - m_buses.data());
     const auto processSlot = [&](std::uint32_t slot) {
+        if (bus.fxSlots[slot].process == nullptr &&
+            bus.fxSlotEffectRef[slot].type == kEffectTypeNone) return;
         EffectDynamicInputView dynamicInput{};
         const EffectDynamicInputView* input = nullptr;
         DynamicDetectorStatus detectorStatus{};
@@ -1095,7 +1116,7 @@ void BusTree::FinalizeBus(Bus& bus, float* const* planes,
         bus.gain.target == 1.0f && !ToneSectionActive(bus.busLpf) &&
         !ToneSectionActive(bus.busHpf);
     float unchangedChannelPeaks[kMaxChannels];
-    bus.preFaderPeak = StageTapPeak(planes, m_mixChannels, 0, blockFrames,
+    bus.preFaderPeak = ParallelBusPeak(planes, m_mixChannels, 0, blockFrames,
         unchangedFaderSamples && fader == m_fxSlots ? unchangedChannelPeaks : nullptr);
 #if HARKEN_ENGINE_DEV
     if (harken::monitor::AudioLiveArmed()) {
@@ -1118,7 +1139,7 @@ void BusTree::FinalizeBus(Bus& bus, float* const* planes,
         if (fader == m_fxSlots)
             std::copy_n(unchangedChannelPeaks, m_mixChannels, bus.outputChannelPeaks);
     } else {
-        bus.postFaderPeak = StageTapPeak(planes, m_mixChannels, 0, blockFrames,
+        bus.postFaderPeak = ParallelBusPeak(planes, m_mixChannels, 0, blockFrames,
             fader == m_fxSlots ? bus.outputChannelPeaks : nullptr);
     }
 #if HARKEN_ENGINE_DEV
@@ -1143,7 +1164,7 @@ void BusTree::FinalizeBus(Bus& bus, float* const* planes,
     bus.outputPeak =
         fader == m_fxSlots
             ? bus.postFaderPeak
-            : StageTapPeak(planes, m_mixChannels, 0, blockFrames,
+            : ParallelBusPeak(planes, m_mixChannels, 0, blockFrames,
                 bus.outputChannelPeaks);
 #if HARKEN_ENGINE_DEV
     if (harken::monitor::AudioLiveArmed()) {
@@ -1215,7 +1236,7 @@ void BusTree::FoldBusOutput(Bus& bus, float* const* planes,
     // §6.4: the bus meter is the peak across all channels of the final output,
     // post the per-bus fold. All builds, like the finalize tap above
     // (section 11.7).
-    bus.outputPeak = StageTapPeak(planes, m_mixChannels, 0, blockFrames,
+    bus.outputPeak = ParallelBusPeak(planes, m_mixChannels, 0, blockFrames,
         bus.outputChannelPeaks);
 }
 
@@ -1481,7 +1502,7 @@ bool BusTree::MixDown(float* const* busPlanes, std::uint32_t blockFrames,
         }
         if (signalNode != UINT32_MAX) {
             if (!signals->ProcessBus(signalNode, planes, bus.outputGain)) return false;
-            bus.outputPeak = StageTapPeak(planes, m_mixChannels, 0, blockFrames,
+            bus.outputPeak = ParallelBusPeak(planes, m_mixChannels, 0, blockFrames,
                 bus.outputChannelPeaks);
         }
         if (i != 0) {

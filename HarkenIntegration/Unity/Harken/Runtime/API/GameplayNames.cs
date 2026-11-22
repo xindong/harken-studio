@@ -20,6 +20,8 @@ namespace Harken
             internal VnObjectId Project;
             internal ulong Generation;
             internal Dictionary<string, Action> Actions;
+            internal PackBootstrapSession.SharedPack[] SmallActions;
+            internal PackBootstrapSession.DirectoryLease Directory;
             internal Dictionary<string, VnObjectId> Variables;
             internal Dictionary<(VnObjectId, string), VnObjectId> Labels;
         }
@@ -27,10 +29,10 @@ namespace Harken
         private static Table current;
         private static ulong generation;
 
+        internal static PackBootstrapSession.DirectoryLease ActiveDirectory => current?.Directory;
         internal static ulong Generation => current?.Generation ?? 0;
 
-        internal static Table Prepare(VnObjectId project, PackCompanion init,
-            IEnumerable<KeyValuePair<string, Action>> actions)
+        internal static Table PrepareInit(VnObjectId project, PackCompanion init)
         {
             var table = new Table
             {
@@ -39,15 +41,30 @@ namespace Harken
                 Variables = new Dictionary<string, VnObjectId>(StringComparer.Ordinal),
                 Labels = new Dictionary<(VnObjectId, string), VnObjectId>()
             };
-            foreach (var row in actions) table.Actions.Add(row.Key, row.Value);
             foreach (var row in init.Variables) table.Variables[row.Name] = row.Id;
             foreach (var row in init.Labels) table.Labels[(row.VariableId, row.Name)] = row.Id;
             return table;
         }
 
+        internal static Table PrepareActions(Table init, int capacity) => new Table
+        {
+            Project = init.Project,
+            Variables = init.Variables,
+            Labels = init.Labels,
+            Actions = new Dictionary<string, Action>(capacity, StringComparer.Ordinal)
+        };
+
         internal static void Publish(Table table)
         {
             table.Generation = unchecked(++generation);
+            current = table;
+        }
+
+        internal static void Expand(PackBootstrapSession.DirectoryLease lease, Table table)
+        {
+            var previous = current;
+            if (previous?.Directory != lease) return;
+            table.Generation = previous.Generation;
             current = table;
         }
 
@@ -59,6 +76,17 @@ namespace Harken
             Table table = current;
             if (table == null) return VnResult.VN_CAPABILITY_UNAVAILABLE;
             if (!project.IsNull && project != table.Project) return VnResult.VN_GAMEPLAY_WRONG_PROJECT;
+            if (table.Directory != null) return table.Directory.Find(name, default, out action);
+            if (table.SmallActions != null)
+            {
+                foreach (var owner in table.SmallActions)
+                    if (owner.Names.Name == name && owner.Handle.IsValid)
+                    {
+                        action = owner.Action;
+                        return VnResult.VN_OK;
+                    }
+                return VnResult.VN_UNKNOWN_ID;
+            }
             return table.Actions.TryGetValue(name, out action) && action.Live ? VnResult.VN_OK : VnResult.VN_UNKNOWN_ID;
         }
 
@@ -67,6 +95,17 @@ namespace Harken
             action = default;
             Table table = current;
             if (table == null) return VnResult.VN_CAPABILITY_UNAVAILABLE;
+            if (table.Directory != null) return table.Directory.Find(null, id, out action);
+            if (table.SmallActions != null)
+            {
+                foreach (var owner in table.SmallActions)
+                    if (owner.Names.RootId == id && owner.Handle.IsValid)
+                    {
+                        action = owner.Action;
+                        return VnResult.VN_OK;
+                    }
+                return VnResult.VN_UNKNOWN_ID;
+            }
             foreach (Action row in table.Actions.Values)
                 if (row.Id == id && row.Live) { action = row; return VnResult.VN_OK; }
             return VnResult.VN_UNKNOWN_ID;

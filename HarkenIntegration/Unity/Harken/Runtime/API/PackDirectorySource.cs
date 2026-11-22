@@ -12,20 +12,26 @@ namespace Harken
         internal byte[] Json;
         internal PackCompanion Names;
         internal VnPackInspectReportV1 Facts;
+        internal int ByteCount => Bytes.Length;
         internal ulong SourceRevision;
+        internal PackDirectorySource.ResidentSelection Selection;
     }
 
     // Only this source knows about filesystem publication. Sessions consume owned snapshots.
-    internal sealed class PackDirectorySource
+    internal sealed partial class PackDirectorySource
     {
         internal readonly string Root;
         internal readonly string Language;
+        internal bool IsResidentDirectory => resident;
 
-        internal PackDirectorySource(string root, string language)
+        internal PackDirectorySource(string root, string language, bool? residentLayout = null)
         {
             Root = Path.GetFullPath(root);
             Language = language ?? string.Empty;
+            resident = residentLayout ?? File.Exists(Path.Combine(Root, "Init.hrp"));
         }
+
+        internal PackDirectorySource ForLanguage(string language) => new PackDirectorySource(Root, language, resident);
 
         internal static bool ValidLanguage(string value)
         {
@@ -43,6 +49,7 @@ namespace Harken
                 return VnResult.VN_INVALID_ARG;
             try
             {
+                if (resident) return CaptureResident(name, project, init, out input);
                 string scope = name == null ? string.Empty : Language;
                 VnResult result = CapturePair(name ?? "Init", scope, out byte[] bytes, out byte[] json);
                 bool fallback = name != null && scope.Length != 0 && result == VnResult.VN_CONTENT_NOT_LOADED;
@@ -64,6 +71,7 @@ namespace Harken
             }
             catch (OutOfMemoryException) { return VnResult.VN_DEVICE_ERROR; }
             catch (PlatformNotSupportedException) { return VnResult.VN_CAPABILITY_UNAVAILABLE; }
+            catch (PackStorage.InvalidMember) { return VnResult.VN_BAD_PACK; }
             catch (IOException) { return VnResult.VN_PACK_PROVIDER_FAILED; }
             catch (UnauthorizedAccessException) { return VnResult.VN_PACK_PROVIDER_FAILED; }
             catch (ArgumentException) { return VnResult.VN_INVALID_ARG; }
@@ -80,8 +88,21 @@ namespace Harken
 
         private bool Publishing() => Exists(Path.Combine(Root, ".harken-pack-publishing"));
 
+        private static readonly bool IsWindows = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true, ExactSpelling = true)]
+        private static extern uint GetFileAttributesW(string path);
+
         private static bool Exists(string path)
         {
+            // Preserve managed long-path normalization. Missing publication markers are the usual case.
+            if (IsWindows && path.Length < 260)
+            {
+                if (GetFileAttributesW(path) != uint.MaxValue) return true;
+                int error = Marshal.GetLastWin32Error();
+                if (error == 2 || error == 3) return false;
+                throw new IOException("Cannot check Pack path.", new System.ComponentModel.Win32Exception(error));
+            }
             try { File.GetAttributes(path); return true; }
             catch (FileNotFoundException) { return false; }
             catch (DirectoryNotFoundException) { return false; }
@@ -121,8 +142,21 @@ namespace Harken
                 FileIdentity beforeBinary = FileIdentity.Read(binary), beforeMetadata = FileIdentity.Read(metadata);
                 if (!FileIdentity.ExactName(binary, name + ".bytes", language) ||
                     !FileIdentity.ExactName(metadata, name + ".json", language)) return VnResult.VN_BAD_PACK;
-                bytes = Read(binary);
-                json = Read(metadata);
+                bytes = PackStorage.ReadBinary(binary);
+                json = PackStorage.ReadPlain(metadata);
+                if (IsWindows && bytesPath.Length < 260 && jsonPath.Length < 260)
+                {
+                    using (var currentBinary = OpenForIdentity(bytesPath))
+                    using (var currentMetadata = OpenForIdentity(jsonPath))
+                    {
+                        return currentBinary != null && currentMetadata != null && !Publishing() &&
+                            beforeBinary.Equals(FileIdentity.Read(binary)) &&
+                            beforeMetadata.Equals(FileIdentity.Read(metadata)) &&
+                            beforeBinary.Equals(FileIdentity.ReadWindows(currentBinary)) &&
+                            beforeMetadata.Equals(FileIdentity.ReadWindows(currentMetadata))
+                            ? VnResult.VN_OK : VnResult.VN_PACK_STALE_REVISION;
+                    }
+                }
                 using (FileStream currentBinary = Open(bytesPath))
                 using (FileStream currentMetadata = Open(jsonPath))
                 {
@@ -137,23 +171,34 @@ namespace Harken
             }
         }
 
-        private static byte[] Read(FileStream stream)
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true, ExactSpelling = true)]
+        private static extern SafeFileHandle CreateFileW(string path, uint access, FileShare share,
+            IntPtr securityAttributes, FileMode mode, uint flags, IntPtr template);
+
+        private static SafeFileHandle OpenForIdentity(string path, FileShare share = FileShare.ReadWrite | FileShare.Delete)
         {
-            if (stream.Length > int.MaxValue) throw new IOException("Pack input exceeds the managed byte limit.");
-            var bytes = new byte[(int)stream.Length];
-            int offset = 0;
-            while (offset < bytes.Length)
-            {
-                int count = stream.Read(bytes, offset, bytes.Length - offset);
-                if (count == 0) throw new EndOfStreamException();
-                offset += count;
-            }
-            return bytes;
+            const uint genericRead = 0x80000000, openReparsePoint = 0x00200000;
+            var handle = CreateFileW(path, genericRead, share,
+                IntPtr.Zero, FileMode.Open, openReparsePoint, IntPtr.Zero);
+            if (!handle.IsInvalid) return handle;
+            int error = Marshal.GetLastWin32Error();
+            handle.Dispose();
+            if (error == 2 || error == 3) return null;
+            throw new IOException("Cannot reopen Pack input.", new System.ComponentModel.Win32Exception(error));
         }
 
-        private readonly struct FileIdentity : IEquatable<FileIdentity>
+        internal readonly struct FileIdentity : IEquatable<FileIdentity>
         {
             private readonly ulong device, inode, length, modified, modifiedNs, changed, changedNs;
+            internal ulong Length => length;
+            internal void SetBatchIdentity(ref VnResidentPackVisitDescV1 directory, long changeTime)
+            {
+                directory.initVolumeId = device;
+                directory.initFileId = inode;
+                directory.initFileSize = length;
+                directory.initWriteTime = modified;
+                directory.initChangeTime = (ulong)changeTime;
+            }
             private FileIdentity(ulong device, ulong inode, ulong length, ulong modified,
                 ulong modifiedNs = 0, ulong changed = 0, ulong changedNs = 0)
             {
@@ -169,10 +214,7 @@ namespace Harken
             {
                 if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
                 {
-                    if (!GetFileInformationByHandle(stream.SafeFileHandle, out WindowsInfo info))
-                        throw new IOException("Cannot identify the opened Pack file.");
-                    return new FileIdentity(info.Volume, ((ulong)info.IndexHigh << 32) | info.IndexLow,
-                        ((ulong)info.SizeHigh << 32) | info.SizeLow, ((ulong)info.WriteHigh << 32) | info.WriteLow);
+                    return ReadWindows(stream.SafeFileHandle);
                 }
                 if (IntPtr.Size != 8) throw new PlatformNotSupportedException();
                 long descriptor = stream.SafeFileHandle.DangerousGetHandle().ToInt64();
@@ -196,15 +238,35 @@ namespace Harken
                 throw new PlatformNotSupportedException();
             }
 
+            internal static FileIdentity ReadWindows(SafeFileHandle handle)
+            {
+                if (!GetFileInformationByHandle(handle, out WindowsInfo info))
+                    throw new IOException("Cannot identify the opened Pack file.");
+                if ((info.Attributes & (uint)FileAttributes.ReparsePoint) != 0) throw new IOException("A Pack input must be a regular file.");
+                return new FileIdentity(info.Volume, ((ulong)info.IndexHigh << 32) | info.IndexLow,
+                    ((ulong)info.SizeHigh << 32) | info.SizeLow, ((ulong)info.WriteHigh << 32) | info.WriteLow);
+            }
+
+            internal static string WindowsPath(SafeFileHandle handle, int pathLength)
+            {
+                const int maxPathChars = 32768;
+                var buffer = new StringBuilder(Math.Min(maxPathChars, Math.Max(260, pathLength + 16)));
+                uint count = GetFinalPathNameByHandle(handle, buffer, (uint)buffer.Capacity, 0);
+                if (count >= buffer.Capacity && count <= maxPathChars)
+                {
+                    buffer = new StringBuilder((int)count);
+                    count = GetFinalPathNameByHandle(handle, buffer, count, 0);
+                }
+                if (count == 0 || count >= buffer.Capacity) throw new IOException("Cannot resolve Pack file identity.");
+                return buffer.ToString();
+            }
+
             internal static bool ExactName(FileStream stream, string name, string language)
             {
                 string path;
                 if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
                 {
-                    var buffer = new StringBuilder(32768);
-                    uint count = GetFinalPathNameByHandle(stream.SafeFileHandle, buffer, (uint)buffer.Capacity, 0);
-                    if (count == 0 || count >= buffer.Capacity) throw new IOException("Cannot resolve Pack file identity.");
-                    path = buffer.ToString();
+                    path = WindowsPath(stream.SafeFileHandle, stream.Name.Length);
                 }
                 else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
                 {

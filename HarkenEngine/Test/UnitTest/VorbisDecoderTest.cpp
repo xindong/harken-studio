@@ -66,7 +66,7 @@ TEST(VorbisDecoder, FloorZeroIsExplicitlyUnsupportedInResourceAndFixturePreparat
     EXPECT_EQ(rejected, nullptr); EXPECT_EQ(result, HV_UNSUPPORTED);
 }
 
-TEST(VorbisDecoder, RejectsZeroDimensionalMappedCodebooksBeforeLookupConstruction) {
+TEST(VorbisDecoder, InspectionAndPlaybackRejectInvalidDimensionsAndIncompleteUnusedCodebooks) {
     const auto fixture = harken::test::MakeVorbisFixture(1);
     harken::VorbisMedia media;
     ASSERT_TRUE(harken::ParseVorbisTestMedia(fixture.media.data(), fixture.media.size(), media));
@@ -74,7 +74,8 @@ TEST(VorbisDecoder, RejectsZeroDimensionalMappedCodebooksBeforeLookupConstructio
     Tables tables(hv_tables_create(memory.Callbacks(), kSetupBudget), hv_tables_destroy);
     ASSERT_NE(tables, nullptr);
     const auto tableAllocations = memory.live;
-    for (unsigned map : {1u, 2u}) for (unsigned dimension : {1u, 0u}) {
+    for (unsigned map : {1u, 2u}) for (auto [dimension, length] :
+         {std::pair{1u, 1u}, std::pair{0u, 1u}, std::pair{1u, 2u}}) {
         std::vector<std::uint8_t> setup{5, 'v', 'o', 'r', 'b', 'i', 's'};
         unsigned bit = 0;
         auto put = [&](std::uint32_t value, unsigned n) {
@@ -86,7 +87,7 @@ TEST(VorbisDecoder, RejectsZeroDimensionalMappedCodebooksBeforeLookupConstructio
         put(1,8);
         // The first mapped book is deliberately unused by floor and residue.
         put(0x564342,24); put(dimension,16); put(1,24);
-        put(0,1); put(0,1); put(0,5); put(map,4);
+        put(0,1); put(0,1); put(length - 1,5); put(map,4);
         put(0,32); put(0,32); put(0,4); put(0,1);
         if (dimension) put(0,1);
         put(0x564342,24); put(1,16); put(1,24);
@@ -100,8 +101,13 @@ TEST(VorbisDecoder, RejectsZeroDimensionalMappedCodebooksBeforeLookupConstructio
         HvResult result;
         DecoderSetup decoded(hv_setup_create(memory.Callbacks(), kSetupBudget, tables.get(), media.ident,
             media.identBytes, setup.data(), setup.size(), &result), hv_setup_destroy);
-        EXPECT_EQ(result, dimension ? HV_OK : HV_INVALID) << map;
-        EXPECT_EQ(decoded != nullptr, dimension != 0) << map;
+        const bool valid = dimension != 0 && length == 1;
+        EXPECT_EQ(result, valid ? HV_OK : HV_INVALID) << map;
+        EXPECT_EQ(decoded != nullptr, valid) << map;
+        const auto inspected = hv_inspect_packets(memory.Callbacks(), kSetupBudget, media.ident,
+            media.identBytes, setup.data(), setup.size(),
+            [](const HvSetup*, const void*) -> int { return 1; }, nullptr);
+        EXPECT_EQ(inspected, result);
         decoded.reset();
         EXPECT_EQ(memory.live, tableAllocations);
     }
@@ -153,7 +159,7 @@ TEST(VorbisDecoder, PoolReordersCanonicalChannelsWithoutAllocatingOnRenderRetire
         {
             harken::memguard::AudioThreadScope audio;
             for (std::uint64_t at = 0; at < media.packetBytes;) {
-                const std::uint8_t* packet; std::uint16_t bytes;
+                const std::uint8_t* packet; std::uint32_t bytes;
                 if (!media.Packet(at, packet, bytes)) { ok = false; break; }
                 const float* pcm[8]{}; unsigned count = 0;
                 if (!state->Decode(workspace, packet, bytes, pcm, count)) { ok = false; break; }
@@ -192,7 +198,7 @@ TEST(VorbisDecoder, DISABLED_DesktopDecodeTiming) {
         for (unsigned repeat = 0; repeat < 10; ++repeat) {
             for (auto* state : states) state->Restart();
             for (std::uint64_t at = 0; at < media.packetBytes;) {
-                const std::uint8_t* packet; std::uint16_t bytes; ASSERT_TRUE(media.Packet(at, packet, bytes));
+                const std::uint8_t* packet; std::uint32_t bytes; ASSERT_TRUE(media.Packet(at, packet, bytes));
                 const auto begin = std::chrono::steady_clock::now();
                 for (auto* state : states) {
                     const float* pcm[8]{}; unsigned count = 0;
@@ -240,7 +246,7 @@ TEST(VorbisDecoder, ExactAcrossLayoutsSeeksRestartsAndSharedSettings) {
                 auto offset = point->packetOffset;
                 std::uint64_t frame = target;
                 while (frame < media.frames) {
-                    const std::uint8_t* packet; std::uint16_t bytes;
+                    const std::uint8_t* packet; std::uint32_t bytes;
                     ASSERT_TRUE(media.Packet(offset, packet, bytes));
                     float** pcm = nullptr; unsigned count = 0;
                     ASSERT_EQ(hv_decode_packet(state, workspace, packet, bytes, &pcm, &count), HV_OK);
@@ -284,7 +290,7 @@ TEST(VorbisDecoder, RenderUsesNoAllocatorAndExistingAudioMemoryGuard) {
         for (unsigned repeat = 0; repeat < 3 && ok; ++repeat) {
             hv_state_restart(state);
             for (std::uint64_t offset = 0; offset < media.packetBytes;) {
-                const std::uint8_t* packet; std::uint16_t bytes;
+                const std::uint8_t* packet; std::uint32_t bytes;
                 if (!media.Packet(offset, packet, bytes)) { ok = false; break; }
                 float** pcm = nullptr; unsigned count = 0;
                 if (hv_decode_packet(state, workspace, packet, bytes, &pcm, &count) != HV_OK) { ok = false; break; }
@@ -341,6 +347,46 @@ TEST(VorbisDecoder, PreparationFailureReleasesEveryAllocationAndRejectsUnsupport
     }
 }
 
+TEST(VorbisDecoder, IndependentResidentVoicesRetainTheirOwnSeekAndOverlapHistory) {
+    const auto fixture = harken::test::MakeVorbisFixture(2);
+    harken::VorbisCodec codec(0);
+    harken::VorbisPrepareResult result;
+    auto source = harken::VorbisResident::Prepare(codec, fixture.media, kSetupBudget, result);
+    ASSERT_NE(source, nullptr);
+    auto* first = source->Acquire();
+    auto* second = source->Acquire();
+    ASSERT_NE(first, nullptr);
+    ASSERT_NE(second, nullptr);
+
+    const auto check = [&](harken::MediaDecoder* decoder, std::uint64_t frame, std::uint32_t request = 256) {
+        harken::PCMView audio;
+        ASSERT_TRUE(decoder->Read(frame, request, 0, audio));
+        ASSERT_GT(audio.frames, 0u);
+        ASSERT_EQ(audio.channelCount, 2u);
+        for (unsigned n = 0; n < audio.frames; ++n)
+            for (unsigned ch = 0; ch < 2; ++ch)
+                ASSERT_EQ(static_cast<const float*>(audio.channels[ch])[n], fixture.reference[(frame + n) * 2 + ch]);
+    };
+    for (auto start : {0u, 8065u, 382u, 4112u, 0u}) {
+        for (unsigned i = 0; i < 8; ++i) {
+            check(first, start + i * 256);
+            check(second, start + (i > 2 ? i * 256 : 1741 + i * 256));
+        }
+    }
+    // A continuous reader can leave an unfinished transform in the shared
+    // workspace. Interleave another reader and a seek while it is pending.
+    for (unsigned block = 0; block < 96; ++block) {
+        const auto frame = block * 128u;
+        check(first, frame, 128);
+        if (block % 13 == 7) check(second, frame + 3072u, 128);
+        if (block % 23 == 19) check(first, 9183u, 128);
+    }
+    first->Retire();
+    second->Retire();
+    codec.states.Collect();
+    EXPECT_EQ(codec.states.ActiveBytes(), 0u);
+}
+
 TEST(VorbisDecoder, ResidentCodecSeekAndRetirementUseNoAudioThreadAllocation) {
     const auto fixture = harken::test::MakeVorbisFixture(6, false, 257, 1023);
     harken::VorbisCodec codec(0);
@@ -394,4 +440,34 @@ TEST(VorbisDecoder, RejectsSeekLoopAndDurationMetadataThatDisagreesWithPackets) 
     EXPECT_EQ(cache.Prepare(media, kSetupBudget, result), valid);
 }
 
+}
+
+
+TEST(VorbisDecoder, PackSeeksUseAudibleFramesAfterLeadingAndTrailingTrim) {
+    harken::VorbisCodec codec(0);
+    for (auto channels : {1u, 2u, 4u, 6u, 8u}) {
+        SCOPED_TRACE(channels);
+        const auto fixture = harken::test::MakeVorbisFixture(channels, false, 6503, 11997, 4096, true, 173);
+        harken::VorbisPrepareResult status;
+        auto resident = harken::VorbisResident::Prepare(codec, fixture.media, 8u << 20, status, true);
+        ASSERT_TRUE(resident);
+        const auto view = resident->View();
+        ASSERT_EQ(fixture.reference.size(), view.frames * channels);
+        auto* decoder = resident->Acquire();
+        ASSERT_NE(decoder, nullptr);
+        const unsigned surround6[] = {0, 2, 1, 5, 3, 4};
+        const unsigned surround8[] = {0, 2, 1, 7, 5, 6, 3, 4};
+        for (auto frame : std::array<std::uint64_t, 6>{0, 4095, 8243, 6503, view.frames - 17, 0}) {
+            harken::PCMView block;
+            ASSERT_TRUE(decoder->Read(frame, 17, 0, block));
+            for (unsigned ch = 0; ch < channels; ++ch) {
+                const auto referenceChannel = channels == 6 ? surround6[ch] : channels == 8 ? surround8[ch] : ch;
+                for (unsigned i = 0; i < block.frames; ++i)
+                    ASSERT_NEAR(static_cast<const float*>(block.channels[ch])[i], fixture.reference[(frame+i)*channels+referenceChannel], 2e-5f);
+            }
+        }
+        decoder->Retire();
+        codec.states.Collect();
+        EXPECT_EQ(codec.states.ActiveBytes(), 0u);
+    }
 }

@@ -1,4 +1,8 @@
 /* Derived from libvorbis 1.3.7; modified for private packet decoding and explicit memory ownership. */
+#if defined(__x86_64__) || defined(_M_X64)
+#include <xmmintrin.h>
+#define HV_COUPLING_SSE 1
+#endif
 #include "private.h"
 /********************************************************************
  *                                                                  *
@@ -175,7 +179,23 @@ static int mapping0_inverse(vorbis_block *vb,vorbis_info_mapping *l){
     float *pcmM=vb->pcm[info->coupling_mag[i]];
     float *pcmA=vb->pcm[info->coupling_ang[i]];
 
-    for(j=0;j<n/2;j++){
+    j=0;
+#if defined(HV_COUPLING_SSE)
+    const __m128 zero=_mm_setzero_ps();
+    const __m128 sign=_mm_set1_ps(-0.0f);
+    for(;j+4<=n/2;j+=4){
+      const __m128 magnitude=_mm_loadu_ps(pcmM+j);
+      const __m128 angle=_mm_loadu_ps(pcmA+j);
+      const __m128 mp=_mm_cmpgt_ps(magnitude,zero);
+      const __m128 ap=_mm_cmpgt_ps(angle,zero);
+      const __m128 minus=_mm_andnot_ps(_mm_xor_ps(mp,ap),sign);
+      const __m128 changed=_mm_add_ps(magnitude,_mm_xor_ps(angle,minus));
+      const __m128 difference=_mm_xor_ps(magnitude,changed);
+      _mm_storeu_ps(pcmM+j,_mm_xor_ps(changed,_mm_and_ps(difference,ap)));
+      _mm_storeu_ps(pcmA+j,_mm_xor_ps(magnitude,_mm_and_ps(difference,ap)));
+    }
+#endif
+    for(;j<n/2;j++){
       float mag=pcmM[j];
       float ang=pcmA[j];
 
@@ -206,6 +226,8 @@ static int mapping0_inverse(vorbis_block *vb,vorbis_info_mapping *l){
       inverse2(vb,b->flr[info->floorsubmap[submap]],
                floormemo[i],pcm);
   }
+
+  if (((HvWorkspace*)vb->internal)->preparing) return 0;
 
   /* transform the PCM data; takes PCM vector, vb; modifies PCM vector */
   /* only MDCT right now.... */

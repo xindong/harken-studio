@@ -12303,6 +12303,109 @@ TEST(ActionFiringApi, NaturalEndStopUsesRemainingSourceDuration) {
     EXPECT_EQ(VN_IN_USE, Vn_ReleaseActionFiring(playFiring));
 }
 
+TEST(ActionFiringApi, PreparedImmediateSoundPlaysOnceWhileGameUpdatesAreStalled) {
+    (void)Vn_Term();
+    constexpr std::uint32_t frames = 64;
+#if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
+    harken::detail::ScopedTimelineCapacityOverrideForTest capacity(1, 1, 1);
+    ASSERT_TRUE(capacity.Valid());
+#endif
+    auto config = harkentest::MakeNullConfig(2, frames, 48000);
+    config.maxActionFirings = 2;
+    harkentest::EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto* engine = session.Engine();
+    std::vector<float> samples(512, 0.25f), otherSamples(512, -0.25f);
+    const auto pcm = harkentest::MonoDesc(samples, 48000);
+    const auto otherPcm = harkentest::MonoDesc(otherSamples, 48000);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(CanonicalActionWorld::kFirstSound, &pcm));
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(CanonicalActionWorld::kSecondSound, &otherPcm));
+    CanonicalActionWorld image(engine->registry.Lookup(CanonicalActionWorld::kFirstSound).contentRevision,
+        engine->registry.Lookup(CanonicalActionWorld::kSecondSound).contentRevision);
+    image.MakeImmediateSoundPlayAndSeparateStopActions();
+    image.steps[10] = image.steps[11];
+    image.steps[10].target.stableId = image.properties[1].stableId;
+    image.steps[10].target.expectedProgramSemanticFingerprint = image.properties[1].programSemanticFingerprint;
+    image.actions[8].programSemanticFingerprint = harken::ComputeActionProgramFingerprintV1(image.actions[8]);
+    image.world.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV4(image.world);
+    ASSERT_EQ(harken::WorldInstallStatus::Ok,
+              harken::InstallContainerWorldV1(*engine, image.world).status);
+    auto desc = ValidPostDesc();
+    desc.actionId = image.actions[9].actionStableId;
+    float referencePeak = 0.0f;
+    for (unsigned scenario = 0; scenario != 3; ++scenario) {
+        const bool cancel = scenario == 1;
+        VnActionFiringHandle firing = 0;
+        ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
+        VnActionFiringHandle replacement = 0;
+        if (scenario != 0) ASSERT_EQ(VN_OK, Vn_StopActionFiring(firing, 0));
+        if (scenario == 2) {
+            auto next = desc;
+            next.actionId = image.actions[8].actionStableId;
+            ASSERT_EQ(VN_OK, Vn_PostAction(&next, &replacement));
+            ASSERT_EQ(VN_OK, Vn_SetBusVolume(VN_BUS_MASTER, -6.0206f, 0));
+        }
+        if (scenario == 0) ASSERT_EQ(VN_OK, Vn_Update());
+        float peak = 0.0f;
+        std::uint32_t audibleFrames = 0;
+        for (unsigned block = 0; block < 128; ++block) {
+            if (block >= 80) ASSERT_EQ(VN_OK, Vn_Update());
+            engine->nullBackend.Pump(1);
+            const auto* output = engine->nullBackend.LastBlock();
+            ASSERT_NE(nullptr, output);
+            for (unsigned frame = 0; frame < frames; ++frame) {
+                const float sample = output[frame * engine->nullBackend.Channels()];
+                const float marked = replacement != 0 ? -sample : sample;
+                if (std::abs(sample) > 0.001f) {
+                    ASSERT_GT(marked, 0.0f);
+                    peak = std::max(peak, marked);
+                    ++audibleFrames;
+                }
+            }
+            if (block == 79) EXPECT_EQ(cancel ? 0u : samples.size(), audibleFrames);
+        }
+        EXPECT_EQ(cancel ? 0u : samples.size(), audibleFrames);
+        if (scenario == 0) referencePeak = peak;
+        if (replacement != 0) {
+            EXPECT_NEAR(referencePeak * 0.5f, peak, 1e-5f);
+            EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(replacement));
+        }
+        EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
+        EXPECT_EQ(0u, engine->playableInstances.LiveCount());
+    }
+#if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
+    // Delay the old source for one block, then submit a new one due in its retry block.
+    ASSERT_EQ(1u, engine->immediateActionLane.MaxEventsPerQuantum());
+    const auto armFor = [&](VnActionFiringHandle firing) {
+        for (const auto& row : engine->playableServices)
+            if (row.InvocationValid() && row.Invocation().actionFiring == firing) return row.arm;
+        return harken::TimelineArmToken{};
+    };
+    VnActionFiringHandle older = 0, newer = 0;
+    ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &older));
+    const auto firstArm = armFor(older);
+    auto* delayed = engine->timelineArms.Resolve(firstArm);
+    ASSERT_NE(nullptr, delayed);
+    ASSERT_FALSE(delayed->reservation.test_and_set(std::memory_order_acquire));
+    engine->nullBackend.Pump(1);
+    delayed->reservation.clear(std::memory_order_release);
+    auto next = desc;
+    next.actionId = image.actions[8].actionStableId;
+    ASSERT_EQ(VN_OK, Vn_PostAction(&next, &newer));
+    const auto nextArm = armFor(newer);
+    ASSERT_TRUE(nextArm.Valid());
+    engine->nullBackend.Pump(1);
+    harken::TimelineArmObservation first{}, second{};
+    ASSERT_TRUE(engine->timelineArms.Observe(firstArm, &first));
+    ASSERT_TRUE(engine->timelineArms.Observe(nextArm, &second));
+    EXPECT_EQ(engine->mixer.BlocksRendered(), first.startedBlockSequence);
+    EXPECT_EQ(0u, second.startedBlockSequence);
+    engine->nullBackend.Pump(1);
+    ASSERT_TRUE(engine->timelineArms.Observe(nextArm, &second));
+    EXPECT_EQ(engine->mixer.BlocksRendered(), second.startedBlockSequence);
+#endif
+}
+
 TEST(ActionFiringApi, StopBeforeFirstServiceReclaimsReservedLaneAttempt) {
     (void)Vn_Term();
     VnConfig config = harkentest::MakeNullConfig(2, 64, 48000);
@@ -12380,8 +12483,30 @@ TEST(ActionFiringApi, NaturalEndStopOfPendingPlayUsesActualStart) {
     const std::uint64_t rendered = engine->mixer.BlocksRendered();
     ASSERT_LE(rendered, oldStart / kBlockFrames);
     ASSERT_LE(oldStart / kBlockFrames - rendered + 1u, 64u);
+    auto* startArm = engine->timelineArms.Resolve(row->arm);
+    ASSERT_NE(nullptr, startArm);
+    ASSERT_FALSE(startArm->reservation.test_and_set(std::memory_order_acquire));
     engine->nullBackend.Pump(static_cast<std::uint32_t>(
         oldStart / kBlockFrames - rendered + 1u));
+    startArm->reservation.clear(std::memory_order_release);
+    struct BusyAtStart {
+        harken::TimelineArmTable::Row* arm;
+        bool held = false;
+    } busy{startArm};
+    engine->immediateActionLane.SetCapturedAdmissionHookForTest(
+        +[](void* context, std::uint32_t) noexcept {
+            auto& busy = *static_cast<BusyAtStart*>(context);
+            busy.held = !busy.arm->reservation.test_and_set(std::memory_order_acquire);
+        }, &busy);
+    engine->nullBackend.Pump(1);
+    engine->immediateActionLane.SetCapturedAdmissionHookForTest(nullptr, nullptr);
+    ASSERT_TRUE(busy.held);
+    startArm->reservation.clear(std::memory_order_release);
+    harken::TimelineArmObservation waiting{};
+    ASSERT_TRUE(engine->timelineArms.Observe(row->arm, &waiting));
+    ASSERT_EQ(harken::ArmState::Armed, waiting.state);
+    ASSERT_EQ(0u, waiting.startedBlockSequence);
+    engine->nullBackend.Pump(1);
     ASSERT_EQ(VN_OK, Vn_Update());
     ASSERT_GT(row->startFrame, oldStart);
     harken::ActionDeferredRecordToken token{};
@@ -12418,7 +12543,10 @@ TEST(ActionFiringApi, PendingLocalStopRetainsHeldIntentUntilConsumedProgressIsPu
     VnPostActionDesc playDesc = ValidPostDesc();
     playDesc.actionId = image.actions[9].actionStableId;
     VnActionFiringHandle play = 0;
+    // Exercise a start that has not yet received its initial lane placement.
+    engine->deferPendingImmediateEntriesForTest = true;
     ASSERT_EQ(VN_OK, Vn_PostAction(&playDesc, &play));
+    engine->deferPendingImmediateEntriesForTest = false;
     const auto row = std::find_if(
         engine->playableServices.begin(), engine->playableServices.end(),
         [play](const harken::EnginePlayableServiceRow& candidate) {
@@ -13902,7 +14030,10 @@ TEST(ActionFiringApi,
     VnPostActionDesc desc = ValidPostDesc();
     desc.actionId = image.actions[9].actionStableId;
     VnActionFiringHandle firing = 0;
+    // Keep the installation and original lane placement separate for this case.
+    engine->deferPendingImmediateEntriesForTest = true;
     ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
+    engine->deferPendingImmediateEntriesForTest = false;
 
     const auto row = std::find_if(
         engine->playableServices.begin(), engine->playableServices.end(),
@@ -14181,7 +14312,10 @@ TEST(ActionFiringApi, StopBeforeOriginalSourceOnsetCancelsWithoutReplacement) {
     VnPostActionDesc desc = ValidPostDesc();
     desc.actionId = image.actions[9].actionStableId;
     VnActionFiringHandle firing = 0;
+    // Keep the installation and original lane placement separate for this case.
+    engine->deferPendingImmediateEntriesForTest = true;
     ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
+    engine->deferPendingImmediateEntriesForTest = false;
     // Audio advances before normal service; Source identity must survive.
     const auto row = std::find_if(engine->playableServices.begin(),
         engine->playableServices.end(), [firing](const auto& current) {
@@ -26253,7 +26387,7 @@ void ExpectImmediateShortQueueMirrorFaultRejected(std::uint32_t fault,
     for (std::uint32_t block = 0; block < 64; ++block) {
         if (claimedReaderSibling && partialClaim.claim.Valid() &&
             siblingRow != nullptr &&
-            siblingRow->phase == harken::EnginePlayableStartPhase::Filed &&
+            (siblingRow->phase == harken::EnginePlayableStartPhase::Filed || siblingRow->immediateLane.Valid()) &&
             siblingStartFrame == UINT64_MAX) {
             siblingStartFrame = siblingRow->startFrame;
             siblingArm = siblingRow->arm;
@@ -69883,7 +70017,10 @@ static void CheckMixedImmediateAndFixedSoundCohort(bool late, bool reversed,
     if (pressure) {
         auto blockerDesc = desc;
         blockerDesc.actionId = image.actions[8].actionStableId;
+        // Hold the three competitors for the same placement pass as the fixed event.
+        engine->deferPendingImmediateEntriesForTest = true;
         for (auto& blocker : blockers) ASSERT_EQ(VN_OK, Vn_PostAction(&blockerDesc, &blocker));
+        engine->deferPendingImmediateEntriesForTest = false;
     }
     VnActionFiringHandle firing = 0;
     ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
