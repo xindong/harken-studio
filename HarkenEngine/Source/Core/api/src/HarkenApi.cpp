@@ -129459,7 +129459,8 @@ VnResult PrepareCompressedMember(Engine& engine, const PackCanonicalImage& image
             desc.structSize = sizeof(desc); desc.sampleRate = row.sampleRate; desc.channels = row.channelCount;
             desc.frames = row.frameCount; desc.layout = VN_PCM_LAYOUT_PLANAR; desc.policy = VN_PCM_POLICY_COPY;
             desc.samplesPlanar = planes.data();
-            result = engine.registry.PreparePackSamples(row.soundId, &desc, &samples[i], CanonicalPcmLoop(row));
+            result = engine.registry.PreparePackSamples(row.soundId, &desc, &samples[i],
+                CanonicalPcmLoop(row), &staging);
         }
         if (result != VN_OK) return result;
     }

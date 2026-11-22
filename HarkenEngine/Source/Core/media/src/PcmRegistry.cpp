@@ -2,6 +2,7 @@
 #include "harken/media/VorbisDecoder.h"
 
 #include "harken/core/MediaContentRevision.h"
+#include "harken/core/detail/PackDecodeBudget.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -207,6 +208,11 @@ detail::PcmSampleBuffer CopySamples(const VnPCMDesc& desc, std::size_t count,
     return stagedSamples;
 }
 
+bool CanStoreCompactSamples(std::size_t count, std::size_t pageBytes) noexcept {
+    return pageBytes != 0 && pageBytes % alignof(float) == 0 &&
+           count * sizeof(std::int16_t) / pageBytes >= 16;
+}
+
 detail::PcmSampleBuffer StageSamples(const VnPCMDesc& desc) {
     if (desc.policy != VN_PCM_POLICY_COPY) return {};
     if (PcmRegisterFaultForTests() == PcmRegisterFault::SampleBacking)
@@ -215,8 +221,7 @@ detail::PcmSampleBuffer StageSamples(const VnPCMDesc& desc) {
     const auto pageBytes = detail::StablePageReservation::SystemPageBytes();
     // Keep compact payloads on the existing page-backed allocation path too.
     // Smaller copies retain their original storage and allocation behavior.
-    if (pageBytes != 0 && pageBytes % alignof(float) == 0 &&
-        count * sizeof(std::int16_t) / pageBytes >= 16 && IsExactInt16(desc, count))
+    if (CanStoreCompactSamples(count, pageBytes) && IsExactInt16(desc, count))
         return CopySamples<std::int16_t>(desc, count, PcmSampleFormat::ExactInt16);
     return CopySamples<float>(desc, count, PcmSampleFormat::Float32);
 }
@@ -461,22 +466,33 @@ bool PCMRegistry::ExtractRetiring(VnSoundId soundId,
 
 VnResult PCMRegistry::PreparePackSamples(
     VnSoundId soundId, const VnPCMDesc* desc, PreparedPackSamples* out,
-    PcmLoopRegion loop) {
+    PcmLoopRegion loop, detail::PackDecodeCharge* staging) {
     if (out == nullptr) return VN_INVALID_ARG;
     if (out->IsPrepared()) return VN_IN_USE;
     const VnResult valid = ValidateDesc(desc);
     if (valid != VN_OK || desc->policy != VN_PCM_POLICY_COPY) return VN_INVALID_ARG;
+    detail::PackDecodeCharge sampleCopy(staging ? staging->Budget() : nullptr);
+    if (staging) {
+        const auto count = static_cast<std::size_t>(desc->frames) * desc->channels;
+        const auto pageBytes = detail::StablePageReservation::SystemPageBytes();
+        // Small copies allocate immediately. Larger copies reserve address space
+        // here and charge their actual representation as Store commits pages.
+        if (!CanStoreCompactSamples(count, pageBytes)) sampleCopy.AddRows<float>(count);
+    }
     PackSampleBuilder builder;
     auto result = BeginPackSamples(soundId, desc, &builder, loop);
     if (result != VN_OK) return result;
+    auto* copyCharge = staging ? &sampleCopy : nullptr;
     if (desc->layout == VN_PCM_LAYOUT_INTERLEAVED) {
         result = builder.Append(desc->samplesInterleaved,
-                                static_cast<std::size_t>(desc->frames) * desc->channels);
+                                static_cast<std::size_t>(desc->frames) * desc->channels, copyCharge);
     } else {
         for (std::uint32_t ch = 0; ch < desc->channels && result == VN_OK; ++ch)
-            result = builder.Append(desc->samplesPlanar[ch], static_cast<std::size_t>(desc->frames));
+            result = builder.Append(desc->samplesPlanar[ch], static_cast<std::size_t>(desc->frames), copyCharge);
     }
-    return result == VN_OK ? builder.Complete(out) : result;
+    if (result == VN_OK) result = builder.Complete(out);
+    if (result == VN_OK && staging) staging->Merge(std::move(sampleCopy));
+    return result;
 }
 
 PcmMediaFacts PCMRegistry::Entry::Facts() const noexcept {
@@ -651,8 +667,7 @@ VnResult PCMRegistry::PackSampleBuilder::PrepareStorage() {
         throw std::bad_alloc{};
     auto& storage = m_entry->ownedSamples;
     const auto pageBytes = detail::StablePageReservation::SystemPageBytes();
-    if (pageBytes != 0 && pageBytes % alignof(float) == 0 &&
-        m_count * sizeof(std::int16_t) / pageBytes >= 16) {
+    if (CanStoreCompactSamples(m_count, pageBytes)) {
         auto& pages = storage.get_deleter().pages;
         pages = std::make_unique<detail::StablePageReservation>();
         if (!pages->Reserve(PackSampleReservationBytes(m_count * sizeof(float)), alignof(float))) {
@@ -668,6 +683,11 @@ VnResult PCMRegistry::PackSampleBuilder::PrepareStorage() {
 }
 
 VnResult PCMRegistry::PackSampleBuilder::Append(const float* samples, std::size_t count) {
+    return Append(samples, count, nullptr);
+}
+
+VnResult PCMRegistry::PackSampleBuilder::Append(const float* samples, std::size_t count,
+                                                detail::PackDecodeCharge* staging) {
     if (m_entry == nullptr) return VN_INVALID_ARG;
     if (m_status != VN_OK) return m_status;
     if (count > m_count - m_written || (count != 0 && samples == nullptr))
@@ -717,14 +737,15 @@ VnResult PCMRegistry::PackSampleBuilder::Append(const float* samples, std::size_
             const auto step = remaining < 256 ? remaining : 256;
             for (std::size_t i = 0; i < step; ++i)
                 restored[i] = readPhysical(candidate->view, m_written + i);
-            const auto result = Store(restored, step);
+            const auto result = Store(restored, step, staging);
             if (result != VN_OK) return result;
         }
     }
-    return Store(samples, count);
+    return Store(samples, count, staging);
 }
 
-VnResult PCMRegistry::PackSampleBuilder::Store(const float* samples, std::size_t count) {
+VnResult PCMRegistry::PackSampleBuilder::Store(const float* samples, std::size_t count,
+                                               detail::PackDecodeCharge* staging) {
     auto& storage = m_entry->ownedSamples;
     auto& view = m_entry->view;
     const bool expand = view.sampleFormat == PcmSampleFormat::ExactInt16 &&
@@ -735,9 +756,14 @@ VnResult PCMRegistry::PackSampleBuilder::Store(const float* samples, std::size_t
     // a system commitment for every bounded input window. Promotion still
     // commits only the additional Float32 pages before expanding the prefix.
     const auto bytes = m_count * (compact ? sizeof(std::int16_t) : sizeof(float));
-    if (storage.get_deleter().pages != nullptr &&
-        !storage.get_deleter().pages->CommitThrough(bytes))
-        return m_status = VN_BACKPRESSURE;
+    if (auto* pages = storage.get_deleter().pages.get()) {
+        if (staging && bytes > pages->CommittedBytes()) {
+            const auto pageBytes = detail::StablePageReservation::SystemPageBytes();
+            const auto target = detail::DecodeBytes(1 + (bytes - 1) / pageBytes, pageBytes);
+            staging->Add(target - pages->CommittedBytes());
+        }
+        if (!pages->CommitThrough(bytes)) return m_status = VN_BACKPRESSURE;
+    }
     auto* destination = static_cast<std::uint8_t*>(storage.get());
     if (expand) {
         for (std::size_t i = m_written; i != 0; --i) {
