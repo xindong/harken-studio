@@ -138,21 +138,20 @@ static_assert(!std::is_copy_constructible_v<PartitionPool::PreparedCommitProof>)
 static_assert(!std::is_copy_constructible_v<PartitionPool::OriginalStoragePin>);
 static_assert(!std::is_aggregate_v<PartitionPool::OriginalStoragePin>);
 
-TEST(EngineQueueScheduleStorage, SharedEnvelopeSurvivesOwnerReleaseAndRetiredBorrower) {
+TEST(EngineQueueScheduleStorage, PreparedSupplySurvivesOwnerReleaseAndRetiredBorrower) {
     using Storage = harken::EngineQueueScheduleStorage;
     Storage storage;
-    ASSERT_TRUE(storage.Configure(3));
     harken::EngineQueueScheduleColumns old;
     Storage::Loan oldLoan;
     ASSERT_TRUE(storage.Acquire(old, {1, 1}, &oldLoan));
     old.events[0].payload = 42;
     const auto* originalEvents = old.events.data();
     Storage::Preparation first, second;
-    ASSERT_TRUE(storage.Prepare({2, 3}, &first));
+    ASSERT_TRUE(storage.Prepare({2, 3}, 3, &first));
     const auto preparedBytes = storage.StorageBytes();
     unsigned allocations = 0;
     const auto refuseAllocation = [&]() noexcept { ++allocations; return false; };
-    ASSERT_TRUE(storage.Prepare({2, 3}, &second, refuseAllocation));
+    ASSERT_TRUE(storage.Prepare({2, 3}, 0, &second, refuseAllocation));
     EXPECT_EQ(0u, allocations);
     EXPECT_EQ(preparedBytes, storage.StorageBytes());
     Storage::Preparation moved(std::move(first));
@@ -163,7 +162,7 @@ TEST(EngineQueueScheduleStorage, SharedEnvelopeSurvivesOwnerReleaseAndRetiredBor
     first.Release();
     EXPECT_FALSE(storage.CollectUnused());
     Storage::Preparation refused;
-    EXPECT_FALSE(storage.Prepare({4, 6}, &refused, refuseAllocation));
+    EXPECT_FALSE(storage.Prepare({4, 6}, 1, &refused, refuseAllocation));
     std::array<harken::EngineQueueScheduleColumns, 3> columns;
     std::array<Storage::Loan, 3> loans;
     ASSERT_TRUE(storage.Acquire(columns[0], {2, 3}, &loans[0], refuseAllocation));
@@ -190,9 +189,8 @@ TEST(EngineQueueScheduleStorage, SharedEnvelopeSurvivesOwnerReleaseAndRetiredBor
 TEST(EngineQueueScheduleStorage, FailedShapeRaisePreservesExistingSupplyAndPointers) {
     using Storage = harken::EngineQueueScheduleStorage;
     Storage storage;
-    ASSERT_TRUE(storage.Configure(3));
     Storage::Preparation baseline;
-    ASSERT_TRUE(storage.Prepare({1, 2}, &baseline));
+    ASSERT_TRUE(storage.Prepare({1, 2}, 2, &baseline));
     std::array<harken::EngineQueueScheduleColumns, 3> columns;
     std::array<Storage::Loan, 3> loans;
     ASSERT_TRUE(storage.Acquire(columns[0], {1, 2}, &loans[0]));
@@ -207,7 +205,7 @@ TEST(EngineQueueScheduleStorage, FailedShapeRaisePreservesExistingSupplyAndPoint
             return true;
         };
         Storage::Preparation refused;
-        EXPECT_FALSE(storage.Prepare({4, 8}, &refused, allowPrefix));
+        EXPECT_FALSE(storage.Prepare({4, 8}, 1, &refused, allowPrefix));
         EXPECT_FALSE(refused.Valid());
         EXPECT_EQ(originalBytes, storage.StorageBytes());
         EXPECT_EQ(originalEvents, columns[0].events.data());
@@ -228,7 +226,6 @@ TEST(EngineQueueScheduleStorage, FailedShapeRaisePreservesExistingSupplyAndPoint
 TEST(EngineQueueScheduleStorage, OrdinaryGrowthUpgradesOnlyOneGroupAndCleanupKeepsLoans) {
     using Storage = harken::EngineQueueScheduleStorage;
     Storage storage;
-    ASSERT_TRUE(storage.Configure(16));
     harken::EngineQueueScheduleColumns columns;
     Storage::Loan loan;
     ASSERT_TRUE(storage.Acquire(columns, {1, 2}, &loan));
@@ -265,12 +262,11 @@ TEST(EngineQueueScheduleStorage, OrdinaryGrowthUpgradesOnlyOneGroupAndCleanupKee
     EXPECT_EQ(0u, storage.StorageBytes());
 }
 
-TEST(EngineQueueScheduleStorage, ZeroShapeAndMovedLoansRespectGlobalCapacity) {
+TEST(EngineQueueScheduleStorage, ZeroShapeAndMovedLoansUseOnlyPreparedRows) {
     using Storage = harken::EngineQueueScheduleStorage;
     Storage storage;
-    ASSERT_TRUE(storage.Configure(2));
     Storage::Preparation preparation;
-    ASSERT_TRUE(storage.Prepare({}, &preparation));
+    ASSERT_TRUE(storage.Prepare({}, 2, &preparation));
     const auto metadataBytes = storage.StorageBytes();
     EXPECT_GT(metadataBytes, 0u);
     std::array<harken::EngineQueueScheduleColumns, 3> columns;

@@ -886,7 +886,6 @@ TEST(QueueProgramBank, OriginalStorageLoansKeepActualDataAndCancelAliasUntilRetu
     static_assert(!std::is_copy_constructible_v<Bank::OriginalReservation>);
     static_assert(!std::is_copy_constructible_v<Bank::OriginalLifetimePin>);
     harken::EngineQueueScheduleStorage storage;
-    ASSERT_TRUE(storage.Configure(2));
     std::vector<Bank> banks(2);
     auto& bank = banks[0];
     Bank::OriginalReservation original;

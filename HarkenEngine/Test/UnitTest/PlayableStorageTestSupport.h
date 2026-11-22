@@ -74,8 +74,7 @@ auto StorageIdentity(const harken::StableRowStorage<T, Index>& rows) {
 
 inline auto CapturePlayableStorage(const harken::Engine& engine) {
     return std::array{
-        StorageIdentity(engine.variableControlRetargetPrograms),
-        StorageIdentity(engine.queueProgramBanks)};
+        StorageIdentity(engine.variableControlRetargetPrograms)};
 }
 
 class PlayableStorageObservation {
@@ -107,6 +106,8 @@ public:
     void CheckStorage() {
         if (!enabled_) return;
         EXPECT_EQ(backing_, CapturePlayableStorage(engine_));
+        if (firstBank_ != nullptr) EXPECT_EQ(firstBank_, engine_.queueProgramBanks.TryAt(0));
+        firstBank_ = engine_.queueProgramBanks.TryAt(0);
         if (firstStart_ != nullptr) EXPECT_EQ(firstStart_, engine_.playableStarts.TryAt(0));
         if (firstService_ != nullptr) EXPECT_EQ(firstService_, engine_.playableServices.TryAt(0));
         if (memberRelationsBase_ != nullptr) EXPECT_EQ(memberRelationsBase_, engine_.memberRelations.TryAt(0));
@@ -167,6 +168,7 @@ private:
         total.reallocationBytes += value.reallocationBytes;
     }
     harken::Engine& engine_;
+    const harken::EngineQueueProgramBank* firstBank_ = nullptr;
     const harken::EnginePlayableStartRow* firstStart_ = nullptr;
     const harken::EnginePlayableServiceRow* firstService_ = nullptr;
     bool enabled_;

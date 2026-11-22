@@ -426,7 +426,7 @@ std::size_t Engine::PreparationStorageBytes() const noexcept {
         column(actionQueueCheckpointResetScratch) + column(actionPlayAttemptTokens) +
         column(initialPendingVariableOwnerScratch) +
         ImmediateEntryAttemptStorageBytes() + PendingSelectionStorageBytes() + CapturedVoiceStorageBytes() +
-        queueProgramBanks.RequestedBytes() + queueProgramBanks.DirectoryBytes() +
+        queueProgramBanks.RequestedBytes() + originalQueueBankHolders.RequestedBytes() +
         queueScheduleStorage.StorageBytes() + bindingBytes +
         timelineStartScratch.starts.RequestedBytes() + timelineStartScratch.transactions.RequestedBytes() +
         timelineStartScratch.extraCommands.RequestedBytes() + timelineStartScratch.queueEvents.RequestedBytes() +
@@ -33438,7 +33438,7 @@ void PrepareQueueLookahead(harken::Engine& engine, harken::EnginePlayableService
     if (!RecordQueueChainFuture(engine, row)) return;
     auto* tail = row.QueueFiling().queueSuccessorProgramBank;
     while (tail->chain.following != nullptr) tail = tail->chain.following;
-    const auto limit = engine.queueProgramBanks.size();
+    const auto limit = engine.voices.AvailableSlotCount();
     for (std::uint32_t count = 0; count < limit; ++count) {
         const auto& source = tail->chain;
         if (engine.voices.AvailableSlotCount() <= 1u) break;
@@ -64465,7 +64465,7 @@ bool Engine::BuildPendingVariableNativeBacking(const EngineImmediateEntryAttempt
         }
         if (nativeVoices > UINT32_MAX || nativeGroups > UINT32_MAX ||
             nativeTransitions > UINT32_MAX || nativeRelations > UINT32_MAX ||
-            queueControls > UINT32_MAX - nativeVoices) return false;
+            queueControls > UINT32_MAX - nativeVoices || queueControls > UINT32_MAX / 2u) return false;
         if (!AllowNativeBackingAllocation()) return shortage();
         auto nativeCandidate = std::make_unique<NativeRuntimeBacking>();
         if (!AllowNativeBackingAllocation()) return shortage();
@@ -64559,7 +64559,8 @@ bool Engine::BuildPendingVariableNativeBacking(const EngineImmediateEntryAttempt
         if (!AllowNativeBackingAllocation()) return shortage();
         nativeCandidate->publicationOwners.resize(producerCount);
         if (queueControls != 0 && !queueScheduleStorage.Prepare(
-                {futures.queue.programs, futures.queue.events}, &nativeCandidate->queueSchedules,
+                {futures.queue.programs, futures.queue.events}, static_cast<std::uint32_t>(2u * queueControls),
+                &nativeCandidate->queueSchedules,
                 [&]() noexcept { return AllowNativeBackingAllocation(); })) return shortage();
         // Queue futures acquire a slot even when their selected schedule has no leaves.
         if (nativeInstances > UINT32_MAX ||
@@ -64567,7 +64568,7 @@ bool Engine::BuildPendingVariableNativeBacking(const EngineImmediateEntryAttempt
             !containerPlayback.PrepareStorage(playableInstances.ConstructedEntryCount()) ||
             !PrepareActionPlayBacking(producerCount, static_cast<std::uint32_t>(queueControls),
                 &nativeCandidate->actionPlays) ||
-            !PrepareQueueProgramBankBacking(queueControls == 0 ? 0u : queueProgramBanks.size(),
+            !PrepareQueueProgramBankBacking(static_cast<std::uint32_t>(2u * queueControls),
                 &nativeCandidate->queueBanks) ||
             (nativeTransitions != 0 && !transitionInstances.PrepareBacking(
                 static_cast<std::uint32_t>(nativeTransitions), &nativeCandidate->transitions)) ||
@@ -65191,7 +65192,7 @@ Engine::PendingOrdinarySelectionResult Engine::ServicePendingOrdinarySelections(
             if ((!holder->nativeMemberBacking.Valid() && !PreparePlayableMemberBacking(1, &holder->nativeMemberBacking)) ||
                 (!holder->nativeRelationBacking.Valid() && !PrepareMemberRelationBacking(1, &holder->nativeRelationBacking)) ||
                 (!holder->nativeProgramBacking.Valid() && !PrepareQueueProgramBankBacking(1, &holder->nativeProgramBacking)) ||
-                (!holder->nativeScheduleBacking.Valid() && !queueScheduleStorage.Prepare({1, 1},
+                (!holder->nativeScheduleBacking.Valid() && !queueScheduleStorage.Prepare({1, 1}, 1,
                     &holder->nativeScheduleBacking, [&]() noexcept { return AllowNativeBackingAllocation(); })))
                 return Result::Waiting;
         }

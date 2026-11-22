@@ -5967,14 +5967,6 @@ inline std::size_t ActionPreparationSlotCapacity(
            config.maxTriggerDepth;
 }
 
-inline std::size_t QueueProgramBankCapacity(const EngineConfig& config) {
-    const auto count = 2ull * config.maxPlayableInstances + config.maxScheduledTransactions;
-    if (count > std::numeric_limits<std::size_t>::max() / sizeof(EngineQueueProgramBank)) {
-        throw std::length_error("Queue program bank capacity overflow");
-    }
-    return static_cast<std::size_t>(count);
-}
-
 inline std::size_t QueueContinuationRecordCapacity(
     const EngineConfig& config) {
     if (config.maxScheduledTransactions == 0 ||
@@ -6147,7 +6139,7 @@ struct Engine {
         StableSlotStorage<EngineActionPlayScratch>::Preparation nativePlayBacking;
         StableStoragePreparation nativeMemberBacking;
         StableStoragePreparation nativeRelationBacking;
-        StableSlotStorage<EngineQueueProgramBank>::Preparation nativeProgramBacking;
+        StableStoragePreparation nativeProgramBacking;
         EngineQueueScheduleStorage::Preparation nativeScheduleBacking;
         EngineFrontierAttemptToken replacement{};
         std::array<EnginePlayableServiceReference, kSelectionPathNodeCapacity> retiredServices{};
@@ -6263,7 +6255,7 @@ struct Engine {
         StableStoragePreparation relations;
         StableStoragePreparation queueFutures;
         StableStoragePreparation transitions;
-        StableSlotStorage<EngineQueueProgramBank>::Preparation queueBanks;
+        StableStoragePreparation queueBanks;
         EngineQueueScheduleStorage::Preparation queueSchedules;
         QueueInstanceTable::BackingPreparation queues;
         QueueCheckpointTable::BackingPreparation checkpoints;
@@ -6287,7 +6279,7 @@ struct Engine {
         StableStoragePreparedUse relations;
         StableStoragePreparedUse queueFutures;
         StableStoragePreparedUse transitions;
-        StableSlotStorage<EngineQueueProgramBank>::PreparedUse queueBanks;
+        StableStoragePreparedUse queueBanks;
         EngineQueueScheduleStorage::PreparedUse queueSchedules;
         QueueInstanceTable::BackingUse queues;
         QueueCheckpointTable::BackingUse checkpoints;
@@ -6314,7 +6306,7 @@ struct Engine {
               relations(backing == nullptr ? StableStoragePreparedUse{} : backing->relations.Use()),
               queueFutures(backing == nullptr ? StableStoragePreparedUse{} : backing->queueFutures.Use()),
               transitions(backing == nullptr ? StableStoragePreparedUse{} : backing->transitions.Use()),
-              queueBanks(backing == nullptr ? StableSlotStorage<EngineQueueProgramBank>::PreparedUse{}
+              queueBanks(backing == nullptr ? StableStoragePreparedUse{}
                   : backing->queueBanks.Use()),
               queueSchedules(backing == nullptr ? EngineQueueScheduleStorage::PreparedUse{}
                   : backing->queueSchedules.Use()),
@@ -7276,12 +7268,9 @@ public:
             !timelineStartScratch.extraCommands.Reserve(kMaxKnownScheduleLeaves) ||
             !timelineStartScratch.queueEvents.Reserve(EngineQueueProgramBank::kEventCapacity)) throw harken::detail::LogicPreparationFailure{};
         const auto playSlotCapacity = ActionPreparationSlotCapacity(resolved);
-        const auto queueBankCapacity = QueueProgramBankCapacity(resolved);
         const auto privateLaneMetadataCapacity = std::max(resolved.maxTransactionEvents,
             resolved.maxKnownScheduleLeaves * 4u);
-        if (playSlotCapacity > UINT32_MAX || queueBankCapacity > UINT32_MAX ||
-            !queueScheduleStorage.Configure(static_cast<std::uint32_t>(queueBankCapacity)) ||
-            !queueProgramBanks.Reserve(static_cast<std::uint32_t>(queueBankCapacity)) ||
+        if (playSlotCapacity > UINT32_MAX ||
             !actionPlayStorage.Reserve(static_cast<std::uint32_t>(playSlotCapacity)) ||
             !pendingOrdinarySelections.Reserve(static_cast<std::uint32_t>(playSlotCapacity)) ||
             !preparedPendingVariableGroups.Reserve(static_cast<std::uint32_t>(playSlotCapacity)) ||
@@ -7428,8 +7417,6 @@ public:
                 static_cast<Engine*>(context)->params.NoteVariableWrite(variable, emitter);
             });
         mixer.InitializeVariableSliceConsumptionStorage();
-        if (!originalQueueBankHolders.Reserve(queueProgramBanks.size()))
-            throw harken::detail::LogicPreparationFailure{};
         if (queueInstances.SupportsOriginalConditionals()) {
             originalQueueReplacementSpans =
                 std::make_unique<PrivateSelectedQueueFutureSpanPool>(UINT32_MAX);
@@ -12575,8 +12562,8 @@ public:
         const EngineQueueProgramBank* bank) noexcept {
         if (bank == nullptr ||
             queueProgramBanks.size() == 0) return nullptr;
-        const auto index = queueProgramBanks.IndexOf(*bank);
-        if (index == UINT32_MAX || !originalQueueBankHolders.IsConstructed(index) ||
+        const auto index = queueProgramBanks.IndexOf(bank);
+        if (index == UINT32_MAX || index >= originalQueueBankHolders.size() ||
             &queueProgramBanks[index] != bank) return nullptr;
         return &originalQueueBankHolders[index];
     }
@@ -12586,13 +12573,15 @@ public:
     }
 
     bool PrepareQueueProgramBankBacking(std::uint32_t count,
-        StableSlotStorage<EngineQueueProgramBank>::Preparation* out) noexcept {
-        return queueProgramBanks.PrepareBacking(count, 0, QueueProgramBankReusable,
-            [this](std::uint32_t slot) noexcept { return PrepareQueueProgramBankSlot(slot); }, out);
-    }
-
-    bool PrepareQueueProgramBankSlot(std::uint32_t slot) noexcept {
-        return originalQueueBankHolders.Emplace(slot) && queueProgramBanks.Emplace(slot);
+        StableStoragePreparation* out) noexcept {
+        std::uint32_t occupied = 0;
+        if (count != 0) {
+            for (const auto& bank : queueProgramBanks)
+                occupied += !QueueProgramBankReusable(bank);
+        }
+        return queueProgramBanks.PrepareBacking(count, occupied, out, [this](std::uint32_t rows) noexcept {
+            return originalQueueBankHolders.ConstructThrough(rows);
+        });
     }
 
     bool PrepareQueueInstanceHolders(std::uint32_t count) noexcept {
@@ -12611,23 +12600,21 @@ public:
     }
 
     EngineQueueProgramBank* ReserveOriginalQueueBank() noexcept {
-        for (std::uint32_t index = 0; index < queueProgramBanks.size(); ++index) {
-            if (!queueProgramBanks.IsConstructed(index)) {
-                if (queueProgramBanks.PreparedUseActive()) continue;
-                if (!PrepareQueueProgramBankSlot(index)) return nullptr;
-            }
-            auto& bank = queueProgramBanks[index];
-            if (!QueueProgramBankReusable(bank)) continue;
-            if (!queueProgramBanks.ProtectBackingForAcquire(index, QueueProgramBankReusable,
-                    [this](std::uint32_t slot) noexcept { return PrepareQueueProgramBankSlot(slot); })) return nullptr;
-            auto& original = originalQueueBankHolders[index];
-            if (!bank.TryReserve(&original.reservation)) continue;
-            if (bank.IssueLifetimePin(original.reservation, &original.baseline)) return &bank;
-            original.reservation.Release();
-            const bool reset = bank.TryResetStorage();
-            assert(reset);
-            (void)reset;
-        }
+        const auto index = queueProgramBanks.FindFreeSlot(UINT32_MAX, QueueProgramBankReusable,
+            [this](std::uint32_t count) noexcept {
+                return queueProgramBanks.ConstructThrough(count, [this](std::uint32_t rows) noexcept {
+                    return originalQueueBankHolders.ConstructThrough(rows);
+                });
+            });
+        if (index == UINT32_MAX) return nullptr;
+        auto& bank = queueProgramBanks[index];
+        auto& original = originalQueueBankHolders[index];
+        if (!bank.TryReserve(&original.reservation)) return nullptr;
+        if (bank.IssueLifetimePin(original.reservation, &original.baseline)) return &bank;
+        original.reservation.Release();
+        const bool reset = bank.TryResetStorage();
+        assert(reset);
+        (void)reset;
         return nullptr;
     }
 
@@ -13986,7 +13973,7 @@ public:
     GrowingRowStorage<DecisionTable::FrontierPublicationProof> initialRootActivationPublicationProofs;
     // Original bank storage outlives every genuine Engine-held loan.
     EngineQueueScheduleStorage queueScheduleStorage;
-    StableSlotStorage<EngineQueueProgramBank> queueProgramBanks;
+    GrowingRowStorage<EngineQueueProgramBank> queueProgramBanks;
     // Original Queue storage outlives every genuine Engine-held loan.
     QueueInstanceTable queueInstances;
     // Bus-topology plan pool: logic constructs plans, the audio thread consumes
@@ -14029,7 +14016,7 @@ public:
     QueueCheckpointTable queueCheckpoints;
     // Fixed, producer-only storage. Copy/reset of service or scratch rows cannot
     // move these native loans. Destruction precedes Pool, Queue table, and banks.
-    StableSlotStorage<OriginalQueueBankHolder> originalQueueBankHolders;
+    GrowingRowStorage<OriginalQueueBankHolder> originalQueueBankHolders;
     GrowingRowStorage<QueueInstanceTable::OriginalLifetimePin> originalQueueLifetimeHolders;
     GrowingRowStorage<OriginalQueueFactoryLifetimeHolder> originalQueueFactoryLifetimeHolders;
     void (*originalQueueFactoryLifetimeHookForTest)(Engine&,

@@ -157,6 +157,7 @@ public:
             if (previous_ != nullptr) previous_->next_ = next_;
             else owner_->preparations_ = next_;
             if (next_ != nullptr) next_->previous_ = previous_;
+            owner_->reserved_ -= count_;
             owner_ = nullptr;
             previous_ = next_ = nullptr;
             shape_ = {};
@@ -168,6 +169,7 @@ public:
             previous_ = std::exchange(other.previous_, nullptr);
             next_ = std::exchange(other.next_, nullptr);
             shape_ = std::exchange(other.shape_, {});
+            count_ = std::exchange(other.count_, 0u);
             if (owner_ == nullptr) return;
             if (previous_ != nullptr) previous_->next_ = this;
             else owner_->preparations_ = this;
@@ -177,6 +179,7 @@ public:
         Preparation* previous_ = nullptr;
         Preparation* next_ = nullptr;
         QueueScheduleShape shape_{};
+        std::uint32_t count_ = 0;
     };
 
     class Loan {
@@ -226,27 +229,18 @@ public:
     EngineQueueScheduleStorage(const EngineQueueScheduleStorage&) = delete;
     EngineQueueScheduleStorage& operator=(const EngineQueueScheduleStorage&) = delete;
 
-    bool Configure(std::uint32_t logicalCapacity) noexcept {
-        if (configured_ || memguard::IsAudioTagged()) return false;
-        logicalCapacity_ = logicalCapacity;
-        configured_ = true;
-        return true;
-    }
-
-    bool Prepare(QueueScheduleShape shape, Preparation* out) noexcept {
-        return Prepare(shape, out, []() noexcept { return true; });
+    bool Prepare(QueueScheduleShape shape, std::uint32_t count, Preparation* out) noexcept {
+        return Prepare(shape, count, out, []() noexcept { return true; });
     }
     template<class AllowAllocation>
-    bool Prepare(QueueScheduleShape shape, Preparation* out, AllowAllocation&& allow) noexcept {
-        if (!configured_ || out == nullptr || out->Valid() || preparedUsers_ != 0 ||
-            memguard::IsAudioTagged()) return false;
+    bool Prepare(QueueScheduleShape shape, std::uint32_t count, Preparation* out, AllowAllocation&& allow) noexcept {
+        if (out == nullptr || out->Valid() || preparedUsers_ != 0 ||
+            count > UINT32_MAX - reserved_ || memguard::IsAudioTagged()) return false;
         RefreshEnvelope();
-        const bool alreadyPrepared = hasEnvelope_ && envelope_.Covers(shape);
         const auto target = QueueScheduleShape::Maximum(envelope_, shape);
+        const auto needed = reserved_ + count;
         std::unique_ptr<Slot> additions;
-        // Existing owners already guarantee the whole global supply for this shape.
-        const auto supplied = alreadyPrepared ? logicalCapacity_ : QualifiedGroups(target);
-        for (auto count = supplied; count < logicalCapacity_; ++count) {
+        for (auto supplied = QualifiedFree(target, needed); supplied < needed; ++supplied) {
             auto slot = AllocateSlot(target, allow);
             if (slot == nullptr) {
                 DestroySlots(additions);
@@ -263,12 +257,13 @@ public:
         }
         out->owner_ = this;
         out->shape_ = shape;
+        out->count_ = count;
+        reserved_ = needed;
         out->next_ = preparations_;
         if (preparations_ != nullptr) preparations_->previous_ = out;
         preparations_ = out;
         envelope_ = target;
-        hasEnvelope_ = true;
-        if (!alreadyPrepared) CollectUnused();
+        CollectUnused();
         return true;
     }
 
@@ -279,16 +274,19 @@ public:
     template<class AllowAllocation>
     bool Acquire(EngineQueueScheduleColumns& columns, QueueScheduleShape actualShape,
         Loan* out, AllowAllocation&& allow) noexcept {
-        if (!configured_ || out == nullptr || out->Valid() || loans_ >= logicalCapacity_ ||
+        if (out == nullptr || out->Valid() || loans_ == UINT32_MAX ||
             columns.borrowed_ || columns.StorageBytes() != 0 || memguard::IsAudioTagged()) return false;
         if (preparedUsers_ == 0) RefreshEnvelope();
         const auto target = QueueScheduleShape::Maximum(envelope_, actualShape);
         Slot** available = &free_;
         while (*available != nullptr && !(*available)->columns.Shape().Covers(target))
             available = &(*available)->freeNext;
-        if (*available == nullptr) {
+        // An ordinary acquisition may not use the last rows promised to pending callers.
+        const bool protect = preparedUsers_ == 0 && reserved_ != 0 &&
+            QualifiedFree(envelope_, static_cast<std::uint64_t>(reserved_) + 1u) <= reserved_;
+        if (*available == nullptr || protect) {
             if (preparedUsers_ != 0) return false;
-            if (free_ != nullptr) {
+            if (!protect && free_ != nullptr) {
                 EngineQueueScheduleColumns replacement;
                 if (!AllocateColumns(replacement, target, allow)) return false;
                 free_->columns.Swap(replacement);
@@ -316,11 +314,7 @@ public:
     bool CollectUnused() noexcept {
         if (preparedUsers_ != 0 || memguard::IsAudioTagged()) return false;
         RefreshEnvelope();
-        std::uint32_t qualifiedLoans = 0;
-        for (auto* slot = slots_.get(); slot != nullptr; slot = slot->next.get())
-            if (slot->borrower != nullptr && slot->Columns().Shape().Covers(envelope_))
-                ++qualifiedLoans;
-        auto keep = hasEnvelope_ ? logicalCapacity_ - qualifiedLoans : 0u;
+        auto keep = reserved_;
         free_ = nullptr;
         auto* link = &slots_;
         while (*link != nullptr) {
@@ -337,7 +331,6 @@ public:
                 *link = std::move(removed->next);
             }
         }
-        assert(!hasEnvelope_ || keep == 0);
         return true;
     }
 
@@ -365,14 +358,13 @@ private:
     void RefreshEnvelope() noexcept {
         assert(preparedUsers_ == 0);
         envelope_ = {};
-        hasEnvelope_ = preparations_ != nullptr;
         for (auto* preparation = preparations_; preparation != nullptr; preparation = preparation->next_)
             envelope_ = QueueScheduleShape::Maximum(envelope_, preparation->shape_);
     }
-    std::uint32_t QualifiedGroups(QueueScheduleShape shape) const noexcept {
+    std::uint32_t QualifiedFree(QueueScheduleShape shape, std::uint64_t limit) const noexcept {
         std::uint32_t count = 0;
-        for (auto* slot = slots_.get(); slot != nullptr && count < logicalCapacity_; slot = slot->next.get())
-            if (slot->Columns().Shape().Covers(shape)) ++count;
+        for (auto* slot = free_; slot != nullptr && count < limit; slot = slot->freeNext)
+            if (slot->columns.Shape().Covers(shape)) ++count;
         return count;
     }
     template<class AllowAllocation>
@@ -404,11 +396,9 @@ private:
     Slot* free_ = nullptr;
     Preparation* preparations_ = nullptr;
     QueueScheduleShape envelope_{};
-    std::uint32_t logicalCapacity_ = 0;
+    std::uint32_t reserved_ = 0;
     std::uint32_t loans_ = 0;
     std::uint32_t preparedUsers_ = 0;
-    bool configured_ = false;
-    bool hasEnvelope_ = false;
 };
 
 } // namespace harken

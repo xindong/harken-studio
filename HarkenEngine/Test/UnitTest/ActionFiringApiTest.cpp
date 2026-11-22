@@ -8560,8 +8560,7 @@ TEST(ActionFiringApi, DelayedStopLastControlArmRefusalLeavesCapturedRootUnchange
     ASSERT_EQ(VN_OK, session.InitResult());
     auto* engine = session.Engine();
     std::vector<float> samples(4096, 0.25f);
-    EXPECT_EQ(2ull * engine->config.maxPlayableInstances + engine->config.maxScheduledTransactions,
-              engine->queueProgramBanks.size());
+    EXPECT_EQ(0u, engine->queueProgramBanks.ConstructedCount());
     ::testing::Test::RecordProperty("queue_program_bank_bytes", static_cast<int>(sizeof(harken::EngineQueueProgramBank)));
     ::testing::Test::RecordProperty("queue_program_bank_capacity", static_cast<int>(engine->queueProgramBanks.size()));
     ::testing::Test::RecordProperty("queue_program_bank_storage_bytes",
@@ -9534,6 +9533,7 @@ static void CheckQueueResetAndScheduledStop(bool deferred, bool refuseCommand, b
     std::vector<harken::EngineQueueProgramBank*> heldBanks;
     std::vector<harken::EngineQueueProgramBank::OriginalLifetimePin> heldBankLoans;
     const auto releaseHeldBanks = [&]() {
+        engine->queueProgramBanks.SetCommitPageLimitForTests(SIZE_MAX);
         while (!heldBanks.empty()) {
             heldBankLoans.back().Release();
             ASSERT_TRUE(engine->ResetOriginalQueueBank(*heldBanks.back()));
@@ -9542,6 +9542,9 @@ static void CheckQueueResetAndScheduledStop(bool deferred, bool refuseCommand, b
         }
     };
     if (availableBanks != UINT32_MAX) {
+        ASSERT_TRUE(engine->queueProgramBanks.ConstructThrough(engine->queueProgramBanks.size() + availableBanks + 1u,
+            [&](std::uint32_t rows) noexcept { return engine->originalQueueBankHolders.ConstructThrough(rows); }));
+        engine->queueProgramBanks.SetCommitPageLimitForTests(0);
         while (auto* bank = engine->ReserveOriginalQueueBank()) {
             auto* original = engine->OriginalQueueBankHolderFor(bank);
             ASSERT_NE(nullptr, original);
@@ -65226,6 +65229,79 @@ TEST(ActionFiringApi,
         EXPECT_TRUE(engine->timelineOccurrences.CancelPreparedAcquire(
             token));
     }
+}
+
+static void CaptureDelayedQueueUnderProgramPressure(bool pressure, std::vector<float>& output) {
+    (void)Vn_Term();
+    harkentest::EngineSession session(
+        harkentest::MakeNullConfig(8, 64, 48000));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    harken::Engine* engine = session.Engine();
+    std::vector<float> first(64, 0.25f);
+    std::vector<float> second(128, 0.125f);
+    const VnPCMDesc firstPcm = harkentest::MonoDesc(first, 48000);
+    const VnPCMDesc secondPcm = harkentest::MonoDesc(second, 48000);
+    ASSERT_EQ(VN_OK,
+              Vn_RegisterPCM(CanonicalActionWorld::kFirstSound, &firstPcm));
+    ASSERT_EQ(VN_OK,
+              Vn_RegisterPCM(CanonicalActionWorld::kSecondSound,
+                             &secondPcm));
+    CanonicalActionWorld image(
+        engine->registry.Lookup(CanonicalActionWorld::kFirstSound)
+            .contentRevision,
+        engine->registry.Lookup(CanonicalActionWorld::kSecondSound)
+            .contentRevision);
+    image.MakeImmediateSequenceQueuePlayAction();
+    image.MakeFirstQueueChildCompositeTrack();
+    {
+        SetAbsoluteTime(&image.steps[11].delay, DelayNanosecondsForTargetFrame(*engine, 4096));
+        image.actions[9].directFeatureMask = image.actions[9].transitiveFeatureMask = 1;
+        image.actions[9].programSemanticFingerprint = harken::ComputeActionProgramFingerprintV1(image.actions[9]);
+        image.world.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV4(image.world);
+    }
+    ASSERT_EQ(harken::WorldInstallStatus::Ok,
+              harken::InstallContainerWorldV1(*engine, image.world).status);
+    VnEmitterHandle emitter = 0;
+    ASSERT_EQ(VN_OK, Vn_CreateEmitter(&emitter));
+
+    auto desc = ValidPostDesc();
+    desc.actionId = image.actions[9].actionStableId;
+    desc.emitter = emitter;
+    VnActionFiringHandle firing = 0;
+    ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
+    std::vector<harken::EngineQueueProgramBank::OriginalLifetimePin> pins;
+    if (pressure) {
+        const auto oldCount = 2u * engine->config.maxPlayableInstances + engine->config.maxScheduledTransactions;
+        for (unsigned i = 0; i <= oldCount; ++i) {
+            auto* bank = engine->ReserveOriginalQueueBank();
+            ASSERT_NE(nullptr, bank);
+            auto* origin = engine->OriginalQueueBankHolderFor(bank);
+            ASSERT_NE(nullptr, origin);
+            ASSERT_TRUE(engine->queueScheduleStorage.Acquire(*bank, {1, 1}, &bank->scheduleStorageLoan));
+            pins.emplace_back();
+            ASSERT_TRUE(origin->baseline.Borrow(&pins.back()));
+        }
+    }
+    for (unsigned block = 0; block < 88; ++block) {
+        engine->nullBackend.Pump(1);
+        const auto* data = engine->nullBackend.LastBlock();
+        output.insert(output.end(), data, data + engine->nullBackend.BlockFrames() * engine->nullBackend.Channels());
+        ASSERT_EQ(VN_OK, Vn_Update());
+    }
+    VnActionFiringInfo info{};
+    info.structSize = sizeof(info);
+    ASSERT_EQ(VN_OK, Vn_QueryActionFiring(firing, &info));
+    EXPECT_EQ(VN_ACTION_OUTCOME_SUCCEEDED, info.outcome);
+    EXPECT_EQ(VN_ACTION_TERMINAL_NATURAL, info.terminalReason);
+    EXPECT_GT(harkentest::Peak(output.data(), output.size()), harkentest::kSilenceFloor);
+    EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
+}
+
+TEST(ActionFiringApi, AcceptedCompositeQueueKeepsItsAudioWhenOtherProgramsFillTheOldPool) {
+    std::vector<float> reference, pressured;
+    ASSERT_NO_FATAL_FAILURE(CaptureDelayedQueueUnderProgramPressure(false, reference));
+    ASSERT_NO_FATAL_FAILURE(CaptureDelayedQueueUnderProgramPressure(true, pressured));
+    EXPECT_TRUE(reference == pressured);
 }
 
 static void CheckCompositePlaybackPastCapacity(bool delayed) {
