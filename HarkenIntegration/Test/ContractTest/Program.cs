@@ -514,8 +514,10 @@ namespace Harken.Test
 
         private static bool CheckCurrentWorldContract()
         {
+#pragma warning disable CS0618
             VnResult result = CurrentWorld.Load(
                 null, out CurrentWorldLoadReport report);
+#pragma warning restore CS0618
             if (result != VnResult.VN_INVALID_ARG ||
                 report.Status !=
                     VnCurrentWorldLoadStatus.VN_CURRENT_WORLD_LOAD_INVALID_ARGUMENT ||

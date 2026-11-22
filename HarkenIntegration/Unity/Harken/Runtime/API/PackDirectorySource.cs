@@ -74,8 +74,6 @@ namespace Harken
             return Path.Combine(directory, name + suffix);
         }
 
-        private bool Publishing() => Exists(Path.Combine(Root, ".harken-pack-publishing"));
-
         private static bool Exists(string path)
         {
             try { File.GetAttributes(path); return true; }
@@ -97,27 +95,24 @@ namespace Harken
 
         private bool PairStillMissing(string name, string language)
         {
-            if (Publishing()) return false;
             using (FileStream bytes = Open(PathFor(name, language, ".bytes")))
             using (FileStream json = Open(PathFor(name, language, ".json")))
-                return bytes == null && json == null && !Publishing();
+                return bytes == null && json == null;
         }
 
         private VnResult CapturePair(string name, string language, out byte[] bytes, out byte[] json)
         {
             bytes = json = null;
-            if (Publishing()) return VnResult.VN_PACK_STALE_REVISION;
             string bytesPath = PathFor(name, language, ".bytes"), jsonPath = PathFor(name, language, ".json");
             using (FileStream binary = Open(bytesPath))
             using (FileStream metadata = Open(jsonPath))
             {
-                if (binary == null && metadata == null)
-                    return PairStillMissing(name, language) ? VnResult.VN_CONTENT_NOT_LOADED : VnResult.VN_PACK_STALE_REVISION;
+                if (binary == null && metadata == null) return VnResult.VN_CONTENT_NOT_LOADED;
                 if (binary == null || metadata == null) return VnResult.VN_BAD_PACK;
                 bytes = Read(binary);
                 json = Read(metadata);
             }
-            return Publishing() ? VnResult.VN_PACK_STALE_REVISION : VnResult.VN_OK;
+            return VnResult.VN_OK;
         }
 
         private static byte[] Read(FileStream stream)
