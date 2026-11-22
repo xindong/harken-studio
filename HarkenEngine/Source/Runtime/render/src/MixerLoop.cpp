@@ -996,7 +996,7 @@ std::uint32_t MixerLoop::DrainCommands(std::uint64_t blockIndex,
     m_buses.ServiceWorkRowRetirements();
     std::uint32_t rawApplied = 0;
     std::uint32_t initialApplied = 0;
-    const auto initialBudget = static_cast<std::uint64_t>(m_voices.Capacity()) * 3u;
+    const auto initialBudget = static_cast<std::uint64_t>(m_voices.ConstructedSlotCount()) * 3u;
     while (const auto* entry = m_commands.InitialSourceAtFront(cut.initialHead)) {
         const auto rawLimit = std::min(cut.rawHead, entry->rawBefore);
         (void)DrainRawCommands(blockIndex, rawLimit, rawApplied);
@@ -1456,6 +1456,12 @@ std::uint32_t MixerLoop::DrainRawCommands(std::uint64_t blockIndex,
             }
             break;
         case kOpcodeStop:
+            if (command.payload.stop.mode == kStopModeCapturedGroup) {
+                for (const auto render : m_commands.GroupStopTargets(command))
+                    m_voices.ApplyStop(render, command.payload.stop.fadeMs, 0,
+                                       m_notifications, blockIndex);
+                break;
+            }
             m_voices.ApplyStop(command.payload.stop.handle,
                                command.payload.stop.fadeMs,
                                command.payload.stop.fadeFrames, m_notifications,

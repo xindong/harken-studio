@@ -289,6 +289,9 @@ VnResult ResolveConfigForInitialDevice(const VnConfig* config,
 
     EngineConfig resolved;
     resolved.automaticRenderVoices = config->maxVoices == 0;
+    resolved.automaticStopTransport = resolved.automaticRenderVoices &&
+        (!hasTransportFields || config->commandQueueDepth == 0) &&
+        (!hasTopologySnapshotFields || config->maxControlCommandsPerQuantum == 0);
     std::uint32_t renderVoiceCapacity = VoiceCapacityModel::kMaxRenderVoices;
     std::uint32_t virtualVoiceCapacity = resolved.voiceCapacity.Virtual();
     resolved.nullDevice = (config->deviceMode == VN_DEVICE_NULL);

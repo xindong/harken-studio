@@ -84,13 +84,16 @@ TEST(VoiceCapacity, DefaultCanMixAnotherVoiceWhileAll256Continue) {
         ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSoundId, &pcm));
         pcm = harkentest::InterleavedDesc(accent, 2u, kSampleRate);
         ASSERT_EQ(VN_OK, Vn_RegisterPCM(extraId, &pcm));
+        VnEmitterHandle emitter{};
+        ASSERT_EQ(VN_OK, Vn_CreateEmitter(&emitter));
         auto play = harkentest::MakePlayDesc(kSoundId);
+        play.emitterHandle = emitter;
         std::array<VnVoiceHandle, 257> handles{};
         for (std::size_t i = 0; i < 256; ++i)
             ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &handles[i])) << i;
         engine.nullBackend.Pump(2);
         ASSERT_EQ(256u, engine.voices.ActiveCount());
-        play = harkentest::MakePlayDesc(extraId);
+        play.soundId = extraId;
         ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &handles.back()));
         engine.nullBackend.Pump(2);
         ASSERT_EQ(257u, engine.voices.ActiveCount());
@@ -108,6 +111,26 @@ TEST(VoiceCapacity, DefaultCanMixAnotherVoiceWhileAll256Continue) {
         EXPECT_EQ(257u, snapshot.activeVoiceCount);
         EXPECT_EQ(0u, snapshot.arenaOverflowCount);
         EXPECT_GE(snapshot.arenaHighWaterBytes, 257u * 2u * kBlockFrames * sizeof(float));
+
+        // A full transport must refuse before any voice is marked or stopped.
+        harken::CommandRecord filler{};
+        filler.opcode = harken::kOpcodeSetBusVolume;
+        filler.payload.setBusVolume.volumeDb = 0.0f;
+        while (engine.commands.HasRoom(1)) ASSERT_TRUE(engine.commands.TryPush(filler));
+        ASSERT_EQ(VN_BACKPRESSURE, workers == 0 ? Vn_StopEmitter(emitter, 0) : Vn_StopAll(0));
+        engine.nullBackend.Pump(1);
+        ASSERT_EQ(257u, engine.voices.ActiveCount());
+
+        ASSERT_EQ(VN_OK, workers == 0 ? Vn_StopEmitter(emitter, 0) : Vn_StopAll(0));
+        VnVoiceHandle later{};
+        ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &later));
+        engine.nullBackend.Pump(1);
+        ASSERT_EQ(VN_OK, Vn_Update());
+        EXPECT_EQ(1u, engine.voices.ActiveCount());
+        EXPECT_NE(0u, harkentest::RenderHandle(&engine, later));
+        for (const auto old : handles)
+            EXPECT_EQ(0u, harkentest::RenderHandle(&engine, old));
+
     }
 }
 

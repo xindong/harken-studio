@@ -138,6 +138,7 @@ struct EngineConfig {
         return automaticRenderVoices ? VoiceCapacityModel::kInitialRenderVoices : voiceCapacity.Render();
     }
     std::uint32_t maxBuses = 1; // Initial Master directory; not an admission limit.
+    bool automaticStopTransport = true;
     std::uint32_t commandQueueDepth = 256;
     // Most control commands one MixQuantum will apply. The drain used to run
     // until the queue was empty, which tied its cost to the queue depth and to

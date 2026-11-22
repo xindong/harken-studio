@@ -77773,11 +77773,41 @@ bool StopTargetSetTouchesGuardedVoice(harken::Engine& engine,
     return blocked;
 }
 
+struct CapturedGroupStop {
+    std::vector<VnVoiceHandle> targets;
+    std::uint32_t slot = UINT32_MAX;
+
+    VnResult Prepare(harken::Engine& engine, VnEmitterHandle emitter,
+                     std::uint32_t direct, std::uint32_t& commands) {
+        if (!engine.config.automaticStopTransport || direct < 2 ||
+            AtomicBatchFitsCapacities(engine, commands)) return VN_OK;
+        slot = engine.commands.PrepareGroupStop();
+        if (slot == UINT32_MAX) return VN_BACKPRESSURE;
+        targets.reserve(direct);
+        engine.ledger.ForEachLive([&](VnVoiceHandle render, std::uint32_t, std::uint64_t, bool) {
+            if (emitter == 0 || engine.params.EmitterHandleOf(render) == emitter)
+                targets.push_back(render);
+        });
+        if (targets.size() != direct) return VN_DEVICE_ERROR;
+        commands -= direct - 1;
+        return VN_OK;
+    }
+
+    bool Publish(harken::Engine& engine, std::uint32_t fadeMs, const harken::MonitorControlCause& cause) {
+        if (slot == UINT32_MAX) return false;
+        for (const auto render : targets) engine.ledger.MarkTerminating(render, cause);
+        if (!engine.commands.PublishGroupStop(slot, std::move(targets), fadeMs))
+            engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
+        return true;
+    }
+};
+
 VnResult StopAllPlayablesCore(harken::Engine& engine, std::uint32_t fadeMs,
-                            std::uint32_t directCommandCount, const harken::MonitorControlCause& cause);
+                            std::uint32_t directCommandCount, const harken::MonitorControlCause& cause,
+                            CapturedGroupStop& group);
 VnResult StopEmitterPlayablesCore(harken::Engine& engine, VnEmitterHandle emitter,
                                 std::uint32_t fadeMs, std::uint32_t directCommandCount,
-                                const harken::MonitorControlCause& cause);
+                                const harken::MonitorControlCause& cause, CapturedGroupStop& group);
 
 VnResult StopAllCore(harken::Engine& engine, std::uint32_t fadeMs,
                      const harken::MonitorControlCause& cause) {
@@ -77795,15 +77825,11 @@ VnResult StopAllCore(harken::Engine& engine, std::uint32_t fadeMs,
         [&](VnVoiceHandle, std::uint32_t, std::uint64_t, bool) {
             ++liveCount;
         });
-    if (!AdmitCommandBatch(engine, liveCount)) {
-        engine.commands.NoteBackpressure();
-        return VN_BACKPRESSURE;
-    }
-
-    const VnResult playables = StopAllPlayablesCore(engine, fadeMs, liveCount, cause);
+    CapturedGroupStop group;
+    const VnResult playables = StopAllPlayablesCore(engine, fadeMs, liveCount, cause, group);
     if (playables != VN_OK) return playables;
-
-    engine.ledger.ForEachLive(
+    if (!group.Publish(engine, fadeMs, cause))
+        engine.ledger.ForEachLive(
         [&](VnVoiceHandle render, std::uint32_t, std::uint64_t, bool) {
             harken::CommandRecord stop{};
             stop.opcode = harken::kOpcodeStop;
@@ -77812,6 +77838,7 @@ VnResult StopAllCore(harken::Engine& engine, std::uint32_t fadeMs,
             engine.ledger.MarkTerminating(render, cause);
             (void)engine.commands.TryPush(stop);
         });
+    if (engine.runtimeRecreateRequired) return VN_RUNTIME_RECREATE_REQUIRED;
     for (const auto& rec : engine.pendingStarts) {
         if (rec.active) {
             const auto slot = engine.pendingStarts.IndexOf(rec);
@@ -112994,6 +113021,7 @@ VnResult Vn_Update(void) {
         // re-enter the drains mid-iteration.
         return VN_OK;
     }
+    engine->commands.ReclaimGroupStops();
     harken::detail::g_callbackExceptionPending = false;
     if (!harken::detail::DispatchRuntimeFault(*engine)) {
         const bool failed = harken::detail::g_callbackExceptionPending;
@@ -121735,10 +121763,11 @@ static VnResult StopEmitterObserved(VnEmitterHandle handle, uint32_t fadeMs,
             ++attachedLive;
         }
     });
-    const VnResult playables = StopEmitterPlayablesCore(*engine, handle, fadeMs, attachedLive, cause);
+    CapturedGroupStop group;
+    const VnResult playables = StopEmitterPlayablesCore(*engine, handle, fadeMs, attachedLive, cause, group);
     if (playables != VN_OK) return playables;
     std::uint32_t stopBatchCount = 0;
-    engine->ledger.ForEachLive([&](VnVoiceHandle render, std::uint32_t,
+    if (!group.Publish(*engine, fadeMs, cause)) engine->ledger.ForEachLive([&](VnVoiceHandle render, std::uint32_t,
                                    std::uint64_t, bool) {
         if (engine->params.EmitterHandleOf(render) != handle) {
             return;
@@ -121761,6 +121790,7 @@ static VnResult StopEmitterObserved(VnEmitterHandle handle, uint32_t fadeMs,
             engine->playLedBatchScratch.data(), stopBatchCount);
         assert(published);
     }
+    if (engine->runtimeRecreateRequired) return VN_RUNTIME_RECREATE_REQUIRED;
     // Pending-start voices attached to this emitter never claimed a slot:
     // cancel them (their deferred start is abandoned and staged effects are
     // released), just as Vn_Stop cancels a pending voice.
@@ -122599,7 +122629,7 @@ void FillResolved(const harken::PackComposition::PublishedView& published,
 
 VnResult StopEmitterPlayablesCore(harken::Engine& engine, VnEmitterHandle emitter,
                                 std::uint32_t fadeMs, std::uint32_t directCommandCount,
-                                const harken::MonitorControlCause& cause) {
+                                const harken::MonitorControlCause& cause, CapturedGroupStop& group) {
     std::uint32_t scratchCount = 0;
     std::uint32_t cancellationCount = 0;
     std::uint32_t commandCount = directCommandCount;
@@ -122620,6 +122650,8 @@ VnResult StopEmitterPlayablesCore(harken::Engine& engine, VnEmitterHandle emitte
         commandCount += scratch.commandCount;
         cancellationCount += scratch.treeCancellationRequired ? 1u : 0u;
     }
+    const auto prepared = group.Prepare(engine, emitter, directCommandCount, commandCount);
+    if (prepared != VN_OK) return prepared;
     // Check the combined DirectVoice and playable demand before changing either.
     if (!AtomicBatchFitsCapacities(engine, commandCount)) return VN_NO_VOICE;
     if (!engine.playableInstances.CanBumpScheduleEpochs(cancellationCount) ||
@@ -122641,7 +122673,8 @@ VnResult StopEmitterPlayablesCore(harken::Engine& engine, VnEmitterHandle emitte
 }
 
 VnResult StopAllPlayablesCore(harken::Engine &engine, std::uint32_t fadeMs,
-                              std::uint32_t directCommandCount, const harken::MonitorControlCause& cause) {
+                              std::uint32_t directCommandCount, const harken::MonitorControlCause& cause,
+                              CapturedGroupStop& group) {
     std::uint32_t scratchCount = 0;
     std::uint32_t cancellationCount = 0;
     std::uint32_t commandCount = directCommandCount;
@@ -122674,6 +122707,8 @@ VnResult StopAllPlayablesCore(harken::Engine &engine, std::uint32_t fadeMs,
         commandCount += scratch.commandCount;
         cancellationCount += scratch.treeCancellationRequired ? 1u : 0u;
     }
+    const auto prepared = group.Prepare(engine, 0, directCommandCount, commandCount);
+    if (prepared != VN_OK) return prepared;
     if (!engine.playableInstances.CanBumpScheduleEpochs(cancellationCount) ||
         !AdmitCommandBatch(engine, commandCount)) {
         engine.commands.NoteBackpressure();
