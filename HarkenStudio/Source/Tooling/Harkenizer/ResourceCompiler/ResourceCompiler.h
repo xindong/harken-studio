@@ -16,12 +16,21 @@ namespace harken::studio::VorbisEncoder { struct EncodedMedia; }
 
 namespace harkenizer::resourcecompiler {
 
+// Serialized once per export input; the same bytes identify control and audible media.
+struct ResidentVorbisBlob {
+    std::vector<std::uint8_t> bytes;
+    std::uint64_t checksum = 0;
+    std::uint64_t revision() const { return checksum ? checksum : 1; }
+};
+std::shared_ptr<const ResidentVorbisBlob> prepareResidentVorbis(
+    const harken::studio::VorbisEncoder::EncodedMedia& media, std::string* error);
+
 struct MediaInput {
     harken::studio::types::ObjectId id{};
     std::string sourcePath;
     std::string contentHash;
     std::shared_ptr<const std::vector<float>> samplesOwner;
-    std::shared_ptr<const harken::studio::VorbisEncoder::EncodedMedia> encodedMedia;
+    std::shared_ptr<const ResidentVorbisBlob> residentVorbis;
     const float* interleavedSamples = nullptr;
     std::size_t sampleCount = 0;
     std::uint32_t sampleRate = 0;
@@ -59,6 +68,7 @@ struct CompiledEntry {
     std::uint64_t relationOrdinal = 0;
     std::vector<std::uint8_t> payload;
     std::shared_ptr<const std::vector<float>> media;
+    std::shared_ptr<const std::vector<std::uint8_t>> encodedBytes;
 };
 
 bool compileEntries(const std::string& logicSections, bool resident,

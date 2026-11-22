@@ -183,7 +183,7 @@ harken> save_project
 
 `get_conversion_results` 仅检查现有缓存，不触发编码。返回 `sources`，每行包含 Sound、Source、语言、`original` 和 `converted`；未转换时 `converted:null`，已有结果带格式、采样率、声道、帧数、字节数、时长和路径。`convert` 使用相同范围，覆盖该平台各工程语言下实际引用预设的有效 Source，同步等待完成后返回 `conversion_result`（`converted/cached/canceled/errors`）与 `sources`。失败返回 `CONVERSION_FAILED`，成功生成的缓存保留。该同步命令不使用旧作业协议：独立 CLI 进程内执行不受异步作业等待期限约束；`--instance` 附加模式仍受 `--timeout` 的传输等待期限约束，等待超时不会取消 Studio 侧正在执行的同步转换。旧 `set_conversion_settings/transcode_asset/batch_convert_media/get_transcode_status/cancel_transcode` 已移除。
 
-Part A 支持 PCM Pack 导出；Vorbis 转换缓存和 Converted 试听通过 Studio 过渡解码可用，但导出仍明确返回 `Vorbis Pack writing is not integrated`。原生 Engine 解码、Vorbis Pack 接入和采样率解耦属于 Part B。
+PCM 和常驻 Vorbis 均可导出。命中 Vorbis 转换规则时，导出器将压缩音频按 Engine 的媒体合同写入最终 Pack。转换缓存和 Converted 试听继续使用 Studio 的转换结果。
 
 ## 两种打包输入
 

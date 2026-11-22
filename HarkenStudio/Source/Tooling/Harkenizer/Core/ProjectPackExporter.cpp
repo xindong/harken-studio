@@ -27,6 +27,7 @@
 #include "PlayablePropertyAuthoringV1.h"
 #include "ProjectPlatformActivity.h"
 #include <harken_studio_build/PackFormat.h>
+#include "Tooling/Harkenizer/ResourceCompiler/ResourceCompiler.h"
 #include "Components/VBus.h"
 #include "Core/Build/PackagingBridge.h"
 #include "ActionStepUtils.h"
@@ -1228,7 +1229,15 @@ bool ProjectPackExporter::CollectMedia(const ProjectData& project,
         desc.authoringSourceId = result.source.sourceId;
         desc.sourcePath = result.conversion->asset.absolutePath;
         desc.interleavedSamples = artifact->samples;
-        desc.encodedMedia = artifact->encodedMedia;
+        if (artifact->encodedMedia) {
+            std::string diagnostic;
+            desc.residentVorbis = harkenizer::resourcecompiler::prepareResidentVorbis(*artifact->encodedMedia, &diagnostic);
+            if (!desc.residentVorbis) {
+                if (errorOut) *errorOut = QString::fromStdString(diagnostic);
+                return false;
+            }
+            desc.encodedFrameCount = artifact->encodedMedia->frameCount;
+        }
         desc.contentHash = artifact->contentHash;
         desc.sampleRate = artifact->sampleRate;
         desc.channels = artifact->channels;
@@ -1239,7 +1248,8 @@ bool ProjectPackExporter::CollectMedia(const ProjectData& project,
             ? bridge::PackMediaFormat::Vorbis : bridge::PackMediaFormat::PcmFloat;
         if (publish) builder.addMedia(desc);
         if (!publish || options.buildPlan) {
-            const auto revision = options.snapshot->derivativeCache->contentRevision(*artifact);
+            const auto revision = desc.residentVorbis ? std::optional<uint64_t>(desc.residentVorbis->revision())
+                : options.snapshot->derivativeCache->contentRevision(*artifact);
             if (!stats || !revision) {
                 if (errorOut) *errorOut = QStringLiteral("Cannot compute converted media revision for Sound %1")
                     .arg(harken::studio::objectIdString(soundId));

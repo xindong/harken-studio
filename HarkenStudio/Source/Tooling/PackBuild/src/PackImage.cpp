@@ -22,7 +22,8 @@ namespace harken::studio::build {
 namespace {
 bool ValidateV2MediaEntry(const PackTocEntry& e, std::uint64_t fileBytes,
                           std::uint64_t blobRegionStart) {
-    if (e.sampleFormat != HK_PACK_SAMPLE_FORMAT_F32_PLANAR) {
+    const bool vorbis = e.sampleFormat == HK_PACK_SAMPLE_FORMAT_VORBIS_RESIDENT;
+    if (!vorbis && e.sampleFormat != HK_PACK_SAMPLE_FORMAT_F32_PLANAR) {
         return false;
     }
     if ((e.flags & ~HK_PACK_MEDIA_KNOWN_FLAGS) != 0) {
@@ -33,10 +34,11 @@ bool ValidateV2MediaEntry(const PackTocEntry& e, std::uint64_t fileBytes,
         return false;
     }
     const std::uint64_t channels = e.channelCount;
-    if (e.frameCount > UINT64_MAX / (channels * sizeof(float))) {
-        return false;
-    }
-    if (e.blobBytes != e.frameCount * channels * sizeof(float)) {
+    if (vorbis) {
+        if ((channels != 1 && channels != 2 && channels != 4 && channels != 6 && channels != 8) ||
+            e.blobBytes < sizeof(HkPackVorbisHeader)) return false;
+    } else if (e.frameCount > UINT64_MAX / (channels * sizeof(float)) ||
+               e.blobBytes != e.frameCount * channels * sizeof(float)) {
         return false;
     }
     if (e.blobOffset % HK_PACK_BLOB_ALIGN != 0) {

@@ -3867,21 +3867,25 @@ TEST(ProjectPackExport, EffectiveMediaChangesRebuildOnlyTheirConsumers)
     const auto publishedReport = mediaReport(inherited);
     ASSERT_NO_FATAL_FAILURE(expectPcmReport(publishedReport));
     const auto published = readFileBytes(context.live.filePath(QStringLiteral("One.bytes")));
-    const auto publishedPackMetadata = readFileBytes(context.live.filePath(QStringLiteral("One.json")));
     firstConfig->rules.front().setFormat(ConversionFormat::Vorbis);
-    const auto refused = build();
-    EXPECT_FALSE(refused.allPlatformsSucceeded);
-    QString diagnostic = refused.preflightError;
-    for (const auto& platform : refused.platforms) diagnostic += platform.result.error;
-    EXPECT_TRUE(diagnostic.contains(QStringLiteral("Vorbis Pack writing is not integrated")))
-        << diagnostic.toStdString();
-    EXPECT_EQ(readFileBytes(context.live.filePath(QStringLiteral("One.bytes"))), published);
-    EXPECT_EQ(readFileBytes(context.live.filePath(QStringLiteral("One.json"))), publishedPackMetadata);
-    const auto refusedReport = mediaReport(refused);
-    ASSERT_EQ(refusedReport.size(), 2);
-    EXPECT_EQ(refusedReport.value(QStringLiteral("Two.bytes")),
-        publishedReport.value(QStringLiteral("Two.bytes")));
-    const auto encodedReport = refusedReport.value(QStringLiteral("One.bytes"));
+    const auto compressed = build();
+    QString diagnostic = compressed.preflightError;
+    for (const auto& platform : compressed.platforms) diagnostic += platform.result.error;
+    ASSERT_TRUE(compressed.allPlatformsSucceeded) << diagnostic.toStdString();
+    ASSERT_TRUE(compressed.finalizationResult.success) << compressed.finalizationResult.error.toStdString();
+    const auto packed = readFileBytes(context.live.filePath(QStringLiteral("One.bytes")));
+    EXPECT_NE(packed, published);
+    harken::studio::build::PackCanonicalImage compressedImage;
+    ASSERT_EQ(VN_OK, harken::studio::build::ParsePackCanonicalImage(
+        reinterpret_cast<const uint8_t*>(packed.constData()), static_cast<uint64_t>(packed.size()), &compressedImage));
+    ASSERT_EQ(compressedImage.media.size(), 1u);
+    const auto& compressedMedia = compressedImage.media.front();
+    ASSERT_EQ(compressedMedia.sampleFormat, HK_PACK_SAMPLE_FORMAT_VORBIS_RESIDENT);
+    EXPECT_EQ(compressedMedia.sampleRate, 32000u);
+    const auto compressedReport = mediaReport(compressed);
+    ASSERT_EQ(compressedReport.size(), 2);
+    EXPECT_EQ(compressedReport.value(QStringLiteral("Two.bytes")), publishedReport.value(QStringLiteral("Two.bytes")));
+    const auto encodedReport = compressedReport.value(QStringLiteral("One.bytes"));
     EXPECT_EQ(encodedReport.value(QStringLiteral("format")).toString(), QStringLiteral("Vorbis"));
     const auto* asset = AssetRegistry::instance().getAsset(source.sourceId);
     ASSERT_NE(asset, nullptr);

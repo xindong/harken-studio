@@ -1335,11 +1335,21 @@ bool collectExistingEntries(const QString& sourcePath,
                 record.size);
         if (record.kind == HK_PACK_ENTRY_KIND_MEDIA) {
             const harken::studio::build::PackTocEntry toc = harken::studio::build::ReadPackMedia(entry.payload.data());
-            entry.media = mediaCache.intern(
-                reinterpret_cast<const std::uint8_t*>(bytes.constData()) + toc.blobOffset,
-                static_cast<std::size_t>(toc.blobBytes), toc.blobChecksum);
-            if (!entry.media) {
-                if (error) *error = QStringLiteral("Pack '%1' contains invalid PCM media").arg(sourcePath);
+            const auto size = static_cast<uint64_t>(bytes.size());
+            if (toc.blobOffset > size || toc.blobBytes > size - toc.blobOffset) {
+                if (error) *error = QStringLiteral("Pack '%1' contains an invalid media extent").arg(sourcePath);
+                return false;
+            }
+            const auto* blob = reinterpret_cast<const uint8_t*>(bytes.constData()) + toc.blobOffset;
+            if (toc.sampleFormat == HK_PACK_SAMPLE_FORMAT_VORBIS_RESIDENT) {
+                if (harken::studio::build::Fnv1a64(blob, toc.blobBytes) != toc.blobChecksum) {
+                    if (error) *error = QStringLiteral("Pack '%1' contains invalid Vorbis media").arg(sourcePath);
+                    return false;
+                }
+                entry.encodedBytes = std::make_shared<const std::vector<uint8_t>>(blob, blob + toc.blobBytes);
+            } else if (toc.sampleFormat != HK_PACK_SAMPLE_FORMAT_F32_PLANAR ||
+                       !(entry.media = mediaCache.intern(blob, static_cast<size_t>(toc.blobBytes), toc.blobChecksum))) {
+                if (error) *error = QStringLiteral("Pack '%1' contains invalid media").arg(sourcePath);
                 return false;
             }
         }
@@ -1390,12 +1400,12 @@ bool PackBuildSession::buildEntries(std::vector<CanonicalPackEntry>* entries)
             input.loopStartFrame = source.loopStartFrame;
             input.loopEndFrame = source.loopEndFrame;
             if (source.format == PackMediaFormat::Vorbis) {
-                if (!source.encodedMedia) {
+                if (!source.residentVorbis) {
                     impl_->lastError = QStringLiteral("Encoded build input is unavailable: %1").arg(source.sourcePath);
                     return false;
                 }
-                input.encodedMedia = source.encodedMedia;
-                input.frameCount = source.encodedMedia->frameCount;
+                input.residentVorbis = source.residentVorbis;
+                input.frameCount = source.encodedFrameCount;
             } else if (source.interleavedSamples) {
                 input.samplesOwner = source.interleavedSamples;
                 input.interleavedSamples = source.interleavedSamples->data();
@@ -1434,6 +1444,7 @@ bool PackBuildSession::buildEntries(std::vector<CanonicalPackEntry>* entries)
         entry.relationOrdinal = source.relationOrdinal;
         entry.payload = std::move(source.payload);
         entry.media = std::move(source.media);
+        entry.encodedBytes = std::move(source.encodedBytes);
         entries->push_back(std::move(entry));
     }
     return impl_->appendEffectPresetEntries(entries);
@@ -1466,7 +1477,7 @@ QString PackBuildSession::inputFingerprint()
                 {QStringLiteral("loopEndFrame"), static_cast<qint64>(source.loopEndFrame)}};
             hash.addData(QJsonDocument(identity).toJson(QJsonDocument::Compact));
             if (source.format == PackMediaFormat::Vorbis) {
-                if (!source.encodedMedia || source.contentHash.isEmpty()) {
+                if (!source.residentVorbis || source.contentHash.isEmpty()) {
                     impl_->lastError = QStringLiteral("Encoded build input is unavailable: %1").arg(source.sourcePath);
                     return {};
                 }
