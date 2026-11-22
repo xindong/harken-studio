@@ -25982,9 +25982,9 @@ TEST(PlayableStart,
     EXPECT_EQ(480u, audibleRuns[1]);
 }
 
-TEST(PlayableStart,
-     ActionQueueMixedTrackOutsideHorizonWaitsForLogicalBoundary) {
-    VnConfig config = harkentest::MakeNullConfig(4, 64, 48000);
+template <class Verify>
+void WithQueuedLandingSound(unsigned blockFrames, unsigned delayBlocks, Verify&& verify) {
+    VnConfig config = harkentest::MakeNullConfig(4, blockFrames, 48000);
     harkentest::EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -25999,7 +25999,8 @@ TEST(PlayableStart,
         engine->registry.Lookup(kSound).contentRevision,
         engine->registry.Lookup(kSecondSound).contentRevision);
     const std::uint64_t futureOffsetFrames =
-        engine->timelinePool.WindowEndFrame() + config.blockFrames;
+        delayBlocks ? static_cast<std::uint64_t>(delayBlocks) * config.blockFrames
+                    : engine->timelinePool.WindowEndFrame() + config.blockFrames;
     image.schedule.placements[1].authoredStart = static_cast<std::int64_t>(
         (futureOffsetFrames * UINT64_C(1000000000) + 47999u) / 48000u);
     image.schedule.placements[1].authoredDuration = 1;
@@ -26062,134 +26063,194 @@ TEST(PlayableStart,
     desc.structSize = sizeof(desc);
     desc.actionId = action.actionStableId;
     ASSERT_EQ(VN_OK, Vn_CreateEmitter(&desc.emitter));
-    VnActionFiringHandle firing = 0;
-    ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
-    VnActionStepResult result{};
-    result.structSize = sizeof(result);
-    ASSERT_EQ(VN_OK, Vn_QueryActionStep(firing, 0, &result));
-    ASSERT_NE(0u, result.producedPlayableInstance);
-    const auto row = std::find_if(
-        engine->playableServices.begin(), engine->playableServices.end(),
-        [&](const harken::EnginePlayableServiceRow& candidate) {
-            return candidate.rootInstance == result.producedPlayableInstance;
-        });
-    ASSERT_NE(engine->playableServices.end(), row);
-    ASSERT_TRUE(row->hasZeroWorkCompletion);
-    const harken::QueueInstanceToken queue = row->queueInstance;
-    // Qualify the outside-horizon preparation at acceptance. By the genuine
-    // audio receipt below, the moving Page window may already cover the boundary.
-    ASSERT_GT(row->zeroWorkCompletionFrame, engine->timelinePool.WindowEndFrame());
-    EXPECT_TRUE(row->queueDeferredNeedsFullPreparation);
-    ASSERT_FALSE(row->queueContinuationPrepared);
-    // Read the accepted anchor after this firing's genuine initial lane receipt.
-    const auto beforeStart = engine->mixer.BlocksRendered();
-    for (std::uint32_t block = 0; block < 32 &&
-         (row->queueTimingPending || row->lastAppliedBlockSequence == 0); ++block) {
-        ASSERT_EQ(VN_OK, Vn_Update());
-        const auto previous = engine->mixer.BlocksRendered();
-        engine->nullBackend.Pump(1);
-        ASSERT_EQ(previous + 1u, engine->mixer.BlocksRendered());
-    }
-    ASSERT_EQ(VN_OK, Vn_Update());
-    ASSERT_FALSE(row->queueTimingPending);
-    ASSERT_GT(row->lastAppliedBlockSequence, beforeStart);
-    ASSERT_LE(row->lastAppliedBlockSequence, engine->mixer.BlocksRendered());
-    const std::uint64_t expectedBoundary = row->zeroWorkCompletionFrame;
-    EXPECT_EQ(row->startFrame + futureOffsetFrames, expectedBoundary);
+    verify(engine, config, desc, futureOffsetFrames);
+}
 
-    bool heardSuccessorEarly = false;
-    bool queueAdvancedEarly = false;
-    while ((engine->mixer.BlocksRendered() + 1u) *
-               engine->config.blockFrames <= expectedBoundary) {
+TEST(PlayableStart, ActionQueueMixedTrackOutsideHorizonWaitsForLogicalBoundary) {
+    WithQueuedLandingSound(64, 0, [](auto* engine, auto config, auto desc, auto futureOffsetFrames) {
+        VnActionFiringHandle firing = 0;
+        ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
+        VnActionStepResult result{};
+        result.structSize = sizeof(result);
+        ASSERT_EQ(VN_OK, Vn_QueryActionStep(firing, 0, &result));
+        ASSERT_NE(0u, result.producedPlayableInstance);
+        const auto row = std::find_if(
+            engine->playableServices.begin(), engine->playableServices.end(),
+            [&](const harken::EnginePlayableServiceRow& candidate) {
+                return candidate.rootInstance == result.producedPlayableInstance;
+            });
+        ASSERT_NE(engine->playableServices.end(), row);
+        ASSERT_TRUE(row->hasZeroWorkCompletion);
+        const harken::QueueInstanceToken queue = row->queueInstance;
+        // Qualify the outside-horizon preparation at acceptance. By the genuine
+        // audio receipt below, the moving Page window may already cover the boundary.
+        ASSERT_GT(row->zeroWorkCompletionFrame, engine->timelinePool.WindowEndFrame());
+        EXPECT_TRUE(row->queueDeferredNeedsFullPreparation);
+        ASSERT_FALSE(row->queueContinuationPrepared);
+        // Read the accepted anchor after this firing's genuine initial lane receipt.
+        const auto beforeStart = engine->mixer.BlocksRendered();
+        for (std::uint32_t block = 0; block < 32 &&
+             (row->queueTimingPending || row->lastAppliedBlockSequence == 0); ++block) {
+            ASSERT_EQ(VN_OK, Vn_Update());
+            const auto previous = engine->mixer.BlocksRendered();
+            engine->nullBackend.Pump(1);
+            ASSERT_EQ(previous + 1u, engine->mixer.BlocksRendered());
+        }
         ASSERT_EQ(VN_OK, Vn_Update());
-        engine->nullBackend.Pump(1);
-        const float* output = engine->nullBackend.LastBlock();
-        for (std::uint32_t frame = 0;
-             frame < engine->config.blockFrames; ++frame) {
-            heardSuccessorEarly = heardSuccessorEarly ||
-                output[frame * engine->nullBackend.Channels()] < -0.1f;
-        }
-        harken::QueueInstanceSnapshot snapshot{};
-        if (!engine->queueInstances.Capture(queue, &snapshot) ||
-            snapshot.logicMirror.version != 1u ||
-            snapshot.logicMirror.currentChildOrdinal != 7u) {
-            queueAdvancedEarly = true;
-        }
-    }
-    EXPECT_FALSE(heardSuccessorEarly);
-    EXPECT_FALSE(queueAdvancedEarly);
-    EXPECT_TRUE(row->queueContinuationPrepared)
-        << "deferred=" << row->queueDeferredNeedsFullPreparation
-        << " parent=" << row->parentService.Valid()
-        << " composite=" << row->QueuePayload().queueCurrentCompositeOwner.Valid()
-        << " natural=" << row->queueNaturalEnd
-        << " completion=" << row->QueuePayload().queueCompletionFrame
-        << " lifecycle=" << static_cast<std::uint32_t>(row->controlLifecycle)
-        << " reason=" << static_cast<std::uint32_t>(row->controlReason)
-        << " deferredSource="
-        << (row->QueueDeferredSource().arm.Valid() ||
-            row->QueueDeferredSource().service.Valid())
-        << " windowEnd=" << engine->timelinePool.WindowEndFrame()
-        << " boundary=" << expectedBoundary;
-    EXPECT_EQ(expectedBoundary, row->QueueFiling().queueTransitionEndFrame);
-    harken::QueueInstanceSnapshot beforeBoundary{};
-    ASSERT_TRUE(engine->queueInstances.Capture(
-        queue, &beforeBoundary));
-    EXPECT_EQ(1u, beforeBoundary.logicMirror.version);
-    EXPECT_EQ(7u, beforeBoundary.logicMirror.currentChildOrdinal);
+        ASSERT_FALSE(row->queueTimingPending);
+        ASSERT_GT(row->lastAppliedBlockSequence, beforeStart);
+        ASSERT_LE(row->lastAppliedBlockSequence, engine->mixer.BlocksRendered());
+        const std::uint64_t expectedBoundary = row->zeroWorkCompletionFrame;
+        EXPECT_EQ(row->startFrame + futureOffsetFrames, expectedBoundary);
 
-    std::uint64_t firstSuccessorFrame = UINT64_MAX;
-    for (std::uint32_t block = 0;
-         block < 256 && firstSuccessorFrame == UINT64_MAX; ++block) {
-        ASSERT_EQ(VN_OK, Vn_Update());
-        engine->nullBackend.Pump(1);
-        const float* output = engine->nullBackend.LastBlock();
-        const std::uint64_t blockStart =
-            (engine->mixer.BlocksRendered() - 1u) *
-            engine->config.blockFrames;
-        for (std::uint32_t frame = 0;
-             frame < engine->config.blockFrames; ++frame) {
-            if (output[frame * engine->nullBackend.Channels()] < -0.1f) {
-                firstSuccessorFrame = blockStart + frame;
-                break;
+        bool heardSuccessorEarly = false;
+        bool queueAdvancedEarly = false;
+        while ((engine->mixer.BlocksRendered() + 1u) *
+                   engine->config.blockFrames <= expectedBoundary) {
+            ASSERT_EQ(VN_OK, Vn_Update());
+            engine->nullBackend.Pump(1);
+            const float* output = engine->nullBackend.LastBlock();
+            for (std::uint32_t frame = 0;
+                 frame < engine->config.blockFrames; ++frame) {
+                heardSuccessorEarly = heardSuccessorEarly ||
+                    output[frame * engine->nullBackend.Channels()] < -0.1f;
+            }
+            harken::QueueInstanceSnapshot snapshot{};
+            if (!engine->queueInstances.Capture(queue, &snapshot) ||
+                snapshot.logicMirror.version != 1u ||
+                snapshot.logicMirror.currentChildOrdinal != 7u) {
+                queueAdvancedEarly = true;
             }
         }
-    }
-    EXPECT_EQ(expectedBoundary, firstSuccessorFrame);
-    harken::QueueInstanceSnapshot activated{};
-    if (engine->queueInstances.Capture(queue, &activated)) {
-        EXPECT_EQ(harken::QueueFailurePhase::Healthy,
-                  activated.failurePhase);
-        EXPECT_TRUE(
-            activated.pendingActivation ==
-                harken::ConditionalQueueActivation::Activated ||
-            activated.logicMirror.version == 2u);
-    } else {
-        EXPECT_EQ(0u, engine->queueInstances.LiveCount());
-    }
-    ASSERT_EQ(VN_OK, Vn_Update());
-    harken::QueueInstanceSnapshot settled{};
-    if (engine->queueInstances.Capture(queue, &settled)) {
-        EXPECT_EQ(harken::QueueFailurePhase::Healthy,
-                  settled.failurePhase);
-        EXPECT_EQ(2u, settled.logicMirror.version);
-        EXPECT_EQ(8u, settled.logicMirror.currentChildOrdinal);
-    } else {
-        EXPECT_EQ(0u, engine->queueInstances.LiveCount());
-    }
+        EXPECT_FALSE(heardSuccessorEarly);
+        EXPECT_FALSE(queueAdvancedEarly);
+        EXPECT_TRUE(row->queueContinuationPrepared)
+            << "deferred=" << row->queueDeferredNeedsFullPreparation
+            << " parent=" << row->parentService.Valid()
+            << " composite=" << row->QueuePayload().queueCurrentCompositeOwner.Valid()
+            << " natural=" << row->queueNaturalEnd
+            << " completion=" << row->QueuePayload().queueCompletionFrame
+            << " lifecycle=" << static_cast<std::uint32_t>(row->controlLifecycle)
+            << " reason=" << static_cast<std::uint32_t>(row->controlReason)
+            << " deferredSource="
+            << (row->QueueDeferredSource().arm.Valid() ||
+                row->QueueDeferredSource().service.Valid())
+            << " windowEnd=" << engine->timelinePool.WindowEndFrame()
+            << " boundary=" << expectedBoundary;
+        EXPECT_EQ(expectedBoundary, row->QueueFiling().queueTransitionEndFrame);
+        harken::QueueInstanceSnapshot beforeBoundary{};
+        ASSERT_TRUE(engine->queueInstances.Capture(
+            queue, &beforeBoundary));
+        EXPECT_EQ(1u, beforeBoundary.logicMirror.version);
+        EXPECT_EQ(7u, beforeBoundary.logicMirror.currentChildOrdinal);
 
-    VnActionFiringInfo info{};
-    info.structSize = sizeof(info);
-    for (std::uint32_t block = 0; block < 32; ++block) {
-        ASSERT_EQ(VN_OK, Vn_QueryActionFiring(firing, &info));
-        if (info.state == VN_ACTION_FIRING_TERMINAL_RETAINED) break;
-        engine->nullBackend.Pump(1);
+        std::uint64_t firstSuccessorFrame = UINT64_MAX;
+        for (std::uint32_t block = 0;
+             block < 256 && firstSuccessorFrame == UINT64_MAX; ++block) {
+            ASSERT_EQ(VN_OK, Vn_Update());
+            engine->nullBackend.Pump(1);
+            const float* output = engine->nullBackend.LastBlock();
+            const std::uint64_t blockStart =
+                (engine->mixer.BlocksRendered() - 1u) *
+                engine->config.blockFrames;
+            for (std::uint32_t frame = 0;
+                 frame < engine->config.blockFrames; ++frame) {
+                if (output[frame * engine->nullBackend.Channels()] < -0.1f) {
+                    firstSuccessorFrame = blockStart + frame;
+                    break;
+                }
+            }
+        }
+        EXPECT_EQ(expectedBoundary, firstSuccessorFrame);
+        harken::QueueInstanceSnapshot activated{};
+        if (engine->queueInstances.Capture(queue, &activated)) {
+            EXPECT_EQ(harken::QueueFailurePhase::Healthy,
+                      activated.failurePhase);
+            EXPECT_TRUE(
+                activated.pendingActivation ==
+                    harken::ConditionalQueueActivation::Activated ||
+                activated.logicMirror.version == 2u);
+        } else {
+            EXPECT_EQ(0u, engine->queueInstances.LiveCount());
+        }
         ASSERT_EQ(VN_OK, Vn_Update());
-    }
-    ASSERT_EQ(VN_ACTION_FIRING_TERMINAL_RETAINED, info.state);
-    EXPECT_EQ(VN_ACTION_OUTCOME_SUCCEEDED, info.outcome);
-    EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
-    EXPECT_EQ(VN_OK, Vn_DestroyEmitter(desc.emitter));
+        harken::QueueInstanceSnapshot settled{};
+        if (engine->queueInstances.Capture(queue, &settled)) {
+            EXPECT_EQ(harken::QueueFailurePhase::Healthy,
+                      settled.failurePhase);
+            EXPECT_EQ(2u, settled.logicMirror.version);
+            EXPECT_EQ(8u, settled.logicMirror.currentChildOrdinal);
+        } else {
+            EXPECT_EQ(0u, engine->queueInstances.LiveCount());
+        }
+
+        VnActionFiringInfo info{};
+        info.structSize = sizeof(info);
+        for (std::uint32_t block = 0; block < 32; ++block) {
+            ASSERT_EQ(VN_OK, Vn_QueryActionFiring(firing, &info));
+            if (info.state == VN_ACTION_FIRING_TERMINAL_RETAINED) break;
+            engine->nullBackend.Pump(1);
+            ASSERT_EQ(VN_OK, Vn_Update());
+        }
+        ASSERT_EQ(VN_ACTION_FIRING_TERMINAL_RETAINED, info.state);
+        EXPECT_EQ(VN_ACTION_OUTCOME_SUCCEEDED, info.outcome);
+        EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
+        EXPECT_EQ(VN_OK, Vn_DestroyEmitter(desc.emitter));
+    });
+}
+
+TEST(PlayableStart, StaggeredSkillsKeepEachLandingSoundAndCancelIndependently) {
+    constexpr unsigned count = 257, spacing = 12, tail = count * spacing + 128;
+    WithQueuedLandingSound(256, tail, [&](auto* engine, auto config, auto desc, auto futureOffsetFrames) {
+        std::array<VnActionFiringHandle, count> firings{};
+        std::array<std::uint64_t, count> roots{}, boundaries{};
+        std::vector<std::uint64_t> landingOnsets;
+        bool previous = false;
+        for (unsigned block = 0; block < tail + count * spacing + 32; ++block) {
+            if (block % spacing == 0 && block / spacing < count) {
+                const unsigned i = block / spacing;
+                const auto slots = engine->voices.AvailableSlotCount();
+                ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firings[i])) << "request " << i << ", available voices " << slots;
+                VnActionStepResult step{};
+                step.structSize = sizeof(step);
+                ASSERT_EQ(VN_OK, Vn_QueryActionStep(firings[i], 0, &step));
+                roots[i] = step.producedPlayableInstance;
+                ASSERT_NE(0u, roots[i]);
+            }
+            if (block == count * spacing + 8) {
+                for (unsigned i = 0; i < count; ++i) {
+                    const auto root = roots[i];
+                    ASSERT_TRUE(engine->playableInstances.Classify(root).live) << i;
+                    const auto row = std::find_if(engine->playableServices.begin(), engine->playableServices.end(),
+                        [&](const auto& service) { return service.rootInstance == root; });
+                    ASSERT_NE(engine->playableServices.end(), row);
+                    ASSERT_EQ(row->startFrame + futureOffsetFrames, row->zeroWorkCompletionFrame);
+                    boundaries[i] = row->zeroWorkCompletionFrame;
+                    if (i % 5 == 0) ASSERT_EQ(VN_OK, Vn_StopActionFiring(firings[i], 0)) << i;
+                }
+            }
+            ASSERT_EQ(VN_OK, Vn_Update());
+            engine->nullBackend.Pump(1);
+            const auto* data = engine->nullBackend.LastBlock();
+            for (unsigned frame = 0; frame < config.blockFrames; ++frame) {
+                const bool sounding = data[frame * engine->nullBackend.Channels()] < -0.1f;
+                if (sounding && !previous) landingOnsets.push_back(static_cast<std::uint64_t>(block) * config.blockFrames + frame);
+                previous = sounding;
+            }
+        }
+        std::vector<std::uint64_t> expected;
+        for (unsigned i = 0; i < count; ++i) {
+            VnActionFiringInfo info{};
+            info.structSize = sizeof(info);
+            ASSERT_EQ(VN_OK, Vn_QueryActionFiring(firings[i], &info));
+            ASSERT_EQ(i % 5 == 0 ? VN_ACTION_OUTCOME_CANCELLED : VN_ACTION_OUTCOME_SUCCEEDED, info.outcome) << i;
+            if (i % 5) expected.push_back(boundaries[i]);
+            ASSERT_EQ(VN_OK, Vn_ReleaseActionFiring(firings[i]));
+        }
+        EXPECT_EQ(expected, landingOnsets);
+        EXPECT_EQ(0u, engine->playableInstances.LiveCount());
+        EXPECT_EQ(0u, engine->actionFirings.LiveCount());
+    });
 }
 
 TEST(PlayableStart,

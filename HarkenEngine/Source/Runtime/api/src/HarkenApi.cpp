@@ -32863,6 +32863,13 @@ QueueContinuationPrepareStatus PrepareQueueContinuationReady(
         return frame >= engine.timelinePool.WindowStartFrame() &&
                frame < engine.timelinePool.WindowEndFrame();
     };
+    // A distant successor may enter the page window while every voice is
+    // temporarily held by earlier arrivals. Retry before its first required event.
+    const auto firstRequired = std::min(successorAnchorFrame, sourceControlRequired ? sourcePhaseFrame : successorStartFrame);
+    if (row.queueDeferredNeedsFullPreparation &&
+        firstRequired > QueueEarliestContinuationFrame(engine) &&
+        (!engine.voices.HasFreeSlot() || !engine.ledger.HasFreeEntry()))
+        return QueueContinuationPrepareStatus::Deferred;
     if (!std::isfinite(voice.outputBusVolumeDb) ||
         !std::isfinite(voice.volumeDb) ||
         !std::isfinite(voice.pitchRatio) || voice.pitchRatio <= 0.0f ||
@@ -61535,7 +61542,9 @@ engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
                     latestScheduledStart,
                     engine.ReadPlayableMember(observedMemberSlots[index]).startFrame);
             }
-            requirePublication(latestScheduledStart);
+            // Publish scheduled members as playback approaches them. Freezing the
+            // whole window for a distant member would refuse intervening starts.
+            requireRollingPublication(latestScheduledStart);
             std::optional<std::array<harken::TimelineArmObservation,
                                      kMaxObservedMemberSpan>> ackArms;
             bool allObserved = true;
