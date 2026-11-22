@@ -8,7 +8,7 @@
 #include <cmath>
 #include <set>
 
-namespace VNX {
+namespace harken::studio {
 
 std::optional<BusSendState> captureBusSendState(const ProjectItem& bus, PlatformScope scope)
 {

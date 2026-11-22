@@ -3,7 +3,7 @@
 
 #include <QObject>
 
-namespace VNX {
+namespace harken::studio {
 
 class WheelGuard : public QObject
 {

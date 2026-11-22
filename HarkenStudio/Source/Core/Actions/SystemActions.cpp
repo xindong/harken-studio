@@ -21,7 +21,7 @@
 #include <cstdint>
 #include <cmath>
 
-namespace VNX {
+namespace harken::studio {
 
 
 static ActionResult engineNotAvailable()
@@ -30,7 +30,7 @@ static ActionResult engineNotAvailable()
 }
 
 static bool listenerVector(const QJsonObject& args, const QString& key,
-                           HarkenEditor::Vec3* value, bool required = false)
+                           harken::studio::Vec3* value, bool required = false)
 {
     if (!args.contains(key)) return !required;
     if (!args.value(key).isArray()) return false;
@@ -49,7 +49,7 @@ static bool listenerVector(const QJsonObject& args, const QString& key,
 static ActionResult playbackResult(const AudioEngine::PlaybackStartResult& result, QJsonObject data)
 {
     data.insert(QStringLiteral("engine_result"), static_cast<qint32>(result.engineResult));
-    if (result.engineResult != HarkenEditor::Bridge::kEngineOk)
+    if (result.engineResult != harken::studio::bridge::kEngineOk)
         return {false, data, "PLAY_FAILED", "The runtime rejected the playback request"};
     return {true, data};
 }
@@ -58,10 +58,10 @@ static ActionResult playbackResult(const AudioEngine::PlaybackStartResult& resul
 
 void registerSystemActions(ActionManager& mgr,
                            AudioEngine* engine,
-                           HarkenEditor::AuditionManager* audition,
+                           harken::studio::AuditionManager* audition,
                            QMap<quintptr, QJsonObject>* activePlaybacks)
 {
-    const QPointer<HarkenEditor::AuditionManager> auditionGuard(audition);
+    const QPointer<harken::studio::AuditionManager> auditionGuard(audition);
 
     {
         ActionDef def;
@@ -81,16 +81,16 @@ void registerSystemActions(ActionManager& mgr,
                             "The audio runtime is already initialized. Call shutdown_engine before changing initialization settings."};
                 return {true, {{"initialized", true}, {"already_initialized", true}}};
             }
-            HarkenEditor::Bridge::EngineSessionConfig config;
+            harken::studio::bridge::EngineSessionConfig config;
             config.sampleRate = args["sample_rate"].toInt(0);
             config.bufferSize = args["buffer_size"].toInt(0);
             config.maxVoices = args["max_voices"].toInt(64);
             const QString deviceMode = args.value("device_mode").toString("real");
             if (deviceMode != "real" && deviceMode != "null" && deviceMode != "null_realtime")
                 return {false, {}, "INVALID_ARGS", "device_mode must be real, null or null_realtime"};
-            config.deviceMode = deviceMode == "null" ? HarkenEditor::Bridge::EngineDeviceMode::Null
-                : deviceMode == "null_realtime" ? HarkenEditor::Bridge::EngineDeviceMode::NullRealtime
-                                                : HarkenEditor::Bridge::EngineDeviceMode::Real;
+            config.deviceMode = deviceMode == "null" ? harken::studio::bridge::EngineDeviceMode::Null
+                : deviceMode == "null_realtime" ? harken::studio::bridge::EngineDeviceMode::NullRealtime
+                                                : harken::studio::bridge::EngineDeviceMode::Real;
             if (!engine->initialize(config))
                 return {false, {{"initialized", false}}, "INIT_FAILED", "Failed to initialize audio engine"};
             if (engine->isSimulationMode()) {
@@ -164,7 +164,7 @@ void registerSystemActions(ActionManager& mgr,
             if (!engine) return engineNotAvailable();
             QString name = args["name"].toString();
             {
-                auto sel = VNX::resolveSelector(name);
+                auto sel = harken::studio::resolveSelector(name);
                 if (!sel.ok) return {false, {}, sel.errorCode, sel.errorMessage};
                 name = sel.name;
             }
@@ -193,7 +193,7 @@ void registerSystemActions(ActionManager& mgr,
             if (!engine) return engineNotAvailable();
             QString name = args["name"].toString();
             {
-                auto sel = VNX::resolveSelector(name);
+                auto sel = harken::studio::resolveSelector(name);
                 if (!sel.ok) return {false, {}, sel.errorCode, sel.errorMessage};
                 name = sel.name;
             }
@@ -202,7 +202,7 @@ void registerSystemActions(ActionManager& mgr,
             float x = args["x"].toDouble(0.0);
             float y = args["y"].toDouble(0.0);
             float z = args["z"].toDouble(0.0);
-            HarkenEditor::Vec3 position(x, y, z);
+            harken::studio::Vec3 position(x, y, z);
             const auto result = engine->playByName3DDetailed(name, position);
             const quintptr handle = result.playbackHandle;
             if (activePlaybacks && handle != 0) {
@@ -238,12 +238,12 @@ void registerSystemActions(ActionManager& mgr,
                         "handle is required"};
             const auto result = engine->stopPlayback(static_cast<quintptr>(handle), fadeMs);
             QJsonObject data{{"engine_result", static_cast<int32_t>(result)}};
-            if (result != HarkenEditor::Bridge::kEngineOk
-                && result != HarkenEditor::Bridge::kEngineStaleHandle) {
+            if (result != harken::studio::bridge::kEngineOk
+                && result != harken::studio::bridge::kEngineStaleHandle) {
                 data.insert("state", "rejected");
                 return {false, data, "STOP_ACTION_FAILED", "The runtime rejected the playback stop"};
             }
-            data.insert("state", result == HarkenEditor::Bridge::kEngineStaleHandle
+            data.insert("state", result == harken::studio::bridge::kEngineStaleHandle
                 ? "stopped" : "stopping");
             return {true, data};
         };
@@ -280,7 +280,7 @@ void registerSystemActions(ActionManager& mgr,
         def.undoable = false;
         def.handler = [engine](const QJsonObject& args) -> ActionResult {
             if (!engine) return engineNotAvailable();
-            HarkenEditor::Vec3 pos, forward(0, 0, -1), up(0, 1, 0);
+            harken::studio::Vec3 pos, forward(0, 0, -1), up(0, 1, 0);
             if (!listenerVector(args, "pos", &pos, true)
                 || !listenerVector(args, "forward", &forward)
                 || !listenerVector(args, "up", &up))
@@ -312,7 +312,7 @@ void registerSystemActions(ActionManager& mgr,
             if (handle == 0)
                 return {false, {}, "INVALID_ARGS",
                         "handle is required"};
-            HarkenEditor::Vec3 position(x, y, z);
+            harken::studio::Vec3 position(x, y, z);
             if (!engine->setPlaybackPosition(static_cast<quintptr>(handle), position))
                 return {false, {}, "SET_ACTION_POSITION_FAILED", "The runtime rejected the playback position"};
             if (activePlaybacks && activePlaybacks->contains(static_cast<quintptr>(handle)))
@@ -372,7 +372,7 @@ void registerSystemActions(ActionManager& mgr,
             if (!engine->isListenerActive(listenerId))
                 return {false, {}, "LISTENER_NOT_ACTIVE",
                     QString("listener_id %1 is not active").arg(listenerId)};
-            HarkenEditor::Vec3 pos, forward(0, 0, -1), up(0, 1, 0);
+            harken::studio::Vec3 pos, forward(0, 0, -1), up(0, 1, 0);
             if (!listenerVector(args, "pos", &pos, true)
                 || !listenerVector(args, "forward", &forward)
                 || !listenerVector(args, "up", &up))
@@ -535,7 +535,7 @@ void registerSystemActions(ActionManager& mgr,
             QString path = args["path"].toString();
             if (path.isEmpty())
                 return {false, {}, "INVALID_ARGS", "Pack path is required"};
-            HarkenEditor::Bridge::EngineResult result = HarkenEditor::Bridge::kEngineOk;
+            harken::studio::bridge::EngineResult result = harken::studio::bridge::kEngineOk;
             bool success = engine->loadPack(path, &result);
             if (success)
                 return {true, QJsonObject{{"path", path}, {"loaded", true}}};
@@ -557,7 +557,7 @@ void registerSystemActions(ActionManager& mgr,
             QString path = args["path"].toString();
             if (path.isEmpty())
                 return {false, {}, "INVALID_ARGS", "Pack path is required"};
-            HarkenEditor::Bridge::EngineResult result = HarkenEditor::Bridge::kEngineOk;
+            harken::studio::bridge::EngineResult result = harken::studio::bridge::kEngineOk;
             if (!engine->unloadPack(path, &result))
                 return {false, QJsonObject{{"runtime_result", static_cast<qint32>(result)}}, "UNLOAD_PACK_FAILED", QString("Failed to unload pack: %1").arg(path)};
             return {true, QJsonObject{{"path", path}, {"unloaded", true}}};
@@ -578,7 +578,7 @@ void registerSystemActions(ActionManager& mgr,
                 return {false, {}, "ENGINE_NOT_AVAILABLE", "PackManager not available"};
             QString packName = args["pack_name"].toString();
             {
-                auto sel = VNX::resolveSelector(packName);
+                auto sel = harken::studio::resolveSelector(packName);
                 if (!sel.ok) return {false, {}, sel.errorCode, sel.errorMessage};
                 packName = sel.name;
             }
@@ -634,7 +634,7 @@ void registerSystemActions(ActionManager& mgr,
             if (category >= 8)
                 return {false, {}, "INVALID_PARAM", "category must be 0-7"};
             uint64_t maxBytes = static_cast<uint64_t>(maxBytesD);
-            if (engine->setMemoryBudgetLimit(category, maxBytes) != HarkenEditor::Bridge::kEngineOk)
+            if (engine->setMemoryBudgetLimit(category, maxBytes) != harken::studio::bridge::kEngineOk)
                 return {false, {}, "SET_FAILED", "Failed to set memory budget limit"};
             return {true, QJsonObject{
                 {"category", static_cast<int>(category)},
@@ -656,10 +656,10 @@ void registerSystemActions(ActionManager& mgr,
             if (!engine->isInitialized() || engine->isSimulationMode())
                 return {false, {}, "ENGINE_NOT_INITIALIZED", "Engine not initialized"};
             uint32_t listenerId = static_cast<uint32_t>(args.value("listener_id").toInt(-1));
-            harkenstudio::ObjectId busId{};
+            harken::studio::types::ObjectId busId{};
             if (!parseObjectIdJson(args.value("bus_id"), &busId))
                 return {false, {}, "INVALID_ARGS", "bus_id must be an object UUID"};
-            if (engine->setListenerOutputBus(listenerId, busId) != HarkenEditor::Bridge::kEngineOk)
+            if (engine->setListenerOutputBus(listenerId, busId) != harken::studio::bridge::kEngineOk)
                 return {false, {}, "SET_FAILED", "Failed to set listener output bus"};
             return {true, QJsonObject{
                 {"listener_id", static_cast<int>(listenerId)},
@@ -682,7 +682,7 @@ void registerSystemActions(ActionManager& mgr,
                 return {false, {}, "INVALID_ARGS", "Required: policy"};
             QString policyStr = args["policy"].toString().toLower();
             {
-                auto sel = VNX::resolveSelector(policyStr);
+                auto sel = harken::studio::resolveSelector(policyStr);
                 if (!sel.ok) return {false, {}, sel.errorCode, sel.errorMessage};
                 policyStr = sel.name;
             }
@@ -695,27 +695,6 @@ void registerSystemActions(ActionManager& mgr,
                 return {false, {}, "OBJECT_ROUTER_UNAVAILABLE", "ObjectRouter not initialized"};
             static const char* policyNames[] = {"retry", "channel_fallback", "silent"};
             return {true, QJsonObject{{"policy", policyNames[policy]}}};
-        };
-        mgr.registerAction(def);
-    }
-
-    {
-        ActionDef def;
-        def.id = "set_preferred_format";
-        def.displayName = "Set Preferred Format";
-        def.category = "system";
-        def.paramSchema = QJsonObject{{"sample_rate", "int"}, {"buffer_size", "int"}};
-        def.undoable = false;
-        def.handler = [](const QJsonObject& args) -> ActionResult {
-            int sampleRate = args.value("sample_rate").toInt(0);
-            int bufferSize = args.value("buffer_size").toInt(0);
-            if (sampleRate <= 0 && bufferSize <= 0)
-                return {false, {}, "INVALID_ARGS", "Provide sample_rate or buffer_size"};
-            return {true, QJsonObject{
-                {"sample_rate", sampleRate > 0 ? sampleRate : 48000},
-                {"buffer_size", bufferSize > 0 ? bufferSize : 256},
-                {"note", "Format preference recorded. Restart output to apply."}
-            }};
         };
         mgr.registerAction(def);
     }

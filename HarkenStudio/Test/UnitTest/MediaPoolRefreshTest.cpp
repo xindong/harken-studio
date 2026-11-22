@@ -73,7 +73,7 @@ void writeWav(const QString& path, uint32_t frames, float value, uint16_t channe
 
 TEST(MediaPoolRefreshTest, SharedWaveformsRefreshAfterSourceAndCacheChanges)
 {
-    using namespace VNX;
+    using namespace harken::studio;
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     const QString path = dir.filePath(QStringLiteral("shared.wav"));
@@ -104,7 +104,7 @@ TEST(MediaPoolRefreshTest, SharedWaveformsRefreshAfterSourceAndCacheChanges)
 
 TEST(MediaPoolRefreshTest, CapturedWaveformsShareCacheAndRejectStaleContentWithUnchangedMetadata)
 {
-    using namespace VNX;
+    using namespace harken::studio;
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     const QString audioDir = dir.filePath(QStringLiteral("AudioSources"));
@@ -172,7 +172,7 @@ TEST(MediaPoolRefreshTest, CapturedWaveformsShareCacheAndRejectStaleContentWithU
 
 TEST(MediaPoolRefreshTest, CacheRemovalInvalidatesPendingWaveformPublication)
 {
-    using namespace VNX;
+    using namespace harken::studio;
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     const QString path = dir.filePath(QStringLiteral("pending.wav"));
@@ -206,7 +206,7 @@ TEST(MediaPoolRefreshTest, CacheRemovalInvalidatesPendingWaveformPublication)
 
 TEST(MediaPoolRefreshTest, SourceChangesInvalidateQueuedReadsAndResumeDeferredWaveforms)
 {
-    using namespace VNX;
+    using namespace harken::studio;
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     auto& registry = AssetRegistry::instance();

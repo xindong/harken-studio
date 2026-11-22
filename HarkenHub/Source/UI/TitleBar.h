@@ -3,7 +3,7 @@
 #include <QPushButton>
 #include <QWidget>
 
-namespace VNH {
+namespace harken::hub {
 
 enum class TitleBarButtonKind {
     Minimize,

@@ -8,7 +8,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace harkenstudiobuild {
+namespace harken::studio::build {
 
 inline void StampRequirementCoverage(std::vector<std::uint8_t>* payload) {
     StorePackRequirementBlockPayloadChecksumCoverage(payload->data(),
@@ -63,8 +63,8 @@ inline PackCanonicalImage NeutralMasterSnapshotImage() {
     header.contentGeneration = kNeutralMasterBusContentGeneration;
     header.profileVintage = 1;
     header.renderSampleRateHz = 48000;
-    header.mixLayout = harkenstudio::kChannelLayoutStereo;
-    header.deviceLayout = harkenstudio::kChannelLayoutStereo;
+    header.mixLayout = harken::studio::types::kChannelLayoutStereo;
+    header.deviceLayout = harken::studio::types::kChannelLayoutStereo;
     header.runtimeCapabilityMask = busfingerprint::kRequiredBusCapabilityMaskV1;
     header.compileTargetProfileFingerprint = busfingerprint::ProfileFingerprintV1(
         header.profileVintage, header.renderSampleRateHz, header.mixLayout,
@@ -73,21 +73,21 @@ inline PackCanonicalImage NeutralMasterSnapshotImage() {
     header.downmixCount = 1;
     header.coefficientCount = 64;
     PackBusDefinitionBus bus{};
-    bus.busId = harkenstudio::kMasterBusObjectId;
+    bus.busId = harken::studio::types::kMasterBusObjectId;
     bus.faderAfterSlot = busfingerprint::kNeutralFaderAfterSlotV1;
-    bus.outputLayout = harkenstudio::kChannelLayoutStereo;
+    bus.outputLayout = harken::studio::types::kChannelLayoutStereo;
     bus.downmixCount = 1;
     bus.downmixFirst = 0;
     image.busDefinitionBusesV2.push_back(bus);
     PackBusDefinitionDownmix downmix{};
-    downmix.busId = harkenstudio::kMasterBusObjectId;
-    downmix.sourceLayout = harkenstudio::kChannelLayoutStereo;
-    downmix.destinationLayout = harkenstudio::kChannelLayoutStereo;
+    downmix.busId = harken::studio::types::kMasterBusObjectId;
+    downmix.sourceLayout = harken::studio::types::kChannelLayoutStereo;
+    downmix.destinationLayout = harken::studio::types::kChannelLayoutStereo;
     downmix.coefficientFirst = 0;
     downmix.coefficientCount = 64;
     image.busDefinitionDownmixesV2.push_back(downmix);
     image.busDefinitionCoefficients.assign(64, 0.0f);
-    DefaultDownmixMatrix(harkenstudio::kChannelLayoutStereo, harkenstudio::kChannelLayoutStereo,
+    DefaultDownmixMatrix(harken::studio::types::kChannelLayoutStereo, harken::studio::types::kChannelLayoutStereo,
                          image.busDefinitionCoefficients.data());
     header.publishedBusFingerprint = CanonicalVolumeBusFingerprint(image);
     header.contentGeneration = header.publishedBusFingerprint;
@@ -140,8 +140,8 @@ inline std::vector<std::uint8_t> NeutralMasterSnapshotPayload(
 }
 
 inline std::vector<std::uint8_t> VolumeBusSnapshotPayload(
-    const harkenbuscompiler::PublishedBusProjectionV1& projection) {
-    using namespace harkenbuscompiler;
+    const harken::studio::bus_compiler::PublishedBusProjectionV1& projection) {
+    using namespace harken::studio::bus_compiler;
     const bool hasEffects = projection.capabilityVintage ==
         BusPublicationCapabilityVintageV1::TopologyVolumeSendAndEffectsNeutralOtherProperties;
     if ((projection.capabilityVintage !=
@@ -208,6 +208,6 @@ inline std::vector<std::uint8_t> VolumeBusSnapshotPayload(
     return EncodeBusDefinitionSnapshotPayload(image);
 }
 
-} // namespace harkenstudiobuild
+} // namespace harken::studio::build
 
 #endif

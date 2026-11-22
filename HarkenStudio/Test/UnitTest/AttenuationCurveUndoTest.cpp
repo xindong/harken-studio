@@ -39,19 +39,19 @@ protected:
     void SetUp() override
     {
         ensureApp();
-        VNX::ActionManager::instance().clearAllForTesting();
-        VNX::registerProjectActions(VNX::ActionManager::instance(),
-                                    &VNX::ProjectManager::instance(), nullptr);
-        VNX::registerSpatialActions(VNX::ActionManager::instance(), nullptr,
-                                    &VNX::ProjectManager::instance());
+        harken::studio::ActionManager::instance().clearAllForTesting();
+        harken::studio::registerProjectActions(harken::studio::ActionManager::instance(),
+                                    &harken::studio::ProjectManager::instance(), nullptr);
+        harken::studio::registerSpatialActions(harken::studio::ActionManager::instance(), nullptr,
+                                    &harken::studio::ProjectManager::instance());
 
         ASSERT_TRUE(tempDir_.isValid());
-        VNX::ProjectConfig config;
+        harken::studio::ProjectConfig config;
         config.name = QStringLiteral("CurveUndoProject");
         config.location = tempDir_.path();
-        ASSERT_TRUE(VNX::ProjectManager::instance().createProject(config));
+        ASSERT_TRUE(harken::studio::ProjectManager::instance().createProject(config));
 
-        const auto seeded = VNX::ActionManager::instance().execute(
+        const auto seeded = harken::studio::ActionManager::instance().execute(
             QStringLiteral("set_attenuation_curve"),
             QJsonObject{
                 {"name", QStringLiteral("TestAtt")},
@@ -61,14 +61,14 @@ protected:
                 {"max_distance", 100.0}
             });
         ASSERT_TRUE(seeded.success);
-        VNX::UndoRedoManager::instance().clear();
+        harken::studio::UndoRedoManager::instance().clear();
     }
 
     void TearDown() override
     {
-        VNX::UndoRedoManager::instance().clear();
-        VNX::ProjectManager::instance().closeProject();
-        VNX::ActionManager::instance().clearAllForTesting();
+        harken::studio::UndoRedoManager::instance().clear();
+        harken::studio::ProjectManager::instance().closeProject();
+        harken::studio::ActionManager::instance().clearAllForTesting();
     }
 
     QTemporaryDir tempDir_;
@@ -78,13 +78,13 @@ protected:
 
 TEST_F(AttenuationCurveUndoTest, DuplicatedAttenuationHasIndependentIdentityAndCurves)
 {
-    auto& manager = VNX::ProjectManager::instance();
-    auto* original = VNX::AttenuationStore::find(manager.currentProject(), QStringLiteral("TestAtt"));
+    auto& manager = harken::studio::ProjectManager::instance();
+    auto* original = harken::studio::AttenuationStore::find(manager.currentProject(), QStringLiteral("TestAtt"));
     ASSERT_NE(original, nullptr);
     const auto data = original->toJson();
     auto* copy = manager.duplicateItem(original->hostItem());
     ASSERT_NE(copy, nullptr);
-    auto* component = copy->comp<VNX::VAttenuation>();
+    auto* component = copy->comp<harken::studio::VAttenuation>();
     ASSERT_NE(component, nullptr);
     EXPECT_NE(copy->guid, original->hostItem()->guid);
     EXPECT_EQ(component->toJson(), data);

@@ -12,7 +12,7 @@
 #include <new>
 #include <utility>
 
-namespace VNX {
+namespace harken::studio {
 namespace Monitor {
 namespace {
 
@@ -703,4 +703,4 @@ bool MonitorSessionWriter::fail()
 }
 
 } // namespace Monitor
-} // namespace VNX
+} // namespace harken::studio

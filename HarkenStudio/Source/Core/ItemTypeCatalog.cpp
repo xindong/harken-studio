@@ -3,7 +3,7 @@
 #include "Components/VSelection.h"
 #include "Components/VVariable.h"
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 

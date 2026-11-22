@@ -5,7 +5,7 @@
 #include <map>
 #include <utility>
 
-namespace VNX {
+namespace harken::studio {
 namespace Monitor {
 
 MonitorGenerationProjection projectGeneration(
@@ -57,4 +57,4 @@ MonitorGenerationProjection projectGeneration(
 }
 
 } // namespace Monitor
-} // namespace VNX
+} // namespace harken::studio

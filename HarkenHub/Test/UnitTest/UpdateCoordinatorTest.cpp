@@ -30,10 +30,10 @@
 #include <functional>
 #include <memory>
 
-using VNH::ReleaseManifest;
-using VNH::UpdateCheckResult;
-using VNH::UpdateCoordinator;
-using VNH::UpdateStateStore;
+using harken::hub::ReleaseManifest;
+using harken::hub::UpdateCheckResult;
+using harken::hub::UpdateCoordinator;
+using harken::hub::UpdateStateStore;
 using HarkenHubTest::RangeHttpServer;
 using HarkenHubTest::TestEntry;
 using HarkenHubTest::writeArchive;
@@ -77,7 +77,7 @@ QByteArray buildPackageBytes(const QString& tempPath)
 
     QJsonArray files;
     QJsonObject binaryRecord;
-    binaryRecord[QStringLiteral("path")] = VNH::studioBinaryRelativePath();
+    binaryRecord[QStringLiteral("path")] = harken::hub::studioBinaryRelativePath();
     binaryRecord[QStringLiteral("size")] = binary.size();
     binaryRecord[QStringLiteral("sha256")] =
         QString::fromLatin1(sha256Hex(binary));
@@ -96,7 +96,7 @@ QByteArray buildPackageBytes(const QString& tempPath)
     capabilities[QStringLiteral("capabilitiesVersion")] = 2;
 
     const std::vector<TestEntry> entries = {
-        {VNH::studioBinaryRelativePath().toUtf8(), binary},
+        {harken::hub::studioBinaryRelativePath().toUtf8(), binary},
         {QByteArrayLiteral("package-manifest.json"),
          QJsonDocument(manifest).toJson(QJsonDocument::Compact)},
         {QByteArrayLiteral("capabilities.json"),
@@ -197,16 +197,16 @@ TEST_F(UpdateCoordinatorTest, DownloadsAndVerifiesNewBuild)
 
 TEST_F(UpdateCoordinatorTest, InterruptedElevationKeepsActiveWorkExclusiveAndCanBeRetried)
 {
-    const auto placement = VNH::HandoffArea::place(dir.filePath("source.zip"), "manifest");
+    const auto placement = harken::hub::HandoffArea::place(dir.filePath("source.zip"), "manifest");
     ASSERT_TRUE(placement.ok);
-    VNH::UpdateStateRecord pending;
+    harken::hub::UpdateStateRecord pending;
     pending.product = "HarkenStudio";
     pending.state = "AwaitingElevation";
     pending.buildId = "run3.cccc3333";
     pending.downloadPath = dir.filePath("source.zip");
     pending.transactionId = placement.transactionId;
     ASSERT_TRUE(UpdateStateStore::save(pending, kNow));
-    auto lease = VNH::DownloadLease::acquire(pending.downloadPath);
+    auto lease = harken::hub::DownloadLease::acquire(pending.downloadPath);
     ASSERT_TRUE(lease);
     UpdateCoordinator coordinator;
     auto newer = manifestResultFor();
@@ -216,7 +216,7 @@ TEST_F(UpdateCoordinatorTest, InterruptedElevationKeepsActiveWorkExclusiveAndCan
     EXPECT_EQ(UpdateStateStore::load(pending.product).transactionId, placement.transactionId);
     EXPECT_EQ(UpdateStateStore::load(pending.product).state, "AwaitingElevation");
     lease.reset();
-    QLockFile installer(VNH::InstallExecutor::lockFilePath());
+    QLockFile installer(harken::hub::InstallExecutor::lockFilePath());
     ASSERT_TRUE(installer.tryLock(0));
     UpdateCoordinator::reconcileElevation(kNow);
     EXPECT_EQ(UpdateStateStore::load(pending.product).state, "AwaitingElevation");
@@ -226,13 +226,13 @@ TEST_F(UpdateCoordinatorTest, InterruptedElevationKeepsActiveWorkExclusiveAndCan
     EXPECT_FALSE(QFileInfo::exists(placement.packagePath));
     EXPECT_TRUE(QFileInfo::exists(pending.downloadPath));
 
-    VNH::InstalledVersionRecord installed;
+    harken::hub::InstalledVersionRecord installed;
     installed.buildId = pending.buildId;
     installed.semanticVersion = "1.5.0";
     installed.healthState = "Installed";
     installed.installPath = dir.filePath("installed");
     QString error;
-    ASSERT_TRUE(VNH::InstallIndex::commitInstallation(installed, 9, &error)) << error.toStdString();
+    ASSERT_TRUE(harken::hub::InstallIndex::commitInstallation(installed, 9, &error)) << error.toStdString();
     ASSERT_TRUE(UpdateStateStore::save(pending, kNow));
     UpdateCoordinator::reconcileElevation(kNow);
     EXPECT_FALSE(UpdateStateStore::load(pending.product).found);
@@ -319,19 +319,19 @@ TEST_F(UpdateCoordinatorTest, QueuesVerifiedBuildForBridgeInstall)
     ASSERT_EQ(state.state, QStringLiteral("AwaitingBridge"))
         << state.failureCode.toStdString();
     ASSERT_FALSE(state.transactionId.isEmpty());
-    const auto entries = VNH::UpdateQueue::pendingEntries();
+    const auto entries = harken::hub::UpdateQueue::pendingEntries();
     ASSERT_EQ(entries.size(), 1u);
     EXPECT_EQ(entries[0].transactionId, state.transactionId);
     EXPECT_EQ(entries[0].product, QStringLiteral("HarkenStudio"));
 
     QLockFile lock(UpdateStateStore::filePath() + QStringLiteral(".lock"));
     ASSERT_TRUE(lock.tryLock());
-    const auto report = VNH::UpdateBridgeConsumer::run(
-        keys.publicKey, kNow, VNH::UpdateBridgeConsumer::defaultHooks());
+    const auto report = harken::hub::UpdateBridgeConsumer::run(
+        keys.publicKey, kNow, harken::hub::UpdateBridgeConsumer::defaultHooks());
     ASSERT_EQ(report.installed, 1);
     EXPECT_FALSE(spinUntil([&]() { return coordinator.currentState().state == "Installed"; }, 100));
     QString error;
-    const auto outcome = VNH::UpdateQueue::studioResult(state.transactionId, &error);
+    const auto outcome = harken::hub::UpdateQueue::studioResult(state.transactionId, &error);
     ASSERT_TRUE(outcome.has_value()) << error.toStdString();
     EXPECT_TRUE(outcome->ok);
     lock.unlock();
@@ -343,7 +343,7 @@ TEST_F(UpdateCoordinatorTest, QueuesVerifiedBuildForBridgeInstall)
     state = coordinator.currentState();
     EXPECT_EQ(state.state, QStringLiteral("Installed"));
     EXPECT_TRUE(state.downloadPath.isEmpty());
-    EXPECT_FALSE(VNH::UpdateQueue::studioResult(state.transactionId, &error).has_value());
+    EXPECT_FALSE(harken::hub::UpdateQueue::studioResult(state.transactionId, &error).has_value());
 }
 
 TEST_F(UpdateCoordinatorTest, FailedInstallSurvivesMissingJournalRestartAndBlockedStateWrite)
@@ -376,16 +376,16 @@ TEST_F(UpdateCoordinatorTest, FailedInstallSurvivesMissingJournalRestartAndBlock
     }));
     const auto pending = coordinator.currentState();
     coordinator.stop();
-    ASSERT_TRUE(QDir().mkpath(VNH::TransactionJournal::filePath()));
-    QFile package(VNH::HandoffArea::packagePath(pending.transactionId));
+    ASSERT_TRUE(QDir().mkpath(harken::hub::TransactionJournal::filePath()));
+    QFile package(harken::hub::HandoffArea::packagePath(pending.transactionId));
     ASSERT_TRUE(package.open(QIODevice::Append));
     package.write("damaged");
     package.close();
-    const auto report = VNH::UpdateBridgeConsumer::run(
-        keys.publicKey, kNow, VNH::UpdateBridgeConsumer::defaultHooks());
+    const auto report = harken::hub::UpdateBridgeConsumer::run(
+        keys.publicKey, kNow, harken::hub::UpdateBridgeConsumer::defaultHooks());
     ASSERT_EQ(report.failed, 1);
     QString error;
-    const auto outcome = VNH::UpdateQueue::studioResult(pending.transactionId, &error);
+    const auto outcome = harken::hub::UpdateQueue::studioResult(pending.transactionId, &error);
     ASSERT_TRUE(outcome.has_value()) << error.toStdString();
     ASSERT_FALSE(outcome->ok);
     EXPECT_EQ(outcome->failureCode, QStringLiteral("PackageRejected"));
@@ -398,7 +398,7 @@ TEST_F(UpdateCoordinatorTest, FailedInstallSurvivesMissingJournalRestartAndBlock
     ASSERT_TRUE(resumed.start(options));
     EXPECT_FALSE(spinUntil([&]() { return resumed.currentState().state == "InstallFailed"; }, 100));
     EXPECT_EQ(resumed.currentState(), pending);
-    EXPECT_TRUE(VNH::UpdateQueue::studioResult(pending.transactionId, &error).has_value());
+    EXPECT_TRUE(harken::hub::UpdateQueue::studioResult(pending.transactionId, &error).has_value());
     lock.unlock();
 
     ASSERT_TRUE(spinUntil([&]() {
@@ -407,13 +407,13 @@ TEST_F(UpdateCoordinatorTest, FailedInstallSurvivesMissingJournalRestartAndBlock
     }));
     EXPECT_EQ(resumed.currentState().failureCode, outcome->failureCode);
     EXPECT_EQ(resumed.currentState().failureDetail, outcome->error);
-    EXPECT_FALSE(VNH::UpdateQueue::studioResult(pending.transactionId, &error).has_value());
+    EXPECT_FALSE(harken::hub::UpdateQueue::studioResult(pending.transactionId, &error).has_value());
 }
 
 TEST_F(UpdateCoordinatorTest, InstallHandoffCannotBorrowAnotherPackagesOwnership)
 {
     EnvGuard bridge("HARKEN_HUB_BRIDGE_COMMAND", QStringLiteral("noop"));
-    VNH::UpdateStateRecord record;
+    harken::hub::UpdateStateRecord record;
     record.product = QStringLiteral("HarkenStudio");
     record.state = QStringLiteral("Verified");
     record.buildId = QStringLiteral("run3.cccc3333");
@@ -426,14 +426,14 @@ TEST_F(UpdateCoordinatorTest, InstallHandoffCannotBorrowAnotherPackagesOwnership
     }
     ASSERT_TRUE(UpdateStateStore::save(record, kNow));
     const auto expected = UpdateStateStore::load(record.product);
-    const auto owner = VNH::DownloadLease::acquire(record.downloadPath);
+    const auto owner = harken::hub::DownloadLease::acquire(record.downloadPath);
     ASSERT_TRUE(owner);
-    const auto unrelated = VNH::DownloadLease::acquire(dir.filePath(QStringLiteral("other.zip")));
+    const auto unrelated = harken::hub::DownloadLease::acquire(dir.filePath(QStringLiteral("other.zip")));
     ASSERT_TRUE(unrelated);
     UpdateCoordinator coordinator;
     coordinator.beginAutoInstall(kNow, unrelated);
     EXPECT_EQ(coordinator.currentState(), expected);
-    EXPECT_TRUE(VNH::UpdateQueue::pendingEntries().empty());
+    EXPECT_TRUE(harken::hub::UpdateQueue::pendingEntries().empty());
 }
 
 TEST_F(UpdateCoordinatorTest, IncompleteInstallationCannotOverrideAFailedCompletion)
@@ -443,30 +443,30 @@ TEST_F(UpdateCoordinatorTest, IncompleteInstallationCannotOverrideAFailedComplet
     options.automaticDownloadEnabled = false;
     options.bridgePollIntervalMs = 10;
     for (const QString& health : {QString("Installing"), QString("NeedsRepair")}) {
-        VNH::InstalledVersionRecord installed;
+        harken::hub::InstalledVersionRecord installed;
         installed.buildId = "incomplete";
         installed.semanticVersion = "1.5.0";
         installed.installPath = dir.filePath("versions/incomplete");
         installed.healthState = health;
         QString error;
-        ASSERT_TRUE(VNH::InstallIndex::commitInstallation(installed, 9, &error));
-        VNH::UpdateStateRecord state;
+        ASSERT_TRUE(harken::hub::InstallIndex::commitInstallation(installed, 9, &error));
+        harken::hub::UpdateStateRecord state;
         state.product = "HarkenStudio";
         state.state = "AwaitingBridge";
         state.buildId = installed.buildId;
-        state.transactionId = VNH::HandoffArea::newTransactionId();
+        state.transactionId = harken::hub::HandoffArea::newTransactionId();
         ASSERT_TRUE(UpdateStateStore::save(state, kNow));
-        VNH::InstallOutcome outcome;
+        harken::hub::InstallOutcome outcome;
         outcome.buildId = installed.buildId;
         outcome.failureCode = "IndexCommitFailed";
         outcome.error = "Installation needs repair";
-        ASSERT_TRUE(VNH::UpdateQueue::writeStudioResult(state.transactionId, outcome,
-            VNH::currentUserId(), &error));
+        ASSERT_TRUE(harken::hub::UpdateQueue::writeStudioResult(state.transactionId, outcome,
+            harken::hub::currentUserId(), &error));
         UpdateCoordinator coordinator;
         ASSERT_TRUE(coordinator.start(options));
         ASSERT_TRUE(spinUntil([&]() { return coordinator.currentState().state == "InstallFailed"; }));
         EXPECT_EQ(coordinator.currentState().failureCode, outcome.failureCode);
-        EXPECT_EQ(VNH::InstallIndex::snapshot().records.front().healthState, health);
+        EXPECT_EQ(harken::hub::InstallIndex::snapshot().records.front().healthState, health);
     }
 }
 
@@ -503,15 +503,15 @@ TEST_F(UpdateCoordinatorTest, QuarantinesTamperedPackage)
 
 TEST_F(UpdateCoordinatorTest, ClearsStateWhenBuildAlreadyInstalled)
 {
-    VNH::InstalledVersionRecord record;
+    harken::hub::InstalledVersionRecord record;
     record.buildId = QStringLiteral("run3.cccc3333");
     record.installPath = dir.filePath(QStringLiteral("versions/x"));
     record.semanticVersion = QStringLiteral("1.5.0");
     record.healthState = QStringLiteral("Installed");
     QString error;
-    ASSERT_TRUE(VNH::InstallIndex::commitInstallation(record, 1, &error));
+    ASSERT_TRUE(harken::hub::InstallIndex::commitInstallation(record, 1, &error));
 
-    VNH::UpdateStateRecord stale;
+    harken::hub::UpdateStateRecord stale;
     stale.product = QStringLiteral("HarkenStudio");
     stale.state = QStringLiteral("Verified");
     stale.buildId = QStringLiteral("run3.cccc3333");
@@ -571,13 +571,13 @@ TEST_F(UpdateCoordinatorTest, UnauthorizedDownloadIsAnonymousFailure)
 
 TEST_F(UpdateCoordinatorTest, InstalledLatestBuildDoesNotProbeDownload)
 {
-    VNH::InstalledVersionRecord installed;
+    harken::hub::InstalledVersionRecord installed;
     installed.buildId = QStringLiteral("run3.cccc3333");
     installed.installPath = dir.filePath(QStringLiteral("versions/x"));
     installed.semanticVersion = QStringLiteral("1.5.0");
     installed.healthState = QStringLiteral("Installed");
     QString error;
-    ASSERT_TRUE(VNH::InstallIndex::commitInstallation(installed, 1, &error));
+    ASSERT_TRUE(harken::hub::InstallIndex::commitInstallation(installed, 1, &error));
     RangeHttpServer server;
     ASSERT_TRUE(server.listen());
     server.setPayload(packageBytes, QByteArrayLiteral("\"etag-6\""));

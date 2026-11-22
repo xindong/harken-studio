@@ -10,7 +10,7 @@
 
 class QPainter;
 
-namespace VNX {
+namespace harken::studio {
 
 class ThemeAssetResolver;
 struct ThemeImageResource;

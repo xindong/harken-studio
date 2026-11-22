@@ -11,7 +11,7 @@
 
 class QTcpSocket;
 
-namespace VNX::TestSupport {
+namespace harken::studio::TestSupport {
 
 class SyntheticHttpServer : public QObject
 {

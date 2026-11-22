@@ -10,7 +10,7 @@
 #include <utility>
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace ObjectListName
 {

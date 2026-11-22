@@ -9,24 +9,24 @@
 #include <map>
 #include <vector>
 
-namespace HarkenEditor::Bridge {
+namespace harken::studio::bridge {
 struct CanonicalRuntimeProjectSourceIndexV1;
 }
 
-namespace VNX {
+namespace harken::studio {
 
 struct ProjectItem;
 
 FieldGroupDefinitionView fieldGroupDefinitionView(const ProjectItem& item);
 
-harkenprojectschema::AuthoringGuid toFieldGroupGuid(const QUuid& guid);
-QUuid fromFieldGroupGuid(harkenprojectschema::AuthoringGuid guid);
+harken::studio::project_schema::AuthoringGuid toFieldGroupGuid(const QUuid& guid);
+QUuid fromFieldGroupGuid(harken::studio::project_schema::AuthoringGuid guid);
 FieldGroupScope toFieldGroupScope(PlatformScope scope);
 
 struct FieldGroupProjectView {
     std::vector<FieldGroupDefinitionView> definitions;
     std::vector<FieldGroupReferenceTarget> referenceTargets;
-    std::vector<HarkenEditor::Bridge::ProjectInputDiagnostic> diagnostics;
+    std::vector<harken::studio::bridge::ProjectInputDiagnostic> diagnostics;
 
     bool ok() const noexcept { return diagnostics.empty(); }
 };
@@ -40,11 +40,11 @@ FieldGroupProjectView buildFieldGroupProjectView(
 
 FieldGroupProjectView buildFieldGroupProjectView(
     const ProjectData& project,
-    const HarkenEditor::Bridge::CanonicalRuntimeProjectSourceIndexV1& source);
+    const harken::studio::bridge::CanonicalRuntimeProjectSourceIndexV1& source);
 
 FieldGroupProjectView buildFieldGroupProjectView(
     const ProjectData& project,
-    const HarkenEditor::Bridge::CanonicalRuntimeProjectSourceIndexV1& source,
+    const harken::studio::bridge::CanonicalRuntimeProjectSourceIndexV1& source,
     const std::function<const DefinitionFieldGroups*(
         const ProjectItem&)>& groupsForDefinition);
 
@@ -61,9 +61,9 @@ struct EffectiveDefinitionFieldGroups {
 
 struct FieldGroupEffectiveSnapshot {
     FieldGroupScope scope;
-    std::map<harkenprojectschema::AuthoringGuid, EffectiveDefinitionFieldGroups> definitions;
-    std::map<harkenprojectschema::AuthoringGuid, const ProjectItem*> objects;
-    std::vector<HarkenEditor::Bridge::ProjectInputDiagnostic> diagnostics;
+    std::map<harken::studio::project_schema::AuthoringGuid, EffectiveDefinitionFieldGroups> definitions;
+    std::map<harken::studio::project_schema::AuthoringGuid, const ProjectItem*> objects;
+    std::vector<harken::studio::bridge::ProjectInputDiagnostic> diagnostics;
 
     bool ok() const noexcept { return diagnostics.empty(); }
 };
@@ -77,11 +77,11 @@ FieldGroupEffectiveSnapshot buildFieldGroupEffectiveSnapshot(
 
 FieldGroupEffectiveSnapshot buildFieldGroupEffectiveSnapshot(
     const ProjectData& project, FieldGroupScope scope,
-    const HarkenEditor::Bridge::CanonicalRuntimeProjectSourceIndexV1& source);
+    const harken::studio::bridge::CanonicalRuntimeProjectSourceIndexV1& source);
 
 FieldGroupEffectiveSnapshot buildFieldGroupEffectiveSnapshot(
     const ProjectData& project, FieldGroupScope scope,
-    const HarkenEditor::Bridge::CanonicalRuntimeProjectSourceIndexV1& source,
+    const harken::studio::bridge::CanonicalRuntimeProjectSourceIndexV1& source,
     const std::function<const DefinitionFieldGroups*(const ProjectItem&)>& groupsForDefinition);
 
 }

@@ -67,7 +67,7 @@
 #include <QWKWidgets/widgetwindowagent.h>
 #endif
 
-namespace VNH {
+namespace harken::hub {
 
 namespace {
 
@@ -499,8 +499,7 @@ void HubWindow::requestUpdateCheck()
         UpdateChecker::Options options;
         QList<QUrl> manifestUrls = ServerEndpoints::manifestUrls(
             serverBaseUrl,
-            hubProduct ? QStringLiteral("hub") : QStringLiteral("harken"),
-            ServerEndpoints::hostChannel());
+            hubProduct ? QStringLiteral("hub") : QStringLiteral("harken"));
         options.latestUrl = manifestUrls.takeFirst();
         options.fallbackUrls = manifestUrls;
         options.trustedHttpOrigin = serverBaseUrl;

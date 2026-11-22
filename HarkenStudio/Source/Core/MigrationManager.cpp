@@ -14,7 +14,7 @@
 #include <QJsonObject>
 #include <QUuid>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 QStringList projectDocumentRelativePaths(const QString& projectDirectory,

@@ -1,33 +1,11 @@
 #pragma once
 
-#include <QString>
-#include <QStringList>
-#include <QVector>
+#include "Integrations/Unity/UnityIntegrationService.h"
 
-namespace VNH {
+namespace harken::hub {
 
-enum class UnityIntegrationStepStatus
-{
-    Pending,
-    Running,
-    Succeeded,
-    Warning,
-    Failed,
-    Skipped,
-};
-
-struct UnityIntegrationStep
-{
-    QString id;
-    QString title;
-    UnityIntegrationStepStatus status = UnityIntegrationStepStatus::Pending;
-    QString summary;
-    QString cause;
-    QString remediation;
-    QStringList details;
-    QStringList artifacts;
-    qint64 elapsedMs = 0;
-};
+using UnityIntegrationStepStatus = harken::hub::unity::UnityIntegrationService::StepStatus;
+using UnityIntegrationStep = harken::hub::unity::UnityIntegrationService::StepResult;
 
 struct UnityIntegrationRequest
 {
@@ -40,27 +18,9 @@ struct UnityIntegrationRequest
     bool restorePrevious = false;
 };
 
-struct UnityIntegrationResult
+struct UnityIntegrationResult : harken::hub::unity::UnityIntegrationService::Result
 {
     bool cancelled = false;
-    bool success = false;
-    bool hasWarnings = false;
-    bool targetInstalled = false;
-    bool targetCurrent = false;
-    bool integrationFound = false;
-    bool integrationRemoved = false;
-    bool previousRestored = false;
-    bool previousVersionAvailable = false;
-    QVector<UnityIntegrationStep> steps;
-    QString unityProjectPath;
-    QString integrationSourcePath;
-    QString integrationInstallPath;
-    QString installedVersion;
-    QString sourceVersion;
-    QString backupPath;
-    QString jsonReportPath;
-    QString textReportPath;
-    int integrationFilesCopied = 0;
 };
 
 class HubUnityIntegrationService

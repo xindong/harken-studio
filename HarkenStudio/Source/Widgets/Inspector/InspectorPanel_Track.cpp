@@ -5,7 +5,7 @@
 #include "Widgets/Inspector/PropertyEditorEngine.h"
 #include "Widgets/Inspector/TrackInspectorSchema.h"
 
-namespace VNX {
+namespace harken::studio {
 
 void InspectorPanelPrivate::setupTrackPage()
 {

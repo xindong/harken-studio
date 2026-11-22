@@ -5,28 +5,28 @@
 #include "Components/VMixNode.h"
 #include "Components/VSpatial.h"
 
-namespace VNX {
+namespace harken::studio {
 
 bool refreshFieldGroupDerivedViews(ProjectData& project)
 {
-    const auto source = HarkenEditor::Bridge::canonicalRuntimeProjectSourceIndex(project);
+    const auto source = harken::studio::bridge::canonicalRuntimeProjectSourceIndex(project);
     const auto view = buildFieldGroupProjectView(project, *source);
     if (!view.ok() || !source->valid || project.busses.empty()
         || !project.busses.front().rootItem)
         return false;
     const auto* master = project.busses.front().rootItem.get();
-    harkenprojectschema::AuthoringGuid masterGuid{};
+    harken::studio::project_schema::AuthoringGuid masterGuid{};
     for (const auto& [guid, item] : source->byGuid)
         if (item == master) masterGuid = guid;
     FieldGroupResolver resolver(view.definitions, masterGuid);
     struct Pending {
         ProjectItem* item;
         uint32_t busId;
-        harkenstudio::ObjectId busRef;
+        harken::studio::types::ObjectId busRef;
         float outputVolume;
         std::vector<Send> sends;
         SpatialRatingFieldGroup rating;
-        harkenstudio::ObjectId attenuationRef;
+        harken::studio::types::ObjectId attenuationRef;
     };
     std::vector<Pending> pending;
     for (const auto& definition : view.definitions) {
@@ -40,8 +40,8 @@ bool refreshFieldGroupDerivedViews(ProjectData& project)
         const auto bus = source->byGuid.find(outputFields.outputBusRef);
         if (bus == source->byGuid.end() || bus->second->type != ProjectItem::Type::Bus)
             return false;
-        harkenstudio::ObjectId attenuationRef{};
-        if (!harkenprojectschema::IsNull(rating.spatialAttenuationRef)) {
+        harken::studio::types::ObjectId attenuationRef{};
+        if (!harken::studio::project_schema::IsNull(rating.spatialAttenuationRef)) {
             const auto attenuation = source->byGuid.find(rating.spatialAttenuationRef);
             if (attenuation == source->byGuid.end()
                 || attenuation->second->type != ProjectItem::Type::Attenuation)

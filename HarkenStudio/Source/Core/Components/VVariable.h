@@ -14,7 +14,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 
 // Authoring bound of a declared range: the field is a free numeric domain, so
 // the editor only fences it against runaway input.
@@ -99,10 +99,10 @@ inline const PropertySchema& VVariable::schema()
     static const PropertySchema s = withOwner<VVariable>({
         { .field="kind", .type=PropType::Enum, .label="Kind", .section=PropertySection::Status,
           .def=1, .flags={ .segmented=true }, .options={{"Step",0},{"Smooth",1}},
-          .get=[](const VNX::IComponent* c){
+          .get=[](const harken::studio::IComponent* c){
               return QVariant(static_cast<int>(static_cast<const VVariable*>(c)->kind));
           },
-          .set=[](VNX::IComponent* c, const QVariant& v) -> bool {
+          .set=[](harken::studio::IComponent* c, const QVariant& v) -> bool {
               const int raw = v.toInt();
               if (raw < static_cast<int>(VariableKind::Step)
                   || raw > static_cast<int>(VariableKind::Smooth)) return false;
@@ -111,58 +111,58 @@ inline const PropertySchema& VVariable::schema()
           } },
         { .field="writers", .type=PropType::Int, .label="Writers", .section=PropertySection::Status,
           .min=1, .max=3, .def=1, .flags={ .advanced=true },
-          .get=[](const VNX::IComponent* c){
+          .get=[](const harken::studio::IComponent* c){
               return QVariant(static_cast<int>(static_cast<const VVariable*>(c)->writers));
           },
-          .set=[](VNX::IComponent* c, const QVariant& v) -> bool {
+          .set=[](harken::studio::IComponent* c, const QVariant& v) -> bool {
               const int raw = v.toInt();
               if (raw < 1 || raw > 3) return false;
               static_cast<VVariable*>(c)->writers = static_cast<std::uint8_t>(raw);
               return true;
           },
-          .serializeWhen=[](const VNX::IComponent* c){
+          .serializeWhen=[](const harken::studio::IComponent* c){
               return static_cast<const VVariable*>(c)->writers != 1;
           } },
         { .field="unit", .type=PropType::String, .label="Unit", .section=PropertySection::Status,
           .flags={ .advanced=true },
           .get=VNX_PROP_GET(VVariable, unit),
-          .set=[](VNX::IComponent* c, const QVariant& v) -> bool {
+          .set=[](harken::studio::IComponent* c, const QVariant& v) -> bool {
               static_cast<VVariable*>(c)->unit = v.toString();
               return true;
           },
-          .serializeWhen=[](const VNX::IComponent* c){
+          .serializeWhen=[](const harken::studio::IComponent* c){
               return !static_cast<const VVariable*>(c)->unit.isEmpty();
           } },
         { .field="precision", .type=PropType::Int, .label="Precision", .section=PropertySection::Status,
           .flags={ .advanced=true },
           .get=VNX_PROP_GETI(VVariable, precision),
           .set=VNX_PROP_SET_I(VVariable, precision),
-          .serializeWhen=[](const VNX::IComponent* c){
+          .serializeWhen=[](const harken::studio::IComponent* c){
               return static_cast<const VVariable*>(c)->precision != 0;
           } },
         { .field="displayScale", .type=PropType::Int, .label="Display Scale", .section=PropertySection::Status,
           .min=0, .max=255, .def=0, .flags={ .advanced=true },
-          .get=[](const VNX::IComponent* c){
+          .get=[](const harken::studio::IComponent* c){
               return QVariant(static_cast<int>(static_cast<const VVariable*>(c)->displayScale));
           },
-          .set=[](VNX::IComponent* c, const QVariant& v) -> bool {
+          .set=[](harken::studio::IComponent* c, const QVariant& v) -> bool {
               const int raw = v.toInt();
               if (raw < 0 || raw > 255) return false;
               static_cast<VVariable*>(c)->displayScale =
                   static_cast<std::uint8_t>(raw);
               return true;
           },
-          .serializeWhen=[](const VNX::IComponent* c){
+          .serializeWhen=[](const harken::studio::IComponent* c){
               return static_cast<const VVariable*>(c)->displayScale != 0;
           } },
         { .field="description", .type=PropType::String, .label="Description", .section=PropertySection::Status,
           .flags={ .advanced=true },
           .get=VNX_PROP_GET(VVariable, description),
-          .set=[](VNX::IComponent* c, const QVariant& v) -> bool {
+          .set=[](harken::studio::IComponent* c, const QVariant& v) -> bool {
               static_cast<VVariable*>(c)->description = v.toString();
               return true;
           },
-          .serializeWhen=[](const VNX::IComponent* c){
+          .serializeWhen=[](const harken::studio::IComponent* c){
               return !static_cast<const VVariable*>(c)->description.isEmpty();
           } },
         // Storage rows: the serialized v6 keys and the by-name setters every
@@ -171,7 +171,7 @@ inline const PropertySchema& VVariable::schema()
         { .field="rangeMin", .type=PropType::Float, .label="Range Min", .section=PropertySection::Status,
           .decimals=2,
           .get=VNX_PROP_GET(VVariable, rangeMin),
-          .set=[](VNX::IComponent* c, const QVariant& v) -> bool {
+          .set=[](harken::studio::IComponent* c, const QVariant& v) -> bool {
               auto* var = static_cast<VVariable*>(c);
               bool ok = false;
               const float value = v.toFloat(&ok);
@@ -180,7 +180,7 @@ inline const PropertySchema& VVariable::schema()
         { .field="rangeMax", .type=PropType::Float, .label="Range Max", .section=PropertySection::Status,
           .def=100.0, .decimals=2,
           .get=VNX_PROP_GET(VVariable, rangeMax),
-          .set=[](VNX::IComponent* c, const QVariant& v) -> bool {
+          .set=[](harken::studio::IComponent* c, const QVariant& v) -> bool {
               auto* var = static_cast<VVariable*>(c);
               bool ok = false;
               const float value = v.toFloat(&ok);
@@ -190,11 +190,11 @@ inline const PropertySchema& VVariable::schema()
         // write so no edit passes through an inverted or half-applied range.
         { .field="range", .type=PropType::Range, .label="Range", .section=PropertySection::Status,
           .decimals=2, .flags={ .serialize=false },
-          .get=[](const VNX::IComponent* c){
+          .get=[](const harken::studio::IComponent* c){
               const auto* var = static_cast<const VVariable*>(c);
               return QVariant(QVariantList{ var->rangeMin, var->rangeMax });
           },
-          .set=[](VNX::IComponent* c, const QVariant& v) -> bool {
+          .set=[](harken::studio::IComponent* c, const QVariant& v) -> bool {
               const QVariantList bounds = v.toList();
               if (bounds.size() != 2) return false;
               bool aOk = false;
@@ -206,7 +206,7 @@ inline const PropertySchema& VVariable::schema()
               auto* var = static_cast<VVariable*>(c);
               return var->setKindAndRange(var->kind, std::min(a, b), std::max(a, b));
           },
-          .domain=[](const VNX::IComponent* c) -> std::optional<FieldDomain> {
+          .domain=[](const harken::studio::IComponent* c) -> std::optional<FieldDomain> {
               const auto form = VariableSemantics::editFormForKind(
                   static_cast<const VVariable*>(c)->kind);
               return FieldDomain{ 0.0,
@@ -216,7 +216,7 @@ inline const PropertySchema& VVariable::schema()
         { .field="defaultValue", .type=PropType::Float, .label="Default Value", .section=PropertySection::Status,
           .decimals=2,
           .get=VNX_PROP_GET(VVariable, defaultValue),
-          .set=[](VNX::IComponent* c, const QVariant& v) -> bool {
+          .set=[](harken::studio::IComponent* c, const QVariant& v) -> bool {
               auto* var = static_cast<VVariable*>(c);
               bool ok = false;
               const float value = v.toFloat(&ok);
@@ -225,7 +225,7 @@ inline const PropertySchema& VVariable::schema()
               var->normalizeDeclaration();
               return true;
           },
-          .domain=[](const VNX::IComponent* c) -> std::optional<FieldDomain> {
+          .domain=[](const harken::studio::IComponent* c) -> std::optional<FieldDomain> {
               const auto* var = static_cast<const VVariable*>(c);
               const auto form = VariableSemantics::editFormForKind(var->kind);
               return FieldDomain{
@@ -245,7 +245,7 @@ inline const PropertySchema& VVariable::schema()
                 .flags={ .state=true } },
               { .field="name",   .type=PropType::String, .label="Name" },
           },
-          .get=[](const VNX::IComponent* c){
+          .get=[](const harken::studio::IComponent* c){
               QVariantList out;
               for (const VariableLabel& l : static_cast<const VVariable*>(c)->labels)
                   out.push_back(QVariantMap{
@@ -254,7 +254,7 @@ inline const PropertySchema& VVariable::schema()
                       { QStringLiteral("name"),   l.name } });
               return QVariant(out);
           },
-          .set=[](VNX::IComponent* c, const QVariant& v) -> bool {
+          .set=[](harken::studio::IComponent* c, const QVariant& v) -> bool {
               auto* variable = static_cast<VVariable*>(c);
               std::vector<VariableLabel> labels;
               if (v.metaType().id() != QMetaType::QVariantList) return false;
@@ -278,10 +278,10 @@ inline const PropertySchema& VVariable::schema()
               variable->labels = std::move(labels);
               return true;
           },
-          .serializeWhen=[](const VNX::IComponent* c){
+          .serializeWhen=[](const harken::studio::IComponent* c){
               return !static_cast<const VVariable*>(c)->labels.empty();
           },
-          .domain=[](const VNX::IComponent* c) -> std::optional<FieldDomain> {
+          .domain=[](const harken::studio::IComponent* c) -> std::optional<FieldDomain> {
               const auto* var = static_cast<const VVariable*>(c);
               return FieldDomain{ var->rangeMin, var->rangeMax, 0, 1.0, {} };
           },

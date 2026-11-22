@@ -27,7 +27,7 @@ class IntegrationGuidanceTest : public QObject
     Q_OBJECT
 
     std::unique_ptr<QTemporaryDir> dir;
-    VNH::EngineTargetRecord target;
+    harken::hub::EngineTargetRecord target;
     QString source;
     QString installed;
 
@@ -39,9 +39,9 @@ class IntegrationGuidanceTest : public QObject
         QCOMPARE(file.write(data), data.size());
     }
 
-    VNH::UnityIntegrationRequest request() const
+    harken::hub::UnityIntegrationRequest request() const
     {
-        VNH::UnityIntegrationRequest value;
+        harken::hub::UnityIntegrationRequest value;
         value.unityProjectPath = target.canonicalRoot;
         value.integrationSourcePath = source;
         return value;
@@ -49,10 +49,10 @@ class IntegrationGuidanceTest : public QObject
 
     void install()
     {
-        const auto result = VNH::HubUnityIntegrationService::run(request());
+        const auto result = harken::hub::HubUnityIntegrationService::run(request());
         QStringList details;
         for (const auto& step : result.steps)
-            if (step.status == VNH::UnityIntegrationStepStatus::Failed)
+            if (step.status == harken::hub::UnityIntegrationStepStatus::Failed)
                 details << step.id << step.summary << step.cause << step.details;
         QVERIFY2(result.success, qPrintable(details.join('\n')));
     }
@@ -92,13 +92,13 @@ private slots:
         install();
         write(QDir(target.canonicalRoot).filePath("Packages/manifest.json"),
               R"({"dependencies":{"com.harken.core":"1.0.0"}})");
-        const auto observation = VNH::EngineTargetProbe::observe(target);
+        const auto observation = harken::hub::EngineTargetProbe::observe(target);
         QVERIFY(observation.dependencyRestricted);
         QVERIFY(observation.canChangeIntegration);
         QVERIFY(!observation.canRemoveIntegration);
         auto check = request();
         check.checkOnly = true;
-        QVERIFY(VNH::HubUnityIntegrationService::run(check).success);
+        QVERIFY(harken::hub::HubUnityIntegrationService::run(check).success);
     }
 
     void embeddedLockRecordAllowsMaintenanceWithoutIgnoringRealDependencies()
@@ -113,30 +113,30 @@ private slots:
                   QJsonDocument(QJsonObject{{"dependencies", resolved}}).toJson());
         };
         writeLock();
-        auto observation = VNH::EngineTargetProbe::observe(target);
+        auto observation = harken::hub::EngineTargetProbe::observe(target);
         QVERIFY(observation.status.isEmpty());
         QVERIFY(!observation.dependencyRestricted);
         QVERIFY(observation.canChangeIntegration && observation.canRemoveIntegration);
         auto check = request();
         check.checkOnly = true;
-        QVERIFY(VNH::HubUnityIntegrationService::run(check).success);
+        QVERIFY(harken::hub::HubUnityIntegrationService::run(check).success);
         resolved.insert("com.example.consumer", QJsonObject{
             {"version", "1.0.0"}, {"source", "registry"}, {"depth", 0},
             {"dependencies", QJsonObject{{"com.harken.core", "1.0.0"}}}});
         writeLock();
-        observation = VNH::EngineTargetProbe::observe(target);
+        observation = harken::hub::EngineTargetProbe::observe(target);
         QVERIFY(observation.dependencyRestricted);
         QVERIFY(observation.canChangeIntegration && !observation.canRemoveIntegration);
         resolved.remove("com.example.consumer");
         writeLock();
         write(target.canonicalRoot + "/Packages/manifest.json",
               R"({"dependencies":{"com.harken.core":"file:com.harken.core"}})");
-        observation = VNH::EngineTargetProbe::observe(target);
+        observation = harken::hub::EngineTargetProbe::observe(target);
         QVERIFY(observation.dependencyRestricted && !observation.canRemoveIntegration);
         write(target.canonicalRoot + "/Packages/manifest.json", R"({"dependencies":{}})");
         auto remove = request();
         remove.removeIntegration = true;
-        QVERIFY(VNH::HubUnityIntegrationService::run(remove).success);
+        QVERIFY(harken::hub::HubUnityIntegrationService::run(remove).success);
     }
 
     void duplicateInstallationsBlockChanges()
@@ -144,14 +144,14 @@ private slots:
         install();
         write(QDir(target.canonicalRoot).filePath("Assets/OtherSDK/package.json"),
               R"({"name":"com.harken.core","version":"1.0.0"})");
-        const auto observation = VNH::EngineTargetProbe::observe(target);
+        const auto observation = harken::hub::EngineTargetProbe::observe(target);
         QCOMPARE(observation.status, "Multiple Integration Package installations");
         QVERIFY(!observation.canChangeIntegration && !observation.canRemoveIntegration);
     }
 
     void damagedUnrealDescriptorAllowsRepairAndRemoval()
     {
-        target.engineKind = VNH::EngineKind::Unreal;
+        target.engineKind = harken::hub::EngineKind::Unreal;
         target.canonicalRoot = dir->filePath("UnrealGame");
         target.descriptorPath = target.canonicalRoot + "/Game.uproject";
         write(target.descriptorPath, R"({"EngineAssociation":"5.6"})");
@@ -162,15 +162,15 @@ private slots:
         write(source + "/Binaries/ThirdParty/HarkenCore/Win64/HarkenCore.dll", "runtime");
         write(source + "/Binaries/ThirdParty/HarkenCore/Mac/libHarkenCore.dylib", "runtime");
         write(source + "/Binaries/ThirdParty/HarkenCore/Linux/x86_64/libHarkenCore.so", "runtime");
-        using Executor = VNH::ProjectIntegrationExecutor;
-        using Operation = VNH::IntegrationOperation;
+        using Executor = harken::hub::ProjectIntegrationExecutor;
+        using Operation = harken::hub::IntegrationOperation;
         auto plan = Executor::planUnreal(target, source, Operation::Install);
         QVERIFY2(plan.valid, qPrintable(plan.error));
         auto result = Executor::executeUnreal(target, plan, Operation::Install, true);
         QVERIFY2(result.success, qPrintable(result.error));
         const QString plugin = target.canonicalRoot + "/Plugins/Harken/Harken.uplugin";
         write(plugin, "invalid");
-        const auto observation = VNH::EngineTargetProbe::observe(target);
+        const auto observation = harken::hub::EngineTargetProbe::observe(target);
         QCOMPARE(observation.status, "Integration Package metadata needs repair");
         QVERIFY(observation.canChangeIntegration && observation.canRemoveIntegration && !observation.canMoveIntegration);
         plan = Executor::planUnreal(target, source, Operation::Repair);
@@ -212,13 +212,13 @@ private slots:
               R"({"name":"com.harken.core","version":"0.3.0"})");
         const QString project = dir->filePath("Audio.hsp");
         write(project, "{}");
-        VNH::IntegrationStore integrations;
-        VNH::EngineTargetStore targets;
-        VNH::ProjectStore projects;
+        harken::hub::IntegrationStore integrations;
+        harken::hub::EngineTargetStore targets;
+        harken::hub::ProjectStore projects;
         QVERIFY(integrations.open(dir->filePath("integrations.db")));
         QVERIFY(targets.open(dir->filePath("targets.db")));
         QVERIFY(projects.open(dir->filePath("projects.db")));
-        VNH::EngineIntegrationsPage page(&integrations, &targets, &projects);
+        harken::hub::EngineIntegrationsPage page(&integrations, &targets, &projects);
         page.resize(760, 600);
         page.show();
         page.beginEditForProject(project, {}, target.canonicalRoot);

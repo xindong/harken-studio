@@ -7,7 +7,7 @@
 #include <QStylePainter>
 #include <QWheelEvent>
 
-namespace VNX {
+namespace harken::studio {
 
 ToolBarComboBox::ToolBarComboBox(QWidget* parent)
     : QComboBox(parent)

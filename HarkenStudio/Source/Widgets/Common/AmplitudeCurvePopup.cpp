@@ -15,7 +15,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace VNX {
+namespace harken::studio {
 
 QAction* addAmplitudePowerLawAction(QMenu* menu, QWidget* owner, const QPoint& globalPosition,
     const QRect& globalAxisBounds, double exponent, std::function<void(double)> changed)

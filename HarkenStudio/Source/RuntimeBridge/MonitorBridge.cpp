@@ -5,7 +5,7 @@
 #include <algorithm>
 #include <vector>
 
-namespace HarkenEditor::Bridge::Monitoring {
+namespace harken::studio::bridge::Monitoring {
 namespace {
 
 template<class Native, class Model, class Call>
@@ -20,8 +20,8 @@ int32_t readValue(Model* out, Call call)
 }
 
 template<class Call>
-int32_t submitPlan(const VNX::Monitor::MonitorCapturePlan* plan,
-                    VNX::Monitor::MonitorEffectiveCapturePlan* out, Call call)
+int32_t submitPlan(const harken::studio::Monitor::MonitorCapturePlan* plan,
+                    harken::studio::Monitor::MonitorEffectiveCapturePlan* out, Call call)
 {
     if (!plan || !out || (plan->tapCount && !plan->taps) ||
         (plan->measurementCount && !plan->measurements)) return VN_INVALID_ARG;
@@ -42,14 +42,14 @@ int32_t submitPlan(const VNX::Monitor::MonitorCapturePlan* plan,
 
 }
 
-int32_t openSession(const VNX::Monitor::MonitorSessionDesc* desc, uint64_t* handle)
+int32_t openSession(const harken::studio::Monitor::MonitorSessionDesc* desc, uint64_t* handle)
 {
     if (!desc) return VN_INVALID_ARG;
     const auto native = toNative(*desc);
     return Vn_MonitorOpenSession(reinterpret_cast<const VnMonitorSessionDesc*>(&native), handle);
 }
 
-int32_t openEventSession(const VNX::Monitor::MonitorSessionDesc* desc, uint64_t* handle)
+int32_t openEventSession(const harken::studio::Monitor::MonitorSessionDesc* desc, uint64_t* handle)
 {
     if (!desc) return VN_INVALID_ARG;
     const auto native = toNative(*desc);
@@ -59,20 +59,20 @@ int32_t openEventSession(const VNX::Monitor::MonitorSessionDesc* desc, uint64_t*
 int32_t closeSession(uint64_t handle) { return Vn_MonitorCloseSession(handle); }
 int32_t sealEventSession(uint64_t handle) { return Vn_MonitorSealEventSession(handle); }
 
-int32_t getEventSessionStatus(uint64_t handle, VNX::Monitor::MonitorEventSessionStatus* out)
+int32_t getEventSessionStatus(uint64_t handle, harken::studio::Monitor::MonitorEventSessionStatus* out)
 {
     return readValue<VnMonitorEventSessionStatusV2>(out, [&](auto* value) {
         return Vn_MonitorGetEventSessionStatus(handle, reinterpret_cast<VnMonitorEventSessionStatus*>(value));
     });
 }
 
-int32_t getCapabilities(VNX::Monitor::MonitorCapabilities* out)
+int32_t getCapabilities(harken::studio::Monitor::MonitorCapabilities* out)
 {
     return readValue<VnMonitorCapabilities>(out, Vn_MonitorGetCapabilities);
 }
 
-int32_t poll(uint64_t handle, const VNX::Monitor::MonitorPollDesc* desc,
-             VNX::Monitor::MonitorPollResult* out)
+int32_t poll(uint64_t handle, const harken::studio::Monitor::MonitorPollDesc* desc,
+             harken::studio::Monitor::MonitorPollResult* out)
 {
     if (!desc || !out) return VN_INVALID_ARG;
     auto native = toNative(*desc);
@@ -84,7 +84,7 @@ int32_t poll(uint64_t handle, const VNX::Monitor::MonitorPollDesc* desc,
     return status;
 }
 
-int32_t getSubscriptionStatus(uint64_t handle, VNX::Monitor::MonitorSubscriptionStatus* out)
+int32_t getSubscriptionStatus(uint64_t handle, harken::studio::Monitor::MonitorSubscriptionStatus* out)
 {
     if (!out || (out->baselineCapacity && !out->baselines)) return VN_INVALID_ARG;
     std::vector<VnMonitorStreamBaseline> baselines(out->baselineCapacity);
@@ -106,7 +106,7 @@ int32_t getSubscriptionStatus(uint64_t handle, VNX::Monitor::MonitorSubscription
     return result;
 }
 
-int32_t getConsumerStatus(uint64_t handle, VNX::Monitor::MonitorDropSummary* out,
+int32_t getConsumerStatus(uint64_t handle, harken::studio::Monitor::MonitorDropSummary* out,
                           uint32_t capacity, uint32_t* required)
 {
     if (!required || (capacity && !out)) return VN_INVALID_ARG;
@@ -118,14 +118,14 @@ int32_t getConsumerStatus(uint64_t handle, VNX::Monitor::MonitorDropSummary* out
     return result;
 }
 
-int32_t getCaptureControlStatus(uint64_t handle, VNX::Monitor::MonitorCaptureControlStatus* out)
+int32_t getCaptureControlStatus(uint64_t handle, harken::studio::Monitor::MonitorCaptureControlStatus* out)
 {
     return readValue<VnMonitorCaptureControlStatus>(out, [&](auto* value) {
         return Vn_MonitorGetCaptureControlStatus(handle, value);
     });
 }
 
-int32_t acquireCaptureControl(uint64_t handle, VNX::Monitor::MonitorCaptureControlStatus* out)
+int32_t acquireCaptureControl(uint64_t handle, harken::studio::Monitor::MonitorCaptureControlStatus* out)
 {
     return readValue<VnMonitorCaptureControlStatus>(out, [&](auto* value) {
         return Vn_MonitorAcquireCaptureControl(handle, value);
@@ -138,8 +138,8 @@ int32_t releaseCaptureControl(uint64_t handle, uint64_t lease)
 }
 
 int32_t validateCapturePlan(uint64_t handle, uint64_t lease,
-                            const VNX::Monitor::MonitorCapturePlan* plan,
-                            VNX::Monitor::MonitorEffectiveCapturePlan* out)
+                            const harken::studio::Monitor::MonitorCapturePlan* plan,
+                            harken::studio::Monitor::MonitorEffectiveCapturePlan* out)
 {
     return submitPlan(plan, out, [&](const auto* native, auto* value) {
         return Vn_MonitorValidateCapturePlan(handle, lease, native, value);
@@ -147,15 +147,15 @@ int32_t validateCapturePlan(uint64_t handle, uint64_t lease,
 }
 
 int32_t applyCapturePlan(uint64_t handle, uint64_t lease,
-                         const VNX::Monitor::MonitorCapturePlan* plan,
-                         VNX::Monitor::MonitorEffectiveCapturePlan* out)
+                         const harken::studio::Monitor::MonitorCapturePlan* plan,
+                         harken::studio::Monitor::MonitorEffectiveCapturePlan* out)
 {
     return submitPlan(plan, out, [&](const auto* native, auto* value) {
         return Vn_MonitorApplyCapturePlan(handle, lease, native, value);
     });
 }
 
-int32_t stopCapture(uint64_t handle, uint64_t lease, VNX::Monitor::MonitorEffectiveCapturePlan* out)
+int32_t stopCapture(uint64_t handle, uint64_t lease, harken::studio::Monitor::MonitorEffectiveCapturePlan* out)
 {
     return readValue<VnMonitorEffectiveCapturePlan>(out, [&](auto* value) {
         return Vn_MonitorStopCapture(handle, lease, value);
@@ -163,7 +163,7 @@ int32_t stopCapture(uint64_t handle, uint64_t lease, VNX::Monitor::MonitorEffect
 }
 
 int32_t getEffectiveCapturePlan(uint64_t handle, uint64_t generation,
-                                VNX::Monitor::MonitorEffectiveCapturePlan* out)
+                                harken::studio::Monitor::MonitorEffectiveCapturePlan* out)
 {
     return readValue<VnMonitorEffectiveCapturePlan>(out, [&](auto* value) {
         return Vn_MonitorGetEffectiveCapturePlan(handle, generation, value);

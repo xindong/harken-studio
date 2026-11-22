@@ -10,11 +10,11 @@
 #include <string>
 #include <vector>
 
-namespace harkenbuscompiler {
+namespace harken::studio::bus_compiler {
 
 using BusProjectGenerationV1 = std::uint64_t;
 
-using CompileTargetProfileV1 = harkenprojectschema::CompileTargetProfileV1;
+using CompileTargetProfileV1 = harken::studio::project_schema::CompileTargetProfileV1;
 
 inline constexpr std::uint64_t kBusRequiredCapabilityMaskV1 =
     (std::uint64_t{1} << 16) | (std::uint64_t{1} << 17)
@@ -45,15 +45,15 @@ enum class BusDiagnosticCodeV1 : std::uint32_t {
 };
 
 struct BusSourceLocationV1 {
-    harkenprojectschema::AuthoringGuid authoringGuid{};
+    harken::studio::project_schema::AuthoringGuid authoringGuid{};
     std::string documentPath;
     std::string fieldPath;
 };
 
 struct BusDiagnosticV1 {
     BusDiagnosticCodeV1 code = BusDiagnosticCodeV1::Invalid;
-    harkenstudio::ObjectId offendingId{};
-    harkenstudio::ObjectId relatedId{};
+    harken::studio::types::ObjectId offendingId{};
+    harken::studio::types::ObjectId relatedId{};
     std::uint64_t projectGeneration = 0;
     BusSourceLocationV1 source;
     std::uint64_t detail = 0;
@@ -71,11 +71,11 @@ struct BusCompilerCapacityV1 {
 };
 
 struct BusAuthoringV1 {
-    harkenstudio::ObjectId busId{};
-    harkenstudio::ObjectId parentId{};
+    harken::studio::types::ObjectId busId{};
+    harken::studio::types::ObjectId parentId{};
     float faderDb = 0.0f;
     std::uint32_t faderAfterSlot = 8;
-    harkenstudio::ChannelLayout outputLayout = 0;
+    harken::studio::types::ChannelLayout outputLayout = 0;
     BusSourceLocationV1 source;
     std::uint32_t effectFirst = 0;
     std::uint32_t effectCount = 0;
@@ -85,22 +85,22 @@ struct BusAuthoringV1 {
 };
 
 struct BusSendAuthoringV1 {
-    harkenstudio::ObjectId sourceBusId{};
-    harkenstudio::ObjectId targetBusId{};
+    harken::studio::types::ObjectId sourceBusId{};
+    harken::studio::types::ObjectId targetBusId{};
     float sendLevelDb = 0.0f;
     BusSourceLocationV1 source;
 };
 
 struct BusEffectParameterAuthoringV1 {
-    harkenstudio::ObjectId effectId{};
+    harken::studio::types::ObjectId effectId{};
     std::uint32_t index = 0;
     float value = 0.0f;
     BusSourceLocationV1 source;
 };
 
 struct BusEffectAuthoringV1 {
-    harkenstudio::ObjectId busId{};
-    harkenstudio::ObjectId effectId{};
+    harken::studio::types::ObjectId busId{};
+    harken::studio::types::ObjectId effectId{};
     std::uint32_t slot = 0;
     std::uint32_t effectType = 0;
     std::uint32_t descriptorVintage = 2;
@@ -108,25 +108,25 @@ struct BusEffectAuthoringV1 {
     std::uint32_t parameterFirst = 0;
     std::uint32_t parameterCount = 0;
     BusSourceLocationV1 source;
-    harkenprojectschema::AuthoringGuid definitionGuid{};
+    harken::studio::project_schema::AuthoringGuid definitionGuid{};
 };
 
 struct BusDownmixAuthoringV1 {
-    harkenstudio::ObjectId busId{};
-    harkenstudio::ChannelLayout sourceLayout = 0;
-    harkenstudio::ChannelLayout destinationLayout = 0;
+    harken::studio::types::ObjectId busId{};
+    harken::studio::types::ChannelLayout sourceLayout = 0;
+    harken::studio::types::ChannelLayout destinationLayout = 0;
     std::uint32_t coefficientFirst = 0;
     std::uint32_t coefficientCount = 0;
     BusSourceLocationV1 source;
 };
 
 struct CompiledBusV1 {
-    harkenstudio::ObjectId busId{};
-    harkenstudio::ObjectId parentId{};
+    harken::studio::types::ObjectId busId{};
+    harken::studio::types::ObjectId parentId{};
     std::uint32_t feedsFirstOrdinal = 0;
     float faderDb = 0.0f;
     std::uint32_t faderAfterSlot = 8;
-    harkenstudio::ChannelLayout outputLayout = 0;
+    harken::studio::types::ChannelLayout outputLayout = 0;
     std::uint32_t effectFirst = 0;
     std::uint32_t effectCount = 0;
     std::uint32_t downmixFirst = 0;
@@ -136,8 +136,8 @@ struct CompiledBusV1 {
 };
 
 struct CompiledBusSendV1 {
-    harkenstudio::ObjectId sourceBusId{};
-    harkenstudio::ObjectId targetBusId{};
+    harken::studio::types::ObjectId sourceBusId{};
+    harken::studio::types::ObjectId targetBusId{};
     float sendLevelDb = 0.0f;
     std::uint32_t sourceLocationIndex = 0;
 };
@@ -149,8 +149,8 @@ struct CompiledBusEffectParameterV1 {
 };
 
 struct CompiledBusEffectV1 {
-    harkenstudio::ObjectId busId{};
-    harkenstudio::ObjectId effectId{};
+    harken::studio::types::ObjectId busId{};
+    harken::studio::types::ObjectId effectId{};
     std::uint32_t slot = 0;
     std::uint32_t effectType = 0;
     std::uint32_t descriptorVintage = 2;
@@ -158,20 +158,20 @@ struct CompiledBusEffectV1 {
     std::uint32_t parameterFirst = 0;
     std::uint32_t parameterCount = 0;
     std::uint32_t sourceLocationIndex = 0;
-    harkenprojectschema::AuthoringGuid definitionGuid{};
+    harken::studio::project_schema::AuthoringGuid definitionGuid{};
 };
 
 struct CompiledBusDownmixV1 {
-    harkenstudio::ObjectId busId{};
-    harkenstudio::ChannelLayout sourceLayout = 0;
-    harkenstudio::ChannelLayout destinationLayout = 0;
+    harken::studio::types::ObjectId busId{};
+    harken::studio::types::ChannelLayout sourceLayout = 0;
+    harken::studio::types::ChannelLayout destinationLayout = 0;
     std::uint32_t coefficientFirst = 0;
     std::uint32_t coefficientCount = 0;
     std::uint32_t sourceLocationIndex = 0;
 };
 
 struct CompiledBusIdSetV1 {
-    std::vector<harkenstudio::ObjectId> ids;
+    std::vector<harken::studio::types::ObjectId> ids;
 };
 
 struct CompiledBusResultV1 {
@@ -179,7 +179,7 @@ struct CompiledBusResultV1 {
     std::vector<CompiledBusV1> buses;
     std::vector<CompiledBusSendV1> sends;
     CompiledBusIdSetV1 idSet;
-    std::shared_ptr<const harkenprojectschema::RuntimeIdentityIndexV1> identityIndex;
+    std::shared_ptr<const harken::studio::project_schema::RuntimeIdentityIndexV1> identityIndex;
     std::shared_ptr<const CompileTargetProfileV1> compileTargetProfile;
     std::uint64_t compileTargetProfileFingerprint = 0;
     std::vector<CompiledBusEffectV1> effects;
@@ -207,7 +207,7 @@ struct PublishedBusProjectionV1 {
     BusPublicationCapabilityVintageV1 capabilityVintage =
         BusPublicationCapabilityVintageV1::TopologyAndSendsNeutralProperties;
     std::uint64_t projectGeneration = 0;
-    std::shared_ptr<const harkenprojectschema::RuntimeIdentityIndexV1> identityIndex;
+    std::shared_ptr<const harken::studio::project_schema::RuntimeIdentityIndexV1> identityIndex;
     std::shared_ptr<const CompileTargetProfileV1> compileTargetProfile;
     std::uint64_t compileTargetProfileFingerprint = 0;
     std::vector<CompiledBusV1> buses;
@@ -221,7 +221,7 @@ struct PublishedBusProjectionV1 {
 
 struct BusCompilerInputV1 {
     std::uint64_t projectGeneration = 0;
-    std::shared_ptr<const harkenprojectschema::RuntimeIdentityIndexV1> identityIndex;
+    std::shared_ptr<const harken::studio::project_schema::RuntimeIdentityIndexV1> identityIndex;
     std::shared_ptr<const CompileTargetProfileV1> compileTargetProfile;
     std::vector<BusAuthoringV1> buses;
     std::vector<BusSendAuthoringV1> sends;
@@ -245,4 +245,4 @@ PublishedBusProjectionV1 BuildPublishedBusProjectionV1(
     const CompiledBusResultV1& result,
     BusPublicationCapabilityVintageV1 capabilityVintage);
 
-} // namespace harkenbuscompiler
+} // namespace harken::studio::bus_compiler

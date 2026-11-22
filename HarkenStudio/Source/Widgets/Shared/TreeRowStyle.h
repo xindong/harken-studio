@@ -11,9 +11,9 @@ class QRect;
 class QString;
 class QTreeWidgetItem;
 
-namespace VNX { class InlineRenameEdit; }
+namespace harken::studio { class InlineRenameEdit; }
 
-namespace VNX::TreeRowStyle {
+namespace harken::studio::TreeRowStyle {
 
 constexpr int kBucketRole = Qt::UserRole + 1;
 

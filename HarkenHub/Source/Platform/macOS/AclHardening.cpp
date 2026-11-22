@@ -11,7 +11,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-namespace VNH {
+namespace harken::hub {
 
 namespace {
 

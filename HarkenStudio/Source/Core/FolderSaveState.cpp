@@ -11,7 +11,7 @@
 #include <QTemporaryDir>
 #include <map>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 const QStringList& managedBuckets()

@@ -22,6 +22,14 @@
 #include <stdint.h>
 #include <harken/ObjectId.h>
 
+#if (defined(__cplusplus) && __cplusplus >= 201402L) || (defined(_MSVC_LANG) && _MSVC_LANG >= 201402L) || (defined(__STDC_VERSION__) && __STDC_VERSION__ >= 202311L)
+#define HARKEN_DEPRECATED(message) [[deprecated(message)]]
+#elif defined(__GNUC__) || defined(__clang__)
+#define HARKEN_DEPRECATED(message) __attribute__((deprecated(message)))
+#else
+#define HARKEN_DEPRECATED(message)
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -1285,8 +1293,7 @@ VnResult Vn_SetVoiceOrientation(VnVoiceHandle handle, VnVec3 forward);
  * Zero is never a valid handle. */
 typedef uint64_t VnPackHandle;
 
-/* Describes one .pack file to load. The path is UTF-8 regardless of
- * the process codepage; it is read during the call only. */
+/* Deprecated Pack descriptor vintage. Use VnPackLoadDesc for current Pack files. */
 typedef struct VnPackDesc {
     uint32_t structSize;  /* set to sizeof(VnPackDesc) */
     uint32_t reserved0;   /* keeps 8-byte alignment for the pointer */
@@ -1424,6 +1431,7 @@ typedef struct VnCanonicalPackSetUnloadDescV1 {
     uint64_t reserved0;
 } VnCanonicalPackSetUnloadDescV1;
 
+HARKEN_DEPRECATED("Use Vn_ActivateCanonicalPackSetV2.")
 VnResult Vn_ActivateCanonicalPackSetV1(
     const VnCanonicalPackSetActivationDescV1* desc,
     VnCanonicalPackSetActivationReportV1* outReport);
@@ -1442,7 +1450,7 @@ typedef struct VnCanonicalPackSetMemberV2 {
 /* The complete desired set, Init first, remaining members ordered by pack ID.
  * Keep has only source identity/kind/expectedHandle, with no source bytes.
  * Content captures the source bytes. Omitted owners are unloaded atomically.
- * V1 layouts and legacy semantics remain unchanged. A companion Init accepts
+ * V1 layouts and legacy semantics remain unchanged. An Init activated through V2 accepts
  * only V2 mutations until unloaded; legacy catalog writes cannot replace it. */
 typedef struct VnCanonicalPackSetActivationDescV2 {
     uint32_t structSize;
@@ -1508,8 +1516,7 @@ typedef struct VnPackLabelFactV1 {
     uint32_t reserved0;
 } VnPackLabelFactV1;
 
-/* Facts about the converted Pack media, independent of preview classification.
- * Source waveform rate/trim coordinates come from companion JSON and VKD. */
+/* Facts about the converted Pack media, independent of preview classification. */
 typedef struct VnPackMediaFactV1 {
     VnSoundId soundId;
     uint64_t mediaChecksum;
@@ -1628,6 +1635,7 @@ typedef struct VnCurrentWorldLoadReport {
  * playback-program bytes as CanonicalDefinitionPartition, with the same
  * shipping bodyVintage. Games load .pack; this is not a third disk
  * contract. */
+HARKEN_DEPRECATED("Use canonical Pack activation for runtime content.")
 VnResult Vn_LoadCurrentWorld(const VnCurrentWorldLoadDesc* desc,
                              VnCurrentWorldLoadReport* outReport);
 
@@ -1647,9 +1655,9 @@ VnResult Vn_LoadCurrentWorld(const VnCurrentWorldLoadDesc* desc,
  * remains fully supported alongside. Reading the file happens on the
  * calling (logic) thread; the audio thread is never involved. */
 /* desc may be a VnPackDesc or a VnPackLoadDesc; structSize selects the vintage.
- * A VnPackDesc cannot activate Init / CanonicalContent Packs. Additive
- * Vn_ActivateCanonicalPackSetV1 is the Init set path; this load still accepts
- * current-vintage Init / CanonicalContent. A canonical pack whose playback-program
+ * The VnPackDesc vintage is deprecated. VnPackLoadDesc loads current-vintage
+ * Init / CanonicalContent. Use Vn_ActivateCanonicalPackSetV2 to activate a set.
+ * A canonical pack whose playback-program
  * bodyVintage is not the current write table refuses with VN_PACK_INCOMPATIBLE;
  * payload damage is VN_BAD_PACK. */
 VnResult Vn_LoadPack(const VnPackDesc* desc,
@@ -2615,6 +2623,7 @@ VnResult Vn_ReplaceStreamFile(VnSoundId soundId, const char* utf8Path);
  * stale handle is a benign no-op returning VN_STALE_HANDLE. VN_IN_USE also
  * refuses a replace while this pack's previous old generation still has
  * logical voices. */
+HARKEN_DEPRECATED("Use Vn_ActivateCanonicalPackSetV2 to replace canonical Pack set members.")
 VnResult Vn_ReplacePack(VnPackHandle handle, const VnPackDesc* desc);
 
 /* Replaces a registered attenuation profile's content. Validation is

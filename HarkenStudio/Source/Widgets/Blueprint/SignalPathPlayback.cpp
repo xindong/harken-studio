@@ -5,11 +5,11 @@
 #include <algorithm>
 #include <functional>
 
-namespace VNX {
+namespace harken::studio {
 
 SignalPathActivity projectSignalPathActivity(
     const ProjectData& project, const SignalPathGraph& graph,
-    const std::vector<HarkenEditor::Bridge::PlaybackPathObservation>& playback)
+    const std::vector<harken::studio::bridge::PlaybackPathObservation>& playback)
 {
     SignalPathActivity result;
     result.edges.resize(graph.edges.size());
@@ -25,7 +25,7 @@ SignalPathActivity projectSignalPathActivity(
         if (binding->rootItem) collect(*binding->rootItem);
     const auto stableId = [&](const QUuid& guid) {
         const auto* item = items.value(guid);
-        return item ? item->runtimeId() : harkenstudio::ObjectId{};
+        return item ? item->runtimeId() : harken::studio::types::ObjectId{};
     };
     const auto nodeStableId = [&](size_t index) { return stableId(graph.nodes[index].key.objectGuid); };
     const auto activate = [&](const SignalPathEndpoint& endpoint) {
@@ -33,8 +33,8 @@ SignalPathActivity projectSignalPathActivity(
     };
 
     for (const auto& voice : playback) {
-        std::vector<harkenstudio::ObjectId> definitions;
-        std::vector<HarkenEditor::Bridge::PlaybackPathRow> uses;
+        std::vector<harken::studio::types::ObjectId> definitions;
+        std::vector<harken::studio::bridge::PlaybackPathRow> uses;
         for (auto row = voice.rows.rbegin(); row != voice.rows.rend(); ++row) {
             if (row->occurrenceOrdinal == UINT32_MAX) definitions.push_back(row->stableId);
             else uses.push_back(*row);
@@ -42,10 +42,10 @@ SignalPathActivity projectSignalPathActivity(
         std::vector<size_t> matches;
         for (size_t index = 0; index < graph.paths.size(); ++index) {
             const auto& path = graph.paths[index];
-            if (voice.soundId == harkenstudio::ObjectId{} || stableId(path.identity.sourceGuid) != voice.soundId
+            if (voice.soundId == harken::studio::types::ObjectId{} || stableId(path.identity.sourceGuid) != voice.soundId
                 || definitions.size() != path.computation.size()) continue;
             if (!std::equal(definitions.begin(), definitions.end(), path.computation.begin(),
-                    [&](harkenstudio::ObjectId id, const auto& endpoint) { return id == nodeStableId(endpoint.occurrenceIndex); }))
+                    [&](harken::studio::types::ObjectId id, const auto& endpoint) { return id == nodeStableId(endpoint.occurrenceIndex); }))
                 continue;
             size_t observed = 0;
             for (const auto& use : path.identity.occurrences) {

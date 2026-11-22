@@ -8,7 +8,7 @@
 #include <cstdint>
 #include <string>
 
-namespace VNX {
+namespace harken::studio {
 namespace Monitor {
 
 enum class MonitorRecordingMode
@@ -85,4 +85,4 @@ const char* recordingFaceText(MonitorRecordingFace face);
 const char* recordingCommandEntry(MonitorRecordingCommand command);
 
 } // namespace Monitor
-} // namespace VNX
+} // namespace harken::studio

@@ -6,7 +6,7 @@
 
 class QLabel;
 
-namespace VNX {
+namespace harken::studio {
 
 class RehearsalSlider;
 struct ProjectItem;

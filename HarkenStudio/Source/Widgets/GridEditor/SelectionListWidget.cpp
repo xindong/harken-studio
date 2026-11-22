@@ -34,7 +34,7 @@
 #include <algorithm>
 #include <limits>
 
-namespace VNX {
+namespace harken::studio {
 
 SelectionListWidget::SelectionListWidget(QWidget* parent)
     : QWidget(parent)

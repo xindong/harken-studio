@@ -2,7 +2,7 @@
 
 #include "Monitor/MonitorWaveformPanel.h"
 
-namespace VNX {
+namespace harken::studio {
 
 void MonitorWaveformSource::attach(MonitorWaveformPanel* panel,
                                    MonitorCursorModel* sharedCursor)
@@ -29,4 +29,4 @@ void MonitorWaveformSource::pushToPanel() const
         panel_->bindSnapshot(snapshot_, stateStreamSubscribed_);
 }
 
-} // namespace VNX
+} // namespace harken::studio

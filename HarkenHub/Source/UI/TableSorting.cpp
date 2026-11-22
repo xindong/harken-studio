@@ -4,7 +4,7 @@
 #include <QHeaderView>
 #include <QVersionNumber>
 
-namespace VNH {
+namespace harken::hub {
 namespace {
 
 constexpr int kSortValueRole = Qt::UserRole + 100;

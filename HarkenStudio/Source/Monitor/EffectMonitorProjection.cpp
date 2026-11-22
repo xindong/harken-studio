@@ -7,7 +7,7 @@
 #include <map>
 #include <utility>
 
-namespace VNX {
+namespace harken::studio {
 namespace Monitor {
 namespace {
 
@@ -131,4 +131,4 @@ EffectMonitorProjection projectEffectRows(
 }
 
 } // namespace Monitor
-} // namespace VNX
+} // namespace harken::studio

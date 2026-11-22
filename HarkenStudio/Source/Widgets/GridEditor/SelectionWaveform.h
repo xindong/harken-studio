@@ -2,7 +2,7 @@
 
 #include "Widgets/Common/SourceRangeThumb.h"
 
-namespace VNX {
+namespace harken::studio {
 
 class SelectionWaveform final : public SourceRangeThumb
 {

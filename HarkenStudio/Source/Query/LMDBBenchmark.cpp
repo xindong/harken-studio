@@ -11,7 +11,7 @@
 #include <QDebug>
 #include <random>
 
-namespace VNX {
+namespace harken::studio {
 
 
 QJsonObject LMDBBenchmark::BenchmarkResult::toJson() const

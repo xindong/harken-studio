@@ -22,7 +22,7 @@
 #include <QRegularExpression>
 #include <filesystem>
 
-namespace VNH {
+namespace harken::hub {
 namespace {
 
 constexpr auto kUnrealReceiptFileName = ".harken-integration-state.json";
@@ -231,7 +231,7 @@ bool copyTargetOnlyFiles(const QString& priorRoot, const QString& stagingRoot,
 
 QJsonObject inventory(const QString& root, QString* error)
 {
-    if (!VNX::UnityInstallation::validateTree(root, error)) return {};
+    if (!harken::hub::unity::UnityInstallation::validateTree(root, error)) return {};
     QJsonObject fileHashes;
     QStringList directories;
     QDirIterator entries(root, QDir::AllEntries | QDir::Hidden | QDir::System | QDir::NoDotAndDotDot,
@@ -264,10 +264,10 @@ bool validInventory(const QJsonObject& value)
         || !entries.contains(QLatin1String(kUnrealReceiptFileName))) return false;
     static const QRegularExpression hashPattern(QStringLiteral("^[0-9a-f]{64}$"));
     for (auto it = entries.begin(); it != entries.end(); ++it)
-        if (!VNX::UnityInstallation::safeRelativePath(it.key())
+        if (!harken::hub::unity::UnityInstallation::safeRelativePath(it.key())
             || !hashPattern.match(it.value().toString()).hasMatch()) return false;
     for (const auto& entry : value.value(QStringLiteral("directories")).toArray())
-        if (!entry.isString() || !VNX::UnityInstallation::safeRelativePath(entry.toString())) return false;
+        if (!entry.isString() || !harken::hub::unity::UnityInstallation::safeRelativePath(entry.toString())) return false;
     return true;
 }
 
@@ -294,8 +294,8 @@ bool emptyLocation(const QString& path)
 
 bool validateLocationTree(const QString& path, QString* error)
 {
-    return VNX::UnityInstallation::validatePath(path, error)
-        && (!QFileInfo::exists(path) || VNX::UnityInstallation::validateTree(path, error));
+    return harken::hub::unity::UnityInstallation::validatePath(path, error)
+        && (!QFileInfo::exists(path) || harken::hub::unity::UnityInstallation::validateTree(path, error));
 }
 
 QString migrationBackup(const EngineTargetRecord& target, const QString& transaction)
@@ -396,22 +396,22 @@ bool ProjectIntegrationExecutor::resolveUnrealLocation(const EngineTargetRecord&
     const QDir project(target.canonicalRoot);
     const QString relative = QDir::isAbsolutePath(normalized)
         ? project.relativeFilePath(normalized) : normalized;
-    if (!VNX::UnityInstallation::safeRelativePath(relative)
+    if (!harken::hub::unity::UnityInstallation::safeRelativePath(relative)
         || !relative.startsWith(QStringLiteral("Plugins/"))) {
         *error = hubTranslate(QStringLiteral("Choose a directory inside this project's Plugins folder, for example Plugins/Audio/Harken."));
         return false;
     }
     *path = QDir::cleanPath(project.absoluteFilePath(relative));
-    if (!VNX::UnityInstallation::validatePath(*path, error)) return false;
+    if (!harken::hub::unity::UnityInstallation::validatePath(*path, error)) return false;
     const QString plugins = project.absoluteFilePath(QStringLiteral("Plugins"));
     for (QString parent = QFileInfo(*path).absolutePath();
-         !VNX::UnityInstallation::samePath(parent, target.canonicalRoot);
+         !harken::hub::unity::UnityInstallation::samePath(parent, target.canonicalRoot);
          parent = QFileInfo(parent).absolutePath()) {
         if (!QDir(parent).entryList({QStringLiteral("*.uplugin")}, QDir::Files | QDir::Hidden).isEmpty()) {
             *error = hubTranslate(QStringLiteral("The Integration Package cannot be placed inside another Unreal plugin. Choose a separate directory under Plugins."));
             return false;
         }
-        if (VNX::UnityInstallation::samePath(parent, plugins)) break;
+        if (harken::hub::unity::UnityInstallation::samePath(parent, plugins)) break;
     }
     return true;
 }
@@ -425,7 +425,7 @@ bool ProjectIntegrationExecutor::locateUnrealInstallation(const EngineTargetReco
     while (!pending.isEmpty()) {
         const QString directory = pending.takeLast();
         IntegrationProgress::inspectedEntry();
-        if (!VNX::UnityInstallation::validatePath(directory, error)) return false;
+        if (!harken::hub::unity::UnityInstallation::validatePath(directory, error)) return false;
         if (!QFileInfo::exists(directory)) continue;
         if (QFileInfo::exists(QDir(directory).filePath(QStringLiteral("Harken.uplugin")))
             || QFileInfo::exists(QDir(directory).filePath(QLatin1String(kUnrealReceiptFileName)))) {
@@ -441,7 +441,7 @@ bool ProjectIntegrationExecutor::locateUnrealInstallation(const EngineTargetReco
         while (!enumerationError && cursor != end) {
             const QFileInfo child(QString::fromStdU16String(cursor->path().u16string()));
             IntegrationProgress::inspectedEntry();
-            if (!VNX::UnityInstallation::validatePath(child.absoluteFilePath(), error)) return false;
+            if (!harken::hub::unity::UnityInstallation::validatePath(child.absoluteFilePath(), error)) return false;
             if (child.isDir()) pending << child.absoluteFilePath();
             cursor.increment(enumerationError);
         }
@@ -478,13 +478,13 @@ IntegrationMigrationPlan ProjectIntegrationExecutor::planUnrealMigration(const E
     bool projectOk = false;
     readObject(target.descriptorPath, &projectOk);
     if (target.engineKind != EngineKind::Unreal || !projectOk
-        || !VNX::UnityInstallation::samePath(QFileInfo(target.descriptorPath).absolutePath(), target.canonicalRoot)) {
+        || !harken::hub::unity::UnityInstallation::samePath(QFileInfo(target.descriptorPath).absolutePath(), target.canonicalRoot)) {
         plan.error = hubTranslate(QStringLiteral("The target is not a readable Unreal project"));
         return plan;
     }
     if (!checkUnrealClosed(target, &plan.error)) return plan;
     const QString journalPath = unrealMigrationJournalPath(target);
-    if (!VNX::UnityInstallation::validatePath(journalPath, &plan.error)) return plan;
+    if (!harken::hub::unity::UnityInstallation::validatePath(journalPath, &plan.error)) return plan;
     QJsonObject journal;
     if (recover) {
         bool ok = false;
@@ -519,8 +519,8 @@ IntegrationMigrationPlan ProjectIntegrationExecutor::planUnrealMigration(const E
         }
         plan.transactionId = QUuid::createUuid().toString(QUuid::WithoutBraces);
     }
-    if (VNX::UnityInstallation::containsPath(plan.sourceRoot, plan.targetRoot)
-        || VNX::UnityInstallation::containsPath(plan.targetRoot, plan.sourceRoot)) {
+    if (harken::hub::unity::UnityInstallation::containsPath(plan.sourceRoot, plan.targetRoot)
+        || harken::hub::unity::UnityInstallation::containsPath(plan.targetRoot, plan.sourceRoot)) {
         plan.error = hubTranslate(QStringLiteral("The current and new Integration Package locations must be separate directories."));
         return plan;
     }
@@ -531,8 +531,8 @@ IntegrationMigrationPlan ProjectIntegrationExecutor::planUnrealMigration(const E
     if (recover) {
         QString installed;
         if (!locateUnrealInstallation(target, &installed, &plan.error)) return plan;
-        if (!installed.isEmpty() && !VNX::UnityInstallation::samePath(installed, plan.sourceRoot)
-            && !VNX::UnityInstallation::samePath(installed, plan.targetRoot)) {
+        if (!installed.isEmpty() && !harken::hub::unity::UnityInstallation::samePath(installed, plan.sourceRoot)
+            && !harken::hub::unity::UnityInstallation::samePath(installed, plan.targetRoot)) {
             plan.error = hubTranslate(QStringLiteral("Another Harken plugin exists outside the migration locations. Preserve it outside Plugins before recovering."));
             return plan;
         }
@@ -590,7 +590,7 @@ IntegrationOperationResult ProjectIntegrationExecutor::executeUnrealMigration(
     const QString journalPath = unrealMigrationJournalPath(target);
     result.backupPath = plan.backupRoot;
     if (!plan.recovering) {
-        if (!VNX::UnityInstallation::validatePath(plan.backupRoot, &result.error)
+        if (!harken::hub::unity::UnityInstallation::validatePath(plan.backupRoot, &result.error)
             || !copyInventory(plan.sourceRoot, plan.backupRoot, plan.inventory, &result.error)) {
             if (result.error.isEmpty()) result.error = hubTranslate(QStringLiteral("The existing Unreal plugin cannot be backed up"));
             return result;
@@ -618,7 +618,7 @@ IntegrationOperationResult ProjectIntegrationExecutor::executeUnrealMigration(
             return result;
         }
     } else {
-        if (!VNX::UnityInstallation::validatePath(output, &result.error)
+        if (!harken::hub::unity::UnityInstallation::validatePath(output, &result.error)
             || !emptyLocation(output) || !QDir().mkpath(QFileInfo(output).absolutePath())) {
             result.error = hubTranslate(QStringLiteral("The migration destination must be an empty directory."));
             return result;
@@ -638,7 +638,7 @@ IntegrationOperationResult ProjectIntegrationExecutor::executeUnrealMigration(
     QString installed;
     if (inventory(output, &result.error) != plan.inventory
         || !locateUnrealInstallation(target, &installed, &result.error)
-        || !VNX::UnityInstallation::samePath(installed, output) || !QFile::remove(journalPath)) {
+        || !harken::hub::unity::UnityInstallation::samePath(installed, output) || !QFile::remove(journalPath)) {
         if (result.error.isEmpty()) result.error = hubTranslate(QStringLiteral("The Integration Package migration is unfinished. Choose \"Recover...\" before continuing."));
         return result;
     }

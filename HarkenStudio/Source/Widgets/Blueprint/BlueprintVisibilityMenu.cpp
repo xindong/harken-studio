@@ -17,7 +17,7 @@
 
 #include <algorithm>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 constexpr NodeContentFields PlaybackFields = NodeContentField::Volume | NodeContentField::Pitch

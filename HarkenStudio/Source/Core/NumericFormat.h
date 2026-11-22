@@ -9,7 +9,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace VNX {
+namespace harken::studio {
 
 inline int axisDecimalsForStep(double step, int maximumDecimals = 9)
 {

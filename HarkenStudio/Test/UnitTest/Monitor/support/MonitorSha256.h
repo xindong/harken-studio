@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 namespace Monitor {
 namespace TestSupport {
 
@@ -71,4 +71,4 @@ inline std::string sha256Hex(const std::vector<uint8_t>& bytes)
 
 } // namespace TestSupport
 } // namespace Monitor
-} // namespace VNX
+} // namespace harken::studio

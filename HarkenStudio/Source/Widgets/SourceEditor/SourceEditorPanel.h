@@ -10,11 +10,11 @@
 
 class QFocusEvent;
 
-namespace HarkenEditor {
+namespace harken::studio {
 class AuditionManager;
 }
 
-namespace VNX {
+namespace harken::studio {
 
 class SourceEditorWidget;
 
@@ -41,7 +41,7 @@ public:
     QUuid soundGuid() const;
     QUuid entryId() const;
     void bindSource(uint32_t sourceId, const QUuid& soundGuid = {}, const QUuid& entryId = {});
-    void setAuditionManager(HarkenEditor::AuditionManager* audition);
+    void setAuditionManager(harken::studio::AuditionManager* audition);
     bool handlePlayStopShortcut();
     void clearEditor();
     QVariantMap snapshotState() const;

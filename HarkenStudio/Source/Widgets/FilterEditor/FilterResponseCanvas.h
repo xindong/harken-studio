@@ -5,7 +5,7 @@
 
 #include <QWidget>
 
-namespace VNX {
+namespace harken::studio {
 
 class FilterResponseCanvas final : public QWidget
 {

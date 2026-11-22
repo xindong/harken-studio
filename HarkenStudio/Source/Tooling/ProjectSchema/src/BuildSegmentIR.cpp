@@ -13,7 +13,7 @@
 #include <utility>
 #include <vector>
 
-namespace harkenprojectschema {
+namespace harken::studio::project_schema {
 
 namespace detail {
 
@@ -52,8 +52,8 @@ std::uint64_t FingerprintLineage(const RuntimeLineageTable& lineage) {
     std::uint64_t state = detail::kFnv1a64OffsetBasis;
     for (const LineageEntry& e : lineage.entries) {
         HashU64(&state, e.hasSegment ? 1u : 0u);
-        for (const auto id : {e.hasSegment ? e.segmentId : harkenstudio::ObjectId{}, e.trackId, e.clipId})
-            for (const auto byte : harkenstudio::ObjectIdBytes(id))
+        for (const auto id : {e.hasSegment ? e.segmentId : harken::studio::types::ObjectId{}, e.trackId, e.clipId})
+            for (const auto byte : harken::studio::types::ObjectIdBytes(id))
                 detail::Fnv1a64HashByte(&state, byte);
         HashU64(&state, e.occurrenceOrdinal);
     }
@@ -479,9 +479,9 @@ std::optional<SegmentIR> BuildSegmentIRImpl(
                     occ.attenuationResolved =
                         attenuationSlot.outcome ==
                             harkenreferenceslots::ResolutionOutcome::Resolved &&
-                        attenuationSlot.value != harkenstudio::ObjectId{};
+                        attenuationSlot.value != harken::studio::types::ObjectId{};
                     occ.resolvedAttenuation =
-                        occ.attenuationResolved ? attenuationSlot.value : harkenstudio::ObjectId{};
+                        occ.attenuationResolved ? attenuationSlot.value : harken::studio::types::ObjectId{};
                     occ.sends = routingSends.sends;
 
                     // The selected effect chain must name this occurrence on the
@@ -622,4 +622,4 @@ std::optional<SegmentIR> BuildSegmentIRForStructureOnly(
                             nullptr);
 }
 
-}  // namespace harkenprojectschema
+}  // namespace harken::studio::project_schema

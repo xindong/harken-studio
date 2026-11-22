@@ -3,7 +3,7 @@
 #include "SignalPathGraph.h"
 #include "RuntimeBridge/DiagnosticsBridge.h"
 
-namespace VNX {
+namespace harken::studio {
 
 struct SignalPathActivity
 {
@@ -13,6 +13,6 @@ struct SignalPathActivity
 
 SignalPathActivity projectSignalPathActivity(
     const ProjectData& project, const SignalPathGraph& graph,
-    const std::vector<HarkenEditor::Bridge::PlaybackPathObservation>& playback);
+    const std::vector<harken::studio::bridge::PlaybackPathObservation>& playback);
 
 }

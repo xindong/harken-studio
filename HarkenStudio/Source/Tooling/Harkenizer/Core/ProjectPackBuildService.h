@@ -4,7 +4,7 @@
 
 #include <QElapsedTimer>
 
-namespace VNX::ProjectPackBuildService {
+namespace harken::studio::ProjectPackBuildService {
 
 enum class ArtifactOrder { Requested, PlatformId };
 enum class Finalization { None, Complete };

@@ -6,12 +6,12 @@
 #include <map>
 #include <QtEndian>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
-harkenprojectschema::ContentKind definitionKind(ProjectItem::Type type)
+harken::studio::project_schema::ContentKind definitionKind(ProjectItem::Type type)
 {
-    using Kind = harkenprojectschema::ContentKind;
+    using Kind = harken::studio::project_schema::ContentKind;
     switch (type) {
     case ProjectItem::Type::Layer: return Kind::Layer;
     case ProjectItem::Type::Sound: return Kind::Sound;
@@ -27,18 +27,18 @@ harkenprojectschema::ContentKind definitionKind(ProjectItem::Type type)
 FieldGroupDefinitionView fieldGroupDefinitionView(const ProjectItem& item)
 {
     return {toFieldGroupGuid(item.guid), definitionKind(item.type),
-            item.parent ? toFieldGroupGuid(item.parent->guid) : harkenprojectschema::AuthoringGuid{},
+            item.parent ? toFieldGroupGuid(item.parent->guid) : harken::studio::project_schema::AuthoringGuid{},
             &item.fieldGroups};
 }
 
-harkenprojectschema::AuthoringGuid toFieldGroupGuid(const QUuid& guid)
+harken::studio::project_schema::AuthoringGuid toFieldGroupGuid(const QUuid& guid)
 {
     const auto bytes = guid.toRfc4122();
     return {qFromBigEndian<quint64>(bytes.constData()),
             qFromBigEndian<quint64>(bytes.constData() + 8)};
 }
 
-QUuid fromFieldGroupGuid(harkenprojectschema::AuthoringGuid guid)
+QUuid fromFieldGroupGuid(harken::studio::project_schema::AuthoringGuid guid)
 {
     QByteArray bytes(16, Qt::Uninitialized);
     qToBigEndian<quint64>(guid.high, bytes.data());
@@ -60,12 +60,12 @@ FieldGroupProjectView buildFieldGroupProjectView(const ProjectData& project)
 
 FieldGroupProjectView buildFieldGroupProjectView(
     const ProjectData& project,
-    const HarkenEditor::Bridge::CanonicalRuntimeProjectSourceIndexV1& source,
+    const harken::studio::bridge::CanonicalRuntimeProjectSourceIndexV1& source,
     const std::function<const DefinitionFieldGroups*(
         const ProjectItem&)>& groupsForDefinition)
 {
-    using namespace harkenprojectschema;
-    using namespace HarkenEditor::Bridge;
+    using namespace harken::studio::project_schema;
+    using namespace harken::studio::bridge;
     FieldGroupProjectView result;
     result.diagnostics = source.structureDiagnostics;
     const auto fail = [&](ProjectInputDiagnosticCode code, const QString& message,
@@ -158,13 +158,13 @@ FieldGroupProjectView buildFieldGroupProjectView(
     const std::function<const DefinitionFieldGroups*(
         const ProjectItem&)>& groupsForDefinition)
 {
-    const auto source = HarkenEditor::Bridge::canonicalRuntimeProjectSourceIndex(project);
+    const auto source = harken::studio::bridge::canonicalRuntimeProjectSourceIndex(project);
     return buildFieldGroupProjectView(project, *source, groupsForDefinition);
 }
 
 FieldGroupProjectView buildFieldGroupProjectView(
     const ProjectData& project,
-    const HarkenEditor::Bridge::CanonicalRuntimeProjectSourceIndexV1& source)
+    const harken::studio::bridge::CanonicalRuntimeProjectSourceIndexV1& source)
 {
     return buildFieldGroupProjectView(project, source, [](const ProjectItem& item) {
         return &item.fieldGroups;
@@ -183,13 +183,13 @@ FieldGroupEffectiveSnapshot buildFieldGroupEffectiveSnapshot(
     const ProjectData& project, FieldGroupScope scope,
     const std::function<const DefinitionFieldGroups*(const ProjectItem&)>& groupsForDefinition)
 {
-    const auto source = HarkenEditor::Bridge::canonicalRuntimeProjectSourceIndex(project);
+    const auto source = harken::studio::bridge::canonicalRuntimeProjectSourceIndex(project);
     return buildFieldGroupEffectiveSnapshot(project, scope, *source, groupsForDefinition);
 }
 
 FieldGroupEffectiveSnapshot buildFieldGroupEffectiveSnapshot(
     const ProjectData& project, FieldGroupScope scope,
-    const HarkenEditor::Bridge::CanonicalRuntimeProjectSourceIndexV1& source)
+    const harken::studio::bridge::CanonicalRuntimeProjectSourceIndexV1& source)
 {
     return buildFieldGroupEffectiveSnapshot(project, scope, source, [](const ProjectItem& item) {
         return &item.fieldGroups;
@@ -198,11 +198,11 @@ FieldGroupEffectiveSnapshot buildFieldGroupEffectiveSnapshot(
 
 FieldGroupEffectiveSnapshot buildFieldGroupEffectiveSnapshot(
     const ProjectData& project, FieldGroupScope scope,
-    const HarkenEditor::Bridge::CanonicalRuntimeProjectSourceIndexV1& source,
+    const harken::studio::bridge::CanonicalRuntimeProjectSourceIndexV1& source,
     const std::function<const DefinitionFieldGroups*(const ProjectItem&)>& groupsForDefinition)
 {
-    using namespace harkenprojectschema;
-    using namespace HarkenEditor::Bridge;
+    using namespace harken::studio::project_schema;
+    using namespace harken::studio::bridge;
     FieldGroupEffectiveSnapshot result;
     result.scope = scope;
     const auto view = buildFieldGroupProjectView(project, source, groupsForDefinition);
@@ -257,7 +257,7 @@ FieldGroupEffectiveSnapshot buildFieldGroupEffectiveSnapshot(
             output.value->source, send.value->source, spatial.value->source,
             std::get<EffectFieldGroup>(effects.value->payload), effects.value->source};
         for (const auto& row : groups.send.sends) {
-            if (row.mode != harkenprojectschema::SendMode::Sidechain
+            if (row.mode != harken::studio::project_schema::SendMode::Sidechain
                 && row.targetBusID == groups.output.outputBusRef)
                 fail(QStringLiteral("Only a Sidechain Send can target the effective Output"),
                      definition.guid, QStringLiteral("targetBusID"));

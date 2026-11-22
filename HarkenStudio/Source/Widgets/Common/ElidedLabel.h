@@ -4,7 +4,7 @@
 #include <QPainter>
 #include <QStyle>
 
-namespace VNX {
+namespace harken::studio {
 
 class ElidedLabel : public QLabel
 {

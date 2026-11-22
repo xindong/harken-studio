@@ -15,12 +15,12 @@
 #include <QFileInfo>
 #include <QTemporaryDir>
 
-using VNH::CacheCleanOptions;
-using VNH::CacheManager;
-using VNH::LogExporter;
-using VNH::PackageReader;
-using VNH::TransactionDiagnostics;
-using VNH::TransactionJournal;
+using harken::hub::CacheCleanOptions;
+using harken::hub::CacheManager;
+using harken::hub::LogExporter;
+using harken::hub::PackageReader;
+using harken::hub::TransactionDiagnostics;
+using harken::hub::TransactionJournal;
 
 namespace {
 
@@ -138,9 +138,9 @@ TEST_F(MaintenanceTest, ActiveArtifactsAreProtectedThroughConsumerHandoff)
                               dir.filePath(QStringLiteral("downloads/manual/build.manifest"))};
     for (const auto& path : paths)
         writeFileAged(path, QByteArrayLiteral("active"), kNow.addDays(-30));
-    auto lease = VNH::DownloadLease::acquire(package);
+    auto lease = harken::hub::DownloadLease::acquire(package);
     ASSERT_TRUE(lease);
-    auto installerLease = VNH::DownloadLease::acquire(installer);
+    auto installerLease = harken::hub::DownloadLease::acquire(installer);
     ASSERT_TRUE(installerLease);
     const auto protectedReport = CacheManager::clean(dir.path(), {}, kNow);
     EXPECT_TRUE(protectedReport.removedFiles.isEmpty());

@@ -2,7 +2,7 @@
 
 #include "Monitor/MonitorDspTimelinePanel.h"
 
-namespace VNX {
+namespace harken::studio {
 
 void MonitorDspTimelineSource::attach(MonitorDspTimelinePanel* panel,
                                       MonitorCursorModel* sharedCursor)
@@ -28,4 +28,4 @@ void MonitorDspTimelineSource::pushToPanel() const
         panel_->bindSnapshot(snapshot_, stateStreamSubscribed_);
 }
 
-} // namespace VNX
+} // namespace harken::studio

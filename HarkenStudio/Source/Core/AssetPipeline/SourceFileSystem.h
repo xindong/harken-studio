@@ -7,9 +7,9 @@
 #include <cstdint>
 #include <memory>
 
-namespace VNX { class TransactionalUndoCommand; struct AssetInfo; }
+namespace harken::studio { class TransactionalUndoCommand; struct AssetInfo; }
 
-namespace VNX::SourceFileSystem {
+namespace harken::studio::SourceFileSystem {
 
 QString absolutePath(const QString& relativePath);
 bool validName(const QString& name);

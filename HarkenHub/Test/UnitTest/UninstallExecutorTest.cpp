@@ -19,9 +19,9 @@
 
 #include <memory>
 
-using VNH::InstallIndex;
-using VNH::InstalledVersionRecord;
-using VNH::UninstallExecutor;
+using harken::hub::InstallIndex;
+using harken::hub::InstalledVersionRecord;
+using harken::hub::UninstallExecutor;
 
 namespace {
 
@@ -58,7 +58,7 @@ protected:
 
     QString installVersion(const QString& buildId, const QString& version)
     {
-        const QString installPath = VNH::studioVersionsRoot() +
+        const QString installPath = harken::hub::studioVersionsRoot() +
                                     QStringLiteral("/") + version +
                                     QStringLiteral("-") + buildId;
         QDir().mkpath(installPath + QStringLiteral("/data"));
@@ -107,7 +107,7 @@ TEST_F(UninstallExecutorTest, RemovesDirectoryAndIndexRecord)
     const auto snapshot = InstallIndex::snapshot();
     ASSERT_TRUE(snapshot.ok);
     EXPECT_TRUE(snapshot.records.empty());
-    const auto states = VNH::TransactionJournal::lastStateByTransaction();
+    const auto states = harken::hub::TransactionJournal::lastStateByTransaction();
     ASSERT_EQ(states.size(), 1);
     EXPECT_EQ(states.constBegin().value(), QStringLiteral("Uninstalled"));
 }
@@ -116,17 +116,17 @@ TEST_F(UninstallExecutorTest, MaintenanceRejectsFilesChangedAfterReviewAndBefore
 {
     const QString build = QStringLiteral("run1.aaaa1111");
     const auto path = installVersion(build, QStringLiteral("1.4.0"));
-    const auto reviewed = VNH::IntegrityChecker::snapshot(path);
+    const auto reviewed = harken::hub::IntegrityChecker::snapshot(path);
     ASSERT_FALSE(reviewed.hash.isEmpty());
     QFile added(path + QStringLiteral("/user.txt"));
     ASSERT_TRUE(added.open(QIODevice::WriteOnly));
     added.write("user content");
     added.close();
     const auto idle = [](const QString&) { return QStringList(); };
-    EXPECT_EQ(VNH::RepairExecutor::run(build, kNow, idle, {}, reviewed.hash).failureCode, "ReviewChanged");
+    EXPECT_EQ(harken::hub::RepairExecutor::run(build, kNow, idle, {}, reviewed.hash).failureCode, "ReviewChanged");
     EXPECT_EQ(UninstallExecutor::run(build, kNow, idle, reviewed.hash).failureCode, "ReviewChanged");
     EXPECT_TRUE(added.exists());
-    const auto refreshed = VNH::IntegrityChecker::snapshot(path);
+    const auto refreshed = harken::hub::IntegrityChecker::snapshot(path);
     const auto changedDuringProbe = UninstallExecutor::run(build, kNow, [&](const QString&) {
         EXPECT_TRUE(added.open(QIODevice::WriteOnly));
         added.write("changed during operation");
@@ -135,7 +135,7 @@ TEST_F(UninstallExecutorTest, MaintenanceRejectsFilesChangedAfterReviewAndBefore
     }, refreshed.hash);
     EXPECT_EQ(changedDuringProbe.failureCode, "ReviewChanged");
     EXPECT_TRUE(added.exists());
-    EXPECT_TRUE(UninstallExecutor::run(build, kNow, idle, VNH::IntegrityChecker::snapshot(path).hash).ok);
+    EXPECT_TRUE(UninstallExecutor::run(build, kNow, idle, harken::hub::IntegrityChecker::snapshot(path).hash).ok);
 }
 
 TEST_F(UninstallExecutorTest, RejectsInvalidBuildId)
@@ -264,7 +264,7 @@ TEST_F(UninstallExecutorTest, RefusesWhileAnotherTransactionHoldsTheLock)
 {
     installVersion(QStringLiteral("run1.aaaa1111"), QStringLiteral("1.4.0"));
 
-    QLockFile lock(VNH::InstallExecutor::lockFilePath());
+    QLockFile lock(harken::hub::InstallExecutor::lockFilePath());
     ASSERT_TRUE(lock.tryLock(0));
 
     const auto outcome = UninstallExecutor::run(

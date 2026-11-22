@@ -24,7 +24,7 @@
 
 #include <memory>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 

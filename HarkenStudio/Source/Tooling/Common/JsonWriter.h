@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-namespace harkenstudiojson {
+namespace harken::studio::json {
 
 class JsonWriter {
 public:
@@ -151,6 +151,6 @@ private:
     bool keyPending_ = false;
 };
 
-} // namespace harkenstudiojson
+} // namespace harken::studio::json
 
 #endif // HARKEN_HOST_JSON_WRITER_H

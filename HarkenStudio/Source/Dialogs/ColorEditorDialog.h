@@ -9,7 +9,7 @@ class QLineEdit;
 class QSpinBox;
 class QTimer;
 
-namespace VNX {
+namespace harken::studio {
 
 class ColorPicker;
 class ParameterBinding;

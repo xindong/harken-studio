@@ -5,7 +5,7 @@
 #include <QPen>
 #include <QtGlobal>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 QColor curveColor(const CurveStyle::Colors& colors, CurveColorRole role)

@@ -8,7 +8,7 @@
 
 TEST(ThemePackageParser, RejectsRecipeSizeOutsideIntegerRange)
 {
-    const auto result = VNX::parseThemeRecipes(R"json({
+    const auto result = harken::studio::parseThemeRecipes(R"json({
         "recipes": [{
             "host": "track.header",
             "variant": "track.compact",
@@ -44,17 +44,17 @@ QJsonObject validColorDefinition()
 TEST(ThemePackageParser, RequiresUniqueRolesAndPaletteIdentities)
 {
     const QJsonObject valid = validColorDefinition();
-    ASSERT_TRUE(VNX::parseThemeColorDefinition(QJsonDocument(valid).toJson()).ok());
+    ASSERT_TRUE(harken::studio::parseThemeColorDefinition(QJsonDocument(valid).toJson()).ok());
     for (const QString& collection : {QStringLiteral("roles"), QStringLiteral("palettes")}) {
         QJsonObject document = valid;
         QJsonArray entries = document.value(collection).toArray();
         entries.append(entries.first());
         document.insert(collection, entries);
-        EXPECT_FALSE(VNX::parseThemeColorDefinition(QJsonDocument(document).toJson()).ok());
+        EXPECT_FALSE(harken::studio::parseThemeColorDefinition(QJsonDocument(document).toJson()).ok());
     }
     QJsonObject document = valid;
     document.insert(QStringLiteral("defaultPalette"), QStringLiteral("missing"));
-    EXPECT_FALSE(VNX::parseThemeColorDefinition(QJsonDocument(document).toJson()).ok());
+    EXPECT_FALSE(harken::studio::parseThemeColorDefinition(QJsonDocument(document).toJson()).ok());
 }
 
 TEST(ThemePackageParser, RequiresUsableUnambiguousColorBindings)
@@ -76,7 +76,7 @@ TEST(ThemePackageParser, RequiresUsableUnambiguousColorBindings)
         QJsonObject role = document.value(QStringLiteral("roles")).toArray().first().toObject();
         role.insert(QStringLiteral("bindings"), bindings);
         document.insert(QStringLiteral("roles"), QJsonArray{role});
-        EXPECT_FALSE(VNX::parseThemeColorDefinition(QJsonDocument(document).toJson()).ok());
+        EXPECT_FALSE(harken::studio::parseThemeColorDefinition(QJsonDocument(document).toJson()).ok());
     }
 }
 
@@ -94,12 +94,12 @@ TEST(ThemePackageParser, PaletteValuesMustExactlyCoverTheirThemeRoles)
         QJsonObject palette = document.value(QStringLiteral("palettes")).toArray().first().toObject();
         palette.insert(QStringLiteral("colors"), colors);
         document.insert(QStringLiteral("palettes"), QJsonArray{palette});
-        EXPECT_FALSE(VNX::parseThemeColorDefinition(QJsonDocument(document).toJson()).ok());
+        EXPECT_FALSE(harken::studio::parseThemeColorDefinition(QJsonDocument(document).toJson()).ok());
     }
     QJsonObject fixedTheme = validColorDefinition();
     fixedTheme.insert(QStringLiteral("roles"), QJsonArray{});
     QJsonObject palette = fixedTheme.value(QStringLiteral("palettes")).toArray().first().toObject();
     palette.insert(QStringLiteral("colors"), QJsonObject{});
     fixedTheme.insert(QStringLiteral("palettes"), QJsonArray{palette});
-    EXPECT_TRUE(VNX::parseThemeColorDefinition(QJsonDocument(fixedTheme).toJson()).ok());
+    EXPECT_TRUE(harken::studio::parseThemeColorDefinition(QJsonDocument(fixedTheme).toJson()).ok());
 }

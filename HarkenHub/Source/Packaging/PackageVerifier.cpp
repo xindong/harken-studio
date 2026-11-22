@@ -12,7 +12,7 @@
 #include <QRegularExpression>
 #include <QSet>
 
-namespace VNH {
+namespace harken::hub {
 
 namespace {
 

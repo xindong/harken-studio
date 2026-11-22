@@ -14,7 +14,7 @@
 
 #include <cstdint>
 
-namespace VNX {
+namespace harken::studio {
 
 enum class SelectionMode : uint8_t
 {
@@ -96,10 +96,10 @@ inline const PropertySchema& VSelection::schema()
     static const PropertySchema s = withOwner<VSelection>({
         { .field="mode", .type=PropType::Enum, .label="Mode", .section=PropertySection::Selection,
           .options={{"Random",0},{"Sequence",2},{"Match",4},{"Blend",5}},
-          .get=[](const VNX::IComponent* c){
+          .get=[](const harken::studio::IComponent* c){
               return QVariant(static_cast<int>(static_cast<const VSelection*>(c)->mode));
           },
-          .set=[](VNX::IComponent* c, const QVariant& v) -> bool {
+          .set=[](harken::studio::IComponent* c, const QVariant& v) -> bool {
               bool ok = false;
               const int raw = v.toInt(&ok);
               if (!ok || !QJsonValue::fromVariant(v).isDouble() || v.toDouble() != raw
@@ -113,10 +113,10 @@ inline const PropertySchema& VSelection::schema()
           } },
         { .field="playType", .type=PropType::Enum, .label="Play Type", .section=PropertySection::Selection,
           .options={{"Single",0},{"Queue",1}},
-          .get=[](const VNX::IComponent* c) {
+          .get=[](const harken::studio::IComponent* c) {
               return QVariant(static_cast<int>(static_cast<const VSelection*>(c)->playType));
           },
-          .set=[](VNX::IComponent* c, const QVariant& v) -> bool {
+          .set=[](harken::studio::IComponent* c, const QVariant& v) -> bool {
               bool ok = false;
               const int raw = v.toInt(&ok);
               auto* selection = static_cast<VSelection*>(c);
@@ -128,10 +128,10 @@ inline const PropertySchema& VSelection::schema()
         { .field="variableResponse", .type=PropType::Enum, .label="Variable Response", .section=PropertySection::Selection,
           .flags={.serialize=false},
           .options={{"Fixed",0},{"Live",1}},
-          .get=[](const VNX::IComponent* c) {
+          .get=[](const harken::studio::IComponent* c) {
               return QVariant(static_cast<int>(static_cast<const VSelection*>(c)->variableResponse()));
           },
-          .set=[](VNX::IComponent* c, const QVariant& v) -> bool {
+          .set=[](harken::studio::IComponent* c, const QVariant& v) -> bool {
               bool ok = false;
               const int raw = v.toInt(&ok);
               if (!ok || !QJsonValue::fromVariant(v).isDouble() || v.toDouble() != raw
@@ -150,10 +150,10 @@ inline const PropertySchema& VSelection::schema()
                .flags={.serialize=false, .settableByName=false, .state=true}},
               {.field="childGuid", .type=PropType::ObjectRef, .label="Child"},
               {.field="weight", .type=PropType::Int, .label="Weight"}},
-          .get=[](const VNX::IComponent* c) {
+          .get=[](const harken::studio::IComponent* c) {
               return static_cast<const VSelection*>(c)->selections.toJson().toVariantMap();
           },
-          .set=[](VNX::IComponent* c, const QVariant& value) {
+          .set=[](harken::studio::IComponent* c, const QVariant& value) {
               auto parsed = SelectionData::fromJson(QJsonObject::fromVariantMap(value.toMap()));
               if (!parsed) return false;
               static_cast<VSelection*>(c)->selections = std::move(*parsed);

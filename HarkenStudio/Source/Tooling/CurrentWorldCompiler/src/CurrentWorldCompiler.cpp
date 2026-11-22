@@ -15,26 +15,26 @@
 
 namespace harkencurrentworldcompiler {
 
-static_assert(harkenprojectschema::kTargetCapabilityVariableDefinitionsV1
-              == harkenstudiobuild::kWorldCapabilityVariableDefinitions);
-static_assert(harkenprojectschema::kTargetCapabilityPlayablePropertiesV1
-              == harkenstudiobuild::kWorldCapabilityPlayableProperties);
-static_assert(harkenprojectschema::kTargetCapabilityRandomDrawV1
-              == harkenstudiobuild::kWorldCapabilityRandomDraw);
-static_assert(harkenprojectschema::kTargetCapabilityRandomRotationV1
-              == harkenstudiobuild::kWorldCapabilityRandomRotation);
-static_assert(harkenprojectschema::kTargetCapabilitySequenceV1
-              == harkenstudiobuild::kWorldCapabilitySequence);
-static_assert(harkenprojectschema::kTargetCapabilityRandomQueueV1
-              == harkenstudiobuild::kWorldCapabilityRandomQueue);
-static_assert(harkenprojectschema::kTargetCapabilitySequenceQueueV1
-              == harkenstudiobuild::kWorldCapabilitySequenceQueue);
-static_assert(harkenprojectschema::kTargetCapabilityVariableControlV1
-              == harkenstudiobuild::kWorldCapabilityVariableControl);
-static_assert(harkenprojectschema::kTargetCapabilityTransitionV1
-              == harkenstudiobuild::kWorldCapabilityTransition);
-static_assert(harkenprojectschema::kTargetCapabilityActionDefinitionsV1
-              == harkenstudiobuild::kWorldCapabilityActionDefinitions);
+static_assert(harken::studio::project_schema::kTargetCapabilityVariableDefinitionsV1
+              == harken::studio::build::kWorldCapabilityVariableDefinitions);
+static_assert(harken::studio::project_schema::kTargetCapabilityPlayablePropertiesV1
+              == harken::studio::build::kWorldCapabilityPlayableProperties);
+static_assert(harken::studio::project_schema::kTargetCapabilityRandomDrawV1
+              == harken::studio::build::kWorldCapabilityRandomDraw);
+static_assert(harken::studio::project_schema::kTargetCapabilityRandomRotationV1
+              == harken::studio::build::kWorldCapabilityRandomRotation);
+static_assert(harken::studio::project_schema::kTargetCapabilitySequenceV1
+              == harken::studio::build::kWorldCapabilitySequence);
+static_assert(harken::studio::project_schema::kTargetCapabilityRandomQueueV1
+              == harken::studio::build::kWorldCapabilityRandomQueue);
+static_assert(harken::studio::project_schema::kTargetCapabilitySequenceQueueV1
+              == harken::studio::build::kWorldCapabilitySequenceQueue);
+static_assert(harken::studio::project_schema::kTargetCapabilityVariableControlV1
+              == harken::studio::build::kWorldCapabilityVariableControl);
+static_assert(harken::studio::project_schema::kTargetCapabilityTransitionV1
+              == harken::studio::build::kWorldCapabilityTransition);
+static_assert(harken::studio::project_schema::kTargetCapabilityActionDefinitionsV1
+              == harken::studio::build::kWorldCapabilityActionDefinitions);
 namespace {
 
 using PropertyId = harkenplayableproperties::PlayablePropertyIdV1;
@@ -48,7 +48,7 @@ float CanonicalF32(float value) noexcept {
 }
 
 bool CanonicalActionTime(float value, float maximum, double scale,
-                         harkenstudiobuild::AuthoredTimeRationalV1* out) noexcept {
+                         harken::studio::build::AuthoredTimeRationalV1* out) noexcept {
     if (out == nullptr || !std::isfinite(value) || value < 0.0f ||
         value > maximum) {
         return false;
@@ -59,7 +59,7 @@ bool CanonicalActionTime(float value, float maximum, double scale,
         rounded > static_cast<double>(std::numeric_limits<std::int64_t>::max())) {
         return false;
     }
-    out->domain = harkenstudiobuild::AuthoredTimeDomainV1::AbsoluteNanoseconds;
+    out->domain = harken::studio::build::AuthoredTimeDomainV1::AbsoluteNanoseconds;
     out->numerator = static_cast<std::int64_t>(rounded);
     out->denominator = 1;
     return true;
@@ -69,19 +69,19 @@ std::uint32_t CanonicalF32Bits(std::uint32_t bits) noexcept {
     return bits == UINT32_C(0x80000000) ? 0u : bits;
 }
 
-harkenstudiobuild::playableproperties::ContentPropertyKindV1 RuntimeKind(
-    harkenprojectschema::ContentKind kind) noexcept {
-    return static_cast<harkenstudiobuild::playableproperties::ContentPropertyKindV1>(
+harken::studio::build::playableproperties::ContentPropertyKindV1 RuntimeKind(
+    harken::studio::project_schema::ContentKind kind) noexcept {
+    return static_cast<harken::studio::build::playableproperties::ContentPropertyKindV1>(
         static_cast<std::uint32_t>(kind));
 }
 
-const harkenprojectschema::ContentObject* FindObject(
-    const harkenprojectschema::CanonicalProject& project,
-    harkenstudio::ObjectId stableId) noexcept {
+const harken::studio::project_schema::ContentObject* FindObject(
+    const harken::studio::project_schema::CanonicalProject& project,
+    harken::studio::types::ObjectId stableId) noexcept {
     const auto found = std::lower_bound(
         project.objects.begin(), project.objects.end(), stableId,
-        [](const harkenprojectschema::ContentObject& object,
-           harkenstudio::ObjectId id) { return object.chassis().id < id; });
+        [](const harken::studio::project_schema::ContentObject& object,
+           harken::studio::types::ObjectId id) { return object.chassis().id < id; });
     return found != project.objects.end() && found->chassis().id == stableId
                ? &*found
                : nullptr;
@@ -90,7 +90,7 @@ const harkenprojectschema::ContentObject* FindObject(
 const DefinitionMaterializationV1* FindMaterialization(
     const std::vector<DefinitionMaterializationV1>& rows,
     harkenplayableproperties::ContentPropertyKindV1 kind,
-    harkenstudio::ObjectId stableId) noexcept {
+    harken::studio::types::ObjectId stableId) noexcept {
     const auto found = std::find_if(
         rows.begin(), rows.end(), [&](const DefinitionMaterializationV1& row) {
             return row.kind == kind && row.stableId == stableId;
@@ -99,10 +99,10 @@ const DefinitionMaterializationV1* FindMaterialization(
 }
 
 
-harkenstudiobuild::PlayableRefV1 MakeRef(
-    const harkenstudiobuild::PlayablePropertyProgramViewV1& property) noexcept {
-    harkenstudiobuild::PlayableRefV1 ref{};
-    ref.kind = static_cast<harkenstudiobuild::PlayableKindV1>(
+harken::studio::build::PlayableRefV1 MakeRef(
+    const harken::studio::build::PlayablePropertyProgramViewV1& property) noexcept {
+    harken::studio::build::PlayableRefV1 ref{};
+    ref.kind = static_cast<harken::studio::build::PlayableKindV1>(
         static_cast<std::uint32_t>(property.contentPropertyKind) - 1u);
     ref.stableId = property.stableId;
     ref.expectedProgramSemanticFingerprint =
@@ -281,22 +281,22 @@ void OwningCurrentWorldV1::Refresh() noexcept {
 }
 
 CompileResultV1 CompileCurrentWorldV1(
-    const harkenprojectschema::CanonicalProject& project,
-    const std::vector<harkenstudiobuild::VariableDefinitionV1>& variables,
+    const harken::studio::project_schema::CanonicalProject& project,
+    const std::vector<harken::studio::build::VariableDefinitionV1>& variables,
     const std::vector<DefinitionMaterializationV1>& materializations,
     const std::vector<ContainerAuthoringV1>& authoredContainers,
-    const harkenstudiobuild::WorldCapacitySummaryV1& requestedCapacity,
+    const harken::studio::build::WorldCapacitySummaryV1& requestedCapacity,
     const std::vector<TransitionProgramAuthoringV1>& authoredTransitions,
     const std::vector<ActionProgramAuthoringV1>& authoredActions,
-    const harkenbuscompiler::CompiledBusIdSetV1* busIds,
+    const harken::studio::bus_compiler::CompiledBusIdSetV1* busIds,
     CompileCapacityModeV1 capacityMode,
-    const std::map<harkenstudio::ObjectId, std::uint32_t>& propertyAuthoredOrders,
+    const std::map<harken::studio::types::ObjectId, std::uint32_t>& propertyAuthoredOrders,
     const std::set<std::uint32_t>& reservedPropertyAuthoredOrders,
     const std::vector<DuckingSendAuthoringV1>& duckingSends, bool includePreviewDucking) {
     CompileResultV1 result{};
     std::set<std::uint32_t> occupiedPropertyOrders;
     for (const auto& [id, order] : propertyAuthoredOrders) {
-        if (id == harkenstudio::ObjectId{} || !occupiedPropertyOrders.insert(order).second) {
+        if (id == harken::studio::types::ObjectId{} || !occupiedPropertyOrders.insert(order).second) {
             result.status = CompileStatusV1::InvalidProject;
             result.relatedStableId = id;
             return result;
@@ -306,16 +306,16 @@ CompileResultV1 CompileCurrentWorldV1(
                                   reservedPropertyAuthoredOrders.end());
     auto capacity = requestedCapacity;
     if (capacityMode == CompileCapacityModeV1::AuthoredContent
-        && (project.objects.size() > harkenstudiobuild::kHardPlayablePropertyProgramCapacity
-            || variables.size() > harkenstudiobuild::kHardVariableDefinitionCapacity
-            || authoredContainers.size() > harkenstudiobuild::kHardContainerProgramCapacity
-            || authoredActions.size() > harkenstudiobuild::kHardActionDefinitionCapacity)) {
+        && (project.objects.size() > harken::studio::build::kHardPlayablePropertyProgramCapacity
+            || variables.size() > harken::studio::build::kHardVariableDefinitionCapacity
+            || authoredContainers.size() > harken::studio::build::kHardContainerProgramCapacity
+            || authoredActions.size() > harken::studio::build::kHardActionDefinitionCapacity)) {
         result.status = CompileStatusV1::Capacity;
         return result;
     }
     if (busIds != nullptr
         && (busIds->ids.empty()
-            || harkenstudio::IsNull(busIds->ids.front())
+            || harken::studio::types::IsNull(busIds->ids.front())
             || !std::is_sorted(busIds->ids.begin(), busIds->ids.end())
             || std::adjacent_find(busIds->ids.begin(), busIds->ids.end())
                 != busIds->ids.end())) {
@@ -332,11 +332,11 @@ CompileResultV1 CompileCurrentWorldV1(
         variable.defaultValue = CanonicalF32(variable.defaultValue);
     }
 
-    std::set<std::pair<std::uint32_t, harkenstudio::ObjectId>> materializationKeys;
+    std::set<std::pair<std::uint32_t, harken::studio::types::ObjectId>> materializationKeys;
     for (const auto& row : materializations) {
         const auto numericKind = static_cast<std::uint32_t>(row.kind);
         const auto* object = FindObject(project, row.stableId);
-        if (row.stableId == harkenstudio::ObjectId{} ||
+        if (row.stableId == harken::studio::types::ObjectId{} ||
             numericKind < static_cast<std::uint32_t>(
                               harkenplayableproperties::ContentPropertyKindV1::Sound) ||
             numericKind > static_cast<std::uint32_t>(
@@ -350,27 +350,27 @@ CompileResultV1 CompileCurrentWorldV1(
         }
     }
 
-    std::map<harkenstudio::ObjectId, harkenstudio::ObjectId> parentByChild;
+    std::map<harken::studio::types::ObjectId, harken::studio::types::ObjectId> parentByChild;
     for (const auto& object : project.objects) {
-        std::vector<harkenstudio::ObjectId> children;
+        std::vector<harken::studio::types::ObjectId> children;
         switch (object.kind) {
-            case harkenprojectschema::ContentKind::Layer:
+            case harken::studio::project_schema::ContentKind::Layer:
                 children = object.layer.ownedChildren;
                 break;
-            case harkenprojectschema::ContentKind::Container:
+            case harken::studio::project_schema::ContentKind::Container:
                 children = object.container.ownedChildren;
                 break;
-            case harkenprojectschema::ContentKind::Track:
+            case harken::studio::project_schema::ContentKind::Track:
                 children = object.track.ownedChildren;
                 break;
-            case harkenprojectschema::ContentKind::Segment:
+            case harken::studio::project_schema::ContentKind::Segment:
                 children = object.segment.tracks;
                 break;
-            case harkenprojectschema::ContentKind::Sound:
+            case harken::studio::project_schema::ContentKind::Sound:
                 break;
         }
-        for (const harkenstudio::ObjectId child : children) {
-            if (child == harkenstudio::ObjectId{} || parentByChild.contains(child)) {
+        for (const harken::studio::types::ObjectId child : children) {
+            if (child == harken::studio::types::ObjectId{} || parentByChild.contains(child)) {
                 result.status = CompileStatusV1::InvalidProject;
                 result.relatedStableId = child;
                 return result;
@@ -379,7 +379,7 @@ CompileResultV1 CompileCurrentWorldV1(
         }
     }
 
-    const auto buildPayload = [&](const harkenprojectschema::PlayablePropertyPayloadV1& source,
+    const auto buildPayload = [&](const harken::studio::project_schema::PlayablePropertyPayloadV1& source,
                                   OwningCurrentWorldV1::OwnedPayload& output) {
         output.view.presentMask = source.presence.bits;
         output.view.values[Slot(PropertyId::LoopCount)].bits = 1;
@@ -397,7 +397,7 @@ CompileResultV1 CompileCurrentWorldV1(
         const auto setU32 = [&](PropertyId id, std::uint32_t value) {
             if (present(id)) output.view.values[Slot(id)].bits = value;
         };
-        const auto setObjectId = [&](PropertyId id, harkenstudio::ObjectId value) {
+        const auto setObjectId = [&](PropertyId id, harken::studio::types::ObjectId value) {
             if (present(id)) output.view.values[Slot(id)].objectId = value;
         };
         setF32(PropertyId::Volume, source.volume);
@@ -420,7 +420,7 @@ CompileResultV1 CompileCurrentWorldV1(
             output.sends.reserve(source.sends.size());
             for (std::size_t i = 0; i < source.sends.size(); ++i) {
                 if (i > UINT32_MAX) return false;
-                harkenstudiobuild::SendV1 row{};
+                harken::studio::build::SendV1 row{};
                 row.stableSendOrdinal = static_cast<std::uint32_t>(i);
                 row.targetBusId = source.sends[i].targetBusId;
                 row.sendLevel = CanonicalF32(source.sends[i].sendLevel);
@@ -436,19 +436,19 @@ CompileResultV1 CompileCurrentWorldV1(
                           return a.nodeId < b.nodeId;
                       });
             for (const auto& sourceNode : sourceNodes) {
-                if (harkenstudiobuild::FindPackEffectSchemaByType(sourceNode.effectType) == nullptr) {
+                if (harken::studio::build::FindPackEffectSchemaByType(sourceNode.effectType) == nullptr) {
                     return false;
                 }
-                harkenstudiobuild::EffectNodeV1 node{};
+                harken::studio::build::EffectNodeV1 node{};
                 node.nodeId = sourceNode.nodeId;
                 node.effectId = sourceNode.effectId;
-                node.effectType = harkenstudio::IsNull(sourceNode.presetId)
+                node.effectType = harken::studio::types::IsNull(sourceNode.presetId)
                     ? sourceNode.effectType : HK_PACK_EFFECT_PRESET_REFERENCE_TYPE;
                 node.flags = sourceNode.flags;
                 node.presetId = sourceNode.presetId;
                 output.effectNodes.push_back(node);
-                auto params = harkenstudio::IsNull(sourceNode.presetId)
-                    ? sourceNode.params : std::vector<harkenprojectschema::EffectParam>{};
+                auto params = harken::studio::types::IsNull(sourceNode.presetId)
+                    ? sourceNode.params : std::vector<harken::studio::project_schema::EffectParam>{};
                 std::sort(params.begin(), params.end(),
                           [](const auto& a, const auto& b) {
                               return a.paramId < b.paramId;
@@ -456,14 +456,14 @@ CompileResultV1 CompileCurrentWorldV1(
                 auto& destinationParams = output.effectParams.emplace_back();
                 destinationParams.reserve(params.size());
                 for (const auto& param : params) {
-                    destinationParams.push_back(harkenstudiobuild::EffectParamV1{
+                    destinationParams.push_back(harken::studio::build::EffectParamV1{
                         param.paramId, CanonicalF32Bits(param.valueBits)});
                 }
             }
             output.effectEdges.reserve(source.signalGraph.edges.size());
             for (const auto& edge : source.signalGraph.edges) {
                 output.effectEdges.push_back(
-                    harkenstudiobuild::EffectEdgeV1{edge.fromNodeId, edge.toNodeId});
+                    harken::studio::build::EffectEdgeV1{edge.fromNodeId, edge.toNodeId});
             }
             std::sort(output.effectEdges.begin(), output.effectEdges.end(),
                       [](const auto& a, const auto& b) {
@@ -481,7 +481,7 @@ CompileResultV1 CompileCurrentWorldV1(
         row.view.contentPropertyKind = RuntimeKind(object.kind);
         row.view.stableId = object.chassis().id;
         const DefinitionMaterializationV1* materialization = nullptr;
-        if (object.kind != harkenprojectschema::ContentKind::Layer) {
+        if (object.kind != harken::studio::project_schema::ContentKind::Layer) {
             materialization = FindMaterialization(
                 materializations,
                 static_cast<harkenplayableproperties::ContentPropertyKindV1>(
@@ -489,8 +489,8 @@ CompileResultV1 CompileCurrentWorldV1(
                 row.view.stableId);
         }
         if (busIds != nullptr) {
-            const auto containsBus = [busIds](harkenstudio::ObjectId id) {
-                return id == harkenstudio::ObjectId{} || std::binary_search(
+            const auto containsBus = [busIds](harken::studio::types::ObjectId id) {
+                return id == harken::studio::types::ObjectId{} || std::binary_search(
                     busIds->ids.begin(), busIds->ids.end(), id);
             };
             const auto& chassis = object.chassis();
@@ -507,13 +507,13 @@ CompileResultV1 CompileCurrentWorldV1(
                 }
             }
         }
-        if (row.view.stableId == harkenstudio::ObjectId{} ||
+        if (row.view.stableId == harken::studio::types::ObjectId{} ||
             !buildPayload(object.chassis(), row.payload)) {
             result.status = CompileStatusV1::InvalidProject;
             result.relatedStableId = object.chassis().id;
             return result;
         }
-        if (object.kind != harkenprojectschema::ContentKind::Layer) {
+        if (object.kind != harken::studio::project_schema::ContentKind::Layer) {
             if (materialization == nullptr) {
                 result.status = CompileStatusV1::MissingMaterialization;
                 result.relatedStableId = row.view.stableId;
@@ -530,9 +530,9 @@ CompileResultV1 CompileCurrentWorldV1(
                 materialization->compatibilityFingerprint;
         }
 
-        std::vector<harkenstudio::ObjectId> nearestFirst;
+        std::vector<harken::studio::types::ObjectId> nearestFirst;
         auto parent = parentByChild.find(row.view.stableId);
-        std::set<harkenstudio::ObjectId> visitedParents;
+        std::set<harken::studio::types::ObjectId> visitedParents;
         while (parent != parentByChild.end()) {
             if (!visitedParents.insert(parent->second).second) {
                 result.status = CompileStatusV1::InvalidProject;
@@ -556,10 +556,10 @@ CompileResultV1 CompileCurrentWorldV1(
                 return result;
             }
             row.structuralAncestors.push_back(
-                harkenstudiobuild::StructuralAncestorRefV1{
+                harken::studio::build::StructuralAncestorRefV1{
                     RuntimeKind(ancestor->kind), 0, *it, 0, {}});
-            if (ancestor->kind == harkenprojectschema::ContentKind::Layer) {
-                row.ancestors.push_back(harkenstudiobuild::LayerAncestorRefV1{*it, 0});
+            if (ancestor->kind == harken::studio::project_schema::ContentKind::Layer) {
+                row.ancestors.push_back(harken::studio::build::LayerAncestorRefV1{*it, 0});
             }
         }
         row.Refresh();
@@ -603,7 +603,7 @@ CompileResultV1 CompileCurrentWorldV1(
         occupiedPropertyOrders.insert(row.authoredStableOrder);
     }
     world->Refresh();
-    std::map<std::pair<std::uint32_t, harkenstudio::ObjectId>, std::size_t> propertyIndex;
+    std::map<std::pair<std::uint32_t, harken::studio::types::ObjectId>, std::size_t> propertyIndex;
     for (std::size_t i = 0; i < world->properties_.size(); ++i) {
         propertyIndex.emplace(
             std::pair(static_cast<std::uint32_t>(
@@ -621,7 +621,7 @@ CompileResultV1 CompileCurrentWorldV1(
                 result.relatedStableId = ancestor.stableId;
                 return result;
             }
-            ancestor.payload = harkenstudiobuild::MakeStructuralAncestorPayloadV1(
+            ancestor.payload = harken::studio::build::MakeStructuralAncestorPayloadV1(
                 world->properties_[found->second].payload.view);
         }
         row.Refresh();
@@ -645,7 +645,7 @@ CompileResultV1 CompileCurrentWorldV1(
         for (auto& ancestor : row.ancestors) {
             const auto found = propertyIndex.find(
                 {static_cast<std::uint32_t>(
-                     harkenstudiobuild::playableproperties::ContentPropertyKindV1::Layer),
+                     harken::studio::build::playableproperties::ContentPropertyKindV1::Layer),
                  ancestor.layerStableId});
             if (found == propertyIndex.end() ||
                 !fingerprintProperty(found->second)) {
@@ -656,7 +656,7 @@ CompileResultV1 CompileCurrentWorldV1(
         }
         row.Refresh();
         row.view.programSemanticFingerprint =
-            harkenstudiobuild::ComputePlayablePropertyFingerprintV1(row.view);
+            harken::studio::build::ComputePlayablePropertyFingerprintV1(row.view);
         fingerprintState[index] = 2;
         return true;
     };
@@ -668,9 +668,9 @@ CompileResultV1 CompileCurrentWorldV1(
         }
     }
 
-    const auto propertyFor = [&](harkenprojectschema::ContentKind kind,
-                                 harkenstudio::ObjectId stableId)
-        -> const harkenstudiobuild::PlayablePropertyProgramViewV1* {
+    const auto propertyFor = [&](harken::studio::project_schema::ContentKind kind,
+                                 harken::studio::types::ObjectId stableId)
+        -> const harken::studio::build::PlayablePropertyProgramViewV1* {
         const auto found = propertyIndex.find(
             {static_cast<std::uint32_t>(kind), stableId});
         return found == propertyIndex.end()
@@ -679,7 +679,7 @@ CompileResultV1 CompileCurrentWorldV1(
     };
 
     for (const auto& object : project.objects) {
-        if (object.kind == harkenprojectschema::ContentKind::Track) {
+        if (object.kind == harken::studio::project_schema::ContentKind::Track) {
             const auto* parent = propertyFor(object.kind, object.chassis().id);
             for (const auto& clip : object.track.clips) {
                 const auto* child = propertyFor(clip.contentRef.kind,
@@ -703,10 +703,10 @@ CompileResultV1 CompileCurrentWorldV1(
                 }
                 row.Refresh();
                 row.view.occurrenceSemanticFingerprint =
-                    harkenstudiobuild::ComputePlayableOccurrenceFingerprintV1(row.view);
+                    harken::studio::build::ComputePlayableOccurrenceFingerprintV1(row.view);
                 world->occurrences_.push_back(std::move(row));
             }
-        } else if (object.kind == harkenprojectschema::ContentKind::Container) {
+        } else if (object.kind == harken::studio::project_schema::ContentKind::Container) {
             const auto* parent = propertyFor(object.kind, object.chassis().id);
             for (const auto& childOccurrence : object.container.children) {
                 const auto* child = propertyFor(
@@ -733,7 +733,7 @@ CompileResultV1 CompileCurrentWorldV1(
                 }
                 row.Refresh();
                 row.view.occurrenceSemanticFingerprint =
-                    harkenstudiobuild::ComputePlayableOccurrenceFingerprintV1(row.view);
+                    harken::studio::build::ComputePlayableOccurrenceFingerprintV1(row.view);
                 world->occurrences_.push_back(std::move(row));
             }
         }
@@ -749,7 +749,7 @@ CompileResultV1 CompileCurrentWorldV1(
               });
 
     for (const auto& object : project.objects) {
-        if (object.kind != harkenprojectschema::ContentKind::Track) continue;
+        if (object.kind != harken::studio::project_schema::ContentKind::Track) continue;
         const auto* root = propertyFor(object.kind, object.chassis().id);
         if (root == nullptr || object.track.clips.size() > UINT32_MAX) {
             result.status = CompileStatusV1::InvalidProject;
@@ -775,7 +775,7 @@ CompileResultV1 CompileCurrentWorldV1(
                 result.relatedStableId = clip.contentRef.target;
                 return result;
             }
-            harkenstudiobuild::ScheduleClipPlacementV1 placement{};
+            harken::studio::build::ScheduleClipPlacementV1 placement{};
             placement.stablePlacementOrdinal = static_cast<std::uint32_t>(i);
             placement.stableOccurrenceOrdinal = clip.stableOccurrenceOrdinal;
             placement.content = MakeRef(*content);
@@ -790,7 +790,7 @@ CompileResultV1 CompileCurrentWorldV1(
         }
         row.Refresh();
         row.view.scheduleSemanticFingerprint =
-            harkenstudiobuild::ComputeTrackScheduleFingerprintV1(row.view);
+            harken::studio::build::ComputeTrackScheduleFingerprintV1(row.view);
         world->trackSchedules_.push_back(std::move(row));
     }
     std::sort(world->trackSchedules_.begin(), world->trackSchedules_.end(),
@@ -800,11 +800,11 @@ CompileResultV1 CompileCurrentWorldV1(
               });
     world->Refresh();
 
-    const auto trackScheduleFor = [&](harkenstudio::ObjectId stableId)
-        -> const harkenstudiobuild::TrackScheduleProgramViewV1* {
+    const auto trackScheduleFor = [&](harken::studio::types::ObjectId stableId)
+        -> const harken::studio::build::TrackScheduleProgramViewV1* {
         const auto found = std::lower_bound(
             world->trackScheduleViews_.begin(), world->trackScheduleViews_.end(),
-            stableId, [](const auto& row, harkenstudio::ObjectId id) {
+            stableId, [](const auto& row, harken::studio::types::ObjectId id) {
                 return row.rootDefinition.stableId < id;
             });
         return found == world->trackScheduleViews_.end() ||
@@ -814,7 +814,7 @@ CompileResultV1 CompileCurrentWorldV1(
     };
 
     for (const auto& object : project.objects) {
-        if (object.kind != harkenprojectschema::ContentKind::Segment) continue;
+        if (object.kind != harken::studio::project_schema::ContentKind::Segment) continue;
         const auto* root = propertyFor(object.kind, object.chassis().id);
         if (root == nullptr || object.segment.tracks.size() > UINT32_MAX ||
             object.segment.markers.size() > UINT32_MAX) {
@@ -828,8 +828,8 @@ CompileResultV1 CompileCurrentWorldV1(
             static_cast<std::uint32_t>(object.segment.startPoint.kind);
         row.view.startMarkerId = object.segment.startPoint.markerId;
         if (object.segment.timeSpec.kind ==
-            harkenprojectschema::SegmentTimeKind::Absolute) {
-            row.view.timeKind = harkenstudiobuild::ScheduleTimeKindV1::AbsoluteNanoseconds;
+            harken::studio::project_schema::SegmentTimeKind::Absolute) {
+            row.view.timeKind = harken::studio::build::ScheduleTimeKindV1::AbsoluteNanoseconds;
         } else {
             if (object.segment.timeSpec.tempoMap.size() != 1 ||
                 object.segment.timeSpec.meterMap.size() != 1 ||
@@ -839,7 +839,7 @@ CompileResultV1 CompileCurrentWorldV1(
                 result.relatedStableId = object.chassis().id;
                 return result;
             }
-            row.view.timeKind = harkenstudiobuild::ScheduleTimeKindV1::MusicalTicks;
+            row.view.timeKind = harken::studio::build::ScheduleTimeKindV1::MusicalTicks;
             row.view.microsPerQuarter =
                 object.segment.timeSpec.tempoMap[0].microsPerQuarter;
             row.view.meterNumerator =
@@ -857,7 +857,7 @@ CompileResultV1 CompileCurrentWorldV1(
                 result.relatedStableId = trackIds[i];
                 return result;
             }
-            row.trackRefs.push_back(harkenstudiobuild::ScheduleTrackRefV1{
+            row.trackRefs.push_back(harken::studio::build::ScheduleTrackRefV1{
                 track->rootDefinition, track->scheduleSemanticFingerprint,
                 static_cast<std::uint32_t>(i), 0});
         }
@@ -867,13 +867,13 @@ CompileResultV1 CompileCurrentWorldV1(
         });
         row.markers.reserve(markers.size());
         for (const auto& marker : markers) {
-            row.markers.push_back(harkenstudiobuild::ScheduleMarkerV1{
+            row.markers.push_back(harken::studio::build::ScheduleMarkerV1{
                 marker.id, marker.markerId, static_cast<std::uint32_t>(marker.kind),
                 marker.position});
         }
         row.Refresh();
         row.view.scheduleSemanticFingerprint =
-            harkenstudiobuild::ComputeSegmentScheduleFingerprintV1(row.view);
+            harken::studio::build::ComputeSegmentScheduleFingerprintV1(row.view);
         world->segmentSchedules_.push_back(std::move(row));
     }
     std::sort(world->segmentSchedules_.begin(), world->segmentSchedules_.end(),
@@ -882,9 +882,9 @@ CompileResultV1 CompileCurrentWorldV1(
                          b.view.rootDefinition.stableId;
               });
 
-    std::set<harkenstudio::ObjectId> consumedAuthoring;
+    std::set<harken::studio::types::ObjectId> consumedAuthoring;
     for (const auto& object : project.objects) {
-        if (object.kind != harkenprojectschema::ContentKind::Container) continue;
+        if (object.kind != harken::studio::project_schema::ContentKind::Container) continue;
         const auto authored = std::find_if(
             authoredContainers.begin(), authoredContainers.end(),
             [&](const ContainerAuthoringV1& row) {
@@ -1022,7 +1022,7 @@ CompileResultV1 CompileCurrentWorldV1(
             }
             const auto childOccurrence = std::find_if(
                 object.container.children.begin(), object.container.children.end(),
-                [&](const harkenprojectschema::ContainerChildOccurrence& child) {
+                [&](const harken::studio::project_schema::ContainerChildOccurrence& child) {
                     return child.stableOccurrenceOrdinal ==
                            authoredChild.stableOccurrenceOrdinal;
                 });
@@ -1040,7 +1040,7 @@ CompileResultV1 CompileCurrentWorldV1(
                     childOccurrence->childPlayableRef.target;
                 return result;
             }
-            harkenstudiobuild::ContainerChildProgramViewV2 compiled{};
+            harken::studio::build::ContainerChildProgramViewV2 compiled{};
             compiled.playable = MakeRef(*child);
             compiled.stableChildOrdinal =
                 authoredChild.stableOccurrenceOrdinal;
@@ -1048,13 +1048,13 @@ CompileResultV1 CompileCurrentWorldV1(
             compiled.frequencyWeight = authoredChild.frequencyWeight;
             compiled.orderWeight = authoredChild.orderWeight;
             compiled.queueStopPolicy = authoredChild.queueStopPolicy;
-            const bool queue = row.view.mode == harkenstudiobuild::ContainerModeV1::RandomQueue ||
-                               row.view.mode == harkenstudiobuild::ContainerModeV1::SequenceQueue;
+            const bool queue = row.view.mode == harken::studio::build::ContainerModeV1::RandomQueue ||
+                               row.view.mode == harken::studio::build::ContainerModeV1::SequenceQueue;
             const bool inlineCompletionAllowed =
-                queue && compiled.playable.kind == harkenstudiobuild::PlayableKindV1::Sound;
+                queue && compiled.playable.kind == harken::studio::build::PlayableKindV1::Sound;
             const bool inactiveCompletion =
                 authoredChild.completion.completionClass ==
-                    harkenstudiobuild::AuthoredCompletionClassV1::SignalOnly &&
+                    harken::studio::build::AuthoredCompletionClassV1::SignalOnly &&
                 authoredChild.completion.leaves.empty();
             if (!inlineCompletionAllowed && !inactiveCompletion) {
                 result.status = CompileStatusV1::InvalidContainerAuthoring;
@@ -1062,10 +1062,10 @@ CompileResultV1 CompileCurrentWorldV1(
                 return result;
             }
             if (queue &&
-                (compiled.playable.kind == harkenstudiobuild::PlayableKindV1::Track ||
-                 compiled.playable.kind == harkenstudiobuild::PlayableKindV1::Segment)) {
+                (compiled.playable.kind == harken::studio::build::PlayableKindV1::Track ||
+                 compiled.playable.kind == harken::studio::build::PlayableKindV1::Segment)) {
                 std::uint64_t scheduleFingerprint = 0;
-                if (compiled.playable.kind == harkenstudiobuild::PlayableKindV1::Track) {
+                if (compiled.playable.kind == harken::studio::build::PlayableKindV1::Track) {
                     const auto* schedule =
                         trackScheduleFor(compiled.playable.stableId);
                     if (schedule == nullptr) {
@@ -1078,7 +1078,7 @@ CompileResultV1 CompileCurrentWorldV1(
                     const auto schedule = std::lower_bound(
                         world->segmentSchedules_.begin(),
                         world->segmentSchedules_.end(), compiled.playable.stableId,
-                        [](const auto& candidate, harkenstudio::ObjectId stableId) {
+                        [](const auto& candidate, harken::studio::types::ObjectId stableId) {
                             return candidate.view.rootDefinition.stableId <
                                    stableId;
                         });
@@ -1092,16 +1092,16 @@ CompileResultV1 CompileCurrentWorldV1(
                     scheduleFingerprint =
                         schedule->view.scheduleSemanticFingerprint;
                 }
-                compiled.timingHint = harkenstudiobuild::MakeScheduleReferenceTimingHint(
+                compiled.timingHint = harken::studio::build::MakeScheduleReferenceTimingHint(
                     compiled.playable.kind, compiled.playable.stableId,
                     scheduleFingerprint);
             } else if (queue &&
-                       compiled.playable.kind == harkenstudiobuild::PlayableKindV1::Sound) {
+                       compiled.playable.kind == harken::studio::build::PlayableKindV1::Sound) {
                 if (authoredChild.completion.completionClass ==
-                        harkenstudiobuild::AuthoredCompletionClassV1::FiniteMediaCandidate &&
+                        harken::studio::build::AuthoredCompletionClassV1::FiniteMediaCandidate &&
                     (authoredChild.completion.leaves.size() != 1 ||
                      authoredChild.completion.leaves[0].value.content.kind !=
-                         harkenstudiobuild::PlayableKindV1::Sound ||
+                         harken::studio::build::PlayableKindV1::Sound ||
                      authoredChild.completion.leaves[0].value.content.stableId !=
                          compiled.playable.stableId)) {
                     result.status = CompileStatusV1::InvalidContainerAuthoring;
@@ -1109,9 +1109,9 @@ CompileResultV1 CompileCurrentWorldV1(
                     return result;
                 }
                 if (authoredChild.completion.completionClass ==
-                    harkenstudiobuild::AuthoredCompletionClassV1::FiniteMediaCandidate) {
+                    harken::studio::build::AuthoredCompletionClassV1::FiniteMediaCandidate) {
                     compiled.timingHint.kind =
-                        harkenstudiobuild::ChildTimingHintKindV2::InlineSound;
+                        harken::studio::build::ChildTimingHintKindV2::InlineSound;
                     const auto& source =
                         authoredChild.completion.leaves[0].value;
                     auto& hint = compiled.timingHint.payload.inlineSound;
@@ -1128,7 +1128,7 @@ CompileResultV1 CompileCurrentWorldV1(
         }
         row.Refresh();
         const auto* containerDefinition = propertyFor(
-            harkenprojectschema::ContentKind::Container,
+            harken::studio::project_schema::ContentKind::Container,
             row.view.containerStableId);
         if (containerDefinition == nullptr) {
             result.status = CompileStatusV1::InvalidProject;
@@ -1154,7 +1154,7 @@ CompileResultV1 CompileCurrentWorldV1(
                   return a.view.containerStableId < b.view.containerStableId;
               });
 
-    harkenstudio::ObjectId advancedTransitionOwner{};
+    harken::studio::types::ObjectId advancedTransitionOwner{};
     world->transitions_.reserve(authoredTransitions.size());
     for (const auto& authored : authoredTransitions) {
         OwningCurrentWorldV1::OwnedTransition row{};
@@ -1182,20 +1182,20 @@ CompileResultV1 CompileCurrentWorldV1(
             row.view.defaultRuleIndex = static_cast<std::uint32_t>(
                 std::distance(row.rules.begin(), defaultRule));
         }
-        const auto resolveRef = [&](harkenstudiobuild::PlayableRefV1* ref) {
-            if (ref == nullptr || ref->reserved != 0 || ref->stableId == harkenstudio::ObjectId{} ||
+        const auto resolveRef = [&](harken::studio::build::PlayableRefV1* ref) {
+            if (ref == nullptr || ref->reserved != 0 || ref->stableId == harken::studio::types::ObjectId{} ||
                 static_cast<std::uint32_t>(ref->kind) >
-                    static_cast<std::uint32_t>(harkenstudiobuild::PlayableKindV1::Segment)) {
+                    static_cast<std::uint32_t>(harken::studio::build::PlayableKindV1::Segment)) {
                 return false;
             }
-            const auto kind = static_cast<harkenprojectschema::ContentKind>(
+            const auto kind = static_cast<harken::studio::project_schema::ContentKind>(
                 static_cast<std::uint32_t>(ref->kind) + 1u);
             const auto* property = propertyFor(kind, ref->stableId);
             if (property == nullptr) return false;
-            const harkenstudiobuild::PlayableRefV1 resolved = MakeRef(*property);
+            const harken::studio::build::PlayableRefV1 resolved = MakeRef(*property);
             const bool identityOnly =
                 ref->expectedProgramSemanticFingerprint == 0 &&
-                ref->contentRevision == 0 && ref->routeStableId == harkenstudio::ObjectId{} &&
+                ref->contentRevision == 0 && ref->routeStableId == harken::studio::types::ObjectId{} &&
                 ref->compatibilityFingerprint == 0;
             if (!identityOnly &&
                 (ref->expectedProgramSemanticFingerprint !=
@@ -1231,13 +1231,13 @@ CompileResultV1 CompileCurrentWorldV1(
         }
         row.Refresh();
         const auto classification =
-            harkenstudiobuild::ClassifyTransitionProgramV1(row.view);
-        if (classification == harkenstudiobuild::TransitionProgramClassV1::Advanced) {
-            if (advancedTransitionOwner == harkenstudio::ObjectId{}) {
+            harken::studio::build::ClassifyTransitionProgramV1(row.view);
+        if (classification == harken::studio::build::TransitionProgramClassV1::Advanced) {
+            if (advancedTransitionOwner == harken::studio::types::ObjectId{}) {
                 advancedTransitionOwner = authored.ownerContainerStableId;
             }
         }
-        if (classification == harkenstudiobuild::TransitionProgramClassV1::Invalid) {
+        if (classification == harken::studio::build::TransitionProgramClassV1::Invalid) {
             result.status = CompileStatusV1::InvalidCanonicalWorld;
             result.relatedStableId = authored.ownerContainerStableId;
             return result;
@@ -1263,7 +1263,7 @@ CompileResultV1 CompileCurrentWorldV1(
         const auto transition = std::lower_bound(
             world->transitions_.begin(), world->transitions_.end(),
             container.view.containerStableId,
-            [](const auto& row, harkenstudio::ObjectId stableId) {
+            [](const auto& row, harken::studio::types::ObjectId stableId) {
                 return row.view.ownerContainerStableId < stableId;
             });
         if (transition == world->transitions_.end() ||
@@ -1282,8 +1282,8 @@ CompileResultV1 CompileCurrentWorldV1(
     for (const auto& authored : authoredActions) {
         OwningCurrentWorldV1::OwnedAction row{};
         row.view.actionStableId = authored.actionStableId;
-        if (row.view.actionStableId == harkenstudio::ObjectId{} || authored.steps.empty() ||
-            authored.steps.size() > harkenstudiobuild::kMaxActionSteps) {
+        if (row.view.actionStableId == harken::studio::types::ObjectId{} || authored.steps.empty() ||
+            authored.steps.size() > harken::studio::build::kMaxActionSteps) {
             result.status = CompileStatusV1::InvalidActionAuthoring;
             result.relatedStableId = authored.actionStableId;
             return result;
@@ -1292,27 +1292,27 @@ CompileResultV1 CompileCurrentWorldV1(
         for (std::size_t index = 0; index < authored.steps.size(); ++index) {
             const auto& source = authored.steps[index];
             if (source.authoredEventIndex != index ||
-                source.target.stableId == harkenstudio::ObjectId{}) {
+                source.target.stableId == harken::studio::types::ObjectId{}) {
                 result.status = CompileStatusV1::InvalidActionAuthoring;
                 result.relatedStableId = authored.actionStableId;
                 return result;
             }
-            harkenstudiobuild::ActionStepProgramViewV1 step{};
+            harken::studio::build::ActionStepProgramViewV1 step{};
             step.opcode = source.opcode;
             step.authoredEventIndex = source.authoredEventIndex;
             step.target.kind = source.target.kind;
             step.target.stableId = source.target.stableId;
-            const harkenstudiobuild::AuthoredTimeRationalV1 zeroTime{
-                harkenstudiobuild::AuthoredTimeDomainV1::AbsoluteNanoseconds, 0, 1};
+            const harken::studio::build::AuthoredTimeRationalV1 zeroTime{
+                harken::studio::build::AuthoredTimeDomainV1::AbsoluteNanoseconds, 0, 1};
             step.delay = zeroTime;
             step.fade = zeroTime;
             step.cooldown = zeroTime;
-            if ((source.opcode == harkenstudiobuild::ActionOpcodeV1::Play ||
-                 source.opcode == harkenstudiobuild::ActionOpcodeV1::Stop) &&
+            if ((source.opcode == harken::studio::build::ActionOpcodeV1::Play ||
+                 source.opcode == harken::studio::build::ActionOpcodeV1::Stop) &&
                 static_cast<std::uint32_t>(source.target.kind) <=
-                    static_cast<std::uint32_t>(harkenstudiobuild::ActionTargetKindV1::Segment)) {
+                    static_cast<std::uint32_t>(harken::studio::build::ActionTargetKindV1::Segment)) {
                 const auto contentKind =
-                    static_cast<harkenprojectschema::ContentKind>(
+                    static_cast<harken::studio::project_schema::ContentKind>(
                         static_cast<std::uint32_t>(source.target.kind) + 1u);
                 const auto* target =
                     propertyFor(contentKind, source.target.stableId);
@@ -1323,12 +1323,12 @@ CompileResultV1 CompileCurrentWorldV1(
                 }
                 step.target.expectedProgramSemanticFingerprint =
                     target->programSemanticFingerprint;
-                if (source.opcode == harkenstudiobuild::ActionOpcodeV1::Play) {
+                if (source.opcode == harken::studio::build::ActionOpcodeV1::Play) {
                     if (!CanonicalActionTime(source.delayMilliseconds, 60000.0f,
                                              1000000.0, &step.delay) ||
                         !CanonicalActionTime(source.cooldownSeconds, 60.0f,
                                              1000000000.0, &step.cooldown) ||
-                        !harkenstudiobuild::ActionQuantizeTimingSupportedV1(
+                        !harken::studio::build::ActionQuantizeTimingSupportedV1(
                             source.opcode, source.quantizeTiming)) {
                         result.status = CompileStatusV1::InvalidActionAuthoring;
                         result.relatedStableId = authored.actionStableId;
@@ -1336,19 +1336,19 @@ CompileResultV1 CompileCurrentWorldV1(
                     }
                     step.quantizeTiming = source.quantizeTiming;
                     if (source.quantizeTiming !=
-                        harkenstudiobuild::ActionQuantizeTimingV1::Immediate) {
-                        if (source.quantizeReference.stableId == harkenstudio::ObjectId{} ||
+                        harken::studio::build::ActionQuantizeTimingV1::Immediate) {
+                        if (source.quantizeReference.stableId == harken::studio::types::ObjectId{} ||
                             static_cast<std::uint32_t>(
                                 source.quantizeReference.kind) >
                                 static_cast<std::uint32_t>(
-                                    harkenstudiobuild::ActionTargetKindV1::Segment)) {
+                                    harken::studio::build::ActionTargetKindV1::Segment)) {
                             result.status =
                                 CompileStatusV1::InvalidActionAuthoring;
                             result.relatedStableId = authored.actionStableId;
                             return result;
                         }
                         const auto referenceKind =
-                            static_cast<harkenprojectschema::ContentKind>(
+                            static_cast<harken::studio::project_schema::ContentKind>(
                                 static_cast<std::uint32_t>(
                                     source.quantizeReference.kind) +
                                 1u);
@@ -1356,9 +1356,9 @@ CompileResultV1 CompileCurrentWorldV1(
                             referenceKind, source.quantizeReference.stableId);
                         if (reference == nullptr ||
                             (source.ifSilent !=
-                                 harkenstudiobuild::ActionIfSilentV1::Immediate &&
+                                 harken::studio::build::ActionIfSilentV1::Immediate &&
                              source.ifSilent !=
-                                 harkenstudiobuild::ActionIfSilentV1::Drop)) {
+                                 harken::studio::build::ActionIfSilentV1::Drop)) {
                             result.status =
                                 CompileStatusV1::InvalidActionAuthoring;
                             result.relatedStableId = authored.actionStableId;
@@ -1375,9 +1375,9 @@ CompileResultV1 CompileCurrentWorldV1(
                     }
                     if (step.cooldown.numerator != 0) {
                         if (source.cooldownScope !=
-                                harkenstudiobuild::ActionCooldownScopeV1::Global &&
+                                harken::studio::build::ActionCooldownScopeV1::Global &&
                             source.cooldownScope !=
-                                harkenstudiobuild::ActionCooldownScopeV1::PerEmitter) {
+                                harken::studio::build::ActionCooldownScopeV1::PerEmitter) {
                             result.status =
                                 CompileStatusV1::InvalidActionAuthoring;
                             result.relatedStableId = authored.actionStableId;
@@ -1392,7 +1392,7 @@ CompileResultV1 CompileCurrentWorldV1(
                                              1000000.0, &step.fade) ||
                         !CanonicalActionTime(source.cooldownSeconds, 60.0f,
                                              1000000000.0, &step.cooldown) ||
-                        !harkenstudiobuild::ActionQuantizeTimingSupportedV1(
+                        !harken::studio::build::ActionQuantizeTimingSupportedV1(
                             source.opcode, source.quantizeTiming)) {
                         result.status = CompileStatusV1::InvalidActionAuthoring;
                         result.relatedStableId = authored.actionStableId;
@@ -1400,19 +1400,19 @@ CompileResultV1 CompileCurrentWorldV1(
                     }
                     step.quantizeTiming = source.quantizeTiming;
                     if (source.quantizeTiming !=
-                        harkenstudiobuild::ActionQuantizeTimingV1::Immediate) {
-                        if (source.quantizeReference.stableId != harkenstudio::ObjectId{}) {
+                        harken::studio::build::ActionQuantizeTimingV1::Immediate) {
+                        if (source.quantizeReference.stableId != harken::studio::types::ObjectId{}) {
                             if (static_cast<std::uint32_t>(
                                     source.quantizeReference.kind) >
                                 static_cast<std::uint32_t>(
-                                    harkenstudiobuild::ActionTargetKindV1::Segment)) {
+                                    harken::studio::build::ActionTargetKindV1::Segment)) {
                                 result.status =
                                     CompileStatusV1::InvalidActionAuthoring;
                                 result.relatedStableId = authored.actionStableId;
                                 return result;
                             }
                             const auto referenceKind =
-                                static_cast<harkenprojectschema::ContentKind>(
+                                static_cast<harken::studio::project_schema::ContentKind>(
                                     static_cast<std::uint32_t>(
                                         source.quantizeReference.kind) +
                                     1u);
@@ -1434,9 +1434,9 @@ CompileResultV1 CompileCurrentWorldV1(
                                 reference->programSemanticFingerprint;
                         }
                         if (source.ifSilent !=
-                                harkenstudiobuild::ActionIfSilentV1::Immediate &&
+                                harken::studio::build::ActionIfSilentV1::Immediate &&
                             source.ifSilent !=
-                                harkenstudiobuild::ActionIfSilentV1::Drop) {
+                                harken::studio::build::ActionIfSilentV1::Drop) {
                             result.status =
                                 CompileStatusV1::InvalidActionAuthoring;
                             result.relatedStableId = authored.actionStableId;
@@ -1446,9 +1446,9 @@ CompileResultV1 CompileCurrentWorldV1(
                     }
                     if (step.cooldown.numerator != 0) {
                         if (source.cooldownScope !=
-                                harkenstudiobuild::ActionCooldownScopeV1::Global &&
+                                harken::studio::build::ActionCooldownScopeV1::Global &&
                             source.cooldownScope !=
-                                harkenstudiobuild::ActionCooldownScopeV1::PerEmitter) {
+                                harken::studio::build::ActionCooldownScopeV1::PerEmitter) {
                             result.status =
                                 CompileStatusV1::InvalidActionAuthoring;
                             result.relatedStableId = authored.actionStableId;
@@ -1457,14 +1457,14 @@ CompileResultV1 CompileCurrentWorldV1(
                         step.cooldownScope = source.cooldownScope;
                     }
                 }
-            } else if (source.opcode == harkenstudiobuild::ActionOpcodeV1::PostAction &&
+            } else if (source.opcode == harken::studio::build::ActionOpcodeV1::PostAction &&
                        source.target.kind ==
-                           harkenstudiobuild::ActionTargetKindV1::Action) {
+                           harken::studio::build::ActionTargetKindV1::Action) {
                 if (!CanonicalActionTime(source.delayMilliseconds, 60000.0f,
                                          1000000.0, &step.delay) ||
                     !CanonicalActionTime(source.cooldownSeconds, 60.0f,
                                          1000000000.0, &step.cooldown) ||
-                    !harkenstudiobuild::ActionQuantizeTimingSupportedV1(
+                    !harken::studio::build::ActionQuantizeTimingSupportedV1(
                         source.opcode, source.quantizeTiming)) {
                     result.status = CompileStatusV1::InvalidActionAuthoring;
                     result.relatedStableId = authored.actionStableId;
@@ -1472,18 +1472,18 @@ CompileResultV1 CompileCurrentWorldV1(
                 }
                 step.quantizeTiming = source.quantizeTiming;
                 if (source.quantizeTiming !=
-                    harkenstudiobuild::ActionQuantizeTimingV1::Immediate) {
-                    if (source.quantizeReference.stableId == harkenstudio::ObjectId{} ||
+                    harken::studio::build::ActionQuantizeTimingV1::Immediate) {
+                    if (source.quantizeReference.stableId == harken::studio::types::ObjectId{} ||
                         static_cast<std::uint32_t>(
                             source.quantizeReference.kind) >
                             static_cast<std::uint32_t>(
-                                harkenstudiobuild::ActionTargetKindV1::Segment)) {
+                                harken::studio::build::ActionTargetKindV1::Segment)) {
                         result.status = CompileStatusV1::InvalidActionAuthoring;
                         result.relatedStableId = authored.actionStableId;
                         return result;
                     }
                     const auto referenceKind =
-                        static_cast<harkenprojectschema::ContentKind>(
+                        static_cast<harken::studio::project_schema::ContentKind>(
                             static_cast<std::uint32_t>(
                                 source.quantizeReference.kind) +
                             1u);
@@ -1491,8 +1491,8 @@ CompileResultV1 CompileCurrentWorldV1(
                         referenceKind, source.quantizeReference.stableId);
                     if (reference == nullptr ||
                         (source.ifSilent !=
-                             harkenstudiobuild::ActionIfSilentV1::Immediate &&
-                         source.ifSilent != harkenstudiobuild::ActionIfSilentV1::Drop)) {
+                             harken::studio::build::ActionIfSilentV1::Immediate &&
+                         source.ifSilent != harken::studio::build::ActionIfSilentV1::Drop)) {
                         result.status = CompileStatusV1::InvalidActionAuthoring;
                         result.relatedStableId = authored.actionStableId;
                         return result;
@@ -1508,26 +1508,26 @@ CompileResultV1 CompileCurrentWorldV1(
                 }
                 if (step.cooldown.numerator != 0) {
                     if (source.cooldownScope !=
-                            harkenstudiobuild::ActionCooldownScopeV1::Global &&
+                            harken::studio::build::ActionCooldownScopeV1::Global &&
                         source.cooldownScope !=
-                            harkenstudiobuild::ActionCooldownScopeV1::PerEmitter) {
+                            harken::studio::build::ActionCooldownScopeV1::PerEmitter) {
                         result.status = CompileStatusV1::InvalidActionAuthoring;
                         result.relatedStableId = authored.actionStableId;
                         return result;
                     }
                     step.cooldownScope = source.cooldownScope;
                 }
-            } else if (source.opcode == harkenstudiobuild::ActionOpcodeV1::Reset &&
+            } else if (source.opcode == harken::studio::build::ActionOpcodeV1::Reset &&
                        source.target.kind ==
-                           harkenstudiobuild::ActionTargetKindV1::Container) {
+                           harken::studio::build::ActionTargetKindV1::Container) {
                 const auto* target = propertyFor(
-                    harkenprojectschema::ContentKind::Container,
+                    harken::studio::project_schema::ContentKind::Container,
                     source.target.stableId);
                 if (target == nullptr ||
                     !CanonicalActionTime(source.delayMilliseconds, 60000.0f,
                                          1000000.0, &step.delay) ||
-                    (source.resetScope != harkenstudiobuild::ActionScopeV1::Global &&
-                     source.resetScope != harkenstudiobuild::ActionScopeV1::Emitter)) {
+                    (source.resetScope != harken::studio::build::ActionScopeV1::Global &&
+                     source.resetScope != harken::studio::build::ActionScopeV1::Emitter)) {
                     result.status = CompileStatusV1::InvalidActionAuthoring;
                     result.relatedStableId = authored.actionStableId;
                     return result;
@@ -1535,19 +1535,19 @@ CompileResultV1 CompileCurrentWorldV1(
                 step.target.expectedProgramSemanticFingerprint =
                     target->programSemanticFingerprint;
                 step.scope = source.resetScope;
-            } else if (source.opcode == harkenstudiobuild::ActionOpcodeV1::SetVariable &&
+            } else if (source.opcode == harken::studio::build::ActionOpcodeV1::SetVariable &&
                        source.target.kind ==
-                           harkenstudiobuild::ActionTargetKindV1::Variable) {
+                           harken::studio::build::ActionTargetKindV1::Variable) {
                 const auto variable = std::find_if(
                     world->variables_.begin(), world->variables_.end(),
-                    [&](const harkenstudiobuild::VariableDefinitionV1& candidate) {
+                    [&](const harken::studio::build::VariableDefinitionV1& candidate) {
                         return candidate.variableId == source.target.stableId;
                     });
                 if (variable == world->variables_.end() ||
                     !std::isfinite(source.value) ||
                     source.value < variable->rangeMin ||
                     source.value > variable->rangeMax ||
-                    (variable->kind == harkenstudiobuild::VariableKindV1::Step &&
+                    (variable->kind == harken::studio::build::VariableKindV1::Step &&
                      (source.value < -16777216.0f ||
                       source.value > 16777216.0f ||
                       source.value != std::floor(source.value)))) {
@@ -1556,8 +1556,8 @@ CompileResultV1 CompileCurrentWorldV1(
                     return result;
                 }
                 const float value = CanonicalF32(source.value);
-                if (source.scope != harkenstudiobuild::ActionScopeV1::Global &&
-                    source.scope != harkenstudiobuild::ActionScopeV1::Emitter) {
+                if (source.scope != harken::studio::build::ActionScopeV1::Global &&
+                    source.scope != harken::studio::build::ActionScopeV1::Emitter) {
                     result.status = CompileStatusV1::InvalidActionAuthoring;
                     result.relatedStableId = authored.actionStableId;
                     return result;
@@ -1575,16 +1575,16 @@ CompileResultV1 CompileCurrentWorldV1(
         for (const auto& step : row.steps) {
             if (step.delay.numerator != 0) row.view.directFeatureMask |= 1u;
             if (step.quantizeTiming !=
-                    harkenstudiobuild::ActionQuantizeTimingV1::Immediate ||
-                step.quantizeReference.stableId != harkenstudio::ObjectId{}) {
+                    harken::studio::build::ActionQuantizeTimingV1::Immediate ||
+                step.quantizeReference.stableId != harken::studio::types::ObjectId{}) {
                 row.view.directFeatureMask |= 2u;
             }
             if (step.cooldown.numerator != 0) {
                 row.view.directFeatureMask |= 4u;
             }
             if (step.cooldownScope !=
-                    harkenstudiobuild::ActionCooldownScopeV1::Global ||
-                step.ifSilent != harkenstudiobuild::ActionIfSilentV1::Immediate) {
+                    harken::studio::build::ActionCooldownScopeV1::Global ||
+                step.ifSilent != harken::studio::build::ActionIfSilentV1::Immediate) {
                 row.view.directFeatureMask |= 8u;
             }
         }
@@ -1601,7 +1601,7 @@ CompileResultV1 CompileCurrentWorldV1(
               });
     if (capacityMode == CompileCapacityModeV1::AuthoredContent) {
         world->Refresh();
-        if (!harkenstudiobuild::GrowAuthoredWorldCapacityV1(world->view_, &capacity)) {
+        if (!harken::studio::build::GrowAuthoredWorldCapacityV1(world->view_, &capacity)) {
             result.status = CompileStatusV1::Capacity;
             return result;
         }
@@ -1632,7 +1632,7 @@ CompileResultV1 CompileCurrentWorldV1(
     std::vector<std::uint8_t> actionState(world->actions_.size(), 0);
     std::vector<std::uint32_t> actionDepth(world->actions_.size(), 0);
     bool actionCapacityExceeded = false;
-    harkenstudio::ObjectId actionFailureStableId{};
+    harken::studio::types::ObjectId actionFailureStableId{};
     std::function<bool(std::size_t, std::uint32_t)> visitAction =
         [&](std::size_t index, std::uint32_t traversalDepth) {
         if (actionState[index] == 1) {
@@ -1647,11 +1647,11 @@ CompileResultV1 CompileCurrentWorldV1(
         std::uint32_t depth = 1;
         std::uint32_t transitiveMask = action.view.directFeatureMask;
         for (auto& step : action.steps) {
-            if (step.opcode != harkenstudiobuild::ActionOpcodeV1::PostAction) continue;
+            if (step.opcode != harken::studio::build::ActionOpcodeV1::PostAction) continue;
             const auto child = std::lower_bound(
                 world->actions_.begin(), world->actions_.end(),
                 step.target.stableId,
-                [](const auto& candidate, harkenstudio::ObjectId stableId) {
+                [](const auto& candidate, harken::studio::types::ObjectId stableId) {
                     return candidate.view.actionStableId < stableId;
                 });
             if (child == world->actions_.end() ||
@@ -1691,7 +1691,7 @@ CompileResultV1 CompileCurrentWorldV1(
         actionDepth[index] = depth;
         action.Refresh();
         action.view.programSemanticFingerprint =
-            harkenstudiobuild::ComputeActionProgramFingerprintV1(action.view);
+            harken::studio::build::ComputeActionProgramFingerprintV1(action.view);
         if (action.view.programSemanticFingerprint == 0) {
             actionFailureStableId = action.view.actionStableId;
             return false;
@@ -1711,16 +1711,16 @@ CompileResultV1 CompileCurrentWorldV1(
 
     world->Refresh();
     if (includePreviewDucking)
-        world->view_.sourceBodyVintage = harkenstudiobuild::kCurrentWorldBodyVintageV20;
+        world->view_.sourceBodyVintage = harken::studio::build::kCurrentWorldBodyVintageV20;
     if (!duckingSends.empty()) {
         if (duckingSends.size() > UINT32_MAX || busIds == nullptr) {
             result.status = CompileStatusV1::InvalidProject;
             return result;
         }
-        world->view_.sourceBodyVintage = harkenstudiobuild::kCurrentWorldBodyVintageV20;
-        std::map<harkenstudio::ObjectId, harkenstudiobuild::SignalReceiverV1> receivers;
+        world->view_.sourceBodyVintage = harken::studio::build::kCurrentWorldBodyVintageV20;
+        std::map<harken::studio::types::ObjectId, harken::studio::build::SignalReceiverV1> receivers;
         for (const auto& send : duckingSends) {
-            harkenstudiobuild::SignalRelationV1 row;
+            harken::studio::build::SignalRelationV1 row;
             row.stableId = send.stableId;
             row.source.kind = send.sourceKind;
             row.source.stableId = send.sourceId;
@@ -1731,16 +1731,16 @@ CompileResultV1 CompileCurrentWorldV1(
                 result.relatedStableId = send.targetBusId;
                 return result;
             }
-            if (send.sourceKind == harkenstudiobuild::SignalEndpointKindV1::Bus) {
+            if (send.sourceKind == harken::studio::build::SignalEndpointKindV1::Bus) {
                 if (!std::binary_search(busIds->ids.begin(), busIds->ids.end(), send.sourceId)) {
                     result.status = CompileStatusV1::InvalidProject;
                     result.relatedStableId = send.sourceId;
                     return result;
                 }
             } else {
-                const auto kind = send.sourceKind == harkenstudiobuild::SignalEndpointKindV1::Sound
-                    ? harkenstudiobuild::playableproperties::ContentPropertyKindV1::Sound
-                    : harkenstudiobuild::playableproperties::ContentPropertyKindV1::Container;
+                const auto kind = send.sourceKind == harken::studio::build::SignalEndpointKindV1::Sound
+                    ? harken::studio::build::playableproperties::ContentPropertyKindV1::Sound
+                    : harken::studio::build::playableproperties::ContentPropertyKindV1::Container;
                 const auto property = std::find_if(world->propertyViews_.begin(), world->propertyViews_.end(),
                     [&](const auto& p) { return p.stableId == send.sourceId && p.contentPropertyKind == kind; });
                 if (property == world->propertyViews_.end()) {
@@ -1749,7 +1749,7 @@ CompileResultV1 CompileCurrentWorldV1(
                     return result;
                 }
                 row.source.expectedPropertyFingerprint = property->programSemanticFingerprint;
-                if (send.sourceKind == harkenstudiobuild::SignalEndpointKindV1::Container) {
+                if (send.sourceKind == harken::studio::build::SignalEndpointKindV1::Container) {
                     const auto program = std::find_if(world->containerViews_.begin(), world->containerViews_.end(),
                         [&](const auto& p) { return p.containerStableId == send.sourceId; });
                     if (program == world->containerViews_.end()) {
@@ -1761,7 +1761,7 @@ CompileResultV1 CompileCurrentWorldV1(
                 }
             }
             world->signalRelations_.push_back(row);
-            receivers.try_emplace(row.target.stableId, harkenstudiobuild::SignalReceiverV1{row.target});
+            receivers.try_emplace(row.target.stableId, harken::studio::build::SignalReceiverV1{row.target});
         }
         std::sort(world->signalRelations_.begin(), world->signalRelations_.end(),
             [](const auto& a, const auto& b) { return a.stableId < b.stableId; });
@@ -1769,27 +1769,27 @@ CompileResultV1 CompileCurrentWorldV1(
         world->Refresh();
     }
     world->view_.identity.capabilityMask =
-        harkenstudiobuild::detail::ComputeCurrentWorldLocalCapabilityMaskV1(world->view_);
+        harken::studio::build::detail::ComputeCurrentWorldLocalCapabilityMaskV1(world->view_);
     world->view_.identity.runtimeSemanticFingerprint =
-        world->view_.sourceBodyVintage == harkenstudiobuild::kCurrentWorldBodyVintageV20
-            ? harkenstudiobuild::ComputeCurrentWorldFingerprintV7(world->view_)
-            : harkenstudiobuild::ComputeCurrentWorldFingerprintV5(world->view_);
-    const harkenstudiobuild::WorldInstallStatus validation =
-        harkenstudiobuild::ValidateCurrentWorldV1(world->view_);
-    if (validation == harkenstudiobuild::WorldInstallStatus::Capacity) {
+        world->view_.sourceBodyVintage == harken::studio::build::kCurrentWorldBodyVintageV20
+            ? harken::studio::build::ComputeCurrentWorldFingerprintV7(world->view_)
+            : harken::studio::build::ComputeCurrentWorldFingerprintV5(world->view_);
+    const harken::studio::build::WorldInstallStatus validation =
+        harken::studio::build::ValidateCurrentWorldV1(world->view_);
+    if (validation == harken::studio::build::WorldInstallStatus::Capacity) {
         result.status = CompileStatusV1::Capacity;
         return result;
     }
-    if (validation == harkenstudiobuild::WorldInstallStatus::CapabilityUnavailable &&
+    if (validation == harken::studio::build::WorldInstallStatus::CapabilityUnavailable &&
         !world->transitions_.empty()) {
         result.status = CompileStatusV1::TransitionCapabilityUnavailable;
-        result.relatedStableId = advancedTransitionOwner != harkenstudio::ObjectId{}
+        result.relatedStableId = advancedTransitionOwner != harken::studio::types::ObjectId{}
             ? advancedTransitionOwner
             : world->transitions_.front().view.ownerContainerStableId;
         return result;
     }
-    if (validation != harkenstudiobuild::WorldInstallStatus::Ok &&
-        validation != harkenstudiobuild::WorldInstallStatus::CapabilityUnavailable) {
+    if (validation != harken::studio::build::WorldInstallStatus::Ok &&
+        validation != harken::studio::build::WorldInstallStatus::CapabilityUnavailable) {
         result.status = CompileStatusV1::InvalidCanonicalWorld;
         return result;
     }

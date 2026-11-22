@@ -9,7 +9,7 @@
 #include <QJsonDocument>
 #include <utility>
 
-namespace VNX {
+namespace harken::studio {
 
 QString MediaConversionRequest::inputPath() const
 {

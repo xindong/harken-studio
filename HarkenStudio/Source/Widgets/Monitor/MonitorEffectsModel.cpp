@@ -1,6 +1,6 @@
 #include "Monitor/MonitorEffectsModel.h"
 
-namespace VNX {
+namespace harken::studio {
 
 MonitorEffectsModel::MonitorEffectsModel(QObject* parent)
     : QAbstractTableModel(parent)
@@ -128,4 +128,4 @@ QString MonitorEffectsModel::latencyText(const Monitor::EffectMonitorRow& row)
     return QString::number(row.latencyFrames);
 }
 
-} // namespace VNX
+} // namespace harken::studio

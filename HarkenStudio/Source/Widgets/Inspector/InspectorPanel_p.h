@@ -37,7 +37,7 @@
 #include "Widgets/Inspector/PropertyEditorEngine.h"
 #include "Widgets/Inspector/InspectorCustomization.h"
 
-namespace VNX {
+namespace harken::studio {
 
 class EffectEditorPanel;
 

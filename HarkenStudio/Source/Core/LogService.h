@@ -8,7 +8,7 @@
 #include <deque>
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 
 enum class LogCategory : uint8_t
 {

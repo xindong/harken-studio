@@ -11,9 +11,9 @@
 
 TEST(TableWidgetTest, ManagedItemViewIsDestroyedWithItsTable)
 {
-    QPointer<VNX::ProportionalTreeWidget> owned;
+    QPointer<harken::studio::ProportionalTreeWidget> owned;
     {
-        VNX::TableWidget table;
+        harken::studio::TableWidget table;
         owned = table.createItemView(QStringLiteral("ManagedItems"),
             {"Name", "Value"}, {600, 400});
         ASSERT_FALSE(owned.isNull());
@@ -23,7 +23,7 @@ TEST(TableWidgetTest, ManagedItemViewIsDestroyedWithItsTable)
 
 TEST(TableWidgetTest, RowRemovalDestroysAssociatedDetails)
 {
-    VNX::TableWidget table;
+    harken::studio::TableWidget table;
     table.setColumns(QStringLiteral("Details"), {
         {QStringLiteral("Number"), QStringLiteral("#"), 0},
         {QStringLiteral("Name"), QStringLiteral("Name"), 700},

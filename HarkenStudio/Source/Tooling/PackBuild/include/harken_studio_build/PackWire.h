@@ -13,21 +13,21 @@
 #include <span>
 #include <type_traits>
 
-namespace harkenstudiobuild {
+namespace harken::studio::build {
 
 static_assert(std::endian::native == std::endian::little);
 
 template <class Wire>
 inline constexpr std::uint64_t kPackBytes = sizeof(Wire);
 
-[[nodiscard]] inline HkPackObjectId ToPackId(harkenstudio::ObjectId value) noexcept {
+[[nodiscard]] inline HkPackObjectId ToPackId(harken::studio::types::ObjectId value) noexcept {
     HkPackObjectId id;
     const auto bytes = ObjectIdBytes(value);
     std::memcpy(id.bytes, bytes.data(), sizeof id.bytes);
     return id;
 }
 
-[[nodiscard]] inline harkenstudio::ObjectId FromPackId(const HkPackObjectId& id) noexcept {
+[[nodiscard]] inline harken::studio::types::ObjectId FromPackId(const HkPackObjectId& id) noexcept {
     return ObjectIdFromBytes(std::span<const std::uint8_t, 16>(id.bytes, 16));
 }
 
@@ -1001,11 +1001,11 @@ inline void ToWire(const CurrentWorldV3PrefixValues& row, HkPackBodyWorldPrefix&
     return true;
 }
 
-inline void ToWire(const harkenstudio::ObjectId& row, HkPackBodyWorldProjectId& wire) noexcept {
+inline void ToWire(const harken::studio::types::ObjectId& row, HkPackBodyWorldProjectId& wire) noexcept {
     wire.value = ToPackId(row);
 }
 
-[[nodiscard]] inline bool FromWire(const HkPackBodyWorldProjectId& wire, harkenstudio::ObjectId& out) noexcept {
+[[nodiscard]] inline bool FromWire(const HkPackBodyWorldProjectId& wire, harken::studio::types::ObjectId& out) noexcept {
     AssignPack(out, FromPackId(wire.value));
     return true;
 }
@@ -1969,11 +1969,11 @@ inline void ToWire(const PackVariableRequirementsHeader& row, HkPackVariableRequ
     return true;
 }
 
-inline void ToWire(const harkenstudio::ObjectId& row, HkPackVoiceRecipeBinding& wire) noexcept {
+inline void ToWire(const harken::studio::types::ObjectId& row, HkPackVoiceRecipeBinding& wire) noexcept {
     wire.bindingId = ToPackId(row);
 }
 
-[[nodiscard]] inline bool FromWire(const HkPackVoiceRecipeBinding& wire, harkenstudio::ObjectId& out) noexcept {
+[[nodiscard]] inline bool FromWire(const HkPackVoiceRecipeBinding& wire, harken::studio::types::ObjectId& out) noexcept {
     AssignPack(out, FromPackId(wire.bindingId));
     return true;
 }

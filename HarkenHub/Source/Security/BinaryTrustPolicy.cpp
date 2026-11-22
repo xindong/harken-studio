@@ -9,7 +9,7 @@
 #include <wintrust.h>
 #endif
 
-namespace VNH {
+namespace harken::hub {
 
 namespace {
 

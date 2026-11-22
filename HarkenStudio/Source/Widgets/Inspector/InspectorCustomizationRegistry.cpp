@@ -3,7 +3,7 @@
 
 #include <algorithm>
 
-namespace VNX {
+namespace harken::studio {
 
 InspectorCustomizationRegistry& InspectorCustomizationRegistry::instance()
 {

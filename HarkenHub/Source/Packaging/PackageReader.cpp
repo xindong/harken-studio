@@ -16,7 +16,7 @@
 #include <sys/stat.h>
 #endif
 
-namespace VNH {
+namespace harken::hub {
 
 namespace {
 
@@ -255,12 +255,6 @@ bool PackageReader::readEntry(const QString& archivePath, const QString& entryPa
         return false;
     }
     return true;
-}
-
-bool PackageReader::extractAll(const QString& archivePath, const QString& targetDir,
-                               QString* errorOut)
-{
-    return extractAllVerified(archivePath, targetDir, {}, errorOut);
 }
 
 bool PackageReader::extractAllVerified(const QString& archivePath,

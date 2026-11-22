@@ -4,7 +4,7 @@
 
 #include <QPainter>
 
-namespace VNX::SwitchIndicator {
+namespace harken::studio::SwitchIndicator {
 
 inline int width() { return ThemeManager::instance().metrics().toggle.compactWidth; }
 inline int height() { return ThemeManager::instance().metrics().toggle.compactHeight; }

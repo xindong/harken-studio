@@ -11,7 +11,7 @@
 #include <cstdint>
 #include <span>
 
-namespace harkenstudiobuild {
+namespace harken::studio::build {
 
 inline constexpr char kVariableExecutionDomain[] = HK_PACK_DOMAIN_VARIABLE_EXECUTION_V1;
 inline constexpr char kVariableCatalogDomain[] = HK_PACK_DOMAIN_VARIABLE_CATALOG_V1;
@@ -21,7 +21,7 @@ inline constexpr char kVariableApiCatalogDomain[] =
     HK_PACK_DOMAIN_VARIABLE_SDK_CATALOG_V1;
 
 inline std::uint64_t ComputeVariableDefinitionFingerprintV1(
-    harkenstudio::ObjectId variableId, std::uint32_t kind, std::uint32_t scope,
+    harken::studio::types::ObjectId variableId, std::uint32_t kind, std::uint32_t scope,
     float rangeMin, float rangeMax, float defaultValue) noexcept {
     constexpr char domain[] = HK_PACK_DOMAIN_VARIABLE_DEFINITION_V1;
     MediaContentRevisionHasherV1 hash(domain, sizeof(domain));
@@ -46,12 +46,12 @@ inline bool CanonicalF32Bits(float value, std::uint32_t* outBits) noexcept {
 }
 
 inline bool ComputeVariableExecutionFingerprintV1(
-    harkenstudio::ObjectId variableId, std::uint8_t kind, std::uint8_t scopePolicy,
+    harken::studio::types::ObjectId variableId, std::uint8_t kind, std::uint8_t scopePolicy,
     std::uint8_t writers, float rangeMin, float rangeMax, float defaultValue,
     const std::int32_t* discreteAnchorsSortedUnique,
     std::uint32_t discreteAnchorCount,
     std::uint64_t* outFingerprint) noexcept {
-    if (outFingerprint == nullptr || variableId == harkenstudio::ObjectId{} || kind > 1 ||
+    if (outFingerprint == nullptr || variableId == harken::studio::types::ObjectId{} || kind > 1 ||
         scopePolicy != 1 || writers < 1 || writers > 3) {
         return false;
     }
@@ -111,12 +111,12 @@ inline bool ComputeVariableExecutionFingerprintV1(
 }
 
 struct VariableCatalogFingerprintRowV1 {
-    harkenstudio::ObjectId variableId{};
+    harken::studio::types::ObjectId variableId{};
     std::uint64_t fingerprint = 0;
 };
 
 inline std::uint64_t ComputeVariableLabelMappingFingerprintV1(
-    harkenstudio::ObjectId variableId, std::span<const VariableLabelDefinitionV1> labels) noexcept {
+    harken::studio::types::ObjectId variableId, std::span<const VariableLabelDefinitionV1> labels) noexcept {
     constexpr char domain[] = HK_PACK_DOMAIN_VARIABLE_LABEL_MAPPING_V1;
     MediaContentRevisionHasherV1 hash(domain, sizeof(domain));
     hash.AddObjectId(variableId);
@@ -149,6 +149,6 @@ inline std::uint64_t ComputeVariableApiCatalogFingerprintV1(
     return hash.Finish();
 }
 
-} // namespace harkenstudiobuild
+} // namespace harken::studio::build
 
 #endif // HARKEN_STUDIO_BUILD_VARIABLE_EXECUTION_FINGERPRINT_H

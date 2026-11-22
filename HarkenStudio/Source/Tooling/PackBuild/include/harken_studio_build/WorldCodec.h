@@ -9,7 +9,7 @@
 #include <memory>
 #include <vector>
 
-namespace harkenstudiobuild {
+namespace harken::studio::build {
 
 
 enum class CurrentWorldBodyDecodeResult : std::uint8_t {
@@ -45,6 +45,6 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-} // namespace harkenstudiobuild
+} // namespace harken::studio::build
 
 #endif // HARKEN_STUDIO_BUILD_CURRENT_WORLD_CODEC_H

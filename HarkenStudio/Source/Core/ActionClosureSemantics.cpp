@@ -18,13 +18,13 @@
 #include <map>
 #include <set>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
-QJsonArray pathJson(const std::vector<harkenstudio::ObjectId>& path)
+QJsonArray pathJson(const std::vector<harken::studio::types::ObjectId>& path)
 {
     QJsonArray result;
-    for (harkenstudio::ObjectId id : path)
+    for (harken::studio::types::ObjectId id : path)
         result.append(objectIdString(id));
     return result;
 }
@@ -44,7 +44,7 @@ bool isContentType(ProjectItem::Type type)
 
 struct Index
 {
-    std::map<harkenstudio::ObjectId, const ProjectItem*> stable;
+    std::map<harken::studio::types::ObjectId, const ProjectItem*> stable;
     std::map<uint32_t, const ProjectItem*> object;
     std::map<QUuid, const ProjectItem*> guid;
     std::set<uint32_t> duplicateObjectIds;
@@ -56,7 +56,7 @@ void indexItem(const ProjectItem* item, Index& index, std::set<const ProjectItem
 {
     if (!item || !seen.insert(item).second)
         return;
-    if (harkenstudio::IsNull(item->runtimeId())) {
+    if (harken::studio::types::IsNull(item->runtimeId())) {
         index.diagnostics.push_back({
             ActionClosureDiagnosticCode::MissingStableIdentity,
             QStringLiteral("%1 '%2' has no runtimeStableId")
@@ -101,13 +101,13 @@ struct Builder
     std::shared_ptr<const EditorUtils::ActionTargetLookup> targetLookupOwner;
     const EditorUtils::ActionTargetLookup& targetLookup;
     ActionClosurePlan plan;
-    std::set<harkenstudio::ObjectId> actionVisited;
-    std::set<harkenstudio::ObjectId> actionActive;
-    std::set<harkenstudio::ObjectId> objectVisited;
-    std::set<harkenstudio::ObjectId> controlVisited;
-    std::set<std::tuple<harkenstudio::ObjectId, harkenstudio::ObjectId, ActionClosureEdgeReason, QString,
-                        std::vector<harkenstudio::ObjectId>>> edgeKeys;
-    std::set<std::tuple<RuntimeCapabilityFeature, harkenstudio::ObjectId, QString>> capabilityKeys;
+    std::set<harken::studio::types::ObjectId> actionVisited;
+    std::set<harken::studio::types::ObjectId> actionActive;
+    std::set<harken::studio::types::ObjectId> objectVisited;
+    std::set<harken::studio::types::ObjectId> controlVisited;
+    std::set<std::tuple<harken::studio::types::ObjectId, harken::studio::types::ObjectId, ActionClosureEdgeReason, QString,
+                        std::vector<harken::studio::types::ObjectId>>> edgeKeys;
+    std::set<std::tuple<RuntimeCapabilityFeature, harken::studio::types::ObjectId, QString>> capabilityKeys;
 
     Builder(const ProjectData& projectValue, BuildVariant variantValue,
             RuntimeCapabilityContext context, bool contentReferencesOnlyValue = false,
@@ -146,21 +146,21 @@ struct Builder
         for (const auto& error : effectiveGroups->diagnostics) {
             const auto object = index.guid.find(error.itemGuid);
             diagnostic(ActionClosureDiagnosticCode::SchemaMismatch, error.message,
-                       {}, -1, object == index.guid.end() ? harkenstudio::ObjectId{} : object->second->runtimeId(),
+                       {}, -1, object == index.guid.end() ? harken::studio::types::ObjectId{} : object->second->runtimeId(),
                        error.field, {});
         }
     }
 
     void diagnostic(ActionClosureDiagnosticCode code, const QString& message,
-                    harkenstudio::ObjectId actionId, int stepIndex, harkenstudio::ObjectId objectId,
-                    const QString& field, const std::vector<harkenstudio::ObjectId>& path)
+                    harken::studio::types::ObjectId actionId, int stepIndex, harken::studio::types::ObjectId objectId,
+                    const QString& field, const std::vector<harken::studio::types::ObjectId>& path)
     {
         plan.diagnostics.push_back({code, message, actionId, stepIndex,
                                     objectId, field, path});
     }
 
-    void edge(harkenstudio::ObjectId from, harkenstudio::ObjectId to, ActionClosureEdgeReason reason,
-              const QString& field, const std::vector<harkenstudio::ObjectId>& path)
+    void edge(harken::studio::types::ObjectId from, harken::studio::types::ObjectId to, ActionClosureEdgeReason reason,
+              const QString& field, const std::vector<harken::studio::types::ObjectId>& path)
     {
         if (!edgeKeys.emplace(from, to, reason, field, path).second)
             return;
@@ -168,7 +168,7 @@ struct Builder
     }
 
     void capability(RuntimeCapabilityFeature feature, RuntimeCapabilityState state,
-                    harkenstudio::ObjectId objectId, const QString& field)
+                    harken::studio::types::ObjectId objectId, const QString& field)
     {
         if (contentReferencesOnly || capabilityContext.deferCurrentWorldCompilation)
             return;
@@ -196,15 +196,15 @@ struct Builder
     }
 
     ActionClosureMember member(const ProjectItem& item,
-                               const std::vector<harkenstudio::ObjectId>& path) const
+                               const std::vector<harken::studio::types::ObjectId>& path) const
     {
         return {item.runtimeId(), item.objectID, item.guid, item.type,
                 item.name, path};
     }
 
-    const ProjectItem* byObject(uint32_t objectId, harkenstudio::ObjectId actionId,
+    const ProjectItem* byObject(uint32_t objectId, harken::studio::types::ObjectId actionId,
                                 int stepIndex, const QString& field,
-                                const std::vector<harkenstudio::ObjectId>& path)
+                                const std::vector<harken::studio::types::ObjectId>& path)
     {
         if (objectId != 0 && index.duplicateObjectIds.contains(objectId)) {
             diagnostic(ActionClosureDiagnosticCode::SchemaMismatch,
@@ -222,9 +222,9 @@ struct Builder
         return it->second;
     }
 
-    const ProjectItem* byGuid(const QUuid& guid, harkenstudio::ObjectId ownerId,
+    const ProjectItem* byGuid(const QUuid& guid, harken::studio::types::ObjectId ownerId,
                               const QString& field,
-                              const std::vector<harkenstudio::ObjectId>& path)
+                              const std::vector<harken::studio::types::ObjectId>& path)
     {
         if (!guid.isNull() && index.duplicateGuids.contains(guid)) {
             diagnostic(ActionClosureDiagnosticCode::SchemaMismatch,
@@ -244,18 +244,18 @@ struct Builder
         return it->second;
     }
 
-    void addDependencies(const ProjectItem& item, const std::vector<harkenstudio::ObjectId>& path)
+    void addDependencies(const ProjectItem& item, const std::vector<harken::studio::types::ObjectId>& path)
     {
         if (contentReferencesOnly)
             return;
         const auto scope = ReferenceSlotResolution::buildResolutionScope(&item, effectiveGroups);
         const auto output = ReferenceSlotResolution::resolveOutputBusSlot(scope);
-        if (output.target && !harkenstudio::IsNull(output.target->runtimeId()))
+        if (output.target && !harken::studio::types::IsNull(output.target->runtimeId()))
             edge(item.runtimeId(), output.target->runtimeId(),
                   ActionClosureEdgeReason::EffectiveOutputBus,
                   QStringLiteral("outputBus"), path);
         const auto attenuation = ReferenceSlotResolution::resolveEffectiveAttenuation(scope);
-        if (attenuation.target && !harkenstudio::IsNull(attenuation.target->runtimeId()))
+        if (attenuation.target && !harken::studio::types::IsNull(attenuation.target->runtimeId()))
             edge(item.runtimeId(), attenuation.target->runtimeId(),
                   ActionClosureEdgeReason::EffectiveAttenuation,
                   QStringLiteral("attenuation"), path);
@@ -353,7 +353,7 @@ struct Builder
             add(variant.language);
     }
 
-    void visitTrack(const ProjectItem& track, const std::vector<harkenstudio::ObjectId>& path,
+    void visitTrack(const ProjectItem& track, const std::vector<harken::studio::types::ObjectId>& path,
                       bool control = false)
     {
         const auto* timeline = track.comp<VTrack>();
@@ -376,7 +376,7 @@ struct Builder
                            QStringLiteral("clips.targetGuid"), path);
                 continue;
             }
-            std::vector<harkenstudio::ObjectId> targetPath = path;
+            std::vector<harken::studio::types::ObjectId> targetPath = path;
             targetPath.push_back(target->runtimeId());
             edge(track.runtimeId(), target->runtimeId(),
                  ActionClosureEdgeReason::TrackClip,
@@ -385,7 +385,7 @@ struct Builder
         }
     }
 
-    void visitContainer(const ProjectItem& container, const std::vector<harkenstudio::ObjectId>& path,
+    void visitContainer(const ProjectItem& container, const std::vector<harken::studio::types::ObjectId>& path,
                       bool control = false)
     {
         const auto platform = ProjectPlatformSemantics::parseId(variant.platform);
@@ -404,7 +404,7 @@ struct Builder
                            QStringLiteral("selections.childGuid"), path);
                 continue;
             }
-            std::vector<harkenstudio::ObjectId> childPath = path;
+            std::vector<harken::studio::types::ObjectId> childPath = path;
             childPath.push_back(child->runtimeId());
             edge(container.runtimeId(), child->runtimeId(),
                  ActionClosureEdgeReason::OwnedChild,
@@ -417,7 +417,7 @@ struct Builder
                                                    field, path);
                 if (!target)
                     continue;
-                std::vector<harkenstudio::ObjectId> targetPath = path;
+                std::vector<harken::studio::types::ObjectId> targetPath = path;
                 targetPath.push_back(target->runtimeId());
                 edge(container.runtimeId(), target->runtimeId(),
                      ActionClosureEdgeReason::GridRow, field, targetPath);
@@ -452,7 +452,7 @@ struct Builder
                        container.runtimeId(), QStringLiteral("behavior.discipline"));
     }
 
-    void visitContent(const ProjectItem& item, const std::vector<harkenstudio::ObjectId>& path,
+    void visitContent(const ProjectItem& item, const std::vector<harken::studio::types::ObjectId>& path,
                       bool control = false)
     {
         if (!isContentType(item.type)) {
@@ -462,7 +462,7 @@ struct Builder
                        QStringLiteral("content"), path);
             return;
         }
-        if (harkenstudio::IsNull(item.runtimeId()))
+        if (harken::studio::types::IsNull(item.runtimeId()))
             return;
         if (!(control ? controlVisited : objectVisited).insert(item.runtimeId()).second)
             return;
@@ -482,7 +482,7 @@ struct Builder
             for (const auto& child : item.children) {
                 if (!child || child->type != ProjectItem::Type::Track)
                     continue;
-                std::vector<harkenstudio::ObjectId> childPath = path;
+                std::vector<harken::studio::types::ObjectId> childPath = path;
                 childPath.push_back(child->runtimeId());
                 edge(item.runtimeId(), child->runtimeId(),
                      ActionClosureEdgeReason::OwnedChild,
@@ -495,9 +495,9 @@ struct Builder
         }
     }
 
-    void visitAction(const ProjectItem& action, std::vector<harkenstudio::ObjectId> path)
+    void visitAction(const ProjectItem& action, std::vector<harken::studio::types::ObjectId> path)
     {
-        if (harkenstudio::IsNull(action.runtimeId()))
+        if (harken::studio::types::IsNull(action.runtimeId()))
             return;
         if (actionActive.count(action.runtimeId())) {
             diagnostic(ActionClosureDiagnosticCode::PostActionCycle,
@@ -538,7 +538,7 @@ struct Builder
                         ? resolved.objectID : step.quantize.referenceObjectID,
                     action.runtimeId(), static_cast<int>(i), field, path);
                 if (reference) {
-                    std::vector<harkenstudio::ObjectId> referencePath = path;
+                    std::vector<harken::studio::types::ObjectId> referencePath = path;
                     referencePath.push_back(reference->runtimeId());
                     edge(action.runtimeId(), reference->runtimeId(),
                          ActionClosureEdgeReason::QuantizeReference,
@@ -575,7 +575,7 @@ struct Builder
                                                  QStringLiteral("steps.targetObjectID"), path);
             if (!target)
                 continue;
-            std::vector<harkenstudio::ObjectId> targetPath = path;
+            std::vector<harken::studio::types::ObjectId> targetPath = path;
             targetPath.push_back(target->runtimeId());
             if (step.type == VActionStep::Type::SetVariable) {
                 if (target->type != ProjectItem::Type::Variable) {
@@ -626,7 +626,7 @@ struct Builder
         actionActive.erase(action.runtimeId());
     }
 
-    ActionClosurePlan build(harkenstudio::ObjectId actionStableId)
+    ActionClosurePlan build(harken::studio::types::ObjectId actionStableId)
     {
         plan.rootActionStableId = actionStableId;
         if (!variant.platform.isEmpty()) {
@@ -639,7 +639,7 @@ struct Builder
             }
         }
         const auto it = index.stable.find(actionStableId);
-        if (harkenstudio::IsNull(actionStableId) || it == index.stable.end()
+        if (harken::studio::types::IsNull(actionStableId) || it == index.stable.end()
             || !it->second || it->second->type != ProjectItem::Type::Action) {
             diagnostic(ActionClosureDiagnosticCode::MissingRootAction,
                        QStringLiteral("Action stable identity %1 does not resolve")
@@ -705,14 +705,14 @@ ActionClosureBuildContext::ActionClosureBuildContext(const ProjectData& project)
 
 ActionClosureBuildContext::~ActionClosureBuildContext() = default;
 
-ActionClosurePlan ActionClosureBuildContext::build(harkenstudio::ObjectId actionStableId,
+ActionClosurePlan ActionClosureBuildContext::build(harken::studio::types::ObjectId actionStableId,
     const BuildVariant& variant, const RuntimeCapabilityContext& context) const
 {
     return Builder(impl_->project, variant, context, false,
         impl_->index, impl_->targetLookup).build(actionStableId);
 }
 
-ActionClosurePlan ActionClosureBuildContext::contentReferences(harkenstudio::ObjectId actionStableId) const
+ActionClosurePlan ActionClosureBuildContext::contentReferences(harken::studio::types::ObjectId actionStableId) const
 {
     return Builder(impl_->project, {}, {}, true,
         impl_->index, impl_->targetLookup).build(actionStableId);
@@ -862,7 +862,7 @@ QString diagnosticCodeName(ActionClosureDiagnosticCode code)
     return {};
 }
 
-ActionClosurePlan buildForContext(const ProjectData& project, harkenstudio::ObjectId actionStableId,
+ActionClosurePlan buildForContext(const ProjectData& project, harken::studio::types::ObjectId actionStableId,
                                   const BuildVariant& variant,
                                   const RuntimeCapabilityContext& context,
                                   const ActionClosureBuildContext* buildContext)
@@ -872,7 +872,7 @@ ActionClosurePlan buildForContext(const ProjectData& project, harkenstudio::Obje
 }
 
 ActionClosurePlan contentReferences(const ProjectData& project,
-                                    harkenstudio::ObjectId actionStableId)
+                                    harken::studio::types::ObjectId actionStableId)
 {
     return Builder(project, {}, {}, true).build(actionStableId);
 }

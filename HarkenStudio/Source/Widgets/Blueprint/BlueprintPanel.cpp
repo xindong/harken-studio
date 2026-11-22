@@ -23,7 +23,7 @@
 
 #include <algorithm>
 
-namespace VNX {
+namespace harken::studio {
 
 BlueprintPanel::BlueprintPanel(QWidget* parent)
     : QWidget(parent)
@@ -184,13 +184,13 @@ BlueprintPanel::BlueprintPanel(QWidget* parent)
     zoomButton_->setObjectName(QStringLiteral("BlueprintZoomButton"));
     zoomButton_->setText(QStringLiteral("100%"));
 
-    VNX::ContextInfo::tag(selectButton_, VNX::ContextTopic::forPanel(QStringLiteral("blueprint.select")));
-    VNX::ContextInfo::tag(panButton_, VNX::ContextTopic::forPanel(QStringLiteral("blueprint.pan")));
-    VNX::ContextInfo::tag(snapButton_, VNX::ContextTopic::forPanel(QStringLiteral("blueprint.snap")));
-    VNX::ContextInfo::tag(filterButton_, VNX::ContextTopic::forPanel(QStringLiteral("blueprint.viewportFilter")));
-    VNX::ContextInfo::tag(visibilityButton_, VNX::ContextTopic::forPanel(QStringLiteral("blueprint.viewportVisibility")));
-    VNX::ContextInfo::tag(resetButton_, VNX::ContextTopic::forPanel(QStringLiteral("blueprint.resetLayout")));
-    VNX::ContextInfo::tag(zoomButton_, VNX::ContextTopic::forPanel(QStringLiteral("blueprint.zoom")));
+    harken::studio::ContextInfo::tag(selectButton_, harken::studio::ContextTopic::forPanel(QStringLiteral("blueprint.select")));
+    harken::studio::ContextInfo::tag(panButton_, harken::studio::ContextTopic::forPanel(QStringLiteral("blueprint.pan")));
+    harken::studio::ContextInfo::tag(snapButton_, harken::studio::ContextTopic::forPanel(QStringLiteral("blueprint.snap")));
+    harken::studio::ContextInfo::tag(filterButton_, harken::studio::ContextTopic::forPanel(QStringLiteral("blueprint.viewportFilter")));
+    harken::studio::ContextInfo::tag(visibilityButton_, harken::studio::ContextTopic::forPanel(QStringLiteral("blueprint.viewportVisibility")));
+    harken::studio::ContextInfo::tag(resetButton_, harken::studio::ContextTopic::forPanel(QStringLiteral("blueprint.resetLayout")));
+    harken::studio::ContextInfo::tag(zoomButton_, harken::studio::ContextTopic::forPanel(QStringLiteral("blueprint.zoom")));
     zoomButton_->setCursor(Qt::PointingHandCursor);
     zoomButton_->setPopupMode(QToolButton::InstantPopup);
 

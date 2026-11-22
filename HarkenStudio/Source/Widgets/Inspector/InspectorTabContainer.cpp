@@ -11,7 +11,7 @@
 #include <QStackedWidget>
 #include <QToolButton>
 
-namespace VNX {
+namespace harken::studio {
 
 InspectorTabContainer::InspectorTabContainer(QWidget* parent)
     : QWidget(parent)

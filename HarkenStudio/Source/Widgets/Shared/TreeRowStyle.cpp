@@ -22,7 +22,7 @@
 
 #include <algorithm>
 
-namespace VNX::TreeRowStyle {
+namespace harken::studio::TreeRowStyle {
 
 namespace {
 

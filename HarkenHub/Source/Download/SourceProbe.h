@@ -9,7 +9,7 @@
 
 class QNetworkReply;
 
-namespace VNH {
+namespace harken::hub {
 
 class SourceProbe : public QObject
 {

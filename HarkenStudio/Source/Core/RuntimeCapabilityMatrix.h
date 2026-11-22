@@ -13,12 +13,12 @@
 #include <optional>
 #include <vector>
 
-namespace HarkenEditor::Bridge {
+namespace harken::studio::bridge {
 struct CanonicalRuntimeProjectSourceIndexV1;
 struct CanonicalRuntimeProjectContextV1;
 }
 
-namespace VNX {
+namespace harken::studio {
 
 struct FieldGroupEffectiveSnapshot;
 struct BindingRuntimeLowering;
@@ -90,7 +90,7 @@ enum class RuntimeCapabilityBackend : uint8_t
 
 struct RuntimeCapabilityLocator
 {
-    harkenstudio::ObjectId objectStableId = {};
+    harken::studio::types::ObjectId objectStableId = {};
     QUuid itemGuid;
     QUuid entityGuid;
     int stepIndex = -1;
@@ -113,7 +113,7 @@ struct RuntimeCapabilityIssue
 struct RuntimeCapabilityAssessment
 {
     RuntimeCapabilityOperation operation = RuntimeCapabilityOperation::LiveSync;
-    harkenstudio::ObjectId rootStableId = {};
+    harken::studio::types::ObjectId rootStableId = {};
     std::optional<BuildVariant> variant;
     RuntimeCapabilityState state = RuntimeCapabilityState::Ready;
     RuntimeCapabilityBackend backend = RuntimeCapabilityBackend::None;
@@ -151,9 +151,9 @@ public:
     explicit RuntimeCapabilityBuildSession(const ProjectData& project);
     ~RuntimeCapabilityBuildSession();
 
-    std::shared_ptr<const HarkenEditor::Bridge::CanonicalRuntimeProjectSourceIndexV1>
+    std::shared_ptr<const harken::studio::bridge::CanonicalRuntimeProjectSourceIndexV1>
         sourceIndex() const;
-    std::shared_ptr<const HarkenEditor::Bridge::CanonicalRuntimeProjectContextV1>
+    std::shared_ptr<const harken::studio::bridge::CanonicalRuntimeProjectContextV1>
         canonicalContext(PlatformScope scope);
     std::shared_ptr<const FieldGroupEffectiveSnapshot> fieldGroups(PlatformScope scope);
     RuntimeCapabilityEntry compile(const ProjectItem& item,
@@ -184,7 +184,7 @@ RuntimeCapabilityAssessment assessForContext(const ProjectItem& item,
                                              std::optional<BuildVariant> variant,
                                              const RuntimeCapabilityContext& context);
 RuntimeCapabilityAssessment assessForContext(const ProjectData& project,
-                                             harkenstudio::ObjectId rootStableId,
+                                             harken::studio::types::ObjectId rootStableId,
                                              RuntimeCapabilityOperation operation,
                                              std::optional<BuildVariant> variant,
                                              const RuntimeCapabilityContext& context);
@@ -203,7 +203,7 @@ RuntimeCapabilityAssessment assess(const ProjectItem& item,
                                    RuntimeCapabilityOperation operation,
                                    std::optional<BuildVariant> variant = std::nullopt);
 RuntimeCapabilityAssessment assess(const ProjectData& project,
-                                   harkenstudio::ObjectId rootStableId,
+                                   harken::studio::types::ObjectId rootStableId,
                                    RuntimeCapabilityOperation operation,
                                    std::optional<BuildVariant> variant = std::nullopt);
 const std::vector<RuntimeCapabilityEntry>& entries();

@@ -9,10 +9,10 @@
 #include <map>
 #include <memory>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
-using namespace harkenprojectschema;
+using namespace harken::studio::project_schema;
 using States = std::map<QUuid, DefinitionFieldGroups>;
 
 std::shared_ptr<ProjectItem> item(std::uint64_t id, ProjectItem::Type type)
@@ -49,7 +49,7 @@ TEST(FieldGroupProjectAdapter, FileBindingEnumerationDoesNotCreateRootsOrReorder
     project.layers = {{second, {}}, {first, {}}, {segment, {}}};
     States states{{segment->guid, MakeRootFieldGroups({0, 100})},
                   {first->guid, {}}, {second->guid, {}}};
-    const auto index = HarkenEditor::Bridge::canonicalRuntimeProjectSourceIndex(project);
+    const auto index = harken::studio::bridge::canonicalRuntimeProjectSourceIndex(project);
     ASSERT_TRUE(index->valid);
     EXPECT_EQ(index->parentDefinition.at(first.get()), segment.get());
     EXPECT_EQ(index->parentDefinition.at(second.get()), segment.get());

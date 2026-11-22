@@ -7,7 +7,7 @@
 #include <cstring>
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 namespace Monitor {
 namespace {
 
@@ -63,7 +63,7 @@ bool applyObject(MonitorCutView* view,
 {
     MonitorObjectKey key;
     uint32_t entityKind = 0;
-    harkenstudio::ObjectId stableId = {};
+    harken::studio::types::ObjectId stableId = {};
     uint64_t stateCutId = 0;
     if (tombstone)
     {
@@ -363,4 +363,4 @@ MonitorStateCutProjection projectStateCut(
 }
 
 } // namespace Monitor
-} // namespace VNX
+} // namespace harken::studio

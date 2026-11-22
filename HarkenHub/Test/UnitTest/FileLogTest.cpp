@@ -6,7 +6,7 @@
 #include <QRegularExpression>
 #include <QTemporaryDir>
 
-using VNH::FileLog;
+using harken::hub::FileLog;
 
 namespace {
 

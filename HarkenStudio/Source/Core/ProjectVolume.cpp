@@ -14,7 +14,7 @@
 #include <sys/mount.h>
 #endif
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 

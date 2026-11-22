@@ -12,7 +12,7 @@
 
 #include <windows.h>
 
-namespace VNH {
+namespace harken::hub {
 
 namespace {
 

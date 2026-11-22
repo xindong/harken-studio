@@ -1,48 +1,47 @@
 
 #include "AudioEngine.h"
 
-namespace VNX {
+namespace harken::studio {
 
-namespace Bridge = HarkenEditor::Bridge;
 
 bool AudioEngine::getDebugVoices(std::vector<DebugVoiceData>& out) const
 {
-    return Bridge::getDebugVoices(out);
+    return bridge::getDebugVoices(out);
 }
 
 bool AudioEngine::getDebugBuses(std::vector<DebugBusData>& out) const
 {
-    return Bridge::getDebugBuses(out);
+    return bridge::getDebugBuses(out);
 }
 
 bool AudioEngine::getDebugPerformance(DebugPerfData& out) const
 {
-    return Bridge::getDebugPerformance(out);
+    return bridge::getDebugPerformance(out);
 }
 
 bool AudioEngine::getSessionRecap(SessionRecapData& out) const
 {
-    return Bridge::getSessionRecap(out);
+    return bridge::getSessionRecap(out);
 }
 
 bool AudioEngine::getCpuBudgetState(CpuBudgetState& out) const
 {
-    return Bridge::getCpuBudgetState(out);
+    return bridge::getCpuBudgetState(out);
 }
 
 bool AudioEngine::getRenderPlan(RenderPlanInfo& out) const
 {
-    return Bridge::getRenderPlan(out);
+    return bridge::getRenderPlan(out);
 }
 
 bool AudioEngine::getJobStats(JobStatsInfo& out) const
 {
-    return Bridge::getJobStats(out);
+    return bridge::getJobStats(out);
 }
 
 bool AudioEngine::getObjectAudioStatus(ObjectAudioStatusInfo& out) const
 {
-    return Bridge::getObjectAudioStatus(out);
+    return bridge::getObjectAudioStatus(out);
 }
 
 bool AudioEngine::setSpatialFallbackPolicy(uint8_t policy)
@@ -53,13 +52,13 @@ bool AudioEngine::setSpatialFallbackPolicy(uint8_t policy)
 
 bool AudioEngine::getBusTopologyPlanCount(uint64_t& outCount) const
 {
-    return Bridge::getBusTopologyPlanCount(outCount);
+    return bridge::getBusTopologyPlanCount(outCount);
 }
 
 bool AudioEngine::getVoiceMetadataChain(uint32_t voiceId,
                                         std::vector<DebugVoiceMetadataNode>& outChain) const
 {
-    return Bridge::getVoiceMetadataChain(voiceId, outChain);
+    return bridge::getVoiceMetadataChain(voiceId, outChain);
 }
 
 }

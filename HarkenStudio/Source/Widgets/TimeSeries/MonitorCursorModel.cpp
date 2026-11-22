@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <utility>
 
-namespace VNX {
+namespace harken::studio {
 
 void MonitorCursorModel::setSessionIdentity(
     std::uint64_t sessionEpoch,
@@ -277,4 +277,4 @@ MonitorCursorUncertaintyKind MonitorCursorModel::classify(
     return MonitorCursorUncertaintyKind::Exact;
 }
 
-} // namespace VNX
+} // namespace harken::studio

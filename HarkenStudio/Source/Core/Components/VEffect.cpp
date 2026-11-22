@@ -2,7 +2,7 @@
 
 #include <cmath>
 
-namespace VNX {
+namespace harken::studio {
 
 const PropertySchema& VEffect::schema()
 {

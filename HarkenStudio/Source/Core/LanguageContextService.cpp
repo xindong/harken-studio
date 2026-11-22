@@ -6,7 +6,7 @@
 
 #include <utility>
 
-namespace VNX {
+namespace harken::studio {
 
 LanguageContextService& LanguageContextService::instance()
 {

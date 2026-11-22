@@ -11,7 +11,7 @@
 #include <optional>
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 
 const char* iconLogicalIdForItem(const ProjectItem& item);
 

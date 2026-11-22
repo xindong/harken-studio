@@ -3,7 +3,7 @@
 
 class QLabel;
 
-namespace VNX {
+namespace harken::studio {
 
 class DialogTitleBar : public TitleBarBase {
     Q_OBJECT

@@ -8,7 +8,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 
-using VNH::ManifestVerifier;
+using harken::hub::ManifestVerifier;
 using HarkenHubTest::baseManifestPayload;
 using HarkenHubTest::makeKeypair;
 using HarkenHubTest::signEnvelope;

@@ -6,7 +6,7 @@
 #include <QLatin1Char>
 #include <QStringLiteral>
 
-namespace VNX {
+namespace harken::studio {
 
 ResolvedSelector resolveProjectSelector(ProjectData* project, const QString& selector,
                                          std::optional<ProjectItem::Type> type)

@@ -10,7 +10,7 @@
 #include <QMessageBox>
 #include <QUuid>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 

@@ -2,7 +2,7 @@
 
 #include "Widgets/CurveEditor/CurveCanvas.h"
 
-namespace VNX {
+namespace harken::studio {
 
 struct MixingCurveClip
 {

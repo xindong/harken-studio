@@ -10,7 +10,7 @@
 #include <cmath>
 #include <limits>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 double tickStep(double minimum)

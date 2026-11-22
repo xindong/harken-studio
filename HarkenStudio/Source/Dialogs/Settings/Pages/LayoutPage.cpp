@@ -20,7 +20,7 @@
 
 #include <utility>
 
-namespace VNX {
+namespace harken::studio {
 
 LayoutPage::LayoutPage(QWidget* parent, SaveCurrentLayout saveCurrentLayout)
     : SettingsPage(parent)

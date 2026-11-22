@@ -8,7 +8,7 @@
 #include <string>
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 namespace Monitor {
 
 enum class CapturePlanFace
@@ -81,4 +81,4 @@ bool generationUnchanged(const CaptureBudgetPreview& before, const CaptureBudget
 std::string capturePlanFaceText(const CaptureBudgetPreview& preview);
 
 } // namespace Monitor
-} // namespace VNX
+} // namespace harken::studio

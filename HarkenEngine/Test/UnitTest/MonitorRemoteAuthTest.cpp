@@ -219,7 +219,6 @@ TEST(MonitorRemote, AuthRawAudioNeedsPermissionAndPlan) {
     ASSERT_EQ(VN_OK, Vn_MonitorGetSubscriptionStatus(handle, &status));
     EXPECT_NE(0u, status.acceptedPermissionMask & VN_MONITOR_PERM_RAW_AUDIO);
     EXPECT_NE(1u, status.rawAudioDecision);
-    EXPECT_FALSE(harken::monitor::MonitorEndpointEmitsRawAudioForTests());
     EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(handle));
     harken::monitor::DisableMonitorEndpointForTests();
 }

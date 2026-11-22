@@ -4,7 +4,7 @@
 #include <QMap>
 #include <QStringList>
 
-namespace VNH::Cli {
+namespace harken::hub::Cli {
 
 struct Reply
 {

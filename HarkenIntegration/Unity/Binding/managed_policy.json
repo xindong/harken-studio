@@ -1,7 +1,5 @@
 {
   "schema_version": 1,
-  "issue": "https://github.com/xindong/venus-studio/issues/639",
-  "stage": "unity-boundary",
   "note": "Visibility of every generated managed symbol, and the native contracts excluded from the managed projection.",
   "groups": {
     "native-binding": {

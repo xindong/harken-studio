@@ -4,7 +4,7 @@
 
 #include <optional>
 
-namespace VNH {
+namespace harken::hub {
 
 struct ContentRange
 {

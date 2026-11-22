@@ -155,8 +155,6 @@ std::uint64_t DerivedDrainCapturePlanGeneration() {
     return g_activeCapturePlanGeneration;
 }
 
-void ResetDerivedHandlersForTests() { g_handlers = {}; }
-
 void ForceLinkMonitorWaveformHandler();
 void ForceLinkMonitorScopeHandler();
 void ForceLinkMonitorSpectrumHandler();

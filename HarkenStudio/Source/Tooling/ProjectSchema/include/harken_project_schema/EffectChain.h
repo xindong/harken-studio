@@ -22,7 +22,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace harkenprojectschema {
+namespace harken::studio::project_schema {
 
 // One effect in a compiled chain, in execution order.
 //
@@ -44,7 +44,7 @@ struct CompiledEffectChainEntry {
     EffectTypeId effectType = kReservedEffectType;
     std::uint32_t paramBlockRef = 0;
     std::uint32_t flags = 0;
-    harkenstudio::ObjectId effectId{};
+    harken::studio::types::ObjectId effectId{};
 };
 
 inline bool operator==(const CompiledEffectChainEntry& a,
@@ -146,6 +146,6 @@ inline bool operator!=(const CompiledEffectChain& a,
     return !(a == b);
 }
 
-}  // namespace harkenprojectschema
+}  // namespace harken::studio::project_schema
 
 #endif  // HARKEN_PROJECT_SCHEMA_EFFECT_CHAIN_H

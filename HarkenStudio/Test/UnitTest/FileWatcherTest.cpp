@@ -24,7 +24,7 @@ namespace {
     if (!QDir().mkpath(QFileInfo(path).absolutePath()))
         return ::testing::AssertionFailure() << "Cannot create directory for " << path.toStdString();
     auto failure = ::testing::AssertionFailure();
-    const bool replaced = VNX::retryFileOperation([&] {
+    const bool replaced = harken::studio::retryFileOperation([&] {
         QSaveFile file(path);
         const auto fail = [&](const char* operation) {
             failure = ::testing::AssertionFailure() << operation << " " << path.toStdString()
@@ -77,17 +77,17 @@ protected:
         ASSERT_TRUE(replaceFile(retained_, "retained before"));
         ASSERT_TRUE(replaceFile(source_, "source before"));
         watcher_.setDebounceInterval(50);
-        QObject::connect(&watcher_, &VNX::FileWatcher::packExternallyModified, &watcher_,
+        QObject::connect(&watcher_, &harken::studio::FileWatcher::packExternallyModified, &watcher_,
                          [&](const QString& path) { projectChanges_.insert(path); });
-        QObject::connect(&watcher_, &VNX::FileWatcher::filesAdded, &watcher_,
+        QObject::connect(&watcher_, &harken::studio::FileWatcher::filesAdded, &watcher_,
                          [&](const QStringList& paths) {
             for (const auto& path : paths) addedSources_.insert(path);
         });
-        QObject::connect(&watcher_, &VNX::FileWatcher::filesRemoved, &watcher_,
+        QObject::connect(&watcher_, &harken::studio::FileWatcher::filesRemoved, &watcher_,
                          [&](const QStringList& paths) {
             for (const auto& path : paths) removedSources_.insert(path);
         });
-        QObject::connect(&watcher_, &VNX::FileWatcher::filesModified, &watcher_,
+        QObject::connect(&watcher_, &harken::studio::FileWatcher::filesModified, &watcher_,
                          [&](const QStringList& paths) {
             for (const auto& path : paths) modifiedSources_.insert(path);
         });
@@ -100,7 +100,7 @@ protected:
     }
 
     QTemporaryDir directory_;
-    VNX::FileWatcher watcher_;
+    harken::studio::FileWatcher watcher_;
     QString changed_;
     QString retained_;
     QString source_;

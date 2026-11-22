@@ -13,7 +13,7 @@
 #include <QFileInfo>
 #include <QStyle>
 
-namespace VNX {
+namespace harken::studio {
 
 
 DropZoneWidget::DropZoneWidget(QWidget* parent)

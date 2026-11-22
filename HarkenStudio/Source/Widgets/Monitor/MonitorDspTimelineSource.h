@@ -4,7 +4,7 @@
 
 #include <memory>
 
-namespace VNX {
+namespace harken::studio {
 
 class MonitorDspTimelinePanel;
 class MonitorCursorModel;
@@ -27,4 +27,4 @@ private:
     MonitorCursorModel* sharedCursor_ = nullptr;
 };
 
-} // namespace VNX
+} // namespace harken::studio

@@ -8,7 +8,7 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/Hub")
 harken_read_version("${CMAKE_CURRENT_SOURCE_DIR}/VERSION" HARKEN_HUB_VERSION)
 file(CONFIGURE
     OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/HubVersion.h"
-    CONTENT "#pragma once\n\n#include <string_view>\n\nnamespace VNH {\n\ninline constexpr std::string_view HubVersion = \"@HARKEN_HUB_VERSION@\";\n\n}\n"
+    CONTENT "#pragma once\n\n#include <string_view>\n\nnamespace harken::hub {\n\ninline constexpr std::string_view HubVersion = \"@HARKEN_HUB_VERSION@\";\n\n}\n"
     @ONLY)
 file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/HubVersion.txt" CONTENT "@HARKEN_HUB_VERSION@\n" @ONLY)
 
@@ -185,7 +185,6 @@ if(WIN32)
         Source/Platform/Windows/ProcessScan.cpp
         Source/Platform/Windows/LoginLaunch.cpp
         Source/Platform/Windows/ShellIcons.cpp
-        Source/Platform/Windows/SystemTheme.cpp
         Source/Platform/Windows/TaskbarIcon.cpp
         Source/Platform/Windows/AclHardening.cpp
         Source/Platform/Windows/UpdateBridgeDeployment.cpp
@@ -245,7 +244,7 @@ harken_configure_hub_library(harken_hub_lib)
 if(HARKEN_BUILD_HUB_UNIT_TESTS)
     add_library(harken_hub_test_lib STATIC ${HARKEN_HUB_SOURCES})
     harken_configure_hub_library(harken_hub_test_lib)
-    target_compile_definitions(harken_hub_test_lib PRIVATE
+    target_compile_definitions(harken_hub_test_lib PUBLIC
         HARKEN_HUB_TEST_OVERRIDES)
 endif()
 

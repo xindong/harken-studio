@@ -96,7 +96,7 @@ TEST(StudioPackageIntegration, InstallsRepairsRegistersCreatesAndOpensRealStudio
     });
     QString error;
     QByteArray manifestBytes;
-    ASSERT_TRUE(VNH::PackageReader::readEntry(package, "package-manifest.json", &manifestBytes, &error));
+    ASSERT_TRUE(harken::hub::PackageReader::readEntry(package, "package-manifest.json", &manifestBytes, &error));
     const auto manifest = QJsonDocument::fromJson(manifestBytes).object();
     const auto build = manifest.value("buildId").toString();
     const auto version = manifest.value("version").toString();
@@ -105,7 +105,7 @@ TEST(StudioPackageIntegration, InstallsRepairsRegistersCreatesAndOpensRealStudio
     payload["buildId"] = build;
     payload["channel"] = manifest.value("channel");
     payload["packageSize"] = QFileInfo(package).size();
-    payload["sha256"] = VNH::PackageReader::fileSha256Hex(package);
+    payload["sha256"] = harken::hub::PackageReader::fileSha256Hex(package);
     const auto envelope = HarkenHubTest::signEnvelope(QJsonDocument(payload).toJson(QJsonDocument::Compact), keys);
     const auto envelopePath = directory.filePath("studio.manifest");
     QFile envelopeFile(envelopePath);
@@ -113,18 +113,18 @@ TEST(StudioPackageIntegration, InstallsRepairsRegistersCreatesAndOpensRealStudio
     envelopeFile.write(envelope);
     envelopeFile.close();
     const auto now = QDateTime::fromString("2026-09-08T00:00:00Z", Qt::ISODate);
-    const auto preparation = VNH::InstallRequest::prepare(package, envelopePath, keys.publicKey, now);
+    const auto preparation = harken::hub::InstallRequest::prepare(package, envelopePath, keys.publicKey, now);
     ASSERT_TRUE(preparation.ok) << preparation.error.toStdString();
-    const auto installed = VNH::InstallExecutor::run(preparation.transactionId, keys.publicKey, now);
+    const auto installed = harken::hub::InstallExecutor::run(preparation.transactionId, keys.publicKey, now);
     ASSERT_TRUE(installed.ok) << installed.error.toStdString();
-    const auto versions = VNH::VersionScanner::scanInstalled();
+    const auto versions = harken::hub::VersionScanner::scanInstalled();
     ASSERT_EQ(versions.size(), 1u);
     EXPECT_EQ(versions.front().expectedBuildId(), build);
     QString identifyError;
-    const auto identity = VNH::StudioInterface::identify(VNH::StudioInterface::executable(versions.front()), &identifyError);
+    const auto identity = harken::hub::StudioInterface::identify(harken::hub::StudioInterface::executable(versions.front()), &identifyError);
     ASSERT_TRUE(identity.has_value()) << identifyError.toStdString();
     EXPECT_EQ(identity->buildId, build);
-    EXPECT_TRUE(VNH::IntegrityChecker::check(installed.installPath).ok);
+    EXPECT_TRUE(harken::hub::IntegrityChecker::check(installed.installPath).ok);
 
     const auto files = manifest.value("files").toArray();
     const auto schemaFile = std::find_if(files.begin(), files.end(), [](const auto& entry) {
@@ -135,17 +135,17 @@ TEST(StudioPackageIntegration, InstallsRepairsRegistersCreatesAndOpensRealStudio
     ASSERT_TRUE(damaged.open(QIODevice::WriteOnly));
     damaged.write("damaged schema payload");
     damaged.close();
-    EXPECT_FALSE(VNH::IntegrityChecker::check(installed.installPath).ok);
-    ASSERT_TRUE(VNH::InstallPackageCache::store(build, package, envelopePath, &error));
-    const auto repaired = VNH::RepairExecutor::run(build, now);
+    EXPECT_FALSE(harken::hub::IntegrityChecker::check(installed.installPath).ok);
+    ASSERT_TRUE(harken::hub::InstallPackageCache::store(build, package, envelopePath, &error));
+    const auto repaired = harken::hub::RepairExecutor::run(build, now);
     ASSERT_TRUE(repaired.ok) << repaired.error.toStdString();
-    EXPECT_TRUE(VNH::StudioInterface::identify(VNH::StudioInterface::executable(versions.front()), &identifyError).has_value());
+    EXPECT_TRUE(harken::hub::StudioInterface::identify(harken::hub::StudioInterface::executable(versions.front()), &identifyError).has_value());
 
-    VNH::LocalBuildRecord local;
-    ASSERT_TRUE(VNH::LocalBuildRegistry::probe(versions.front().executablePath, &local, &error)) << error.toStdString();
-    ASSERT_TRUE(VNH::LocalBuildRegistry::upsert(local, &error));
-    EXPECT_TRUE(VNH::LocalBuildRegistry::metadataMatchesFile(local));
-    EXPECT_EQ(VNH::VersionScanner::scanLocalBuilds().front().expectedBuildId(), build);
+    harken::hub::LocalBuildRecord local;
+    ASSERT_TRUE(harken::hub::LocalBuildRegistry::probe(versions.front().executablePath, &local, &error)) << error.toStdString();
+    ASSERT_TRUE(harken::hub::LocalBuildRegistry::upsert(local, &error));
+    EXPECT_TRUE(harken::hub::LocalBuildRegistry::metadataMatchesFile(local));
+    EXPECT_EQ(harken::hub::VersionScanner::scanLocalBuilds().front().expectedBuildId(), build);
 
     const auto project = directory.filePath("Projects/Smoke/Smoke.hsp");
     ASSERT_TRUE(QDir().mkpath(directory.filePath("Projects")));
@@ -155,22 +155,22 @@ TEST(StudioPackageIntegration, InstallsRepairsRegistersCreatesAndOpensRealStudio
         if (recent.removeAll(project) > 0)
             settings.setValue("RecentProjects", recent);
     });
-    VNH::ProjectStore store;
+    harken::hub::ProjectStore store;
     ASSERT_TRUE(store.open(directory.filePath("projects.db")));
-    VNH::ProjectIntakeConsumer intake(&store);
+    harken::hub::ProjectIntakeConsumer intake(&store);
     const auto runStudio = [&](bool create) {
-        VNH::StudioLaunchSpec launch;
+        harken::hub::StudioLaunchSpec launch;
         launch.installPath = installed.installPath;
         launch.executablePath = versions.front().executablePath;
         launch.projectPath = project;
-        VNH::StudioCreateSpec creation;
+        harken::hub::StudioCreateSpec creation;
         creation.launch = launch;
         creation.projectName = "Smoke";
         creation.projectLocation = directory.filePath("Projects");
         QProcess process;
         process.setWorkingDirectory(installed.installPath);
-        process.start(launch.executablePath, create ? VNH::StudioLauncher::argumentsForCreate(creation)
-                                                    : VNH::StudioLauncher::argumentsFor(launch));
+        process.start(launch.executablePath, create ? harken::hub::StudioLauncher::argumentsForCreate(creation)
+                                                    : harken::hub::StudioLauncher::argumentsFor(launch));
         if (!process.waitForStarted(10000))
             return false;
         QElapsedTimer elapsed;
@@ -192,23 +192,23 @@ TEST(StudioPackageIntegration, InstallsRepairsRegistersCreatesAndOpensRealStudio
         return synchronized && editorShown;
     };
     ASSERT_TRUE(runStudio(true));
-    const auto probe = VNH::ProjectProbe::probe(project);
+    const auto probe = harken::hub::ProjectProbe::probe(project);
     ASSERT_TRUE(probe.ok);
     EXPECT_EQ(probe.savedStudioVersion, version);
-    VNH::ProjectRecord record;
+    harken::hub::ProjectRecord record;
     record.canonicalPath = probe.canonicalPath;
-    const auto decision = VNH::LaunchPreflight::evaluate(record, versions, VNH::InstallIndex::snapshot(), build);
-    ASSERT_EQ(decision.verdict, VNH::LaunchVerdict::Ready) << decision.reason.toStdString();
+    const auto decision = harken::hub::LaunchPreflight::evaluate(record, versions, harken::hub::InstallIndex::snapshot(), build);
+    ASSERT_EQ(decision.verdict, harken::hub::LaunchVerdict::Ready) << decision.reason.toStdString();
     ASSERT_TRUE(runStudio(false));
 
-    QFile cached(VNH::InstallPackageCache::packagePath(build));
+    QFile cached(harken::hub::InstallPackageCache::packagePath(build));
     ASSERT_TRUE(cached.open(QIODevice::Append));
     cached.write("tampered");
     cached.close();
     ASSERT_TRUE(damaged.open(QIODevice::WriteOnly));
     damaged.write("damaged again");
     damaged.close();
-    const auto rejected = VNH::RepairExecutor::run(build, now);
+    const auto rejected = harken::hub::RepairExecutor::run(build, now);
     EXPECT_FALSE(rejected.ok);
     EXPECT_EQ(rejected.failureCode, QStringLiteral("RepairSourceRejected"));
 }

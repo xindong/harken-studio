@@ -33,7 +33,7 @@
 #include <unordered_map>
 #include <utility>
 
-namespace VNX {
+namespace harken::studio {
 namespace ProjectLoaderInternal {
 
 constexpr const char* kActionsFolder = ItemTypeCatalog::kActionsFolderName;
@@ -399,7 +399,7 @@ bool loadBussesPacksImpl(const QString& projectRoot,
     int rootCount = 0;
     for (const auto& child : scratchRoot->children) {
         if (!child) continue;
-        if (!child->comp<VNX::VBus>()) continue;
+        if (!child->comp<harken::studio::VBus>()) continue;
         if (child->objectID == 0 || !byObjectID.emplace(child->objectID, child).second) {
             ++failed;
             if (errOut)

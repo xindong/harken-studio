@@ -55,7 +55,7 @@ struct DecisionTable::FrontierSidecar {
     TimelineEventPayload controlPayload{};
     TimelineProgramView controlProgram{};
     FrontierActivation activation;
-    std::optional<Plan03GroupReaderPin> pagePin;
+    std::optional<ScheduleGroupReaderPin> pagePin;
     DecisionFuturePin observerPin;
     const ScheduledTransactionPool* operationPool = nullptr;
     FrontierOwnerIdentity operationOwner{};
@@ -590,12 +590,12 @@ bool DecisionTable::BindFrontierDecision(DecisionToken token,
     const FrontierGroupBinding& binding, const ScheduledTransactionPool& pool) noexcept {
     if (PreparedTicketHeld(token)) { return false; }
     auto* row = Resolve(token);
-    Plan03PageGroupView group{};
+    SchedulePageGroupView group{};
     if (row == nullptr || !binding.Valid() || binding.role == FrontierGroupRole::Coordinator ||
         binding.operation.group.decision.slot != token.slot || binding.operation.group.decision.generation != token.generation ||
         binding.operation.world != row->world || binding.operation.transport != row->transport ||
-        !pool.PrivatePlan03GroupBindable(binding.operation.group) ||
-        !pool.ResolvePlan03GroupSliceProducer(binding.operation.group, &group) || group.frontier != &binding ||
+        !pool.PrivateScheduleGroupBindable(binding.operation.group) ||
+        !pool.ResolveScheduleGroupSliceProducer(binding.operation.group, &group) || group.frontier != &binding ||
         group.lease == nullptr || group.lease->Capture().state != AudioSliceState::Ready ||
         ResolveFrontierActivation(token) != nullptr) return false;
     auto& sidecar = frontiers_[token.slot];
@@ -610,14 +610,14 @@ bool DecisionTable::BindFrontierDecision(DecisionToken token,
 bool DecisionTable::IsFrontierDecisionBindingFor(DecisionToken token,
     const FrontierGroupBinding& binding, const ScheduledTransactionPool& pool) const noexcept {
     const auto* row = Resolve(token);
-    Plan03PageGroupView original{};
+    SchedulePageGroupView original{};
     return row != nullptr && binding.Valid() && binding.role != FrontierGroupRole::Coordinator &&
         binding.operation.group.decision.slot == token.slot &&
         binding.operation.group.decision.generation == token.generation &&
         binding.operation.world == row->world && binding.operation.transport == row->transport &&
         HasFrontierDecisionBinding(token) && frontiers_[token.slot].operationPool == &pool &&
         frontiers_[token.slot].operationOwner == binding.operation.owner &&
-        pool.ResolvePlan03GroupSliceProducer(binding.operation.group, &original) &&
+        pool.ResolveScheduleGroupSliceProducer(binding.operation.group, &original) &&
         original.frontier == &binding;
 }
 
@@ -643,7 +643,7 @@ bool DecisionTable::CanRollbackPreparedFrontierDecision(DecisionToken token, Dec
         row->consumedSlices.load(std::memory_order_acquire) != 0 ||
         row->lastAudioSequence.load(std::memory_order_acquire) != 0) return false;
     if (token.slot != coordinator.slot || token.generation != coordinator.generation) {
-        Plan03PageGroupView group{};
+        SchedulePageGroupView group{};
         if (binding == nullptr || !binding->Valid() || binding->role != FrontierGroupRole::EntryMember ||
             !(binding->entry == activation->Descriptor().entry) ||
             !(binding->primary == activation->Descriptor().primary) ||
@@ -651,9 +651,9 @@ bool DecisionTable::CanRollbackPreparedFrontierDecision(DecisionToken token, Dec
             binding->operation.group.decision.generation != token.generation ||
             !HasFrontierDecisionBinding(token) ||
             !(frontiers_[token.slot].operationOwner == binding->operation.owner) ||
-            !frontiers_[token.slot].operationPool->PrivatePlan03GroupBindable(
+            !frontiers_[token.slot].operationPool->PrivateScheduleGroupBindable(
                 binding->operation.group) ||
-            !frontiers_[token.slot].operationPool->ResolvePlan03GroupSliceProducer(binding->operation.group, &group) ||
+            !frontiers_[token.slot].operationPool->ResolveScheduleGroupSliceProducer(binding->operation.group, &group) ||
             group.frontier != binding || group.lease == nullptr ||
             group.lease->Capture().state != AudioSliceState::Ready) return false;
     } else if (binding != nullptr) return false;
@@ -686,7 +686,7 @@ bool DecisionTable::CanRollbackPrivatePendingQueueFrontierDecision(const Frontie
     if (binding.role == FrontierGroupRole::EntryMember)
         return CanRollbackPreparedFrontierDecision(binding.operation.group.decision, binding.entry.coordinator, &binding);
     const auto* activation = ResolveFrontierActivation(binding.entry.coordinator);
-    Plan03PageGroupView native{};
+    SchedulePageGroupView native{};
     if (binding.role != FrontierGroupRole::Future || binding.operation.kind != FrontierOperationKind::Dependent ||
         binding.operation.group.sliceIndex != 1 || row == nullptr || activation == nullptr ||
         binding.entry != activation->Descriptor().entry || binding.primary != activation->Descriptor().primary ||
@@ -698,7 +698,7 @@ bool DecisionTable::CanRollbackPrivatePendingQueueFrontierDecision(const Frontie
         row->consumedSlices.load(std::memory_order_acquire) != 0 || row->lastAudioSequence.load(std::memory_order_acquire) != 0 ||
         row->authoredStopInvalidated.load(std::memory_order_acquire) ||
         !pool.PrivateImmediateLaneFrontierRollbackReady(binding.operation.group) ||
-        !pool.ResolvePlan03GroupSliceProducer(binding.operation.group, &native) || native.frontier != &binding ||
+        !pool.ResolveScheduleGroupSliceProducer(binding.operation.group, &native) || native.frontier != &binding ||
         native.lease == nullptr || native.lease->Capture().state != AudioSliceState::Ready) return false;
     const auto state = row->commit.load(std::memory_order_acquire);
     return state == DecisionCommitState::Open || state == DecisionCommitState::Committed;
@@ -739,9 +739,9 @@ bool DecisionTable::ValidateFrontierMemberDecisionApply(const FrontierGroupBindi
         row->world != binding.operation.world || row->transport != binding.operation.transport ||
         lease.Capture().state != AudioSliceState::Ready) return false;
     const auto& sidecar = frontiers_[token.slot];
-    Plan03PageGroupView group{};
+    SchedulePageGroupView group{};
     if (!(sidecar.operationOwner == binding.operation.owner) ||
-        !sidecar.operationPool->ResolvePlan03GroupSliceRt(binding.operation.group, &group) ||
+        !sidecar.operationPool->ResolveScheduleGroupSliceRt(binding.operation.group, &group) ||
         group.frontier != &binding || group.lease != &lease) return false;
     out->row_ = row;
     out->table_ = this;
@@ -757,7 +757,7 @@ bool DecisionTable::PrepareFrontierActivation(DecisionToken token,
     const FrontierActivationDescriptor& descriptor, ScheduledTransactionPool& pool) noexcept {
     if (PreparedTicketHeld(token)) { return false; }
     Row* row = Resolve(token);
-    Plan03PageGroupView primary{};
+    SchedulePageGroupView primary{};
     const bool committedExact = row != nullptr &&
         row->commit.load(std::memory_order_acquire) == DecisionCommitState::Committed &&
         descriptor.order.logicCommitSequence == row->ticket.sequence &&
@@ -767,13 +767,13 @@ bool DecisionTable::PrepareFrontierActivation(DecisionToken token,
         descriptor.entry.coordinator.generation != token.generation ||
         descriptor.worldGeneration != row->world || descriptor.primary.transportEpoch != row->transport ||
         descriptor.expectedMemberCount > maxParticipantsPerDecision_ ||
-        !pool.ResolvePlan03GroupSliceProducer(descriptor.primary, &primary) ||
+        !pool.ResolveScheduleGroupSliceProducer(descriptor.primary, &primary) ||
         primary.memberCount != 0 || primary.sourceControlCount != 0) return false;
     auto& sidecar = frontiers_[token.slot];
     if (sidecar.activation.State() != FrontierReceiptState::Empty || sidecar.pagePin.has_value() ||
         sidecar.observerPin.Valid()) return false;
     sidecar.pagePin.emplace();
-    if (!pool.AcquirePlan03GroupReader(descriptor.primary, &*sidecar.pagePin)) {
+    if (!pool.AcquireScheduleGroupReader(descriptor.primary, &*sidecar.pagePin)) {
         sidecar.pagePin.reset();
         return false;
     }
@@ -803,13 +803,13 @@ const FrontierActivation* DecisionTable::ResolveFrontierActivation(DecisionToken
 bool DecisionTable::MatchesPreparedFrontierActivationPool(const FrontierEntryReceiptRef& entry,
     const ScheduledTransactionPool& pool) const noexcept {
     const auto* activation = ResolveFrontierActivation(entry.coordinator);
-    Plan03PageGroupView primary{};
+    SchedulePageGroupView primary{};
     if (!entry.Valid() || activation == nullptr || activation->State() != FrontierReceiptState::Prepared ||
         !(activation->Descriptor().entry == entry)) return false;
     const auto& sidecar = frontiers_[entry.coordinator.slot];
     return sidecar.pagePin.has_value() && sidecar.observerPin.Valid() &&
-        pool.IsPlan03GroupReaderFor(*sidecar.pagePin, activation->Descriptor().primary) &&
-        pool.ResolvePlan03GroupSliceProducer(activation->Descriptor().primary, &primary) &&
+        pool.IsScheduleGroupReaderFor(*sidecar.pagePin, activation->Descriptor().primary) &&
+        pool.ResolveScheduleGroupSliceProducer(activation->Descriptor().primary, &primary) &&
         primary.memberCount == 0 && primary.sourceControlCount == 0 && primary.lease != nullptr &&
         primary.lease == activation->lease_ && primary.lease->Capture().state == AudioSliceState::Ready;
 }
@@ -1655,21 +1655,21 @@ bool DecisionTable::CloneFuturePin(const DecisionFuturePin& source, DecisionFutu
 }
 
 bool DecisionTable::CaptureFrontierSliceDependency(const DecisionFuturePin& original,
-    const Plan03GroupReaderPin& reader, const ScheduledTransactionPool& pool,
+    const ScheduleGroupReaderPin& reader, const ScheduledTransactionPool& pool,
     const FrontierOwnerIdentity& dependent, FrontierSliceDependency* out) const noexcept {
     if (out == nullptr || out->Valid() || !dependent.Valid() || original.Owner() != this ||
-        !original.Valid() || !pool.IsPlan03GroupReaderFor(reader, reader.Identity())) return false;
+        !original.Valid() || !pool.IsScheduleGroupReaderFor(reader, reader.Identity())) return false;
     const auto identity = reader.Identity();
     const auto token = original.Token();
     if (PreparedTicketHeld(token) || FrontierPublicationHeld(token)) return false;
     const auto* row = Resolve(token);
-    Plan03PageGroupView group{};
-    if (row == nullptr || identity.backing != Plan03GroupBacking::Page ||
+    SchedulePageGroupView group{};
+    if (row == nullptr || identity.backing != ScheduleGroupBacking::Page ||
         identity.decision.slot != token.slot || identity.decision.generation != token.generation ||
         row->futurePinCount.load(std::memory_order_acquire) == 0 ||
         row->commit.load(std::memory_order_acquire) == DecisionCommitState::Cancelled ||
         identity.sliceIndex >= row->sliceCount || !row->transitionGate.Valid() ||
-        !pool.ResolvePlan03GroupSliceProducer(identity, &group) || group.frontier == nullptr || group.lease == nullptr ||
+        !pool.ResolveScheduleGroupSliceProducer(identity, &group) || group.frontier == nullptr || group.lease == nullptr ||
         group.frontier->role != FrontierGroupRole::Future ||
         !IsFrontierDecisionBindingFor(token, *group.frontier, pool)) return false;
     const auto& binding = *group.frontier;
@@ -1724,9 +1724,9 @@ FrontierSliceDependencyStatus DecisionTable::ReadFrontierSliceDependency(const F
         audio == AudioGroupState::Retired) return Status::Rejected;
     // Open preparations have no audio-visible page yet.
     if (commit == DecisionCommitState::Open) return Status::Pending;
-    Plan03PageGroupView group{};
+    SchedulePageGroupView group{};
     // A committed preparation may not have reached the audio-visible page yet.
-    if (!dependency.pool_->ResolvePlan03GroupSliceRt(original.group, &group)) return Status::Pending;
+    if (!dependency.pool_->ResolveScheduleGroupSliceRt(original.group, &group)) return Status::Pending;
     if (group.lease == nullptr || group.frontier == nullptr || group.frontier->role != FrontierGroupRole::Future ||
         !(group.frontier->operation.owner == original.owner) || group.frontier->operation.order != original.order)
         return Status::Rejected;
@@ -1735,7 +1735,7 @@ FrontierSliceDependencyStatus DecisionTable::ReadFrontierSliceDependency(const F
 }
 
 bool DecisionTable::CaptureAppliedSignalDependency(const DecisionFuturePin& original,
-    const Plan03GroupReaderPin& primaryPin, const Plan03GroupReaderPin& memberPin,
+    const ScheduleGroupReaderPin& primaryPin, const ScheduleGroupReaderPin& memberPin,
     const ScheduledTransactionPool& pool, std::uint64_t completedAudioSequence,
     FrontierAppliedSignalDependency* out) const noexcept {
     if (out == nullptr || out->Valid() || original.Owner() != this || !original.Valid()) return false;
@@ -1744,16 +1744,16 @@ bool DecisionTable::CaptureAppliedSignalDependency(const DecisionFuturePin& orig
     const auto& descriptor = activation->Descriptor();
     const auto& member = memberPin.Identity();
     FrontierActivationReceipt receipt{};
-    Plan03PageGroupView primary{}, signal{};
-    if (!descriptor.Valid() || descriptor.sourceCohort || descriptor.primary.backing != Plan03GroupBacking::Page ||
-        !pool.IsPlan03GroupReaderFor(primaryPin, descriptor.primary) ||
-        !pool.IsPlan03GroupReaderFor(memberPin, member) || member.backing != Plan03GroupBacking::Page ||
+    SchedulePageGroupView primary{}, signal{};
+    if (!descriptor.Valid() || descriptor.sourceCohort || descriptor.primary.backing != ScheduleGroupBacking::Page ||
+        !pool.IsScheduleGroupReaderFor(primaryPin, descriptor.primary) ||
+        !pool.IsScheduleGroupReaderFor(memberPin, member) || member.backing != ScheduleGroupBacking::Page ||
         activation->Read(descriptor.entry, completedAudioSequence, &receipt) != FrontierReceiptRead::Ready ||
         receipt.outcome != FrontierReceiptOutcome::Applied || receipt.origin != FrontierReceiptOrigin::Audio ||
         receipt.reason != FrontierReceiptReason::None || receipt.audioSequence == 0 ||
         receipt.order != descriptor.order ||
-        !pool.ResolvePlan03GroupSliceProducer(descriptor.primary, &primary) ||
-        !pool.ResolvePlan03GroupSliceProducer(member, &signal) ||
+        !pool.ResolveScheduleGroupSliceProducer(descriptor.primary, &primary) ||
+        !pool.ResolveScheduleGroupSliceProducer(member, &signal) ||
         primary.frontier == nullptr || signal.frontier == nullptr ||
         !primary.frontier->Valid() || !signal.frontier->Valid() || primary.lease == nullptr ||
         signal.lease != primary.lease || primary.lease->Capture().state != AudioSliceState::SliceApplied ||
@@ -1788,22 +1788,22 @@ bool DecisionTable::CaptureAppliedSignalDependency(const DecisionFuturePin& orig
 }
 
 bool DecisionTable::IsAppliedSignalDependencyFor(const FrontierAppliedSignalDependency& original,
-    const FrontierEntryReceiptRef& entry, const Plan03GroupSliceIdentity& primary,
-    const Plan03GroupSliceIdentity& member, std::uint64_t completedAudioSequence) const noexcept {
+    const FrontierEntryReceiptRef& entry, const ScheduleGroupSliceIdentity& primary,
+    const ScheduleGroupSliceIdentity& member, std::uint64_t completedAudioSequence) const noexcept {
     return IsAppliedEntryDependencyFor(original, FrontierEntryPrerequisiteKind::QueueSignal,
         entry, primary, member, completedAudioSequence);
 }
 
 bool DecisionTable::IsAppliedSourceCohortDependencyFor(const FrontierAppliedSignalDependency& original,
-    const FrontierEntryReceiptRef& entry, const Plan03GroupSliceIdentity& primary,
-    const Plan03GroupSliceIdentity& member, std::uint64_t completedAudioSequence) const noexcept {
+    const FrontierEntryReceiptRef& entry, const ScheduleGroupSliceIdentity& primary,
+    const ScheduleGroupSliceIdentity& member, std::uint64_t completedAudioSequence) const noexcept {
     return IsAppliedEntryDependencyFor(original, FrontierEntryPrerequisiteKind::SourceCohortChild,
         entry, primary, member, completedAudioSequence);
 }
 
 bool DecisionTable::IsAppliedEntryDependencyFor(const FrontierAppliedSignalDependency& original,
     FrontierEntryPrerequisiteKind kind, const FrontierEntryReceiptRef& entry,
-    const Plan03GroupSliceIdentity& primary, const Plan03GroupSliceIdentity& member,
+    const ScheduleGroupSliceIdentity& primary, const ScheduleGroupSliceIdentity& member,
     std::uint64_t completedAudioSequence) const noexcept {
     if (original.kind_ != kind || original.owner_ != this || !(original.entry_ == entry) || !(original.primary_ == primary) ||
         !(original.member_ == member) || !entry.Valid() || !primary.Exact() || !member.Exact() ||
@@ -1839,7 +1839,7 @@ bool DecisionTable::ProveAppliedSignalPrerequisite(const FrontierAppliedSignalDe
     const FrontierGroupBinding& child, std::uint64_t completedAudioSequence) const noexcept {
     if (child.prerequisiteKind != FrontierEntryPrerequisiteKind::QueueSignal ||
         !child.Valid() || child.role != FrontierGroupRole::Coordinator ||
-        child.operation.group.backing != Plan03GroupBacking::Page || child.appliedPrerequisite != &original ||
+        child.operation.group.backing != ScheduleGroupBacking::Page || child.appliedPrerequisite != &original ||
         !IsAppliedSignalDependencyFor(original, child.prerequisite, original.primary_,
             child.prerequisiteMember, completedAudioSequence)) return false;
     const auto* activation = ResolveFrontierActivation(child.prerequisite.coordinator);
@@ -1860,8 +1860,8 @@ bool DecisionTable::ValidateSourceCohortPrerequisite(const FrontierGroupBinding&
         member.role != FrontierGroupRole::Coordinator ||
         child.operation.kind != FrontierOperationKind::Entry || primary.operation.kind != FrontierOperationKind::Entry ||
         member.operation.kind != FrontierOperationKind::Entry ||
-        child.primary.backing != Plan03GroupBacking::Page || primary.primary.backing != Plan03GroupBacking::Page ||
-        member.primary.backing != Plan03GroupBacking::Page ||
+        child.primary.backing != ScheduleGroupBacking::Page || primary.primary.backing != ScheduleGroupBacking::Page ||
+        member.primary.backing != ScheduleGroupBacking::Page ||
         !(child.operation.group == child.primary) || !(primary.operation.group == primary.primary) ||
         !(member.operation.group == member.primary) ||
         !(child.prerequisite == primary.entry) || !(member.prerequisite == primary.entry) ||
@@ -1905,7 +1905,7 @@ bool DecisionTable::ValidateSourceCohortPrerequisite(const FrontierGroupBinding&
 }
 
 bool DecisionTable::CaptureAppliedSourceCohortDependency(const DecisionFuturePin& original,
-    const Plan03GroupReaderPin& primaryPin, const Plan03GroupReaderPin& memberPin,
+    const ScheduleGroupReaderPin& primaryPin, const ScheduleGroupReaderPin& memberPin,
     const ScheduledTransactionPool& pool, std::uint64_t completedAudioSequence,
     FrontierAppliedSignalDependency* out) const noexcept {
     if (out == nullptr || out->Valid() || original.Owner() != this || !original.Valid()) return false;
@@ -1914,15 +1914,15 @@ bool DecisionTable::CaptureAppliedSourceCohortDependency(const DecisionFuturePin
     const auto& descriptor = activation->Descriptor();
     const auto& memberIdentity = memberPin.Identity();
     FrontierActivationReceipt receipt{};
-    Plan03PageGroupView primary{}, member{};
+    SchedulePageGroupView primary{}, member{};
     if (!descriptor.Valid() || !descriptor.sourceCohort ||
-        !pool.IsPlan03GroupReaderFor(primaryPin, descriptor.primary) ||
-        !pool.IsPlan03GroupReaderFor(memberPin, memberIdentity) ||
+        !pool.IsScheduleGroupReaderFor(primaryPin, descriptor.primary) ||
+        !pool.IsScheduleGroupReaderFor(memberPin, memberIdentity) ||
         activation->Read(descriptor.entry, completedAudioSequence, &receipt) != FrontierReceiptRead::Ready ||
         receipt.outcome != FrontierReceiptOutcome::Applied || receipt.origin != FrontierReceiptOrigin::Audio ||
         receipt.reason != FrontierReceiptReason::None || receipt.audioSequence == 0 || receipt.order != descriptor.order ||
-        !pool.ResolvePlan03GroupSliceProducer(descriptor.primary, &primary) ||
-        !pool.ResolvePlan03GroupSliceProducer(memberIdentity, &member) ||
+        !pool.ResolveScheduleGroupSliceProducer(descriptor.primary, &primary) ||
+        !pool.ResolveScheduleGroupSliceProducer(memberIdentity, &member) ||
         primary.frontier == nullptr || member.frontier == nullptr || primary.lease == nullptr || member.lease == nullptr ||
         primary.lease->Capture().state != AudioSliceState::SliceApplied ||
         member.lease->Capture().state != AudioSliceState::SliceApplied ||
@@ -1945,7 +1945,7 @@ bool DecisionTable::CaptureAppliedSourceCohortDependency(const DecisionFuturePin
 bool DecisionTable::ProveAppliedSourceCohortPrerequisite(const FrontierAppliedSignalDependency& original,
     const FrontierGroupBinding& child, std::uint64_t completedAudioSequence) const noexcept {
     if (!child.Valid() || child.prerequisiteKind != FrontierEntryPrerequisiteKind::SourceCohortChild ||
-        child.role != FrontierGroupRole::Coordinator || child.operation.group.backing != Plan03GroupBacking::Page ||
+        child.role != FrontierGroupRole::Coordinator || child.operation.group.backing != ScheduleGroupBacking::Page ||
         child.appliedPrerequisite != &original || child.entry == child.prerequisite ||
         !IsAppliedSourceCohortDependencyFor(original, child.prerequisite, original.primary_,
             child.prerequisiteMember, completedAudioSequence)) return false;

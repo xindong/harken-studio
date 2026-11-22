@@ -1,6 +1,6 @@
 #include "ProjectIssue.h"
 
-namespace VNX {
+namespace harken::studio {
 
 QString projectIssueCode(ProjectIssue issue)
 {

@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 namespace Monitor {
 namespace TestSupport {
 
@@ -22,4 +22,4 @@ LoadedFixture loadEditorFixture(const std::string& fileName);
 
 } // namespace TestSupport
 } // namespace Monitor
-} // namespace VNX
+} // namespace harken::studio

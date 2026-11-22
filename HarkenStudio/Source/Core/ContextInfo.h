@@ -14,7 +14,7 @@
 
 class QWidget;
 
-namespace VNX {
+namespace harken::studio {
 
 enum class ContextTopicKind : uint8_t
 {
@@ -73,4 +73,4 @@ std::optional<ContextTopic> tagOf(const QWidget* widget);
 
 }
 
-Q_DECLARE_METATYPE(VNX::ContextTopic)
+Q_DECLARE_METATYPE(harken::studio::ContextTopic)

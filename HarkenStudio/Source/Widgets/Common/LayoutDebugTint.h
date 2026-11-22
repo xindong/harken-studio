@@ -31,7 +31,7 @@
 #include <QStringLiteral>
 #include <QWidget>
 
-namespace VNX {
+namespace harken::studio {
 namespace DebugTint {
 
 inline constexpr bool kEnabled = false;

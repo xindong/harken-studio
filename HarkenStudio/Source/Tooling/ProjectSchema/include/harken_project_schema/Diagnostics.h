@@ -21,7 +21,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace harkenprojectschema {
+namespace harken::studio::project_schema {
 
 // The contract violations, numbered by the stage that raises them so a smaller
 // code is a failure found earlier. The order is also the tiebreak used to make
@@ -126,6 +126,6 @@ struct Diagnostic {
 // explain output use it so a reader is never handed a bare ordinal.
 const char* DiagnosticCodeName(DiagnosticCode code);
 
-}  // namespace harkenprojectschema
+}  // namespace harken::studio::project_schema
 
 #endif  // HARKEN_PROJECT_SCHEMA_DIAGNOSTICS_H

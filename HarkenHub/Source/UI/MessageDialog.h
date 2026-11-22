@@ -6,7 +6,7 @@
 class QDialogButtonBox;
 class QPlainTextEdit;
 
-namespace VNH {
+namespace harken::hub {
 
 class MessageDialog : public QDialog
 {

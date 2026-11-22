@@ -8,7 +8,7 @@
 #include <QJsonArray>
 #include <QSet>
 
-namespace VNX {
+namespace harken::studio {
 bool commandSupportedByHost(CommandHost host, const QString& name, bool requiresDesktop)
 {
     if (host == CommandHost::Cli && requiresDesktop) return false;
@@ -19,26 +19,14 @@ bool commandSupportedByHost(CommandHost host, const QString& name, bool requires
 #endif
     static const QSet<QString> unavailable{
         "apply_template_from_data",
-        "create_pack", "rename_pack", "delete_pack",
-        "set_platform_profile", "set_target_platforms", "set_voice_language", "set_preferred_format",
+        "set_voice_language",
         "get_object_audio_status", "get_cpu_budget_state", "get_render_plan",
         "audition_get_position", "audition_get_speed", "audition_set_speed",
         "bind_attenuation_to_object", "unbind_attenuation_from_object", "set_attenuation_distance_scaling",
         "set_send_filter", "get_send_filter",
-        "link_capture_start", "link_capture_stop", "link_get_status", "link_mute_bus",
-        "link_pause_engine", "link_post_action", "link_resume_engine", "link_set_property",
-        "link_solo_bus", "link_stop_all",
-        "set_clock_pll", "get_clock_sync_status", "list_codecs", "get_codec_info",
-        "get_codec_capabilities", "get_stream_status", "get_stream_position",
-        "get_stream_device_info", "get_stream_device_count", "get_stream_throughput",
-        "get_mmap_status", "get_device_fairness", "get_memory_budget_status",
-        "get_listener_output_bus", "get_device_capabilities", "get_active_format",
-        "get_hotplug_events", "get_watched_parameters", "get_live_parameters",
         "watch_parameter", "unwatch_parameter", "get_monitor_filter", "set_monitor_filter",
-        "get_voice_contribution", "get_voice_path_latency", "get_pack_metrics",
         "get_voice_metadata_chain", "get_voice_node_virtual_states", "set_spatial_fallback_policy",
-        "get_pack_load_history", "get_action_routing", "resolve_action_packs",
-        "validate_multipack_collisions", "list_modulators", "list_modulator_chains",
+        "list_modulators", "list_modulator_chains",
         "get_modulator_presets", "save_modulator_user_preset", "delete_modulator_user_preset",
         "apply_modulator_preset", "set_game_object_volume", "set_game_object_mute",
         "set_game_object_position", "set_game_object_orientation", "set_metering_interval",

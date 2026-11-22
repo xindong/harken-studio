@@ -15,7 +15,7 @@
 #include <cmath>
 #include <algorithm>
 
-namespace VNX {
+namespace harken::studio {
 
 BusController::BusController(MainWindow* host)
     : QObject(host)

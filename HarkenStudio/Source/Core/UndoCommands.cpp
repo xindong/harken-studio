@@ -22,7 +22,7 @@
 #include <QScopedValueRollback>
 #include <QUuid>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 std::optional<QSet<QUuid>> authoringWriteSet(const UndoCommand* command)
@@ -336,9 +336,9 @@ void ProjectItemCommand::redo()
 Scene3DCommand::Scene3DCommand(
     ObjectType objectType,
     int objectId,
-    const HarkenEditor::Vec3& oldPosition,
-    const HarkenEditor::Vec3& newPosition,
-    std::function<void(ObjectType, int, const HarkenEditor::Vec3&)> applyFn,
+    const harken::studio::Vec3& oldPosition,
+    const harken::studio::Vec3& newPosition,
+    std::function<void(ObjectType, int, const harken::studio::Vec3&)> applyFn,
     const QString& text,
     UndoCommand* parent)
     : UndoCommand(text, parent)

@@ -2,7 +2,7 @@
 
 #include <QString>
 
-namespace VNX {
+namespace harken::studio {
 namespace EditorLaunchMap {
 
 QString editorPanelTypeForSlot(const QString& slot);

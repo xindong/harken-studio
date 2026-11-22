@@ -3,7 +3,7 @@
 #include <QCoreApplication>
 #include <QStandardPaths>
 
-namespace VNH {
+namespace harken::hub {
 
 QString studioVersionsRoot()
 {

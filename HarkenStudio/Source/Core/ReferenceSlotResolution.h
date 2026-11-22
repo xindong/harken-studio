@@ -10,7 +10,7 @@
 #include <memory>
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 namespace ReferenceSlotResolution {
 
 using PlacementItemResolver = std::function<const ProjectItem*(const QUuid&)>;
@@ -82,7 +82,7 @@ uint32_t resolveEffectiveOutputBusId(const ProjectItem* item);
 
 struct AttenuationSlot : SlotResolution
 {
-    harkenstudio::ObjectId ref{};
+    harken::studio::types::ObjectId ref{};
 };
 
 AttenuationSlot resolveEffectiveAttenuation(const ResolutionScope& scope);

@@ -4,7 +4,7 @@
 #include <harken/Harken.h>
 #include <harken/HarkenDevelopment.h>
 
-namespace HarkenEditor::Bridge {
+namespace harken::studio::bridge {
 
 void mapSnapshotToDebugVoices(const VnSnapshot& snapshot, std::vector<DebugVoiceData>& out);
 void mapSnapshotToDebugBuses(const VnSnapshot& snapshot, std::vector<DebugBusData>& out);

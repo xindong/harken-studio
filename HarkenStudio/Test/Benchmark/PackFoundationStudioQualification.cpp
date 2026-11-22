@@ -25,7 +25,7 @@ int main(int argc, char* argv[])
     if (objectCount <= 0)
         return 2;
 
-    auto result = VNX::LMDBBenchmark::runSynthetic(objectCount);
+    auto result = harken::studio::LMDBBenchmark::runSynthetic(objectCount);
     const bool complete = result.complete && result.objectCount == objectCount &&
         result.wordResultCount > 0 && result.phraseResultCount > 0 &&
         result.trigramResultCount > 0 && result.boundedBatchCount == 256;

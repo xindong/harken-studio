@@ -7,7 +7,7 @@
 
 class QSpacerItem;
 
-namespace VNX {
+namespace harken::studio {
 
 class ToggleSwitch : public QWidget
 {

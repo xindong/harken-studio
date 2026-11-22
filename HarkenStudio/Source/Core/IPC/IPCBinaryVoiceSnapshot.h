@@ -4,7 +4,7 @@
 
 #include <QByteArray>
 
-namespace VNX {
+namespace harken::studio {
 namespace BinaryVoiceSnapshot {
 
 enum class Outcome : uint8_t

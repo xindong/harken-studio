@@ -7,7 +7,7 @@
 
 class QObject;
 
-namespace VNX {
+namespace harken::studio {
 
 struct ProjectItem;
 class VMixNode;
@@ -24,7 +24,7 @@ QString changeKey(const BindingAddress& address);
 
 QJsonObject upsertArgs(const ProjectItem* item, const ParameterBindingDef& binding,
                        const QString& text);
-QJsonObject removeArgs(const ProjectItem* item, harkenstudio::ObjectId runtimeStableId,
+QJsonObject removeArgs(const ProjectItem* item, harken::studio::types::ObjectId runtimeStableId,
                        const QString& text);
 QJsonObject removeAllArgs(const ProjectItem* item, const BindingAddress& address,
                           const QString& text);
@@ -37,7 +37,7 @@ bool apply(ProjectItem* item, const BindingLedger& ledger,
            const BindingAddress& address, const QObject* originator = nullptr);
 bool upsert(ProjectItem* item, ParameterBindingDef binding,
             const QObject* originator = nullptr);
-bool remove(ProjectItem* item, harkenstudio::ObjectId runtimeStableId,
+bool remove(ProjectItem* item, harken::studio::types::ObjectId runtimeStableId,
             const QObject* originator = nullptr);
 bool removeAll(ProjectItem* item, const BindingAddress& address,
                const QObject* originator = nullptr);

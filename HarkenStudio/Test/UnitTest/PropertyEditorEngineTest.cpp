@@ -38,14 +38,14 @@ void ensureApp()
 
 struct NotesFixture
 {
-    VNX::PropertyEditorEngine engine;
+    harken::studio::PropertyEditorEngine engine;
     std::unique_ptr<QWidget> page;
     QPlainTextEdit* edit = nullptr;
 
     NotesFixture()
     {
-        engine.setSchema({VNX::notesInspectorDescriptor()}, VNX::ComponentType::_Count);
-        engine.setItemType(VNX::ProjectItem::Type::Sound);
+        engine.setSchema({harken::studio::notesInspectorDescriptor()}, harken::studio::ComponentType::_Count);
+        engine.setItemType(harken::studio::ProjectItem::Type::Sound);
         page.reset(engine.buildPage());
         edit = page->findChild<QPlainTextEdit*>(QStringLiteral("prop_notes"));
     }
@@ -58,10 +58,10 @@ TEST(PropertyEditorEngineNotes, NarrowLayoutsSettleWithoutChangingText)
     ensureApp();
     const QString style = qApp->styleSheet();
     const auto restoreStyle = qScopeGuard([&] { qApp->setStyleSheet(style); });
-    qApp->setStyleSheet(VNX::QtControlSkin::current().applicationStyleSheet());
+    qApp->setStyleSheet(harken::studio::QtControlSkin::current().applicationStyleSheet());
     NotesFixture fx;
     ASSERT_NE(fx.edit, nullptr);
-    auto* section = fx.page->findChild<VNX::CollapsibleSection*>();
+    auto* section = fx.page->findChild<harken::studio::CollapsibleSection*>();
     ASSERT_NE(section, nullptr);
     section->setDynamicContent(true);
     fx.page->resize(480, 240);
@@ -89,7 +89,7 @@ TEST(PropertyEditorEngineNotes, NarrowLayoutsSettleWithoutChangingText)
     for (bool expanded : {true, false}) {
         SCOPED_TRACE(expanded);
         section->setExpanded(expanded);
-        for (int height : {VNX::QtControlSkin::current().fieldHeight(), 96}) {
+        for (int height : {harken::studio::QtControlSkin::current().fieldHeight(), 96}) {
             SCOPED_TRACE(height);
             fx.edit->setFixedHeight(height);
             for (const auto& text : samples) {
@@ -115,7 +115,7 @@ TEST(PropertyEditorEngineNotes, NarrowLayoutsSettleWithoutChangingText)
 
 TEST(PropertyEditorEnginePlatformContext, SwitchingMatchesFreshBindingWithoutAuthoringChanges)
 {
-    using namespace VNX;
+    using namespace harken::studio;
     ensureApp();
     auto& manager = ProjectManager::instance();
     auto& platforms = PlatformContextService::instance();

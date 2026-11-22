@@ -45,7 +45,7 @@
 #include <functional>
 #include <limits>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 
@@ -157,7 +157,7 @@ bool hasPlayableDefinitionComponentAuthority(ProjectItem::Type type,
                                              const QJsonObject& components)
 {
     if (!PlayablePropertyAuthoringV1::isDefinitionType(type)) return false;
-    for (const auto& field : VNX::PlayablePropertyAuthoringV1::fields()) {
+    for (const auto& field : harken::studio::PlayablePropertyAuthoringV1::fields()) {
         if (PlayablePropertyAuthoringV1::isComponentStored(field.id)) continue;
         const QJsonObject component = components.value(
             QLatin1String(field.component)).toObject();
@@ -248,7 +248,7 @@ bool ProjectSerializer::registerWriteItem(const ProjectItem& item,
                                  item.guid, documentId, item.name};
     referencesByGuid_.insert(item.guid, target);
     referencesByObjectId_.insert(item.objectID, target);
-    if (!harkenstudio::IsNull(item.runtimeId())) {
+    if (!harken::studio::types::IsNull(item.runtimeId())) {
         if (referencesByRuntimeStableId_.contains(item.runtimeId())) {
             lastError_ = QStringLiteral("Project contains a duplicate runtime identity: %1")
                              .arg(objectIdString(item.runtimeId()));
@@ -489,11 +489,11 @@ uint32_t ProjectSerializer::transientObjectIdForGuid(const QUuid& guid) const
     return target == referencesByGuid_.cend() ? 0 : target->objectId;
 }
 
-harkenstudio::ObjectId ProjectSerializer::transientRuntimeStableIdForGuid(
+harken::studio::types::ObjectId ProjectSerializer::transientRuntimeStableIdForGuid(
     const QUuid& guid) const
 {
     const auto target = referencesByGuid_.constFind(guid);
-    return target == referencesByGuid_.cend() ? harkenstudio::ObjectId{} : target->runtimeId();
+    return target == referencesByGuid_.cend() ? harken::studio::types::ObjectId{} : target->runtimeId();
 }
 
 uint32_t ProjectSerializer::transientObjectId(const QUuid& guid) const
@@ -532,9 +532,9 @@ QJsonObject ProjectSerializer::persistentReference(
 }
 
 QJsonObject ProjectSerializer::persistentRuntimeReference(
-    harkenstudio::ObjectId runtimeStableId, ProjectItem::Type expectedType) const
+    harken::studio::types::ObjectId runtimeStableId, ProjectItem::Type expectedType) const
 {
-    if (harkenstudio::IsNull(runtimeStableId)) return {};
+    if (harken::studio::types::IsNull(runtimeStableId)) return {};
     const auto target = referencesByRuntimeStableId_.constFind(runtimeStableId);
     if (target == referencesByRuntimeStableId_.cend()) {
         lastError_ = QStringLiteral("Project contains a reference to a missing object");
@@ -583,7 +583,7 @@ bool ProjectSerializer::transientReference(
 
 bool ProjectSerializer::transientRuntimeReference(
     const QJsonValue& value, ProjectItem::Type expectedType,
-    harkenstudio::ObjectId* runtimeStableId) const
+    harken::studio::types::ObjectId* runtimeStableId) const
 {
     if (!runtimeStableId) return false;
     if (value.isNull()) {
@@ -593,7 +593,7 @@ bool ProjectSerializer::transientRuntimeReference(
     uint32_t objectId = 0;
     if (!transientReference(value, expectedType, &objectId)) return false;
     const auto target = referencesByObjectId_.constFind(objectId);
-    if (target == referencesByObjectId_.cend() || harkenstudio::IsNull(target->runtimeId())) {
+    if (target == referencesByObjectId_.cend() || harken::studio::types::IsNull(target->runtimeId())) {
         lastError_ = QStringLiteral("Project reference target has no runtime identity");
         return false;
     }
@@ -959,7 +959,7 @@ bool ProjectSerializer::rewritePlayableReferenceFields(QJsonObject* properties,
 {
     if (!properties) return false;
     using Role = harkenplayableproperties::PlayablePropertyReferenceRoleV1;
-    for (const auto& field : VNX::PlayablePropertyAuthoringV1::fields()) {
+    for (const auto& field : harken::studio::PlayablePropertyAuthoringV1::fields()) {
         const QLatin1String key(field.jsonKey);
         if (!properties->contains(key)) continue;
         if (field.referenceRole == Role::OutputBus
@@ -971,9 +971,9 @@ bool ProjectSerializer::rewritePlayableReferenceFields(QJsonObject* properties,
             if (encode) {
                 const QJsonValue value = properties->value(key);
                 if (!value.isString()) return false;
-                harkenstudio::ObjectId stableId{};
+                harken::studio::types::ObjectId stableId{};
                 if (!parseObjectIdJson(value, &stableId)) return false;
-                if (harkenstudio::IsNull(stableId)) {
+                if (harken::studio::types::IsNull(stableId)) {
                     (*properties)[key] = QJsonValue::Null;
                     continue;
                 }
@@ -982,7 +982,7 @@ bool ProjectSerializer::rewritePlayableReferenceFields(QJsonObject* properties,
                 if (reference.isEmpty()) return false;
                 (*properties)[key] = reference;
             } else {
-                harkenstudio::ObjectId stableId = {};
+                harken::studio::types::ObjectId stableId = {};
                 if (!transientRuntimeReference(
                         properties->value(key), expectedType, &stableId))
                     return false;
@@ -2363,7 +2363,7 @@ bool ProjectSerializer::variablePackFromJson(const QJsonObject& json, ProjectIte
 QJsonObject ProjectSerializer::busPackToJson(
     const ProjectItem& busItem) const
 {
-    const auto* bc = busItem.comp<VNX::VBus>();
+    const auto* bc = busItem.comp<harken::studio::VBus>();
     if (!bc)
     {
         qWarning() << "[BusPack] Bus ProjectItem missing VBus:"

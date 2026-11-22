@@ -1,7 +1,7 @@
 
 #include "PanelInstanceRegistry.h"
 
-namespace VNX {
+namespace harken::studio {
 
 PanelInstanceRegistry::PanelInstanceRegistry(QObject* parent)
     : QObject(parent)

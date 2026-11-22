@@ -5,7 +5,7 @@
 #include "Dialogs/Settings/Pages/ProjectPublishPage.h"
 
 
-namespace VNX {
+namespace harken::studio {
 
 ProjectSettingsPanel::ProjectSettingsPanel(QWidget* parent)
     : SettingsPanel(parent)

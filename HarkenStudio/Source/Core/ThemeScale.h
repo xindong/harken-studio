@@ -2,7 +2,7 @@
 
 #include "ThemeSnapshot.h"
 
-namespace VNX {
+namespace harken::studio {
 
 ThemeSnapshot scaledThemeSnapshot(const ThemeSnapshot& base, qreal factor);
 

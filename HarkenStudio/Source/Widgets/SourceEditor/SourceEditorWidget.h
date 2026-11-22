@@ -18,11 +18,11 @@ class QLabel;
 class QResizeEvent;
 class QToolButton;
 
-namespace HarkenEditor {
+namespace harken::studio {
 class AuditionManager;
 }
 
-namespace VNX {
+namespace harken::studio {
 
 struct AssetInfo;
 class SourceEditorWaveformView;
@@ -40,7 +40,7 @@ public:
     QUuid entryId() const { return entryId_; }
     void bindSource(uint32_t sourceId, const QUuid& soundGuid = {}, const QUuid& entryId = {});
     void clearSource();
-    void setAuditionManager(HarkenEditor::AuditionManager* audition);
+    void setAuditionManager(harken::studio::AuditionManager* audition);
     uint32_t auditionPlayingId() const { return auditionPlayingId_; }
     std::optional<SoundSourceSemantics::PcmSlice> previewPcmSlice(uint64_t startFrame = 0) const;
     std::optional<SoundSourceSemantics::PcmSlice> previewLoopPcmSlice(uint64_t startFrame = 0) const;
@@ -50,7 +50,7 @@ public:
     QString previewObjectName() const;
     std::optional<uint64_t> previewPlayheadFrame() const;
     bool isPreviewPlayheadActive() const;
-    harkenstudio::ObjectId previewSoundId() const { return previewSoundId_; }
+    harken::studio::types::ObjectId previewSoundId() const { return previewSoundId_; }
     uint64_t previewPlaybackHandle() const { return previewPlaybackHandle_; }
 
 protected:
@@ -74,13 +74,13 @@ private:
     uint32_t sourceId_ = 0;
     QUuid soundGuid_;
     QUuid entryId_;
-    harkenstudio::ObjectId previewSoundId_{};
+    harken::studio::types::ObjectId previewSoundId_{};
     uint64_t previewPlaybackHandle_ = 0;
     std::optional<SoundSourceDef> preparedSource_;
     QString preparedSourcePath_;
     QString preparedSourceContentHash_;
     uint32_t auditionPlayingId_ = 0;
-    QPointer<HarkenEditor::AuditionManager> audition_;
+    QPointer<harken::studio::AuditionManager> audition_;
     bool refreshingDisplayedSource_ = false;
     QWidget* sourceIdentityStrip_ = nullptr;
     QLabel* sourceTitle_ = nullptr;

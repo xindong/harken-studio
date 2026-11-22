@@ -12,7 +12,7 @@
 #include <mz_zip.h>
 #include <mz_zip_rw.h>
 
-namespace VNH {
+namespace harken::hub {
 
 QList<QPair<QString, QString>> LogExporter::defaultSources()
 {

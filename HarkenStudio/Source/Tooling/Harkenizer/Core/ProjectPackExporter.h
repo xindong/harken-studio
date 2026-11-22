@@ -27,7 +27,7 @@
 
 class QLockFile;
 
-namespace VNX {
+namespace harken::studio {
     struct ProjectData;
     struct ProjectItem;
     struct PackBuildPlan;
@@ -40,7 +40,7 @@ namespace VNX {
     class PackBuildState;
 }
 
-namespace VNX {
+namespace harken::studio {
 
 namespace ProjectPackExporterInternal {
 
@@ -72,7 +72,7 @@ namespace ProjectPackExporterInternal {
 
         QSet<QString> onlyUnits;
         QSet<QString> onlyPackPaths;
-        std::set<harkenstudio::ObjectId> onlyActionStableIds;
+        std::set<harken::studio::types::ObjectId> onlyActionStableIds;
 
         // Polled between units; returning true aborts the export with
         // ExportResult::canceled set.
@@ -118,7 +118,7 @@ public:
         int     mediaCacheHits = 0;
         int     mediaConversions = 0;
         uint64_t currentWorldSemanticFingerprint = 0;
-        std::map<harkenstudio::ObjectId, uint64_t> soundContentRevisions;
+        std::map<harken::studio::types::ObjectId, uint64_t> soundContentRevisions;
         QString resourceFingerprint;
         bool reusedResources = false;
         int builtPackCount = 0;
@@ -164,21 +164,15 @@ public:
     ExportResult ExportInitPack(const ProjectData& project,
                                  const QString& outputPath,
                                  const ExportOptions& options,
-                                 std::vector<HarkenEditor::Bridge::PackBuildSession::CanonicalPackEntry>* resourceEntries = nullptr);
+                                 std::vector<harken::studio::bridge::PackBuildSession::CanonicalPackEntry>& resourceEntries);
 
     ExportResult ExportActionPack(const ProjectData& project,
                                   const QString& actionName,
                                   const QString& outputPath,
                                   const ExportOptions& options,
+                                  std::vector<harken::studio::bridge::PackBuildSession::CanonicalPackEntry>& resourceEntries,
                                   const std::set<uint32_t>* sharedMediaIds = nullptr,
-                                  const std::set<uint32_t>* sharedObjectIds = nullptr,
-                                  std::vector<HarkenEditor::Bridge::PackBuildSession::CanonicalPackEntry>* resourceEntries = nullptr);
-
-    ExportResult ExportSharedPack(const ProjectData& project,
-                                  const QString& outputPath,
-                                  const ExportOptions& options,
-                                  const std::set<uint32_t>& sharedMedia,
-                                  const std::set<uint32_t>& sharedObjects);
+                                  const std::set<uint32_t>* sharedObjectIds = nullptr);
 
     static QString platformOutputDir(const QString& baseDir,
                                      const ProjectPlatform& platform);
@@ -254,11 +248,11 @@ signals:
     void unitProgressChanged(int done, int total, const QString& unitName);
 
 public:
-    static std::set<harkenstudio::ObjectId> CollectActionStableIds(const ProjectData& project);
+    static std::set<harken::studio::types::ObjectId> CollectActionStableIds(const ProjectData& project);
 
     struct ActionPackUnit
     {
-        harkenstudio::ObjectId stableId = {};
+        harken::studio::types::ObjectId stableId = {};
         uint32_t objectID = 0;
         QString  name;
     };
@@ -279,7 +273,7 @@ private:
 
     struct MediaCollectionStats
     {
-        std::map<harkenstudio::ObjectId, uint64_t> soundContentRevisions;
+        std::map<harken::studio::types::ObjectId, uint64_t> soundContentRevisions;
         int cacheHits = 0;
         int conversions = 0;
         QStringList warnings;
@@ -290,12 +284,12 @@ private:
         const ProjectItem& action,
         const QString& outputPath,
         const ExportOptions& options,
+        std::vector<harken::studio::bridge::PackBuildSession::CanonicalPackEntry>& resourceEntries,
         const std::set<uint32_t>* sharedMediaIds = nullptr,
-        const std::set<uint32_t>* sharedObjectIds = nullptr,
-        std::vector<HarkenEditor::Bridge::PackBuildSession::CanonicalPackEntry>* resourceEntries = nullptr);
+        const std::set<uint32_t>* sharedObjectIds = nullptr);
 
     void CollectContentInputsFromItem(const ProjectItem* item,
-                                      HarkenEditor::Bridge::PackBuildSession& builder,
+                                      harken::studio::bridge::PackBuildSession& builder,
                                       std::set<uint32_t>& visitedObjects,
                                       std::set<uint32_t>& requiredMedia,
                                       const ProjectData& project,
@@ -305,10 +299,10 @@ private:
 
     SharedOwnership computeSharedOwnership(const ProjectData& project,
                                            const PackBuildPlan& plan,
-                                           const std::set<harkenstudio::ObjectId>& includedActionIds) const;
+                                           const std::set<harken::studio::types::ObjectId>& includedActionIds) const;
 
     bool CollectMedia(const ProjectData& project,
-                       HarkenEditor::Bridge::PackBuildSession& builder,
+                       harken::studio::bridge::PackBuildSession& builder,
                        const std::set<uint32_t>& requiredMedia,
                        const std::set<uint32_t>* includedObjectIds,
                        const ExportOptions& options,
@@ -318,19 +312,19 @@ private:
                        const std::set<uint32_t>* excludedClosureMediaIds = nullptr);
 
     bool CollectBuses(const ProjectData& project,
-                      HarkenEditor::Bridge::PackBuildSession& builder,
+                      harken::studio::bridge::PackBuildSession& builder,
                       PlatformScope scope, QString* errorOut);
     bool CollectSends(const ProjectData& project,
-                      HarkenEditor::Bridge::PackBuildSession& builder,
+                      harken::studio::bridge::PackBuildSession& builder,
                        PlatformScope scope, QString* errorOut);
     void CollectAttenuations(const ProjectData& project,
-                                     HarkenEditor::Bridge::PackBuildSession& builder);
+                                     harken::studio::bridge::PackBuildSession& builder);
     bool CollectEffectPresets(const ProjectData& project,
-                             HarkenEditor::Bridge::PackBuildSession& builder,
+                             harken::studio::bridge::PackBuildSession& builder,
                              QString* errorOut);
     bool CollectTypedBindings(const ProjectData& project,
-                              HarkenEditor::Bridge::PackBuildSession& builder,
-                              const std::set<harkenstudio::ObjectId>* allowedRuntimeObjectIds = nullptr,
+                              harken::studio::bridge::PackBuildSession& builder,
+                              const std::set<harken::studio::types::ObjectId>* allowedRuntimeObjectIds = nullptr,
                               QString* errorOut = nullptr,
                               PackBuildContext* buildContext = nullptr);
     void CollectReferencedMedia(const ProjectData& project,

@@ -10,7 +10,7 @@
 
 #include <string>
 
-namespace VNH {
+namespace harken::hub {
 
 namespace {
 

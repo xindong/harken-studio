@@ -3,7 +3,7 @@
 #include "Core/ProjectTypes.h"
 #include "Core/PropertyDescriptor.h"
 
-namespace VNX {
+namespace harken::studio {
 
 inline PropertyDescriptor notesInspectorDescriptor()
 {

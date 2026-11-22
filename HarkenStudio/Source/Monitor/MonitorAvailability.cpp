@@ -3,7 +3,7 @@
 
 #include <cstddef>
 
-namespace VNX {
+namespace harken::studio {
 namespace Monitor {
 namespace {
 
@@ -421,4 +421,4 @@ const MonitorAvailabilityLayerResult& availabilityLayer(
 }
 
 } // namespace Monitor
-} // namespace VNX
+} // namespace harken::studio

@@ -6,7 +6,7 @@
 #include <QString>
 #include <QVector>
 
-namespace VNX {
+namespace harken::studio {
 
 class MonitorBusesModel : public QAbstractTableModel
 {
@@ -46,4 +46,4 @@ private:
     QVector<Monitor::BusMonitorRow> rows_;
 };
 
-} // namespace VNX
+} // namespace harken::studio

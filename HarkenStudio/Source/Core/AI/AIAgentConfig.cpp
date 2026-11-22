@@ -4,7 +4,7 @@
 
 #include <utility>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 constexpr int kDefaultMaxTokens = 1024;
 constexpr int kDefaultContextWindowTokens = 128000;

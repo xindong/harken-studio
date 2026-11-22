@@ -5,7 +5,7 @@
 
 #include <functional>
 
-namespace VNX {
+namespace harken::studio {
 
 class ParameterBinding : public QObject
 {

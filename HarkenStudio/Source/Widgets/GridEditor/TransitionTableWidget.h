@@ -14,7 +14,7 @@ class QComboBox;
 class QKeyEvent;
 class QToolButton;
 
-namespace VNX {
+namespace harken::studio {
 
 struct ProjectItem;
 class TableWidget;

@@ -65,7 +65,7 @@ public:
         return frame + *delay < start ? QueueConditionalProofStatus::MissedDeadline
                                      : QueueConditionalProofStatus::ReadyToActivate;
     }
-    Plan03GroupSliceIdentity GroupIdentity(std::uint32_t slice) const noexcept {
+    ScheduleGroupSliceIdentity GroupIdentity(std::uint32_t slice) const noexcept {
         for (std::uint32_t i = 0; i < groupCount_; ++i)
             if (groups_[i].sliceIndex == slice) return groups_[i];
         return {};
@@ -87,14 +87,14 @@ public:
                 decision.consumedSlices != 0) return false;
         } else if (!decisions_->IsOpen(decision_)) return false;
         for (std::uint32_t i = 0; i < groupCount_; ++i) {
-            Plan03PageGroupView group{};
-            if (!pool_->ResolvePlan03GroupSliceProducer(groups_[i], &group) || !Owns(group) ||
+            SchedulePageGroupView group{};
+            if (!pool_->ResolveScheduleGroupSliceProducer(groups_[i], &group) || !Owns(group) ||
                 group.lease->Capture().state != AudioSliceState::Ready) return false;
         }
         return true;
     }
 
-    bool ReserveGroup(const Plan03GroupSliceInput& input,
+    bool ReserveGroup(const ScheduleGroupSliceInput& input,
         const TimelineArmTable& arms) noexcept {
         if (!Active() || placed_ || prepared_ || groupCount_ == groups_.size() ||
             input.decision.slot != decision_.slot || input.decision.generation != decision_.generation ||
@@ -140,7 +140,7 @@ private:
         if (!Active() || prepared_ || groupCount_ == 0 ||
             (!placed_ && !PreparePlacement(events, count)) ||
             !lane_->PinArms(handle_, arms) ||
-            !lane_->PinGroups(handle_, *pool_, *decisions_, pool_->MaxPlan03GroupHeadersPerPage())) return false;
+            !lane_->PinGroups(handle_, *pool_, *decisions_, pool_->MaxScheduleGroupHeadersPerPage())) return false;
         conditional_ = conditional;
         prepared_ = true;
         return true;
@@ -156,10 +156,10 @@ public:
         if (out == nullptr || *out != nullptr || !Active() || !prepared_ || published_ ||
             groupCount_ != 1 || !queues_->ProvePendingConditionalIdentity(queue_, conditional_, decision_))
             return false;
-        Plan03PageGroupView group{};
+        SchedulePageGroupView group{};
         const auto* attempt = lane_->Resolve(handle_);
         if (attempt == nullptr || attempt->eventCount != 1 ||
-            !pool_->ResolvePlan03GroupSliceProducer(groups_[0], &group) || !Owns(group) ||
+            !pool_->ResolveScheduleGroupSliceProducer(groups_[0], &group) || !Owns(group) ||
             group.memberCount != 1 || group.sourceControlCount != 0 || group.lease == nullptr ||
             group.lease->Capture().state != AudioSliceState::Ready) return false;
         const auto actual = group.members[0];
@@ -194,7 +194,7 @@ public:
     }
 
     std::size_t CaptureGroups(const ImmediateActionLane& lane, ImmediateLaneHandle handle,
-        const ScheduledTransactionPool& pool, Plan03ImmediateLaneGroupDescriptor* out,
+        const ScheduledTransactionPool& pool, ScheduleImmediateLaneGroupDescriptor* out,
         std::size_t capacity) const noexcept {
         if (&lane != lane_ || &pool != pool_ || handle.slot != handle_.slot ||
             handle.generation != handle_.generation || !queueLifetime_.Valid() ||
@@ -213,7 +213,7 @@ public:
         return groupCount_;
     }
 
-    bool Owns(const Plan03PageGroupView& group) const noexcept {
+    bool Owns(const SchedulePageGroupView& group) const noexcept {
         if (!Active() || group.frontier != nullptr || group.lease == nullptr ||
             group.identity.decision.slot != decision_.slot ||
             group.identity.decision.generation != decision_.generation) return false;
@@ -292,7 +292,7 @@ private:
     QueueInstanceToken queue_{};
     ConditionalQueueVersionToken conditional_{};
     DecisionToken decision_{};
-    std::array<Plan03GroupSliceIdentity, 2> groups_{};
+    std::array<ScheduleGroupSliceIdentity, 2> groups_{};
     std::uint32_t groupCount_ = 0;
     std::uint64_t root_ = 0, domain_ = 0;
     bool placed_ = false, prepared_ = false, published_ = false;

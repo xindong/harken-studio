@@ -17,7 +17,7 @@
 
 namespace {
 
-using Service = VNX::UnityIntegrationService;
+using Service = harken::hub::unity::UnityIntegrationService;
 
 void writeFile(const QString& path, const QByteArray& contents)
 {
@@ -220,10 +220,10 @@ TEST_F(UnityIntegrationTest, FailedInstallationKeepsThePreviousVersionUntilItIsR
 #endif
     }
     EXPECT_FALSE(Service::previousVersionBackup(project).isEmpty());
-    VNH::EngineTargetRecord record;
-    record.engineKind = VNH::EngineKind::Unity;
+    harken::hub::EngineTargetRecord record;
+    record.engineKind = harken::hub::EngineKind::Unity;
     record.canonicalRoot = project;
-    EXPECT_TRUE(VNH::EngineTargetProbe::observe(record).canRestorePrevious);
+    EXPECT_TRUE(harken::hub::EngineTargetProbe::observe(record).canRestorePrevious);
 
     const auto preview = restore(true);
     ASSERT_TRUE(preview.success) << diagnostics(preview).toStdString();
@@ -233,7 +233,7 @@ TEST_F(UnityIntegrationTest, FailedInstallationKeepsThePreviousVersionUntilItIsR
     EXPECT_TRUE(restored.previousRestored);
     EXPECT_EQ(tree(installed), original);
     EXPECT_TRUE(Service::previousVersionBackup(project).isEmpty());
-    EXPECT_FALSE(VNH::EngineTargetProbe::observe(record).canRestorePrevious);
+    EXPECT_FALSE(harken::hub::EngineTargetProbe::observe(record).canRestorePrevious);
     EXPECT_FALSE(restore().success);
 }
 
@@ -320,7 +320,7 @@ TEST_F(UnityIntegrationTest, BlocksPackageManagerReferencesButIgnoresCaches)
 {
     makeCompleteIntegration(path("Library/PackageCache/com.harken.core@unused"));
     makeCompleteIntegration(path("Backups/SDK"));
-    EXPECT_TRUE(VNX::UnityInstallation::discover(project).installations.isEmpty());
+    EXPECT_TRUE(harken::hub::unity::UnityInstallation::discover(project).installations.isEmpty());
     const QString manifest = path("Packages/manifest.json");
     writeFile(manifest, R"({"dependencies":{"com.harken.core":"1.0.0"}})");
     EXPECT_FALSE(install().success);
@@ -334,7 +334,7 @@ TEST_F(UnityIntegrationTest, MovedInstallationIsUpdatedInPlace)
 {
     ASSERT_TRUE(install().success);
     ASSERT_TRUE(QDir().rename(path("Packages/com.harken.core"), path("Assets/RenamedAudio")));
-    const auto scan = VNX::UnityInstallation::discover(project);
+    const auto scan = harken::hub::unity::UnityInstallation::discover(project);
     ASSERT_TRUE(scan.errors.isEmpty());
     ASSERT_EQ(scan.installations.size(), 1);
     EXPECT_EQ(scan.installations.front().path, path("Assets/RenamedAudio"));
@@ -395,12 +395,12 @@ TEST(UnityProjectAccess, DistinguishesStaleFilesFromLiveLocksWithoutChangingThem
     const QString path = QDir(project).filePath("Temp/UnityLockfile");
     QString error;
     bool isOpen = true;
-    EXPECT_TRUE(VNX::checkUnityProjectClosed(project, &error, &isOpen));
+    EXPECT_TRUE(harken::hub::unity::checkUnityProjectClosed(project, &error, &isOpen));
     EXPECT_FALSE(isOpen);
     EXPECT_FALSE(QFileInfo::exists(path));
     writeFile(path, "stale lock contents");
     const auto modified = QFileInfo(path).lastModified();
-    EXPECT_TRUE(VNX::checkUnityProjectClosed(project, &error));
+    EXPECT_TRUE(harken::hub::unity::checkUnityProjectClosed(project, &error));
     QStringList modes{QStringLiteral("exclusive")};
 #ifndef Q_OS_WIN
     modes << QStringLiteral("record");
@@ -408,11 +408,11 @@ TEST(UnityProjectAccess, DistinguishesStaleFilesFromLiveLocksWithoutChangingThem
     for (const QString& mode : modes) {
         HarkenHubTest::UnityProjectLock unityLock;
         ASSERT_TRUE(unityLock.lock(project, mode));
-        EXPECT_FALSE(VNX::checkUnityProjectClosed(project, &error, &isOpen));
+        EXPECT_FALSE(harken::hub::unity::checkUnityProjectClosed(project, &error, &isOpen));
         EXPECT_TRUE(isOpen);
         EXPECT_TRUE(error.contains("This Unity project is open."));
         ASSERT_TRUE(unityLock.unlock());
-        EXPECT_TRUE(VNX::checkUnityProjectClosed(project, &error, &isOpen));
+        EXPECT_TRUE(harken::hub::unity::checkUnityProjectClosed(project, &error, &isOpen));
         EXPECT_FALSE(isOpen);
         EXPECT_TRUE(error.isEmpty());
     }
@@ -420,14 +420,14 @@ TEST(UnityProjectAccess, DistinguishesStaleFilesFromLiveLocksWithoutChangingThem
     EXPECT_EQ(QFileInfo(path).lastModified(), modified);
     ASSERT_TRUE(QFile::remove(path));
     ASSERT_TRUE(QDir().mkpath(path));
-    EXPECT_FALSE(VNX::checkUnityProjectClosed(project, &error, &isOpen));
+    EXPECT_FALSE(harken::hub::unity::checkUnityProjectClosed(project, &error, &isOpen));
     EXPECT_FALSE(isOpen);
     EXPECT_TRUE(error.startsWith("Cannot check whether this Unity project is open:"));
     makeUnityProject(project);
-    VNH::UnityIntegrationRequest request;
+    harken::hub::UnityIntegrationRequest request;
     request.unityProjectPath = project;
     request.removeIntegration = true;
-    const auto result = VNH::HubUnityIntegrationService::run(request);
+    const auto result = harken::hub::HubUnityIntegrationService::run(request);
     qunsetenv("HARKEN_HUB_USER_ROOT");
     ASSERT_FALSE(result.steps.isEmpty());
     EXPECT_EQ(result.steps.front().cause, error);

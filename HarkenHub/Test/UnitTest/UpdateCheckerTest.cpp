@@ -12,8 +12,8 @@
 
 #include <functional>
 
-using VNH::UpdateChecker;
-using VNH::UpdateCheckResult;
+using harken::hub::UpdateChecker;
+using harken::hub::UpdateCheckResult;
 using HarkenHubTest::baseManifestPayload;
 using HarkenHubTest::latestResponseJson;
 using HarkenHubTest::makeKeypair;
@@ -69,7 +69,7 @@ QByteArray releaseResponseJson(const QList<QJsonObject>& payloads,
         entry[QStringLiteral("version")] = version;
         entry[QStringLiteral("file")] =
             QStringLiteral("release/harken/%1/%2/run12-abcd1234-20261008T100000Z/Harken.zip")
-                .arg(VNH::ServerEndpoints::hostChannel(), version);
+                .arg(harken::hub::ServerEndpoints::hostChannel(), version);
         entry[QStringLiteral("integrity")] = QJsonDocument::fromJson(
             signEnvelope(
                 QJsonDocument(payload).toJson(QJsonDocument::Compact), keys))
@@ -77,7 +77,7 @@ QByteArray releaseResponseJson(const QList<QJsonObject>& payloads,
         versions.append(entry);
     }
     QJsonObject channels;
-    channels[VNH::ServerEndpoints::hostChannel()] = versions;
+    channels[harken::hub::ServerEndpoints::hostChannel()] = versions;
     QJsonObject response;
     response[QStringLiteral("schema_version")] = 1;
     response[QStringLiteral("channels")] = channels;
@@ -111,15 +111,15 @@ protected:
         UpdateChecker::Options options;
         options.latestUrl = server.packageUrl();
         options.product = QStringLiteral("harken");
-        options.channel = VNH::ServerEndpoints::hostChannel();
+        options.channel = harken::hub::ServerEndpoints::hostChannel();
         options.manifestPublicKey = keys.publicKey;
         options.transferTimeoutMs = 2000;
         return options;
     }
 
-    static VNH::BackoffPolicy fastBackoff()
+    static harken::hub::BackoffPolicy fastBackoff()
     {
-        VNH::BackoffPolicy policy;
+        harken::hub::BackoffPolicy policy;
         policy.baseDelayMs = 1;
         policy.maxDelayMs = 4;
         return policy;
@@ -495,11 +495,11 @@ TEST_F(UpdateCheckerTest, IgnoresInvalidEntryBehindCurrentRelease)
         releaseResponseJson({current, historical}, keys)).object();
     QJsonObject channels = response[QStringLiteral("channels")].toObject();
     QJsonArray versions =
-        channels[VNH::ServerEndpoints::hostChannel()].toArray();
+        channels[harken::hub::ServerEndpoints::hostChannel()].toArray();
     QJsonObject invalidHistory = versions[1].toObject();
     invalidHistory[QStringLiteral("integrity")] = QJsonObject();
     versions[1] = invalidHistory;
-    channels[VNH::ServerEndpoints::hostChannel()] = versions;
+    channels[harken::hub::ServerEndpoints::hostChannel()] = versions;
     response[QStringLiteral("channels")] = channels;
     server.setPayload(QJsonDocument(response).toJson(QJsonDocument::Compact),
                       QByteArrayLiteral("\"invalid-history\""));
@@ -523,11 +523,11 @@ TEST_F(UpdateCheckerTest, UnsignedVersionMismatchIsRejected)
     QJsonObject response = QJsonDocument::fromJson(
         latestResponseJson(envelope)).object();
     QJsonObject channels = response[QStringLiteral("channels")].toObject();
-    QJsonArray versions = channels[VNH::ServerEndpoints::hostChannel()].toArray();
+    QJsonArray versions = channels[harken::hub::ServerEndpoints::hostChannel()].toArray();
     QJsonObject entry = versions[0].toObject();
     entry[QStringLiteral("version")] = QStringLiteral("9.9.9");
     versions[0] = entry;
-    channels[VNH::ServerEndpoints::hostChannel()] = versions;
+    channels[harken::hub::ServerEndpoints::hostChannel()] = versions;
     response[QStringLiteral("channels")] = channels;
     server.setPayload(QJsonDocument(response).toJson(QJsonDocument::Compact),
                       QByteArrayLiteral("\"mismatch\""));
@@ -550,12 +550,12 @@ TEST_F(UpdateCheckerTest, ObjectPathOutsideSignedReleaseIsRejected)
     QJsonObject response = QJsonDocument::fromJson(
         latestResponseJson(envelope)).object();
     QJsonObject channels = response[QStringLiteral("channels")].toObject();
-    QJsonArray versions = channels[VNH::ServerEndpoints::hostChannel()].toArray();
+    QJsonArray versions = channels[harken::hub::ServerEndpoints::hostChannel()].toArray();
     QJsonObject entry = versions[0].toObject();
     entry[QStringLiteral("file")] =
         QStringLiteral("release/hub/windows-x64/1.4.0/run12.abcd1234/Harken.zip");
     versions[0] = entry;
-    channels[VNH::ServerEndpoints::hostChannel()] = versions;
+    channels[harken::hub::ServerEndpoints::hostChannel()] = versions;
     response[QStringLiteral("channels")] = channels;
     server.setPayload(QJsonDocument(response).toJson(QJsonDocument::Compact),
                       QByteArrayLiteral("\"outside\""));

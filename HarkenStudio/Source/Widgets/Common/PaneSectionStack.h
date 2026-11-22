@@ -5,7 +5,7 @@
 
 class QSplitter;
 
-namespace VNX {
+namespace harken::studio {
 
 class PaneSection;
 

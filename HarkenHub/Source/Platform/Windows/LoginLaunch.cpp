@@ -4,7 +4,7 @@
 #include <QDir>
 #include <QSettings>
 
-namespace VNH {
+namespace harken::hub {
 
 namespace {
 

@@ -21,7 +21,7 @@
 #include <shlobj.h>
 #include <wrl/client.h>
 
-namespace VNH {
+namespace harken::hub {
 
 QString saveShellIcon(const QIcon& icon, const QString& root)
 {

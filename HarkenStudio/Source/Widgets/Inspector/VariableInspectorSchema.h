@@ -3,7 +3,7 @@
 
 #include "Core/PropertyDescriptor.h"
 
-namespace VNX {
+namespace harken::studio {
 
 const PropertySchema& variableInspectorSchema();
 

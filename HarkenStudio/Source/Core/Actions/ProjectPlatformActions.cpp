@@ -10,7 +10,7 @@
 #include "../Components/VMixNode.h"
 #include "../SoundSourceSemantics.h"
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 namespace Platforms = ProjectPlatformSemantics;

@@ -16,7 +16,7 @@
 #include <array>
 #include <memory>
 
-namespace VNX {
+namespace harken::studio {
 
 template <typename Tick>
 QStringList meterTickLabels(const QVector<Tick>& ticks)

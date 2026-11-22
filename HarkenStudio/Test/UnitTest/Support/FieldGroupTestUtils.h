@@ -7,18 +7,18 @@
 
 namespace HarkenTest {
 namespace FieldGroupPlatformIds {
-inline constexpr harkenprojectschema::AuthoringGuid Windows{UINT64_C(0x7e69e0e28d1552df), UINT64_C(0xa609ab96fff38750)};
-inline constexpr harkenprojectschema::AuthoringGuid macOS{UINT64_C(0xa20e7261208a5332), UINT64_C(0xb0018cc1a2d81428)};
-inline constexpr harkenprojectschema::AuthoringGuid Linux{UINT64_C(0x3d58f8d1ec2a5f83), UINT64_C(0x94361ee7ca758210)};
-inline constexpr harkenprojectschema::AuthoringGuid Android{UINT64_C(0x97cb29eb309051cf), UINT64_C(0x90ee15f88ff671c5)};
-inline constexpr harkenprojectschema::AuthoringGuid iOS{UINT64_C(0x19587786cb985146), UINT64_C(0x814a088cee6f47c9)};
-inline constexpr harkenprojectschema::AuthoringGuid Universal{};
+inline constexpr harken::studio::project_schema::AuthoringGuid Windows{UINT64_C(0x7e69e0e28d1552df), UINT64_C(0xa609ab96fff38750)};
+inline constexpr harken::studio::project_schema::AuthoringGuid macOS{UINT64_C(0xa20e7261208a5332), UINT64_C(0xb0018cc1a2d81428)};
+inline constexpr harken::studio::project_schema::AuthoringGuid Linux{UINT64_C(0x3d58f8d1ec2a5f83), UINT64_C(0x94361ee7ca758210)};
+inline constexpr harken::studio::project_schema::AuthoringGuid Android{UINT64_C(0x97cb29eb309051cf), UINT64_C(0x90ee15f88ff671c5)};
+inline constexpr harken::studio::project_schema::AuthoringGuid iOS{UINT64_C(0x19587786cb985146), UINT64_C(0x814a088cee6f47c9)};
+inline constexpr harken::studio::project_schema::AuthoringGuid Universal{};
 }
 
 inline constexpr std::array fieldGroupPlatforms{
     FieldGroupPlatformIds::Windows, FieldGroupPlatformIds::macOS, FieldGroupPlatformIds::Linux, FieldGroupPlatformIds::Android, FieldGroupPlatformIds::iOS};
 
-inline std::string_view fieldGroupPlatformIdString(harkenprojectschema::AuthoringGuid id)
+inline std::string_view fieldGroupPlatformIdString(harken::studio::project_schema::AuthoringGuid id)
 {
     if (id == FieldGroupPlatformIds::Windows) return "7e69e0e2-8d15-52df-a609-ab96fff38750";
     if (id == FieldGroupPlatformIds::macOS) return "a20e7261-208a-5332-b001-8cc1a2d81428";

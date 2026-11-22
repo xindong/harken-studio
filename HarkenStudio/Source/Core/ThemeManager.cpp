@@ -23,7 +23,7 @@
 
 #include <utility>
 
-namespace VNX {
+namespace harken::studio {
 
 ThemeManager& ThemeManager::instance()
 {

@@ -11,7 +11,7 @@
 #include <atomic>
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 
 struct ConversionResult
 {
@@ -76,9 +76,9 @@ public:
                                    QString* contentHash = nullptr);
 
 signals:
-    void conversionProgress(uint32_t sourceID, VNX::ProjectPlatformId platform, int percent);
-    void conversionComplete(uint32_t sourceID, VNX::ProjectPlatformId platform, const QString& cachePath);
-    void conversionFailed(uint32_t sourceID, VNX::ProjectPlatformId platform, const QString& error);
+    void conversionProgress(uint32_t sourceID, harken::studio::ProjectPlatformId platform, int percent);
+    void conversionComplete(uint32_t sourceID, harken::studio::ProjectPlatformId platform, const QString& cachePath);
+    void conversionFailed(uint32_t sourceID, harken::studio::ProjectPlatformId platform, const QString& error);
 
 private:
     struct JobState {

@@ -13,7 +13,7 @@
 #include <algorithm>
 #include <harken_studio_build/PackFormatV2.h>
 
-namespace harkenstudiobuild {
+namespace harken::studio::build {
 namespace {
 
 struct Reader {

@@ -1,7 +1,7 @@
 #include "PlayableLifecycleProjection.h"
 #include "Monitor/MonitorTypes.h"
 
-namespace VNX {
+namespace harken::studio {
 namespace Monitor {
 
 bool playableAsOfStatePublished()
@@ -34,4 +34,4 @@ MonitorPlayablesProjection projectPlayablesFace(
 }
 
 } // namespace Monitor
-} // namespace VNX
+} // namespace harken::studio

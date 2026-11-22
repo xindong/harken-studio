@@ -8,7 +8,7 @@
 class QButtonGroup;
 class QToolButton;
 
-namespace VNX {
+namespace harken::studio {
 
 class SegmentedControl final : public QWidget
 {

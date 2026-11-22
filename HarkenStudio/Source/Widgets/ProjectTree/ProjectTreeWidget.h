@@ -9,7 +9,7 @@
 
 class QMouseEvent;
 
-namespace VNX {
+namespace harken::studio {
 
 class ProjectTreePanel;
 

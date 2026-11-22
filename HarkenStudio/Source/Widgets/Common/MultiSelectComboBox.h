@@ -6,7 +6,7 @@
 
 class QStandardItemModel;
 
-namespace VNX {
+namespace harken::studio {
 
 class MultiSelectComboBox final : public QComboBox
 {

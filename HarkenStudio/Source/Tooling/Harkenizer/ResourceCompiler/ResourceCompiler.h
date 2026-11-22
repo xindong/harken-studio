@@ -14,27 +14,8 @@
 
 namespace harkenizer::resourcecompiler {
 
-enum class Container { Pack, Stream };
-
-struct Request {
-    std::vector<std::string> manifestPaths;
-    Container container = Container::Pack;
-    bool disableCache = false;
-    std::string reportPath;
-    std::string cachePath;
-    std::string emitManifestPath;
-};
-
-struct Result {
-    bool success = false;
-    std::string error;
-    std::string reportPath;
-    std::string outputLog;
-    std::string diagnosticLog;
-};
-
 struct MediaInput {
-    harkenstudio::ObjectId id{};
+    harken::studio::types::ObjectId id{};
     std::string sourcePath;
     std::string contentHash;
     std::shared_ptr<const std::vector<float>> samplesOwner;
@@ -70,7 +51,7 @@ private:
 struct CompiledEntry {
     std::uint32_t kind = 0;
     std::uint32_t vintage = 1;
-    harkenstudio::ObjectId id{};
+    harken::studio::types::ObjectId id{};
     std::uint64_t relationOrdinal = 0;
     std::vector<std::uint8_t> payload;
     std::shared_ptr<const std::vector<float>> media;
@@ -80,7 +61,5 @@ bool compileEntries(const std::string& logicSections, bool resident,
                     const std::vector<MediaInput>& media,
                     std::vector<CompiledEntry>* entries, std::string* error,
                     MediaCache* mediaCache = nullptr);
-
-Result compile(const Request& request);
 
 }

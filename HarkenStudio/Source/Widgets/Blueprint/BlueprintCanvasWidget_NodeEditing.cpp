@@ -19,7 +19,7 @@
 #include <QTimer>
 #include "Core/ToolTip.h"
 
-namespace VNX {
+namespace harken::studio {
 
 void BlueprintCanvasWidget::initializeNodeEditors_()
 {

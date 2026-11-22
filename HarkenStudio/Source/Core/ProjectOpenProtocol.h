@@ -5,7 +5,7 @@
 #include <QJsonObject>
 #include <QString>
 
-namespace VNX {
+namespace harken::studio {
 
 inline constexpr int kProjectOpenAnalysisProtocolVersion = 1;
 

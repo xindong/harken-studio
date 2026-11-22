@@ -15,7 +15,7 @@
 #include <array>
 #include <cmath>
 
-namespace VNX {
+namespace harken::studio {
 
 FilterResponseCanvas::FilterResponseCanvas(QWidget* parent)
     : QWidget(parent)

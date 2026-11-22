@@ -387,7 +387,7 @@ def parse_enum_values(clean: str) -> dict[str, int]:
     ):
         for item in split_top_level(enum_match.group(1), ","):
             match = re.fullmatch(
-                r"(VN_[A-Z0-9_]+)\s*=\s*(.+)",
+                r'(VN_[A-Z0-9_]+)(?:\s+HARKEN_DEPRECATED\("[^"]*"\))?\s*=\s*(.+)',
                 item.strip(),
                 flags=re.DOTALL,
             )
@@ -1404,6 +1404,7 @@ def build_manifest(repo_root: Path) -> dict[str, Any]:
                     table["abi"]["callingConvention"],
                 ),
                 "parameters": parameters,
+                **{key: function[key] for key in ("deprecated", "deprecatedDescriptors") if key in function},
             })
     native_abi = {
         "platform": {

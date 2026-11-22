@@ -1,7 +1,7 @@
 #pragma once
 #include "TitleBarBase.h"
 
-namespace VNX {
+namespace harken::studio {
 
 class FloatingTitleBar : public TitleBarBase {
     Q_OBJECT

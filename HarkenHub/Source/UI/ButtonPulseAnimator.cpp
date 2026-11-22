@@ -7,7 +7,7 @@
 #include <QEasingCurve>
 #include <QPalette>
 
-namespace VNH {
+namespace harken::hub {
 
 ButtonPulseAnimator::ButtonPulseAnimator(QObject* parent)
     : QObject(parent)

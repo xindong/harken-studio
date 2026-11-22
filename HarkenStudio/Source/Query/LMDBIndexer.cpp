@@ -10,7 +10,7 @@
 #include <algorithm>
 #include <cstring>
 
-namespace VNX {
+namespace harken::studio {
 
 
 static constexpr uint64_t kFNV64Offset = 14695981039346656037ULL;

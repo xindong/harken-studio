@@ -4,13 +4,13 @@
 
 TEST(PackGenerationRecord, ClearingSessionCancelsWorkAndInvalidatesItsEvents)
 {
-    auto& store = VNX::PackGenerationRecordStore::instance();
+    auto& store = harken::studio::PackGenerationRecordStore::instance();
     store.clear();
     const auto cancel = std::make_shared<std::atomic_bool>(false);
     const auto oldRun = store.beginProgress(cancel);
-    VNX::PackGenerationProgress progress{
+    harken::studio::PackGenerationProgress progress{
         QStringLiteral("platform"), QStringLiteral("English"), QStringLiteral("a:123"),
-        41, VNX::PackGenerationStage::Compiling};
+        41, harken::studio::PackGenerationStage::Compiling};
     store.updateProgress(oldRun, progress);
     store.clear();
     EXPECT_TRUE(cancel->load());
@@ -30,16 +30,16 @@ TEST(PackGenerationRecord, ClearingSessionCancelsWorkAndInvalidatesItsEvents)
 
 TEST(PackGenerationRecord, ObservationsFollowActiveRunAndTrackedUnits)
 {
-    auto& store = VNX::PackGenerationRecordStore::instance();
+    auto& store = harken::studio::PackGenerationRecordStore::instance();
     store.clear();
     const auto run = store.beginProgress(std::make_shared<std::atomic_bool>(false));
-    VNX::PackGenerationProgress progress{
+    harken::studio::PackGenerationProgress progress{
         QStringLiteral("platform"), QStringLiteral("English"), QStringLiteral("a:123"),
-        0, VNX::PackGenerationStage::Queued};
-    VNX::PackBuildObservation global{progress.platform, {}, {},
-        VNX::PackBuildObservationStage::CompilingProject};
-    VNX::PackBuildObservation unit{progress.platform, progress.language, progress.unitKey,
-        VNX::PackBuildObservationStage::Prepared, QStringLiteral("Action")};
+        0, harken::studio::PackGenerationStage::Queued};
+    harken::studio::PackBuildObservation global{progress.platform, {}, {},
+        harken::studio::PackBuildObservationStage::CompilingProject};
+    harken::studio::PackBuildObservation unit{progress.platform, progress.language, progress.unitKey,
+        harken::studio::PackBuildObservationStage::Prepared, QStringLiteral("Action")};
     store.updateObservation(run, unit);
     EXPECT_EQ(store.findObservation(unit.platform, unit.language, unit.unitKey), nullptr);
     store.updateProgress(run, progress);
@@ -47,16 +47,16 @@ TEST(PackGenerationRecord, ObservationsFollowActiveRunAndTrackedUnits)
     store.updateObservation(run, unit);
     ASSERT_NE(store.globalObservation(), nullptr);
     ASSERT_NE(store.findObservation(unit.platform, unit.language, unit.unitKey), nullptr);
-    progress.stage = VNX::PackGenerationStage::Compiling;
+    progress.stage = harken::studio::PackGenerationStage::Compiling;
     progress.percent = 40;
     store.updateProgress(run, progress);
     ASSERT_NE(store.findObservation(unit.platform, unit.language, unit.unitKey), nullptr);
     EXPECT_EQ(store.findProgress(unit.platform, unit.language, unit.unitKey)->stage, progress.stage);
     EXPECT_EQ(store.findProgress(unit.platform, unit.language, unit.unitKey)->percent, progress.percent);
-    progress.stage = VNX::PackGenerationStage::Writing;
+    progress.stage = harken::studio::PackGenerationStage::Writing;
     store.updateProgress(run, progress);
     EXPECT_EQ(store.findObservation(unit.platform, unit.language, unit.unitKey), nullptr);
-    progress.stage = VNX::PackGenerationStage::Complete;
+    progress.stage = harken::studio::PackGenerationStage::Complete;
     store.updateProgress(run, progress);
     store.updateObservation(run, unit);
     EXPECT_EQ(store.findObservation(unit.platform, unit.language, unit.unitKey), nullptr);
@@ -69,7 +69,7 @@ TEST(PackGenerationRecord, ObservationsFollowActiveRunAndTrackedUnits)
     store.updateObservation(nextRun, unit);
     EXPECT_EQ(store.globalObservation(), nullptr);
     EXPECT_EQ(store.findObservation(unit.platform, unit.language, unit.unitKey), nullptr);
-    progress.stage = VNX::PackGenerationStage::Queued;
+    progress.stage = harken::studio::PackGenerationStage::Queued;
     store.updateProgress(nextRun, progress);
     store.updateObservation(nextRun, unit);
     ASSERT_NE(store.findObservation(unit.platform, unit.language, unit.unitKey), nullptr);
@@ -78,19 +78,19 @@ TEST(PackGenerationRecord, ObservationsFollowActiveRunAndTrackedUnits)
 
 TEST(PackGenerationRecord, EndingSessionsClearsGlobalAndUnitObservations)
 {
-    auto& store = VNX::PackGenerationRecordStore::instance();
+    auto& store = harken::studio::PackGenerationRecordStore::instance();
     for (int ending = 0; ending < 3; ++ending) {
         SCOPED_TRACE(ending);
         store.clear();
         const auto cancel = std::make_shared<std::atomic_bool>(false);
         const auto run = store.beginProgress(cancel);
-        VNX::PackGenerationProgress progress{
+        harken::studio::PackGenerationProgress progress{
             QStringLiteral("platform"), {}, QStringLiteral("init"),
-            5, VNX::PackGenerationStage::Preparing};
-        VNX::PackBuildObservation global{progress.platform, {}, {},
-            VNX::PackBuildObservationStage::PreparingMedia};
-        VNX::PackBuildObservation unit{progress.platform, progress.language, progress.unitKey,
-            VNX::PackBuildObservationStage::Prepared, QStringLiteral("Init")};
+            5, harken::studio::PackGenerationStage::Preparing};
+        harken::studio::PackBuildObservation global{progress.platform, {}, {},
+            harken::studio::PackBuildObservationStage::PreparingMedia};
+        harken::studio::PackBuildObservation unit{progress.platform, progress.language, progress.unitKey,
+            harken::studio::PackBuildObservationStage::Prepared, QStringLiteral("Init")};
         store.updateProgress(run, progress);
         store.updateObservation(run, global);
         store.updateObservation(run, unit);

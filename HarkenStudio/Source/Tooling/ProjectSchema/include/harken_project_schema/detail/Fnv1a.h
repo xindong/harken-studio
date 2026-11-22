@@ -3,7 +3,7 @@
 
 #include <cstdint>
 
-namespace harkenprojectschema::detail {
+namespace harken::studio::project_schema::detail {
 
 inline constexpr std::uint64_t kFnv1a64OffsetBasis =
     14695981039346656037ull;
@@ -14,6 +14,6 @@ inline void Fnv1a64HashByte(std::uint64_t* state, std::uint8_t byte) {
     *state *= kFnv1a64Prime;
 }
 
-}  // namespace harkenprojectschema::detail
+}  // namespace harken::studio::project_schema::detail
 
 #endif  // HARKEN_PROJECT_SCHEMA_DETAIL_FNV1A_H

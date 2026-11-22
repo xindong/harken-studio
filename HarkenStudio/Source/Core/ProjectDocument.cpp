@@ -14,7 +14,7 @@
 #include <initializer_list>
 #include <utility>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 

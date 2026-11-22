@@ -6,14 +6,14 @@
 #include <cstdint>
 #include <memory>
 
-namespace harkenprojectschema {
+namespace harken::studio::project_schema {
 
 struct CompileTargetProfileV1
 {
     std::uint32_t vintage = 1;
     std::uint32_t sampleRate = 48000;
-    harkenstudio::ChannelLayout mixLayout = harkenstudio::kChannelLayoutStereo;
-    harkenstudio::ChannelLayout deviceLayout = harkenstudio::kChannelLayoutStereo;
+    harken::studio::types::ChannelLayout mixLayout = harken::studio::types::kChannelLayoutStereo;
+    harken::studio::types::ChannelLayout deviceLayout = harken::studio::types::kChannelLayoutStereo;
     std::uint64_t capabilityMask = 0;
     std::uint64_t fingerprint = 0;
 };
@@ -50,10 +50,10 @@ std::uint64_t compileTargetProfileFingerprintV1(
 std::shared_ptr<const CompileTargetProfileV1> MakeCompileTargetProfileV1(
     std::uint32_t vintage,
     std::uint32_t sampleRate,
-    harkenstudio::ChannelLayout mixLayout,
-    harkenstudio::ChannelLayout deviceLayout,
+    harken::studio::types::ChannelLayout mixLayout,
+    harken::studio::types::ChannelLayout deviceLayout,
     std::uint64_t capabilityMask) noexcept;
 
-}  // namespace harkenprojectschema
+}  // namespace harken::studio::project_schema
 
 #endif  // HARKEN_PROJECT_SCHEMA_COMPILE_TARGET_PROFILE_H

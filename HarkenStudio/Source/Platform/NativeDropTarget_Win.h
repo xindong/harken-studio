@@ -12,7 +12,7 @@
 #include <functional>
 #include <atomic>
 
-namespace VNX {
+namespace harken::studio {
 
 struct NativeDropInfo {
     QStringList paths;

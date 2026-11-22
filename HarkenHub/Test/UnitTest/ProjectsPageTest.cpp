@@ -39,7 +39,7 @@ TEST(ProjectsPageTest, RefreshReturnsBeforeMetadataReadsAndUpdatesRecommendation
         qunsetenv("HARKEN_HUB_USER_ROOT");
         qunsetenv("HARKEN_HUB_MACHINE_ROOT");
     });
-    VNH::ProjectStore store;
+    harken::hub::ProjectStore store;
     ASSERT_TRUE(store.open(dir.filePath("projects.db")));
     const auto path = dir.filePath("Demo.hsp");
     const auto writeVersion = [&](const QString& version) {
@@ -50,11 +50,11 @@ TEST(ProjectsPageTest, RefreshReturnsBeforeMetadataReadsAndUpdatesRecommendation
             {"type", "project.root"}, {"savedStudioVersion", version}}}}).toJson()) > 0;
     };
     ASSERT_TRUE(writeVersion("1.0"));
-    VNH::ProjectRecord record;
+    harken::hub::ProjectRecord record;
     record.canonicalPath = path;
     record.displayName = "Demo";
     ASSERT_TRUE(store.addProject(record));
-    VNH::InstalledVersion first;
+    harken::hub::InstalledVersion first;
     first.buildId = "first-build";
     first.semanticVersion = "1.0";
     auto second = first;
@@ -76,8 +76,8 @@ TEST(ProjectsPageTest, RefreshReturnsBeforeMetadataReadsAndUpdatesRecommendation
         pool->setMaxThreadCount(previousLimit);
     });
     ASSERT_TRUE(entered.tryAcquire(1, 5000));
-    VNH::ProjectsPage page(&store);
-    page.setVersionsProvider([=]() { return std::vector<VNH::InstalledVersion>{first, second}; });
+    harken::hub::ProjectsPage page(&store);
+    page.setVersionsProvider([=]() { return std::vector<harken::hub::InstalledVersion>{first, second}; });
     page.refresh();
     auto* table = page.findChild<QTableWidget*>();
     ASSERT_NE(table, nullptr);
@@ -114,7 +114,7 @@ protected:
         qputenv("HARKEN_HUB_MACHINE_ROOT", dir.filePath("machine").toUtf8());
         ASSERT_TRUE(store.open(dir.filePath("projects.db")));
         for (const auto* name : {"Alpha", "Bravo", "Charlie"}) {
-            VNH::ProjectRecord record;
+            harken::hub::ProjectRecord record;
             record.canonicalPath = dir.filePath(QString::fromLatin1(name) + ".hsp");
             record.displayName = QString::fromLatin1(name);
             QFile file(record.canonicalPath);
@@ -123,7 +123,7 @@ protected:
             ASSERT_TRUE(store.addProject(record));
             paths.append(record.canonicalPath);
         }
-        page = std::make_unique<VNH::ProjectsPage>(&store);
+        page = std::make_unique<harken::hub::ProjectsPage>(&store);
         page->resize(1100, 600);
         page->show();
         table = page->findChild<QTableWidget*>();
@@ -166,25 +166,25 @@ protected:
     }
 
     QTemporaryDir dir;
-    VNH::ProjectStore store;
+    harken::hub::ProjectStore store;
     QStringList paths;
-    std::unique_ptr<VNH::ProjectsPage> page;
+    std::unique_ptr<harken::hub::ProjectsPage> page;
     QTableWidget* table = nullptr;
 };
 
 TEST_F(ProjectsPageSelectionTest, SelectionSurvivesReorderingAndMetadataRefresh)
 {
-    VNH::InstalledVersion newer;
+    harken::hub::InstalledVersion newer;
     newer.buildId = "newer";
     newer.semanticVersion = "1.10.0";
     auto older = newer;
     older.buildId = "older";
     older.semanticVersion = "1.9.0";
-    page->setVersionsProvider([=]() { return std::vector<VNH::InstalledVersion>{newer, older}; });
+    page->setVersionsProvider([=]() { return std::vector<harken::hub::InstalledVersion>{newer, older}; });
     ASSERT_TRUE(store.setPreferredBuild(paths[0], newer.buildId));
     ASSERT_TRUE(store.setPreferredBuild(paths[1], older.buildId));
-    ASSERT_TRUE(store.setLastOpened(paths[0], "2026-10-21T10:00:00+08:00"));
-    ASSERT_TRUE(store.setLastOpened(paths[1], "2026-10-21T03:00:00Z"));
+    ASSERT_TRUE(store.recordSuccessfulOpen(paths[0], "Alpha", newer.buildId, "2026-10-21T10:00:00+08:00"));
+    ASSERT_TRUE(store.recordSuccessfulOpen(paths[1], "Bravo", older.buildId, "2026-10-21T03:00:00Z"));
     clickRow(0);
     clickRow(1, Qt::LeftButton, Qt::ShiftModifier);
     const auto selected = selectedPaths();
@@ -219,8 +219,8 @@ TEST_F(ProjectsPageSelectionTest, SelectionSurvivesReorderingAndMetadataRefresh)
         EXPECT_EQ(table->item(table->currentRow(), 0)->data(Qt::UserRole + 1).toString(), currentPath);
     }
     page.reset();
-    VNH::ProjectsPage reopened(&store);
-    reopened.setVersionsProvider([=]() { return std::vector<VNH::InstalledVersion>{newer, older}; });
+    harken::hub::ProjectsPage reopened(&store);
+    reopened.setVersionsProvider([=]() { return std::vector<harken::hub::InstalledVersion>{newer, older}; });
     reopened.refresh();
     const auto* reopenedTable = reopened.findChild<QTableWidget*>();
     EXPECT_EQ(reopenedTable->horizontalHeader()->sortIndicatorSection(), 2);
@@ -282,7 +282,7 @@ TEST_F(ProjectsPageSelectionTest, UnselectedRowMenuKeepsProjectIdentityAfterSort
 
 TEST_F(ProjectsPageSelectionTest, ExplicitCreateVersionSurvivesGuidanceAndRefreshWithoutChangingDefault)
 {
-    VNH::InstalledVersion latest;
+    harken::hub::InstalledVersion latest;
     latest.buildId = "latest-build";
     latest.semanticVersion = "2.0.0";
     latest.installPath = dir.path();
@@ -292,11 +292,11 @@ TEST_F(ProjectsPageSelectionTest, ExplicitCreateVersionSurvivesGuidanceAndRefres
     auto local = older;
     local.buildId = "local-build";
     local.runtimeBuildId = "local-runtime";
-    local.source = VNH::VersionSource::LocalBuild;
+    local.source = harken::hub::VersionSource::LocalBuild;
     page->setVersionsProvider([=]() {
-        return std::vector<VNH::InstalledVersion>{latest, older, local};
+        return std::vector<harken::hub::InstalledVersion>{latest, older, local};
     });
-    const QString previousDefault = VNH::StudioLaunchTarget::pinnedBuildId();
+    const QString previousDefault = harken::hub::StudioLaunchTarget::pinnedBuildId();
     auto* create = page->findChild<QPushButton*>(QStringLiteral("newProjectButton"));
     auto* versions = page->findChild<QComboBox*>(QStringLiteral("newProjectVersion"));
     auto* guidance = page->findChild<QVariantAnimation*>();
@@ -318,7 +318,7 @@ TEST_F(ProjectsPageSelectionTest, ExplicitCreateVersionSurvivesGuidanceAndRefres
         versions->setCurrentIndex(versions->findData(manualBuildId));
         page->refreshVersions();
         EXPECT_EQ(versions->currentData().toString(), manualBuildId);
-        EXPECT_EQ(VNH::StudioLaunchTarget::pinnedBuildId(), previousDefault);
+        EXPECT_EQ(harken::hub::StudioLaunchTarget::pinnedBuildId(), previousDefault);
 
         page->showProjectsList();
         create->click();

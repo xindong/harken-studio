@@ -8,7 +8,7 @@
 
 #include <cstring>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 using namespace Monitor;
 
@@ -213,7 +213,7 @@ QVariant MonitorCatalogModel::data(const QModelIndex& index, int role) const
         return {};
     case Object: return event->objectName;
     case ObjectId:
-        if (!harkenstudio::IsNull(event->objectId())) return objectIdString(event->objectId());
+        if (!harken::studio::types::IsNull(event->objectId())) return objectIdString(event->objectId());
         return {};
     case GameObject: return event->gameObjectName;
     case GameObjectId:
@@ -226,9 +226,9 @@ QVariant MonitorCatalogModel::data(const QModelIndex& index, int role) const
 QString MonitorCatalogModel::levelText(const Monitor::CapturedEvent& event)
 {
     switch (event.level()) {
-    case VNX::Monitor::kLogInfo: return tr("Info");
-    case VNX::Monitor::kLogWarn: return tr("Warning");
-    case VNX::Monitor::kLogError: return tr("Error");
+    case harken::studio::Monitor::kLogInfo: return tr("Info");
+    case harken::studio::Monitor::kLogWarn: return tr("Warning");
+    case harken::studio::Monitor::kLogError: return tr("Error");
     default: return unknownToken(event.level());
     }
 }
@@ -251,17 +251,17 @@ QString MonitorCatalogModel::description(const Monitor::CapturedEvent& event)
     if (event.isExecution()) return executionDescription(event);
     const auto& detail = event.detail;
     const QString text = QString::fromUtf8(detail.text, detail.textBytes);
-    if (detail.category == VNX::Monitor::kMonitorEventCategoryDiagnostic)
+    if (detail.category == harken::studio::Monitor::kMonitorEventCategoryDiagnostic)
         return tr("%1 [code %2]").arg(text).arg(detail.code);
-    if (detail.category == VNX::Monitor::kMonitorEventCategoryLifecycle) {
+    if (detail.category == harken::studio::Monitor::kMonitorEventCategoryLifecycle) {
         QString phase;
         switch (detail.code) {
-        case VNX::Monitor::kMonitorLifecycleActionAccept: phase = tr("Action triggered"); break;
-        case VNX::Monitor::kMonitorLifecycleActionStop: phase = tr("Action stopping"); break;
-        case VNX::Monitor::kMonitorLifecycleActionReject: phase = tr("Action rejected"); break;
-        case VNX::Monitor::kMonitorLifecycleTransitionStart: phase = tr("Transition started"); break;
-        case VNX::Monitor::kMonitorLifecycleTransitionStop: phase = tr("Transition stopped"); break;
-        case VNX::Monitor::kMonitorLifecycleTransitionReject: phase = tr("Transition rejected"); break;
+        case harken::studio::Monitor::kMonitorLifecycleActionAccept: phase = tr("Action triggered"); break;
+        case harken::studio::Monitor::kMonitorLifecycleActionStop: phase = tr("Action stopping"); break;
+        case harken::studio::Monitor::kMonitorLifecycleActionReject: phase = tr("Action rejected"); break;
+        case harken::studio::Monitor::kMonitorLifecycleTransitionStart: phase = tr("Transition started"); break;
+        case harken::studio::Monitor::kMonitorLifecycleTransitionStop: phase = tr("Transition stopped"); break;
+        case harken::studio::Monitor::kMonitorLifecycleTransitionReject: phase = tr("Transition rejected"); break;
         default: return {};
         }
         if (detail.result) phase += tr("; reason %1").arg(detail.result);
@@ -269,36 +269,36 @@ QString MonitorCatalogModel::description(const Monitor::CapturedEvent& event)
     }
     QString operation;
     switch (detail.code) {
-    case VNX::Monitor::kMonitorOperationPostAction: operation = tr("Post Action"); break;
-    case VNX::Monitor::kMonitorOperationPostActionByName: operation = tr("Post Action by name"); break;
-    case VNX::Monitor::kMonitorOperationPostActionPinned: operation = tr("Post pinned Action"); break;
-    case VNX::Monitor::kMonitorOperationPostActionResolved: operation = tr("Post resolved Action"); break;
-    case VNX::Monitor::kMonitorOperationPlayPreview: operation = tr("Play preview"); break;
-    case VNX::Monitor::kMonitorOperationStopPreview: operation = tr("Stop preview"); break;
-    case VNX::Monitor::kMonitorOperationStopVoice: operation = tr("Stop playback"); break;
-    case VNX::Monitor::kMonitorOperationStopAction: operation = tr("Stop Action"); break;
-    case VNX::Monitor::kMonitorOperationStopAll: operation = tr("Stop all"); break;
-    case VNX::Monitor::kMonitorOperationStopEmitter: operation = tr("Stop emitter"); break;
-    case VNX::Monitor::kMonitorOperationSetValue: operation = tr("Set variable"); break;
-    case VNX::Monitor::kMonitorOperationSetEmitterValue: operation = tr("Set emitter variable"); break;
-    case VNX::Monitor::kMonitorOperationSetValues: operation = tr("Set variable batch"); break;
-    case VNX::Monitor::kMonitorOperationSetEmitterValues: operation = tr("Set emitter variable batch"); break;
-    case VNX::Monitor::kMonitorOperationLoadPack: operation = tr("Load Pack"); break;
-    case VNX::Monitor::kMonitorOperationUnloadPack: operation = tr("Unload Pack"); break;
+    case harken::studio::Monitor::kMonitorOperationPostAction: operation = tr("Post Action"); break;
+    case harken::studio::Monitor::kMonitorOperationPostActionByName: operation = tr("Post Action by name"); break;
+    case harken::studio::Monitor::kMonitorOperationPostActionPinned: operation = tr("Post pinned Action"); break;
+    case harken::studio::Monitor::kMonitorOperationPostActionResolved: operation = tr("Post resolved Action"); break;
+    case harken::studio::Monitor::kMonitorOperationPlayPreview: operation = tr("Play preview"); break;
+    case harken::studio::Monitor::kMonitorOperationStopPreview: operation = tr("Stop preview"); break;
+    case harken::studio::Monitor::kMonitorOperationStopVoice: operation = tr("Stop playback"); break;
+    case harken::studio::Monitor::kMonitorOperationStopAction: operation = tr("Stop Action"); break;
+    case harken::studio::Monitor::kMonitorOperationStopAll: operation = tr("Stop all"); break;
+    case harken::studio::Monitor::kMonitorOperationStopEmitter: operation = tr("Stop emitter"); break;
+    case harken::studio::Monitor::kMonitorOperationSetValue: operation = tr("Set variable"); break;
+    case harken::studio::Monitor::kMonitorOperationSetEmitterValue: operation = tr("Set emitter variable"); break;
+    case harken::studio::Monitor::kMonitorOperationSetValues: operation = tr("Set variable batch"); break;
+    case harken::studio::Monitor::kMonitorOperationSetEmitterValues: operation = tr("Set emitter variable batch"); break;
+    case harken::studio::Monitor::kMonitorOperationLoadPack: operation = tr("Load Pack"); break;
+    case harken::studio::Monitor::kMonitorOperationUnloadPack: operation = tr("Unload Pack"); break;
     default: operation = tr("Operation %1").arg(detail.code); break;
     }
     if (!text.isEmpty()) operation += QStringLiteral(" \"%1\"").arg(text);
-    if (detail.code == VNX::Monitor::kMonitorOperationSetValue || detail.code == VNX::Monitor::kMonitorOperationSetEmitterValue ||
-        detail.code == VNX::Monitor::kMonitorOperationSetValues || detail.code == VNX::Monitor::kMonitorOperationSetEmitterValues) {
+    if (detail.code == harken::studio::Monitor::kMonitorOperationSetValue || detail.code == harken::studio::Monitor::kMonitorOperationSetEmitterValue ||
+        detail.code == harken::studio::Monitor::kMonitorOperationSetValues || detail.code == harken::studio::Monitor::kMonitorOperationSetEmitterValues) {
         float value;
         std::memcpy(&value, &detail.valueBits, sizeof(value));
         operation += tr(" = %1").arg(value, 0, 'g', 7);
-        if (detail.code == VNX::Monitor::kMonitorOperationSetValues || detail.code == VNX::Monitor::kMonitorOperationSetEmitterValues)
+        if (detail.code == harken::studio::Monitor::kMonitorOperationSetValues || detail.code == harken::studio::Monitor::kMonitorOperationSetEmitterValues)
             operation += tr(" [%1/%2]").arg(detail.arg1 ? detail.arg0 + 1 : 0).arg(detail.arg1);
     }
-    if (detail.code == VNX::Monitor::kMonitorOperationStopPreview || detail.code == VNX::Monitor::kMonitorOperationStopVoice ||
-        detail.code == VNX::Monitor::kMonitorOperationStopAction || detail.code == VNX::Monitor::kMonitorOperationStopAll ||
-        detail.code == VNX::Monitor::kMonitorOperationStopEmitter)
+    if (detail.code == harken::studio::Monitor::kMonitorOperationStopPreview || detail.code == harken::studio::Monitor::kMonitorOperationStopVoice ||
+        detail.code == harken::studio::Monitor::kMonitorOperationStopAction || detail.code == harken::studio::Monitor::kMonitorOperationStopAll ||
+        detail.code == harken::studio::Monitor::kMonitorOperationStopEmitter)
         operation += tr("; fade %1 ms").arg(detail.arg0);
     return tr("%1: %2 (%3)").arg(operation, resultDescription(detail.result)).arg(detail.result);
 }
@@ -318,10 +318,10 @@ QString MonitorCatalogModel::details(int row) const
         lines << tr("Error code: %1").arg(event->execution.result);
     if (event->type() == DesignerEventType::Step) {
         if (!event->actionName.isEmpty()) lines << tr("Action: %1").arg(event->actionName);
-        if (!harkenstudio::IsNull(event->header.stableId))
+        if (!harken::studio::types::IsNull(event->header.stableId))
             lines << tr("Action ID: %1").arg(objectIdString(event->header.stableId));
     }
     return lines.join(QLatin1Char('\n'));
 }
 
-} // namespace VNX
+} // namespace harken::studio

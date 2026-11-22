@@ -2,7 +2,7 @@
 
 #include <utility>
 
-namespace VNX {
+namespace harken::studio {
 
 class PollReentryGuard
 {
@@ -54,4 +54,4 @@ private:
     int blocked_ = 0;
 };
 
-} // namespace VNX
+} // namespace harken::studio

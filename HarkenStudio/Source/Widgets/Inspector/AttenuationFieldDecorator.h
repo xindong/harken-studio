@@ -4,7 +4,7 @@
 #include "InspectorSlotButton.h"
 #include "Core/ProjectTypes.h"
 
-namespace VNX {
+namespace harken::studio {
 
 class AttenuationFieldDecorator : public InspectorSlotButton, public IFieldDecorator
 {

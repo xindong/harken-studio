@@ -22,7 +22,7 @@
 
 #include <CDSPResampler.h>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 
@@ -349,7 +349,7 @@ bool AssetConverter::writeFloatWavCache(const QString& path,
 bool AssetConverter::decodeSource(const QString& path, std::vector<float>& samples,
                                    int& channels, int& sampleRate)
 {
-    if (!HarkenEditor::Bridge::decodeAudioFileInterleaved(path, samples,
+    if (!harken::studio::bridge::decodeAudioFileInterleaved(path, samples,
                                                          channels, sampleRate)) {
         qWarning() << "AssetConverter: Failed to decode:" << path;
         return false;

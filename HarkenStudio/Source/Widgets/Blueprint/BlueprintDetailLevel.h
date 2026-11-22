@@ -1,6 +1,6 @@
 #pragma once
 
-namespace VNX {
+namespace harken::studio {
 
 enum class BlueprintDetailLevel { Overview, Full };
 

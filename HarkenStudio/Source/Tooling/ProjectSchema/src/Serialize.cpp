@@ -7,11 +7,11 @@
 #include <cstdint>
 #include <string>
 
-namespace harkenprojectschema {
+namespace harken::studio::project_schema {
 namespace {
 
 std::string U(std::uint64_t v) { return std::to_string(v); }
-std::string U(harkenstudio::ObjectId v) { return harkenstudio::ObjectIdString(v); }
+std::string U(harken::studio::types::ObjectId v) { return harken::studio::types::ObjectIdString(v); }
 std::string I(std::int64_t v) { return std::to_string(v); }
 
 // A float is rendered as its raw IEEE-754 bit pattern, an unsigned integer,
@@ -91,7 +91,7 @@ void AppendSignalGraph(std::string* s, bool declared, const SignalGraph& g) {
     for (const EffectNode& node : g.nodes) {
         *s += "  fxnode id=" + U(node.nodeId) + " object=" + U(node.effectId) + " type=" + U(node.effectType);
         if (node.flags != 0) *s += " flags=" + U(node.flags);
-        if (!harkenstudio::IsNull(node.presetId)) *s += " preset=" + U(node.presetId);
+        if (!harken::studio::types::IsNull(node.presetId)) *s += " preset=" + U(node.presetId);
         *s += "\n";
         for (const EffectParam& param : node.params) {
             *s += "    param id=" + U(param.paramId) +
@@ -119,7 +119,7 @@ void AppendSpatial(std::string* s, const SpatialSpec& sp) {
 }
 
 void AppendReferenceSlots(std::string* s, const Chassis& c) {
-    if (c.outputBusRef == harkenstudio::ObjectId{}) {
+    if (c.outputBusRef == harken::studio::types::ObjectId{}) {
         return;
     }
     *s += "  refs bus=" + U(c.outputBusRef) + "\n";
@@ -690,4 +690,4 @@ std::string RenderResult(const FrontEndResult& result) {
     return s;
 }
 
-}  // namespace harkenprojectschema
+}  // namespace harken::studio::project_schema

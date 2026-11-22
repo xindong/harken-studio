@@ -19,7 +19,7 @@
 #include <algorithm>
 #include <QScopedValueRollback>
 
-namespace VNX {
+namespace harken::studio {
 
 ProportionalTreeWidget::ProportionalTreeWidget(const QList<int>& columnWeights, QWidget* parent,
                                                ThemeManager* themeManager)

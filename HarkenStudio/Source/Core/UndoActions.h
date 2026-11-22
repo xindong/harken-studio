@@ -5,7 +5,7 @@
 class QAction;
 class QObject;
 
-namespace VNX {
+namespace harken::studio {
 
 class UndoRedoManager;
 

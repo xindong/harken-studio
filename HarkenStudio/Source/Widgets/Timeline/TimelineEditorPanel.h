@@ -40,7 +40,7 @@ class QMenu;
 class QVBoxLayout;
 class QWheelEvent;
 
-namespace VNX {
+namespace harken::studio {
 
 struct ProjectItem;
 class ThemeManager;

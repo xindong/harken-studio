@@ -6,7 +6,7 @@
 #include <QHash>
 #include <QString>
 
-namespace VNX {
+namespace harken::studio {
 
 struct HelpEntry
 {

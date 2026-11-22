@@ -7,7 +7,7 @@
 #include "VariableRehearsal.h"
 #include "VariableSemantics.h"
 
-namespace VNX {
+namespace harken::studio {
 
 TransitionRehearsal::TransitionRehearsal(QObject* parent)
     : QObject(parent)

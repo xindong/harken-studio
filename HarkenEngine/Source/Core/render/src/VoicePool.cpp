@@ -878,7 +878,7 @@ bool VoicePool::AdmitTimelineQuantum(
 bool VoicePool::AdmitTimelineQuantum(
     std::uint32_t arenaAvailableBytes, std::uint32_t blockFrames,
     const DecisionTable* decisions,
-    const Plan03ScratchDecisionState* currentSlices,
+    const ScratchDecisionState* currentSlices,
     std::uint32_t currentSliceCount,
     const std::uint32_t* controlRenderGenerations,
     std::uint32_t controlRenderCount) const noexcept {
@@ -5710,10 +5710,12 @@ void VoicePool::ReleaseSlot(Slot& slot, ReleaseThread thread) {
     const bool nativeFinished = FinishNativeVariableStart(slot, false);
     assert(nativeFinished);
     (void)nativeFinished;
+#if defined(HARKEN_TEST_VOICE_RELEASE_HOOK)
     if (slot.state.load(std::memory_order_acquire) == SlotState::ReleaseHeld) {
         if (const auto hook = m_releaseHeldHookForTest.exchange(nullptr, std::memory_order_acq_rel))
             hook(m_releaseHeldContextForTest.load(std::memory_order_relaxed));
     }
+#endif
     // Bypass paths have an explicit cancellation result, never inferred EOF.
     if (slot.render.sourceTerminal != nullptr &&
         slot.render.sourceTerminal->completedSequence.load(std::memory_order_relaxed) == 0) {

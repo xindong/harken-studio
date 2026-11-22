@@ -16,14 +16,14 @@
 #include <type_traits>
 #include <utility>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
-using Guid = harkenprojectschema::AuthoringGuid;
+using Guid = harken::studio::project_schema::AuthoringGuid;
 using Property = harkenplayableproperties::PlayablePropertyIdV1;
 using EditCode = FieldGroupEditDiagnosticCode;
 using Diagnostics = std::vector<FieldGroupEditDiagnostic>;
-using SourceIndex = HarkenEditor::Bridge::CanonicalRuntimeProjectSourceIndexV1;
+using SourceIndex = harken::studio::bridge::CanonicalRuntimeProjectSourceIndexV1;
 
 struct EditingContext {
     std::shared_ptr<const SourceIndex> source;
@@ -139,7 +139,7 @@ EditingContext buildContext(ProjectData& project,
     EditingContext context;
     for (const auto& platform : project.platforms)
         context.platforms.push_back(toFieldGroupGuid(platform.id));
-    context.source = HarkenEditor::Bridge::canonicalRuntimeProjectSourceIndex(project);
+    context.source = harken::studio::bridge::canonicalRuntimeProjectSourceIndex(project);
     if (!context.source->valid || !context.source->duplicateGuids.empty()) {
         for (const auto& diagnostic : context.source->structureDiagnostics)
             addDiagnostic(context.diagnostics, EditCode::InvalidProject, diagnostic.message,
@@ -239,7 +239,7 @@ Diagnostics validateView(const EditingContext& context,
         for (const auto& row : effects.entries()) {
             const auto identity = toFieldGroupGuid(row.guid);
             const auto [found, inserted] = identities.emplace(identity, owner);
-            if (harkenstudio::IsNull(identity) || row.runtimeId() == harkenstudio::kMasterBusObjectId
+            if (harken::studio::types::IsNull(identity) || row.runtimeId() == harken::studio::types::kMasterBusObjectId
                 || (!inserted && found->second != owner))
                 addDiagnostic(diagnostics, EditCode::InvalidProject,
                     QStringLiteral("Effect identity conflicts with another project object"),
@@ -288,7 +288,7 @@ Diagnostics validateView(const EditingContext& context,
             const auto outputBus = std::get<OutputFieldGroup>(output.value->payload).outputBusRef;
             const auto& sends = std::get<SendFieldGroup>(send.value->payload).sends;
             for (std::size_t row = 0; row < sends.size(); ++row) {
-                if (sends[row].mode != harkenprojectschema::SendMode::Sidechain
+                if (sends[row].mode != harken::studio::project_schema::SendMode::Sidechain
                     && sends[row].targetBusID == outputBus)
                     addDiagnostic(diagnostics, EditCode::OutputSendConflict,
                         QStringLiteral("Only a Sidechain Send can target the effective Output"),
@@ -346,7 +346,7 @@ bool setField(OutputFieldGroup& payload, const SetFieldGroupField& edit, Guid ma
     if (edit.property == Property::OutputBusRef) {
         const auto* value = std::get_if<Guid>(&edit.value);
         if (!value) return false;
-        payload.outputBusRef = harkenprojectschema::IsNull(*value) ? master : *value;
+        payload.outputBusRef = harken::studio::project_schema::IsNull(*value) ? master : *value;
         return true;
     }
     if (edit.property == Property::OutputBusVolume) {
@@ -605,7 +605,7 @@ FieldGroupEditResult prepareFieldGroupEdit(
     const auto definition = context.identities.at(item);
     const bool canInherit = std::any_of(context.view.definitions.begin(),
         context.view.definitions.end(), [&](const FieldGroupDefinitionView& view) {
-            return view.guid == definition && !harkenprojectschema::IsNull(view.parentGuid);
+            return view.guid == definition && !harken::studio::project_schema::IsNull(view.parentGuid);
         });
     const auto* mode = std::get_if<SetFieldGroupMode>(&request.operation);
     if (!canInherit && ((mode && mode->mode != FieldGroupMode::UseShared)

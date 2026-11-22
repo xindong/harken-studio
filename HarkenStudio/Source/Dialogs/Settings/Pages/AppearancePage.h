@@ -12,7 +12,7 @@ class QPushButton;
 class QShowEvent;
 class QTimer;
 
-namespace VNX {
+namespace harken::studio {
 
 class ColorEditorDialog;
 class ProportionalTreeWidget;

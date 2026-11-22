@@ -19,7 +19,7 @@ class QLabel;
 class QPainter;
 class QToolButton;
 
-namespace VNX {
+namespace harken::studio {
 
 class ObjectRefWidget;
 class ParameterSlider;
@@ -56,7 +56,7 @@ public:
     const auto& spectrumLevels() const { return displayState().spectrumLevels; }
     const auto& spectrumPeaks() const { return displayState().spectrumPeaks; }
     double spectrogramSpeed() const { return spectrogramSpeed_; }
-    void acceptMeasurement(const HarkenEditor::Bridge::MeterMeasurementFrame& frame);
+    void acceptMeasurement(const harken::studio::bridge::MeterMeasurementFrame& frame);
     QVariantMap saveState() const;
     void restoreState(const QVariantMap& state);
     int embeddedHeaderHeight() const { return header_->height(); }
@@ -142,7 +142,7 @@ private:
     std::array<MeterBallistics, kSpectrumMeterDisplayPoints> spectrumBallistics_{};
     double spectrogramSpeed_ = 2.0;
     uint32_t busObjectID_ = 0;
-    harkenstudio::ObjectId busRuntimeId_{};
+    harken::studio::types::ObjectId busRuntimeId_{};
     QElapsedTimer elapsed_;
 };
 

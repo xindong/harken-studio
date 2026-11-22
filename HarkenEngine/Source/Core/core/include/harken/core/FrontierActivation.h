@@ -3,7 +3,7 @@
 
 #include "harken/core/AudioSliceLease.h"
 #include "harken/core/AuthoredStopOperationIdentity.h"
-#include "harken/core/Plan03GroupIdentity.h"
+#include "harken/core/ScheduleGroupIdentity.h"
 #include "harken/core/OccurrenceToken.h"
 #include "harken/core/TimelineExecutionOrder.h"
 #include "harken/core/VariableReadCut.h"
@@ -50,7 +50,7 @@ struct FrontierEntryReceiptRef {
 
 struct FrontierActivationDescriptor {
     FrontierEntryReceiptRef entry{};
-    Plan03GroupSliceIdentity primary{};
+    ScheduleGroupSliceIdentity primary{};
     TimelineExecutionOrder order{};
     std::uint64_t worldGeneration = 0;
     std::uint64_t worldSemanticFingerprint = 0;
@@ -81,7 +81,7 @@ struct FrontierDueOperationRef {
     FrontierOperationKind kind = FrontierOperationKind::Invalid;
     FrontierOwnerIdentity owner{};
     TimelineExecutionOrder order{};
-    Plan03GroupSliceIdentity group{};
+    ScheduleGroupSliceIdentity group{};
     TransportEpoch transport = kInvalidTransportEpoch;
     std::uint64_t world = 0;
     std::uint64_t transactionId = 0;
@@ -111,7 +111,7 @@ struct FrontierEventBinding {
     FrontierOperationKind kind = FrontierOperationKind::Invalid;
     FrontierEntryReceiptRef entry{};
     FrontierOwnerIdentity owner{};
-    Plan03GroupSliceIdentity group{};
+    ScheduleGroupSliceIdentity group{};
     TransportEpoch transport = kInvalidTransportEpoch;
     std::uint64_t world = 0;
     std::uint32_t operationOrdinal = 0;
@@ -164,9 +164,9 @@ struct FrontierImmediateLaneMemberIdentity {
     bool Empty() const noexcept {
         return *this == FrontierImmediateLaneMemberIdentity{};
     }
-    Plan03GroupSliceIdentity Expand() const noexcept {
+    ScheduleGroupSliceIdentity Expand() const noexcept {
         if (!Valid()) return {};
-        Plan03GroupSliceIdentity expanded{};
+        ScheduleGroupSliceIdentity expanded{};
         expanded.absoluteQuantum = 0;
         expanded.pageGeneration = 1;
         expanded.decision = decision;
@@ -174,12 +174,12 @@ struct FrontierImmediateLaneMemberIdentity {
         expanded.committedRow = committedRow;
         expanded.rowClaimGeneration = rowClaimGeneration;
         expanded.transportEpoch = transportEpoch;
-        expanded.backing = Plan03GroupBacking::ImmediateLane;
+        expanded.backing = ScheduleGroupBacking::ImmediateLane;
         return expanded;
     }
-    bool Capture(Plan03GroupSliceIdentity identity) noexcept {
+    bool Capture(ScheduleGroupSliceIdentity identity) noexcept {
         if (!identity.Exact() ||
-            identity.backing != Plan03GroupBacking::ImmediateLane ||
+            identity.backing != ScheduleGroupBacking::ImmediateLane ||
             identity.absoluteQuantum != 0 || identity.pageGeneration != 1)
             return false;
         FrontierImmediateLaneMemberIdentity candidate{};
@@ -213,7 +213,7 @@ struct FrontierQueueDescendantIdentity {
         return selectedSideMember.Empty() &&
             selectedSide == FrontierVariableSideIdentity{};
     }
-    bool Freeze(Plan03GroupSliceIdentity member,
+    bool Freeze(ScheduleGroupSliceIdentity member,
                 FrontierVariableSideIdentity side) noexcept {
         if (!side.Valid()) return false;
         FrontierImmediateLaneMemberIdentity compact{};
@@ -266,8 +266,8 @@ private:
     friend class DecisionTable;
     const DecisionTable* owner_ = nullptr;
     FrontierEntryReceiptRef entry_{};
-    Plan03GroupSliceIdentity primary_{};
-    Plan03GroupSliceIdentity member_{};
+    ScheduleGroupSliceIdentity primary_{};
+    ScheduleGroupSliceIdentity member_{};
     TimelineExecutionOrder memberOrder_{};
     FrontierEntryReceiptRef memberEntry_{};
     FrontierEntryPrerequisiteKind kind_ = FrontierEntryPrerequisiteKind::QueueSignal;
@@ -318,11 +318,11 @@ struct FrontierGroupBinding {
     FrontierGroupRole role = FrontierGroupRole::Legacy;
     FrontierEntryReceiptRef entry{};
     FrontierEntryReceiptRef prerequisite{};
-    Plan03GroupSliceIdentity prerequisiteMember{};
+    ScheduleGroupSliceIdentity prerequisiteMember{};
     FrontierEntryPrerequisiteKind prerequisiteKind = FrontierEntryPrerequisiteKind::QueueSignal;
     const FrontierAppliedSignalDependency* appliedPrerequisite = nullptr;
     FrontierDueOperationRef operation{};
-    Plan03GroupSliceIdentity primary{};
+    ScheduleGroupSliceIdentity primary{};
     FrontierVariableSideIdentity variableSide{};
     FrontierQueueDescendantIdentity queueDescendant{};
     FrontierQueueInitialIdentity queueInitial{};
@@ -362,7 +362,7 @@ struct FrontierGroupBinding {
             if (role != FrontierGroupRole::Future || !queueInitial.Valid() ||
                 queueConditional.Valid() || variableSide.Valid() ||
                 !queueInitialCompletion.Valid() ||
-                operation.group.backing != Plan03GroupBacking::ImmediateLane ||
+                operation.group.backing != ScheduleGroupBacking::ImmediateLane ||
                 operation.group.sliceIndex != 1u ||
                 queueInitialCompletion.slot != queueInitial.slot ||
                 queueInitialCompletion.generation != queueInitial.generation ||

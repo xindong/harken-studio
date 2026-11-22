@@ -8,7 +8,7 @@
 #include <QSqlQuery>
 #include <QVariant>
 
-namespace VNH {
+namespace harken::hub {
 
 namespace {
 
@@ -162,28 +162,6 @@ bool ProjectStore::setPreferredBuild(const QString& canonicalPath, const QString
     return query.numRowsAffected() > 0;
 }
 
-bool ProjectStore::setLastKnownGood(const QString& canonicalPath,
-                                    const QString& buildId, const QString& at)
-{
-    if (!isOpen()) {
-        lastError_ = QStringLiteral("Store is not open");
-        return false;
-    }
-    QSqlDatabase db = QSqlDatabase::database(connectionName_);
-    QSqlQuery query(db);
-    query.prepare(QStringLiteral(
-        "UPDATE projects SET lastKnownGoodStudioBuildId = ?, lastOpenedAt = ?"
-        " WHERE canonicalPath = ?"));
-    query.addBindValue(buildId);
-    query.addBindValue(at);
-    query.addBindValue(canonicalPath);
-    if (!query.exec()) {
-        lastError_ = query.lastError().text();
-        return false;
-    }
-    return query.numRowsAffected() > 0;
-}
-
 bool ProjectStore::recordSuccessfulOpen(const QString& canonicalPath,
                                         const QString& displayName,
                                         const QString& buildId,
@@ -201,26 +179,6 @@ bool ProjectStore::recordSuccessfulOpen(const QString& canonicalPath,
         " WHERE canonicalPath = ?"));
     query.addBindValue(displayName);
     query.addBindValue(buildId);
-    query.addBindValue(at);
-    query.addBindValue(canonicalPath);
-    if (!query.exec()) {
-        lastError_ = query.lastError().text();
-        return false;
-    }
-    return query.numRowsAffected() > 0;
-}
-
-bool ProjectStore::setLastOpened(const QString& canonicalPath,
-                                 const QString& at)
-{
-    if (!isOpen()) {
-        lastError_ = QStringLiteral("Store is not open");
-        return false;
-    }
-    QSqlDatabase db = QSqlDatabase::database(connectionName_);
-    QSqlQuery query(db);
-    query.prepare(QStringLiteral(
-        "UPDATE projects SET lastOpenedAt = ? WHERE canonicalPath = ?"));
     query.addBindValue(at);
     query.addBindValue(canonicalPath);
     if (!query.exec()) {

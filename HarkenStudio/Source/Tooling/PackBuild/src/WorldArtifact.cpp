@@ -6,7 +6,7 @@
 #include <array>
 #include <limits>
 
-namespace harkenstudiobuild {
+namespace harken::studio::build {
 namespace {
 
 void AppendU16(std::vector<std::uint8_t> &out, std::uint16_t value) {
@@ -59,4 +59,4 @@ bool EncodeCurrentWorldArtifactV1(const ContainerWorldInstallViewV1 &world,
     }
 }
 
-} // namespace harkenstudiobuild
+} // namespace harken::studio::build

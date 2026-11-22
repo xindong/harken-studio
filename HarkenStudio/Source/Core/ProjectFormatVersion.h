@@ -2,7 +2,7 @@
 
 #include "ProjectSchemaGenerated.h"
 
-namespace VNX {
+namespace harken::studio {
 
 inline constexpr int kCurrentProjectSchemaVersion = ProjectSchema::kProjectSchemaVersion;
 

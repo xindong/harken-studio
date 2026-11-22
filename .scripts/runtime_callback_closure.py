@@ -2642,13 +2642,13 @@ def timeline_sink_ast_authority(
     })
     expected_methods = sorted({
         "AdmitQuantum",
-        "ApplyPlan03Groups",
+        "ApplyScheduleGroups",
         "ApplyTransaction",
         "BeginQuantum",
         "BindingValid",
         "CancelBinding",
         "EndQuantum",
-        "FailPlan03Deadline",
+        "FailScheduleDeadline",
     })
     if interface_methods != expected_methods:
         raise ClosureError(

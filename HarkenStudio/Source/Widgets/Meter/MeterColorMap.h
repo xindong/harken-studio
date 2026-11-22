@@ -8,7 +8,7 @@
 #include <array>
 #include <cmath>
 
-namespace VNX {
+namespace harken::studio {
 
 class MeterColorMap
 {

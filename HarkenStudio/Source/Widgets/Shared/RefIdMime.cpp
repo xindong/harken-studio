@@ -8,7 +8,7 @@
 
 #include <cstring>
 
-namespace VNX {
+namespace harken::studio {
 namespace RefIdMime {
 namespace {
 

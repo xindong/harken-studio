@@ -14,7 +14,7 @@
 #include <algorithm>
 #include <optional>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 constexpr int kClickSlopPx = 4;
@@ -258,13 +258,6 @@ MonitorCursorReject MonitorPerformancePanel::lockFromChartX(int logicalX)
     return cursorModel().lockTo(frameFromLogicalX(logicalX));
 }
 
-bool MonitorPerformancePanel::advanceLiveForTest(qint64 executeFrame)
-{
-    if (paused_)
-        return false;
-    return cursorModel().advanceLive(executeFrame);
-}
-
 bool MonitorPerformancePanel::eventFilter(QObject* watched, QEvent* event)
 {
     if (watched != chart_)
@@ -348,4 +341,4 @@ qint64 MonitorPerformancePanel::frameFromLogicalX(int logicalX) const
     return columnSampleX(start, end, width, clamped);
 }
 
-} // namespace VNX
+} // namespace harken::studio

@@ -17,7 +17,7 @@
 #include <cmath>
 #include <limits>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 bool equalPoint(const CurvePointDef& left, const CurvePointDef& right)

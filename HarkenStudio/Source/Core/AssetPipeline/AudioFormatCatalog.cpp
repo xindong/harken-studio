@@ -1,6 +1,6 @@
 #include "AudioFormatCatalog.h"
 
-namespace VNX {
+namespace harken::studio {
 
 const QStringList& AudioFormatCatalog::extensions()
 {

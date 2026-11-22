@@ -36,7 +36,7 @@ QString versionString()
 
 }
 
-namespace VNX {
+namespace harken::studio {
 
 StartupLoadingWindow::StartupLoadingWindow()
     : QWidget(nullptr, Qt::Window | Qt::FramelessWindowHint

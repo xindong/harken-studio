@@ -2,7 +2,7 @@
 
 #include "MonitorProjectionTypes.h"
 
-namespace VNX {
+namespace harken::studio {
 namespace Monitor {
 
 MonitorDropProjection projectDrop(
@@ -11,4 +11,4 @@ MonitorDropProjection projectDrop(
     uint64_t storeLocalSaturationCount = 0);
 
 } // namespace Monitor
-} // namespace VNX
+} // namespace harken::studio

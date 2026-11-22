@@ -3,7 +3,7 @@
 #include <QJsonObject>
 #include <QString>
 
-namespace VNX {
+namespace harken::studio {
 
 QString commandSchemaError(const QJsonObject& schema);
 bool validateCommandArguments(const QJsonObject& arguments, const QJsonObject& schema,

@@ -2,7 +2,7 @@
 
 #include <QJsonObject>
 
-namespace VNX {
+namespace harken::studio {
 
 QJsonObject runSchemaCompatibilityProbe(const QJsonObject& request);
 

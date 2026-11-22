@@ -6,7 +6,7 @@
 #include <QLabel>
 #include <QVBoxLayout>
 
-namespace VNX {
+namespace harken::studio {
 
 MonitorDspTimelinePanel::MonitorDspTimelinePanel(QWidget* parent)
     : QWidget(parent)
@@ -114,4 +114,4 @@ void MonitorDspTimelinePanel::onSharedCursor(const MonitorCursorSnapshot&)
     refreshFace();
 }
 
-} // namespace VNX
+} // namespace harken::studio

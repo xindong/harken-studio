@@ -5,7 +5,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 int zoomLevelForScale(qreal percent)
@@ -226,38 +226,7 @@ int AppSettings::effectiveFontSize(PanelId panelId) const
     return qRound(baseSize * globalUIScale() / 100.0);
 }
 
-int AppSettings::panelFontSize(const QString& panelKey) const
-{
-    PanelId id = PanelRegistry::findByKey(panelKey);
-    if (id == PanelId::Count) {
-        return DEFAULT_FONT_SIZE;
-    }
-    return panelFontSize(id);
-}
-
-void AppSettings::setPanelFontSize(const QString& panelKey, int size)
-{
-    PanelId id = PanelRegistry::findByKey(panelKey);
-    if (id != PanelId::Count) {
-        setPanelFontSize(id, size);
-    }
-}
-
-int AppSettings::effectiveFontSize(const QString& panelKey) const
-{
-    PanelId id = PanelRegistry::findByKey(panelKey);
-    if (id == PanelId::Count) {
-        return DEFAULT_FONT_SIZE;
-    }
-    return effectiveFontSize(id);
-}
-
 int AppSettings::defaultFontSize(PanelId)
-{
-    return DEFAULT_FONT_SIZE;
-}
-
-int AppSettings::defaultFontSize(const QString&)
 {
     return DEFAULT_FONT_SIZE;
 }

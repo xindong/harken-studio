@@ -8,7 +8,7 @@
 
 class QLabel;
 
-namespace VNX {
+namespace harken::studio {
 
 class ObjectRefWidget;
 class RehearsalSlider;

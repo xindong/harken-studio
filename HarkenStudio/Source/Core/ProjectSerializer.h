@@ -18,7 +18,7 @@
 
 class QSaveFile;
 
-namespace VNX {
+namespace harken::studio {
 
 class VBus;
 
@@ -33,7 +33,7 @@ public:
     ~ProjectSerializer() override;
 
     static const QString fileExtension() { return ".hsp"; }
-    static const QString legacyPackExtension() { return HarkenEditor::Bridge::packArtifactExtension(); }
+    static const QString legacyPackExtension() { return harken::studio::bridge::packArtifactExtension(); }
     static const QString packExtension() { return ".vp"; }
 
     bool saveProject(const QString& filePath, ProjectData& project);
@@ -62,7 +62,7 @@ public:
     bool projectItemFromJson(const QJsonObject& json, ProjectItem& item) const;
     bool prepareStandaloneReferenceRead(const QJsonArray& itemRoots);
     uint32_t transientObjectIdForGuid(const QUuid& guid) const;
-    harkenstudio::ObjectId transientRuntimeStableIdForGuid(const QUuid& guid) const;
+    harken::studio::types::ObjectId transientRuntimeStableIdForGuid(const QUuid& guid) const;
 
     QJsonObject audioItemToJson(const ProjectItem& layer) const;
     bool        audioItemFromJson(const QJsonObject& json, ProjectItem& layer) const;
@@ -111,7 +111,7 @@ private:
         uint32_t objectId = 0;
         ProjectItem::Type type = ProjectItem::Type::None;
         QUuid guid;
-        harkenstudio::ObjectId runtimeId() const { return runtimeObjectId(guid); }
+        harken::studio::types::ObjectId runtimeId() const { return runtimeObjectId(guid); }
         QUuid documentId;
         QString name;
     };
@@ -130,13 +130,13 @@ private:
     QJsonObject persistentReference(uint32_t objectId,
                                     std::optional<ProjectItem::Type> expectedType = std::nullopt) const;
     QJsonObject persistentRuntimeReference(
-        harkenstudio::ObjectId runtimeStableId, ProjectItem::Type expectedType) const;
+        harken::studio::types::ObjectId runtimeStableId, ProjectItem::Type expectedType) const;
     bool transientReference(const QJsonValue& value,
                             std::optional<ProjectItem::Type> expectedType,
                             uint32_t* objectId, QString* targetName = nullptr) const;
     bool transientRuntimeReference(const QJsonValue& value,
                                    ProjectItem::Type expectedType,
-                                   harkenstudio::ObjectId* runtimeStableId) const;
+                                   harken::studio::types::ObjectId* runtimeStableId) const;
     QJsonObject persistentParentReference(const ProjectItem& item) const;
     bool loadParentReference(const QJsonObject& json, ParentRef* ref) const;
     bool encodeComponentReferences(QJsonObject* components) const;
@@ -163,7 +163,7 @@ private:
     ProjectUpgradeResult upgradeResult_;
     QHash<QString, QByteArray> loadedDocuments_;
     mutable QHash<uint32_t, ReferenceTarget> referencesByObjectId_;
-    mutable QHash<harkenstudio::ObjectId, ReferenceTarget> referencesByRuntimeStableId_;
+    mutable QHash<harken::studio::types::ObjectId, ReferenceTarget> referencesByRuntimeStableId_;
     mutable QHash<QUuid, ReferenceTarget> referencesByGuid_;
     mutable QHash<QString, QUuid> callableNames_;
     mutable QHash<QUuid, ParentRef> parentOverrides_;

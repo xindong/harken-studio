@@ -26,7 +26,7 @@
 
 #include <algorithm>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 constexpr int kBucketRole = TreeRowStyle::kBucketRole;

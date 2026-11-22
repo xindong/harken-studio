@@ -5,7 +5,7 @@
 #include <QPointer>
 #include <QSet>
 
-namespace VNX {
+namespace harken::studio {
 
 class ThemeManager;
 

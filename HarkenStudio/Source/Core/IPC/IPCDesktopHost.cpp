@@ -1,6 +1,6 @@
 #include "IPCDesktopInternal.h"
 
-namespace VNX {
+namespace harken::studio {
 
 void IPCServer::setMainWindow(MainWindow* window)
 {

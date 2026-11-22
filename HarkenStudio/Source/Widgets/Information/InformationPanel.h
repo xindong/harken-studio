@@ -9,7 +9,7 @@
 class QFrame;
 class QLabel;
 
-namespace VNX {
+namespace harken::studio {
 
 class InformationPanel : public QWidget
 {

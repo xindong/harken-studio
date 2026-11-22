@@ -10,7 +10,7 @@
 
 class QLabel;
 
-namespace VNX {
+namespace harken::studio {
 
 class SourceEditorWaveformView;
 

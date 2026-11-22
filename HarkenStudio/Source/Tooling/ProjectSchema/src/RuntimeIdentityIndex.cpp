@@ -4,7 +4,7 @@
 #include <map>
 #include <set>
 
-namespace harkenprojectschema {
+namespace harken::studio::project_schema {
 namespace {
 
 bool validClaimShape(const RuntimeIdentityIndexBuildRowV1& row) noexcept

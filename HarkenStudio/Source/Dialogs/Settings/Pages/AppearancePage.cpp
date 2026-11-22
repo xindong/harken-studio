@@ -28,7 +28,7 @@
 #include <QStylePainter>
 #include <QTimer>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 

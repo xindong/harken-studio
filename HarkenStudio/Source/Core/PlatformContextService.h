@@ -11,7 +11,7 @@
 #include <memory>
 #include <optional>
 
-namespace VNX {
+namespace harken::studio {
 
 class PlatformContextService : public QObject
 {
@@ -31,7 +31,7 @@ public:
     void setStorageForTesting(std::unique_ptr<ISettingsStorage> storage);
 
 signals:
-    void contextChanged(const VNX::PlatformContext& context);
+    void contextChanged(const harken::studio::PlatformContext& context);
 
 private:
     PlatformContextService();

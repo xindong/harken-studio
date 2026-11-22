@@ -7,7 +7,7 @@
 #include <algorithm>
 #include <functional>
 
-namespace VNX::EditorUtils {
+namespace harken::studio::EditorUtils {
 
 namespace {
 

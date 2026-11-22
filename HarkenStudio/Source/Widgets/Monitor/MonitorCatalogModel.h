@@ -7,7 +7,7 @@
 #include <QIcon>
 #include <QString>
 
-namespace VNX {
+namespace harken::studio {
 
 class MonitorCatalogModel final : public QAbstractTableModel
 {
@@ -30,4 +30,4 @@ private:
     mutable QHash<QString, QIcon> objectIcons_;
 };
 
-} // namespace VNX
+} // namespace harken::studio

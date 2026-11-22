@@ -5,7 +5,7 @@
 #include <QJsonObject>
 #include <QTemporaryDir>
 
-using namespace VNX;
+using namespace harken::studio;
 
 namespace {
 

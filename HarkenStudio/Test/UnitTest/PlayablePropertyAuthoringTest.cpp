@@ -10,9 +10,9 @@
 
 namespace {
 
-using VNX::PlayablePropertyAuthoringV1;
-using VNX::PlayablePropertyOccurrenceV1;
-using VNX::PlayablePropertyOccurrenceValueV1;
+using harken::studio::PlayablePropertyAuthoringV1;
+using harken::studio::PlayablePropertyOccurrenceV1;
+using harken::studio::PlayablePropertyOccurrenceValueV1;
 const auto kJsonFieldsV1 = PlayablePropertyAuthoringV1::fields();
 using harkenplayableproperties::PlayablePropertyIdV1;
 using harkenplayableproperties::PlayablePropertyWireV1;
@@ -62,7 +62,7 @@ TEST(PlayablePropertyAuthoring,
     for (const auto& field : kJsonFieldsV1) {
         if (PlayablePropertyAuthoringV1::isComponentStored(field.id)) continue;
         const auto id = static_cast<PlayablePropertyIdV1>(field.id);
-        if (VNX::FieldGroupForProperty(id)) continue;
+        if (harken::studio::FieldGroupForProperty(id)) continue;
         occurrence.presence.Set(id);
         ASSERT_TRUE(occurrence.setValue(
             id, exactOccurrenceValue(field.wire, field.id)));
@@ -75,7 +75,7 @@ TEST(PlayablePropertyAuthoring,
         else if (field.wire == PlayablePropertyWireV1::U32)
             EXPECT_TRUE(std::holds_alternative<uint32_t>(*stored));
         else if (field.wire == PlayablePropertyWireV1::ObjectId)
-            EXPECT_TRUE(std::holds_alternative<harkenstudio::ObjectId>(*stored));
+            EXPECT_TRUE(std::holds_alternative<harken::studio::types::ObjectId>(*stored));
         else
             EXPECT_TRUE(std::holds_alternative<QJsonArray>(*stored));
     }

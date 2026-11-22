@@ -10,7 +10,7 @@
 #include <QPen>
 #include <algorithm>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 float levelToY(const QRect& plot, float amplitude, const AmplitudeScale& amplitudeAxis)

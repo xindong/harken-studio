@@ -8,7 +8,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace VNX {
+namespace harken::studio {
 
 AmplitudeScale WaveformRenderer::amplitudeScale(const WaveformStyle& style, double exponent)
 {

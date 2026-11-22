@@ -33,7 +33,7 @@
 
 #include <algorithm>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 
@@ -163,9 +163,9 @@ MonitorPanel::MonitorPanel(QWidget* parent)
     levelFilter_ = new QComboBox(this);
     levelFilter_->setObjectName(QStringLiteral("MonitorLevelFilter"));
     levelFilter_->addItem(tr("All levels"), -1);
-    levelFilter_->addItem(tr("Info"), VNX::Monitor::kLogInfo);
-    levelFilter_->addItem(tr("Warning"), VNX::Monitor::kLogWarn);
-    levelFilter_->addItem(tr("Error"), VNX::Monitor::kLogError);
+    levelFilter_->addItem(tr("Info"), harken::studio::Monitor::kLogInfo);
+    levelFilter_->addItem(tr("Warning"), harken::studio::Monitor::kLogWarn);
+    levelFilter_->addItem(tr("Error"), harken::studio::Monitor::kLogError);
     filters->addWidget(levelFilter_);
     typeFilter_ = new QComboBox(this);
     typeFilter_->setObjectName(QStringLiteral("MonitorTypeFilter"));
@@ -419,4 +419,4 @@ void MonitorPanel::copySelected()
     if (!lines.isEmpty()) QApplication::clipboard()->setText(lines.join(QLatin1Char('\n')));
 }
 
-} // namespace VNX
+} // namespace harken::studio

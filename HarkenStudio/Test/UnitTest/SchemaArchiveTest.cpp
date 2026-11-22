@@ -59,26 +59,26 @@ TEST(SchemaArchive, SnapshotFileTamperingIsRejected)
 {
     QTemporaryDir directory;
     ASSERT_TRUE(directory.isValid());
-    const QString source = VNX::SchemaArchive::instance().rootPath();
+    const QString source = harken::studio::SchemaArchive::instance().rootPath();
     copyTree(source, directory.path());
     QFile schema(directory.filePath(QStringLiteral("Editor/%1/ProjectSerializedSchema.json")
-                                       .arg(VNX::ProjectSchema::kProjectSchemaVersion)));
+                                       .arg(harken::studio::ProjectSchema::kProjectSchemaVersion)));
     ASSERT_TRUE(schema.open(QIODevice::Append));
     ASSERT_EQ(schema.write(" "), 1);
     schema.close();
 
     SchemaRootOverride override(directory.path());
     QString error;
-    EXPECT_FALSE(VNX::SchemaArchive::instance().verifyBuildSnapshot(&error));
-    EXPECT_TRUE(VNX::SchemaArchive::instance().projectSchema(
-        VNX::ProjectSchema::kProjectSchemaVersion, &error).isEmpty());
+    EXPECT_FALSE(harken::studio::SchemaArchive::instance().verifyBuildSnapshot(&error));
+    EXPECT_TRUE(harken::studio::SchemaArchive::instance().projectSchema(
+        harken::studio::ProjectSchema::kProjectSchemaVersion, &error).isEmpty());
 }
 
 TEST(SchemaArchive, ManifestIdentityTamperingIsRejected)
 {
     QTemporaryDir directory;
     ASSERT_TRUE(directory.isValid());
-    auto& archive = VNX::SchemaArchive::instance();
+    auto& archive = harken::studio::SchemaArchive::instance();
     copyTree(archive.rootPath(), directory.path());
     QJsonObject manifest = archive.buildManifest();
     manifest.insert(QStringLiteral("inputs"), QJsonArray{});

@@ -7,7 +7,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 
-namespace VNH {
+namespace harken::hub {
 
 ProjectProbeResult ProjectProbe::probe(const QString& inputPath)
 {

@@ -2,9 +2,8 @@
 #include "../RuntimeU64Json.h"
 #include "../Actions/ActionSelectors.h"
 
-namespace VNX {
+namespace harken::studio {
 
-namespace Bridge = HarkenEditor::Bridge;
 
 void IPCServer::registerMixerHandlers()
 {
@@ -108,9 +107,9 @@ void IPCServer::registerMixerHandlers()
         }
 
         const QJsonValue busValue = args.value(QStringLiteral("bus_id"));
-        harkenstudio::ObjectId busId{};
+        harken::studio::types::ObjectId busId{};
         ProjectItem* item = nullptr;
-        if (parseObjectIdJson(busValue, &busId) && !harkenstudio::IsNull(busId)) {
+        if (parseObjectIdJson(busValue, &busId) && !harken::studio::types::IsNull(busId)) {
             item = pm.findItemByRuntimeStableId(busId);
         } else if (busValue.isDouble()) {
             const qint64 objectId = busValue.toInteger(-1);
@@ -137,7 +136,7 @@ void IPCServer::registerMixerHandlers()
                 ? item->parent : item;
             props["parent_bus_id"] = static_cast<qint64>(parentBus->objectID);
             props["parent_bus_ref"] = objectIdString(
-                parentBus == item ? harkenstudio::ObjectId{} : parentBus->runtimeId());
+                parentBus == item ? harken::studio::types::ObjectId{} : parentBus->runtimeId());
             props["has_receives"] = pm.busHasIncomingSends(item->objectID);
             props["volume"] = mix->volume;
             props["pan"] = bc->pan;
@@ -180,7 +179,7 @@ void IPCServer::registerMixerHandlers()
                 ? item->parent : item;
             busObj["parent_bus_id"] = static_cast<qint64>(parentBus->objectID);
             busObj["parent_bus_ref"] = objectIdString(
-                parentBus == item ? harkenstudio::ObjectId{} : parentBus->runtimeId());
+                parentBus == item ? harken::studio::types::ObjectId{} : parentBus->runtimeId());
             busObj["has_receives"] = pm.busHasIncomingSends(item->objectID);
             busObj["volume"] = mix->volume;
             busObj["mute"] = pm.auditionOverlay().isMuted(item->runtimeId());
@@ -219,7 +218,7 @@ void IPCServer::registerMixerHandlers()
                 ? item->parent : item;
             busObj["parent_bus_id"] = static_cast<qint64>(parentBus->objectID);
             busObj["parent_bus_ref"] = objectIdString(
-                parentBus == item ? harkenstudio::ObjectId{} : parentBus->runtimeId());
+                parentBus == item ? harken::studio::types::ObjectId{} : parentBus->runtimeId());
             busObj["has_receives"] = ProjectManager::instance().busHasIncomingSends(item->objectID);
             busObj["volume"] = mix->volume;
             busObj["pan"] = bc->pan;
@@ -271,7 +270,7 @@ QJsonObject IPCServer::handleGetMixerLevels(const QJsonObject& args)
     float peakL = 0.0f, peakR = 0.0f;
     const auto masterStatus = engine_->getBusMeterPeakById(
         master->runtimeId(), peakL, peakR);
-    if (masterStatus != Bridge::IpcQueryStatus::Ok)
+    if (masterStatus != bridge::IpcQueryStatus::Ok)
         return errorResponse("UNAVAILABLE", "Mixer levels unavailable");
     const double masterDb = linearToDb((std::max)(peakL, peakR));
     buses.append(QJsonObject{{"name", master->name}, {"level_db", masterDb},
@@ -283,7 +282,7 @@ QJsonObject IPCServer::handleGetMixerLevels(const QJsonObject& args)
         float bPeakL = 0.0f, bPeakR = 0.0f;
         if (engine_->getBusMeterPeakById(item->runtimeId(),
                                          bPeakL, bPeakR)
-            != Bridge::IpcQueryStatus::Ok)
+            != bridge::IpcQueryStatus::Ok)
             continue;
         const double bDb = linearToDb((std::max)(bPeakL, bPeakR));
         buses.append(QJsonObject{{"name", item->name}, {"level_db", bDb},

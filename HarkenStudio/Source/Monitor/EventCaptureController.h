@@ -16,9 +16,9 @@
 #include <tuple>
 #include <vector>
 
-namespace HarkenEditor::Bridge { class RemoteConnection; }
+namespace harken::studio::bridge { class RemoteConnection; }
 
-namespace VNX::Monitor {
+namespace harken::studio::Monitor {
 
 enum class EventCaptureState { Unavailable, Idle, Starting, Capturing, Stopping, Stopped, Failed };
 enum class EventCaptureTarget { Local, Remote };
@@ -49,7 +49,7 @@ struct CapturedEvent
     bool isDesignerEvent() const;
     quint64 playbackRequestId() const { return playbackRequestSequence; }
     quint64 gameObjectId() const { return emitterObjectId; }
-    harkenstudio::ObjectId objectId() const;
+    harken::studio::types::ObjectId objectId() const;
     MonitorFactRequest request() const;
 };
 
@@ -58,7 +58,7 @@ class EventCaptureController final : public QObject
     Q_OBJECT
 
 public:
-    explicit EventCaptureController(HarkenEditor::Bridge::RemoteConnection* remote,
+    explicit EventCaptureController(harken::studio::bridge::RemoteConnection* remote,
                                      QObject* parent = nullptr);
     ~EventCaptureController() override;
 
@@ -125,7 +125,7 @@ private:
     void resolveGameObject(CapturedEvent& event, const EmitterIdentity* firstIdentity = nullptr);
     void refreshGameObjects(const EmitterIdentities& changedEmitters);
 
-    QPointer<HarkenEditor::Bridge::RemoteConnection> remote_;
+    QPointer<harken::studio::bridge::RemoteConnection> remote_;
     EventCaptureState state_ = EventCaptureState::Unavailable;
     EventCaptureTarget target_ = EventCaptureTarget::Local;
     bool localAvailable_ = false;

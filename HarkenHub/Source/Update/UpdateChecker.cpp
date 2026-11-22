@@ -15,7 +15,7 @@
 #include <climits>
 #include <limits>
 
-namespace VNH {
+namespace harken::hub {
 
 namespace {
 
@@ -128,6 +128,7 @@ void UpdateChecker::invalidateCache()
         forcedRoundPending_ = true;
 }
 
+#ifdef HARKEN_HUB_TEST_OVERRIDES
 bool UpdateChecker::isChecking() const
 {
     return reply_ != nullptr;
@@ -137,6 +138,7 @@ qint64 UpdateChecker::effectiveIntervalMs() const
 {
     return options_.intervalMs;
 }
+#endif
 
 void UpdateChecker::beginRound(bool manual)
 {

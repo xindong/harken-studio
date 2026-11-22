@@ -14,7 +14,7 @@
 #include <QStylePainter>
 #include <QToolButton>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 class MenuActionPrimaryButton final : public QPushButton

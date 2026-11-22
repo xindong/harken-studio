@@ -20,7 +20,7 @@
 class QAction;
 class QToolButton;
 
-namespace VNX {
+namespace harken::studio {
 
 struct ProjectData;
 class MultiSelectComboBox;

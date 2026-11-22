@@ -21,7 +21,7 @@ class QWidget;
 class QMenu;
 class QActionGroup;
 
-namespace VNX {
+namespace harken::studio {
 
 struct WorkspaceDockCreateSpec;
 
@@ -48,8 +48,8 @@ public:
     void setDocks(const Docks& d);
     void setWindowDockResolver(WindowDockResolver resolver);
 
-    void setInstanceSnapshotProvider(std::function<QList<VNX::DockInstanceSpec>()> provider);
-    void setInstanceRestoreFactory(std::function<bool(const VNX::DockInstanceSpec&)> factory);
+    void setInstanceSnapshotProvider(std::function<QList<harken::studio::DockInstanceSpec>()> provider);
+    void setInstanceRestoreFactory(std::function<bool(const harken::studio::DockInstanceSpec&)> factory);
     void setSingletonSnapshotProvider(std::function<QVariantMap()> provider);
     void setSingletonStateRestorer(std::function<void(const QVariantMap&)> restorer);
     void setVisibleSingletonMaterializer(std::function<void()> materializer);
@@ -127,7 +127,7 @@ private:
     QJsonArray collapsedZonesToJson() const;
     void collapsedZonesFromJson(const QJsonArray& zones);
 
-    void ensureDocksForSpecs(const QList<VNX::DockInstanceSpec>& specs);
+    void ensureDocksForSpecs(const QList<harken::studio::DockInstanceSpec>& specs);
     QJsonObject captureLayoutState() const;
     void restoreLayoutState(const QJsonObject& json);
     void activateLayout(const QString& name, const QJsonObject& json);
@@ -142,8 +142,8 @@ private:
     MainWindow* host_ = nullptr;
     QMenu* layoutsMenu_ = nullptr;
     QActionGroup* layoutActionGroup_ = nullptr;
-    std::function<QList<VNX::DockInstanceSpec>()> instanceSnapshotProvider_;
-    std::function<bool(const VNX::DockInstanceSpec&)> instanceRestoreFactory_;
+    std::function<QList<harken::studio::DockInstanceSpec>()> instanceSnapshotProvider_;
+    std::function<bool(const harken::studio::DockInstanceSpec&)> instanceRestoreFactory_;
     std::function<QVariantMap()> singletonSnapshotProvider_;
     std::function<void(const QVariantMap&)> singletonStateRestorer_;
     std::function<void()> visibleSingletonMaterializer_;

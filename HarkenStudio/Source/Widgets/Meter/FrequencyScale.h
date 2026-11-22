@@ -4,7 +4,7 @@
 #include <cmath>
 #include <algorithm>
 
-namespace VNX {
+namespace harken::studio {
 
 enum class FreqScaleType { Log, Linear, Mel, Bark, ERB, Musical };
 

@@ -75,19 +75,17 @@
 #include <utility>
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 
-namespace Bridge = HarkenEditor::Bridge;
-namespace Build = HarkenEditor::Build;
 
 constexpr char kWaveformLock[] = ".harken-pack-waveforms.lock";
 
 std::uint64_t fnvName(const QString& name)
 {
     const QByteArray utf8 = name.toUtf8();
-    return harkenstudiobuild::Fnv1a64(utf8.constData(), static_cast<std::size_t>(utf8.size()));
+    return harken::studio::build::Fnv1a64(utf8.constData(), static_cast<std::size_t>(utf8.size()));
 }
 
 std::vector<std::uint8_t> requirementPayload(std::uint64_t packStableId,
@@ -97,9 +95,9 @@ std::vector<std::uint8_t> requirementPayload(std::uint64_t packStableId,
                                              std::uint64_t semanticFingerprint,
                                              std::uint64_t lineageFingerprint,
                                              std::uint64_t contentRevision,
-                                             harkenstudiobuild::CanonicalBusTriple busTriple)
+                                             harken::studio::build::CanonicalBusTriple busTriple)
 {
-    harkenstudiobuild::PackRequirementBlock block;
+    harken::studio::build::PackRequirementBlock block;
     block.schemaVersion = HK_PACK_PACK_REQUIREMENT_BLOCK_VINTAGE;
     block.storageModelVersion = HK_PACK_PACK_REQUIREMENT_BLOCK_VINTAGE;
     block.packStableId = packStableId;
@@ -111,27 +109,27 @@ std::vector<std::uint8_t> requirementPayload(std::uint64_t packStableId,
     block.lineageFingerprint = lineageFingerprint;
     block.ownedDefinitionCount = ownedDefinitions;
     block.ownedResourceCount = ownedResources;
-    harkenstudiobuild::ApplyCanonicalBusTriple(&block, busTriple);
-    std::vector<std::uint8_t> payload(harkenstudiobuild::kPackBytes<HkPackRequirementBlock>, 0);
-    harkenstudiobuild::SerializePackRow<HkPackRequirementBlock>(block, payload.data());
-    harkenstudiobuild::StampRequirementCoverage(&payload);
+    harken::studio::build::ApplyCanonicalBusTriple(&block, busTriple);
+    std::vector<std::uint8_t> payload(harken::studio::build::kPackBytes<HkPackRequirementBlock>, 0);
+    harken::studio::build::SerializePackRow<HkPackRequirementBlock>(block, payload.data());
+    harken::studio::build::StampRequirementCoverage(&payload);
     return payload;
 }
 
 std::vector<std::uint8_t> dependencyPayload(std::uint64_t prerequisiteId,
                                             std::uint32_t edgeKind,
                                             std::uint64_t expectedRevision,
-                                            harkenstudiobuild::CanonicalBusTriple busTriple)
+                                            harken::studio::build::CanonicalBusTriple busTriple)
 {
-    harkenstudiobuild::PackDependencyEdge edge;
+    harken::studio::build::PackDependencyEdge edge;
     edge.prerequisitePackStableId = prerequisiteId;
     edge.edgeKind = edgeKind;
     edge.required01 = 1;
     edge.expectedPrerequisiteContentRevision = expectedRevision;
     if (edgeKind == HK_PACK_DEPENDENCY_EDGE_KIND_INIT)
-        harkenstudiobuild::ApplyCanonicalBusTriple(&edge, busTriple);
-    std::vector<std::uint8_t> payload(harkenstudiobuild::kPackBytes<HkPackDependencyEdge>, 0);
-    harkenstudiobuild::SerializePackRow<HkPackDependencyEdge>(edge, payload.data());
+        harken::studio::build::ApplyCanonicalBusTriple(&edge, busTriple);
+    std::vector<std::uint8_t> payload(harken::studio::build::kPackBytes<HkPackDependencyEdge>, 0);
+    harken::studio::build::SerializePackRow<HkPackDependencyEdge>(edge, payload.data());
     return payload;
 }
 
@@ -147,8 +145,8 @@ bool readAll(const QString& path, QByteArray* bytes, QString* error)
     return true;
 }
 
-bool appendEntry(Bridge::PackBuildSession::CanonicalPackEntry entry, const QString& path,
-                 std::vector<Bridge::PackBuildSession::CanonicalPackEntry>* entries, QString* error)
+bool appendEntry(bridge::PackBuildSession::CanonicalPackEntry entry, const QString& path,
+                 std::vector<bridge::PackBuildSession::CanonicalPackEntry>* entries, QString* error)
 {
     const auto existing = std::find_if(entries->begin(), entries->end(),
         [&](const auto& candidate) {
@@ -169,7 +167,7 @@ bool appendEntry(Bridge::PackBuildSession::CanonicalPackEntry entry, const QStri
         if (existing->vintage != entry.vintage || !samePayload) {
             if (error)
                 *error = QStringLiteral("Conflicting Pack entry %1 in '%2'")
-                             .arg(VNX::objectIdString(entry.id), path);
+                             .arg(harken::studio::objectIdString(entry.id), path);
             return false;
         }
         return true;
@@ -179,26 +177,26 @@ bool appendEntry(Bridge::PackBuildSession::CanonicalPackEntry entry, const QStri
 }
 
 bool collectEntries(const QByteArray& bytes, const QString& path,
-                    std::vector<Bridge::PackBuildSession::CanonicalPackEntry>* entries,
+                    std::vector<bridge::PackBuildSession::CanonicalPackEntry>* entries,
                     QString* error, bool resourcesOnly, bool publicationMetadataOnly,
                     harkenizer::resourcecompiler::MediaCache* mediaCache = nullptr)
 {
-    if (bytes.size() < static_cast<int>(harkenstudiobuild::kPackBytes<HkPackFileHeader>)) {
+    if (bytes.size() < static_cast<int>(harken::studio::build::kPackBytes<HkPackFileHeader>)) {
         if (error)
             *error = QStringLiteral("Pack '%1' is too small").arg(path);
         return false;
     }
-    harkenstudiobuild::PackFileHeader header;
-    if (!harkenstudiobuild::ReadPackFileHeader(
+    harken::studio::build::PackFileHeader header;
+    if (!harken::studio::build::ReadPackFileHeader(
             reinterpret_cast<const std::uint8_t*>(bytes.constData()), &header)) {
         if (error)
             *error = QStringLiteral("Pack '%1' is not a v2 container").arg(path);
         return false;
     }
     for (std::uint32_t i = 0; i < header.entryCount; ++i) {
-        const harkenstudiobuild::PackDirectoryEntry record = harkenstudiobuild::ReadPackDirectoryEntry(
+        const harken::studio::build::PackDirectoryEntry record = harken::studio::build::ReadPackDirectoryEntry(
             reinterpret_cast<const std::uint8_t*>(bytes.constData()) +
-            header.directoryOffset + i * harkenstudiobuild::kPackBytes<HkPackDirectoryEntry>);
+            header.directoryOffset + i * harken::studio::build::kPackBytes<HkPackDirectoryEntry>);
         if (publicationMetadataOnly
             && record.kind != HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION
             && record.kind != HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK
@@ -212,20 +210,20 @@ bool collectEntries(const QByteArray& bytes, const QString& path,
             && record.kind != HK_PACK_ENTRY_KIND_EFFECT_PRESET
             && record.kind != HK_PACK_ENTRY_KIND_BUS_EFFECT
             && record.kind != HK_PACK_ENTRY_KIND_EFFECT_DYNAMIC_ROUTE) continue;
-        Bridge::PackBuildSession::CanonicalPackEntry entry;
+        bridge::PackBuildSession::CanonicalPackEntry entry;
         entry.kind = record.kind;
         entry.vintage = record.vintage;
         entry.id = record.id;
         entry.relationOrdinal = record.relationOrdinal;
         if (record.kind == HK_PACK_ENTRY_KIND_MEDIA) {
-            const harkenstudiobuild::PackTocEntry toc = harkenstudiobuild::ReadPackMedia(
+            const harken::studio::build::PackTocEntry toc = harken::studio::build::ReadPackMedia(
                 reinterpret_cast<const std::uint8_t*>(bytes.constData()) + record.offset);
-            entry.payload.resize(harkenstudiobuild::kPackBytes<HkPackMedia>);
+            entry.payload.resize(harken::studio::build::kPackBytes<HkPackMedia>);
             std::memcpy(entry.payload.data(),
                         reinterpret_cast<const std::uint8_t*>(bytes.constData()) +
                             record.offset,
-                        harkenstudiobuild::kPackBytes<HkPackMedia>);
-            harkenstudiobuild::StorePackMediaBlobOffset(entry.payload.data(), 0);
+                        harken::studio::build::kPackBytes<HkPackMedia>);
+            harken::studio::build::StorePackMediaBlobOffset(entry.payload.data(), 0);
             if (toc.blobBytes != 0) {
                 const auto* blob = reinterpret_cast<const std::uint8_t*>(bytes.constData()) + toc.blobOffset;
                 if (toc.blobBytes % sizeof(float) != 0) {
@@ -431,7 +429,7 @@ struct PackMeta
     QString fileName;
     QString language;
     QString platform;
-    std::vector<harkenstudio::ObjectId> actionStableIds;
+    std::vector<harken::studio::types::ObjectId> actionStableIds;
     bool grouped = false;
     std::uint64_t packStableId = 0;
     std::uint32_t packKind = 0;
@@ -444,17 +442,17 @@ struct PackMeta
     std::uint64_t lineageFingerprint = 0;
     std::vector<std::uint8_t> partitionPayload;
     std::vector<std::uint8_t> variablePolicyOverlayPayload;
-    QJsonObject companion;
+    QJsonObject packMetadata;
     std::vector<std::uint8_t> variableRequirementsPayload;
-    std::unordered_map<harkenstudio::ObjectId, std::uint64_t> variableExecutionFingerprints;
-    std::unordered_map<harkenstudio::ObjectId, std::uint64_t> variableLabelMappingFingerprints;
-    std::vector<Bridge::PackBuildSession::CanonicalPackEntry> resourceEntries;
+    std::unordered_map<harken::studio::types::ObjectId, std::uint64_t> variableExecutionFingerprints;
+    std::unordered_map<harken::studio::types::ObjectId, std::uint64_t> variableLabelMappingFingerprints;
+    std::vector<bridge::PackBuildSession::CanonicalPackEntry> resourceEntries;
     QJsonObject previousRow;
-    std::vector<Bridge::PackBuildSession::CanonicalPackEntry> previousEntries;
+    std::vector<bridge::PackBuildSession::CanonicalPackEntry> previousEntries;
     QString resourceFingerprint;
     QString previousResourceFingerprint;
     bool previousValid = false;
-    harkenstudiobuild::WorldCapacitySummaryV1 previousCapacity;
+    harken::studio::build::WorldCapacitySummaryV1 previousCapacity;
     bool retained = false;
     bool metadataUpdated = false;
     bool skipped = false;
@@ -464,24 +462,24 @@ struct PackMeta
     qint64 elapsedNanoseconds = 0;
     quint32 formatVersion = 0;
     qint64 fileSize = 0;
-    std::unordered_map<harkenstudio::ObjectId, std::uint64_t> soundContentRevisions;
+    std::unordered_map<harken::studio::types::ObjectId, std::uint64_t> soundContentRevisions;
     ProjectPackExporter::ExportResult mediaResult;
-    std::set<harkenstudio::ObjectId> ownedPlayableIds;
-    std::vector<std::vector<harkenstudiobuild::SendV1>> ownedSends;
-    std::vector<std::vector<harkenstudiobuild::LayerAncestorRefV1>> ownedLayerAncestors;
-    std::vector<std::vector<harkenstudiobuild::StructuralAncestorRefV1>> ownedStructuralAncestors;
-    std::vector<std::vector<harkenstudiobuild::ScheduleClipPlacementV1>> ownedPlacements;
-    std::vector<std::vector<harkenstudiobuild::ScheduleTrackRefV1>> ownedTrackRefs;
-    std::vector<std::vector<harkenstudiobuild::ContainerChildProgramViewV2>> ownedContainerChildren;
-    std::vector<std::vector<harkenstudiobuild::ActionStepProgramViewV1>> ownedActionSteps;
-    std::vector<harkenstudiobuild::PlayablePropertyProgramViewV1> slicedPlayables;
-    std::vector<harkenstudiobuild::PlayableOccurrencePropertyViewV1> slicedOccurrences;
-    std::vector<harkenstudiobuild::TrackScheduleProgramViewV1> slicedTracks;
-    std::vector<harkenstudiobuild::SegmentScheduleProgramViewV1> slicedSegments;
-    std::vector<harkenstudiobuild::ContainerProgramViewV3> slicedContainers;
-    std::vector<harkenstudiobuild::TransitionProgramViewV1> slicedTransitions;
-    std::vector<harkenstudiobuild::ActionProgramViewV1> slicedActions;
-    std::vector<harkenstudiobuild::VariableDefinitionV1> slicedVariables;
+    std::set<harken::studio::types::ObjectId> ownedPlayableIds;
+    std::vector<std::vector<harken::studio::build::SendV1>> ownedSends;
+    std::vector<std::vector<harken::studio::build::LayerAncestorRefV1>> ownedLayerAncestors;
+    std::vector<std::vector<harken::studio::build::StructuralAncestorRefV1>> ownedStructuralAncestors;
+    std::vector<std::vector<harken::studio::build::ScheduleClipPlacementV1>> ownedPlacements;
+    std::vector<std::vector<harken::studio::build::ScheduleTrackRefV1>> ownedTrackRefs;
+    std::vector<std::vector<harken::studio::build::ContainerChildProgramViewV2>> ownedContainerChildren;
+    std::vector<std::vector<harken::studio::build::ActionStepProgramViewV1>> ownedActionSteps;
+    std::vector<harken::studio::build::PlayablePropertyProgramViewV1> slicedPlayables;
+    std::vector<harken::studio::build::PlayableOccurrencePropertyViewV1> slicedOccurrences;
+    std::vector<harken::studio::build::TrackScheduleProgramViewV1> slicedTracks;
+    std::vector<harken::studio::build::SegmentScheduleProgramViewV1> slicedSegments;
+    std::vector<harken::studio::build::ContainerProgramViewV3> slicedContainers;
+    std::vector<harken::studio::build::TransitionProgramViewV1> slicedTransitions;
+    std::vector<harken::studio::build::ActionProgramViewV1> slicedActions;
+    std::vector<harken::studio::build::VariableDefinitionV1> slicedVariables;
 };
 
 struct IdentityOwner
@@ -497,7 +495,7 @@ bool isPlayableType(ProjectItem::Type type)
         || type == ProjectItem::Type::Layer;
 }
 
-const ProjectItem* findAction(const ProjectData& project, harkenstudio::ObjectId stableId)
+const ProjectItem* findAction(const ProjectData& project, harken::studio::types::ObjectId stableId)
 {
     const auto units = ProjectPackExporter::CollectActionPackUnits(project);
     uint32_t objectId = 0;
@@ -544,13 +542,13 @@ const ProjectItem* findItemByGuid(const ProjectData& project, const QUuid& guid)
     return found;
 }
 
-const ProjectItem* findItemByStableId(const ProjectData& project, harkenstudio::ObjectId stableId)
+const ProjectItem* findItemByStableId(const ProjectData& project, harken::studio::types::ObjectId stableId)
 {
     const ProjectItem* found = nullptr;
     std::function<void(const ProjectItem*)> walk = [&](const ProjectItem* item) {
         if (!item || found)
             return;
-        const harkenstudio::ObjectId itemId =
+        const harken::studio::types::ObjectId itemId =
             item->runtimeId();
         if (itemId == stableId)
             found = item;
@@ -566,7 +564,7 @@ const ProjectItem* findItemByStableId(const ProjectData& project, harkenstudio::
     return found;
 }
 
-harkenstudio::ObjectId itemStableId(const ProjectItem& item)
+harken::studio::types::ObjectId itemStableId(const ProjectItem& item)
 {
     return item.runtimeId();
 }
@@ -600,7 +598,7 @@ bool validateVariableDeclarationForExport(const ProjectItem* item,
             *error = QStringLiteral("Variable overlay is missing writers");
         return false;
     }
-    const harkenstudio::ObjectId id = itemStableId(*item);
+    const harken::studio::types::ObjectId id = itemStableId(*item);
     QString labelsError;
     if (source->rangeMin < 0.0f || !VariableSemantics::validateLabels(source->labels, &labelsError)) {
         if (error) *error = QStringLiteral("Variable '%1': %2").arg(item->name,
@@ -610,7 +608,7 @@ bool validateVariableDeclarationForExport(const ProjectItem* item,
     if (source->writers < 1 || source->writers > 3) {
         if (error)
             *error = QStringLiteral("Variable %1 writers must be 1, 2, or 3")
-                         .arg(VNX::objectIdString(id));
+                         .arg(harken::studio::objectIdString(id));
         return false;
     }
     if (source->kind == VariableKind::Step &&
@@ -621,7 +619,7 @@ bool validateVariableDeclarationForExport(const ProjectItem* item,
             *error = QStringLiteral(
                          "Variable %1 Discrete range and default must be "
                          "exact integers")
-                         .arg(VNX::objectIdString(id));
+                         .arg(harken::studio::objectIdString(id));
         return false;
     }
     if (!std::isfinite(source->rangeMin) || !std::isfinite(source->rangeMax) ||
@@ -632,7 +630,7 @@ bool validateVariableDeclarationForExport(const ProjectItem* item,
             *error = QStringLiteral(
                          "Variable %1 defaultValue is outside [rangeMin, "
                          "rangeMax]")
-                         .arg(VNX::objectIdString(id));
+                         .arg(harken::studio::objectIdString(id));
         return false;
     }
     return true;
@@ -653,10 +651,10 @@ bool overlayWritersFor(const ProjectItem* item, std::uint8_t* writers,
 }
 
 void stripBindingEntries(
-    std::vector<Bridge::PackBuildSession::CanonicalPackEntry>* entries)
+    std::vector<bridge::PackBuildSession::CanonicalPackEntry>* entries)
 {
     entries->erase(std::remove_if(entries->begin(), entries->end(),
-        [](const Bridge::PackBuildSession::CanonicalPackEntry& entry) {
+        [](const bridge::PackBuildSession::CanonicalPackEntry& entry) {
             return entry.kind == HK_PACK_ENTRY_KIND_BINDING_DEFINITION
                 || entry.kind == HK_PACK_ENTRY_KIND_BINDING_ATTACHMENT;
         }), entries->end());
@@ -664,13 +662,13 @@ void stripBindingEntries(
 
 bool encodeBindingDefinitionEntry(
     const BindingRuntimeProgram& program,
-    Bridge::PackBuildSession::CanonicalPackEntry* out)
+    bridge::PackBuildSession::CanonicalPackEntry* out)
 {
-    if (!out || harkenstudio::IsNull(program.bindingId) || harkenstudio::IsNull(program.variableId)
+    if (!out || harken::studio::types::IsNull(program.bindingId) || harken::studio::types::IsNull(program.variableId)
         || program.points.size() < 2
-        || program.points.size() > harkenstudio::kCurveMaxPoints)
+        || program.points.size() > harken::studio::types::kCurveMaxPoints)
         return false;
-    harkenstudiobuild::BindingDefinition desc{};
+    harken::studio::build::BindingDefinition desc{};
     desc.variableId = program.variableId;
     desc.targetScopeKind = program.targetScopeKind;
     desc.targetId = program.targetId;
@@ -691,8 +689,8 @@ bool encodeBindingDefinitionEntry(
     out->kind = HK_PACK_ENTRY_KIND_BINDING_DEFINITION;
     out->vintage = HK_PACK_BINDING_DEFINITION_VINTAGE;
     out->id = program.bindingId;
-    out->payload.assign(harkenstudiobuild::kPackBytes<HkPackBindingDefinition>, 0);
-    harkenstudiobuild::WritePackBindingDefinition(program.bindingId, desc,
+    out->payload.assign(harken::studio::build::kPackBytes<HkPackBindingDefinition>, 0);
+    harken::studio::build::WritePackBindingDefinition(program.bindingId, desc,
                                             out->payload.data());
     return true;
 }
@@ -700,14 +698,14 @@ bool encodeBindingDefinitionEntry(
 bool appendCanonicalBindingEntries(
     const BindingRuntimeLowering& lowering,
     const PackMeta& meta,
-    std::vector<Bridge::PackBuildSession::CanonicalPackEntry>* entries,
+    std::vector<bridge::PackBuildSession::CanonicalPackEntry>* entries,
     QString* error)
 {
     if (!entries)
         return false;
     stripBindingEntries(entries);
     const bool initPack = meta.packKind == HK_PACK_KIND_INIT;
-    std::set<harkenstudio::ObjectId> localObjectIds;
+    std::set<harken::studio::types::ObjectId> localObjectIds;
     for (const auto& entry : *entries) {
         if (entry.kind == HK_PACK_ENTRY_KIND_MEDIA
             || entry.kind == HK_PACK_ENTRY_KIND_BUS)
@@ -717,11 +715,11 @@ bool appendCanonicalBindingEntries(
                           meta.ownedPlayableIds.end());
 
     std::vector<BindingRuntimeAttachment> kept;
-    std::set<harkenstudio::ObjectId> keptBindingIds;
+    std::set<harken::studio::types::ObjectId> keptBindingIds;
     for (const BindingRuntimeAttachment& attachment : lowering.attachments) {
         const bool global =
-            attachment.scopeKind == harkenstudio::kTargetScopeBus
-            || attachment.scopeKind == harkenstudio::kTargetScopeBusEffectParam;
+            attachment.scopeKind == harken::studio::types::kTargetScopeBus
+            || attachment.scopeKind == harken::studio::types::kTargetScopeBusEffectParam;
         if (global != initPack)
             continue;
         if (localObjectIds.count(attachment.objectId) == 0)
@@ -732,47 +730,47 @@ bool appendCanonicalBindingEntries(
     for (const BindingRuntimeProgram& program : lowering.programs) {
         if (keptBindingIds.count(program.bindingId) == 0)
             continue;
-        Bridge::PackBuildSession::CanonicalPackEntry entry;
+        bridge::PackBuildSession::CanonicalPackEntry entry;
         if (!encodeBindingDefinitionEntry(program, &entry)) {
             if (error)
                 *error = QStringLiteral("Pack '%1' cannot encode Binding %2")
                              .arg(meta.fileName)
-                             .arg(VNX::objectIdString(program.bindingId));
+                             .arg(harken::studio::objectIdString(program.bindingId));
             return false;
         }
         entries->push_back(std::move(entry));
     }
     std::uint64_t ordinal = 0;
     for (const BindingRuntimeAttachment& attachment : kept) {
-        Bridge::PackBuildSession::CanonicalPackEntry entry;
+        bridge::PackBuildSession::CanonicalPackEntry entry;
         entry.kind = HK_PACK_ENTRY_KIND_BINDING_ATTACHMENT;
         entry.vintage = HK_PACK_BINDING_ATTACHMENT_VINTAGE;
         entry.relationOrdinal = ordinal++;
-        harkenstudiobuild::PackBindingAttachmentEntry wire;
+        harken::studio::build::PackBindingAttachmentEntry wire;
         wire.bindingId = attachment.bindingId;
         wire.scopeKind = attachment.scopeKind;
         wire.objectId = attachment.objectId;
-        entry.payload.assign(harkenstudiobuild::kPackBytes<HkPackBindingAttachment>, 0);
-        harkenstudiobuild::SerializePackRow<HkPackBindingAttachment>(wire, entry.payload.data());
+        entry.payload.assign(harken::studio::build::kPackBytes<HkPackBindingAttachment>, 0);
+        harken::studio::build::SerializePackRow<HkPackBindingAttachment>(wire, entry.payload.data());
         entries->push_back(std::move(entry));
     }
     return true;
 }
 
 bool encodeVariablePolicyOverlay(
-    const harkenstudiobuild::ContainerWorldInstallViewV1& world,
+    const harken::studio::build::ContainerWorldInstallViewV1& world,
     const ProjectData& project,
     std::vector<std::uint8_t>* outPayload,
-    std::unordered_map<harkenstudio::ObjectId, std::uint64_t>* fingerprints,
-    std::unordered_map<harkenstudio::ObjectId, std::uint64_t>* labelFingerprints,
+    std::unordered_map<harken::studio::types::ObjectId, std::uint64_t>* fingerprints,
+    std::unordered_map<harken::studio::types::ObjectId, std::uint64_t>* labelFingerprints,
     QString* error)
 {
     struct Row {
-        harkenstudio::ObjectId variableId = {};
+        harken::studio::types::ObjectId variableId = {};
         std::uint8_t writers = 1;
         std::uint64_t fingerprint = 0;
         std::vector<std::int32_t> anchors;
-        std::vector<harkenstudiobuild::VariableLabelDefinitionV1> labels;
+        std::vector<harken::studio::build::VariableLabelDefinitionV1> labels;
         std::uint64_t labelMappingFingerprint = 0;
     };
     std::vector<Row> rows;
@@ -791,7 +789,7 @@ bool encodeVariablePolicyOverlay(
         const std::int32_t* pointer =
             anchors.empty() ? nullptr : anchors.data();
         std::uint64_t fingerprint = 0;
-        if (!harkenstudiobuild::ComputeVariableExecutionFingerprintV1(
+        if (!harken::studio::build::ComputeVariableExecutionFingerprintV1(
                 def.variableId, static_cast<std::uint8_t>(def.kind),
                 1, writers, def.rangeMin,
                 def.rangeMax, def.defaultValue, pointer,
@@ -799,21 +797,21 @@ bool encodeVariablePolicyOverlay(
             if (error)
                 *error = QStringLiteral(
                     "Variable %1 failed execution fingerprint")
-                             .arg(VNX::objectIdString(def.variableId));
+                             .arg(harken::studio::objectIdString(def.variableId));
             return false;
         }
         (*fingerprints)[def.variableId] = fingerprint;
-        std::vector<harkenstudiobuild::VariableLabelDefinitionV1> labels;
+        std::vector<harken::studio::build::VariableLabelDefinitionV1> labels;
         for (const auto& label : VariableSemantics::effectiveLabels(*item->comp<VVariable>()))
             labels.push_back({label.anchor, {}, runtimeObjectId(label.id)});
-        const auto mapping = harkenstudiobuild::ComputeVariableLabelMappingFingerprintV1(def.variableId, labels);
+        const auto mapping = harken::studio::build::ComputeVariableLabelMappingFingerprintV1(def.variableId, labels);
         (*labelFingerprints)[def.variableId] = mapping;
         rows.push_back({def.variableId, writers, fingerprint, std::move(anchors), std::move(labels), mapping});
     }
     std::sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) {
         return a.variableId < b.variableId;
     });
-    using namespace harkenstudiobuild;
+    using namespace harken::studio::build;
     struct PolicyRecord {
         const Row& source;
         PackVariablePolicyRow Wire() const noexcept { return {source.variableId, source.writers, source.fingerprint}; }
@@ -873,8 +871,8 @@ bool encodeVariablePolicyOverlay(
     return true;
 }
 
-bool fillInitCompanion(const harkenstudiobuild::ContainerWorldInstallViewV1& world,
-                       const ProjectData& project, QJsonObject* companion, QString* error)
+bool fillInitPackMetadata(const harken::studio::build::ContainerWorldInstallViewV1& world,
+                       const ProjectData& project, QJsonObject* packMetadata, QString* error)
 {
     QJsonArray variables;
     QSet<QString> names;
@@ -897,18 +895,18 @@ bool fillInitCompanion(const harkenstudiobuild::ContainerWorldInstallViewV1& wor
             {QStringLiteral("guid"), objectIdString(item->runtimeId())},
             {QStringLiteral("labels"), labels}});
     }
-    *companion = QJsonObject{{QStringLiteral("packMetadataVersion"), HARKEN_PACK_METADATA_VERSION},
+    *packMetadata = QJsonObject{{QStringLiteral("packMetadataVersion"), HARKEN_PACK_METADATA_VERSION},
         {QStringLiteral("variables"), variables}};
     return true;
 }
 
-QStringList companionWaveformFiles(const QJsonObject& companion,
-                                    const QString& companionPath, const QDir& root)
+QStringList packMetadataWaveformFiles(const QJsonObject& packMetadata,
+                                    const QString& packMetadataPath, const QDir& root)
 {
     QStringList files;
-    const QDir companionDir(QFileInfo(companionPath).absolutePath());
-    for (const auto& value : companion.value(QStringLiteral("waveforms")).toArray()) {
-        const QString absolute = QDir::cleanPath(companionDir.absoluteFilePath(
+    const QDir packMetadataDir(QFileInfo(packMetadataPath).absolutePath());
+    for (const auto& value : packMetadata.value(QStringLiteral("waveforms")).toArray()) {
+        const QString absolute = QDir::cleanPath(packMetadataDir.absoluteFilePath(
             value.toObject().value(QStringLiteral("file")).toString()));
         const QString relative = root.relativeFilePath(absolute);
         if (safePublicationPath(root, relative) && QFileInfo(absolute).isFile())
@@ -918,13 +916,13 @@ QStringList companionWaveformFiles(const QJsonObject& companion,
     return files;
 }
 
-std::set<harkenstudio::ObjectId> worldMetadataObjectIds(
-    const harkenstudiobuild::ContainerWorldInstallViewV1& world)
+std::set<harken::studio::types::ObjectId> worldMetadataObjectIds(
+    const harken::studio::build::ContainerWorldInstallViewV1& world)
 {
-    std::set<harkenstudio::ObjectId> ids;
-    const auto collectPayload = [&](const harkenstudiobuild::PlayablePropertyPayloadViewV1& payload) {
+    std::set<harken::studio::types::ObjectId> ids;
+    const auto collectPayload = [&](const harken::studio::build::PlayablePropertyPayloadViewV1& payload) {
         constexpr auto slot = static_cast<std::size_t>(
-            harkenstudiobuild::playableproperties::PlayablePropertyIdV1::SpatialAttenuationRef) - 1;
+            harken::studio::build::playableproperties::PlayablePropertyIdV1::SpatialAttenuationRef) - 1;
         if (payload.presentMask & (UINT64_C(1) << slot))
             ids.insert(payload.values[slot].objectId);
     };
@@ -962,14 +960,14 @@ std::set<harkenstudio::ObjectId> worldMetadataObjectIds(
         for (std::uint32_t j = 0; j < container.continuousAxisCount; ++j)
             ids.insert(container.continuousAxes[j].variableId);
     }
-    ids.erase(harkenstudio::ObjectId{});
-    ids.erase(harkenstudio::kMasterBusObjectId);
+    ids.erase(harken::studio::types::ObjectId{});
+    ids.erase(harken::studio::types::kMasterBusObjectId);
     return ids;
 }
 
-std::set<harkenstudio::ObjectId> packMetadataObjectIds(
-    const harkenstudiobuild::PackCanonicalImage& image,
-    const harkenstudiobuild::ContainerWorldInstallViewV1& world)
+std::set<harken::studio::types::ObjectId> packMetadataObjectIds(
+    const harken::studio::build::PackCanonicalImage& image,
+    const harken::studio::build::ContainerWorldInstallViewV1& world)
 {
     auto ids = worldMetadataObjectIds(world);
     for (const auto& media : image.media)
@@ -984,15 +982,15 @@ std::set<harkenstudio::ObjectId> packMetadataObjectIds(
         for (const auto& bus : image.busDefinitionBusesV2)
             ids.insert(bus.busId);
     }
-    ids.erase(harkenstudio::ObjectId{});
-    ids.erase(harkenstudio::kMasterBusObjectId);
+    ids.erase(harken::studio::types::ObjectId{});
+    ids.erase(harken::studio::types::kMasterBusObjectId);
     return ids;
 }
 
 bool fillPackMetadata(const ProjectData& project, const PackMeta& pack,
-                      const std::set<harkenstudio::ObjectId>& ids,
-                      const std::unordered_map<harkenstudio::ObjectId, const ProjectItem*>& items,
-                      QJsonObject* companion, QString* error)
+                      const std::set<harken::studio::types::ObjectId>& ids,
+                      const std::unordered_map<harken::studio::types::ObjectId, const ProjectItem*>& items,
+                      QJsonObject* packMetadata, QString* error)
 {
     const auto* platform = ProjectPlatformSemantics::find(project.platforms, QUuid(pack.platform));
     if (!platform) {
@@ -1014,7 +1012,7 @@ bool fillPackMetadata(const ProjectData& project, const PackMeta& pack,
             {QStringLiteral("type"), ItemTypeCatalog::canonicalName(item.type)},
             {QStringLiteral("path"), item.objectPath()}});
     }
-    companion->insert(QStringLiteral("metadata"), QJsonObject{
+    packMetadata->insert(QStringLiteral("metadata"), QJsonObject{
         {QStringLiteral("packStableId"), QString::number(pack.packStableId)},
         {QStringLiteral("platform"), platform->name},
         {QStringLiteral("language"), pack.language},
@@ -1022,20 +1020,20 @@ bool fillPackMetadata(const ProjectData& project, const PackMeta& pack,
     return true;
 }
 
-bool fillWaveformCompanion(const CanonicalPackSetExportRequest& request,
+bool fillWaveformPackMetadata(const CanonicalPackSetExportRequest& request,
                            const PackMeta& pack, const QString& outputRoot,
                            QHash<uint32_t, QString>* exportedSources,
-                           QJsonObject* companion, QString* error)
+                           QJsonObject* packMetadata, QString* error)
 {
     QJsonArray waveforms;
-    std::set<harkenstudio::ObjectId> mediaIds;
+    std::set<harken::studio::types::ObjectId> mediaIds;
     for (const auto& entry : pack.resourceEntries)
         if (entry.kind == HK_PACK_ENTRY_KIND_MEDIA)
             mediaIds.insert(entry.id);
     const auto& snapshot = *request.options.snapshot;
     const auto& project = *request.project;
     const QDir waveformDir(outputRoot);
-    const QDir companionDir(QFileInfo(QDir(request.outputDir).filePath(pack.fileName)).absolutePath());
+    const QDir packMetadataDir(QFileInfo(QDir(request.outputDir).filePath(pack.fileName)).absolutePath());
     for (const auto& variant : request.plan->variants) {
         if (variant.variant.platform != pack.platform || variant.variant.language != pack.language
             || std::find(pack.actionStableIds.begin(), pack.actionStableIds.end(), variant.actionStableId)
@@ -1081,7 +1079,7 @@ bool fillWaveformCompanion(const CanonicalPackSetExportRequest& request,
                 if (exportCanceled(request.options.cancelCheck, error)) return false;
                 const QString path = waveformDir.filePath(fileName);
                 if (!request.options.packBuildState || !request.options.packBuildState->isWaveformCurrent(
-                        pack.fileName, companionDir.relativeFilePath(path))) {
+                        pack.fileName, packMetadataDir.relativeFilePath(path))) {
                     QSaveFile file(path);
                     if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size() || !file.commit()) {
                         *error = QStringLiteral("Cannot write waveform '%1'").arg(path);
@@ -1094,7 +1092,7 @@ bool fillWaveformCompanion(const CanonicalPackSetExportRequest& request,
             }
             waveforms.append(QJsonObject{
                 {QStringLiteral("soundGuid"), objectIdString(media.soundStableId)},
-                {QStringLiteral("file"), companionDir.relativeFilePath(waveformDir.filePath(fileName))},
+                {QStringLiteral("file"), packMetadataDir.relativeFilePath(waveformDir.filePath(fileName))},
                 {QStringLiteral("trimStartFrame"), static_cast<qint64>(range->trimStartFrame)},
                 {QStringLiteral("trimEndFrame"), static_cast<qint64>(range->trimEndFrame)}});
         }
@@ -1103,15 +1101,15 @@ bool fillWaveformCompanion(const CanonicalPackSetExportRequest& request,
         *error = QStringLiteral("Pack '%1' contains media without a waveform source").arg(pack.fileName);
         return false;
     }
-    companion->insert(QStringLiteral("waveforms"), waveforms);
+    packMetadata->insert(QStringLiteral("waveforms"), waveforms);
     return true;
 }
 
 std::vector<std::uint8_t> encodeVariableRequirements(
-    const std::vector<std::pair<harkenstudio::ObjectId, std::uint64_t>>& rows,
-    const std::unordered_map<harkenstudio::ObjectId, std::uint64_t>& labelFingerprints)
+    const std::vector<std::pair<harken::studio::types::ObjectId, std::uint64_t>>& rows,
+    const std::unordered_map<harken::studio::types::ObjectId, std::uint64_t>& labelFingerprints)
 {
-    using namespace harkenstudiobuild;
+    using namespace harken::studio::build;
     std::vector<PackVariableRequirement> wires;
     wires.reserve(rows.size());
     for (const auto& row : rows)
@@ -1138,8 +1136,8 @@ std::vector<std::uint8_t> encodeVariableRequirements(
     return payload;
 }
 
-bool claimIdentity(std::unordered_map<harkenstudio::ObjectId, IdentityOwner>* owners,
-                   harkenstudio::ObjectId stableId, std::uint64_t packStableId,
+bool claimIdentity(std::unordered_map<harken::studio::types::ObjectId, IdentityOwner>* owners,
+                   harken::studio::types::ObjectId stableId, std::uint64_t packStableId,
                    std::uint32_t identityClass, QString* error)
 {
     const auto existing = owners->find(stableId);
@@ -1150,7 +1148,7 @@ bool claimIdentity(std::unordered_map<harkenstudio::ObjectId, IdentityOwner>* ow
         }
         if (error)
             *error = QStringLiteral("Duplicate ownership for identity %1")
-                         .arg(VNX::objectIdString(stableId));
+                         .arg(harken::studio::objectIdString(stableId));
         return false;
     }
     (*owners)[stableId] = {{packStableId}, identityClass};
@@ -1161,8 +1159,8 @@ bool assignOwnership(
     const CanonicalPackSetExportRequest& request,
     const std::vector<PackMeta>& packs, const QString& language,
     std::uint64_t initId,
-    const harkenstudiobuild::ContainerWorldInstallViewV1& world,
-    std::unordered_map<harkenstudio::ObjectId, IdentityOwner>* owners, QString* error)
+    const harken::studio::build::ContainerWorldInstallViewV1& world,
+    std::unordered_map<harken::studio::types::ObjectId, IdentityOwner>* owners, QString* error)
 {
     for (const PackMeta& pack : packs) {
         if (pack.actionStableIds.empty()
@@ -1176,14 +1174,14 @@ bool assignOwnership(
                 continue;
             for (const ActionClosureMember& action : variant.closure.actions)
                 if (!claimIdentity(owners, action.stableId, pack.packStableId,
-                                   harkenstudiobuild::kInitCatalogIdentityClassAction, error))
+                                   harken::studio::build::kInitCatalogIdentityClassAction, error))
                     return false;
             for (const ActionClosureMember& member : variant.closure.objects) {
-                if (!isPlayableType(member.type) || harkenstudio::IsNull(member.stableId)
+                if (!isPlayableType(member.type) || harken::studio::types::IsNull(member.stableId)
                     || member.type == ProjectItem::Type::Layer)
                     continue;
                 if (!claimIdentity(owners, member.stableId, pack.packStableId,
-                                   harkenstudiobuild::kInitCatalogIdentityClassPlayable, error))
+                                   harken::studio::build::kInitCatalogIdentityClassPlayable, error))
                     return false;
             }
         }
@@ -1191,45 +1189,45 @@ bool assignOwnership(
 
     for (std::uint32_t i = 0; i < world.variableCount; ++i) {
         if (!claimIdentity(owners, world.variables[i].variableId, initId,
-                           harkenstudiobuild::kInitCatalogIdentityClassVariable, error))
+                           harken::studio::build::kInitCatalogIdentityClassVariable, error))
             return false;
     }
     for (std::uint32_t i = 0; i < world.playablePropertyCount; ++i) {
         const auto& property = world.playableProperties[i];
         if (property.contentPropertyKind
-                != harkenstudiobuild::playableproperties::ContentPropertyKindV1::Layer)
+                != harken::studio::build::playableproperties::ContentPropertyKindV1::Layer)
             continue;
         if (!claimIdentity(owners, property.stableId, initId,
-                           harkenstudiobuild::kInitCatalogIdentityClassPlayable, error))
+                           harken::studio::build::kInitCatalogIdentityClassPlayable, error))
             return false;
     }
     return true;
 }
 
-bool ownedBy(const std::unordered_map<harkenstudio::ObjectId, IdentityOwner>& owners,
-             harkenstudio::ObjectId stableId, std::uint64_t packStableId)
+bool ownedBy(const std::unordered_map<harken::studio::types::ObjectId, IdentityOwner>& owners,
+             harken::studio::types::ObjectId stableId, std::uint64_t packStableId)
 {
     const auto it = owners.find(stableId);
     return it != owners.end() && it->second.packStableIds.count(packStableId) != 0;
 }
 
 bool hostOwnedByPack(const ProjectItem& host, const PackMeta& pack,
-                     const std::unordered_map<harkenstudio::ObjectId, IdentityOwner>& owners)
+                     const std::unordered_map<harken::studio::types::ObjectId, IdentityOwner>& owners)
 {
     if (pack.actionStableIds.empty())
         return false;
-    const harkenstudio::ObjectId id = itemStableId(host);
+    const harken::studio::types::ObjectId id = itemStableId(host);
     return ownedBy(owners, id, pack.packStableId);
 }
 
-bool prepareOwnedPayload(harkenstudiobuild::PlayablePropertyPayloadViewV1* payload,
-                         std::vector<harkenstudiobuild::SendV1>* ownedSends,
+bool prepareOwnedPayload(harken::studio::build::PlayablePropertyPayloadViewV1* payload,
+                         std::vector<harken::studio::build::SendV1>* ownedSends,
                          QString* error)
 {
     if (payload == nullptr)
         return true;
     constexpr auto kOutputSlot =
-        static_cast<std::size_t>(harkenstudiobuild::playableproperties::PlayablePropertyIdV1::OutputBusRef)
+        static_cast<std::size_t>(harken::studio::build::playableproperties::PlayablePropertyIdV1::OutputBusRef)
         - 1;
     const auto output = payload->values[kOutputSlot].objectId;
     if (payload->sendCount == 0 || payload->sends == nullptr)
@@ -1245,7 +1243,7 @@ bool prepareOwnedPayload(harkenstudiobuild::PlayablePropertyPayloadViewV1* paylo
             if (error) {
                 *error = QStringLiteral(
                     "Send target equals Output (%1); export refuses send==Output")
-                    .arg(VNX::objectIdString(output));
+                    .arg(harken::studio::objectIdString(output));
             }
             return false;
         }
@@ -1254,9 +1252,9 @@ bool prepareOwnedPayload(harkenstudiobuild::PlayablePropertyPayloadViewV1* paylo
     return true;
 }
 
-const harkenstudiobuild::PlayablePropertyProgramViewV1* findSlicedPlayable(
-    const std::vector<harkenstudiobuild::PlayablePropertyProgramViewV1>& playables,
-    harkenstudio::ObjectId stableId)
+const harken::studio::build::PlayablePropertyProgramViewV1* findSlicedPlayable(
+    const std::vector<harken::studio::build::PlayablePropertyProgramViewV1>& playables,
+    harken::studio::types::ObjectId stableId)
 {
     for (const auto& playable : playables) {
         if (playable.stableId == stableId)
@@ -1265,8 +1263,8 @@ const harkenstudiobuild::PlayablePropertyProgramViewV1* findSlicedPlayable(
     return nullptr;
 }
 
-void rebindPlayableRef(harkenstudiobuild::PlayableRefV1* ref,
-                       const std::vector<harkenstudiobuild::PlayablePropertyProgramViewV1>& playables)
+void rebindPlayableRef(harken::studio::build::PlayableRefV1* ref,
+                       const std::vector<harken::studio::build::PlayablePropertyProgramViewV1>& playables)
 {
     if (ref == nullptr)
         return;
@@ -1278,9 +1276,9 @@ void rebindPlayableRef(harkenstudiobuild::PlayableRefV1* ref,
     }
 }
 
-const harkenstudiobuild::TrackScheduleProgramViewV1* findSlicedTrack(
-    const std::vector<harkenstudiobuild::TrackScheduleProgramViewV1>& tracks,
-    harkenstudio::ObjectId stableId)
+const harken::studio::build::TrackScheduleProgramViewV1* findSlicedTrack(
+    const std::vector<harken::studio::build::TrackScheduleProgramViewV1>& tracks,
+    harken::studio::types::ObjectId stableId)
 {
     for (const auto& track : tracks) {
         if (track.rootDefinition.stableId == stableId)
@@ -1289,9 +1287,9 @@ const harkenstudiobuild::TrackScheduleProgramViewV1* findSlicedTrack(
     return nullptr;
 }
 
-const harkenstudiobuild::SegmentScheduleProgramViewV1* findSlicedSegment(
-    const std::vector<harkenstudiobuild::SegmentScheduleProgramViewV1>& segments,
-    harkenstudio::ObjectId stableId)
+const harken::studio::build::SegmentScheduleProgramViewV1* findSlicedSegment(
+    const std::vector<harken::studio::build::SegmentScheduleProgramViewV1>& segments,
+    harken::studio::types::ObjectId stableId)
 {
     for (const auto& segment : segments) {
         if (segment.rootDefinition.stableId == stableId)
@@ -1301,17 +1299,17 @@ const harkenstudiobuild::SegmentScheduleProgramViewV1* findSlicedSegment(
 }
 
 void remapActionObjectRef(
-    harkenstudiobuild::ActionObjectRefV1* ref,
-    const std::vector<harkenstudiobuild::PlayablePropertyProgramViewV1>& playables)
+    harken::studio::build::ActionObjectRefV1* ref,
+    const std::vector<harken::studio::build::PlayablePropertyProgramViewV1>& playables)
 {
-    if (ref == nullptr || ref->stableId == harkenstudio::ObjectId{})
+    if (ref == nullptr || ref->stableId == harken::studio::types::ObjectId{})
         return;
     if (const auto* playable = findSlicedPlayable(playables, ref->stableId))
         ref->expectedProgramSemanticFingerprint = playable->programSemanticFingerprint;
 }
 
 bool preparePlayableAfterOwnedCopy(
-    harkenstudiobuild::PlayablePropertyProgramViewV1* playable,
+    harken::studio::build::PlayablePropertyProgramViewV1* playable,
     PackMeta* pack,
     QString* error)
 {
@@ -1339,14 +1337,14 @@ bool preparePlayableAfterOwnedCopy(
 
 struct SlicedWorldIndex
 {
-    std::unordered_map<harkenstudio::ObjectId,
-        const harkenstudiobuild::PlayablePropertyProgramViewV1*> playables;
-    std::unordered_map<harkenstudio::ObjectId,
-        const harkenstudiobuild::TrackScheduleProgramViewV1*> tracks;
-    std::unordered_map<harkenstudio::ObjectId,
-        const harkenstudiobuild::SegmentScheduleProgramViewV1*> segments;
-    std::unordered_map<harkenstudio::ObjectId,
-        const harkenstudiobuild::ActionProgramViewV1*> actions;
+    std::unordered_map<harken::studio::types::ObjectId,
+        const harken::studio::build::PlayablePropertyProgramViewV1*> playables;
+    std::unordered_map<harken::studio::types::ObjectId,
+        const harken::studio::build::TrackScheduleProgramViewV1*> tracks;
+    std::unordered_map<harken::studio::types::ObjectId,
+        const harken::studio::build::SegmentScheduleProgramViewV1*> segments;
+    std::unordered_map<harken::studio::types::ObjectId,
+        const harken::studio::build::ActionProgramViewV1*> actions;
 
     SlicedWorldIndex(const std::vector<PackMeta>& packs, const QString& language)
     {
@@ -1365,36 +1363,36 @@ struct SlicedWorldIndex
     }
 };
 
-const harkenstudiobuild::PlayablePropertyProgramViewV1* findLiveSlicedPlayable(
-    const SlicedWorldIndex& index, harkenstudio::ObjectId stableId)
+const harken::studio::build::PlayablePropertyProgramViewV1* findLiveSlicedPlayable(
+    const SlicedWorldIndex& index, harken::studio::types::ObjectId stableId)
 {
     const auto found = index.playables.find(stableId);
     return found == index.playables.end() ? nullptr : found->second;
 }
 
-const harkenstudiobuild::TrackScheduleProgramViewV1* findLiveSlicedTrack(
-    const SlicedWorldIndex& index, harkenstudio::ObjectId stableId)
+const harken::studio::build::TrackScheduleProgramViewV1* findLiveSlicedTrack(
+    const SlicedWorldIndex& index, harken::studio::types::ObjectId stableId)
 {
     const auto found = index.tracks.find(stableId);
     return found == index.tracks.end() ? nullptr : found->second;
 }
 
-const harkenstudiobuild::SegmentScheduleProgramViewV1* findLiveSlicedSegment(
-    const SlicedWorldIndex& index, harkenstudio::ObjectId stableId)
+const harken::studio::build::SegmentScheduleProgramViewV1* findLiveSlicedSegment(
+    const SlicedWorldIndex& index, harken::studio::types::ObjectId stableId)
 {
     const auto found = index.segments.find(stableId);
     return found == index.segments.end() ? nullptr : found->second;
 }
 
-const harkenstudiobuild::ActionProgramViewV1* findLiveSlicedAction(
-    const SlicedWorldIndex& index, harkenstudio::ObjectId stableId)
+const harken::studio::build::ActionProgramViewV1* findLiveSlicedAction(
+    const SlicedWorldIndex& index, harken::studio::types::ObjectId stableId)
 {
     const auto found = index.actions.find(stableId);
     return found == index.actions.end() ? nullptr : found->second;
 }
 
 void rebindPlayableRefLive(
-    harkenstudiobuild::PlayableRefV1* ref,
+    harken::studio::build::PlayableRefV1* ref,
     const SlicedWorldIndex& index)
 {
     if (ref == nullptr)
@@ -1408,10 +1406,10 @@ void rebindPlayableRefLive(
 }
 
 void remapActionObjectRefLive(
-    harkenstudiobuild::ActionObjectRefV1* ref,
+    harken::studio::build::ActionObjectRefV1* ref,
     const SlicedWorldIndex& index)
 {
-    if (ref == nullptr || ref->stableId == harkenstudio::ObjectId{})
+    if (ref == nullptr || ref->stableId == harken::studio::types::ObjectId{})
         return;
     if (const auto* playable = findLiveSlicedPlayable(index, ref->stableId)) {
         ref->expectedProgramSemanticFingerprint = playable->programSemanticFingerprint;
@@ -1422,14 +1420,14 @@ void remapActionObjectRefLive(
 }
 
 void rebindPlayableCrossPackRefs(
-    harkenstudiobuild::PlayablePropertyProgramViewV1* playable,
+    harken::studio::build::PlayablePropertyProgramViewV1* playable,
     const SlicedWorldIndex& index)
 {
     if (playable == nullptr)
         return;
     if (playable->organizationLayerAncestorCount != 0
         && playable->organizationLayerAncestors != nullptr) {
-        auto* ancestors = const_cast<harkenstudiobuild::LayerAncestorRefV1*>(
+        auto* ancestors = const_cast<harken::studio::build::LayerAncestorRefV1*>(
             playable->organizationLayerAncestors);
         for (std::uint32_t i = 0; i < playable->organizationLayerAncestorCount; ++i) {
             if (const auto* layer = findLiveSlicedPlayable(
@@ -1440,7 +1438,7 @@ void rebindPlayableCrossPackRefs(
     }
     if (playable->structuralAncestorCount != 0
         && playable->structuralAncestors != nullptr) {
-        auto* ancestors = const_cast<harkenstudiobuild::StructuralAncestorRefV1*>(
+        auto* ancestors = const_cast<harken::studio::build::StructuralAncestorRefV1*>(
             playable->structuralAncestors);
         for (std::uint32_t i = 0; i < playable->structuralAncestorCount; ++i) {
             const auto* current = findLiveSlicedPlayable(index, ancestors[i].stableId);
@@ -1448,22 +1446,22 @@ void rebindPlayableCrossPackRefs(
                 continue;
             ancestors[i].programSemanticFingerprint = current->programSemanticFingerprint;
             ancestors[i].payload =
-                harkenstudiobuild::MakeStructuralAncestorPayloadV1(current->payload);
+                harken::studio::build::MakeStructuralAncestorPayloadV1(current->payload);
         }
     }
     playable->programSemanticFingerprint =
-        harkenstudiobuild::ComputePlayablePropertyFingerprintV1(*playable);
+        harken::studio::build::ComputePlayablePropertyFingerprintV1(*playable);
 }
 
 void rebindLayerAncestorFingerprints(
-    std::vector<harkenstudiobuild::PlayablePropertyProgramViewV1>* playables)
+    std::vector<harken::studio::build::PlayablePropertyProgramViewV1>* playables)
 {
     if (playables == nullptr)
         return;
     for (auto& playable : *playables) {
         if (playable.organizationLayerAncestorCount != 0
             && playable.organizationLayerAncestors != nullptr) {
-            auto* ancestors = const_cast<harkenstudiobuild::LayerAncestorRefV1*>(
+            auto* ancestors = const_cast<harken::studio::build::LayerAncestorRefV1*>(
                 playable.organizationLayerAncestors);
             for (std::uint32_t i = 0; i < playable.organizationLayerAncestorCount; ++i) {
                 if (const auto* layer = findSlicedPlayable(*playables, ancestors[i].layerStableId))
@@ -1472,38 +1470,38 @@ void rebindLayerAncestorFingerprints(
             }
         }
         playable.programSemanticFingerprint =
-            harkenstudiobuild::ComputePlayablePropertyFingerprintV1(playable);
+            harken::studio::build::ComputePlayablePropertyFingerprintV1(playable);
     }
 }
 
 bool remapScheduleReferenceHintLive(
-    harkenstudiobuild::ChildTimingHintV2* hint,
+    harken::studio::build::ChildTimingHintV2* hint,
     const SlicedWorldIndex& index,
     QString* error)
 {
     if (hint == nullptr
-        || hint->kind != harkenstudiobuild::ChildTimingHintKindV2::ScheduleReference)
+        || hint->kind != harken::studio::build::ChildTimingHintKindV2::ScheduleReference)
         return true;
     auto& key = hint->payload.schedule;
-    if (key.kind == harkenstudiobuild::PlayableKindV1::Track) {
+    if (key.kind == harken::studio::build::PlayableKindV1::Track) {
         const auto* track = findLiveSlicedTrack(index, key.stableId);
         if (track == nullptr) {
             if (error)
                 *error = QStringLiteral(
                     "Schedule reference track %1 is missing from the sliced canonical set")
-                    .arg(VNX::objectIdString(key.stableId));
+                    .arg(harken::studio::objectIdString(key.stableId));
             return false;
         }
         key.scheduleSemanticFingerprint = track->scheduleSemanticFingerprint;
         return true;
     }
-    if (key.kind == harkenstudiobuild::PlayableKindV1::Segment) {
+    if (key.kind == harken::studio::build::PlayableKindV1::Segment) {
         const auto* segment = findLiveSlicedSegment(index, key.stableId);
         if (segment == nullptr) {
             if (error)
                 *error = QStringLiteral(
                     "Schedule reference segment %1 is missing from the sliced canonical set")
-                    .arg(VNX::objectIdString(key.stableId));
+                    .arg(harken::studio::objectIdString(key.stableId));
             return false;
         }
         key.scheduleSemanticFingerprint = segment->scheduleSemanticFingerprint;
@@ -1512,26 +1510,26 @@ bool remapScheduleReferenceHintLive(
     if (error)
         *error = QStringLiteral(
             "Schedule reference %1 has unsupported kind %2")
-            .arg(VNX::objectIdString(key.stableId))
+            .arg(harken::studio::objectIdString(key.stableId))
             .arg(static_cast<std::uint32_t>(key.kind));
     return false;
 }
 
 bool sliceWorld(
-    const harkenstudiobuild::ContainerWorldInstallViewV1& world, std::uint64_t packStableId,
-    const std::unordered_map<harkenstudio::ObjectId, IdentityOwner>& owners,
-    std::vector<harkenstudiobuild::VariableDefinitionV1>* variables,
-    std::vector<harkenstudiobuild::PlayablePropertyProgramViewV1>* playables,
-    std::vector<harkenstudiobuild::PlayableOccurrencePropertyViewV1>* occurrences,
-    std::vector<harkenstudiobuild::TrackScheduleProgramViewV1>* tracks,
-    std::vector<harkenstudiobuild::SegmentScheduleProgramViewV1>* segments,
-    std::vector<harkenstudiobuild::ContainerProgramViewV3>* containers,
-    std::vector<harkenstudiobuild::TransitionProgramViewV1>* transitions,
-    std::vector<harkenstudiobuild::ActionProgramViewV1>* actions,
+    const harken::studio::build::ContainerWorldInstallViewV1& world, std::uint64_t packStableId,
+    const std::unordered_map<harken::studio::types::ObjectId, IdentityOwner>& owners,
+    std::vector<harken::studio::build::VariableDefinitionV1>* variables,
+    std::vector<harken::studio::build::PlayablePropertyProgramViewV1>* playables,
+    std::vector<harken::studio::build::PlayableOccurrencePropertyViewV1>* occurrences,
+    std::vector<harken::studio::build::TrackScheduleProgramViewV1>* tracks,
+    std::vector<harken::studio::build::SegmentScheduleProgramViewV1>* segments,
+    std::vector<harken::studio::build::ContainerProgramViewV3>* containers,
+    std::vector<harken::studio::build::TransitionProgramViewV1>* transitions,
+    std::vector<harken::studio::build::ActionProgramViewV1>* actions,
     PackMeta* pack,
     QString* error)
 {
-    harkenstudiobuild::ContainerWorldInstallViewV1 slice = world;
+    harken::studio::build::ContainerWorldInstallViewV1 slice = world;
     for (std::uint32_t i = 0; i < world.variableCount; ++i) {
         if (ownedBy(owners, world.variables[i].variableId, packStableId))
             variables->push_back(world.variables[i]);
@@ -1543,7 +1541,7 @@ bool sliceWorld(
         if (!preparePlayableAfterOwnedCopy(&playable, pack, error))
             return false;
         playable.programSemanticFingerprint =
-            harkenstudiobuild::ComputePlayablePropertyFingerprintV1(playable);
+            harken::studio::build::ComputePlayablePropertyFingerprintV1(playable);
         playables->push_back(playable);
     }
     rebindLayerAncestorFingerprints(playables);
@@ -1559,7 +1557,7 @@ bool sliceWorld(
             occurrence.parentProgramSemanticFingerprint = parent->programSemanticFingerprint;
         rebindPlayableRef(&occurrence.childPlayable, *playables);
         occurrence.occurrenceSemanticFingerprint =
-            harkenstudiobuild::ComputePlayableOccurrenceFingerprintV1(occurrence);
+            harken::studio::build::ComputePlayableOccurrenceFingerprintV1(occurrence);
         occurrences->push_back(occurrence);
     }
     for (std::uint32_t i = 0; i < world.trackScheduleCount; ++i) {
@@ -1576,7 +1574,7 @@ bool sliceWorld(
             track.placements = placements.data();
         }
         track.scheduleSemanticFingerprint =
-            harkenstudiobuild::ComputeTrackScheduleFingerprintV1(track);
+            harken::studio::build::ComputeTrackScheduleFingerprintV1(track);
         tracks->push_back(track);
     }
     for (std::uint32_t i = 0; i < world.segmentScheduleCount; ++i) {
@@ -1596,7 +1594,7 @@ bool sliceWorld(
             segment.trackRefs = trackRefs.data();
         }
         segment.scheduleSemanticFingerprint =
-            harkenstudiobuild::ComputeSegmentScheduleFingerprintV1(segment);
+            harken::studio::build::ComputeSegmentScheduleFingerprintV1(segment);
         segments->push_back(segment);
     }
     for (std::uint32_t i = 0; i < world.transitionCount; ++i) {
@@ -1609,7 +1607,7 @@ bool sliceWorld(
                      packStableId)) {
             continue;
         }
-        harkenstudiobuild::ContainerProgramViewV3 container = world.containers[i];
+        harken::studio::build::ContainerProgramViewV3 container = world.containers[i];
         if (container.childCount != 0 && container.children != nullptr) {
             pack->ownedContainerChildren.emplace_back(
                 container.children, container.children + container.childCount);
@@ -1622,7 +1620,7 @@ bool sliceWorld(
         container.transitionProgramIndex = UINT32_MAX;
         const auto transition = std::find_if(
             transitions->begin(), transitions->end(),
-            [&](const harkenstudiobuild::TransitionProgramViewV1& candidate) {
+            [&](const harken::studio::build::TransitionProgramViewV1& candidate) {
                 return candidate.ownerContainerStableId ==
                        container.containerStableId;
             });
@@ -1645,7 +1643,7 @@ bool sliceWorld(
             }
             action.steps = steps.data();
             action.programSemanticFingerprint =
-                harkenstudiobuild::ComputeActionProgramFingerprintV1(action);
+                harken::studio::build::ComputeActionProgramFingerprintV1(action);
         }
         actions->push_back(action);
     }
@@ -1667,50 +1665,50 @@ bool sliceWorld(
     slice.actions = actions->empty() ? nullptr : actions->data();
     slice.actionCount = static_cast<std::uint32_t>(actions->size());
     slice.identity.capabilityMask =
-        harkenstudiobuild::detail::ComputeCurrentWorldLocalCapabilityMaskV1(slice);
+        harken::studio::build::detail::ComputeCurrentWorldLocalCapabilityMaskV1(slice);
     slice.identity.runtimeSemanticFingerprint =
-        harkenstudiobuild::ComputeCurrentWorldFingerprintV5(slice);
+        harken::studio::build::ComputeCurrentWorldFingerprintV5(slice);
     return true;
 }
 
 bool encodePartition(std::uint64_t packStableId,
-                     const harkenstudiobuild::ContainerWorldInstallViewV1& slice,
+                     const harken::studio::build::ContainerWorldInstallViewV1& slice,
                      std::uint32_t ownedDefinitions,
                      std::vector<std::uint8_t>* payload, QString* error,
-                     harkenstudiobuild::CanonicalBusTriple busTriple,
+                     harken::studio::build::CanonicalBusTriple busTriple,
                      std::uint64_t partitionRevision = 1)
 {
     std::vector<std::uint8_t> body;
-    if (!harkenstudiobuild::EncodeCurrentWorldShippingBody(slice, body)) {
+    if (!harken::studio::build::EncodeCurrentWorldShippingBody(slice, body)) {
         if (error)
             *error = QStringLiteral("Failed to encode definition partition");
         return false;
     }
-    harkenstudiobuild::PackCanonicalPartitionHeader header;
-    header.headerBytes = harkenstudiobuild::kPackBytes<HkPackCanonicalPartitionHeader>;
-    header.bodyVintage = harkenstudiobuild::kCanonicalDefinitionPartitionBodyVintage;
+    harken::studio::build::PackCanonicalPartitionHeader header;
+    header.headerBytes = harken::studio::build::kPackBytes<HkPackCanonicalPartitionHeader>;
+    header.bodyVintage = harken::studio::build::kCanonicalDefinitionPartitionBodyVintage;
     header.bodyBytes = body.size();
-    header.bodyChecksum = harkenstudiobuild::Fnv1a64(body.data(), body.size());
+    header.bodyChecksum = harken::studio::build::Fnv1a64(body.data(), body.size());
     header.packStableId = packStableId;
     header.partitionRevision = partitionRevision;
     header.ownedDefinitionCount = ownedDefinitions;
-    harkenstudiobuild::ApplyCanonicalBusTriple(&header, busTriple);
-    payload->assign(harkenstudiobuild::kPackBytes<HkPackCanonicalPartitionHeader> + body.size(), 0);
-    harkenstudiobuild::SerializePackRow<HkPackCanonicalPartitionHeader>(header, payload->data());
-    header.headerChecksum = harkenstudiobuild::Fnv1a64(payload->data(), offsetof(HkPackCanonicalPartitionHeader, headerChecksum));
-    harkenstudiobuild::SerializePackRow<HkPackCanonicalPartitionHeader>(header, payload->data());
+    harken::studio::build::ApplyCanonicalBusTriple(&header, busTriple);
+    payload->assign(harken::studio::build::kPackBytes<HkPackCanonicalPartitionHeader> + body.size(), 0);
+    harken::studio::build::SerializePackRow<HkPackCanonicalPartitionHeader>(header, payload->data());
+    header.headerChecksum = harken::studio::build::Fnv1a64(payload->data(), offsetof(HkPackCanonicalPartitionHeader, headerChecksum));
+    harken::studio::build::SerializePackRow<HkPackCanonicalPartitionHeader>(header, payload->data());
     if (!body.empty()) {
-        std::memcpy(payload->data() + harkenstudiobuild::kPackBytes<HkPackCanonicalPartitionHeader>,
+        std::memcpy(payload->data() + harken::studio::build::kPackBytes<HkPackCanonicalPartitionHeader>,
                     body.data(), body.size());
     }
     return true;
 }
 
 std::uint64_t lineageFingerprint(
-    const std::unordered_map<harkenstudio::ObjectId, IdentityOwner>& owners,
+    const std::unordered_map<harken::studio::types::ObjectId, IdentityOwner>& owners,
     std::uint64_t packStableId)
 {
-    std::vector<harkenstudio::ObjectId> ids;
+    std::vector<harken::studio::types::ObjectId> ids;
     for (const auto& [stableId, owner] : owners) {
         if (owner.packStableIds.count(packStableId) != 0)
             ids.push_back(stableId);
@@ -1719,14 +1717,14 @@ std::uint64_t lineageFingerprint(
     std::vector<std::uint8_t> bytes;
     bytes.reserve(ids.size() * 16);
     for (const auto id : ids) {
-        const auto encoded = harkenstudio::ObjectIdBytes(id);
+        const auto encoded = harken::studio::types::ObjectIdBytes(id);
         bytes.insert(bytes.end(), encoded.begin(), encoded.end());
     }
-    return harkenstudiobuild::Fnv1a64(bytes.data(), bytes.size());
+    return harken::studio::build::Fnv1a64(bytes.data(), bytes.size());
 }
 
 std::uint32_t ownedDefinitionCount(
-    const std::unordered_map<harkenstudio::ObjectId, IdentityOwner>& owners,
+    const std::unordered_map<harken::studio::types::ObjectId, IdentityOwner>& owners,
     std::uint64_t packStableId)
 {
     std::uint32_t count = 0;
@@ -1738,14 +1736,14 @@ std::uint32_t ownedDefinitionCount(
     return count;
 }
 
-bool decodePreviousPack(const PackMeta& pack, harkenstudiobuild::CurrentWorldBodyImage* body)
+bool decodePreviousPack(const PackMeta& pack, harken::studio::build::CurrentWorldBodyImage* body)
 {
     const auto found = std::find_if(pack.previousEntries.begin(), pack.previousEntries.end(), [](const auto& entry) {
         return entry.kind == HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION;
     });
     if (found == pack.previousEntries.end()) return false;
-    harkenstudiobuild::PackCanonicalPartitionHeader header;
-    return harkenstudiobuild::ReadPackCanonicalPartitionHeader(
+    harken::studio::build::PackCanonicalPartitionHeader header;
+    return harken::studio::build::ReadPackCanonicalPartitionHeader(
             found->payload.data(), found->payload.size(), &header)
         && body->Decode(found->payload.data() + header.headerBytes,
             static_cast<std::size_t>(header.bodyBytes), header.bodyVintage);
@@ -1754,8 +1752,8 @@ bool decodePreviousPack(const PackMeta& pack, harkenstudiobuild::CurrentWorldBod
 struct PublicationAuthoredOrders
 {
     QString language;
-    std::map<harkenstudio::ObjectId, std::uint32_t> properties;
-    std::map<harkenstudio::ObjectId, std::uint32_t> containers;
+    std::map<harken::studio::types::ObjectId, std::uint32_t> properties;
+    std::map<harken::studio::types::ObjectId, std::uint32_t> containers;
 };
 
 std::vector<PublicationAuthoredOrders> readPublicationAuthoredOrders(
@@ -1765,7 +1763,7 @@ std::vector<PublicationAuthoredOrders> readPublicationAuthoredOrders(
 {
     std::vector<PublicationAuthoredOrders> result;
     for (const auto& pack : publication) {
-        harkenstudiobuild::CurrentWorldBodyImage body;
+        harken::studio::build::CurrentWorldBodyImage body;
         if (!decodePreviousPack(pack, &body)) continue;
         PublicationAuthoredOrders orders;
         orders.language = pack.language;
@@ -1787,12 +1785,12 @@ std::vector<PublicationAuthoredOrders> readPublicationAuthoredOrders(
 
 bool mergePublicationAuthoredOrders(const std::vector<PublicationAuthoredOrders>& publication,
                                     const QString& language,
-                                    const std::set<harkenstudio::ObjectId>& neutralDefinitions,
-                                    std::map<harkenstudio::ObjectId, std::uint32_t>* properties,
-                                    std::map<harkenstudio::ObjectId, std::uint32_t>* containers,
+                                    const std::set<harken::studio::types::ObjectId>& neutralDefinitions,
+                                    std::map<harken::studio::types::ObjectId, std::uint32_t>* properties,
+                                    std::map<harken::studio::types::ObjectId, std::uint32_t>* containers,
                                     QString* error)
 {
-    std::map<std::uint32_t, harkenstudio::ObjectId> propertyOwners, containerOwners;
+    std::map<std::uint32_t, harken::studio::types::ObjectId> propertyOwners, containerOwners;
     const auto merge = [&](const auto& source, auto& orders, auto& owners, bool compatible) {
         for (const auto& [id, order] : source) {
             if (!compatible && neutralDefinitions.count(id) == 0) continue;
@@ -1837,12 +1835,12 @@ struct CapacityFields
     void U32(std::uint32_t& value) { values.push_back(&value); }
 };
 
-bool mergeCapacity(harkenstudiobuild::WorldCapacitySummaryV1* target,
-                   harkenstudiobuild::WorldCapacitySummaryV1 source)
+bool mergeCapacity(harken::studio::build::WorldCapacitySummaryV1* target,
+                   harken::studio::build::WorldCapacitySummaryV1 source)
 {
     CapacityFields destinationFields, sourceFields;
-    harkenstudiobuild::VisitWorldCapacitySummaryV1(*target, destinationFields);
-    harkenstudiobuild::VisitWorldCapacitySummaryV1(source, sourceFields);
+    harken::studio::build::VisitWorldCapacitySummaryV1(*target, destinationFields);
+    harken::studio::build::VisitWorldCapacitySummaryV1(source, sourceFields);
     bool changed = false;
     for (std::size_t i = 0; i < destinationFields.values.size(); ++i) {
         auto& value = *destinationFields.values[i];
@@ -1853,13 +1851,13 @@ bool mergeCapacity(harkenstudiobuild::WorldCapacitySummaryV1* target,
     return changed;
 }
 
-std::set<harkenstudio::ObjectId> effectPresetReferences(
-    const harkenstudiobuild::ContainerWorldInstallViewV1& world)
+std::set<harken::studio::types::ObjectId> effectPresetReferences(
+    const harken::studio::build::ContainerWorldInstallViewV1& world)
 {
-    std::set<harkenstudio::ObjectId> references;
+    std::set<harken::studio::types::ObjectId> references;
     const auto collect = [&](const auto& payload) {
         for (std::uint32_t i = 0; i < payload.effectNodeCount; ++i)
-            if (!harkenstudio::IsNull(payload.effectNodes[i].presetId))
+            if (!harken::studio::types::IsNull(payload.effectNodes[i].presetId))
                 references.insert(payload.effectNodes[i].presetId);
     };
     for (std::uint32_t i = 0; i < world.playablePropertyCount; ++i) {
@@ -1875,14 +1873,14 @@ std::set<harkenstudio::ObjectId> effectPresetReferences(
 
 bool harmonizePublicationCapacity(std::vector<PackMeta>* packs,
                                   PackBuildState* buildState,
-                                  const std::map<harkenstudio::ObjectId, std::vector<std::uint8_t>>& authoredPresets,
+                                  const std::map<harken::studio::types::ObjectId, std::vector<std::uint8_t>>& authoredPresets,
                                   QString* error)
 {
-    std::vector<std::unique_ptr<harkenstudiobuild::CurrentWorldBodyImage>> bodies;
-    std::vector<harkenstudiobuild::PackCanonicalPartitionHeader> headers;
-    harkenstudiobuild::WorldCapacitySummaryV1 common;
+    std::vector<std::unique_ptr<harken::studio::build::CurrentWorldBodyImage>> bodies;
+    std::vector<harken::studio::build::PackCanonicalPartitionHeader> headers;
+    harken::studio::build::WorldCapacitySummaryV1 common;
     QStringList languages{QString()};
-    std::map<harkenstudio::ObjectId, std::vector<std::uint8_t>> presets;
+    std::map<harken::studio::types::ObjectId, std::vector<std::uint8_t>> presets;
     for (const auto& pack : *packs) {
         if (pack.packKind != HK_PACK_KIND_INIT) continue;
         const auto& entries = pack.retained ? pack.previousEntries : pack.resourceEntries;
@@ -1891,7 +1889,7 @@ bool harmonizePublicationCapacity(std::vector<PackMeta>* packs,
                 presets.emplace(entry.id, entry.payload);
     }
     for (auto& pack : *packs) {
-        auto body = std::make_unique<harkenstudiobuild::CurrentWorldBodyImage>();
+        auto body = std::make_unique<harken::studio::build::CurrentWorldBodyImage>();
         if (pack.retained) {
             if (!decodePreviousPack(pack, body.get())) {
                 *error = QStringLiteral("Cannot read retained Pack '%1'").arg(pack.fileName);
@@ -1908,8 +1906,8 @@ bool harmonizePublicationCapacity(std::vector<PackMeta>* packs,
                 else if (entry.kind == HK_PACK_ENTRY_KIND_VARIABLE_REQUIREMENTS)
                     pack.variableRequirementsPayload = entry.payload;
                 else if (entry.kind == HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK) {
-                    harkenstudiobuild::PackRequirementBlock requirement;
-                    if (!harkenstudiobuild::ReadPackRequirementBlock(
+                    harken::studio::build::PackRequirementBlock requirement;
+                    if (!harken::studio::build::ReadPackRequirementBlock(
                             entry.payload.data(), entry.payload.size(), &requirement)) {
                         *error = QStringLiteral("Invalid retained Pack requirement");
                         return false;
@@ -1921,8 +1919,8 @@ bool harmonizePublicationCapacity(std::vector<PackMeta>* packs,
                 }
             }
         }
-        harkenstudiobuild::PackCanonicalPartitionHeader header;
-        if (!harkenstudiobuild::ReadPackCanonicalPartitionHeader(
+        harken::studio::build::PackCanonicalPartitionHeader header;
+        if (!harken::studio::build::ReadPackCanonicalPartitionHeader(
                 pack.partitionPayload.data(), pack.partitionPayload.size(), &header)
             || header.headerBytes > pack.partitionPayload.size()
             || header.bodyBytes != pack.partitionPayload.size() - header.headerBytes
@@ -1954,16 +1952,16 @@ bool harmonizePublicationCapacity(std::vector<PackMeta>* packs,
         bodies.push_back(std::move(body));
     }
     for (const auto& language : languages) {
-        std::vector<harkenstudiobuild::VariableDefinitionV1> variables;
-        std::vector<harkenstudiobuild::PlayablePropertyProgramViewV1> properties;
-        std::vector<harkenstudiobuild::PlayableOccurrencePropertyViewV1> occurrences;
-        std::vector<harkenstudiobuild::ContainerProgramViewV3> containers;
-        std::vector<harkenstudiobuild::ActionProgramViewV1> actions;
-        std::vector<harkenstudiobuild::TrackScheduleProgramViewV1> tracks;
-        std::vector<harkenstudiobuild::SegmentScheduleProgramViewV1> segments;
-        std::set<harkenstudio::ObjectId> variableIds, propertyIds, containerIds, actionIds;
-        std::set<harkenstudio::ObjectId> trackIds, segmentIds;
-        std::set<std::tuple<std::uint32_t, harkenstudio::ObjectId, std::uint32_t>> occurrenceIds;
+        std::vector<harken::studio::build::VariableDefinitionV1> variables;
+        std::vector<harken::studio::build::PlayablePropertyProgramViewV1> properties;
+        std::vector<harken::studio::build::PlayableOccurrencePropertyViewV1> occurrences;
+        std::vector<harken::studio::build::ContainerProgramViewV3> containers;
+        std::vector<harken::studio::build::ActionProgramViewV1> actions;
+        std::vector<harken::studio::build::TrackScheduleProgramViewV1> tracks;
+        std::vector<harken::studio::build::SegmentScheduleProgramViewV1> segments;
+        std::set<harken::studio::types::ObjectId> variableIds, propertyIds, containerIds, actionIds;
+        std::set<harken::studio::types::ObjectId> trackIds, segmentIds;
+        std::set<std::tuple<std::uint32_t, harken::studio::types::ObjectId, std::uint32_t>> occurrenceIds;
         const auto append = [](auto& rows, auto& ids, const auto* source,
                                std::uint32_t count, auto identity) {
             for (std::uint32_t i = 0; i < count; ++i)
@@ -1990,17 +1988,17 @@ bool harmonizePublicationCapacity(std::vector<PackMeta>* packs,
             append(segments, segmentIds, world.segmentSchedules, world.segmentScheduleCount,
                    [](const auto& row) { return row.rootDefinition.stableId; });
         }
-        if (variables.size() > harkenstudiobuild::kHardVariableDefinitionCapacity
-            || properties.size() > harkenstudiobuild::kHardPlayablePropertyProgramCapacity
-            || occurrences.size() > harkenstudiobuild::kHardPlayableOccurrencePropertyCapacity
-            || containers.size() > harkenstudiobuild::kHardContainerProgramCapacity
-            || actions.size() > harkenstudiobuild::kHardActionDefinitionCapacity
-            || tracks.size() > harkenstudiobuild::kHardTrackScheduleProgramCapacity
-            || segments.size() > harkenstudiobuild::kHardSegmentScheduleProgramCapacity) {
+        if (variables.size() > harken::studio::build::kHardVariableDefinitionCapacity
+            || properties.size() > harken::studio::build::kHardPlayablePropertyProgramCapacity
+            || occurrences.size() > harken::studio::build::kHardPlayableOccurrencePropertyCapacity
+            || containers.size() > harken::studio::build::kHardContainerProgramCapacity
+            || actions.size() > harken::studio::build::kHardActionDefinitionCapacity
+            || tracks.size() > harken::studio::build::kHardTrackScheduleProgramCapacity
+            || segments.size() > harken::studio::build::kHardSegmentScheduleProgramCapacity) {
             *error = QStringLiteral("Published Pack set exceeds World representation limits");
             return false;
         }
-        harkenstudiobuild::ContainerWorldInstallViewV1 combined;
+        harken::studio::build::ContainerWorldInstallViewV1 combined;
         combined.variables = variables.empty() ? nullptr : variables.data();
         combined.variableCount = static_cast<std::uint32_t>(variables.size());
         combined.playableProperties = properties.empty() ? nullptr : properties.data();
@@ -2015,7 +2013,7 @@ bool harmonizePublicationCapacity(std::vector<PackMeta>* packs,
         combined.trackScheduleCount = static_cast<std::uint32_t>(tracks.size());
         combined.segmentSchedules = segments.empty() ? nullptr : segments.data();
         combined.segmentScheduleCount = static_cast<std::uint32_t>(segments.size());
-        if (!harkenstudiobuild::GrowAuthoredWorldCapacityV1(combined, &common)) {
+        if (!harken::studio::build::GrowAuthoredWorldCapacityV1(combined, &common)) {
             *error = QStringLiteral("Published Pack set exceeds World content capacity");
             return false;
         }
@@ -2025,15 +2023,15 @@ bool harmonizePublicationCapacity(std::vector<PackMeta>* packs,
         auto world = *bodies[i]->ProductionView();
         if (!mergeCapacity(&world.capacity, common)) continue;
         world.identity.runtimeSemanticFingerprint =
-            harkenstudiobuild::ComputeCurrentWorldFingerprintV5(world);
+            harken::studio::build::ComputeCurrentWorldFingerprintV5(world);
         if (!encodePartition(pack.packStableId, world, pack.ownedDefinitions,
                 &pack.partitionPayload, error,
-                harkenstudiobuild::PartitionBusTriple(headers[i]),
+                harken::studio::build::PartitionBusTriple(headers[i]),
                 headers[i].partitionRevision))
             return false;
-        pack.semanticFingerprint = harkenstudiobuild::Fnv1a64(
-            pack.partitionPayload.data() + harkenstudiobuild::kPackBytes<HkPackCanonicalPartitionHeader>,
-            pack.partitionPayload.size() - harkenstudiobuild::kPackBytes<HkPackCanonicalPartitionHeader>);
+        pack.semanticFingerprint = harken::studio::build::Fnv1a64(
+            pack.partitionPayload.data() + harken::studio::build::kPackBytes<HkPackCanonicalPartitionHeader>,
+            pack.partitionPayload.size() - harken::studio::build::kPackBytes<HkPackCanonicalPartitionHeader>);
         pack.metadataUpdated = pack.retained;
     }
     return true;
@@ -2044,15 +2042,15 @@ bool readExistingPack(const QDir& output, const QString& path,
                       PackMeta* pack, QString* error)
 {
     QByteArray bytes;
-    harkenstudiobuild::PackCanonicalImage image;
-    harkenstudiobuild::CurrentWorldBodyImage body;
+    harken::studio::build::PackCanonicalImage image;
+    harken::studio::build::CurrentWorldBodyImage body;
     if (!safePublicationPath(output, path)
         || !readAll(output.filePath(path), &bytes, error)) return false;
-    if (harkenstudiobuild::ParsePackCanonicalImage(
+    if (harken::studio::build::ParsePackCanonicalImage(
             reinterpret_cast<const std::uint8_t*>(bytes.constData()), bytes.size(), &image)
-                != harkenstudiobuild::kPackOk
+                != harken::studio::build::kPackOk
         || !body.Decode(image.partitionBody.data(), image.partitionBody.size(),
-            harkenstudiobuild::kCanonicalDefinitionPartitionBodyVintage)) {
+            harken::studio::build::kCanonicalDefinitionPartitionBodyVintage)) {
         *error = QStringLiteral("Cannot read existing Pack '%1'").arg(path);
         return false;
     }
@@ -2061,13 +2059,13 @@ bool readExistingPack(const QDir& output, const QString& path,
         return false;
     }
     const QFileInfo file(path);
-    const QString companion = QDir::cleanPath(QDir(file.path()).filePath(file.completeBaseName() + QStringLiteral(".json")));
-    QByteArray companionBytes;
-    if (!readAll(output.filePath(companion), &companionBytes, error)) return false;
+    const QString packMetadataPath = QDir::cleanPath(QDir(file.path()).filePath(file.completeBaseName() + QStringLiteral(".json")));
+    QByteArray packMetadataBytes;
+    if (!readAll(output.filePath(packMetadataPath), &packMetadataBytes, error)) return false;
     QJsonParseError parseError;
-    const auto document = QJsonDocument::fromJson(companionBytes, &parseError);
+    const auto document = QJsonDocument::fromJson(packMetadataBytes, &parseError);
     if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
-        *error = QStringLiteral("Cannot read existing Pack companion '%1'").arg(companion);
+        *error = QStringLiteral("Cannot read existing Pack metadata '%1'").arg(packMetadataPath);
         return false;
     }
     if (!collectEntries(bytes, output.filePath(path), &pack->previousEntries, error, false, false)) return false;
@@ -2079,13 +2077,13 @@ bool readExistingPack(const QDir& output, const QString& path,
     pack->contentRevision = image.requirement.packContentRevision;
     pack->language = file.path() == QStringLiteral(".") ? QString() : file.path();
     pack->platform = platformId;
-    pack->companion = document.object();
+    pack->packMetadata = document.object();
     pack->name = image.packKind == HK_PACK_KIND_INIT
-        ? QStringLiteral("Init") : pack->companion.value(QStringLiteral("name")).toString();
+        ? QStringLiteral("Init") : pack->packMetadata.value(QStringLiteral("name")).toString();
     pack->unitKey = image.packKind == HK_PACK_KIND_INIT
-        ? QStringLiteral("Init") : QStringLiteral("a:") + pack->companion.value(QStringLiteral("guid")).toString();
+        ? QStringLiteral("Init") : QStringLiteral("a:") + pack->packMetadata.value(QStringLiteral("guid")).toString();
     if (image.packKind != HK_PACK_KIND_INIT)
-        pack->actionStableIds.push_back(runtimeObjectId(QUuid(pack->companion.value(QStringLiteral("guid")).toString())));
+        pack->actionStableIds.push_back(runtimeObjectId(QUuid(pack->packMetadata.value(QStringLiteral("guid")).toString())));
     QJsonArray dependencies;
     for (const auto& edge : image.dependencyEdges) {
         pack->dependencies.push_back(edge.prerequisitePackStableId);
@@ -2094,7 +2092,7 @@ bool readExistingPack(const QDir& output, const QString& path,
     const auto& world = *body.ProductionView();
     for (std::uint32_t i = 0; i < world.playablePropertyCount; ++i) {
         const auto& property = world.playableProperties[i];
-        if (property.contentPropertyKind == harkenstudiobuild::playableproperties::ContentPropertyKindV1::Sound)
+        if (property.contentPropertyKind == harken::studio::build::playableproperties::ContentPropertyKindV1::Sound)
             pack->soundContentRevisions.emplace(property.stableId, property.contentRevision);
     }
     pack->previousCapacity = body.ProductionView()->capacity;
@@ -2105,7 +2103,7 @@ bool readExistingPack(const QDir& output, const QString& path,
         {QStringLiteral("packKind"), static_cast<int>(pack->packKind)},
         {QStringLiteral("contentRevision"), static_cast<qint64>(pack->contentRevision)},
         {QStringLiteral("dependencies"), dependencies},
-        {QStringLiteral("language"), pack->language}, {QStringLiteral("companion"), pack->companion}};
+        {QStringLiteral("language"), pack->language}, {QStringLiteral("packMetadata"), pack->packMetadata}};
     return true;
 }
 
@@ -2152,14 +2150,14 @@ bool inspectPackPublication(const QString& directory, const QString& projectId,
         std::stable_sort(binaries.begin(), binaries.end(), [&](const auto& left, const auto& right) {
             return expectedPackPaths.contains(left) && !expectedPackPaths.contains(right);
         });
-    harkenstudio::ObjectId expectedProject = runtimeObjectId(QUuid(projectId));
+    harken::studio::types::ObjectId expectedProject = runtimeObjectId(QUuid(projectId));
     std::uint64_t initId = 0;
     bool selectedInit = false;
     QSet<QString> selectedPaths;
     QSet<qulonglong> ids;
     std::unordered_map<std::uint64_t, std::uint32_t> kinds;
-    std::vector<harkenstudiobuild::PackDependencyEdge> dependencyEdges;
-    std::set<harkenstudio::ObjectId> presetIds, presetReferences;
+    std::vector<harken::studio::build::PackDependencyEdge> dependencyEdges;
+    std::set<harken::studio::types::ObjectId> presetIds, presetReferences;
     QSet<QString> names;
     QSet<QString> actionIds;
     QSet<QString> localizedNames;
@@ -2168,25 +2166,25 @@ bool inspectPackPublication(const QString& directory, const QString& projectId,
         if (exportCanceled(cancelCheck, error)) return false;
         const auto info = QFileInfo(path);
         const bool selected = expectedPackPaths.isEmpty() || expectedPackPaths.contains(path);
-        const QString companionPath = QDir::cleanPath(QDir(info.path()).filePath(info.completeBaseName() + QStringLiteral(".json")));
-        const bool hasCompanion = files.contains(companionPath);
+        const QString packMetadataPath = QDir::cleanPath(QDir(info.path()).filePath(info.completeBaseName() + QStringLiteral(".json")));
+        const bool hasPackMetadata = files.contains(packMetadataPath);
         QByteArray bytes;
-        harkenstudiobuild::PackCanonicalImage image;
-        harkenstudiobuild::CurrentWorldBodyImage body;
+        harken::studio::build::PackCanonicalImage image;
+        harken::studio::build::CurrentWorldBodyImage body;
         const bool parsed = readAll(dir.filePath(path), &bytes, &detail)
-            && harkenstudiobuild::ParsePackCanonicalImage(reinterpret_cast<const std::uint8_t*>(bytes.constData()),
-                bytes.size(), &image) == harkenstudiobuild::kPackOk;
+            && harken::studio::build::ParsePackCanonicalImage(reinterpret_cast<const std::uint8_t*>(bytes.constData()),
+                bytes.size(), &image) == harken::studio::build::kPackOk;
         const bool decoded = parsed
             && body.Decode(image.partitionBody.data(), image.partitionBody.size(),
-                harkenstudiobuild::kCanonicalDefinitionPartitionBodyVintage);
+                harken::studio::build::kCanonicalDefinitionPartitionBodyVintage);
         if (!decoded) {
-            if (requireComplete && selected && hasCompanion)
+            if (requireComplete && selected && hasPackMetadata)
                 return reject(QStringLiteral("Invalid published Pack '%1'").arg(path));
             continue;
         }
         const auto& world = *body.ProductionView();
         const auto pairProject = world.identity.projectId;
-        if (!harkenstudio::IsNull(pairProject) && !harkenstudio::IsNull(expectedProject)
+        if (!harken::studio::types::IsNull(pairProject) && !harken::studio::types::IsNull(expectedProject)
             && pairProject != expectedProject)
             return reject(QStringLiteral("Pack publication contains another project's content: %1").arg(path));
         if (selected && !platformId.isEmpty() && (requireComplete || !allowPlatformReplacement)) {
@@ -2196,12 +2194,12 @@ bool inspectPackPublication(const QString& directory, const QString& projectId,
             for (const auto& edge : image.dependencyEdges)
                 if (edge.edgeKind == HK_PACK_DEPENDENCY_EDGE_KIND_INIT
                     && edge.prerequisitePackStableId != expectedInit
-                    && harkenstudiobuild::ValidateCanonicalInitDependency(
-                        image.dependencyEdges, edge.prerequisitePackStableId) == harkenstudiobuild::kPackOk)
+                    && harken::studio::build::ValidateCanonicalInitDependency(
+                        image.dependencyEdges, edge.prerequisitePackStableId) == harken::studio::build::kPackOk)
                     return reject(QStringLiteral("Pack publication contains another platform's content: %1").arg(path));
         }
-        if (!hasCompanion) continue;
-        const auto hash = harkenstudiobuild::Fnv1a64(bytes.constData(), bytes.size());
+        if (!hasPackMetadata) continue;
+        const auto hash = harken::studio::build::Fnv1a64(bytes.constData(), bytes.size());
         QJsonObject row;
         QString pairError;
         const auto inspectPair = [&] {
@@ -2209,18 +2207,18 @@ bool inspectPackPublication(const QString& directory, const QString& projectId,
                 pairError = message;
                 return false;
             };
-            QJsonObject companion;
-            QByteArray companionBytes;
-            if (!readAll(dir.filePath(companionPath), &companionBytes, &detail)) return rejectPair(detail);
+            QJsonObject packMetadata;
+            QByteArray packMetadataBytes;
+            if (!readAll(dir.filePath(packMetadataPath), &packMetadataBytes, &detail)) return rejectPair(detail);
             QJsonParseError parseError;
-            const auto document = QJsonDocument::fromJson(companionBytes, &parseError);
+            const auto document = QJsonDocument::fromJson(packMetadataBytes, &parseError);
             if (parseError.error != QJsonParseError::NoError || !document.isObject())
-                return rejectPair(QStringLiteral("Invalid Pack companion '%1'").arg(companionPath));
-            companion = document.object();
-            const auto companionErrors = ProjectSchemaValidator::validatePackMetadata(
-                HARKEN_PACK_METADATA_VERSION, companion, companionPath);
-            if (!companionErrors.isEmpty()) return rejectPair(companionErrors.join(QLatin1Char('\n')));
-            if (harkenstudio::IsNull(pairProject))
+                return rejectPair(QStringLiteral("Invalid Pack metadata '%1'").arg(packMetadataPath));
+            packMetadata = document.object();
+            const auto packMetadataErrors = ProjectSchemaValidator::validatePackMetadata(
+                HARKEN_PACK_METADATA_VERSION, packMetadata, packMetadataPath);
+            if (!packMetadataErrors.isEmpty()) return rejectPair(packMetadataErrors.join(QLatin1Char('\n')));
+            if (harken::studio::types::IsNull(pairProject))
                 return rejectPair(QStringLiteral("Pack publication contains an invalid project identity: %1").arg(path));
             if (requireComplete && selected && ids.contains(image.packStableId))
                 return rejectPair(QStringLiteral("Pack publication repeats a Pack identity: %1").arg(path));
@@ -2228,60 +2226,60 @@ bool inspectPackPublication(const QString& directory, const QString& projectId,
             if (image.packKind == HK_PACK_KIND_INIT) {
                 if ((selected && initId != 0) || path != QStringLiteral("Init.bytes")
                     || (!platformId.isEmpty() && image.packStableId != fnvName(platformId + QStringLiteral("/Init")))
-                    || companion.size() != 2 + companion.contains(QStringLiteral("waveforms"))
-                        + companion.contains(QStringLiteral("metadata"))
-                    || !companion.value(QStringLiteral("variables")).isArray())
+                    || packMetadata.size() != 2 + packMetadata.contains(QStringLiteral("waveforms"))
+                        + packMetadata.contains(QStringLiteral("metadata"))
+                    || !packMetadata.value(QStringLiteral("variables")).isArray())
                     return rejectPair(QStringLiteral("Invalid Init publication in '%1'").arg(directory));
                 name = QStringLiteral("Init");
-                const auto variables = companion.value(QStringLiteral("variables")).toArray();
+                const auto variables = packMetadata.value(QStringLiteral("variables")).toArray();
                 if (variables.size() != world.variableCount)
-                    return rejectPair(QStringLiteral("Init companion does not match its Variable definitions"));
+                    return rejectPair(QStringLiteral("Init Pack metadata does not match its Variable definitions"));
                 QSet<QString> variableNames;
-                std::set<harkenstudio::ObjectId> variableIds;
+                std::set<harken::studio::types::ObjectId> variableIds;
                 for (const auto& value : variables) {
                     const auto variable = value.toObject();
                     const QString variableName = variable.value(QStringLiteral("name")).toString();
                     const QString guid = variable.value(QStringLiteral("guid")).toString();
                     const auto id = runtimeObjectId(QUuid(guid));
                     if (variable.size() != 3 || !NameValidator::validateItemName(variableName, ProjectItem::Type::Variable)
-                        || harkenstudio::IsNull(id) || objectIdString(id) != guid
+                        || harken::studio::types::IsNull(id) || objectIdString(id) != guid
                         || variableNames.contains(variableName) || !variableIds.insert(id).second
                         || !variable.value(QStringLiteral("labels")).isArray()
                         || std::none_of(world.variables, world.variables + world.variableCount,
                             [&](const auto& definition) { return definition.variableId == id; }))
-                        return rejectPair(QStringLiteral("Invalid Variable in Init companion"));
+                        return rejectPair(QStringLiteral("Invalid Variable in Init Pack metadata"));
                     variableNames.insert(variableName);
                     const auto overlay = std::find_if(image.variablePolicyOverlays.begin(), image.variablePolicyOverlays.end(),
                         [&](const auto& row) { return row.variableId == id; });
                     const auto labels = variable.value(QStringLiteral("labels")).toArray();
                     if (overlay == image.variablePolicyOverlays.end())
-                        return rejectPair(QStringLiteral("Init companion does not match its Label definitions"));
+                        return rejectPair(QStringLiteral("Init Pack metadata does not match its Label definitions"));
                     QSet<QString> labelNames;
-                    std::set<harkenstudio::ObjectId> labelIds;
+                    std::set<harken::studio::types::ObjectId> labelIds;
                     for (const auto& labelValue : labels) {
                         const auto label = labelValue.toObject();
                         const QString labelName = label.value(QStringLiteral("name")).toString();
                         const QString labelGuid = label.value(QStringLiteral("guid")).toString();
                         const auto labelId = runtimeObjectId(QUuid(labelGuid));
-                        if (label.size() != 2 || labelName.isEmpty() || harkenstudio::IsNull(labelId)
+                        if (label.size() != 2 || labelName.isEmpty() || harken::studio::types::IsNull(labelId)
                             || objectIdString(labelId) != labelGuid || labelNames.contains(labelName)
                             || !labelIds.insert(labelId).second
                             || std::none_of(overlay->labels.begin(), overlay->labels.end(),
                                 [&](const auto& row) { return row.labelId == labelId; }))
-                            return rejectPair(QStringLiteral("Invalid Label in Init companion"));
+                            return rejectPair(QStringLiteral("Invalid Label in Init Pack metadata"));
                         labelNames.insert(labelName);
                     }
                 }
             } else {
-                name = companion.value(QStringLiteral("name")).toString();
-                const QString guid = companion.value(QStringLiteral("guid")).toString();
+                name = packMetadata.value(QStringLiteral("name")).toString();
+                const QString guid = packMetadata.value(QStringLiteral("guid")).toString();
                 const auto id = runtimeObjectId(QUuid(guid));
                 const QString scope = info.path() == QStringLiteral(".") ? QString() : info.path();
                 if (image.packKind != HK_PACK_KIND_CANONICAL_CONTENT
-                    || companion.size() != 3 + companion.contains(QStringLiteral("waveforms"))
-                        + companion.contains(QStringLiteral("metadata"))
+                    || packMetadata.size() != 3 + packMetadata.contains(QStringLiteral("waveforms"))
+                        + packMetadata.contains(QStringLiteral("metadata"))
                     || !NameValidator::validateItemName(name, ProjectItem::Type::Action)
-                    || harkenstudio::IsNull(id) || objectIdString(id) != guid || world.actionCount == 0
+                    || harken::studio::types::IsNull(id) || objectIdString(id) != guid || world.actionCount == 0
                     || std::none_of(world.actions, world.actions + world.actionCount,
                         [&](const auto& action) { return action.actionStableId == id; })
                     || (!platformId.isEmpty() && image.packStableId != fnvName(PackBuildPlanning::relativePackPath(
@@ -2291,14 +2289,14 @@ bool inspectPackPublication(const QString& directory, const QString& projectId,
                     || (!scope.isEmpty() && (names.contains(QLatin1Char('/') + name)
                         || actionIds.contains(QLatin1Char('/') + guid)))
                     || (scope.isEmpty() && (localizedNames.contains(name) || localizedActionIds.contains(guid))))))
-                    return rejectPair(QStringLiteral("Invalid Action companion '%1'").arg(companionPath));
+                    return rejectPair(QStringLiteral("Invalid Action Pack metadata '%1'").arg(packMetadataPath));
             }
-            if (companion.contains(QStringLiteral("metadata"))) {
-                const auto metadata = companion.value(QStringLiteral("metadata")).toObject();
+            if (packMetadata.contains(QStringLiteral("metadata"))) {
+                const auto metadata = packMetadata.value(QStringLiteral("metadata")).toObject();
                 const auto language = info.path() == QStringLiteral(".") ? QString() : info.path();
                 if (metadata.value(QStringLiteral("packStableId")).toString() != QString::number(image.packStableId)
                     || metadata.value(QStringLiteral("language")).toString() != language)
-                    return rejectPair(QStringLiteral("Pack metadata identity does not match '%1'").arg(companionPath));
+                    return rejectPair(QStringLiteral("Pack metadata identity does not match '%1'").arg(packMetadataPath));
                 auto expectedObjects = packMetadataObjectIds(image, world);
                 for (const auto& value : metadata.value(QStringLiteral("objects")).toArray()) {
                     const auto object = value.toObject();
@@ -2306,13 +2304,13 @@ bool inspectPackPublication(const QString& directory, const QString& projectId,
                     if (expectedObjects.erase(id) != 1
                         || (!image.hasBusDefinitionSnapshot
                             && object.value(QStringLiteral("type")).toString() == QStringLiteral("Bus")))
-                        return rejectPair(QStringLiteral("Invalid metadata object in '%1'").arg(companionPath));
+                        return rejectPair(QStringLiteral("Invalid metadata object in '%1'").arg(packMetadataPath));
                 }
                 if (!expectedObjects.empty())
-                    return rejectPair(QStringLiteral("Pack metadata does not cover the dependencies in '%1'").arg(companionPath));
+                    return rejectPair(QStringLiteral("Pack metadata does not cover the dependencies in '%1'").arg(packMetadataPath));
             }
-            std::set<harkenstudio::ObjectId> waveformSounds;
-            for (const auto& value : companion.value(QStringLiteral("waveforms")).toArray()) {
+            std::set<harken::studio::types::ObjectId> waveformSounds;
+            for (const auto& value : packMetadata.value(QStringLiteral("waveforms")).toArray()) {
                 const auto waveform = value.toObject();
                 const auto soundId = runtimeObjectId(QUuid(waveform.value(QStringLiteral("soundGuid")).toString()));
                 const QString file = waveform.value(QStringLiteral("file")).toString();
@@ -2331,10 +2329,10 @@ bool inspectPackPublication(const QString& directory, const QString& projectId,
                     || QDir::cleanPath(file) != file
                     || waveform.value(QStringLiteral("trimEndFrame")).toInteger()
                         <= waveform.value(QStringLiteral("trimStartFrame")).toInteger())
-                    return rejectPair(QStringLiteral("Invalid waveform index in '%1'").arg(companionPath));
+                    return rejectPair(QStringLiteral("Invalid waveform index in '%1'").arg(packMetadataPath));
             }
-            if (companion.contains(QStringLiteral("waveforms")) && waveformSounds.size() != image.media.size())
-                return rejectPair(QStringLiteral("Waveform index does not cover the Pack media in '%1'").arg(companionPath));
+            if (packMetadata.contains(QStringLiteral("waveforms")) && waveformSounds.size() != image.media.size())
+                return rejectPair(QStringLiteral("Waveform index does not cover the Pack media in '%1'").arg(packMetadataPath));
             QJsonArray dependencies;
             for (const auto& edge : image.dependencyEdges)
                 dependencies.append(QString::number(edge.prerequisitePackStableId));
@@ -2346,20 +2344,20 @@ bool inspectPackPublication(const QString& directory, const QString& projectId,
                 {QStringLiteral("dependencies"), dependencies},
                 {QStringLiteral("language"), info.path() == QStringLiteral(".") ? QString() : info.path()},
                 {QStringLiteral("projectId"), objectIdString(pairProject)},
-                {QStringLiteral("platformId"), platformId}, {QStringLiteral("companion"), companion}};
+                {QStringLiteral("platformId"), platformId}, {QStringLiteral("packMetadata"), packMetadata}};
             return true;
         };
         if (!inspectPair()) {
             if (requireComplete && selected) return reject(pairError);
             continue;
         }
-        if (harkenstudio::IsNull(expectedProject) && selected) expectedProject = pairProject;
+        if (harken::studio::types::IsNull(expectedProject) && selected) expectedProject = pairProject;
         if (selected && image.packKind == HK_PACK_KIND_INIT) {
             initId = image.packStableId;
             selectedInit = true;
         } else if (selected) {
             const QString name = row.value(QStringLiteral("name")).toString();
-            const QString guid = row.value(QStringLiteral("companion")).toObject().value(QStringLiteral("guid")).toString();
+            const QString guid = row.value(QStringLiteral("packMetadata")).toObject().value(QStringLiteral("guid")).toString();
             const QString scope = row.value(QStringLiteral("language")).toString();
             names.insert(scope + QLatin1Char('/') + name);
             actionIds.insert(scope + QLatin1Char('/') + guid);
@@ -2369,7 +2367,7 @@ bool inspectPackPublication(const QString& directory, const QString& projectId,
             }
         }
         managedFiles->append(path);
-        managedFiles->append(companionPath);
+        managedFiles->append(packMetadataPath);
         if (!selected) continue;
         selectedPaths.insert(path);
         ids.insert(image.packStableId);
@@ -2420,7 +2418,7 @@ bool inspectPackPublication(const QString& directory, const QString& projectId,
                     HARKEN_PACK_METADATA_VERSION, document.object(), relative).isEmpty()) continue;
             if (!document.object().contains(QStringLiteral("guid"))
                 && !document.object().contains(QStringLiteral("variables"))) continue;
-            return reject(QStringLiteral("Pack companion has no valid matching binary: %1").arg(relative));
+            return reject(QStringLiteral("Pack metadata has no valid matching binary: %1").arg(relative));
         }
         for (const auto& edge : dependencyEdges) {
             const auto prerequisite = kinds.find(edge.prerequisitePackStableId);
@@ -2435,20 +2433,20 @@ bool inspectPackPublication(const QString& directory, const QString& projectId,
             if (exportCanceled(cancelCheck, error)) return false;
             if (managedFiles->contains(path)) continue;
             const QFileInfo info(path);
-            const auto companion = QDir::cleanPath(QDir(info.path()).filePath(info.completeBaseName() + QStringLiteral(".json")));
-            if (files.contains(companion)) continue;
+            const auto packMetadataPath = QDir::cleanPath(QDir(info.path()).filePath(info.completeBaseName() + QStringLiteral(".json")));
+            if (files.contains(packMetadataPath)) continue;
             QByteArray bytes;
-            harkenstudiobuild::PackCanonicalImage image;
-            harkenstudiobuild::CurrentWorldBodyImage body;
+            harken::studio::build::PackCanonicalImage image;
+            harken::studio::build::CurrentWorldBodyImage body;
             if (!readAll(dir.filePath(path), &bytes, &detail)
-                || harkenstudiobuild::ParsePackCanonicalImage(reinterpret_cast<const std::uint8_t*>(bytes.constData()),
-                    bytes.size(), &image) != harkenstudiobuild::kPackOk
+                || harken::studio::build::ParsePackCanonicalImage(reinterpret_cast<const std::uint8_t*>(bytes.constData()),
+                    bytes.size(), &image) != harken::studio::build::kPackOk
                 || !body.Decode(image.partitionBody.data(), image.partitionBody.size(),
-                    harkenstudiobuild::kCanonicalDefinitionPartitionBodyVintage)
+                    harken::studio::build::kCanonicalDefinitionPartitionBodyVintage)
                 || body.ProductionView()->identity.projectId != expectedProject) continue;
             if ((image.packKind == HK_PACK_KIND_CANONICAL_CONTENT
-                    && harkenstudiobuild::ValidateCanonicalInitDependency(image.dependencyEdges, initId)
-                        == harkenstudiobuild::kPackOk)
+                    && harken::studio::build::ValidateCanonicalInitDependency(image.dependencyEdges, initId)
+                        == harken::studio::build::kPackOk)
                 || (image.packKind == HK_PACK_KIND_INIT && image.packStableId == initId))
                 managedFiles->append(path);
         }
@@ -2485,15 +2483,15 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
     }
     const auto sourceIndex = request.options.buildContext
         ? request.options.buildContext->capabilities->sourceIndex()
-        : Bridge::canonicalRuntimeProjectSourceIndex(project);
-    const auto actionFor = [&](harkenstudio::ObjectId id) -> const ProjectItem* {
+        : bridge::canonicalRuntimeProjectSourceIndex(project);
+    const auto actionFor = [&](harken::studio::types::ObjectId id) -> const ProjectItem* {
         const auto found = sourceIndex->byQtGuid.find(QUuid(objectIdString(id)));
         return found != sourceIndex->byQtGuid.end()
             && found->second->type == ProjectItem::Type::Action
             && found->second->comp<VAction>() ? found->second : nullptr;
     };
     BindingRuntimeLowering lowering;
-    std::map<harkenstudio::ObjectId, RuntimeCapabilityEntry> bindingCapabilities;
+    std::map<harken::studio::types::ObjectId, RuntimeCapabilityEntry> bindingCapabilities;
     for (const auto* bus : sourceIndex->buses) {
         const auto capability = RuntimeCapabilityMatrix::lowerBindings(
             *bus, project, RuntimeCapabilityOperation::PackBuild, &lowering);
@@ -2503,18 +2501,18 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         }
         bindingCapabilities.emplace(bus->runtimeId(), capability);
     }
-    std::vector<Bridge::ProjectInputDiagnostic> busDiagnostics;
+    std::vector<bridge::ProjectInputDiagnostic> busDiagnostics;
     const auto busProjection = [&] {
         if (!request.options.buildContext)
-            return Bridge::compileStudioBusProjectionForPlatform(
+            return bridge::compileStudioBusProjectionForPlatform(
                 project, QUuid::fromString(request.options.platform), &busDiagnostics);
         const auto context = request.options.buildContext->capabilities->canonicalContext(
             QUuid(request.options.platform));
         busDiagnostics = context->diagnostics;
-        if (!context->ok()) return harkenbuscompiler::PublishedBusProjectionV1{};
-        return harkenbuscompiler::BuildPublishedBusProjectionV1(
+        if (!context->ok()) return harken::studio::bus_compiler::PublishedBusProjectionV1{};
+        return harken::studio::bus_compiler::BuildPublishedBusProjectionV1(
             *context->busResult,
-            harkenbuscompiler::BusPublicationCapabilityVintageV1::
+            harken::studio::bus_compiler::BusPublicationCapabilityVintageV1::
                 TopologyVolumeSendAndEffectsNeutralOtherProperties);
     }();
     if (!busDiagnostics.empty() || busProjection.fingerprint == 0) {
@@ -2526,16 +2524,16 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
                        busDiagnostics.front().field);
         return result;
     }
-    const auto busSnapshotPayload = harkenstudiobuild::VolumeBusSnapshotPayload(busProjection);
-    harkenstudiobuild::PackBusDefinitionSnapshotHeader busSnapshotHeader;
+    const auto busSnapshotPayload = harken::studio::build::VolumeBusSnapshotPayload(busProjection);
+    harken::studio::build::PackBusDefinitionSnapshotHeader busSnapshotHeader;
     if (busSnapshotPayload.empty() ||
-        !harkenstudiobuild::ReadPackBusDefinitionSnapshotHeader(
+        !harken::studio::build::ReadPackBusDefinitionSnapshotHeader(
             busSnapshotPayload.data(), busSnapshotPayload.size(), &busSnapshotHeader)) {
         result.error = QStringLiteral("Bus snapshot cannot represent target platform %1")
                            .arg(request.options.platform);
         return result;
     }
-    const auto busTriple = harkenstudiobuild::SnapshotBusTriple(busSnapshotHeader);
+    const auto busTriple = harken::studio::build::SnapshotBusTriple(busSnapshotHeader);
     QDir liveDir(request.outputDir);
     if (!liveDir.exists())
         liveDir.mkpath(".");
@@ -2630,7 +2628,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         PackMeta init;
         init.name = QStringLiteral("Init");
         init.unitKey = QStringLiteral("Init");
-        init.fileName = QStringLiteral("Init") + Bridge::packArtifactExtension();
+        init.fileName = QStringLiteral("Init") + bridge::packArtifactExtension();
         init.platform = request.options.platform;
         init.packStableId = initId;
         init.packKind = HK_PACK_KIND_INIT;
@@ -2642,11 +2640,11 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         content.unitKey = planned.grouped ? QStringLiteral("g:") + planned.artifactKey
             : QStringLiteral("a:") + objectIdString(planned.actionStableIds.front());
         content.fileName = PackBuildPlanning::packFileName(
-            planned.variant.language, planned.name, Bridge::packArtifactExtension());
+            planned.variant.language, planned.name, bridge::packArtifactExtension());
         content.language = planned.variant.language;
         content.platform = planned.variant.platform;
         content.grouped = planned.grouped;
-        for (harkenstudio::ObjectId actionId : planned.actionStableIds) {
+        for (harken::studio::types::ObjectId actionId : planned.actionStableIds) {
             if (request.includedActionIds.count(actionId) == 0
                 || request.failedActionVariants.count({actionId, planned.variant.language}) != 0)
                 continue;
@@ -2687,7 +2685,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         QString scanError;
         if (!scanOutputFiles(liveDir, &files, nullptr, &scanError, request.options.cancelCheck)) return fail(scanError);
         for (const auto& path : files)
-            if (path.endsWith(Bridge::packArtifactExtension())) previousPaths.append(path);
+            if (path.endsWith(bridge::packArtifactExtension())) previousPaths.append(path);
     } else if (!request.options.forceReexport) {
         for (const auto& pack : packs)
             if (request.options.packBuildState
@@ -2712,7 +2710,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         }
         previousPacks.insert(path, std::move(previous));
     }
-    std::set<harkenstudio::ObjectId> previousInitLayerIds;
+    std::set<harken::studio::types::ObjectId> previousInitLayerIds;
     for (auto& pack : packs) {
         const auto previous = previousPacks.constFind(pack.fileName);
         if (previous == previousPacks.cend() || previous->packStableId != pack.packStableId
@@ -2722,12 +2720,12 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         pack.previousCapacity = previous->previousCapacity;
         pack.previousValid = true;
         if (request.options.updateSelectedOnly && pack.packKind == HK_PACK_KIND_INIT) {
-            harkenstudiobuild::CurrentWorldBodyImage body;
+            harken::studio::build::CurrentWorldBodyImage body;
             if (decodePreviousPack(pack, &body)) {
                 const auto& world = *body.ProductionView();
                 for (std::uint32_t i = 0; i < world.playablePropertyCount; ++i)
                     if (world.playableProperties[i].contentPropertyKind
-                        == harkenstudiobuild::playableproperties::ContentPropertyKindV1::Layer)
+                        == harken::studio::build::playableproperties::ContentPropertyKindV1::Layer)
                         previousInitLayerIds.insert(world.playableProperties[i].stableId);
             }
         }
@@ -2755,8 +2753,8 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
             recordFailure(pack, error);
         }
         const QFileInfo file(pack.fileName);
-        const auto companion = QDir::cleanPath(QDir(file.path()).filePath(file.completeBaseName() + QStringLiteral(".json")));
-        for (const auto& path : {pack.fileName, companion})
+        const auto packMetadataPath = QDir::cleanPath(QDir(file.path()).filePath(file.completeBaseName() + QStringLiteral(".json")));
+        for (const auto& path : {pack.fileName, packMetadataPath})
             if (!safePublicationPath(liveDir, path) || QFileInfo(liveDir.filePath(path)).isDir())
                 recordFailure(pack, QStringLiteral("Invalid Pack output path: %1").arg(path));
     }
@@ -2774,7 +2772,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
                     ? liveDir.filePath(meta.previousRow.value(QStringLiteral("path")).toString()) : QString(),
                 meta.previousResourceFingerprint};
         const auto appendResources = [&](const ProjectPackExporter::ExportResult& resource,
-                                         std::vector<Bridge::PackBuildSession::CanonicalPackEntry> entries) {
+                                         std::vector<bridge::PackBuildSession::CanonicalPackEntry> entries) {
             if (exportCanceled(request.options.cancelCheck, &unit.error)) {
                 unit.canceled = true;
                 return false;
@@ -2808,8 +2806,8 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
             return unit;
         }
         if (meta.packKind == HK_PACK_KIND_INIT) {
-            std::vector<Bridge::PackBuildSession::CanonicalPackEntry> entries;
-            unit = exporter.ExportInitPack(project, path, resourceOptions, &entries);
+            std::vector<bridge::PackBuildSession::CanonicalPackEntry> entries;
+            unit = exporter.ExportInitPack(project, path, resourceOptions, entries);
             if (!unit.success) return unit;
             meta.resourceFingerprint = unit.resourceFingerprint;
             if (!appendResources(unit, std::move(entries))) {
@@ -2819,25 +2817,25 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         } else {
             ProjectPackExporter::ExportOptions contentOpts = resourceOptions;
             contentOpts.language = meta.language;
-            for (harkenstudio::ObjectId actionId : meta.actionStableIds) {
+            for (harken::studio::types::ObjectId actionId : meta.actionStableIds) {
                 const ProjectItem* action = actionFor(actionId);
                 if (!action) {
                     unit.error = QStringLiteral("Missing Action %1 in Pack '%2'")
-                                     .arg(VNX::objectIdString(actionId), meta.name);
+                                     .arg(harken::studio::objectIdString(actionId), meta.name);
                     return unit;
                 }
-                std::vector<Bridge::PackBuildSession::CanonicalPackEntry> entries;
+                std::vector<bridge::PackBuildSession::CanonicalPackEntry> entries;
                 auto member = contentOpts.buildContext
                     ? exporter.exportSingleActionPack(
-                        project, *action, path, contentOpts, nullptr, nullptr, &entries)
+                        project, *action, path, contentOpts, entries)
                     : exporter.ExportActionPack(
-                        project, action->name, path, contentOpts, nullptr, nullptr, &entries);
+                        project, action->name, path, contentOpts, entries);
                 if (!member.success) return member;
                 for (const auto& [soundId, revision] : member.soundContentRevisions) {
                     const auto [found, inserted] = meta.soundContentRevisions.emplace(soundId, revision);
                     if (!inserted && found->second != revision) {
                         unit.error = QStringLiteral("Conflicting control media revision for Sound %1")
-                            .arg(VNX::objectIdString(soundId));
+                            .arg(harken::studio::objectIdString(soundId));
                         return unit;
                     }
                 }
@@ -2881,10 +2879,10 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
             }
             unit.success = false;
             unit.error = QStringLiteral("Pack '%1' contains invalid PCM media %2")
-                .arg(meta.fileName).arg(VNX::objectIdString(entry.id));
-            if (entry.payload.size() < harkenstudiobuild::kPackBytes<HkPackMedia>)
+                .arg(meta.fileName).arg(harken::studio::objectIdString(entry.id));
+            if (entry.payload.size() < harken::studio::build::kPackBytes<HkPackMedia>)
                 return unit;
-            const auto media = harkenstudiobuild::ReadPackMedia(entry.payload.data());
+            const auto media = harken::studio::build::ReadPackMedia(entry.payload.data());
             const auto pcmBytes = entry.mediaBytes();
             if (media.sampleFormat != HK_PACK_SAMPLE_FORMAT_F32_PLANAR
                 || media.blobBytes != pcmBytes || pcmBytes % sizeof(float) != 0
@@ -2900,7 +2898,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
             std::uint64_t revision = 0;
             const bool loopable =
                 (media.flags & HK_PACK_MEDIA_FLAG_LOOPABLE) != 0;
-            if (!harkenstudiobuild::ComputeMediaPcmContentRevisionV1(
+            if (!harken::studio::build::ComputeMediaPcmContentRevisionV1(
                     media.sampleRate, media.channelCount, media.frameCount,
                     channels.data(), 1, &revision,
                     loopable ? media.loopStartFrame : 0,
@@ -2909,7 +2907,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
             const auto [found, inserted] = meta.soundContentRevisions.emplace(media.soundId, revision);
             if (!inserted && found->second != revision) {
                 unit.error = QStringLiteral("Control and packed media revisions disagree for Sound %1")
-                    .arg(VNX::objectIdString(media.soundId));
+                    .arg(harken::studio::objectIdString(media.soundId));
                 return unit;
             }
             ++meta.ownedResources;
@@ -2947,7 +2945,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
                                     || variant.variant.language == pack.language);
                         });
                     if (planned == request.plan->variants.end()) continue;
-                    std::set<harkenstudio::ObjectId> sounds;
+                    std::set<harken::studio::types::ObjectId> sounds;
                     for (const auto* inputs : {&planned->closure.media, &planned->closure.controlMedia}) {
                         for (const auto& media : *inputs) {
                             if (!sounds.insert(media.soundStableId).second) continue;
@@ -2991,7 +2989,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
     if (exportCanceled(request.options.cancelCheck, &result.error)) return fail(result.error);
     observeStage(PackBuildObservationStage::CompilingProject);
     QString compileError;
-    std::set<harkenstudio::ObjectId> requiredDefinitions;
+    std::set<harken::studio::types::ObjectId> requiredDefinitions;
     for (const auto& variant : request.plan->variants) {
         if (std::none_of(packs.begin(), packs.end(), [&](const auto& pack) {
                 return std::find(pack.actionStableIds.begin(), pack.actionStableIds.end(), variant.actionStableId)
@@ -3000,7 +2998,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         for (const auto* members : {&variant.closure.objects, &variant.closure.controlObjects})
             for (const auto& member : *members) requiredDefinitions.insert(member.stableId);
     }
-    std::set<harkenstudio::ObjectId> sharedLayerIds;
+    std::set<harken::studio::types::ObjectId> sharedLayerIds;
     std::function<bool(const ProjectItem*)> collectLayers = [&](const ProjectItem* item) {
         if (!item) return false;
         bool required = requiredDefinitions.count(item->runtimeId()) != 0
@@ -3021,10 +3019,10 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         ? project.defaultLanguage : buildOptions.language.trimmed();
     const QString selectedLanguage = languages.contains(preferredLanguage)
         ? preferredLanguage : languages.front();
-    std::map<harkenstudio::ObjectId, std::uint32_t> newPropertyOrders, newContainerOrders;
+    std::map<harken::studio::types::ObjectId, std::uint32_t> newPropertyOrders, newContainerOrders;
     std::set<std::uint32_t> reservedPropertyOrders, reservedContainerOrders;
     std::vector<PublicationAuthoredOrders> publicationOrders;
-    std::set<harkenstudio::ObjectId> neutralDefinitionIds = sharedLayerIds;
+    std::set<harken::studio::types::ObjectId> neutralDefinitionIds = sharedLayerIds;
     if (request.options.updateSelectedOnly) {
         for (const auto& variant : request.plan->variants) {
             if (!variant.variant.language.isEmpty()) continue;
@@ -3036,8 +3034,8 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
     }
     for (const QString& language : languages) {
         if (exportCanceled(request.options.cancelCheck, &result.error)) return fail(result.error);
-        std::set<harkenstudio::ObjectId> packedActionIds;
-        std::set<harkenstudio::ObjectId> packedDefinitionIds;
+        std::set<harken::studio::types::ObjectId> packedActionIds;
+        std::set<harken::studio::types::ObjectId> packedDefinitionIds;
         const auto collectPackedInputs = [&]() {
             packedActionIds.clear();
             packedDefinitionIds = sharedLayerIds;
@@ -3066,7 +3064,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
                 QUuid(request.options.platform));
         }
         if (!buildOptions.sourceIndex)
-            buildOptions.sourceIndex = Bridge::canonicalRuntimeProjectSourceIndex(project);
+            buildOptions.sourceIndex = bridge::canonicalRuntimeProjectSourceIndex(project);
         std::vector<CurrentWorldBuildDiagnostic> loweringDiagnostics;
         buildOptions.loweringDiagnostics = &loweringDiagnostics;
         buildOptions.fieldGroups = fieldGroups.get();
@@ -3138,7 +3136,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
                                                 packedActionIds, packedDefinitionIds);
         }
         if (request.options.updateSelectedOnly) {
-            std::map<harkenstudio::ObjectId, std::uint32_t> containerOrders;
+            std::map<harken::studio::types::ObjectId, std::uint32_t> containerOrders;
             if (!mergePublicationAuthoredOrders(publicationOrders, language, neutralDefinitionIds,
                     &worldRequest->propertyAuthoredOrders, &containerOrders,
                     &compileError))
@@ -3172,23 +3170,23 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
                     worldRequest->soundContentRevisions.emplace(soundId, revision);
                 if (!inserted && found->second != revision)
                     return fail(QStringLiteral("Conflicting packed media for Sound %1")
-                                    .arg(VNX::objectIdString(soundId)));
+                                    .arg(harken::studio::objectIdString(soundId)));
             }
         }
         for (const auto& source : worldRequest->soundSources) {
             if (worldRequest->soundContentRevisions.count(source.stableId) == 0)
                 return fail(QStringLiteral("Missing packed media for Sound %1 on %2/%3")
-                                .arg(VNX::objectIdString(source.stableId)).arg(request.options.platform, language));
+                                .arg(harken::studio::objectIdString(source.stableId)).arg(request.options.platform, language));
         }
-        auto compiled = Build::compileCurrentWorldRequest(*worldRequest);
+        auto compiled = build::compileCurrentWorldRequest(*worldRequest);
         if (exportCanceled(request.options.cancelCheck, &result.error)) return fail(result.error);
         if (!compiled.ok() || !compiled.world) {
             return fail(QStringLiteral(
                             "Current World project compilation failed (%1, stable id %2, language '%3')")
                             .arg(static_cast<std::uint32_t>(compiled.status))
-                            .arg(VNX::objectIdString(compiled.relatedStableId)).arg(language));
+                            .arg(harken::studio::objectIdString(compiled.relatedStableId)).arg(language));
         }
-        const harkenstudiobuild::ContainerWorldInstallViewV1& world = compiled.world->View();
+        const harken::studio::build::ContainerWorldInstallViewV1& world = compiled.world->View();
         if (request.options.updateSelectedOnly) {
             for (std::uint32_t i = 0; i < world.playablePropertyCount; ++i) {
                 const auto& property = world.playableProperties[i];
@@ -3204,7 +3202,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
             result.currentWorldSemanticFingerprint = world.identity.runtimeSemanticFingerprint;
         }
 
-        std::unordered_map<harkenstudio::ObjectId, IdentityOwner> owners;
+        std::unordered_map<harken::studio::types::ObjectId, IdentityOwner> owners;
         QString ownershipError;
         if (!assignOwnership(request, packs, language, initId,
                              world, &owners, &ownershipError))
@@ -3219,7 +3217,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
             const auto id = world.playableProperties[i].stableId;
             if (owners.count(id) == 0
                 && !claimIdentity(&compilationOwners, id, controlInputs.packStableId,
-                    harkenstudiobuild::kInitCatalogIdentityClassPlayable, &compileError))
+                    harken::studio::build::kInitCatalogIdentityClassPlayable, &compileError))
                 return fail(compileError);
         }
         packs.push_back(std::move(controlInputs));
@@ -3303,19 +3301,19 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
                     occurrence.parentProgramSemanticFingerprint = parent->programSemanticFingerprint;
                 rebindPlayableRefLive(&occurrence.childPlayable, slicedIndex);
                 occurrence.occurrenceSemanticFingerprint =
-                    harkenstudiobuild::ComputePlayableOccurrenceFingerprintV1(occurrence);
+                    harken::studio::build::ComputePlayableOccurrenceFingerprintV1(occurrence);
             }
             for (auto& track : pack.slicedTracks) {
                 rebindPlayableRefLive(&track.rootDefinition, slicedIndex);
                 if (track.placements != nullptr) {
-                    auto* placements = const_cast<harkenstudiobuild::ScheduleClipPlacementV1*>(
+                    auto* placements = const_cast<harken::studio::build::ScheduleClipPlacementV1*>(
                         track.placements);
                     for (std::uint32_t i = 0; i < track.placementCount; ++i)
                         rebindPlayableRefLive(&placements[i].content,
                                              slicedIndex);
                 }
                 track.scheduleSemanticFingerprint =
-                    harkenstudiobuild::ComputeTrackScheduleFingerprintV1(track);
+                    harken::studio::build::ComputeTrackScheduleFingerprintV1(track);
             }
         }
         for (PackMeta& pack : packs) {
@@ -3324,7 +3322,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
             for (auto& segment : pack.slicedSegments) {
                 rebindPlayableRefLive(&segment.rootDefinition, slicedIndex);
                 if (segment.trackRefs != nullptr) {
-                    auto* trackRefs = const_cast<harkenstudiobuild::ScheduleTrackRefV1*>(
+                    auto* trackRefs = const_cast<harken::studio::build::ScheduleTrackRefV1*>(
                         segment.trackRefs);
                     for (std::uint32_t i = 0; i < segment.trackRefCount; ++i) {
                         rebindPlayableRefLive(&trackRefs[i].trackDefinition,
@@ -3334,18 +3332,18 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
                         if (track == nullptr)
                             return fail(QStringLiteral(
                                 "Segment %1 references missing sliced Track %2")
-                                .arg(VNX::objectIdString(segment.rootDefinition.stableId),
-                                     VNX::objectIdString(trackRefs[i].trackDefinition.stableId)));
+                                .arg(harken::studio::objectIdString(segment.rootDefinition.stableId),
+                                     harken::studio::objectIdString(trackRefs[i].trackDefinition.stableId)));
                         trackRefs[i].trackScheduleSemanticFingerprint =
                             track->scheduleSemanticFingerprint;
                     }
                 }
                 segment.scheduleSemanticFingerprint =
-                    harkenstudiobuild::ComputeSegmentScheduleFingerprintV1(segment);
+                    harken::studio::build::ComputeSegmentScheduleFingerprintV1(segment);
             }
             for (auto& container : pack.slicedContainers) {
                 if (container.children != nullptr) {
-                    auto* children = const_cast<harkenstudiobuild::ContainerChildProgramViewV2*>(
+                    auto* children = const_cast<harken::studio::build::ContainerChildProgramViewV2*>(
                         container.children);
                     for (std::uint32_t i = 0; i < container.childCount; ++i) {
                         rebindPlayableRefLive(&children[i].playable,
@@ -3360,7 +3358,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
                 if (definition == nullptr)
                     return fail(QStringLiteral(
                         "Container %1 is missing from the sliced canonical set")
-                        .arg(VNX::objectIdString(container.containerStableId)));
+                        .arg(harken::studio::objectIdString(container.containerStableId)));
                 container.programSemanticFingerprint =
                     definition->programSemanticFingerprint;
             }
@@ -3379,7 +3377,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
                     continue;
                 for (auto& action : pack.slicedActions) {
                     if (action.steps != nullptr) {
-                        auto* steps = const_cast<harkenstudiobuild::ActionStepProgramViewV1*>(
+                        auto* steps = const_cast<harken::studio::build::ActionStepProgramViewV1*>(
                             action.steps);
                         for (std::uint32_t i = 0; i < action.stepCount; ++i) {
                             remapActionObjectRefLive(&steps[i].target, slicedIndex);
@@ -3388,7 +3386,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
                     }
                     const auto before = action.programSemanticFingerprint;
                     action.programSemanticFingerprint =
-                        harkenstudiobuild::ComputeActionProgramFingerprintV1(action);
+                        harken::studio::build::ComputeActionProgramFingerprintV1(action);
                     if (action.programSemanticFingerprint != before)
                         actionFingerprintsChanged = true;
                 }
@@ -3401,7 +3399,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         for (PackMeta& pack : packs) {
             if (!packNeedsEncode(pack))
                 continue;
-            harkenstudiobuild::ContainerWorldInstallViewV1 slice = world;
+            harken::studio::build::ContainerWorldInstallViewV1 slice = world;
 
             slice.variables = pack.slicedVariables.empty() ? nullptr : pack.slicedVariables.data();
             slice.variableCount = static_cast<std::uint32_t>(pack.slicedVariables.size());
@@ -3420,19 +3418,19 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
             slice.actions = pack.slicedActions.empty() ? nullptr : pack.slicedActions.data();
             slice.actionCount = static_cast<std::uint32_t>(pack.slicedActions.size());
             slice.identity.capabilityMask =
-                harkenstudiobuild::detail::ComputeCurrentWorldLocalCapabilityMaskV1(slice);
+                harken::studio::build::detail::ComputeCurrentWorldLocalCapabilityMaskV1(slice);
             slice.identity.runtimeSemanticFingerprint =
-                harkenstudiobuild::ComputeCurrentWorldFingerprintV5(slice);
+                harken::studio::build::ComputeCurrentWorldFingerprintV5(slice);
             if (!encodePartition(pack.packStableId, slice, pack.ownedDefinitions,
                                  &pack.partitionPayload, &compileError, busTriple))
                 return fail(compileError);
-            pack.semanticFingerprint = harkenstudiobuild::Fnv1a64(
-                pack.partitionPayload.data() + harkenstudiobuild::kPackBytes<HkPackCanonicalPartitionHeader>,
+            pack.semanticFingerprint = harken::studio::build::Fnv1a64(
+                pack.partitionPayload.data() + harken::studio::build::kPackBytes<HkPackCanonicalPartitionHeader>,
                 pack.partitionPayload.size()
-                    - harkenstudiobuild::kPackBytes<HkPackCanonicalPartitionHeader>);
+                    - harken::studio::build::kPackBytes<HkPackCanonicalPartitionHeader>);
             pack.lineageFingerprint = lineageFingerprint(owners, pack.packStableId);
             if (pack.packKind == HK_PACK_KIND_INIT &&
-                !fillInitCompanion(world, project, &pack.companion, &compileError))
+                !fillInitPackMetadata(world, project, &pack.packMetadata, &compileError))
                 return fail(compileError);
             if (pack.packKind == HK_PACK_KIND_INIT
                 && pack.variablePolicyOverlayPayload.empty()
@@ -3447,9 +3445,9 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
                 && pack.variableRequirementsPayload.empty()) {
                 const auto& fingerprints =
                     packs.front().variableExecutionFingerprints;
-                std::set<harkenstudio::ObjectId> referenced;
+                std::set<harken::studio::types::ObjectId> referenced;
                 for (std::uint32_t i = 0; i < world.variableCount; ++i) {
-                    const harkenstudio::ObjectId variableId = world.variables[i].variableId;
+                    const harken::studio::types::ObjectId variableId = world.variables[i].variableId;
                     const ProjectItem* variable =
                         findItemByStableId(project, variableId);
                     if (!variable)
@@ -3463,8 +3461,8 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
                             referenced.insert(variableId);
                     }
                 }
-                std::vector<std::pair<harkenstudio::ObjectId, std::uint64_t>> rows;
-                for (harkenstudio::ObjectId variableId : referenced) {
+                std::vector<std::pair<harken::studio::types::ObjectId, std::uint64_t>> rows;
+                for (harken::studio::types::ObjectId variableId : referenced) {
                     const auto found = fingerprints.find(variableId);
                     if (found == fingerprints.end())
                         continue;
@@ -3477,7 +3475,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         }
     }
 
-    std::map<harkenstudio::ObjectId, std::vector<std::uint8_t>> authoredPresets;
+    std::map<harken::studio::types::ObjectId, std::vector<std::uint8_t>> authoredPresets;
     for (const auto& entry : packs.front().resourceEntries)
         if (entry.kind == HK_PACK_ENTRY_KIND_EFFECT_PRESET)
             authoredPresets.emplace(entry.id, entry.payload);
@@ -3507,17 +3505,17 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
     }
     if (!harmonizePublicationCapacity(&packs, request.options.packBuildState.get(), authoredPresets, &compileError))
         return fail(compileError);
-    std::set<harkenstudio::ObjectId> bindingIds;
+    std::set<harken::studio::types::ObjectId> bindingIds;
     std::erase_if(lowering.programs, [&](const auto& program) {
         return !bindingIds.insert(program.bindingId).second;
     });
-    std::set<std::pair<harkenstudio::ObjectId, harkenstudio::ObjectId>> bindingAttachments;
+    std::set<std::pair<harken::studio::types::ObjectId, harken::studio::types::ObjectId>> bindingAttachments;
     std::erase_if(lowering.attachments, [&](const auto& attachment) {
         return !bindingAttachments.emplace(attachment.bindingId, attachment.objectId).second;
     });
     for (PackMeta& pack : packs) {
         if (pack.retained && !pack.metadataUpdated) continue;
-        std::vector<Bridge::PackBuildSession::CanonicalPackEntry> retainedGlobals;
+        std::vector<bridge::PackBuildSession::CanonicalPackEntry> retainedGlobals;
         auto& globals = pack.retained ? retainedGlobals : pack.resourceEntries;
         if (exportCanceled(request.options.cancelCheck, &result.error)) return fail(result.error);
         if (pack.retained) {
@@ -3552,19 +3550,19 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
             pack.contentRevision = pack.previousRow.value(QStringLiteral("contentRevision")).toVariant().toULongLong();
             continue;
         }
-        auto contentRevision = harkenstudiobuild::Fnv1a64(
+        auto contentRevision = harken::studio::build::Fnv1a64(
             pack.partitionPayload.data(), pack.partitionPayload.size());
         for (const auto& entry : globals) {
             std::array<std::uint8_t, 32> header{};
-            harkenstudiobuild::StoreLE32(header.data(), entry.kind);
-            harkenstudiobuild::StoreLE32(header.data() + 4, entry.vintage);
-            harkenstudiobuild::StoreObjectId(header.data() + 8, entry.id);
-            harkenstudiobuild::StoreLE64(header.data() + 24, entry.relationOrdinal);
-            contentRevision = harkenstudiobuild::Fnv1a64(
+            harken::studio::build::StoreLE32(header.data(), entry.kind);
+            harken::studio::build::StoreLE32(header.data() + 4, entry.vintage);
+            harken::studio::build::StoreObjectId(header.data() + 8, entry.id);
+            harken::studio::build::StoreLE64(header.data() + 24, entry.relationOrdinal);
+            contentRevision = harken::studio::build::Fnv1a64(
                 header.data(), header.size(), contentRevision);
-            contentRevision = harkenstudiobuild::Fnv1a64(
+            contentRevision = harken::studio::build::Fnv1a64(
                 entry.payload.data(), entry.payload.size(), contentRevision);
-            contentRevision = harkenstudiobuild::Fnv1a64(
+            contentRevision = harken::studio::build::Fnv1a64(
                 entry.mediaData(), entry.mediaBytes(), contentRevision);
         }
         for (const auto& row : {std::make_pair(HK_PACK_ENTRY_KIND_VARIABLE_POLICY_OVERLAY,
@@ -3573,13 +3571,13 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
                                               &pack.variableRequirementsPayload)}) {
             if (row.second->empty()) continue;
             std::array<std::uint8_t, 16> header{};
-            harkenstudiobuild::StoreLE32(header.data(), row.first);
-            harkenstudiobuild::StoreLE32(header.data() + 4,
-                                       harkenstudiobuild::PackEntryVintage(row.first));
-            harkenstudiobuild::StoreLE64(header.data() + 8, 0);
-            contentRevision = harkenstudiobuild::Fnv1a64(
+            harken::studio::build::StoreLE32(header.data(), row.first);
+            harken::studio::build::StoreLE32(header.data() + 4,
+                                       harken::studio::build::PackEntryVintage(row.first));
+            harken::studio::build::StoreLE64(header.data() + 8, 0);
+            contentRevision = harken::studio::build::Fnv1a64(
                 header.data(), header.size(), contentRevision);
-            contentRevision = harkenstudiobuild::Fnv1a64(
+            contentRevision = harken::studio::build::Fnv1a64(
                 row.second->data(), row.second->size(), contentRevision);
         }
         pack.contentRevision = contentRevision & INT64_MAX;
@@ -3590,8 +3588,8 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         if (pack.retained) {
             for (const auto& entry : pack.previousEntries) {
                 if (entry.kind != HK_PACK_ENTRY_KIND_PACK_DEPENDENCY_EDGE) continue;
-                harkenstudiobuild::PackDependencyEdge edge;
-                if (!harkenstudiobuild::ReadPackDependencyEdge(
+                harken::studio::build::PackDependencyEdge edge;
+                if (!harken::studio::build::ReadPackDependencyEdge(
                         entry.payload.data(), entry.payload.size(), &edge))
                     return fail(QStringLiteral("Invalid retained Pack dependency"));
                 if (edge.prerequisitePackStableId == initId
@@ -3624,40 +3622,40 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
                 if (entry.kind == HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION) {
                     entry.payload = meta.partitionPayload;
                 } else if (entry.kind == HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK) {
-                    harkenstudiobuild::PackRequirementBlock requirement;
-                    if (!harkenstudiobuild::ReadPackRequirementBlock(
+                    harken::studio::build::PackRequirementBlock requirement;
+                    if (!harken::studio::build::ReadPackRequirementBlock(
                             entry.payload.data(), entry.payload.size(), &requirement)) {
                         unit.error = QStringLiteral("Invalid retained Pack requirement");
                         return unit;
                     }
                     requirement.semanticFingerprint = meta.semanticFingerprint;
                     requirement.packContentRevision = meta.contentRevision;
-                    harkenstudiobuild::SerializePackRow<HkPackRequirementBlock>(requirement, entry.payload.data());
-                    harkenstudiobuild::StampRequirementCoverage(&entry.payload);
+                    harken::studio::build::SerializePackRow<HkPackRequirementBlock>(requirement, entry.payload.data());
+                    harken::studio::build::StampRequirementCoverage(&entry.payload);
                 } else if (entry.kind == HK_PACK_ENTRY_KIND_PACK_DEPENDENCY_EDGE) {
-                    harkenstudiobuild::PackDependencyEdge edge;
-                    if (!harkenstudiobuild::ReadPackDependencyEdge(
+                    harken::studio::build::PackDependencyEdge edge;
+                    if (!harken::studio::build::ReadPackDependencyEdge(
                             entry.payload.data(), entry.payload.size(), &edge)) {
                         unit.error = QStringLiteral("Invalid retained Pack dependency");
                         return unit;
                     }
                     if (edge.prerequisitePackStableId == initId) {
                         edge.expectedPrerequisiteContentRevision = meta.requiredInitRevision;
-                        harkenstudiobuild::SerializePackRow<HkPackDependencyEdge>(edge, entry.payload.data());
+                        harken::studio::build::SerializePackRow<HkPackDependencyEdge>(edge, entry.payload.data());
                     }
                 }
             }
-            unit.success = Bridge::PackBuildSession::writeCanonicalPackFile(
+            unit.success = bridge::PackBuildSession::writeCanonicalPackFile(
                 path, meta.packKind == HK_PACK_KIND_INIT
-                    ? Bridge::PackBuildSession::CanonicalPackKind::Init
-                    : Bridge::PackBuildSession::CanonicalPackKind::CanonicalContent,
+                    ? bridge::PackBuildSession::CanonicalPackKind::Init
+                    : bridge::PackBuildSession::CanonicalPackKind::CanonicalContent,
                 entries, &unit.error);
             unit.outputPath = path;
             unit.fileSize = QFileInfo(path).size();
             return unit;
         }
         auto& entries = meta.resourceEntries;
-        Bridge::PackBuildSession::CanonicalPackEntry partition;
+        bridge::PackBuildSession::CanonicalPackEntry partition;
         partition.kind = HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION;
         partition.vintage = HK_PACK_CANONICAL_DEFINITION_PARTITION_VINTAGE;
         partition.relationOrdinal = 0;
@@ -3665,7 +3663,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         entries.push_back(std::move(partition));
         if (meta.packKind == HK_PACK_KIND_INIT
             && !meta.variablePolicyOverlayPayload.empty()) {
-            Bridge::PackBuildSession::CanonicalPackEntry overlay;
+            bridge::PackBuildSession::CanonicalPackEntry overlay;
             overlay.kind = HK_PACK_ENTRY_KIND_VARIABLE_POLICY_OVERLAY;
             overlay.vintage = HK_PACK_VARIABLE_POLICY_OVERLAY_VINTAGE;
             overlay.id = {};
@@ -3674,7 +3672,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         }
         if (meta.packKind == HK_PACK_KIND_CANONICAL_CONTENT
             && !meta.variableRequirementsPayload.empty()) {
-            Bridge::PackBuildSession::CanonicalPackEntry requirements;
+            bridge::PackBuildSession::CanonicalPackEntry requirements;
             requirements.kind = HK_PACK_ENTRY_KIND_VARIABLE_REQUIREMENTS;
             requirements.vintage = HK_PACK_VARIABLE_REQUIREMENTS_VINTAGE;
             requirements.id = {};
@@ -3684,7 +3682,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
 
         std::uint32_t edgeOrdinal = 0;
         for (std::uint64_t dependency : meta.dependencies) {
-            Bridge::PackBuildSession::CanonicalPackEntry edge;
+            bridge::PackBuildSession::CanonicalPackEntry edge;
             edge.kind = HK_PACK_ENTRY_KIND_PACK_DEPENDENCY_EDGE;
             edge.vintage = HK_PACK_PACK_DEPENDENCY_EDGE_VINTAGE;
             edge.relationOrdinal = edgeOrdinal++;
@@ -3696,7 +3694,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
                 busTriple);
             entries.push_back(std::move(edge));
         }
-        Bridge::PackBuildSession::CanonicalPackEntry requirement;
+        bridge::PackBuildSession::CanonicalPackEntry requirement;
         requirement.kind = HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK;
         requirement.vintage = HK_PACK_PACK_REQUIREMENT_BLOCK_VINTAGE;
         requirement.relationOrdinal = 0;
@@ -3707,7 +3705,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         entries.push_back(std::move(requirement));
 
         if (meta.packKind == HK_PACK_KIND_INIT) {
-            Bridge::PackBuildSession::CanonicalPackEntry snapshot;
+            bridge::PackBuildSession::CanonicalPackEntry snapshot;
             snapshot.kind = HK_PACK_ENTRY_KIND_BUS_DEFINITION_SNAPSHOT;
             snapshot.vintage = HK_PACK_BUS_DEFINITION_SNAPSHOT_VINTAGE;
             snapshot.id = {};
@@ -3728,11 +3726,11 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
                 return std::any_of(meta.previousEntries.begin(), meta.previousEntries.end(),
                     [&](const auto& previous) { return sameEntry(entry, previous); });
             })) return reuse();
-        if (!Bridge::PackBuildSession::writeCanonicalPackFile(
+        if (!bridge::PackBuildSession::writeCanonicalPackFile(
                 path,
                 meta.packKind == HK_PACK_KIND_INIT
-                    ? Bridge::PackBuildSession::CanonicalPackKind::Init
-                    : Bridge::PackBuildSession::CanonicalPackKind::CanonicalContent,
+                    ? bridge::PackBuildSession::CanonicalPackKind::Init
+                    : bridge::PackBuildSession::CanonicalPackKind::CanonicalContent,
                 entries, &unit.error)) {
             unit.success = false;
             return unit;
@@ -3745,7 +3743,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         return unit;
     };
 
-    std::unordered_map<harkenstudio::ObjectId, const ProjectItem*> metadataItems;
+    std::unordered_map<harken::studio::types::ObjectId, const ProjectItem*> metadataItems;
     if (project.buildExportPackMetadata) {
         std::unordered_set<const ProjectItem*> visited;
         const auto indexItem = [&](auto&& self, const ProjectItem* item) -> void {
@@ -3802,22 +3800,22 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
                     unit.success = false;
                     unit.error = QStringLiteral("Action publication identity is unavailable for '%1'").arg(pack.name);
                 } else {
-                    pack.companion = QJsonObject{{QStringLiteral("packMetadataVersion"), HARKEN_PACK_METADATA_VERSION},
+                    pack.packMetadata = QJsonObject{{QStringLiteral("packMetadataVersion"), HARKEN_PACK_METADATA_VERSION},
                         {QStringLiteral("name"), action->name}, {QStringLiteral("guid"), objectIdString(action->runtimeId())}};
                 }
             }
             if (unit.success && project.buildExportWaveforms) {
                 QString error = waveformOutputError;
-                if (!error.isEmpty() || !fillWaveformCompanion(request, pack, waveformOutputRoot,
-                        &exportedWaveformSources, &pack.companion, &error)) {
+                if (!error.isEmpty() || !fillWaveformPackMetadata(request, pack, waveformOutputRoot,
+                        &exportedWaveformSources, &pack.packMetadata, &error)) {
                     unit.success = false;
                     unit.error = QStringLiteral("Cannot export waveforms for Pack '%1': %2").arg(pack.name, error);
                 }
             }
             if (unit.success && project.buildExportPackMetadata) {
-                harkenstudiobuild::CurrentWorldBodyImage body;
-                harkenstudiobuild::PackCanonicalPartitionHeader header;
-                unit.success = harkenstudiobuild::ReadPackCanonicalPartitionHeader(
+                harken::studio::build::CurrentWorldBodyImage body;
+                harken::studio::build::PackCanonicalPartitionHeader header;
+                unit.success = harken::studio::build::ReadPackCanonicalPartitionHeader(
                         pack.partitionPayload.data(), pack.partitionPayload.size(), &header)
                     && body.Decode(pack.partitionPayload.data() + header.headerBytes,
                         static_cast<std::size_t>(header.bodyBytes), header.bodyVintage);
@@ -3829,9 +3827,9 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
                         if (entry.kind == HK_PACK_ENTRY_KIND_MEDIA
                             || entry.kind == HK_PACK_ENTRY_KIND_ATTENUATION) ids.insert(entry.id);
                         if (entry.kind == HK_PACK_ENTRY_KIND_BINDING_DEFINITION) {
-                            harkenstudio::ObjectId id;
-                            harkenstudiobuild::BindingDefinition binding;
-                            if (!harkenstudiobuild::ReadPackBindingDefinition(
+                            harken::studio::types::ObjectId id;
+                            harken::studio::build::BindingDefinition binding;
+                            if (!harken::studio::build::ReadPackBindingDefinition(
                                     entry.payload.data(), entry.payload.size(), &id, &binding)) {
                                 unit.success = false;
                                 unit.error = QStringLiteral("Cannot read binding metadata for '%1'").arg(pack.name);
@@ -3842,18 +3840,18 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
                     }
                     if (!pack.variableRequirementsPayload.empty()) {
                         const auto* data = pack.variableRequirementsPayload.data();
-                        harkenstudiobuild::PackVariableRequirementsHeader header;
-                        if (!harkenstudiobuild::ParsePackRow<HkPackVariableRequirementsHeader>(data,
-                                harkenstudiobuild::kPackBytes<HkPackVariableRequirementsHeader>, &header)) {
+                        harken::studio::build::PackVariableRequirementsHeader header;
+                        if (!harken::studio::build::ParsePackRow<HkPackVariableRequirementsHeader>(data,
+                                harken::studio::build::kPackBytes<HkPackVariableRequirementsHeader>, &header)) {
                             unit.success = false;
                             unit.error = QStringLiteral("Cannot read variable requirement metadata for '%1'").arg(pack.name);
                             break;
                         }
                         for (std::uint32_t i = 0; i < header.rowCount; ++i) {
-                            harkenstudiobuild::PackVariableRequirement row;
-                            if (!harkenstudiobuild::ParsePackRow<HkPackVariableRequirement>(data +
-                                    harkenstudiobuild::kPackBytes<HkPackVariableRequirementsHeader> + i * harkenstudiobuild::kPackBytes<HkPackVariableRequirement>,
-                                    harkenstudiobuild::kPackBytes<HkPackVariableRequirement>, &row)) {
+                            harken::studio::build::PackVariableRequirement row;
+                            if (!harken::studio::build::ParsePackRow<HkPackVariableRequirement>(data +
+                                    harken::studio::build::kPackBytes<HkPackVariableRequirementsHeader> + i * harken::studio::build::kPackBytes<HkPackVariableRequirement>,
+                                    harken::studio::build::kPackBytes<HkPackVariableRequirement>, &row)) {
                                 unit.success = false;
                                 unit.error = QStringLiteral("Cannot read variable requirement metadata for '%1'").arg(pack.name);
                                 break;
@@ -3863,29 +3861,29 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
                     }
                     if (pack.packKind == HK_PACK_KIND_INIT)
                         for (const auto& bus : busProjection.buses) ids.insert(bus.busId);
-                    ids.erase(harkenstudio::ObjectId{});
-                    ids.erase(harkenstudio::kMasterBusObjectId);
+                    ids.erase(harken::studio::types::ObjectId{});
+                    ids.erase(harken::studio::types::kMasterBusObjectId);
                     if (unit.success)
-                        unit.success = fillPackMetadata(project, pack, ids, metadataItems, &pack.companion, &unit.error);
+                        unit.success = fillPackMetadata(project, pack, ids, metadataItems, &pack.packMetadata, &unit.error);
                 }
             }
             if (unit.success) {
                 const QFileInfo binary(pack.fileName);
                 const auto relative = QDir::cleanPath(QDir(binary.path()).filePath(binary.completeBaseName() + QStringLiteral(".json")));
                 const auto path = liveDir.filePath(relative);
-                const auto bytes = QJsonDocument(pack.companion).toJson(QJsonDocument::Indented);
+                const auto bytes = QJsonDocument(pack.packMetadata).toJson(QJsonDocument::Indented);
                 QFile current(path);
                 const bool unchanged = current.open(QIODevice::ReadOnly | QIODevice::Text) && current.readAll() == bytes;
                 current.close();
-                if (!unchanged) unit.success = writeJson(path, pack.companion, &unit.error);
+                if (!unchanged) unit.success = writeJson(path, pack.packMetadata, &unit.error);
             }
         }
         if (unit.success) {
             const QFileInfo binary(pack.fileName);
-            const QString companion = QDir::cleanPath(
+            const QString packMetadataPath = QDir::cleanPath(
                 QDir(binary.path()).filePath(binary.completeBaseName() + QStringLiteral(".json")));
             unit.success = preserveOutputFileSpelling(liveDir.filePath(pack.fileName), &unit.error)
-                && preserveOutputFileSpelling(liveDir.filePath(companion), &unit.error);
+                && preserveOutputFileSpelling(liveDir.filePath(packMetadataPath), &unit.error);
         }
         recordUnit(pack, unit);
         if (!unit.success) {
@@ -3913,9 +3911,9 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         }
         QJsonObject output{{QStringLiteral("key"), pack.unitKey},
                            {QStringLiteral("path"), pack.fileName}};
-        if (pack.companion.contains(QStringLiteral("waveforms")))
-            output.insert(QStringLiteral("companion"), QJsonObject{
-                {QStringLiteral("waveforms"), pack.companion.value(QStringLiteral("waveforms"))}});
+        if (pack.packMetadata.contains(QStringLiteral("waveforms")))
+            output.insert(QStringLiteral("packMetadata"), QJsonObject{
+                {QStringLiteral("waveforms"), pack.packMetadata.value(QStringLiteral("waveforms"))}});
         result.outputs.append(output);
         if (request.options.packBuildState && !pack.resourceFingerprint.isEmpty())
             request.options.packBuildState->setResourceFingerprint(pack.fileName, pack.resourceFingerprint);
@@ -3962,7 +3960,7 @@ ProjectPackExporter::ExportResult ProjectPackExporter::FinalizePackExport(
                 keep.append(root.relativeFilePath(directory.filePath(path)));
                 keep.append(root.relativeFilePath(directory.filePath(QDir::cleanPath(
                     QDir(file.path()).filePath(file.completeBaseName() + QStringLiteral(".json"))))));
-                keep.append(companionWaveformFiles(row.value(QStringLiteral("companion")).toObject(),
+                keep.append(packMetadataWaveformFiles(row.value(QStringLiteral("packMetadata")).toObject(),
                     directory.filePath(path), root));
             }
         }
@@ -4015,7 +4013,7 @@ ProjectPackExporter::ExportResult ProjectPackExporter::FinalizePackExport(
                 errors.append(QStringLiteral("Cannot remove obsolete output '%1'").arg(path));
                 continue;
             }
-            if (relative.endsWith(Bridge::packArtifactExtension())) ++result.removedPackCount;
+            if (relative.endsWith(bridge::packArtifactExtension())) ++result.removedPackCount;
         }
         std::sort(directories.begin(), directories.end(), [](const auto& a, const auto& b) {
             const auto aDepth = a.count(QLatin1Char('/'));

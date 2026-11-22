@@ -2,7 +2,7 @@
 
 #include <QVector>
 
-namespace VNX {
+namespace harken::studio {
 namespace BuiltinLayouts {
 namespace {
 
@@ -76,4 +76,4 @@ QVector<LayoutStateItem> describeLayoutState(QStringView currentView)
 }
 
 } // namespace BuiltinLayouts
-} // namespace VNX
+} // namespace harken::studio

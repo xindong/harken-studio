@@ -1,14 +1,14 @@
 
 #include "AuditionOverlay.h"
 
-namespace VNX {
+namespace harken::studio {
 
 AuditionOverlay::AuditionOverlay(QObject* parent)
     : QObject(parent)
 {
 }
 
-bool AuditionOverlay::setMuted(harkenstudio::ObjectId stableId, bool muted)
+bool AuditionOverlay::setMuted(harken::studio::types::ObjectId stableId, bool muted)
 {
     if (muted == muted_.contains(stableId))
         return false;
@@ -20,7 +20,7 @@ bool AuditionOverlay::setMuted(harkenstudio::ObjectId stableId, bool muted)
     return true;
 }
 
-bool AuditionOverlay::setSoloed(harkenstudio::ObjectId stableId, bool soloed)
+bool AuditionOverlay::setSoloed(harken::studio::types::ObjectId stableId, bool soloed)
 {
     if (soloed == soloed_.contains(stableId))
         return false;
@@ -34,10 +34,10 @@ bool AuditionOverlay::setSoloed(harkenstudio::ObjectId stableId, bool soloed)
 
 void AuditionOverlay::clearAll()
 {
-    const QSet<harkenstudio::ObjectId> touched = muted_ + soloed_;
+    const QSet<harken::studio::types::ObjectId> touched = muted_ + soloed_;
     muted_.clear();
     soloed_.clear();
-    for (harkenstudio::ObjectId stableId : touched)
+    for (harken::studio::types::ObjectId stableId : touched)
         emit auditionChanged(stableId);
 }
 

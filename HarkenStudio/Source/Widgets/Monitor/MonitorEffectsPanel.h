@@ -15,7 +15,7 @@
 class QLabel;
 class QTableView;
 
-namespace VNX {
+namespace harken::studio {
 
 class MonitorEffectsPanel : public QWidget
 {
@@ -43,7 +43,6 @@ public:
     void restoreParams(const QVariantMap& params);
 
     MonitorCursorReject lockCurrentRow();
-    MonitorCursorReject lockExecuteFrameForTest(std::optional<qint64> executeFrame);
 
 private:
     void rebuildVisibleRows();
@@ -68,4 +67,4 @@ private:
     Monitor::MonitorEffectsTableState tableState_ = Monitor::MonitorEffectsTableState::UnsupportedLayout;
 };
 
-} // namespace VNX
+} // namespace harken::studio

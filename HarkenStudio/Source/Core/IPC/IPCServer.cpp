@@ -15,7 +15,7 @@
 #include <QTcpServer>
 #include <QTcpSocket>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 struct IpcDispatchDepthGuard
@@ -372,7 +372,7 @@ void IPCServer::registerCommandHandlers()
         else ++it;
     }
 
-    VNX::setupTransactionCallbacks(this);
+    harken::studio::setupTransactionCallbacks(this);
 }
 
 QJsonObject IPCServer::handleCommand(const QString& cmd, const QJsonObject& args)
@@ -942,7 +942,7 @@ void IPCServer::handleBinaryFrame(QTcpSocket* client, const QByteArray& frameDat
             if (payloadSize >= sizeof(IPCSetMixerVolumePayload))
             {
                 const auto* p = reinterpret_cast<const IPCSetMixerVolumePayload*>(payload);
-                if (engine_) engine_->setMixerVolume(harkenstudio::ObjectIdFromBytes(p->busId), p->volumeDb);
+                if (engine_) engine_->setMixerVolume(harken::studio::types::ObjectIdFromBytes(p->busId), p->volumeDb);
                 sendBinaryResponse(client, IPCBinaryStatus::Ok, seqId, {});
             }
             break;

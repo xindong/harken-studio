@@ -6,7 +6,7 @@
 #include <cstdint>
 #include <tuple>
 
-namespace harkenprojectschema {
+namespace harken::studio::project_schema {
 
 enum class RuntimeIdentityKindV1 : std::uint32_t {
     Invalid = 0,

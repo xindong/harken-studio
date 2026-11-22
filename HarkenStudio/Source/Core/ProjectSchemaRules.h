@@ -5,7 +5,7 @@
 #include <QString>
 #include <QStringList>
 
-namespace VNX {
+namespace harken::studio {
 
 enum class ProjectSchemaReferenceKind
 {
@@ -43,10 +43,10 @@ public:
 
 }
 
-namespace VNX::GeneratedSchemaRegistry {
+namespace harken::studio::GeneratedSchemaRegistry {
 
 bool validateProjectRules(int version,
-                          VNX::ProjectSchemaRuleExecutor& executor,
+                          harken::studio::ProjectSchemaRuleExecutor& executor,
                           QStringList& errors);
 
 }

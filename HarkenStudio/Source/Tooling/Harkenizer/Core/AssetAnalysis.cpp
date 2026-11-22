@@ -17,7 +17,7 @@
 
 #include "Core/Build/PackagingBridge.h"
 
-namespace VNX {
+namespace harken::studio {
 
 
 AssetImporter::AssetImporter(QObject* parent)
@@ -314,7 +314,7 @@ AudioMetadata AssetImporter::readMp3Metadata(const QString& path)
     meta.originalFormat = "MP3";
     meta.fileSize = QFileInfo(path).size();
 
-    const auto info = HarkenEditor::Bridge::audioFileInfo(path);
+    const auto info = harken::studio::bridge::audioFileInfo(path);
     if (info.valid)
     {
         meta.sampleRate = static_cast<uint32_t>(info.sampleRate);
@@ -337,7 +337,7 @@ AudioMetadata AssetImporter::readFlacMetadata(const QString& path)
     meta.originalFormat = "FLAC";
     meta.fileSize = QFileInfo(path).size();
 
-    const auto info = HarkenEditor::Bridge::audioFileInfo(path);
+    const auto info = harken::studio::bridge::audioFileInfo(path);
     if (info.valid)
     {
         meta.sampleRate = static_cast<uint32_t>(info.sampleRate);
@@ -360,7 +360,7 @@ AudioMetadata AssetImporter::readOggMetadata(const QString& path)
     meta.originalFormat = "OGG";
     meta.fileSize = QFileInfo(path).size();
 
-    const auto info = HarkenEditor::Bridge::audioFileInfo(path);
+    const auto info = harken::studio::bridge::audioFileInfo(path);
     if (info.valid)
     {
         meta.sampleRate = static_cast<uint32_t>(info.sampleRate);
@@ -383,7 +383,7 @@ AudioMetadata AssetImporter::readAiffMetadata(const QString& path)
     meta.originalFormat = "AIFF";
     meta.fileSize = QFileInfo(path).size();
 
-    const auto info = HarkenEditor::Bridge::audioFileInfo(path);
+    const auto info = harken::studio::bridge::audioFileInfo(path);
     if (info.valid)
     {
         meta.sampleRate = static_cast<uint32_t>(info.sampleRate);

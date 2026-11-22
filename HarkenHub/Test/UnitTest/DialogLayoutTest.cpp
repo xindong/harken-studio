@@ -35,7 +35,7 @@ TEST(DialogLayoutTest, MessagesPreserveLongTextWithoutGrowingBeyondTheScreen)
         QStringLiteral("D:/") + QString(20000, QLatin1Char('x')),
         QString(20000, QChar(0x754c))};
     for (qsizetype i = 0; i < messages.size(); ++i) {
-        VNH::MessageDialog dialog(QMessageBox::Warning, QStringLiteral("Diagnostics"),
+        harken::hub::MessageDialog dialog(QMessageBox::Warning, QStringLiteral("Diagnostics"),
                                   messages.at(i), QMessageBox::Cancel, nullptr);
         auto* approve = dialog.addButton(QStringLiteral("Continue"), QMessageBox::AcceptRole);
         dialog.show();
@@ -61,7 +61,7 @@ TEST(DialogLayoutTest, MessagesPreserveLongTextWithoutGrowingBeyondTheScreen)
 
 TEST(DialogLayoutTest, DynamicTextScrollsWithoutMovingActionsOrResizingTheWindow)
 {
-    VNH::MessageDialog dialog(QMessageBox::Information, QStringLiteral("Status"),
+    harken::hub::MessageDialog dialog(QMessageBox::Information, QStringLiteral("Status"),
                               QStringLiteral("Starting..."), QMessageBox::Cancel, nullptr);
     QSignalSpy finished(&dialog, &QDialog::finished);
     dialog.show();
@@ -85,7 +85,7 @@ TEST(DialogLayoutTest, OversizedDefaultsAndMinimumsFitTheAvailableScreen)
     QDialog dialog;
     auto* layout = new QVBoxLayout(&dialog);
     layout->addWidget(new QPlainTextEdit(&dialog));
-    VNH::configureDialog(&dialog, QSize(10000, 10000), QSize(9000, 9000));
+    harken::hub::configureDialog(&dialog, QSize(10000, 10000), QSize(9000, 9000));
     dialog.show();
     QCoreApplication::processEvents();
     expectContainedActions(dialog);
@@ -99,7 +99,7 @@ TEST(DialogLayoutTest, OversizedDefaultsAndMinimumsFitTheAvailableScreen)
 
 TEST(DialogLayoutTest, EscapeAndDefaultButtonsPreserveTheRequestedDecision)
 {
-    VNH::MessageDialog cancel(QMessageBox::Warning, QStringLiteral("Confirm"),
+    harken::hub::MessageDialog cancel(QMessageBox::Warning, QStringLiteral("Confirm"),
                               QStringLiteral("Apply changes?"), QMessageBox::Cancel, nullptr);
     cancel.addButton(QStringLiteral("Apply"), QMessageBox::AcceptRole);
     cancel.show();
@@ -107,7 +107,7 @@ TEST(DialogLayoutTest, EscapeAndDefaultButtonsPreserveTheRequestedDecision)
     EXPECT_EQ(cancel.clickedButton(), cancel.button(QMessageBox::Cancel));
     EXPECT_EQ(cancel.result(), QMessageBox::Cancel);
 
-    VNH::MessageDialog choice(QMessageBox::Question, QStringLiteral("Confirm"),
+    harken::hub::MessageDialog choice(QMessageBox::Question, QStringLiteral("Confirm"),
                               QStringLiteral("Apply changes?"), QMessageBox::Yes | QMessageBox::No, nullptr);
     choice.setDefaultButton(qobject_cast<QPushButton*>(choice.button(QMessageBox::No)));
     choice.show();

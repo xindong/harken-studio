@@ -3,7 +3,7 @@
 #include <QString>
 #include <cstdint>
 
-namespace HarkenEditor::Bridge {
+namespace harken::studio::bridge {
 
 QString mediaRegistryFindPath(uint32_t sourceId);
 void mediaRegistryRegister(uint32_t sourceId, const QString& absolutePath,

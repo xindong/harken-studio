@@ -9,7 +9,7 @@
 #include <QLayout>
 #include <QResizeEvent>
 
-namespace VNX {
+namespace harken::studio {
 
 class GridHeaderRef : public ObjectRefWidget
 {

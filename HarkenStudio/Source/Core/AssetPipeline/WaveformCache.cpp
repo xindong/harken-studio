@@ -36,7 +36,7 @@
 
 #include "Core/Build/PackagingBridge.h"
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 
@@ -792,7 +792,7 @@ WaveformPeakData WaveformCache::readRange(const QString& audioFilePath,
     std::vector<float> samples;
     int channels = 0;
     int sampleRate = 0;
-    if (!HarkenEditor::Bridge::decodeAudioFileInterleaved(
+    if (!harken::studio::bridge::decodeAudioFileInterleaved(
             audioFilePath, samples, channels, sampleRate)
         || reading.cancelled()
         || channels <= 0 || sampleRate <= 0
@@ -1010,7 +1010,7 @@ bool WaveformCache::generateFromDecoded(const QString& audioFilePath, const QStr
     int decodedChannels = 0;
     int sampleRate = 0;
 
-    if (!HarkenEditor::Bridge::decodeAudioFileInterleaved(audioFilePath, interleaved,
+    if (!harken::studio::bridge::decodeAudioFileInterleaved(audioFilePath, interleaved,
                                                          decodedChannels, sampleRate))
     {
         qWarning() << "[WaveformCache] AudioDecoder failed to decode:" << audioFilePath;
@@ -1200,7 +1200,7 @@ bool WaveformCache::generateMidSideForRevision(const QString& audioFilePath,
         std::vector<float> interleaved;
         int decodedChannels = 0;
         int sampleRate = 0;
-        if (!HarkenEditor::Bridge::decodeAudioFileInterleaved(audioFilePath, interleaved,
+        if (!harken::studio::bridge::decodeAudioFileInterleaved(audioFilePath, interleaved,
                                                              decodedChannels, sampleRate)) {
             qWarning() << "[WaveformCache] generateMidSide: failed to decode:" << audioFilePath;
             outData.midSidePeaks.clear();

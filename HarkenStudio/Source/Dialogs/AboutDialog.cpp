@@ -62,7 +62,7 @@ void addSummaryRow(QGridLayout* layout, int row, const QString& name,
 
 }
 
-namespace VNX {
+namespace harken::studio {
 
 AboutDialog::AboutDialog(QWidget* parent, bool showDeveloperInformation)
     : BaseDialog(parent)

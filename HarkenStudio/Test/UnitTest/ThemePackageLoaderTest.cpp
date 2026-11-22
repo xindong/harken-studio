@@ -112,7 +112,7 @@ TEST(ThemePackageLoader, BuiltinThemeLoadsWithoutExternalPackages)
     QTemporaryDir root;
     ASSERT_TRUE(root.isValid());
     const QString missingRoot = QDir(root.path()).filePath(QStringLiteral("missing"));
-    const auto discovered = VNX::discoverThemePackages(missingRoot);
+    const auto discovered = harken::studio::discoverThemePackages(missingRoot);
     ASSERT_TRUE(discovered.diagnostics.isEmpty());
     ASSERT_EQ(discovered.themes.size(), 1);
     QSet<QString> ids;
@@ -123,7 +123,7 @@ TEST(ThemePackageLoader, BuiltinThemeLoadsWithoutExternalPackages)
         EXPECT_FALSE(preset.displayName.isEmpty());
         EXPECT_FALSE(ids.contains(preset.id));
         ids.insert(preset.id);
-        const auto loaded = VNX::loadThemePackageCandidate(missingRoot, preset.id);
+        const auto loaded = harken::studio::loadThemePackageCandidate(missingRoot, preset.id);
         ASSERT_TRUE(loaded.ok());
         EXPECT_EQ(loaded.candidate->manifest.id, preset.id);
         EXPECT_EQ(loaded.candidate->manifest.displayName, preset.displayName);
@@ -134,10 +134,10 @@ TEST(ThemePackageLoader, BuiltinThemeLoadsWithoutExternalPackages)
                 SCOPED_TRACE(role.key.toStdString());
                 EXPECT_TRUE(palette.colors.value(role.key).isValid());
                 for (const auto& binding : role.bindings)
-                    EXPECT_TRUE(VNX::readThemeColor(*palette.snapshot, binding.target).isValid());
+                    EXPECT_TRUE(harken::studio::readThemeColor(*palette.snapshot, binding.target).isValid());
             }
     }
-    EXPECT_TRUE(ids.contains(VNX::builtinThemeId()));
+    EXPECT_TRUE(ids.contains(harken::studio::builtinThemeId()));
     EXPECT_FALSE(QDir(missingRoot).exists());
 }
 
@@ -145,27 +145,27 @@ TEST(ThemePackageLoader, BuiltinThemeIdentityCannotBeReplacedByExternalPackages)
 {
     QTemporaryDir root;
     ASSERT_TRUE(root.isValid());
-    const auto builtins = VNX::discoverThemePackages(root.path());
+    const auto builtins = harken::studio::discoverThemePackages(root.path());
     ASSERT_FALSE(builtins.themes.isEmpty());
     for (const auto& preset : builtins.themes) {
         SCOPED_TRACE(preset.id.toStdString());
         QTemporaryDir packages;
         ASSERT_TRUE(packages.isValid());
-        const auto original = VNX::loadThemePackageCandidate(root.path(), preset.id);
+        const auto original = harken::studio::loadThemePackageCandidate(root.path(), preset.id);
         ASSERT_TRUE(original.ok());
-        ASSERT_TRUE(writeColorPackage(packages.path(), preset.id, VNX::builtinThemeId(), {
+        ASSERT_TRUE(writeColorPackage(packages.path(), preset.id, harken::studio::builtinThemeId(), {
             {QStringLiteral("accent.primary"), QStringLiteral("#80123456")}}));
 
-        const auto discovered = VNX::discoverThemePackages(packages.path());
+        const auto discovered = harken::studio::discoverThemePackages(packages.path());
         EXPECT_TRUE(std::any_of(discovered.diagnostics.cbegin(), discovered.diagnostics.cend(),
-            [](const VNX::ThemePackageDiagnostic& diagnostic) {
-                return diagnostic.code == VNX::ThemePackageErrorCode::DuplicateThemeId;
+            [](const harken::studio::ThemePackageDiagnostic& diagnostic) {
+                return diagnostic.code == harken::studio::ThemePackageErrorCode::DuplicateThemeId;
             }));
         EXPECT_EQ(std::count_if(discovered.themes.cbegin(), discovered.themes.cend(),
-            [&preset](const VNX::ThemePackageDescriptor& theme) {
+            [&preset](const harken::studio::ThemePackageDescriptor& theme) {
                 return theme.id == preset.id && theme.builtin;
             }), 1);
-        const auto loaded = VNX::loadThemePackageCandidate(packages.path(), preset.id);
+        const auto loaded = harken::studio::loadThemePackageCandidate(packages.path(), preset.id);
         ASSERT_TRUE(loaded.ok());
         EXPECT_EQ(*loaded.candidate->snapshot, *original.candidate->snapshot);
     }
@@ -177,10 +177,10 @@ TEST(ThemePackageLoader, ColorPalettesCannotReplaceThemeInheritance)
     ASSERT_TRUE(root.isValid());
     const QString paletteId = QStringLiteral("light");
     const QString childId = QStringLiteral("theme.child");
-    EXPECT_FALSE(VNX::loadThemePackageCandidate(root.path(), paletteId).ok());
+    EXPECT_FALSE(harken::studio::loadThemePackageCandidate(root.path(), paletteId).ok());
     ASSERT_TRUE(writeColorPackage(root.path(), childId, paletteId, {
         {QStringLiteral("accent.primary"), QStringLiteral("#80123456")}}));
-    EXPECT_FALSE(VNX::loadThemePackageCandidate(root.path(), childId).ok());
+    EXPECT_FALSE(harken::studio::loadThemePackageCandidate(root.path(), childId).ok());
 }
 
 TEST(ThemePackageLoader, ResolvesSharedColorsAfterInheritanceWithoutMutatingSnapshots)
@@ -193,7 +193,7 @@ TEST(ThemePackageLoader, ResolvesSharedColorsAfterInheritanceWithoutMutatingSnap
     const QColor inheritedLabel(QStringLiteral("#8a9bac"));
     const QColor childText(QStringLiteral("#e6d5c4"));
     const QColor childAccent(QStringLiteral("#cc88ee"));
-    ASSERT_TRUE(writeColorPackage(root.path(), parentId, VNX::builtinThemeId(), {
+    ASSERT_TRUE(writeColorPackage(root.path(), parentId, harken::studio::builtinThemeId(), {
         {QStringLiteral("text.primary"), parentText.name()},
         {QStringLiteral("text.secondary"), inheritedLabel.name()},
         {QStringLiteral("accent.primary"), QStringLiteral("#1abc9c")}}));
@@ -201,8 +201,8 @@ TEST(ThemePackageLoader, ResolvesSharedColorsAfterInheritanceWithoutMutatingSnap
         {QStringLiteral("text.primary"), childText.name()},
         {QStringLiteral("accent.primary"), childAccent.name()}}));
 
-    const auto parent = VNX::loadThemePackageCandidate(root.path(), parentId);
-    const auto child = VNX::loadThemePackageCandidate(root.path(), childId);
+    const auto parent = harken::studio::loadThemePackageCandidate(root.path(), parentId);
+    const auto child = harken::studio::loadThemePackageCandidate(root.path(), childId);
     ASSERT_TRUE(parent.ok());
     ASSERT_TRUE(child.ok());
     const auto parentSnapshot = parent.candidate->snapshot;
@@ -218,7 +218,7 @@ TEST(ThemePackageLoader, ResolvesSharedColorsAfterInheritanceWithoutMutatingSnap
     ASSERT_TRUE(writeColorPackage(root.path(), childId, parentId, {
         {QStringLiteral("text.primary"), reloadedText.name()},
         {QStringLiteral("accent.primary"), reloadedAccent.name()}}));
-    const auto reloaded = VNX::loadThemePackageCandidate(root.path(), childId);
+    const auto reloaded = harken::studio::loadThemePackageCandidate(root.path(), childId);
     ASSERT_TRUE(reloaded.ok());
     EXPECT_EQ(reloaded.candidate->snapshot->domains.nodeGraphNode.contentValue,
               reloadedText);
@@ -268,7 +268,7 @@ TEST(ThemePackageLoader, RejectsUnknownColorOverrides)
         QTemporaryDir root;
         ASSERT_TRUE(root.isValid());
         const QString id = QStringLiteral("theme.override");
-        ASSERT_TRUE(writeColorPackage(root.path(), id, VNX::builtinThemeId(), {}));
+        ASSERT_TRUE(writeColorPackage(root.path(), id, harken::studio::builtinThemeId(), {}));
         const QString key = QString::fromLatin1(override.key);
         const QJsonObject document{{QStringLiteral("colors"), QJsonObject{
             {key, QStringLiteral("#123456")}}}};
@@ -276,12 +276,12 @@ TEST(ThemePackageLoader, RejectsUnknownColorOverrides)
                                   QString::fromLatin1(override.file)),
                               QJsonDocument(document).toJson(QJsonDocument::Compact)));
 
-        const auto result = VNX::loadThemePackageCandidate(root.path(), id);
+        const auto result = harken::studio::loadThemePackageCandidate(root.path(), id);
         EXPECT_FALSE(result.ok());
         EXPECT_FALSE(result.candidate.has_value());
         EXPECT_TRUE(std::any_of(result.diagnostics.cbegin(), result.diagnostics.cend(),
-            [&key](const VNX::ThemePackageDiagnostic& diagnostic) {
-                return diagnostic.code == VNX::ThemePackageErrorCode::UnknownSemanticKey
+            [&key](const harken::studio::ThemePackageDiagnostic& diagnostic) {
+                return diagnostic.code == harken::studio::ThemePackageErrorCode::UnknownSemanticKey
                     && diagnostic.path.endsWith(key);
             }));
     }
@@ -330,7 +330,7 @@ TEST(ThemePackageLoader, RejectsSymbolicLinkEscapeWhenSupported)
                           "\"tokens\":\"escape/tokens.json\"");
     ASSERT_TRUE(writeFile(manifest, manifestBytes));
 
-    const auto result = VNX::loadThemePackageCandidate(
+    const auto result = harken::studio::loadThemePackageCandidate(
         root.path(), QStringLiteral("theme.linked"));
     std::error_code removeError;
     std::filesystem::remove(
@@ -346,7 +346,7 @@ TEST(ThemePackageLoader, ColorDefinitionsAreScopedToThemesAndReplaceInheritedRol
     ASSERT_TRUE(root.isValid());
     const QString parentId = QStringLiteral("theme.parent");
     const QString childId = QStringLiteral("theme.child");
-    ASSERT_TRUE(writeColorPackage(root.path(), parentId, VNX::builtinThemeId(), {}));
+    ASSERT_TRUE(writeColorPackage(root.path(), parentId, harken::studio::builtinThemeId(), {}));
     ASSERT_TRUE(writeColorDefinition(root.path(), parentId, colorDefinition(
         QStringLiteral("surface"), QJsonArray{
             QJsonObject{{QStringLiteral("target"), QStringLiteral("panel.background")}},
@@ -357,8 +357,8 @@ TEST(ThemePackageLoader, ColorDefinitionsAreScopedToThemesAndReplaceInheritedRol
             QJsonObject{{QStringLiteral("target"), QStringLiteral("curve.grid")},
                         {QStringLiteral("alpha"), 96}}})));
 
-    const auto parent = VNX::loadThemePackageCandidate(root.path(), parentId);
-    const auto child = VNX::loadThemePackageCandidate(root.path(), childId);
+    const auto parent = harken::studio::loadThemePackageCandidate(root.path(), parentId);
+    const auto child = harken::studio::loadThemePackageCandidate(root.path(), childId);
     ASSERT_TRUE(parent.ok());
     ASSERT_TRUE(child.ok());
     ASSERT_EQ(parent.candidate->colorRoles.size(), 1);
@@ -368,7 +368,7 @@ TEST(ThemePackageLoader, ColorDefinitionsAreScopedToThemesAndReplaceInheritedRol
     EXPECT_EQ(parent.candidate->defaultPaletteId, child.candidate->defaultPaletteId);
     EXPECT_FALSE(child.candidate->palettes.front().colors.contains(QStringLiteral("surface")));
     EXPECT_EQ(child.candidate->snapshot->domains.curve.colors.grid.alpha(), 96);
-    EXPECT_EQ(child.candidate->palettes.back().snapshot->colorScheme, VNX::ThemeColorScheme::Light);
+    EXPECT_EQ(child.candidate->palettes.back().snapshot->colorScheme, harken::studio::ThemeColorScheme::Light);
     EXPECT_EQ(parent.candidate->snapshot->domains.curve.colors.canvasBackground, QColor("#182432"));
 }
 
@@ -378,7 +378,7 @@ TEST(ThemePackageLoader, InheritedPalettesReceiveRoleAndFixedColorOverridesIndep
     ASSERT_TRUE(root.isValid());
     const QString parentId = QStringLiteral("theme.parent");
     const QString childId = QStringLiteral("theme.child");
-    ASSERT_TRUE(writeColorPackage(root.path(), parentId, VNX::builtinThemeId(), {}));
+    ASSERT_TRUE(writeColorPackage(root.path(), parentId, harken::studio::builtinThemeId(), {}));
     ASSERT_TRUE(writeColorDefinition(root.path(), parentId, colorDefinition(
         QStringLiteral("surface"), QJsonArray{
             QJsonObject{{QStringLiteral("target"), QStringLiteral("curve.grid")},
@@ -388,8 +388,8 @@ TEST(ThemePackageLoader, InheritedPalettesReceiveRoleAndFixedColorOverridesIndep
     ASSERT_TRUE(writeColorPackage(root.path(), childId, parentId, {
         {QStringLiteral("panel.background"), QStringLiteral("#445566")},
         {QStringLiteral("text.primary"), QStringLiteral("#ddeeff")}}));
-    const auto parent = VNX::loadThemePackageCandidate(root.path(), parentId);
-    const auto child = VNX::loadThemePackageCandidate(root.path(), childId);
+    const auto parent = harken::studio::loadThemePackageCandidate(root.path(), parentId);
+    const auto child = harken::studio::loadThemePackageCandidate(root.path(), childId);
     ASSERT_TRUE(parent.ok());
     ASSERT_TRUE(child.ok());
     ASSERT_EQ(child.candidate->palettes.size(), parent.candidate->palettes.size());
@@ -414,9 +414,9 @@ TEST(ThemePackageLoader, RejectsUnknownAndDuplicateBindingTargets)
         QTemporaryDir root;
         ASSERT_TRUE(root.isValid());
         const QString id = QStringLiteral("theme.invalid");
-        ASSERT_TRUE(writeColorPackage(root.path(), id, VNX::builtinThemeId(), {}));
+        ASSERT_TRUE(writeColorPackage(root.path(), id, harken::studio::builtinThemeId(), {}));
         ASSERT_TRUE(writeColorDefinition(root.path(), id, colorDefinition(QStringLiteral("custom"), targets)));
-        const auto loaded = VNX::loadThemePackageCandidate(root.path(), id);
+        const auto loaded = harken::studio::loadThemePackageCandidate(root.path(), id);
         EXPECT_FALSE(loaded.ok());
         ASSERT_FALSE(loaded.diagnostics.isEmpty());
         EXPECT_TRUE(loaded.diagnostics.front().path.startsWith(QStringLiteral("$.roles[0].bindings[")));
@@ -432,7 +432,7 @@ TEST(ThemePackageLoader, ExplicitPalettesRejectDirectAssignmentsToTheirBoundTarg
         QTemporaryDir root;
         ASSERT_TRUE(root.isValid());
         const QString id = QStringLiteral("theme.conflict");
-        ASSERT_TRUE(writeColorPackage(root.path(), id, VNX::builtinThemeId(), {}));
+        ASSERT_TRUE(writeColorPackage(root.path(), id, harken::studio::builtinThemeId(), {}));
         ASSERT_TRUE(writeColorDefinition(root.path(), id, colorDefinition(
             QStringLiteral("surface"), QJsonArray{
                 QJsonObject{{QStringLiteral("target"), QStringLiteral("panel.background")}},
@@ -441,10 +441,10 @@ TEST(ThemePackageLoader, ExplicitPalettesRejectDirectAssignmentsToTheirBoundTarg
             {target, QStringLiteral("#182432")}}}};
         ASSERT_TRUE(writeFile(QDir(QDir(root.path()).filePath(id)).filePath(file),
                               QJsonDocument(document).toJson()));
-        const auto loaded = VNX::loadThemePackageCandidate(root.path(), id);
+        const auto loaded = harken::studio::loadThemePackageCandidate(root.path(), id);
         EXPECT_FALSE(loaded.ok());
         ASSERT_FALSE(loaded.diagnostics.isEmpty());
-        EXPECT_EQ(loaded.diagnostics.front().code, VNX::ThemePackageErrorCode::InvalidValue);
+        EXPECT_EQ(loaded.diagnostics.front().code, harken::studio::ThemePackageErrorCode::InvalidValue);
         EXPECT_EQ(loaded.diagnostics.front().path, QStringLiteral("$.colors.") + target);
     }
 }
@@ -455,7 +455,7 @@ TEST(ThemePackageLoader, InheritedRoleOverridesRequireConsistentValuesWithoutAlp
     ASSERT_TRUE(root.isValid());
     const QString parentId = QStringLiteral("theme.parent");
     const QString childId = QStringLiteral("theme.child");
-    ASSERT_TRUE(writeColorPackage(root.path(), parentId, VNX::builtinThemeId(), {}));
+    ASSERT_TRUE(writeColorPackage(root.path(), parentId, harken::studio::builtinThemeId(), {}));
     ASSERT_TRUE(writeColorDefinition(root.path(), parentId, colorDefinition(
         QStringLiteral("surface"), QJsonArray{
             QJsonObject{{QStringLiteral("target"), QStringLiteral("curve.grid")},
@@ -467,19 +467,19 @@ TEST(ThemePackageLoader, InheritedRoleOverridesRequireConsistentValuesWithoutAlp
     const QString visualFile = QDir(QDir(root.path()).filePath(childId))
         .filePath(QStringLiteral("visuals/curve.json"));
     ASSERT_TRUE(writeFile(visualFile, R"json({"colors":{"curve.grid":"#445566"}})json"));
-    const auto alphaConflict = VNX::loadThemePackageCandidate(root.path(), childId);
+    const auto alphaConflict = harken::studio::loadThemePackageCandidate(root.path(), childId);
     EXPECT_FALSE(alphaConflict.ok());
     ASSERT_FALSE(alphaConflict.diagnostics.isEmpty());
-    EXPECT_EQ(alphaConflict.diagnostics.front().code, VNX::ThemePackageErrorCode::InvalidValue);
+    EXPECT_EQ(alphaConflict.diagnostics.front().code, harken::studio::ThemePackageErrorCode::InvalidValue);
 
     ASSERT_TRUE(writeFile(visualFile, R"json({"colors":{"curve.canvasBackground":"#abcdef"}})json"));
-    const auto valueConflict = VNX::loadThemePackageCandidate(root.path(), childId);
+    const auto valueConflict = harken::studio::loadThemePackageCandidate(root.path(), childId);
     EXPECT_FALSE(valueConflict.ok());
     ASSERT_FALSE(valueConflict.diagnostics.isEmpty());
-    EXPECT_EQ(valueConflict.diagnostics.front().code, VNX::ThemePackageErrorCode::InvalidValue);
+    EXPECT_EQ(valueConflict.diagnostics.front().code, harken::studio::ThemePackageErrorCode::InvalidValue);
 
     ASSERT_TRUE(writeFile(visualFile, R"json({"colors":{"curve.canvasBackground":"#445566"}})json"));
-    const auto consistent = VNX::loadThemePackageCandidate(root.path(), childId);
+    const auto consistent = harken::studio::loadThemePackageCandidate(root.path(), childId);
     ASSERT_TRUE(consistent.ok());
     for (const auto& palette : consistent.candidate->palettes) {
         EXPECT_EQ(palette.colors.value(QStringLiteral("surface")), QColor("#445566"));

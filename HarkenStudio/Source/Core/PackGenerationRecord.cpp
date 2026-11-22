@@ -1,7 +1,7 @@
 #include "PackGenerationRecord.h"
 #include <algorithm>
 
-namespace VNX {
+namespace harken::studio {
 
 QJsonObject PackGenerationRecord::toJson() const
 {

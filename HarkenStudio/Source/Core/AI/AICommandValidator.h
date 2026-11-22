@@ -7,7 +7,7 @@
 #include <QString>
 #include <optional>
 
-namespace VNX {
+namespace harken::studio {
 
 class AICommandValidator
 {

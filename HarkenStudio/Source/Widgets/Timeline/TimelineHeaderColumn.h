@@ -6,7 +6,7 @@ class QMenu;
 class QVBoxLayout;
 class QUuid;
 
-namespace VNX {
+namespace harken::studio {
 
 class TimelineEditorPanel;
 class TableWidget;

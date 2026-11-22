@@ -55,9 +55,6 @@ VnResult OpenMonitorEndpointSessionForTests(const VnMonitorSessionDesc* desc,
                                            VnMonitorSessionHandle* outHandle);
 void SetHostPrincipalForTests(bool authenticated, std::uint32_t observeMask);
 void ClearHostPrincipalForTests();
-bool PublishStateCutBeginForTests();
-bool PublishStateCutEndForTests();
-void SetDropStateCutEndForTests(bool drop);
 bool PublishEpochBoundaryForTests();
 void AdvanceExecuteFrameForTests(std::uint64_t frames);
 void SetLeaseExpiryExecuteFrameForTests(std::uint64_t frame);
@@ -71,7 +68,6 @@ std::uint32_t LogicRingCapacityForTests();
 bool FillLogicRingForTests();
 bool FillLogicRingLeavingFreeSlotsForTests(std::uint32_t freeSlots);
 std::uint32_t LogicRingFreeSlotsForTests();
-void ObserveDspGapForTests();
 void FillProducerRingForTests();
 void PublishPlanarAudioChunk(std::uint32_t tapKind, std::uint64_t ownerHandle,
                              std::uint64_t ownerGeneration, std::uint32_t slotId,
@@ -99,7 +95,6 @@ VnResult OfferSelfReportedPrincipalForTests(std::uint64_t claimedSidHash,
                                             std::uint32_t claimedPermissionMask);
 VnResult FailMonitorHandshakeForTests();
 VnResult GrantMonitorPermissionsForTests(std::uint32_t mask);
-bool MonitorEndpointEmitsRawAudioForTests();
 
 } // namespace monitor
 } // namespace harken

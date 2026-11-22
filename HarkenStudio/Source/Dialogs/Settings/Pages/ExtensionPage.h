@@ -4,7 +4,7 @@
 
 class QCheckBox;
 
-namespace VNX {
+namespace harken::studio {
 
 inline constexpr const char* kSettingsPageExtension = "extension";
 

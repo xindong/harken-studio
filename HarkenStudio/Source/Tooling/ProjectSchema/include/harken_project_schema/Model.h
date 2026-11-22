@@ -24,17 +24,17 @@
 #include <limits>
 #include <vector>
 
-namespace harkenprojectschema {
+namespace harken::studio::project_schema {
 
-using AuthoringGuid = harkenstudio::ObjectId;
+using AuthoringGuid = harken::studio::types::ObjectId;
 
 // The all-zero GUID is reserved to mean "no object". An authored object may not
 // carry it, so it can stand in for absence without colliding with a real id.
 inline constexpr AuthoringGuid kNullGuid{0, 0};
 
-using harkenstudio::IsNull;
+using harken::studio::types::IsNull;
 
-using StableId = harkenstudio::ObjectId;
+using StableId = harken::studio::types::ObjectId;
 
 inline constexpr StableId kUnmintedStableId{};
 
@@ -212,7 +212,7 @@ using SemanticOrderKey = std::uint64_t;
 // A bus id names a destination bus. Zero is reserved to mean "unset": it can
 // never name a real bus, so a send authored against it is an unset entry the
 // front-end refuses rather than routing a level nowhere.
-using BusId = harkenstudio::ObjectId;
+using BusId = harken::studio::types::ObjectId;
 inline constexpr BusId kReservedBusId{};
 
 enum class SendMode : std::uint8_t {
@@ -301,9 +301,9 @@ struct EffectNode {
     GraphNodeId nodeId = kReservedGraphNodeId;
     EffectTypeId effectType = kReservedEffectType;
     std::vector<EffectParam> params;
-    harkenstudio::ObjectId effectId{};
+    harken::studio::types::ObjectId effectId{};
     std::uint32_t flags = 0;
-    harkenstudio::ObjectId presetId{};
+    harken::studio::types::ObjectId presetId{};
 };
 
 inline bool operator==(const EffectNode& a, const EffectNode& b) {
@@ -365,7 +365,7 @@ struct SpatialSpec {
     float spread = 0.0f;
     bool is3DEnabled = false;
     float attenuationDistanceScaling = 1.0f;
-    harkenstudio::ObjectId attenuationRef{};
+    harken::studio::types::ObjectId attenuationRef{};
     float spatializationMix = 1.0f;
 };
 
@@ -396,7 +396,7 @@ struct PlayablePropertyPayloadV1 {
     std::uint32_t streamingMode = 0;
     float outputBusVolume = 0.0f;
     std::vector<Send> sends;
-    harkenstudio::ObjectId outputBusRef{};
+    harken::studio::types::ObjectId outputBusRef{};
     SpatialSpec spatial;
     SignalGraph signalGraph;
 };
@@ -529,11 +529,11 @@ struct ContentObject {
 // of a legal kind. Objects are stored in a stable order (ascending stable id)
 // so the model itself is order-deterministic before any serialization.
 struct CanonicalProject {
-    harkenstudio::ObjectId projectId{};
+    harken::studio::types::ObjectId projectId{};
     std::vector<ContentObject> objects;
     std::vector<StableId> roots;  // top-level objects, in ascending stable id order
 };
 
-}  // namespace harkenprojectschema
+}  // namespace harken::studio::project_schema
 
 #endif  // HARKEN_PROJECT_SCHEMA_MODEL_H

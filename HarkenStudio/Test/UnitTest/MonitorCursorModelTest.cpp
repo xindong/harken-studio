@@ -4,9 +4,9 @@
 
 #include <vector>
 
-using VNX::MonitorCursorClock;
-using VNX::MonitorCursorModel;
-using VNX::MonitorCursorSnapshot;
+using harken::studio::MonitorCursorClock;
+using harken::studio::MonitorCursorModel;
+using harken::studio::MonitorCursorSnapshot;
 
 namespace {
 

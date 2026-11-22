@@ -7,7 +7,7 @@
 #include <QObject>
 #include <QString>
 
-namespace VNX {
+namespace harken::studio {
 
 class PlacementContext;
 
@@ -32,7 +32,7 @@ public:
     void selectItem(ProjectItem* item, bool reveal,
                     const PlacementContext& placement);
     void revealItemSourceInExplorer(ProjectItem* item);
-    bool revealProjectObject(harkenstudio::ObjectId id);
+    bool revealProjectObject(harken::studio::types::ObjectId id);
 
     void selectCurve(const CurveSelection& selection);
 

@@ -20,7 +20,7 @@ inline QJsonObject projectDocument(const QString& type,
                                    const QString& projectId,
                                    const QJsonObject& content,
                                    int schemaVersion =
-                                       VNX::ProjectSchema::kProjectSchemaVersion)
+                                       harken::studio::ProjectSchema::kProjectSchemaVersion)
 {
     QJsonObject header{
         {QStringLiteral("type"), type},
@@ -29,7 +29,7 @@ inline QJsonObject projectDocument(const QString& type,
         {QStringLiteral("schemaVersion"), schemaVersion},
     };
     QJsonObject authoredContent = content;
-    if (schemaVersion >= VNX::ProjectSchema::kProjectSchemaVersion) {
+    if (schemaVersion >= harken::studio::ProjectSchema::kProjectSchemaVersion) {
         const QString itemType = content.value(QStringLiteral("type")).toString();
         const bool hasFieldGroups = itemType == QStringLiteral("Sound")
             || itemType == QStringLiteral("Container") || itemType == QStringLiteral("Layer")
@@ -52,11 +52,11 @@ inline QJsonObject projectDocument(const QString& type,
             });
         }
     }
-    if (schemaVersion >= 2 && schemaVersion < VNX::ProjectSchema::kProjectSchemaVersion) {
+    if (schemaVersion >= 2 && schemaVersion < harken::studio::ProjectSchema::kProjectSchemaVersion) {
         header.insert(QStringLiteral("savedStudioVersion"), QStringLiteral("1.0.0"));
         header.insert(QStringLiteral("propertyModel"), QStringLiteral("fieldGroupsV1"));
     }
-    if (schemaVersion >= VNX::ProjectSchema::kProjectSchemaVersion
+    if (schemaVersion >= harken::studio::ProjectSchema::kProjectSchemaVersion
         && type == QStringLiteral("project.root")) {
         header.insert(QStringLiteral("studioVersion"), QStringLiteral("1.0.0"));
     }
@@ -68,22 +68,22 @@ inline QJsonObject projectDocument(const QString& type,
 
 inline QJsonObject projectRoot(const QJsonObject& content,
                                int schemaVersion =
-                                   VNX::ProjectSchema::kProjectSchemaVersion,
+                                   harken::studio::ProjectSchema::kProjectSchemaVersion,
                                const QString& projectId = kProjectId)
 {
     QJsonObject configured = content;
-    if (schemaVersion < VNX::ProjectSchema::kProjectSchemaVersion)
+    if (schemaVersion < harken::studio::ProjectSchema::kProjectSchemaVersion)
         configured.insert(QStringLiteral("paths"), QJsonObject{
             {QStringLiteral("audioFolder"), QStringLiteral("Layers")},
         });
-    if (schemaVersion == VNX::ProjectSchema::kProjectSchemaVersion
+    if (schemaVersion == harken::studio::ProjectSchema::kProjectSchemaVersion
         && content.value(QStringLiteral("metadata")).isObject()) {
         auto metadata = content.value(QStringLiteral("metadata")).toObject();
         if (!content.contains(QStringLiteral("deployPlatforms"))
             && !metadata.contains(QStringLiteral("targetPlatforms"))) {
             const auto project = projectWithPlatforms();
             configured.insert(QStringLiteral("deployPlatforms"),
-                              VNX::ProjectPlatformSemantics::platformsToJson(project.platforms));
+                              harken::studio::ProjectPlatformSemantics::platformsToJson(project.platforms));
         }
     }
     return projectDocument(QStringLiteral("project.root"), projectId, projectId,
@@ -127,7 +127,7 @@ inline bool writeRootBusForProject(const QString& projectPath, int schemaVersion
             {QStringLiteral("kind"), QStringLiteral("root")},
         }},
     };
-    if (schemaVersion < VNX::ProjectSchema::kProjectSchemaVersion)
+    if (schemaVersion < harken::studio::ProjectSchema::kProjectSchemaVersion)
         content.insert(QStringLiteral("componentData"), QJsonObject{});
     else
         content.insert(QStringLiteral("components"), QJsonObject{
@@ -147,7 +147,7 @@ inline bool writeRootBusForProject(const QString& projectPath, int schemaVersion
 inline bool writeRootBusForProject(const QString& projectPath)
 {
     return writeRootBusForProject(projectPath,
-                                  VNX::ProjectSchema::kProjectSchemaVersion);
+                                  harken::studio::ProjectSchema::kProjectSchemaVersion);
 }
 
 }

@@ -41,7 +41,7 @@ public:
     void SetVariableControlSliceClaimHookForTest(void (*hook)(void*), void* context) noexcept;
     void SetQueueFutureSliceHooksForTest(void (*validated)(void*), void (*claimed)(void*),
         void (*applied)(void*, std::uint16_t), void* context, bool beforeBucketClaim = false) noexcept;
-    void SetQueueLaneProbeGroupForTest(Plan03GroupSliceIdentity group) noexcept;
+    void SetQueueLaneProbeGroupForTest(ScheduleGroupSliceIdentity group) noexcept;
 #endif
     void Begin(std::uint64_t quantum, std::uint32_t blockFrames) noexcept;
     void BeginLane(std::uint64_t quantum, std::uint32_t blockFrames,
@@ -53,7 +53,7 @@ public:
     VariableReadCutStatus LaneEventTimingStatus(const ConsumedEvent& event) const noexcept;
     VariableReadCutStatus StartSourcesStatus(const ConsumedEvent& event) const noexcept;
     bool LaneEventOffset(const ConsumedEvent& event, std::uint16_t* outOffset) const noexcept;
-    bool CollectGroup(const Plan03PageGroupView& group) noexcept;
+    bool CollectGroup(const SchedulePageGroupView& group) noexcept;
     bool PendingBindingValid(const ConsumedEvent& event,
         const TimelineEventPayload& payload) const noexcept;
     bool CollectEvent(const ConsumedEvent& event, const TimelineEventPayload* payload,

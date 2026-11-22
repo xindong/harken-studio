@@ -5,12 +5,12 @@
 #include <cstdint>
 #include <string>
 
-namespace harkenstudiobuild {
+namespace harken::studio::build {
 
 struct VariableLabelDefinitionV1 {
     std::int32_t anchor = 0;
     std::string name;
-    harkenstudio::ObjectId labelId{};
+    harken::studio::types::ObjectId labelId{};
 };
 
 }

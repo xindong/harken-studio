@@ -8,7 +8,7 @@
 #include <QComboBox>
 #include <QSlider>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 

@@ -6,8 +6,8 @@
 #include <QFile>
 #include <QTemporaryDir>
 
-using VNH::LogTailer;
-using VNH::LogConsoleDialog;
+using harken::hub::LogTailer;
+using harken::hub::LogConsoleDialog;
 
 namespace {
 

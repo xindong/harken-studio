@@ -27,11 +27,12 @@ and this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `HarkenPreparedPacks` is now `HarkenPreviewContent`, and `HarkenEditorCatalog.PreparedPacks` is now `PreviewContent`.
 - The Editor catalog is rebuilt from the Pack metadata. `GameplayPublication` is replaced by `ActionCatalog` (`ProjectId`, `Language`, `InitPackStableId`, `Actions`, `TryFindAction`, `GetPreparationOrder`), and `GameplayAction` by `ActionCatalogEntry` (`Name`, `ActionId`, `PackStableId`). The `Publication` properties of `HarkenEditorCatalog` and `HarkenPreviewContent` are now `Catalog`. `PackManifestEntry`, `PackIndexEntry`, `RetiredGameplayAction` and the catalog fields that never carried data are removed.
 - The Action inspector says Pack directory, Refresh, Save binding and Action instead of publication terms. Bindings saved by earlier versions are not read; save them again.
-- Reading a Pack directory relies on the Studio publishing marker only. It no longer compares file identities through platform system calls or rejects file names that differ only in letter case.
+- Reading a Pack directory no longer compares file identities through platform system calls or rejects file names that differ only in letter case. It does not detect a Studio export in progress; a partially written Pack is rejected as invalid, so retry after the export finishes.
 
 ### Deprecated
 
 - `StreamSources`, `StreamByteSource`, `StreamReadCancellation` and `StreamSourceRequest`. Studio does not export streaming resources; these types will be removed in the next version.
+- `CurrentWorld` and `CurrentWorldLoadReport`. No product produces current-world envelopes; load Packs through `PackBootstrap`. They will be removed in the next version.
 - The low-level Pack API: `Packs.LoadPack`, `LoadInitPack`, `InspectInitPack`, `ActivateCanonicalPackSet` and `UnloadCanonicalPackSet`, `CanonicalPackMember`, and `PackByteProvider.LoadPack`. Use `PackBootstrap`; these will be removed in the next version.
 
 ### Removed

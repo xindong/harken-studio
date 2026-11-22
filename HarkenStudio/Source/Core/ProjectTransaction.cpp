@@ -30,7 +30,7 @@
 #include <unistd.h>
 #endif
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 

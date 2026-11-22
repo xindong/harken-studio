@@ -6,7 +6,7 @@
 
 #include <utility>
 
-namespace VNX {
+namespace harken::studio {
 
 WorkspaceWindowManager::WorkspaceWindowManager(WorkspaceWindowCatalog catalog,
                                                QtAdsWindowAdapter adapter)

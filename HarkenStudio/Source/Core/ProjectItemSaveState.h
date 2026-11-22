@@ -7,7 +7,7 @@
 #include <QUuid>
 #include <memory>
 
-namespace VNX {
+namespace harken::studio {
 
 struct ProjectData;
 struct ProjectItem;

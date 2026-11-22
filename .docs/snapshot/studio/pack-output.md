@@ -37,7 +37,7 @@ v7/v8 工程升级时同步转换历史输出路由字段及效果条目结构�
 
 ## 独立构建入口
 
-GUI、IPC 与 CLI 共用打包静态库，内部保留 `harkenizer_core`、`harkenizer_build` 等目标名称，覆盖工程构建计划、媒体准备、资源编译调度、共享逻辑编译、包体装配、直接写入、根目录 Project.json 和自清理。独立 Harkenizer 和 packc 程序均不再交付，不新增内核 DLL。主打包链直接调用资源编译库生成内存条目，不启动私有 worker。文件资源接口的私有 worker 由 `HarkenStudioCLI --resource-worker` 承接，程序定位覆盖变量为 `HARKEN_STUDIO_CLI_PATH`。
+GUI、IPC 与 CLI 共用打包静态库，内部保留 `harkenizer_core`、`harkenizer_build` 等目标名称，覆盖工程构建计划、媒体准备、资源编译调度、共享逻辑编译、包体装配、直接写入、根目录 Project.json 和自清理。独立 Harkenizer 和 packc 程序均不再交付，不新增内核 DLL。主打包链直接调用资源编译库生成内存条目。
 
 Studio 的 Publisher 窗口及操作命令与 CLI 命令目录分别注册；共享打包服务不要求 CLI 带入桌面交互。`validate_pack_build_readiness` 按工程平台复用实际打包及 Current World 的总线发布校验，非中性 pan／pitch、Listener 相对路由等不支持配置会出现在预检错误中。
 
@@ -95,7 +95,7 @@ GUI、IPC、CLI 会话导出和 CLI 已保存工程构建使用同一个 `Projec
 3. 对需要构建的包准备媒体。源状态相同直接使用资产登记中的摘要和音频元数据；变化或状态不可靠时，复制稳定源的同时计算摘要。只有转换或波形生成实际需要样本时才读取样本；已有有效转换 PCM 直接载入。
 4. 编译同平台、同语言的共享逻辑和资源，确定包依赖与资源归属。包体直接写入最终 `.bytes`，再完成必需的伴随 JSON 及已开启的附加输出。每个成功包独立记入结果，失败包及依赖它的包报错，独立包和后续平台继续。
 5. 未取消时处理可选 `Project.json`。只有全部选中平台成功且启用 Self-cleaning 时枚举目标目录、清理退出本次清单的文件；不清理请求不为收尾扫描整个输出目录。不重新读取所有包，不在平台结束或请求结束再次验证源文件。
-6. 对尚未派生输入的成功包，使用本请求已知源身份补齐记录；部分失败只派生成功路径，取消时不再派生新输入。实际进入过构建时先回收无用 PCM，并在尚未读取到 version 2 状态时清理旧缓存，然后将构建记录和资产源状态各保存一次，未变不写。全部命中时不扫描转换目录。
+6. 对尚未派生输入的成功包，使用本请求已知源身份补齐记录；部分失败只派生成功路径，取消时不再派生新输入。实际进入过构建时先回收无用 PCM，并在尚未读取到 version 3 状态时清理旧缓存，然后将构建记录和资产源状态各保存一次，未变不写。全部命中时不扫描转换目录。
 
 包输入身份包含编译器身份、实际平台配置、公共编译选项、本包 Action 依赖闭包及祖先对象语义、源内容身份和有效转换设置；对象摘要在请求内复用。Init 另包含总线／变量／衰减配置和本次包输入集合。仍需遍历工程图、建立计划并计算这些身份；不声称重打完全没有计算。notes、color、编辑器位置、未引用资产和只影响 `Project.json` 的信息不作为包内容输入。
 
@@ -118,11 +118,11 @@ GUI、IPC、CLI 会话导出和 CLI 已保存工程构建使用同一个 `Projec
 | `asset_registry/assets.json` | AssetRegistry／BuildSourceInputs → 编辑器、媒体准备 | 既有资产登记：sourceID、relativePath、contentHash、lastModified、metadata、settings、ownerObjectGuid、isOrphaned、platformCaches。打包在同一条目补充 sourceState、waveformState，不复制一张源表；absolutePath 从工程目录推导，不保存 |
 | `sourceState` | 源识别 → 下次源识别 | 文件身份、大小及写入／变更时间的原生状态，十六进制保存；相同即可复用既有 contentHash 和 metadata |
 | `waveformState` | 波形生成 → 波形读取 | 共享 .vkd 的文件身份、大小和修改时间；源内容变化时清空，用于判断已生成波形是否变化 |
-| `builds.json.version` | PackBuildState → 后续构建、Publisher | 缓存格式版本，当前 2 |
+| `builds.json.version` | PackBuildState → 后续构建、Publisher | 缓存格式版本，当前 3 |
 | `targets[绝对平台输出目录].platform` | 同上 | 当前目标所属平台 UUID；同一输出目录一份当前记录 |
 | `targets[...].packs[相对.bytes路径].key` | 同上 | 构建单元稳定键，连接当前计划和 Publisher 行 |
 | `input` | 当前计划 → 下次比较 | 本包输入摘要，用于决定该包是否需要构建；不保存整棵工程树 |
-| `state`、`companionState` | 成功写入 → 下次比较 | 包体和同名 JSON 的文件身份、大小和修改时间，检测缺失、替换和一般修改；权限变化不使内容失效，不保存全文件摘要 |
+| `state`、`packMetadataState` | 成功写入 → 下次比较 | 包体和同名 JSON 的文件身份、大小和修改时间，检测缺失、替换和一般修改；权限变化不使内容失效，不保存全文件摘要 |
 | `resourceFingerprint` | 资源编译 → 后续资源复用 | 仅在已知时保存；用于判断旧包内资源能否复用，与该包 state 绑定 |
 | `packs[...].waveforms` | 启用波形导出时 → 下次比较、自清理 | 相对伴随文件目录的波形路径数组；仅保存本包引用，未导出波形则没有该字段 |
 | `builds.json.waveforms` | 波形成功写入 → 下次比较 | 波形绝对路径到原生状态的唯一表；多个包／平台共享同一文件记录，空表不保存 |
@@ -150,7 +150,7 @@ GUI、IPC、CLI 会话导出和 CLI 已保存工程构建使用同一个 `Projec
 | 锁文件 | 输出根 .harken-pack-build.lock、平台 .harken-pack-platform.lock、共享波形 .harken-pack-waveforms.lock；持有期间存在，防止同一输出被同时修改 |
 | 平台大小写改名 | 必要时通过 .harken-pack-rename-* 中转目录完成一次改名；不是打包暂存区 |
 | 转换回收 | 每次实际构建结束后、状态落盘前，按当前工程 Sound／平台／语言的有效源和转换设置推导所需 key，删除无用 .pcm 及遗留 .pcm.?????? 临时文件；不读音频载荷，不维护持久引用清单；删除失败只记日志、不重试 |
-| 旧缓存清理 | 仅未读到 version 2 的首次／旧状态构建，在保存 version 2 前移除 pack/targets、pack/sources.json、pack-build、pack-inputs、media/pack-derivatives、pack-artifacts.json 和 .vkd.source.json。已读到 version 2 就不再扫描；没有额外迁移标记，删除失败只记日志、不重试 |
+| 旧缓存清理 | 仅未读到 version 3 的首次／旧状态构建，在保存 version 3 前移除 pack/targets、pack/sources.json、pack-build、pack-inputs、media/pack-derivatives、pack-artifacts.json 和 .vkd.source.json。已读到 version 3 就不再扫描；没有额外迁移标记，删除失败只记日志、不重试 |
 | 旧选择记录处理 | 读取旧 pack-export-selection.json 时，有效内容成功迁移到 QSettings 后删除，无效或版本不支持则直接清除 |
 | 部分打包的保留包发现 | 仅部分打包实际进入构建时枚举最终平台目录，发现仍在磁盘上的保留包，用于容量合并与必要更新；成功缓存不是完整产物清单。完整复用不增加扫描，不保存失败清单或恢复标记 |
 | 输出清理 | 仅 Self-cleaning 请求枚举并清理目标文件；删除成功后同步删掉状态表中退出本输出根的目标／包记录，其他输出根记录保留；删除失败报告错误 |

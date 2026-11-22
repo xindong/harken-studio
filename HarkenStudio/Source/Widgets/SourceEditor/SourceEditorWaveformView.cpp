@@ -22,7 +22,7 @@
 #include <cmath>
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 

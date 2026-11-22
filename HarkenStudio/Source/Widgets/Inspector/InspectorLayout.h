@@ -5,7 +5,7 @@
 #include <QString>
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 
 class TableWidget;
 

@@ -11,7 +11,7 @@
 
 #include <algorithm>
 
-namespace VNX {
+namespace harken::studio {
 
 ListFooter::ListFooter(QWidget* parent, bool standardButtons, ThemeManager* themeManager)
     : QWidget(parent), themeManager_(themeManager ? themeManager : &ThemeManager::instance())

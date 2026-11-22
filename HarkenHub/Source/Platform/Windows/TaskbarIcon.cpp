@@ -18,7 +18,7 @@
 #include <wrl/client.h>
 #include <utility>
 
-namespace VNH {
+namespace harken::hub {
 
 namespace {
 

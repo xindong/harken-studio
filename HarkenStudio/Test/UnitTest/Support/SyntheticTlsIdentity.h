@@ -1,6 +1,6 @@
 #pragma once
 
-namespace VNX::TestSupport {
+namespace harken::studio::TestSupport {
 
 inline constexpr char kTestCertificate[] = R"pem(-----BEGIN CERTIFICATE-----
 MIIDBjCCAe6gAwIBAgIBATANBgkqhkiG9w0BAQsFADAoMSYwJAYDVQQDDB1TeW50

@@ -13,17 +13,17 @@
 #include <QToolButton>
 #include <QVBoxLayout>
 
-namespace VNH {
+namespace harken::hub {
 
 namespace {
 
 QString categoryTitle(const QString& category)
 {
     if (category == QStringLiteral("added"))
-        return QCoreApplication::translate("VNH::ReleaseNotesDialog", "Added");
+        return QCoreApplication::translate("harken::hub::ReleaseNotesDialog", "Added");
     if (category == QStringLiteral("removed"))
-        return QCoreApplication::translate("VNH::ReleaseNotesDialog", "Removed");
-    return QCoreApplication::translate("VNH::ReleaseNotesDialog", "Improved");
+        return QCoreApplication::translate("harken::hub::ReleaseNotesDialog", "Removed");
+    return QCoreApplication::translate("harken::hub::ReleaseNotesDialog", "Improved");
 }
 
 QWidget* createChanges(const ReleaseNotesEntry& entry, QWidget* parent)
@@ -68,7 +68,7 @@ QWidget* createChanges(const ReleaseNotesEntry& entry, QWidget* parent)
         }
     }
     auto* contributors = new QLabel(
-        QCoreApplication::translate("VNH::ReleaseNotesDialog", "Contributors") +
+        QCoreApplication::translate("harken::hub::ReleaseNotesDialog", "Contributors") +
             QStringLiteral(":  @") + entry.contributors.join(QStringLiteral("  @")),
         container);
     contributors->setObjectName(QStringLiteral("releaseNotesContributors"));

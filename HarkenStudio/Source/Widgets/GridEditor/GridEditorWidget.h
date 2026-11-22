@@ -14,7 +14,7 @@ class QLabel;
 class QShowEvent;
 class QStackedWidget;
 
-namespace VNX {
+namespace harken::studio {
 
 class PaneSection;
 class PaneSectionStack;

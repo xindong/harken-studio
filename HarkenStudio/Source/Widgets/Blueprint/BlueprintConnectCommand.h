@@ -10,9 +10,9 @@
 #include "../../Core/FieldGroupEditing.h"
 #include "../../Core/BusRouteGraph.h"
 
-namespace VNX {
+namespace harken::studio {
 
-class BlueprintConnectCommand : public VNX::UndoCommand
+class BlueprintConnectCommand : public harken::studio::UndoCommand
 {
 public:
     enum class Effective { Containment, BusRoute, Override };
@@ -20,7 +20,7 @@ public:
     BlueprintConnectCommand(uint32_t fromItemId,
                             uint32_t toId,
                             Effective effectiveType,
-                            VNX::UndoCommand* parent = nullptr);
+                            harken::studio::UndoCommand* parent = nullptr);
 
     void undo() override;
     void redo() override;
@@ -42,7 +42,7 @@ private:
     bool firstRedo_ = true;
 };
 
-class BlueprintDisconnectCommand : public VNX::UndoCommand
+class BlueprintDisconnectCommand : public harken::studio::UndoCommand
 {
 public:
     enum class Kind { Containment, BusRoute, Override };
@@ -50,7 +50,7 @@ public:
     BlueprintDisconnectCommand(uint32_t fromItemId,
                                uint32_t toId,
                                Kind kind,
-                               VNX::UndoCommand* parent = nullptr);
+                               harken::studio::UndoCommand* parent = nullptr);
 
     void undo() override;
     void redo() override;
@@ -71,13 +71,13 @@ private:
     bool firstRedo_ = true;
 };
 
-class BlueprintOverrideToggleCommand : public VNX::UndoCommand
+class BlueprintOverrideToggleCommand : public harken::studio::UndoCommand
 {
 public:
     BlueprintOverrideToggleCommand(uint32_t itemId,
                                    bool newOverride,
                                    uint32_t autoRouteToBusId,
-                                   VNX::UndoCommand* parent = nullptr);
+                                   harken::studio::UndoCommand* parent = nullptr);
 
     void undo() override;
     void redo() override;
@@ -94,12 +94,12 @@ private:
     bool firstRedo_ = true;
 };
 
-class BlueprintSendConnectCommand : public VNX::UndoCommand
+class BlueprintSendConnectCommand : public harken::studio::UndoCommand
 {
 public:
     BlueprintSendConnectCommand(uint32_t fromBusId,
                                 uint32_t targetBusId,
-                                VNX::UndoCommand* parent = nullptr);
+                                harken::studio::UndoCommand* parent = nullptr);
 
     void undo() override;
     void redo() override;
@@ -115,12 +115,12 @@ private:
     bool firstRedo_ = true;
 };
 
-class BlueprintSendDisconnectCommand : public VNX::UndoCommand
+class BlueprintSendDisconnectCommand : public harken::studio::UndoCommand
 {
 public:
     BlueprintSendDisconnectCommand(uint32_t fromBusId,
                                    uint32_t targetBusId,
-                                   VNX::UndoCommand* parent = nullptr,
+                                   harken::studio::UndoCommand* parent = nullptr,
                                    SendMode mode = SendMode::Mix);
 
     void undo() override;

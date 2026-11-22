@@ -6,7 +6,7 @@
 #include "Core/ProjectManager.h"
 #include "Core/SoundSourceEditing.h"
 
-namespace VNX {
+namespace harken::studio {
 
 SelectionWaveform::SelectionWaveform(const QUuid& targetGuid, QWidget* parent)
     : SourceRangeThumb(parent), targetGuid_(targetGuid)

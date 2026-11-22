@@ -14,7 +14,7 @@
 #include <QRegularExpression>
 #include <QSet>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 

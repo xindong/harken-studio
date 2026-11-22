@@ -9,7 +9,7 @@
 #include <cstdint>
 #include <limits>
 
-namespace VNX {
+namespace harken::studio {
 
 class BusController : public QObject
 {

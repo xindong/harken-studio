@@ -49,7 +49,7 @@ public:
         DecisionToken newDecision{}, newCoordinator{};
         OccurrenceToken newSuccessor{};
         CompletionOwnerRef newSuccessorOwner{};
-        std::array<Plan03GroupSliceIdentity, 2> newGroups{};
+        std::array<ScheduleGroupSliceIdentity, 2> newGroups{};
         std::array<std::uint64_t, 2> relativeFrames{};
         TimelineArmToken newMember{};
         std::uint16_t newMemberCount = 0;
@@ -67,7 +67,7 @@ public:
         CompletionOwnerRef completionOwner{};
         EffectiveQueueState currentState{}, resetInitial{}, next{};
         bool logicalFloor = false;
-        std::array<Plan03GroupSliceIdentity, 2> groups{};
+        std::array<ScheduleGroupSliceIdentity, 2> groups{};
         std::array<std::uint64_t, 2> relativeFrames{};
         LogicCommitSequence sequence = 0;
     };
@@ -484,7 +484,7 @@ private:
                  old.clockGroups[1].Identity().committedRow].selectedFutureDomain)) return false;
         if (memberRow.memberCount != 0) {
             const auto actualMember = memberRow.MemberTokens()[0];
-            Plan03GroupSliceInput expected{};
+            ScheduleGroupSliceInput expected{};
             expected.executeFrame = newMember.executeFrame_;
             expected.decision = newMember.Identity().decision;
             expected.sliceIndex = newMember.Identity().sliceIndex;
@@ -562,7 +562,7 @@ private:
         row.stepCount = stepCount;
         row.occurrences = &occurrences;
         row.decisions = &decisions;
-        row.arms = groups.plan03ArmTable_;
+        row.arms = groups.scheduleArmTable_;
         row.anchor = row.completionFloor = 0;
         row.closed.store(false, std::memory_order_relaxed);
         row.bound.store(false, std::memory_order_relaxed);
@@ -660,7 +660,7 @@ public:
     // The hidden Lane remains unpublished; ordinary audio lookup still refuses it.
     // Returning its actual binding and lease is not a Catalog selector or claim.
     bool ResolveNativeConditionalGroup(const NativeConditionalRead& read,
-        Plan03PageGroupView* out) const noexcept {
+        SchedulePageGroupView* out) const noexcept {
         if (out == nullptr || read.pool_ != this || read.slot_ >= capacity_ || read.marker_ == 0)
             return false;
         const auto& row = rows_[read.slot_];
@@ -668,7 +668,7 @@ public:
             row.closed.load(std::memory_order_acquire) ||
             !row.bound.load(std::memory_order_acquire)) return false;
         auto* pool = row.oldFuture.owner_->originalConditionalRows_[row.oldFuture.row_].clockPool;
-        Plan03PageGroupView actual{};
+        SchedulePageGroupView actual{};
         if (pool == nullptr || !pool->ResolveRetainedHiddenConditionalGroup(
                 row.newGroups[0], row.newGroups[1], &actual) ||
             !(actual.identity == row.backing.groups[1])) return false;
@@ -697,7 +697,7 @@ public:
             return QueueConditionalProofStatus::Waiting;
         const auto& body = row.backing;
         const auto& id = binding.queueConditional;
-        Plan03PageGroupView group{};
+        SchedulePageGroupView group{};
         DecisionCommittedSnapshot nativeDecision{};
         auto* pool = row.oldFuture.owner_->originalConditionalRows_[row.oldFuture.row_].clockPool;
         const auto ordinal = 1u;

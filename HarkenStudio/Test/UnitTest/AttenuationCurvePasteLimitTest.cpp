@@ -23,7 +23,7 @@ void ensureApp()
 
 constexpr float kMaxDistance = 100.0f;
 
-VNX::CurvePointDef makePoint(float distance, float value)
+harken::studio::CurvePointDef makePoint(float distance, float value)
 {
     return {distance, value};
 }
@@ -50,20 +50,20 @@ QJsonObject makePayload(const QJsonArray& points,
                        {QStringLiteral("points"), points}};
 }
 
-std::unique_ptr<VNX::CurveCanvas> makeCanvas(
-    const QVector<VNX::CurvePointDef>& points,
-    const QVector<VNX::CurveHandlePairDef>& handles = {})
+std::unique_ptr<harken::studio::CurveCanvas> makeCanvas(
+    const QVector<harken::studio::CurvePointDef>& points,
+    const QVector<harken::studio::CurveHandlePairDef>& handles = {})
 {
     ensureApp();
-    auto canvas = std::make_unique<VNX::CurveCanvas>();
+    auto canvas = std::make_unique<harken::studio::CurveCanvas>();
     canvas->setXDomain(0.0f, kMaxDistance);
     canvas->setCurve(points, handles);
     return canvas;
 }
 
-void expectCurve(const VNX::CurveCanvas& canvas,
-                 const QVector<VNX::CurvePointDef>& points,
-                 const QVector<VNX::CurveHandlePairDef>& handles)
+void expectCurve(const harken::studio::CurveCanvas& canvas,
+                 const QVector<harken::studio::CurvePointDef>& points,
+                 const QVector<harken::studio::CurveHandlePairDef>& handles)
 {
     const auto actualPoints = canvas.curve();
     const auto actualHandles = canvas.curveHandles();
@@ -93,9 +93,9 @@ TEST(AttenuationCurveClipboard, InvalidPayloadsLeaveCurveAndSelectionUnchanged)
     const auto handles = canvas->curveHandles();
     int edits = 0;
     int selections = 0;
-    QObject::connect(canvas.get(), &VNX::CurveCanvas::curveEdited, canvas.get(),
+    QObject::connect(canvas.get(), &harken::studio::CurveCanvas::curveEdited, canvas.get(),
                      [&]() { ++edits; });
-    QObject::connect(canvas.get(), &VNX::CurveCanvas::selectionChanged, canvas.get(),
+    QObject::connect(canvas.get(), &harken::studio::CurveCanvas::selectionChanged, canvas.get(),
                      [&]() { ++selections; });
 
     const QVector<QJsonArray> invalidPoints{
@@ -120,21 +120,21 @@ TEST(AttenuationCurveClipboard, InvalidPayloadsLeaveCurveAndSelectionUnchanged)
 
 TEST(AttenuationCurveClipboard, CutAndPasteRestoresAllAnchorHandles)
 {
-    const QVector<VNX::CurvePointDef> points{
+    const QVector<harken::studio::CurvePointDef> points{
         makePoint(0.0f, 0.0f), makePoint(25.0f, -20.0f), makePoint(50.0f, -40.0f),
         makePoint(75.0f, -60.0f), makePoint(100.0f, -96.0f)};
-    const QVector<VNX::CurveHandlePairDef> handles{
+    const QVector<harken::studio::CurveHandlePairDef> handles{
         {5.0f, -5.0f, 20.0f, -15.0f}, {30.0f, -25.0f, 45.0f, -35.0f},
         {55.0f, -45.0f, 70.0f, -55.0f}, {80.0f, -70.0f, 95.0f, -85.0f}};
     const QVector<QVector<int>> selections{{2}, {1, 2}, {1, 3}};
-    for (const auto domain : {VNX::CurveAxisScale::AmplitudeDb,
-                              VNX::CurveAxisScale::MirroredAmplitudeDb,
-                              VNX::CurveAxisScale::LinearValue}) {
+    for (const auto domain : {harken::studio::CurveAxisScale::AmplitudeDb,
+                              harken::studio::CurveAxisScale::MirroredAmplitudeDb,
+                              harken::studio::CurveAxisScale::LinearValue}) {
         for (const auto& selection : selections) {
             auto canvas = makeCanvas(points, handles);
             auto profile = canvas->profile();
             profile.axisScale = domain;
-            if (domain == VNX::CurveAxisScale::LinearValue)
+            if (domain == harken::studio::CurveAxisScale::LinearValue)
                 profile.clipboardFamily = QStringLiteral("pitch");
             canvas->setProfile(profile);
             canvas->setSelectedPointIndices(selection, selection.front());

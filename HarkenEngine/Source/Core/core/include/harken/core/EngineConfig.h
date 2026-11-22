@@ -291,7 +291,7 @@ struct EngineConfig {
     std::uint32_t maxActionCooldownRows = 256;
     std::uint32_t maxDecisionRows = 512;
     std::uint32_t maxParticipantsPerDecision = 128;
-    std::uint32_t maxPlan03GroupHeadersPerPage = 64;
+    std::uint32_t maxScheduleGroupHeadersPerPage = 64;
     std::uint32_t maxArmGroups = 256;
     std::uint32_t maxArmsPerGroup = 128;
     std::uint32_t maxCatalogEntries = 65536;

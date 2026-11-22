@@ -12,7 +12,7 @@
 
 #include <optional>
 
-namespace VNX {
+namespace harken::studio {
 
 struct ProjectItem;
 class InspectorPanelPrivate;

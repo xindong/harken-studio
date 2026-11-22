@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace harkenstudiobuild {
+namespace harken::studio::build {
 
 namespace {
 

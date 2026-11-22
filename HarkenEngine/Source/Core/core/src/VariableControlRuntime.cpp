@@ -519,13 +519,13 @@ bool VariableControlInstanceTable::BindFrontierSide(VariableControlInstanceToken
     const FrontierGroupBinding& binding, const ScheduledTransactionPool& pool) noexcept {
     auto* entry = ResolvePreparing(instance);
     const auto& identity = binding.variableSide;
-    Plan03PageGroupView group{};
+    SchedulePageGroupView group{};
     if (entry == nullptr || !binding.Valid() || !identity.Valid() ||
         instance.slot != identity.slot || instance.generation != identity.generation ||
         entry->world.load(std::memory_order_acquire) != binding.operation.world ||
         entry->rootInstance.load(std::memory_order_acquire) != binding.operation.owner.child ||
-        !pool.PrivatePlan03GroupBindable(binding.operation.group) ||
-        !pool.ResolvePlan03GroupSliceProducer(binding.operation.group, &group) ||
+        !pool.PrivateScheduleGroupBindable(binding.operation.group) ||
+        !pool.ResolveScheduleGroupSliceProducer(binding.operation.group, &group) ||
         group.frontier == nullptr || !(group.frontier->variableSide == identity) ||
         group.lease == nullptr || group.lease->Capture().state != AudioSliceState::Ready) return false;
     auto& side = identity.side == 0 ? entry->discrete : entry->continuous;
@@ -554,9 +554,9 @@ bool VariableControlInstanceTable::ProveFrontierSide(const FrontierGroupBinding&
     if (entry == nullptr || entry->world.load(std::memory_order_acquire) != binding.operation.world ||
         entry->rootInstance.load(std::memory_order_acquire) != binding.operation.owner.child) return false;
     auto& side = identity.side == 0 ? entry->discrete : entry->continuous;
-    Plan03PageGroupView group{};
+    SchedulePageGroupView group{};
     if (side.frontierPool == nullptr || !(side.frontierOwner == binding.operation.owner) ||
-        !side.frontierPool->ResolvePlan03GroupSliceRt(binding.operation.group, &group) ||
+        !side.frontierPool->ResolveScheduleGroupSliceRt(binding.operation.group, &group) ||
         group.frontier != &binding || group.lease != &lease) return false;
     auto expected = side.state.load(std::memory_order_acquire);
     const auto priorState = expected;
@@ -586,12 +586,12 @@ bool VariableControlInstanceTable::MatchesPrivateInitialFrontierSide(
     const ScheduledTransactionPool& pool, const DecisionTable& decisions) const noexcept {
     const auto& identity = binding.variableSide;
     const auto* activation = decisions.ResolveFrontierActivation(binding.entry.coordinator);
-    Plan03PageGroupView group{}, primary{};
+    SchedulePageGroupView group{}, primary{};
     if (original.replacing_ || !MatchesInitialSideEntry(original) || !binding.Valid() ||
         original.entry_->state.load(std::memory_order_acquire) != SlotState::Live ||
         binding.role != FrontierGroupRole::EntryMember || binding.operation.kind != FrontierOperationKind::Entry ||
         binding.operation.owner != binding.entry.owner ||
-        binding.operation.group.backing != Plan03GroupBacking::ImmediateLane || binding.operation.group.sliceIndex != 0 ||
+        binding.operation.group.backing != ScheduleGroupBacking::ImmediateLane || binding.operation.group.sliceIndex != 0 ||
         binding.transition.Valid() || binding.queueInitial.Valid() || binding.queueConditional.Valid() ||
         !binding.queueDescendant.Empty() || binding.prerequisite.Valid() || binding.prerequisiteMember.Valid() ||
         binding.initialVariables.Valid() || !identity.Valid() ||
@@ -608,10 +608,10 @@ bool VariableControlInstanceTable::MatchesPrivateInitialFrontierSide(
         activation->Descriptor().worldSemanticFingerprint != original.create_.programSemanticFingerprint ||
         !pool.PrivateImmediateLaneFrontierRollbackReady(binding.operation.group) ||
         !pool.PrivateImmediateLaneFrontierRollbackReady(binding.primary) ||
-        !pool.ResolvePlan03GroupSliceProducer(binding.operation.group, &group) ||
+        !pool.ResolveScheduleGroupSliceProducer(binding.operation.group, &group) ||
         group.frontier != &binding || group.lease == nullptr ||
         group.lease->Capture().state != AudioSliceState::Ready ||
-        !pool.ResolvePlan03GroupSliceProducer(binding.primary, &primary) || primary.lease == nullptr ||
+        !pool.ResolveScheduleGroupSliceProducer(binding.primary, &primary) || primary.lease == nullptr ||
         primary.lease->Capture().state != AudioSliceState::Ready || primary.frontier == nullptr ||
         primary.frontier->role != FrontierGroupRole::Coordinator ||
         !(primary.frontier->entry == binding.entry) || !(primary.frontier->primary == binding.primary) ||

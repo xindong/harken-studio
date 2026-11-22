@@ -8,7 +8,7 @@
 
 #include <optional>
 
-namespace VNX {
+namespace harken::studio {
 
 class SourceRangeThumb : public PreviewField
 {

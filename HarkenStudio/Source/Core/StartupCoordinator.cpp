@@ -19,7 +19,7 @@
 #include <QTimer>
 #include <QtConcurrent>
 
-namespace VNX {
+namespace harken::studio {
 
 StartupCoordinator::StartupCoordinator(
     QApplication& application,
@@ -320,13 +320,13 @@ void StartupCoordinator::finish()
         if (!instanceServer->start(&instanceError))
             qWarning().noquote() << "Studio instance commands unavailable:" << instanceError;
         if (startupArguments_.shell) {
-            using Exit = HarkenStudioCli::ShellExitRequest;
-            const auto result = HarkenStudioCli::runDesktopShell(
+            using Exit = harken::studio::cli::ShellExitRequest;
+            const auto result = harken::studio::cli::runDesktopShell(
                 *mainWindow_->ipcServer(), startupArguments_.shellJson, [this](Exit request) -> QJsonObject {
                     const bool discarded = request == Exit::Discard
                         && ProjectManager::instance().hasUnsavedChanges();
                     if (!mainWindow_->closeFromShell(request == Exit::Discard))
-                        return HarkenStudioCli::failure(QStringLiteral("EXIT_NOT_COMPLETED"),
+                        return harken::studio::cli::failure(QStringLiteral("EXIT_NOT_COMPLETED"),
                             QStringLiteral("Studio did not close. Resolve the active operation or canceled close request before retrying."));
                     return {{"status", "ok"}, {"result", QJsonObject{{"exiting", true}, {"discarded", discarded}}}};
                 });
@@ -366,7 +366,7 @@ void StartupCoordinator::finishCancellation()
     QTimer::singleShot(0, this, [this]() {
         loading_.dismiss();
         if (startupArguments_.shell)
-            HarkenStudioCli::writeShellResponse(HarkenStudioCli::failure(QStringLiteral("CANCELED"),
+            harken::studio::cli::writeShellResponse(harken::studio::cli::failure(QStringLiteral("CANCELED"),
                 QStringLiteral("Project opening was canceled before the shell became ready.")));
         application_.exit(startupArguments_.shell ? 130 : 0);
     });
@@ -381,7 +381,7 @@ void StartupCoordinator::fail(const QString& message, int exitCode,
     terminal_ = true;
     const QString userMessage = ProjectUpgradeMessages::userMessage(message);
     if (startupArguments_.shell) {
-        HarkenStudioCli::writeShellResponse(HarkenStudioCli::failure(errorCode, userMessage));
+        harken::studio::cli::writeShellResponse(harken::studio::cli::failure(errorCode, userMessage));
         loading_.dismiss();
         QTimer::singleShot(0, &application_, [this, exitCode]() { application_.exit(exitCode); });
         return;

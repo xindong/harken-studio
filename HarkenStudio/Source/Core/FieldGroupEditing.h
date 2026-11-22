@@ -10,14 +10,14 @@
 #include <variant>
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 
 struct ProjectData;
 struct ProjectItem;
 
 struct FieldGroupEditScopes {
     bool shared = false;
-    std::vector<harkenprojectschema::AuthoringGuid> platforms;
+    std::vector<harken::studio::project_schema::AuthoringGuid> platforms;
 };
 
 struct SetFieldGroupMode {
@@ -27,7 +27,7 @@ struct SetFieldGroupMode {
 struct RebuildLocalFieldGroup {};
 
 using FieldGroupFieldValue = std::variant<
-    float, bool, harkenprojectschema::AuthoringGuid>;
+    float, bool, harken::studio::project_schema::AuthoringGuid>;
 
 struct SetFieldGroupField {
     harkenplayableproperties::PlayablePropertyIdV1 property =
@@ -83,7 +83,7 @@ struct FieldGroupEditDiagnostic {
     FieldGroupScope scope;
     QString field;
     std::optional<std::size_t> row;
-    harkenprojectschema::AuthoringGuid relatedGuid{};
+    harken::studio::project_schema::AuthoringGuid relatedGuid{};
     std::optional<FieldGroupDiagnosticCode> groupCode;
 };
 

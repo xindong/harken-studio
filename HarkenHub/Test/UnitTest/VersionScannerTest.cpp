@@ -15,7 +15,7 @@
 #include <QJsonObject>
 #include <QTemporaryDir>
 
-using VNH::VersionScanner;
+using harken::hub::VersionScanner;
 
 namespace {
 
@@ -70,7 +70,7 @@ bool makeVersionDir(const QString& root, const QString& directoryName,
 
     if (withBinary) {
         const QString binaryPath =
-            installPath + QStringLiteral("/") + VNH::studioBinaryRelativePath();
+            installPath + QStringLiteral("/") + harken::hub::studioBinaryRelativePath();
         if (!QDir().mkpath(QFileInfo(binaryPath).absolutePath()))
             return false;
         QFile binary(binaryPath);
@@ -101,7 +101,7 @@ TEST(VersionScanner, FindsCompleteVersionDirectory)
     EXPECT_EQ(versions[0].channel, QStringLiteral("stable"));
     EXPECT_EQ(versions[0].executablePath,
               QDir(versions[0].installPath)
-                  .filePath(VNH::studioBinaryRelativePath()));
+                  .filePath(harken::hub::studioBinaryRelativePath()));
     EXPECT_EQ(versions[0].releaseSequence, 12);
 }
 
@@ -195,24 +195,24 @@ TEST(VersionScanner, InstalledScanUsesIndexAsSourceOfTruth)
                            dir.filePath(QStringLiteral("machine")));
     const EnvGuard versions("HARKEN_HUB_VERSIONS_ROOT",
                             dir.filePath(QStringLiteral("versions")));
-    ASSERT_TRUE(makeVersionDir(VNH::studioVersionsRoot(),
+    ASSERT_TRUE(makeVersionDir(harken::hub::studioVersionsRoot(),
                                QStringLiteral("1.4.0-run12.abcd1234"),
                                QStringLiteral("run12.abcd1234"),
                                QStringLiteral("1.4.0")));
-    ASSERT_TRUE(makeVersionDir(VNH::studioVersionsRoot(),
+    ASSERT_TRUE(makeVersionDir(harken::hub::studioVersionsRoot(),
                                QStringLiteral("9.9.9-unknown"),
                                QStringLiteral("unknown"),
                                QStringLiteral("9.9.9")));
 
-    VNH::InstalledVersionRecord record;
+    harken::hub::InstalledVersionRecord record;
     record.buildId = QStringLiteral("run12.abcd1234");
     record.semanticVersion = QStringLiteral("1.4.0");
     record.channel = QStringLiteral("stable");
-    record.installPath = VNH::studioVersionsRoot() +
+    record.installPath = harken::hub::studioVersionsRoot() +
                          QStringLiteral("/1.4.0-run12.abcd1234");
     record.healthState = QStringLiteral("Installed");
     QString error;
-    ASSERT_TRUE(VNH::InstallIndex::commitInstallation(record, 7, &error))
+    ASSERT_TRUE(harken::hub::InstallIndex::commitInstallation(record, 7, &error))
         << error.toStdString();
 
     const auto installed = VersionScanner::scanInstalled();
@@ -225,26 +225,26 @@ TEST(VersionScanner, InspectionDistinguishesMissingInvalidUnreadableAndMismatche
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     const EnvGuard root("HARKEN_HUB_VERSIONS_ROOT", dir.path());
-    VNH::InstalledVersionRecord record;
+    harken::hub::InstalledVersionRecord record;
     record.buildId = "registered-build";
     record.semanticVersion = "0.1.20-dev";
     record.installPath = dir.filePath("installed");
     QString error;
-    EXPECT_EQ(VersionScanner::inspect(record, nullptr, &error), VNH::InstallationIssue::Missing);
+    EXPECT_EQ(VersionScanner::inspect(record, nullptr, &error), harken::hub::InstallationIssue::Missing);
     EXPECT_TRUE(error.contains("directory"));
     ASSERT_TRUE(makeVersionDir(dir.path(), "installed", "other-build", record.semanticVersion,
                                true, true, false));
-    EXPECT_EQ(VersionScanner::inspect(record, nullptr, &error), VNH::InstallationIssue::IdentityMismatch);
+    EXPECT_EQ(VersionScanner::inspect(record, nullptr, &error), harken::hub::InstallationIssue::IdentityMismatch);
     EXPECT_TRUE(error.contains("identity"));
     record.buildId = "other-build";
-    EXPECT_EQ(VersionScanner::inspect(record, nullptr, &error), VNH::InstallationIssue::Missing);
+    EXPECT_EQ(VersionScanner::inspect(record, nullptr, &error), harken::hub::InstallationIssue::Missing);
     EXPECT_TRUE(error.contains("executable"));
     const auto manifest = record.installPath + "/package-manifest.json";
     ASSERT_TRUE(writeJson(manifest, {}));
-    EXPECT_EQ(VersionScanner::inspect(record, nullptr, &error), VNH::InstallationIssue::InvalidMetadata);
+    EXPECT_EQ(VersionScanner::inspect(record, nullptr, &error), harken::hub::InstallationIssue::InvalidMetadata);
     ASSERT_TRUE(QFile::remove(manifest));
     ASSERT_TRUE(QDir().mkpath(manifest));
-    EXPECT_EQ(VersionScanner::inspect(record, nullptr, &error), VNH::InstallationIssue::Unreadable);
+    EXPECT_EQ(VersionScanner::inspect(record, nullptr, &error), harken::hub::InstallationIssue::Unreadable);
     EXPECT_TRUE(error.contains("Cannot read"));
 }
 
@@ -255,7 +255,7 @@ TEST(VersionScanner, KeepsDistinctMissingLocalBuildsVisibleAndRemovable)
     const EnvGuard user("HARKEN_HUB_USER_ROOT", dir.filePath("user"));
     const EnvGuard machine("HARKEN_HUB_MACHINE_ROOT", dir.filePath("machine"));
     const EnvGuard root("HARKEN_HUB_VERSIONS_ROOT", dir.filePath("versions"));
-    VNH::LocalBuildRecord first;
+    harken::hub::LocalBuildRecord first;
     first.executablePath = dir.filePath("first/HarkenStudio.exe");
     first.reportedBuildId = "first-build";
     first.semanticVersion = "1.4.0";
@@ -263,8 +263,8 @@ TEST(VersionScanner, KeepsDistinctMissingLocalBuildsVisibleAndRemovable)
     second.executablePath = dir.filePath("second/HarkenStudio.exe");
     second.reportedBuildId = "second-build";
     QString error;
-    ASSERT_TRUE(VNH::LocalBuildRegistry::upsert(first, &error));
-    ASSERT_TRUE(VNH::LocalBuildRegistry::upsert(second, &error));
+    ASSERT_TRUE(harken::hub::LocalBuildRegistry::upsert(first, &error));
+    ASSERT_TRUE(harken::hub::LocalBuildRegistry::upsert(second, &error));
 
     const auto versions = VersionScanner::scanManaged();
     ASSERT_EQ(versions.size(), 2u);
@@ -272,7 +272,7 @@ TEST(VersionScanner, KeepsDistinctMissingLocalBuildsVisibleAndRemovable)
     EXPECT_FALSE(versions[1].available);
     EXPECT_NE(versions[0].buildId, versions[1].buildId);
     EXPECT_TRUE(VersionScanner::scanAvailable().empty());
-    ASSERT_TRUE(VNH::LocalBuildRegistry::remove(first.executablePath, &error));
+    ASSERT_TRUE(harken::hub::LocalBuildRegistry::remove(first.executablePath, &error));
     const auto remaining = VersionScanner::scanManaged();
     ASSERT_EQ(remaining.size(), 1u);
     EXPECT_EQ(remaining.front().executablePath, second.executablePath);
@@ -285,26 +285,26 @@ TEST(VersionScanner, DeduplicatesTheSameExecutableButKeepsSeparateCopies)
     const EnvGuard user("HARKEN_HUB_USER_ROOT", dir.filePath("user"));
     const EnvGuard machine("HARKEN_HUB_MACHINE_ROOT", dir.filePath("machine"));
     const EnvGuard root("HARKEN_HUB_VERSIONS_ROOT", dir.filePath("versions"));
-    ASSERT_TRUE(makeVersionDir(VNH::studioVersionsRoot(), "installed", "shared-build", "1.4.0"));
+    ASSERT_TRUE(makeVersionDir(harken::hub::studioVersionsRoot(), "installed", "shared-build", "1.4.0"));
     ASSERT_TRUE(makeVersionDir(dir.path(), "local", "shared-build", "1.4.0"));
-    VNH::InstalledVersionRecord installed;
+    harken::hub::InstalledVersionRecord installed;
     installed.buildId = "shared-build";
     installed.semanticVersion = "1.4.0";
-    installed.installPath = QDir(VNH::studioVersionsRoot()).filePath("installed");
+    installed.installPath = QDir(harken::hub::studioVersionsRoot()).filePath("installed");
     installed.healthState = "Installed";
     QString error;
-    ASSERT_TRUE(VNH::InstallIndex::commitInstallation(installed, 7, &error));
-    VNH::LocalBuildRecord local;
-    local.executablePath = QDir(installed.installPath).filePath(VNH::studioBinaryRelativePath());
+    ASSERT_TRUE(harken::hub::InstallIndex::commitInstallation(installed, 7, &error));
+    harken::hub::LocalBuildRecord local;
+    local.executablePath = QDir(installed.installPath).filePath(harken::hub::studioBinaryRelativePath());
     local.reportedBuildId = installed.buildId;
     local.semanticVersion = installed.semanticVersion;
-    ASSERT_TRUE(VNH::LocalBuildRegistry::upsert(local, &error));
+    ASSERT_TRUE(harken::hub::LocalBuildRegistry::upsert(local, &error));
     const auto sameFile = VersionScanner::scanManaged();
     ASSERT_EQ(sameFile.size(), 1u);
     EXPECT_FALSE(sameFile.front().isLocalBuild());
 
-    local.executablePath = QDir(dir.filePath("local")).filePath(VNH::studioBinaryRelativePath());
-    ASSERT_TRUE(VNH::LocalBuildRegistry::upsert(local, &error));
+    local.executablePath = QDir(dir.filePath("local")).filePath(harken::hub::studioBinaryRelativePath());
+    ASSERT_TRUE(harken::hub::LocalBuildRegistry::upsert(local, &error));
     const auto copies = VersionScanner::scanManaged();
     ASSERT_EQ(copies.size(), 2u);
     EXPECT_EQ(copies[0].expectedBuildId(), copies[1].expectedBuildId());

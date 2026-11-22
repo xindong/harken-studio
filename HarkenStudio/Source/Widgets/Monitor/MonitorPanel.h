@@ -16,12 +16,12 @@ class QTableView;
 class QToolButton;
 class QTextBrowser;
 
-namespace VNX {
+namespace harken::studio {
 
 class MonitorCatalogFilter;
 class TableWidget;
 
-using MonitorJumpLocator = std::function<void(harkenstudio::ObjectId stableId)>;
+using MonitorJumpLocator = std::function<void(harken::studio::types::ObjectId stableId)>;
 
 class MonitorPanel : public QWidget
 {
@@ -68,4 +68,4 @@ private:
     MonitorJumpLocator locator_;
 };
 
-} // namespace VNX
+} // namespace harken::studio

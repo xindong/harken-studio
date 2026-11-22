@@ -8,7 +8,7 @@
 
 #include <unordered_set>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 
@@ -116,8 +116,8 @@ std::vector<BlueprintEdgeView> deriveAllEdges(const ProjectData& project)
         std::function<void(const ProjectItem*)> walkBus =
             [&](const ProjectItem* node) {
                 if (node == nullptr) return;
-                if (node->comp<VNX::VBus>())
-                    if (const auto* mix = node->comp<VNX::VMixNode>())
+                if (node->comp<harken::studio::VBus>())
+                    if (const auto* mix = node->comp<harken::studio::VMixNode>())
                         appendBusSendEdges(*mix, node->objectID, out);
                 for (auto const& child : node->children) walkBus(child.get());
             };

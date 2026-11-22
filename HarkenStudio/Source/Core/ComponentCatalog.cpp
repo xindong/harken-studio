@@ -1,7 +1,7 @@
 
 #include "ComponentCatalog.h"
 
-namespace VNX {
+namespace harken::studio {
 namespace ComponentCatalog {
 
 namespace {

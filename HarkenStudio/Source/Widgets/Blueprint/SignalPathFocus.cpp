@@ -2,7 +2,7 @@
 
 #include <algorithm>
 
-namespace VNX {
+namespace harken::studio {
 
 SignalPathFocus projectSignalPathFocus(const SignalPathGraph& graph,
                                       const std::vector<size_t>& selectedNodes,

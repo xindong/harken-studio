@@ -4,7 +4,7 @@
 #include "Core/Components/VAttenuation.h"
 #include "Shared/SchemaFieldPick.h"
 
-namespace VNX {
+namespace harken::studio {
 
 const PropertySchema& attenuationInspectorSchema()
 {

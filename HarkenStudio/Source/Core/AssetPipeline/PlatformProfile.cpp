@@ -3,7 +3,7 @@
 #include "../ProjectPlatform.h"
 #include <limits>
 
-namespace VNX {
+namespace harken::studio {
 
 bool validateSizePolicies(const std::vector<SizePolicy>& policies, QString* error)
 {

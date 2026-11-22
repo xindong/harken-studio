@@ -9,7 +9,7 @@
 #include <QLabel>
 #include <QToolButton>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 QString prettifySlot(const QString& slot)

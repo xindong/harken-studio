@@ -19,7 +19,7 @@
 #include <string_view>
 #include <vector>
 
-namespace harkenstudiobuild {
+namespace harken::studio::build {
 
 inline void StoreLEF32(std::uint8_t* out, float v) {
     std::uint32_t bits;
@@ -35,31 +35,31 @@ inline float LoadLEF32(const std::uint8_t* in) {
 }
 
 struct PackBusEntry {
-    harkenstudio::ObjectId busId{};
-    harkenstudio::ObjectId parentBusId{};
+    harken::studio::types::ObjectId busId{};
+    harken::studio::types::ObjectId parentBusId{};
     float volume = 0.0f;
     float outputBusVolume = 0.0f;
 };
 
 struct PackBusSendEntry {
-    harkenstudio::ObjectId fromBusId{};
-    harkenstudio::ObjectId toBusId{};
+    harken::studio::types::ObjectId fromBusId{};
+    harken::studio::types::ObjectId toBusId{};
     float levelDb = 0.0f;
 };
 
 struct PackBindingDefinitionEntry {
-    harkenstudio::ObjectId bindingId{};
+    harken::studio::types::ObjectId bindingId{};
     BindingDefinition definition{};
 };
 
 struct PackBindingAttachmentEntry {
-    harkenstudio::ObjectId bindingId{};
+    harken::studio::types::ObjectId bindingId{};
     std::uint32_t scopeKind = 0;
-    harkenstudio::ObjectId objectId{};
+    harken::studio::types::ObjectId objectId{};
 };
 
 struct PackVoiceRecipeEntryHeader {
-    harkenstudio::ObjectId playableId{};
+    harken::studio::types::ObjectId playableId{};
     std::uint32_t installCount = 0;
     std::uint32_t bindingCount = 0;
 };
@@ -71,7 +71,7 @@ struct PackVoiceRecipeInstall {
     std::uint32_t bypass = 0;
     std::uint32_t paramCount = 0;
     std::array<float, HK_PACK_VOICE_RECIPE_MAX_PARAMS> params{};
-    harkenstudio::ObjectId effectId{};
+    harken::studio::types::ObjectId effectId{};
 };
 
 struct PackVoiceRecipeInstallWire : PackVoiceRecipeInstall {
@@ -79,7 +79,7 @@ struct PackVoiceRecipeInstallWire : PackVoiceRecipeInstall {
 };
 
 struct PackBusEffectEntry {
-    harkenstudio::ObjectId busId{};
+    harken::studio::types::ObjectId busId{};
     std::uint32_t slot = 0;
     std::uint32_t effectType = 0;
     std::uint32_t descriptorVintage = 0;
@@ -88,18 +88,18 @@ struct PackBusEffectEntry {
     std::uint32_t paramCount = 0;
     std::uint32_t paramBytes = 0;
     std::array<float, HK_PACK_VOICE_RECIPE_MAX_PARAMS> params{};
-    harkenstudio::ObjectId effectId{};
+    harken::studio::types::ObjectId effectId{};
 };
 
 struct PackEffectDynamicRouteEntry {
-    harkenstudio::ObjectId targetBusId{};
+    harken::studio::types::ObjectId targetBusId{};
     std::uint32_t effectSlot = 0;
     std::uint32_t routeSlot = 0;
     std::uint32_t expectedEffectType = 0;
     std::uint32_t signalForm = 0;
     std::uint32_t sourceKind = 0;
     std::uint32_t tap = 0;
-    harkenstudio::ObjectId sourceId{};
+    harken::studio::types::ObjectId sourceId{};
     float levelDb = 0.0f;
 };
 
@@ -119,7 +119,7 @@ struct PackVoiceRecipeTone {
 };
 
 struct PackVoiceRecipeSpatial {
-    harkenstudio::ObjectId attenuationId{};
+    harken::studio::types::ObjectId attenuationId{};
     float distanceScale = 1.0f;
     std::uint32_t reserved0 = 0;
 };
@@ -129,16 +129,16 @@ struct PackVoiceRecipePlayback {
     std::uint32_t loopCount = 0;
 };
 struct PackContainerEntryHeader {
-    harkenstudio::ObjectId containerId{};
+    harken::studio::types::ObjectId containerId{};
     std::uint32_t selectionOrder = 0;
     std::uint32_t avoidRepeatWindow = 0;
-    harkenstudio::ObjectId selectionVariableId{};
+    harken::studio::types::ObjectId selectionVariableId{};
     std::uint32_t defaultIndex = 0;
     std::uint32_t childCount = 0;
 };
 
 struct PackContainerChild {
-    harkenstudio::ObjectId playableId{};
+    harken::studio::types::ObjectId playableId{};
     std::uint32_t weight = 0;
     std::uint32_t matchValue = 0;
     std::uint32_t delayMs = 0;
@@ -240,21 +240,21 @@ struct PackBusDefinitionSnapshotHeader {
     std::uint32_t coefficientRowBytes = 0;
     std::uint64_t reserved1 = 0;
 };
-inline constexpr harkenstudio::ObjectId CanonicalSnapshotBusIdV1(std::uint64_t packed) noexcept {
-    return packed == 0 ? harkenstudio::ObjectId{} : harkenstudio::ObjectId{0, packed};
+inline constexpr harken::studio::types::ObjectId CanonicalSnapshotBusIdV1(std::uint64_t packed) noexcept {
+    return packed == 0 ? harken::studio::types::ObjectId{} : harken::studio::types::ObjectId{0, packed};
 }
 
-inline constexpr std::uint64_t CanonicalSnapshotPackedBusIdV1(harkenstudio::ObjectId id) noexcept {
+inline constexpr std::uint64_t CanonicalSnapshotPackedBusIdV1(harken::studio::types::ObjectId id) noexcept {
     return id.high == 0 ? id.low : 0;
 }
 
 inline constexpr bool CanonicalSnapshotIsMasterV1(std::uint64_t packed) noexcept {
-    return packed == harkenstudio::kMasterBusObjectId.low;
+    return packed == harken::studio::types::kMasterBusObjectId.low;
 }
 
 struct PackBusDefinitionBus {
-    harkenstudio::ObjectId busId{};
-    harkenstudio::ObjectId parentId{};
+    harken::studio::types::ObjectId busId{};
+    harken::studio::types::ObjectId parentId{};
     std::uint32_t feedsFirstOrdinal = 0;
     float faderDb = 0.0f;
     float outputBusVolumeDb = 0.0f;
@@ -267,13 +267,13 @@ struct PackBusDefinitionBus {
 };
 
 struct PackBusDefinitionSend {
-    harkenstudio::ObjectId source{};
-    harkenstudio::ObjectId target{};
+    harken::studio::types::ObjectId source{};
+    harken::studio::types::ObjectId target{};
     float levelDb = 0.0f;
 };
 
 struct PackEffectPresetHeader {
-    harkenstudio::ObjectId presetId{};
+    harken::studio::types::ObjectId presetId{};
     std::uint32_t effectType = 0;
     std::uint32_t descriptorVintage = 0;
     std::uint32_t paramCount = 0;
@@ -290,8 +290,8 @@ struct PackEffectPreset {
 };
 
 struct PackBusDefinitionEffect {
-    harkenstudio::ObjectId busId{};
-    harkenstudio::ObjectId effectId{};
+    harken::studio::types::ObjectId busId{};
+    harken::studio::types::ObjectId effectId{};
     std::uint32_t slot = 0;
     std::uint32_t effectType = 0;
     std::uint32_t descriptorVintage = 0;
@@ -306,7 +306,7 @@ struct PackBusDefinitionEffectParameter {
 };
 
 struct PackBusDefinitionDownmix {
-    harkenstudio::ObjectId busId{};
+    harken::studio::types::ObjectId busId{};
     std::uint32_t sourceLayout = 0;
     std::uint32_t destinationLayout = 0;
     std::uint32_t coefficientFirst = 0;
@@ -329,7 +329,7 @@ struct PackCanonicalPartitionHeader {
 
 }
 
-namespace harkenstudiobuild {
+namespace harken::studio::build {
 struct PackFilePrefix {
     std::uint32_t formatVersion{};
     std::uint32_t headerBytes{};
@@ -365,7 +365,7 @@ struct StreamHeader {
 };
 
 struct StreamTocEntry {
-    harkenstudio::ObjectId soundId{};
+    harken::studio::types::ObjectId soundId{};
     std::uint32_t sampleRate{};
     std::uint16_t channelCount{};
     std::uint16_t sampleFormat{};
@@ -382,7 +382,7 @@ struct StreamTocEntry {
 struct PackDirectoryEntry {
     std::uint32_t kind{};
     std::uint32_t vintage{};
-    harkenstudio::ObjectId id{};
+    harken::studio::types::ObjectId id{};
     std::uint64_t offset{};
     std::uint64_t size{};
     std::uint64_t payloadChecksum{};
@@ -394,7 +394,7 @@ struct PackVariablePolicyHeader {
 };
 
 struct PackVariablePolicyRow {
-    harkenstudio::ObjectId variableId{};
+    harken::studio::types::ObjectId variableId{};
     std::uint8_t writers{};
     std::uint64_t executionFingerprint{};
 };
@@ -409,7 +409,7 @@ struct PackVariableLabelHeader {
 };
 
 struct PackVariableLabel {
-    harkenstudio::ObjectId labelId{};
+    harken::studio::types::ObjectId labelId{};
     std::int32_t anchor{};
 };
 
@@ -418,16 +418,16 @@ struct PackVariableRequirementsHeader {
 };
 
 struct PackVariableRequirement {
-    harkenstudio::ObjectId stableId{};
+    harken::studio::types::ObjectId stableId{};
     std::uint64_t expectedExecutionFingerprint{};
     std::uint64_t expectedLabelMappingFingerprint{};
 };
 }
 
-namespace harkenstudiobuild {
+namespace harken::studio::build {
 
 struct PackWorldVariableWire {
-    harkenstudio::ObjectId variableId{};
+    harken::studio::types::ObjectId variableId{};
     std::uint32_t kind = 0;
     float rangeMin = 0;
     float rangeMax = 0;
@@ -436,10 +436,10 @@ struct PackWorldVariableWire {
 
 }
 
-namespace harkenstudiobuild {
+namespace harken::studio::build {
 
 struct PackSegmentEntryTimeline {
-    harkenstudio::ObjectId stableMarkerId{};
+    harken::studio::types::ObjectId stableMarkerId{};
     std::uint64_t position = 0;
     std::uint64_t contentStart = 0;
     std::uint64_t contentEnd = 0;
@@ -451,7 +451,7 @@ struct PackSegmentEntryTimeline {
 
 #include <harken_studio_build/PackWire.h>
 
-namespace harkenstudiobuild {
+namespace harken::studio::build {
 
 inline bool ReadPackCanonicalPartitionHeader(
     const std::uint8_t* in, std::uint64_t size,
@@ -564,7 +564,7 @@ inline bool ReadPackVoiceRecipeTone(const std::uint8_t* in, PackVoiceRecipeTone*
 
 inline bool PackVoiceRecipeSpatialValid(const PackVoiceRecipeSpatial& spatial) noexcept {
     if (spatial.reserved0 != 0) return false;
-    if (spatial.attenuationId == harkenstudio::ObjectId{}) return std::bit_cast<std::uint32_t>(spatial.distanceScale) == 0;
+    if (spatial.attenuationId == harken::studio::types::ObjectId{}) return std::bit_cast<std::uint32_t>(spatial.distanceScale) == 0;
     return std::isfinite(spatial.distanceScale) && spatial.distanceScale > 0.0f;
 }
 
@@ -603,9 +603,9 @@ inline bool ReadPackVoiceRecipeInstall(const std::uint8_t* in, PackVoiceRecipeIn
 
 template <class Container>
 inline bool ReadPackContainerPayload(const std::uint8_t* in, std::uint64_t size,
-                                      harkenstudio::ObjectId expectedId, Container& container) {
+                                      harken::studio::types::ObjectId expectedId, Container& container) {
     if (!ReadPackContainerHeader(in, size, &container.header) ||
-        container.header.containerId == harkenstudio::ObjectId{} || container.header.containerId != expectedId) return false;
+        container.header.containerId == harken::studio::types::ObjectId{} || container.header.containerId != expectedId) return false;
     container.children.resize(container.header.childCount);
     struct Visitor {
         Container& row;
@@ -623,9 +623,9 @@ inline bool ReadPackContainerPayload(const std::uint8_t* in, std::uint64_t size,
 
 template <class Recipe>
 inline bool ReadPackVoiceRecipePayload(const std::uint8_t* in, std::uint64_t size,
-                                       harkenstudio::ObjectId expectedId, Recipe& recipe) {
+                                       harken::studio::types::ObjectId expectedId, Recipe& recipe) {
     if (!ReadPackVoiceRecipeHeader(in, size, &recipe.header) ||
-        recipe.header.playableId == harkenstudio::ObjectId{} || recipe.header.playableId != expectedId) return false;
+        recipe.header.playableId == harken::studio::types::ObjectId{} || recipe.header.playableId != expectedId) return false;
     recipe.installs.resize(recipe.header.installCount);
     recipe.bindings.resize(recipe.header.bindingCount);
     struct InstallVisitor {
@@ -685,13 +685,13 @@ inline bool ReadPackAttenuation(const std::uint8_t* in, std::uint64_t size,
     return ParsePackRow<HkPackAttenuation>(in, size, out);
 }
 
-inline void WritePackBindingDefinition(harkenstudio::ObjectId bindingId, const BindingDefinition& definition,
+inline void WritePackBindingDefinition(harken::studio::types::ObjectId bindingId, const BindingDefinition& definition,
                                        std::uint8_t* out) noexcept {
     SerializePackRow<HkPackBindingDefinition>(PackBindingDefinitionEntry{bindingId, definition}, out);
 }
 
 inline bool ReadPackBindingDefinition(const std::uint8_t* in, std::uint64_t size,
-                                      harkenstudio::ObjectId* outId, BindingDefinition* out) noexcept {
+                                      harken::studio::types::ObjectId* outId, BindingDefinition* out) noexcept {
     PackBindingDefinitionEntry row{};
     if (!ParsePackRow<HkPackBindingDefinition>(in, size, &row)) return false;
     *outId = row.bindingId;

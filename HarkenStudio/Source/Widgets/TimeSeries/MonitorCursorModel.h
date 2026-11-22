@@ -5,7 +5,7 @@
 #include <optional>
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 
 enum class MonitorCursorMode
 {
@@ -110,4 +110,4 @@ private:
     bool publishing_ = false;
 };
 
-} // namespace VNX
+} // namespace harken::studio

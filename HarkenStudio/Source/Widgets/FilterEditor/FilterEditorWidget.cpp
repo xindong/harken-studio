@@ -19,7 +19,7 @@
 #include <QStackedWidget>
 #include <QVBoxLayout>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 std::optional<QVector<ProjectPlatformId>> authoringPlatforms()

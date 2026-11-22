@@ -4,7 +4,7 @@
 
 class QMenu;
 
-namespace VNX {
+namespace harken::studio {
 
 class ToolBarComboBox : public QComboBox
 {

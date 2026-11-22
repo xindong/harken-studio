@@ -5,14 +5,14 @@
 #include <array>
 #include <cstdint>
 
-namespace VNX {
+namespace harken::studio {
 
 // The system-wide unified curve form (blueprint D1): a point list plus one
 // bezier handle pair per segment. Attenuation dimensions, binding mapping
 // curves, and grid edge fades all carry this one shape; a two-point curve is
 // the natural single-segment degenerate, never a second form.
 
-// Runtime curves carry at most 8 control points (harkenstudiobuild::kMaxCurvePoints,
+// Runtime curves carry at most 8 control points (harken::studio::build::kMaxCurvePoints,
 // HarkenStudio/Source/Tooling/PackBuild/include/harken_studio_build/Curve.h); authoring
 // write paths refuse to grow a curve past this so export never has to trim.
 inline constexpr int kCurveMaxPoints = 8;

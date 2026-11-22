@@ -5,7 +5,7 @@
 #include "Core/Components/VSelection.h"
 #include "Core/BusRouteGraph.h"
 
-namespace VNX {
+namespace harken::studio {
 
 enum class SignalPathConnectGesture { Output, Input, Node };
 enum class SignalPathConnectTarget { Body, Input, Output };

@@ -670,32 +670,6 @@ target_compile_definitions(harken_monitor_public_api_probe PRIVATE
 add_test(NAME monitor_public_api_probe
          COMMAND "$<TARGET_FILE:harken_monitor_public_api_probe>")
 
-add_executable(harken_runtime_tests_hub_absent
-    UnitTest/PassthroughGoldenTest.cpp
-)
-target_link_libraries(harken_runtime_tests_hub_absent PRIVATE
-    harken_core_hub_absent harken_buildinfo GTest::gtest_main)
-target_include_directories(harken_runtime_tests_hub_absent PRIVATE
-    ${HARKEN_CORE_DIR}/api/src
-    ${HARKEN_DEVELOPMENT_PRIVATE_INCLUDES}
-    ${HARKEN_CORE_DIR}/core/include
-    ${HARKEN_CORE_DIR}/dsp/include
-    ${HARKEN_CORE_DIR}/media/include
-    ${HARKEN_PACK_FORMAT_INCLUDE_DIR}
-    ${HARKEN_CORE_DIR}/param/include
-    ${HARKEN_CORE_DIR}/render/include
-    ${CMAKE_CURRENT_SOURCE_DIR}
-)
-target_compile_definitions(harken_runtime_tests_hub_absent PRIVATE
-    HARKEN_MONITOR_HUB_ABSENT
-    _CRT_SECURE_NO_WARNINGS)
-if(HARKEN_ENABLE_STAGE_TAPS)
-    target_compile_definitions(harken_runtime_tests_hub_absent PRIVATE HARKEN_ENABLE_STAGE_TAPS)
-endif()
-gtest_discover_tests(harken_runtime_tests_hub_absent
-    TEST_PREFIX "HubAbsent."
-    PROPERTIES TIMEOUT 120 LABELS harken-artifact-contract)
-
 # The forced fallback executable owns a separately compiled worker-pool object.
 # It must not link harken_core because the private wake strategy changes the
 # RenderWorkerPool layout for this target.

@@ -15,7 +15,7 @@
 #include <algorithm>
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 

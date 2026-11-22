@@ -10,7 +10,7 @@
 
 #include <QSet>
 
-namespace VNX::ReferenceSlotResolution {
+namespace harken::studio::ReferenceSlotResolution {
 namespace {
 
 std::shared_ptr<const FieldGroupEffectiveSnapshot> currentSnapshot(const ProjectItem* item)

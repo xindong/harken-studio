@@ -15,6 +15,7 @@
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QJsonObject>
 #include <QLockFile>
 #include <QSaveFile>
 #include <QThread>
@@ -23,7 +24,7 @@
 #include <functional>
 #include <memory>
 
-namespace VNX {
+namespace harken::hub::unity {
 namespace {
 
 using Service = UnityIntegrationService;
@@ -67,7 +68,7 @@ QStringList allFiles(const QString& root)
     QDirIterator it(root, QDir::Files | QDir::Hidden | QDir::System | QDir::NoDotAndDotDot,
                     QDirIterator::Subdirectories);
     while (it.hasNext()) {
-        VNH::IntegrationProgress::inspectedEntry();
+        harken::hub::IntegrationProgress::inspectedEntry();
         files << normalizePath(QDir(root).relativeFilePath(it.next()));
     }
     files.sort(Qt::CaseSensitive);
@@ -85,13 +86,13 @@ QStringList relativeFiles(const QString& root)
 
 QByteArray sha256File(const QString& path)
 {
-    VNH::IntegrationProgress::inspectedEntry();
+    harken::hub::IntegrationProgress::inspectedEntry();
     constexpr int kRetries = 25;
     for (int attempt = 0; attempt <= kRetries; ++attempt) {
         QFile file(path);
         if (file.open(QIODevice::ReadOnly)) {
             QCryptographicHash hash(QCryptographicHash::Sha256);
-            if (VNH::IntegrationProgress::addFileData(file, hash)) return hash.result();
+            if (harken::hub::IntegrationProgress::addFileData(file, hash)) return hash.result();
         }
         if (!QFileInfo::exists(path)) return {};
         QThread::msleep(20);
@@ -117,7 +118,7 @@ bool copyFile(const QString& source, const QString& target, QString* error)
     }
     QByteArray buffer(1024 * 1024, Qt::Uninitialized);
     while (!input.atEnd()) {
-        VNH::IntegrationProgress::checkpoint();
+        harken::hub::IntegrationProgress::checkpoint();
         const qint64 count = input.read(buffer.data(), buffer.size());
         if (count < 0 || output.write(buffer.constData(), count) != count) {
             *error = QStringLiteral("Copy failed from %1 to %2").arg(source, target);
@@ -183,7 +184,7 @@ QString projectIdentity(const QString& project)
 
 QString hubProjectDirectory(const QString& area, const QString& project, QString* error)
 {
-    const QString userRoot = VNH::userDataDir();
+    const QString userRoot = harken::hub::userDataDir();
     if (userRoot.isEmpty() || !QDir().mkpath(userRoot)) {
         *error = QCoreApplication::translate("HarkenHub", "Cannot create the Hub application-data directory: %1").arg(userRoot);
         return {};
@@ -287,7 +288,7 @@ bool createBackup(const QString& project, const QString& target, const QString& 
         {QStringLiteral("version"), packageVersion(target)},
         {QStringLiteral("files"), QJsonArray::fromStringList(files)},
         {QStringLiteral("created_at_utc"), QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs)}};
-    if (VNH::writeIntegrationFile(QDir(backupRoot).filePath(QLatin1String(kBackupRecord)),
+    if (harken::hub::writeIntegrationFile(QDir(backupRoot).filePath(QLatin1String(kBackupRecord)),
                                   QJsonDocument(record).toJson(QJsonDocument::Indented), error)
         && (files.isEmpty() || backupReady(backupRoot)))
         return true;
@@ -300,8 +301,8 @@ bool createBackup(const QString& project, const QString& target, const QString& 
 class StepRunner
 {
 public:
-    StepRunner(Service::Result& result, std::function<void(int)> publish, std::initializer_list<StepSpec> specs)
-        : result_(result), publish_(std::move(publish))
+    StepRunner(Service::Result& result, std::initializer_list<StepSpec> specs)
+        : result_(result)
     {
         for (const StepSpec& spec : specs) {
             StepResult step;
@@ -315,19 +316,17 @@ public:
 
     void run(const std::function<void(StepResult&)>& body, bool runWhenBlocked = false)
     {
-        StepResult& step = result_.steps[next_];
+        StepResult& step = result_.steps[next_++];
         if (blocked_ && !runWhenBlocked) {
             step.status = StepStatus::Skipped;
             step.summary = QStringLiteral("Not run because %1 failed.").arg(blockingTitle_);
             step.cause = QStringLiteral("A required earlier step did not complete.");
             step.remediation = QStringLiteral("Fix the first failed step, then run integration again.");
-            publish_(next_++);
             return;
         }
         QElapsedTimer timer;
         timer.start();
         step.status = StepStatus::Running;
-        publish_(next_);
         body(step);
         step.elapsedMs = timer.elapsed();
         if (step.status == StepStatus::Running) step.status = StepStatus::Succeeded;
@@ -335,7 +334,6 @@ public:
             blocked_ = true;
             blockingTitle_ = step.title;
         }
-        publish_(next_++);
     }
 
     void finish()
@@ -349,7 +347,6 @@ public:
 
 private:
     Service::Result& result_;
-    std::function<void(int)> publish_;
     int next_ = 0;
     bool blocked_ = false;
     QString blockingTitle_;
@@ -419,7 +416,7 @@ void writeReport(Service::Result& result, const QString& kind, bool checkOnly, S
         if (!item.details.isEmpty()) text += QStringLiteral("Details:\n%1\n\n").arg(item.details.join(QLatin1Char('\n')));
     }
     const QJsonObject root{
-        {QStringLiteral("schema_version"), 3},
+        {QStringLiteral("schema_version"), 4},
         {QStringLiteral("operation"), kind},
         {QStringLiteral("generated_at_utc"), QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs)},
         {QStringLiteral("success"), success},
@@ -432,8 +429,8 @@ void writeReport(Service::Result& result, const QString& kind, bool checkOnly, S
         {QStringLiteral("previous_version_available"), result.previousVersionAvailable},
         {QStringLiteral("steps"), steps}};
     QString error;
-    if (!VNH::writeIntegrationFile(jsonPath, QJsonDocument(root).toJson(QJsonDocument::Indented), &error)
-        || !VNH::writeIntegrationFile(textPath, text.toUtf8(), &error)) {
+    if (!harken::hub::writeIntegrationFile(jsonPath, QJsonDocument(root).toJson(QJsonDocument::Indented), &error)
+        || !harken::hub::writeIntegrationFile(textPath, text.toUtf8(), &error)) {
         step.status = StepStatus::Failed;
         step.summary = QStringLiteral("The integration report could not be written.");
         step.cause = error;
@@ -447,11 +444,6 @@ void writeReport(Service::Result& result, const QString& kind, bool checkOnly, S
 }
 
 } // namespace
-
-UnityIntegrationService::UnityIntegrationService(QObject* parent)
-    : QObject(parent)
-{
-}
 
 QString UnityIntegrationService::statusName(StepStatus status)
 {
@@ -517,21 +509,6 @@ QString UnityIntegrationService::previousVersionBackup(const QString& unityProje
     return !backupRoot.isEmpty() && backupReady(backupRoot) ? backupRoot : QString();
 }
 
-QJsonObject UnityIntegrationService::stepToJson(const StepResult& step)
-{
-    QJsonObject object;
-    object[QStringLiteral("id")] = step.id;
-    object[QStringLiteral("title")] = step.title;
-    object[QStringLiteral("status")] = statusName(step.status);
-    object[QStringLiteral("summary")] = step.summary;
-    object[QStringLiteral("cause")] = step.cause;
-    object[QStringLiteral("remediation")] = step.remediation;
-    object[QStringLiteral("elapsed_ms")] = step.elapsedMs;
-    object[QStringLiteral("details")] = QJsonArray::fromStringList(step.details);
-    object[QStringLiteral("artifacts")] = QJsonArray::fromStringList(step.artifacts);
-    return object;
-}
-
 UnityIntegrationService::Result UnityIntegrationService::run(const Request& request)
 {
     if (request.restorePrevious) return restorePrevious(request);
@@ -543,11 +520,10 @@ UnityIntegrationService::Result UnityIntegrationService::install(const Request& 
 {
     Result result;
     result.unityProjectPath = cleanAbsolutePath(request.unityProjectPath);
-    StepRunner runner(result, [&](int index) { emit stepUpdated(index, result.steps[index]); },
-        {{"unity_preflight", "Validate Unity project"},
-         {"sdk_preflight", "Validate Harken Unity Integration Package source"},
-         {"compare_sdk", "Compare installed Unity Integration Package"},
-         {"install_sdk", "Install or update Unity Integration Package"},
+    StepRunner runner(result, {{"unity_preflight", "Validate Unity project"},
+         {"package_preflight", "Validate Harken Unity Integration Package source"},
+         {"compare_package", "Compare installed Unity Integration Package"},
+         {"install_package", "Install or update Unity Integration Package"},
          {"verify", "Verify installed Integration Package"},
          {"report", "Write integration report"}});
     QString target;
@@ -715,8 +691,7 @@ UnityIntegrationService::Result UnityIntegrationService::remove(const Request& r
 {
     Result result;
     result.unityProjectPath = cleanAbsolutePath(request.unityProjectPath);
-    StepRunner runner(result, [&](int index) { emit stepUpdated(index, result.steps[index]); },
-        {{"unity_preflight", "Validate Unity project"},
+    StepRunner runner(result, {{"unity_preflight", "Validate Unity project"},
          {"inspect_installation", "Review installed Harken Integration Package"},
          {"remove_integration", "Remove Harken Integration Package"},
          {"removal_report", "Write removal report"}});
@@ -824,8 +799,7 @@ UnityIntegrationService::Result UnityIntegrationService::restorePrevious(const R
 {
     Result result;
     result.unityProjectPath = cleanAbsolutePath(request.unityProjectPath);
-    StepRunner runner(result, [&](int index) { emit stepUpdated(index, result.steps[index]); },
-        {{"unity_preflight", "Validate Unity project"},
+    StepRunner runner(result, {{"unity_preflight", "Validate Unity project"},
          {"restore_previous", "Restore previous Integration Package"},
          {"report", "Write integration report"}});
     QString backupRoot;
@@ -911,4 +885,4 @@ UnityIntegrationService::Result UnityIntegrationService::restorePrevious(const R
     return result;
 }
 
-} // namespace VNX
+} // namespace harken::hub::unity

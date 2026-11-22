@@ -13,7 +13,7 @@ class QLabel;
 class QProgressBar;
 class QTableWidget;
 
-namespace VNH {
+namespace harken::hub {
 
 class DialogTextView;
 class VersionReleaseNotes;

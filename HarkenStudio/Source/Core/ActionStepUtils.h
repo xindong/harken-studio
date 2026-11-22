@@ -8,13 +8,13 @@
 #include <cstdint>
 #include <vector>
 
-namespace VNX::EditorUtils {
+namespace harken::studio::EditorUtils {
 
 struct ActionStepCatalogEntry
 {
-    VNX::VActionStep::Type type = VNX::VActionStep::Type::Play;
+    harken::studio::VActionStep::Type type = harken::studio::VActionStep::Type::Play;
     QString name;
-    std::vector<VNX::ProjectItem::Type> targetTypes;
+    std::vector<harken::studio::ProjectItem::Type> targetTypes;
     bool supportsQuantize = false;
     bool hasFade = false;
     bool hasValue = false;
@@ -23,23 +23,23 @@ struct ActionStepCatalogEntry
 
 const std::vector<ActionStepCatalogEntry>& actionStepCatalog();
 
-const ActionStepCatalogEntry* actionStepCatalogEntry(VNX::VActionStep::Type type);
+const ActionStepCatalogEntry* actionStepCatalogEntry(harken::studio::VActionStep::Type type);
 
-const std::vector<VNX::ProjectItem::Type>& actionStepTargetTypes(
-    VNX::VActionStep::Type type);
+const std::vector<harken::studio::ProjectItem::Type>& actionStepTargetTypes(
+    harken::studio::VActionStep::Type type);
 
-std::vector<VNX::ProjectItem::Type> userFacingActionStepTargetTypes(
-    VNX::VActionStep::Type type);
+std::vector<harken::studio::ProjectItem::Type> userFacingActionStepTargetTypes(
+    harken::studio::VActionStep::Type type);
 
-bool canActionStepReferenceObject(VNX::VActionStep::Type type,
-                                  VNX::ProjectItem::Type targetType,
+bool canActionStepReferenceObject(harken::studio::VActionStep::Type type,
+                                  harken::studio::ProjectItem::Type targetType,
                                   uint32_t targetObjectID = 0,
                                   uint32_t currentActionObjectID = 0);
 
-bool defaultActionStepTypeForTarget(VNX::ProjectItem::Type targetType,
-                                    VNX::VActionStep::Type& outType);
+bool defaultActionStepTypeForTarget(harken::studio::ProjectItem::Type targetType,
+                                    harken::studio::VActionStep::Type& outType);
 
-bool isCanonicalActionQuantize(const VNX::ActionQuantizeDef& quantize);
+bool isCanonicalActionQuantize(const harken::studio::ActionQuantizeDef& quantize);
 
 enum class ActionRuntimeReadinessState {
     Ready,
@@ -56,7 +56,7 @@ struct ActionRuntimeReadiness
     bool ready() const { return state == ActionRuntimeReadinessState::Ready; }
 };
 
-ActionRuntimeReadiness actionStepRuntimeReadiness(const VNX::VActionStep& step);
+ActionRuntimeReadiness actionStepRuntimeReadiness(const harken::studio::VActionStep& step);
 
 enum class ActionTargetState { Empty, Resolved, Dangling };
 
@@ -71,29 +71,29 @@ struct ActionStepTargetResolution
 struct ActionTargetRecord
 {
     uint32_t objectID = 0;
-    VNX::ProjectItem::Type type = VNX::ProjectItem::Type::None;
+    harken::studio::ProjectItem::Type type = harken::studio::ProjectItem::Type::None;
     QString name;
 };
 
 class ActionTargetLookup
 {
 public:
-    void add(const VNX::ProjectItem& item);
+    void add(const harken::studio::ProjectItem& item);
     void renameObject(uint32_t objectID, const QString& name);
     const ActionTargetRecord* findByObjectID(uint32_t objectID) const;
     const std::vector<ActionTargetRecord>& findByLeafName(const QString& leafName) const;
-    const std::vector<VNX::VActionStep>& postActionSteps(uint32_t objectID) const;
+    const std::vector<harken::studio::VActionStep>& postActionSteps(uint32_t objectID) const;
 
 private:
     QHash<uint32_t, ActionTargetRecord> byObjectID_;
     QHash<QString, std::vector<ActionTargetRecord>> byLeafName_;
-    QHash<uint32_t, std::vector<VNX::VActionStep>> postActionSteps_;
+    QHash<uint32_t, std::vector<harken::studio::VActionStep>> postActionSteps_;
 };
 
-ActionTargetLookup makeProjectTargetLookup(const VNX::ProjectData& project);
+ActionTargetLookup makeProjectTargetLookup(const harken::studio::ProjectData& project);
 
 ActionStepTargetResolution resolveActionStepTarget(
-    VNX::VActionStep::Type stepType,
+    harken::studio::VActionStep::Type stepType,
     uint32_t targetObjectID,
     const QString& targetName,
     const ActionTargetLookup& lookup,
@@ -101,12 +101,12 @@ ActionStepTargetResolution resolveActionStepTarget(
 
 QString postActionCycleError(
     uint32_t currentActionObjectID,
-    const std::vector<VNX::VActionStep>& replacementSteps,
+    const std::vector<harken::studio::VActionStep>& replacementSteps,
     const ActionTargetLookup& lookup);
 
 void applyActionStepTypeChange(
-    VNX::VActionStep& step,
-    VNX::VActionStep::Type newType,
+    harken::studio::VActionStep& step,
+    harken::studio::VActionStep::Type newType,
     const ActionTargetLookup& lookup,
     uint32_t currentActionObjectID = 0);
 

@@ -4,7 +4,7 @@
 #include <QWidget>
 #include <utility>
 
-namespace VNX {
+namespace harken::studio {
 
 void WorkspaceWindowCatalog::registerWindow(WorkspaceWindowDescriptor descriptor)
 {
@@ -310,83 +310,33 @@ QVector<WorkspaceWindowDescriptor> defaultWorkspaceWindowDescriptors()
             MaterializationPolicy::OnDemand,
             ClosePolicy::Hide,
             AvailabilityPolicy::FeatureDisabled
-        },
-        {
-            QStringLiteral("MonitorStreaming"),
-            QStringLiteral("Streaming"),
-            QStringLiteral("MonitorStreamingDock"),
-            WindowKind::Singleton,
-            {DefaultDockArea::Floating, QString(), false},
-            MaterializationPolicy::OnDemand,
-            ClosePolicy::Hide,
-            AvailabilityPolicy::FeatureDisabled
-        },
-        {
-            QStringLiteral("MonitorMemory"),
-            QStringLiteral("Memory"),
-            QStringLiteral("MonitorMemoryDock"),
-            WindowKind::Singleton,
-            {DefaultDockArea::Floating, QString(), false},
-            MaterializationPolicy::OnDemand,
-            ClosePolicy::Hide,
-            AvailabilityPolicy::FeatureDisabled
-        },
-        {
-            QStringLiteral("MonitorGameModulate"),
-            QStringLiteral("Game Modulate"),
-            QStringLiteral("MonitorGameModulateDock"),
-            WindowKind::Singleton,
-            {DefaultDockArea::Floating, QString(), false},
-            MaterializationPolicy::OnDemand,
-            ClosePolicy::Hide,
-            AvailabilityPolicy::FeatureDisabled
-        },
-        {
-            QStringLiteral("MonitorEmitters"),
-            QStringLiteral("Emitters"),
-            QStringLiteral("MonitorEmittersDock"),
-            WindowKind::Singleton,
-            {DefaultDockArea::Floating, QString(), false},
-            MaterializationPolicy::OnDemand,
-            ClosePolicy::Hide,
-            AvailabilityPolicy::FeatureDisabled
         }
     };
 }
 
 QStringList ipcKnownPanelObjectNames()
 {
-    return {
-        QStringLiteral("Explorer"),
-        QStringLiteral("ProjectSettingsPanel"),
-        QStringLiteral("PreferencesPanel"),
-        QStringLiteral("RemoteConnectPanel"),
-        QStringLiteral("InspectorPanel"),
-        QStringLiteral("BlueprintPanel"),
-        QStringLiteral("ControlPanel"),
-        QStringLiteral("PublisherPanel"),
-        QStringLiteral("LogPanel"),
-        QStringLiteral("MeterPanel"),
-        QStringLiteral("MonitorPerformanceDock"),
-        QStringLiteral("MonitorDock"),
-        QStringLiteral("MonitorVoicesDock"),
-        QStringLiteral("MonitorPlayablesDock"),
-        QStringLiteral("MonitorEffectsDock"),
-        QStringLiteral("MonitorBusesDock"),
-        QStringLiteral("MonitorDspTimelineDock"),
-        QStringLiteral("MonitorLineageDock"),
-        QStringLiteral("MonitorTapSelectDock"),
-        QStringLiteral("MonitorWaveformDock"),
-        QStringLiteral("MonitorScopeDock"),
-        QStringLiteral("MonitorSpectrumDock"),
-        QStringLiteral("MonitorRecordingDock"),
-        QStringLiteral("MonitorSessionCompareDock"),
-        QStringLiteral("MonitorStreamingDock"),
-        QStringLiteral("MonitorMemoryDock"),
-        QStringLiteral("MonitorGameModulateDock"),
-        QStringLiteral("MonitorEmittersDock"),
-        QStringLiteral("MonitorCapturePlanBar"),
-    };
+    static const QStringList names = [] {
+        QStringList panels{
+            QStringLiteral("Explorer"),
+            QStringLiteral("ProjectSettingsPanel"),
+            QStringLiteral("PreferencesPanel"),
+            QStringLiteral("RemoteConnectPanel"),
+            QStringLiteral("InspectorPanel"),
+            QStringLiteral("BlueprintPanel"),
+            QStringLiteral("ControlPanel"),
+            QStringLiteral("PublisherPanel"),
+            QStringLiteral("LogPanel"),
+            QStringLiteral("MeterPanel"),
+            QStringLiteral("MonitorCapturePlanBar"),
+        };
+        for (const auto& descriptor : defaultWorkspaceWindowDescriptors()) {
+            if (descriptor.isMonitorPanel())
+                panels.append(descriptor.dockObjectName);
+        }
+        return panels;
+    }();
+    return names;
 }
 
 QString ipcKnownPanelObjectNameFromWidget(const QWidget* widget)

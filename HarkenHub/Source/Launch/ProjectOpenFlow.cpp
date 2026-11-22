@@ -13,7 +13,7 @@
 #include <QVBoxLayout>
 #include <algorithm>
 
-namespace VNH {
+namespace harken::hub {
 
 namespace {
 
@@ -44,14 +44,6 @@ bool ProjectOpenFlow::ensureRegistered(ProjectStore* store, const QString& path,
         return false;
     }
     return true;
-}
-
-bool ProjectOpenFlow::isVersionBlock(const QString& blockCode)
-{
-    return blockCode == QStringLiteral("VersionSelectionRequired")
-        || blockCode == QStringLiteral("VersionUnavailable")
-        || blockCode == QStringLiteral("VersionNeedsRepair")
-        || blockCode == QStringLiteral("ExecutableMissing");
 }
 
 ProjectOpenOutcome ProjectOpenFlow::open(

@@ -4,7 +4,7 @@
 
 class QHeaderView;
 
-namespace VNX {
+namespace harken::studio {
 
 class ThemeManager;
 

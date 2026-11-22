@@ -3,7 +3,7 @@
 
 #include "harken_studio_build/World.h"
 
-namespace harkenstudiobuild::detail {
+namespace harken::studio::build::detail {
 
 #if defined(__GNUC__) || defined(__clang__)
 #define HARKEN_STUDIO_BUILD_DETAIL_HIDDEN __attribute__((visibility("hidden")))
@@ -19,6 +19,6 @@ HARKEN_STUDIO_BUILD_DETAIL_HIDDEN std::uint64_t ComputeCurrentWorldLocalCapabili
 
 #undef HARKEN_STUDIO_BUILD_DETAIL_HIDDEN
 
-} // namespace harkenstudiobuild::detail
+} // namespace harken::studio::build::detail
 
 #endif // HARKEN_STUDIO_BUILD_DETAIL_CURRENT_WORLD_VALIDATION_H

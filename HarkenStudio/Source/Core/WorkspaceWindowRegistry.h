@@ -10,7 +10,7 @@
 #include <QString>
 #include <QWidget>
 
-namespace VNX {
+namespace harken::studio {
 
 struct WorkspaceWindowInstanceEntry
 {

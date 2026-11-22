@@ -16,7 +16,7 @@ TEST(ProjectCreateFlowTest, DispatchDoesNotWaitForProjectCreation)
 {
     QTemporaryDir directory;
     ASSERT_TRUE(directory.isValid());
-    VNH::ProjectCreateRequest request;
+    harken::hub::ProjectCreateRequest request;
     request.version.installPath = QFileInfo(QString::fromUtf8(HARKEN_HUB_STUDIO_FIXTURE)).absolutePath();
     request.version.executablePath = QString::fromUtf8(HARKEN_HUB_STUDIO_FIXTURE);
     request.version.semanticVersion = QStringLiteral("1.4.0");
@@ -27,7 +27,7 @@ TEST(ProjectCreateFlowTest, DispatchDoesNotWaitForProjectCreation)
     scenario.write("{}");
     scenario.close();
     QString error;
-    ASSERT_TRUE(VNH::ProjectCreateFlow::create(request, &error)) << error.toStdString();
+    ASSERT_TRUE(harken::hub::ProjectCreateFlow::create(request, &error)) << error.toStdString();
     const auto path = directory.filePath("Demo/Demo.hsp");
     QFile log(path + ".launch.json");
     QElapsedTimer timer;
@@ -40,20 +40,20 @@ TEST(ProjectCreateFlowTest, DispatchDoesNotWaitForProjectCreation)
     const auto pid = QJsonDocument::fromJson(log.readAll()).object().value("pid").toInteger();
     EXPECT_GT(pid, 0);
     EXPECT_FALSE(QFileInfo::exists(path));
-    EXPECT_FALSE(VNH::executablePathForPid(pid).isEmpty());
-    ASSERT_TRUE(VNH::terminateProcessById(pid));
-    while (!VNH::executablePathForPid(pid).isEmpty() && timer.elapsed() < 15000)
+    EXPECT_FALSE(harken::hub::executablePathForPid(pid).isEmpty());
+    ASSERT_TRUE(harken::hub::terminateProcessById(pid));
+    while (!harken::hub::executablePathForPid(pid).isEmpty() && timer.elapsed() < 15000)
         QThread::msleep(5);
 }
 
 TEST(ProjectCreateFlowTest, MissingExecutableReturnsTheDispatchError)
 {
     QTemporaryDir directory;
-    VNH::ProjectCreateRequest request;
+    harken::hub::ProjectCreateRequest request;
     request.version.installPath = directory.path();
     request.version.executablePath = directory.filePath("MissingStudio.exe");
     request.version.semanticVersion = QStringLiteral("1.4.0");
     QString error;
-    EXPECT_FALSE(VNH::ProjectCreateFlow::create(request, &error));
+    EXPECT_FALSE(harken::hub::ProjectCreateFlow::create(request, &error));
     EXPECT_TRUE(error.contains(request.version.executablePath));
 }

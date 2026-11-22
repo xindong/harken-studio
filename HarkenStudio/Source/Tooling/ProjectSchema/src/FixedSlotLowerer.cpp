@@ -3,7 +3,7 @@
 #include <cstddef>
 #include <utility>
 
-namespace harkenprojectschema {
+namespace harken::studio::project_schema {
 
 LowerEffectChainResult LowerEffectChainToFixedSlots(
     const CompiledEffectChain& chain, const AuthoringGuid& owner) {
@@ -28,4 +28,4 @@ LowerEffectChainResult LowerEffectChainToFixedSlots(
     return result;
 }
 
-}  // namespace harkenprojectschema
+}  // namespace harken::studio::project_schema

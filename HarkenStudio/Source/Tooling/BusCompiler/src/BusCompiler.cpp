@@ -15,7 +15,7 @@
 #include <string_view>
 #include <tuple>
 
-namespace harkenbuscompiler {
+namespace harken::studio::bus_compiler {
 namespace {
 
 constexpr std::string_view kAuthoredBusFingerprintTagV1 = "harken.bus.authored.v1";
@@ -24,19 +24,19 @@ constexpr std::string_view kPublishedBusFingerprintTagV2 = "harken.bus.published
 
 void appendU32(std::vector<std::uint8_t>& bytes, std::uint32_t value)
 {
-    harkenstudiobuild::busfingerprint::AppendU32(
+    harken::studio::build::busfingerprint::AppendU32(
         [&bytes](std::uint8_t byte) { bytes.push_back(byte); }, value);
 }
 
 void appendU64(std::vector<std::uint8_t>& bytes, std::uint64_t value)
 {
-    harkenstudiobuild::busfingerprint::AppendU64(
+    harken::studio::build::busfingerprint::AppendU64(
         [&bytes](std::uint8_t byte) { bytes.push_back(byte); }, value);
 }
 
 void appendF32(std::vector<std::uint8_t>& bytes, float value)
 {
-    appendU32(bytes, harkenstudiobuild::busfingerprint::CanonicalFloatBits(value));
+    appendU32(bytes, harken::studio::build::busfingerprint::CanonicalFloatBits(value));
 }
 
 void align8(std::vector<std::uint8_t>& bytes)
@@ -47,7 +47,7 @@ void align8(std::vector<std::uint8_t>& bytes)
 
 std::uint64_t fnv1a(const std::vector<std::uint8_t>& bytes)
 {
-    return harkenstudiobuild::busfingerprint::HashBytes(bytes.data(), bytes.size());
+    return harken::studio::build::busfingerprint::HashBytes(bytes.data(), bytes.size());
 }
 
 bool checkedAdd(std::uint64_t left, std::uint64_t right,
@@ -68,14 +68,14 @@ bool checkedMultiply(std::uint64_t left, std::uint64_t right,
     return true;
 }
 
-std::uint32_t channelCount(harkenstudio::ChannelLayout layout)
+std::uint32_t channelCount(harken::studio::types::ChannelLayout layout)
 {
     switch (layout) {
-    case harkenstudio::kChannelLayoutMono: return 1;
-    case harkenstudio::kChannelLayoutStereo: return 2;
-    case harkenstudio::kChannelLayoutQuad: return 4;
-    case harkenstudio::kChannelLayout5_1: return 6;
-    case harkenstudio::kChannelLayout7_1: return 8;
+    case harken::studio::types::kChannelLayoutMono: return 1;
+    case harken::studio::types::kChannelLayoutStereo: return 2;
+    case harken::studio::types::kChannelLayoutQuad: return 4;
+    case harken::studio::types::kChannelLayout5_1: return 6;
+    case harken::studio::types::kChannelLayout7_1: return 8;
     default: return 0;
     }
 }
@@ -95,12 +95,12 @@ TargetProfileValidity classifyTargetProfile(
     const auto mixChannels = channelCount(profile->mixLayout);
     const auto deviceChannels = channelCount(profile->deviceLayout);
     const bool fingerprintValid = profile->fingerprint != 0
-        && harkenprojectschema::compileTargetProfileFingerprintV1(*profile)
+        && harken::studio::project_schema::compileTargetProfileFingerprintV1(*profile)
             == profile->fingerprint;
     if (profile->vintage != 1 || profile->sampleRate < 1
         || profile->sampleRate > 384000
         || (profile->capabilityMask
-            & ~harkenprojectschema::kKnownCapabilityMaskV1) != 0) {
+            & ~harken::studio::project_schema::kKnownCapabilityMaskV1) != 0) {
         return TargetProfileValidity::Malformed;
     }
     if (mixChannels == 0 || deviceChannels == 0
@@ -121,10 +121,10 @@ bool validTargetEffectParameter(const CompileTargetProfileV1& profile,
                                 std::uint32_t parameterIndex,
                                 float value)
 {
-    if (!harkenstudiobuild::PackEffectParamInAuthoredRange(
+    if (!harken::studio::build::PackEffectParamInAuthoredRange(
             effectType, parameterIndex, value))
         return false;
-    if (effectType == harkenstudio::kEffectThreeBandTone
+    if (effectType == harken::studio::types::kEffectThreeBandTone
         && (parameterIndex == 1 || parameterIndex == 3
             || parameterIndex == 6)) {
         return value < static_cast<float>(profile.sampleRate) * 0.5f;
@@ -132,8 +132,8 @@ bool validTargetEffectParameter(const CompileTargetProfileV1& profile,
     return true;
 }
 
-bool hasIdentity(const std::shared_ptr<const harkenprojectschema::RuntimeIdentityIndexV1>& index,
-                 harkenstudio::ObjectId id, harkenprojectschema::RuntimeIdentityKindV1 kind)
+bool hasIdentity(const std::shared_ptr<const harken::studio::project_schema::RuntimeIdentityIndexV1>& index,
+                 harken::studio::types::ObjectId id, harken::studio::project_schema::RuntimeIdentityKindV1 kind)
 {
     if (!index)
         return false;
@@ -141,8 +141,8 @@ bool hasIdentity(const std::shared_ptr<const harkenprojectschema::RuntimeIdentit
     return claim != nullptr && claim->kind == kind;
 }
 
-BusDiagnosticV1 diagnostic(BusDiagnosticCodeV1 code, harkenstudio::ObjectId offending,
-                           harkenstudio::ObjectId related, std::uint64_t generation,
+BusDiagnosticV1 diagnostic(BusDiagnosticCodeV1 code, harken::studio::types::ObjectId offending,
+                           harken::studio::types::ObjectId related, std::uint64_t generation,
                            const BusSourceLocationV1& source = {})
 {
     return {code, offending, related, generation, source};
@@ -154,16 +154,16 @@ BusDiagnosticV1 numericDiagnostic(BusDiagnosticCodeV1 code, std::uint64_t actual
     return {code, {}, {}, generation, {}, actual, limit};
 }
 
-BusDiagnosticV1 detailDiagnostic(BusDiagnosticCodeV1 code, harkenstudio::ObjectId object,
+BusDiagnosticV1 detailDiagnostic(BusDiagnosticCodeV1 code, harken::studio::types::ObjectId object,
                                  std::uint64_t detail, std::uint64_t generation,
                                  const BusSourceLocationV1& source)
 {
     return {code, object, {}, generation, source, detail};
 }
 
-void appendObjectId(std::vector<std::uint8_t>& out, harkenstudio::ObjectId value)
+void appendObjectId(std::vector<std::uint8_t>& out, harken::studio::types::ObjectId value)
 {
-    const auto bytes = harkenstudio::ObjectIdBytes(value);
+    const auto bytes = harken::studio::types::ObjectIdBytes(value);
     out.insert(out.end(), bytes.begin(), bytes.end());
 }
 
@@ -223,7 +223,7 @@ bool sameSource(const BusSourceLocationV1& left,
 
 bool validSourceLocation(const BusSourceLocationV1& source)
 {
-    if (harkenprojectschema::IsNull(source.authoringGuid)
+    if (harken::studio::project_schema::IsNull(source.authoringGuid)
         || source.documentPath.empty() || source.fieldPath.empty()
         || source.documentPath.front() == '/'
         || source.documentPath.find('\\') != std::string::npos
@@ -345,7 +345,7 @@ bool serializedProofSize(const CompiledBusResultV1& result,
 std::uint32_t resolvedOutputLayout(const BusAuthoringV1& bus,
                                    const CompileTargetProfileV1& profile)
 {
-    if (bus.outputLayout == harkenstudio::kChannelLayoutDefault)
+    if (bus.outputLayout == harken::studio::types::kChannelLayoutDefault)
         return profile.mixLayout;
     const auto count = channelCount(bus.outputLayout);
     const auto mixCount = channelCount(profile.mixLayout);
@@ -359,7 +359,7 @@ void addDefaultMatrix(std::vector<float>& destination,
                       std::uint32_t destinationLayout)
 {
     float matrix[64] = {};
-    harkenstudiobuild::DefaultDownmixMatrix(sourceLayout, destinationLayout, matrix);
+    harken::studio::build::DefaultDownmixMatrix(sourceLayout, destinationLayout, matrix);
     destination.insert(destination.end(), std::begin(matrix), std::end(matrix));
 }
 
@@ -429,7 +429,7 @@ bool fingerprintStream(
     const std::uint64_t profileFingerprint = result.compileTargetProfile
         ? (result.compileTargetProfileFingerprint != 0
                ? result.compileTargetProfileFingerprint
-               : harkenprojectschema::compileTargetProfileFingerprintV1(
+               : harken::studio::project_schema::compileTargetProfileFingerprintV1(
                      *result.compileTargetProfile))
         : 0;
     appendU64(bytes, profileFingerprint);
@@ -616,16 +616,16 @@ BusCompileOutcomeV1 CompileBusProjectV1(const BusCompilerInputV1& input)
             input.projectGeneration));
     }
 
-    std::map<harkenstudio::ObjectId, BusAuthoringV1> byId;
+    std::map<harken::studio::types::ObjectId, BusAuthoringV1> byId;
     std::size_t masterCount = 0;
-    harkenstudio::ObjectId masterId{};
+    harken::studio::types::ObjectId masterId{};
     for (const auto& bus : input.buses) {
         if (!validSourceLocation(bus.source)) {
             outcome.diagnostics.push_back(diagnostic(
                 BusDiagnosticCodeV1::UnsupportedAuthoredProperty,
                 bus.busId, {}, input.projectGeneration, bus.source));
         }
-        if (bus.busId == harkenstudio::ObjectId{}) {
+        if (bus.busId == harken::studio::types::ObjectId{}) {
             outcome.diagnostics.push_back(diagnostic(
                 BusDiagnosticCodeV1::MissingIdentity, bus.busId, bus.parentId,
                 input.projectGeneration, bus.source));
@@ -633,16 +633,16 @@ BusCompileOutcomeV1 CompileBusProjectV1(const BusCompilerInputV1& input)
         }
         if (input.identityIndex
             && !hasIdentity(input.identityIndex, bus.busId,
-                            harkenprojectschema::RuntimeIdentityKindV1::Bus)) {
+                            harken::studio::project_schema::RuntimeIdentityKindV1::Bus)) {
             outcome.diagnostics.push_back(diagnostic(
                 BusDiagnosticCodeV1::MissingIdentity, bus.busId, {},
                 input.projectGeneration, bus.source));
         }
-        if (bus.parentId == harkenstudio::kMasterBusObjectId) {
+        if (bus.parentId == harken::studio::types::kMasterBusObjectId) {
             ++masterCount;
             masterId = bus.busId;
         }
-        if (bus.busId == harkenstudio::kMasterBusObjectId)
+        if (bus.busId == harken::studio::types::kMasterBusObjectId)
             outcome.diagnostics.push_back(diagnostic(
                 BusDiagnosticCodeV1::ReservedMasterCollision, bus.busId,
                 bus.parentId, input.projectGeneration, bus.source));
@@ -684,11 +684,11 @@ BusCompileOutcomeV1 CompileBusProjectV1(const BusCompilerInputV1& input)
     }
     if (masterCount == 0)
         outcome.diagnostics.push_back(diagnostic(
-            BusDiagnosticCodeV1::MissingMaster, harkenstudio::kMasterBusObjectId, {},
+            BusDiagnosticCodeV1::MissingMaster, harken::studio::types::kMasterBusObjectId, {},
             input.projectGeneration));
     else if (masterCount > 1)
         outcome.diagnostics.push_back(diagnostic(
-            BusDiagnosticCodeV1::MultipleMasterCandidates, harkenstudio::kMasterBusObjectId, {},
+            BusDiagnosticCodeV1::MultipleMasterCandidates, harken::studio::types::kMasterBusObjectId, {},
             input.projectGeneration));
 
     for (const auto& [id, bus] : byId) {
@@ -697,8 +697,8 @@ BusCompileOutcomeV1 CompileBusProjectV1(const BusCompilerInputV1& input)
                 BusDiagnosticCodeV1::SelfEdge, id, bus.parentId,
                 input.projectGeneration, bus.source));
         }
-        if (bus.parentId != harkenstudio::kMasterBusObjectId
-            && (bus.parentId == harkenstudio::ObjectId{} || !byId.count(bus.parentId))) {
+        if (bus.parentId != harken::studio::types::kMasterBusObjectId
+            && (bus.parentId == harken::studio::types::ObjectId{} || !byId.count(bus.parentId))) {
             outcome.diagnostics.push_back(diagnostic(
                 BusDiagnosticCodeV1::MissingParent, id, bus.parentId,
                 input.projectGeneration, bus.source));
@@ -710,8 +710,8 @@ BusCompileOutcomeV1 CompileBusProjectV1(const BusCompilerInputV1& input)
             static_cast<std::uint64_t>(byId.size()) + 1,
             input.capacity.maxBusesIncludingOutputRoot, input.projectGeneration));
 
-    std::map<std::pair<harkenstudio::ObjectId, harkenstudio::ObjectId>, BusSendAuthoringV1> sendRows;
-    std::map<harkenstudio::ObjectId, std::uint32_t> sendsPerBus;
+    std::map<std::pair<harken::studio::types::ObjectId, harken::studio::types::ObjectId>, BusSendAuthoringV1> sendRows;
+    std::map<harken::studio::types::ObjectId, std::uint32_t> sendsPerBus;
     if (input.sends.size() > input.capacity.maxTotalSends)
         outcome.diagnostics.push_back(numericDiagnostic(
             BusDiagnosticCodeV1::TotalSendCapacity,
@@ -732,13 +732,13 @@ BusCompileOutcomeV1 CompileBusProjectV1(const BusCompilerInputV1& input)
                 send.targetBusId, input.projectGeneration, send.source));
         if (sourceExists && input.identityIndex
             && !hasIdentity(input.identityIndex, send.sourceBusId,
-                            harkenprojectschema::RuntimeIdentityKindV1::Bus))
+                            harken::studio::project_schema::RuntimeIdentityKindV1::Bus))
             outcome.diagnostics.push_back(diagnostic(
                 BusDiagnosticCodeV1::MissingIdentity, send.sourceBusId,
                 send.targetBusId, input.projectGeneration, send.source));
         if (targetExists && input.identityIndex
             && !hasIdentity(input.identityIndex, send.targetBusId,
-                            harkenprojectschema::RuntimeIdentityKindV1::Bus))
+                            harken::studio::project_schema::RuntimeIdentityKindV1::Bus))
             outcome.diagnostics.push_back(diagnostic(
                 BusDiagnosticCodeV1::MissingIdentity, send.targetBusId,
                 send.sourceBusId, input.projectGeneration, send.source));
@@ -811,9 +811,9 @@ BusCompileOutcomeV1 CompileBusProjectV1(const BusCompilerInputV1& input)
             BusDiagnosticCodeV1::InvalidLayoutDownmix, {}, {},
             input.projectGeneration));
 
-    std::map<harkenstudio::ObjectId, std::set<std::uint32_t>> effectSlots;
-    std::map<std::pair<harkenstudio::ObjectId, std::uint32_t>, BusEffectAuthoringV1> effectRows;
-    std::map<harkenstudio::ObjectId, harkenstudio::ObjectId> effectIds;
+    std::map<harken::studio::types::ObjectId, std::set<std::uint32_t>> effectSlots;
+    std::map<std::pair<harken::studio::types::ObjectId, std::uint32_t>, BusEffectAuthoringV1> effectRows;
+    std::map<harken::studio::types::ObjectId, harken::studio::types::ObjectId> effectIds;
     std::vector<std::uint32_t> parameterSliceOwners(
         input.effectParameters.size(), 0);
     for (const auto& effect : input.effects) {
@@ -823,7 +823,7 @@ BusCompileOutcomeV1 CompileBusProjectV1(const BusCompilerInputV1& input)
                 effect.effectId, effect.busId,
                 input.projectGeneration, effect.source));
         }
-        if (!byId.count(effect.busId) || effect.effectId == harkenstudio::ObjectId{}) {
+        if (!byId.count(effect.busId) || effect.effectId == harken::studio::types::ObjectId{}) {
             outcome.diagnostics.push_back(diagnostic(
                 BusDiagnosticCodeV1::MissingIdentity, effect.effectId,
                 effect.busId, input.projectGeneration, effect.source));
@@ -831,7 +831,7 @@ BusCompileOutcomeV1 CompileBusProjectV1(const BusCompilerInputV1& input)
         }
         if (input.identityIndex
             && !hasIdentity(input.identityIndex, effect.effectId,
-                            harkenprojectschema::RuntimeIdentityKindV1::BusEffect))
+                            harken::studio::project_schema::RuntimeIdentityKindV1::BusEffect))
             outcome.diagnostics.push_back(diagnostic(
                 BusDiagnosticCodeV1::MissingIdentity, effect.effectId,
                 effect.busId, input.projectGeneration, effect.source));
@@ -847,7 +847,7 @@ BusCompileOutcomeV1 CompileBusProjectV1(const BusCompilerInputV1& input)
             outcome.diagnostics.push_back(diagnostic(
                 BusDiagnosticCodeV1::EffectCapacity, effect.busId,
                 effect.effectId, input.projectGeneration, effect.source));
-        const auto* effectSchema = harkenstudiobuild::FindPackEffectSchemaByType(
+        const auto* effectSchema = harken::studio::build::FindPackEffectSchemaByType(
             effect.effectType);
         if (!effectSchema
             || effect.descriptorVintage != effectSchema->descriptorVintage)
@@ -939,7 +939,7 @@ BusCompileOutcomeV1 CompileBusProjectV1(const BusCompilerInputV1& input)
             BusDiagnosticCodeV1::InvalidLayoutDownmix,
             static_cast<std::uint64_t>(input.downmix.size()), 0,
             input.projectGeneration));
-    std::map<harkenstudio::ObjectId, BusDownmixAuthoringV1> downmixRows;
+    std::map<harken::studio::types::ObjectId, BusDownmixAuthoringV1> downmixRows;
     for (const auto& row : input.downmix) {
         if (!validSourceLocation(row.source)) {
             outcome.diagnostics.push_back(diagnostic(
@@ -965,11 +965,11 @@ BusCompileOutcomeV1 CompileBusProjectV1(const BusCompilerInputV1& input)
                 BusDiagnosticCodeV1::NonFiniteScalar, {}, {},
                 input.projectGeneration));
 
-    std::map<harkenstudio::ObjectId, std::vector<harkenstudio::ObjectId>> outgoing;
-    std::map<harkenstudio::ObjectId, std::uint32_t> indegree;
+    std::map<harken::studio::types::ObjectId, std::vector<harken::studio::types::ObjectId>> outgoing;
+    std::map<harken::studio::types::ObjectId, std::uint32_t> indegree;
     for (const auto& [id, unused] : byId)
         indegree.emplace(id, 0);
-    const auto addEdge = [&](harkenstudio::ObjectId from, harkenstudio::ObjectId to) {
+    const auto addEdge = [&](harken::studio::types::ObjectId from, harken::studio::types::ObjectId to) {
         if (!byId.count(from) || !byId.count(to))
             return;
         outgoing[from].push_back(to);
@@ -981,16 +981,16 @@ BusCompileOutcomeV1 CompileBusProjectV1(const BusCompilerInputV1& input)
     for (const auto& [key, unused] : sendRows)
         addEdge(key.first, key.second);
 
-    std::priority_queue<harkenstudio::ObjectId, std::vector<harkenstudio::ObjectId>, std::greater<harkenstudio::ObjectId>> ready;
+    std::priority_queue<harken::studio::types::ObjectId, std::vector<harken::studio::types::ObjectId>, std::greater<harken::studio::types::ObjectId>> ready;
     for (const auto& [id, degree] : indegree)
         if (degree == 0)
             ready.push(id);
-    std::vector<harkenstudio::ObjectId> order;
+    std::vector<harken::studio::types::ObjectId> order;
     while (!ready.empty()) {
-        const harkenstudio::ObjectId id = ready.top();
+        const harken::studio::types::ObjectId id = ready.top();
         ready.pop();
         order.push_back(id);
-        for (const harkenstudio::ObjectId target : outgoing[id])
+        for (const harken::studio::types::ObjectId target : outgoing[id])
             if (--indegree[target] == 0)
                 ready.push(target);
     }
@@ -1001,7 +1001,7 @@ BusCompileOutcomeV1 CompileBusProjectV1(const BusCompilerInputV1& input)
                                            });
         outcome.diagnostics.push_back(diagnostic(
             BusDiagnosticCodeV1::CombinedTreeSendCycle,
-            residual == indegree.end() ? harkenstudio::ObjectId{} : residual->first, {},
+            residual == indegree.end() ? harken::studio::types::ObjectId{} : residual->first, {},
             input.projectGeneration));
     }
     if (masterCount == 1) {
@@ -1033,7 +1033,7 @@ BusCompileOutcomeV1 CompileBusProjectV1(const BusCompilerInputV1& input)
     result->compileTargetProfileFingerprint = input.compileTargetProfile
         ? (input.compileTargetProfile->fingerprint != 0
                ? input.compileTargetProfile->fingerprint
-               : harkenprojectschema::compileTargetProfileFingerprintV1(
+               : harken::studio::project_schema::compileTargetProfileFingerprintV1(
                      *input.compileTargetProfile))
         : 0;
     result->idSet.ids.reserve(byId.size());
@@ -1279,10 +1279,10 @@ PublishedBusProjectionV1 BuildPublishedBusProjectionV1(
         }
     }
     CompiledBusV1 outputRoot;
-    outputRoot.busId = harkenstudio::kMasterBusObjectId;
+    outputRoot.busId = harken::studio::types::kMasterBusObjectId;
     outputRoot.feedsFirstOrdinal = static_cast<std::uint32_t>(projection.buses.size());
     outputRoot.outputLayout = projection.compileTargetProfile
-        ? projection.compileTargetProfile->deviceLayout : harkenstudio::kChannelLayoutDefault;
+        ? projection.compileTargetProfile->deviceLayout : harken::studio::types::kChannelLayoutDefault;
     outputRoot.downmixFirst = static_cast<std::uint32_t>(projection.downmix.size());
     outputRoot.downmixCount = 1;
     projection.downmix.push_back({
@@ -1304,4 +1304,4 @@ PublishedBusProjectionV1 BuildPublishedBusProjectionV1(
     return projection;
 }
 
-} // namespace harkenbuscompiler
+} // namespace harken::studio::bus_compiler

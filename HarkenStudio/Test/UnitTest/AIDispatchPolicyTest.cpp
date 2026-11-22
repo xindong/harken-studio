@@ -4,7 +4,7 @@
 
 #include <QJsonArray>
 
-using namespace VNX;
+using namespace harken::studio;
 
 namespace {
 

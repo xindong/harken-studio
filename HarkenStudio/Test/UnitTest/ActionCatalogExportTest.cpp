@@ -31,11 +31,7 @@
 #include <utility>
 #include <vector>
 
-#ifndef HARKEN_STUDIO_CLI_PATH
-#error "HARKEN_STUDIO_CLI_PATH must point at the Studio CLI executable"
-#endif
-
-using namespace VNX;
+using namespace harken::studio;
 
 namespace {
 
@@ -116,7 +112,6 @@ protected:
     void SetUp() override
     {
         ensureApp();
-        qputenv("HARKEN_STUDIO_CLI_PATH", QByteArray(HARKEN_STUDIO_CLI_PATH));
         auto& manager = ProjectManager::instance();
         if (manager.isProjectOpen())
             manager.closeProject();
@@ -158,7 +153,7 @@ protected:
         layer->name = QStringLiteral("Root");
         layer->type = ProjectItem::Type::Layer;
         layer->objectID = 10010;
-        layer->guid = VNX::authoringUuid(harkentest::StudioObjectId(200010));
+        layer->guid = harken::studio::authoringUuid(harkentest::StudioObjectId(200010));
         layer->attachDefaultComponents();
         layer->fieldGroups = MakeRootFieldGroups(
             toFieldGroupGuid(project->busses.front().rootItem->guid));
@@ -166,7 +161,7 @@ protected:
         sound->name = QStringLiteral("Tone");
         sound->type = ProjectItem::Type::Sound;
         sound->objectID = 10001;
-        sound->guid = VNX::authoringUuid(harkentest::StudioObjectId(200001));
+        sound->guid = harken::studio::authoringUuid(harkentest::StudioObjectId(200001));
         sound->attachDefaultComponents();
         HarkenTest::setSharedSoundSource(*sound, sourceId);
         sound->parent = layer.get();
@@ -220,7 +215,7 @@ protected:
         for (const auto& value : publication(outputDir)) {
             const auto row = value.toObject();
             if (row.value("packKind").toInt() == HK_PACK_KIND_CANONICAL_CONTENT)
-                result.append(row.value("companion"));
+                result.append(row.value("packMetadata"));
         }
         return result;
     }
@@ -230,7 +225,7 @@ protected:
         for (const auto& value : publication(outputDir)) {
             const auto row = value.toObject();
             if (guid.isEmpty() ? row.value("packKind").toInt() == HK_PACK_KIND_INIT
-                : row.value("companion").toObject().value("guid").toString() == guid)
+                : row.value("packMetadata").toObject().value("guid").toString() == guid)
                 return row;
         }
         ADD_FAILURE() << "Published pack missing for " << guid.toStdString();
@@ -251,7 +246,7 @@ protected:
     ProjectItem* action_ = nullptr;
 };
 
-TEST_F(ActionCatalogExportTest, RepeatedExportKeepsCompanionsAndExecutableBytes)
+TEST_F(ActionCatalogExportTest, RepeatedExportKeepsPackMetadataAndExecutableBytes)
 {
     auto& manager = ProjectManager::instance();
     ASSERT_TRUE(manager.saveProject());

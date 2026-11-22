@@ -6,7 +6,7 @@
 #include <QStringList>
 #include <QVBoxLayout>
 
-namespace VNX {
+namespace harken::studio {
 
 MonitorRemoteStatusStrip::MonitorRemoteStatusStrip(QWidget* parent)
     : QWidget(parent)
@@ -72,4 +72,4 @@ QString MonitorRemoteStatusStrip::recordDeniedReason() const
     return recordDeniedReason_;
 }
 
-} // namespace VNX
+} // namespace harken::studio

@@ -4,7 +4,7 @@
 #include "Projects/ProjectStore.h"
 #include "Versions/VersionScanner.h"
 
-namespace VNH {
+namespace harken::hub {
 
 struct ProjectVersionSelection
 {

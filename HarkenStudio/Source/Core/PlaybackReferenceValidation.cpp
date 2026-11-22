@@ -11,7 +11,7 @@
 
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 
 const ProjectItem* findDirectPlaybackChild(const ProjectItem& owner, const QUuid& guid)
 {

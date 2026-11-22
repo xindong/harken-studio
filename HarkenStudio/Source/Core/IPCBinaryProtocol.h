@@ -3,7 +3,7 @@
 
 #include <cstdint>
 
-namespace VNX {
+namespace harken::studio {
 
 
 static constexpr uint8_t IPC_BINARY_MAGIC   = 0x56;

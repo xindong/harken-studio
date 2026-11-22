@@ -4,7 +4,7 @@
 
 #include <cstdint>
 
-namespace HarkenEditor::Bridge {
+namespace harken::studio::bridge {
 
 struct CurrentWorldTestInstallResult {
     enum class Status : std::uint8_t { Ok, Backpressure, Failed };

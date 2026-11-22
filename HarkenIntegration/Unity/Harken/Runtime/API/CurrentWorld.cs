@@ -4,6 +4,7 @@ using System.Text;
 
 namespace Harken
 {
+    [Obsolete("No product produces current-world envelopes; load Packs through PackBootstrap. CurrentWorld will be removed in the next version.")]
     public readonly struct CurrentWorldLoadReport
     {
         public readonly VnCurrentWorldLoadStatus Status;
@@ -29,6 +30,7 @@ namespace Harken
     }
 
     // Studio / debug DirectWorld envelope. Games load .pack.
+    [Obsolete("No product produces current-world envelopes; load Packs through PackBootstrap. CurrentWorld will be removed in the next version.")]
     public static class CurrentWorld
     {
         private const int StackPathBytes = 1024;

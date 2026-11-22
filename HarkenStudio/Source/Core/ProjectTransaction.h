@@ -14,7 +14,7 @@
 #include <functional>
 #include <memory>
 
-namespace VNX {
+namespace harken::studio {
 
 class ProjectSaveSnapshot;
 

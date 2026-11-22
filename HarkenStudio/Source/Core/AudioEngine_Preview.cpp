@@ -11,37 +11,37 @@
 
 #include <algorithm>
 
-namespace VNX {
+namespace harken::studio {
 
 AudioEngine::PreviewPlayableStartResult AudioEngine::playPreviewPlayable(
-    uint32_t playableKind, harkenstudio::ObjectId stableId, quint64 emitterHandle)
+    uint32_t playableKind, harken::studio::types::ObjectId stableId, quint64 emitterHandle)
 {
     PreviewPlayableStartResult result;
     if (!session_) {
-        result.status = HarkenEditor::Bridge::kPreviewHostError;
+        result.status = harken::studio::bridge::kPreviewHostError;
         return result;
     }
     const auto barrier = currentWorldPlaybackBarrier();
     if (barrier.state != RuntimeSyncCoordinator::RevisionBarrierState::Ready) {
         result.status = barrier.state == RuntimeSyncCoordinator::RevisionBarrierState::Pending
-            ? HarkenEditor::Bridge::kPreviewBackpressure : HarkenEditor::Bridge::kPreviewHostError;
+            ? harken::studio::bridge::kPreviewBackpressure : harken::studio::bridge::kPreviewHostError;
         return result;
     }
-    if (emitterHandle == 0 && !harkenstudio::IsNull(stableId)
-        && playableKind <= HarkenEditor::Bridge::kPreviewPlayableSegment) {
+    if (emitterHandle == 0 && !harken::studio::types::IsNull(stableId)
+        && playableKind <= harken::studio::bridge::kPreviewPlayableSegment) {
         emitterHandle = ensurePreviewEmitter();
         if (emitterHandle == 0) {
-            result.status = HarkenEditor::Bridge::kPreviewHostError;
+            result.status = harken::studio::bridge::kPreviewHostError;
             return result;
         }
         applyPreviewVariableOverrides();
     }
 
     uint64_t handle = 0;
-    result.status = HarkenEditor::Bridge::playPreviewPlayable(playableKind, stableId, emitterHandle, handle);
+    result.status = harken::studio::bridge::playPreviewPlayable(playableKind, stableId, emitterHandle, handle);
     result.handle = handle;
-    if (result.status != HarkenEditor::Bridge::kPreviewOk
-        && result.status != HarkenEditor::Bridge::kPreviewBackpressure) {
+    if (result.status != harken::studio::bridge::kPreviewOk
+        && result.status != harken::studio::bridge::kPreviewBackpressure) {
         qWarning() << "[Preview] PlayPlayable refused:"
                    << "kind=" << playableKind
                    << "stableId=" << stableId
@@ -51,36 +51,36 @@ AudioEngine::PreviewPlayableStartResult AudioEngine::playPreviewPlayable(
     return result;
 }
 
-int32_t AudioEngine::resetPreviewPlayable(uint32_t playableKind, harkenstudio::ObjectId stableId)
+int32_t AudioEngine::resetPreviewPlayable(uint32_t playableKind, harken::studio::types::ObjectId stableId)
 {
-    if (playableKind != HarkenEditor::Bridge::kPreviewPlayableContainer || harkenstudio::IsNull(stableId))
-        return HarkenEditor::Bridge::kPreviewInvalidArg;
+    if (playableKind != harken::studio::bridge::kPreviewPlayableContainer || harken::studio::types::IsNull(stableId))
+        return harken::studio::bridge::kPreviewInvalidArg;
     if (!session_)
-        return HarkenEditor::Bridge::kPreviewHostError;
+        return harken::studio::bridge::kPreviewHostError;
 
     const auto barrier = currentWorldPlaybackBarrier();
     if (barrier.state != RuntimeSyncCoordinator::RevisionBarrierState::Ready)
         return barrier.state == RuntimeSyncCoordinator::RevisionBarrierState::Pending
-            ? HarkenEditor::Bridge::kPreviewBackpressure : HarkenEditor::Bridge::kPreviewHostError;
+            ? harken::studio::bridge::kPreviewBackpressure : harken::studio::bridge::kPreviewHostError;
 
     quint64 emitterHandle = previewEmitterHandle_;
     if (emitterHandle == 0) {
         emitterHandle = ensurePreviewEmitter();
         if (emitterHandle == 0)
-            return HarkenEditor::Bridge::kPreviewHostError;
+            return harken::studio::bridge::kPreviewHostError;
     }
 
-    return HarkenEditor::Bridge::resetPreviewPlayable(playableKind, stableId, emitterHandle);
+    return harken::studio::bridge::resetPreviewPlayable(playableKind, stableId, emitterHandle);
 }
 
-quint64 AudioEngine::ensurePreviewEmitter(HarkenEditor::Bridge::EngineResult* outResult)
+quint64 AudioEngine::ensurePreviewEmitter(harken::studio::bridge::EngineResult* outResult)
 {
     if (outResult != nullptr)
-        *outResult = HarkenEditor::Bridge::kEngineOk;
+        *outResult = harken::studio::bridge::kEngineOk;
     if (previewEmitterHandle_ != 0)
         return previewEmitterHandle_;
 
-    const auto emitter = HarkenEditor::Bridge::createPreviewEmitter(outResult);
+    const auto emitter = harken::studio::bridge::createPreviewEmitter(outResult);
     if (emitter == 0)
         return 0;
     previewEmitterHandle_ = emitter;
@@ -92,7 +92,7 @@ void AudioEngine::releasePreviewEmitter()
 {
     if (previewEmitterHandle_ == 0)
         return;
-    HarkenEditor::Bridge::destroyPreviewEmitter(previewEmitterHandle_);
+    harken::studio::bridge::destroyPreviewEmitter(previewEmitterHandle_);
     previewEmitterHandle_ = 0;
     for (auto it = previewVariableOverrides_.begin();
          it != previewVariableOverrides_.end();) {
@@ -181,14 +181,14 @@ void AudioEngine::applyPreviewVariableOverrides()
             state.hasValue ? std::optional<float>(state.value) : std::nullopt,
             variable.kind, variable.rangeMin, variable.rangeMax,
             variable.defaultValue);
-        HarkenEditor::Bridge::VariableTicket ticket{};
+        harken::studio::bridge::VariableTicket ticket{};
         state.acceptedEmitter = 0;
         state.acceptedGlobal = false;
         state.mustResubmit = true;
-        const auto result = HarkenEditor::Bridge::writePreviewVariable(
+        const auto result = harken::studio::bridge::writePreviewVariable(
             item.runtimeId(), value,
             state.scope == VariableScope::Global ? 0 : previewEmitterHandle_, ticket);
-        if (result != HarkenEditor::Bridge::kEngineOk)
+        if (result != harken::studio::bridge::kEngineOk)
             return result;
         state.submittedValue = value;
         state.submittedHasValue = state.hasValue;
@@ -205,15 +205,15 @@ void AudioEngine::applyPreviewVariableOverrides()
          it != previewVariableOverrides_.end();) {
         auto& state = it.value();
         if (state.inFlight) {
-            const auto outcome = HarkenEditor::Bridge::queryVariableWriteState(
+            const auto outcome = harken::studio::bridge::queryVariableWriteState(
                 {state.inFlightSequence, state.inFlightWorld, state.inFlightTransport});
             if (!state.mustResubmit
-                && outcome == HarkenEditor::Bridge::VariableWriteState::Pending) {
+                && outcome == harken::studio::bridge::VariableWriteState::Pending) {
                 ++it;
                 continue;
             }
             if (!state.mustResubmit
-                && outcome == HarkenEditor::Bridge::VariableWriteState::Applied) {
+                && outcome == harken::studio::bridge::VariableWriteState::Applied) {
                 if (state.scope == VariableScope::Global)
                     state.acceptedGlobal = true;
                 else
@@ -232,7 +232,7 @@ void AudioEngine::applyPreviewVariableOverrides()
         const ProjectItem* item = projects.findItemByGuid(it.key());
         const VVariable* variable = item != nullptr
             ? item->comp<VVariable>() : nullptr;
-        if (variable == nullptr || harkenstudio::IsNull(item->runtimeId())) {
+        if (variable == nullptr || harken::studio::types::IsNull(item->runtimeId())) {
             it = previewVariableOverrides_.erase(it);
             continue;
         }
@@ -250,8 +250,8 @@ void AudioEngine::applyPreviewVariableOverrides()
             ++it;
             continue;
         }
-        const HarkenEditor::Bridge::EngineResult result = submitWrite(*item, *variable, state);
-        if (result == HarkenEditor::Bridge::kEngineStaleHandle) {
+        const harken::studio::bridge::EngineResult result = submitWrite(*item, *variable, state);
+        if (result == harken::studio::bridge::kEngineStaleHandle) {
             previewEmitterHandle_ = 0;
             for (auto reset = previewVariableOverrides_.begin();
                  reset != previewVariableOverrides_.end(); ++reset) {
@@ -261,8 +261,8 @@ void AudioEngine::applyPreviewVariableOverrides()
                 reset->inFlight = false;
             }
             return;
-        } else if (result != HarkenEditor::Bridge::kEngineOk &&
-                   result != HarkenEditor::Bridge::kEngineBackpressure && result != HarkenEditor::Bridge::kEngineNoVariable) {
+        } else if (result != harken::studio::bridge::kEngineOk &&
+                   result != harken::studio::bridge::kEngineBackpressure && result != harken::studio::bridge::kEngineNoVariable) {
             qWarning() << "[Preview] Variable rehearsal sync refused:"
                        << "variable=" << item->runtimeId()
                        << "status=" << result;
@@ -289,13 +289,13 @@ bool AudioEngine::hasPendingPreviewVariableOverrides() const
 
 int32_t AudioEngine::stopPreviewPlayable(quint64 handle, uint32_t fadeMs)
 {
-    return HarkenEditor::Bridge::stopPreviewPlayable(handle, fadeMs);
+    return harken::studio::bridge::stopPreviewPlayable(handle, fadeMs);
 }
 
 int32_t AudioEngine::queryPreviewPlayable(
     quint64 handle, PreviewPlayableState& outState) const
 {
-    return HarkenEditor::Bridge::queryPreviewPlayable(handle, outState);
+    return harken::studio::bridge::queryPreviewPlayable(handle, outState);
 }
 
 }

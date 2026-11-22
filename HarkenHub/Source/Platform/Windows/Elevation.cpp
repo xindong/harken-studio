@@ -6,7 +6,7 @@
 #include <windows.h>
 #include <shellapi.h>
 
-namespace VNH {
+namespace harken::hub {
 
 ElevationLaunchResult launchElevatedCommand(const QStringList& arguments)
 {

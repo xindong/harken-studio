@@ -6,7 +6,7 @@
 #include <QStringList>
 #include <cmath>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
 QString memberPath(const QString& path, const QString& key)

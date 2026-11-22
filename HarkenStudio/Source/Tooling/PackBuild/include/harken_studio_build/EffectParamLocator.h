@@ -3,7 +3,7 @@
 
 #include <cstdint>
 
-namespace harkenstudiobuild {
+namespace harken::studio::build {
 
 inline constexpr std::uint32_t kEffectParamLocatorIndexShift = 0;
 inline constexpr std::uint32_t kEffectParamLocatorSlotShift = 6;

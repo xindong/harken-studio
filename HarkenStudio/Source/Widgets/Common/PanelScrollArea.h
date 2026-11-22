@@ -2,7 +2,7 @@
 
 #include <QScrollArea>
 
-namespace VNX {
+namespace harken::studio {
 
 class PanelScrollArea : public QScrollArea
 {

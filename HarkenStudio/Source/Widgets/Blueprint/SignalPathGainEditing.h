@@ -5,7 +5,7 @@
 #include <QObject>
 #include <memory>
 
-namespace VNX {
+namespace harken::studio {
 
 struct FieldGroupEffectiveSnapshot;
 

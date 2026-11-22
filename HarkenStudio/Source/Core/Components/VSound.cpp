@@ -4,7 +4,7 @@
 
 #include <cmath>
 
-namespace VNX {
+namespace harken::studio {
 
 QJsonObject VSound::toJson() const
 {

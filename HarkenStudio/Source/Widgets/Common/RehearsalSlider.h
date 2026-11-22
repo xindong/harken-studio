@@ -3,7 +3,7 @@
 
 #include "ParameterSlider.h"
 
-namespace VNX {
+namespace harken::studio {
 
 class VVariable;
 

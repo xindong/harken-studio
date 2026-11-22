@@ -3,7 +3,7 @@
 #include <QString>
 #include <QStringList>
 
-namespace VNH {
+namespace harken::hub {
 
 QString currentUserId();
 #ifdef Q_OS_WIN

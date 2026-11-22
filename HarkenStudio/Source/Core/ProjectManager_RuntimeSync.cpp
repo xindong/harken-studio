@@ -37,9 +37,8 @@
 #include <iterator>
 #include <algorithm>
 
-namespace VNX {
+namespace harken::studio {
 
-namespace Bridge = HarkenEditor::Bridge;
 
 namespace {
 void startupTrace(const QString& message)
@@ -59,7 +58,7 @@ bool busPublicationSupported(const ProjectData& project)
 {
     const auto scope = currentWorldPlatformScope(
         PlatformContextService::instance().context());
-    const auto diagnostics = Bridge::validateBusPublicationSupport(
+    const auto diagnostics = bridge::validateBusPublicationSupport(
         project, scope.value_or(ProjectPlatformId{}));
     if (diagnostics.empty())
         return true;
@@ -69,8 +68,8 @@ bool busPublicationSupported(const ProjectData& project)
 
 void supersedePendingCurrentWorld(RuntimeSyncCoordinator& coordinator)
 {
-    const auto superseded = Bridge::discardPendingCurrentWorld(
-        Bridge::PendingCurrentWorldDisposition::Superseded);
+    const auto superseded = bridge::discardPendingCurrentWorld(
+        bridge::PendingCurrentWorldDisposition::Superseded);
     if (superseded)
         coordinator.acceptCurrentWorldSyncResult(*superseded);
 }
@@ -203,13 +202,13 @@ void ProjectManager::initializeRuntimeSync()
             this, &ProjectManager::finishRuntimePreparationIfReady);
 }
 
-static harkenstudio::ObjectId runtimeStableIdForItem(const ProjectItem* item)
+static harken::studio::types::ObjectId runtimeStableIdForItem(const ProjectItem* item)
 {
-    return item ? item->runtimeId() : harkenstudio::ObjectId{};
+    return item ? item->runtimeId() : harken::studio::types::ObjectId{};
 }
 
-static std::optional<Bridge::SoundDesc> soundDescriptor(
-    const ProjectItem* item, harkenstudio::ObjectId parentRuntimeId,
+static std::optional<bridge::SoundDesc> soundDescriptor(
+    const ProjectItem* item, harken::studio::types::ObjectId parentRuntimeId,
     const FieldGroupEffectiveSnapshot& snapshot)
 {
     auto* ac = item->comp<VAudio>();
@@ -227,7 +226,7 @@ static std::optional<Bridge::SoundDesc> soundDescriptor(
         return std::nullopt;
     const auto& rating = effective->second.spatialRating;
 
-    Bridge::SoundDesc desc;
+    bridge::SoundDesc desc;
     desc.objectId = runtimeStableIdForItem(item);
     desc.parentObjectId = parentRuntimeId;
     desc.name = item->name;
@@ -238,16 +237,16 @@ static std::optional<Bridge::SoundDesc> soundDescriptor(
     desc.loopCount = ac->loopCount;
     desc.spatialized3D = rating.spatialIs3DEnabled;
     desc.streamingMode = static_cast<uint8_t>(ac->streamingMode);
-    if (!harkenprojectschema::IsNull(rating.spatialAttenuationRef))
+    if (!harken::studio::project_schema::IsNull(rating.spatialAttenuationRef))
         desc.attenuationId = snapshot.objects.at(rating.spatialAttenuationRef)->runtimeId();
     return desc;
 }
 
-static harkenstudio::ObjectId syncSound(const ProjectItem* item, harkenstudio::ObjectId parentRuntimeId, AudioEngine&,
+static harken::studio::types::ObjectId syncSound(const ProjectItem* item, harken::studio::types::ObjectId parentRuntimeId, AudioEngine&,
                           const FieldGroupEffectiveSnapshot& snapshot)
 {
     const auto desc = soundDescriptor(item, parentRuntimeId, snapshot);
-    if (!desc || !Bridge::syncSound(*desc))
+    if (!desc || !bridge::syncSound(*desc))
         return {};
 
     if (desc->sourceId != 0)
@@ -255,13 +254,13 @@ static harkenstudio::ObjectId syncSound(const ProjectItem* item, harkenstudio::O
         const AssetInfo* asset = AssetRegistry::instance().getAsset(desc->sourceId);
         if (asset && !asset->absolutePath.isEmpty())
         {
-            Bridge::mediaRegistryRegister(desc->sourceId, asset->absolutePath);
+            bridge::mediaRegistryRegister(desc->sourceId, asset->absolutePath);
         }
     }
     return desc->objectId;
 }
 
-static harkenstudio::ObjectId syncLayer(const ProjectItem* item, harkenstudio::ObjectId parentRuntimeId, AudioEngine&,
+static harken::studio::types::ObjectId syncLayer(const ProjectItem* item, harken::studio::types::ObjectId parentRuntimeId, AudioEngine&,
                           const FieldGroupEffectiveSnapshot& snapshot)
 {
     const auto effective = snapshot.definitions.find(toFieldGroupGuid(item->guid));
@@ -269,21 +268,21 @@ static harkenstudio::ObjectId syncLayer(const ProjectItem* item, harkenstudio::O
         return {};
     const auto& rating = effective->second.spatialRating;
 
-    Bridge::LayerDesc desc;
+    bridge::LayerDesc desc;
     desc.objectId = runtimeStableIdForItem(item);
     desc.parentObjectId = parentRuntimeId;
     desc.name = item->name;
     desc.spatialized3D = rating.spatialIs3DEnabled;
-    if (!harkenprojectschema::IsNull(rating.spatialAttenuationRef))
+    if (!harken::studio::project_schema::IsNull(rating.spatialAttenuationRef))
         desc.attenuationId = snapshot.objects.at(rating.spatialAttenuationRef)->runtimeId();
 
-    if (!Bridge::syncLayer(desc))
+    if (!bridge::syncLayer(desc))
         return {};
     return desc.objectId;
 }
 
 
-using SyncHandler = harkenstudio::ObjectId (*)(const ProjectItem*, harkenstudio::ObjectId, AudioEngine&,
+using SyncHandler = harken::studio::types::ObjectId (*)(const ProjectItem*, harken::studio::types::ObjectId, AudioEngine&,
                                  const FieldGroupEffectiveSnapshot&);
 
 enum class RuntimeTeardown : uint8_t { None, RemoveObject, RemoveActionName };
@@ -333,7 +332,7 @@ static SyncHandler findSyncHandler(ProjectItem::Type type)
 }
 
 
-static void syncGeneralAudioProperties(ProjectItem* item, harkenstudio::ObjectId objectId,
+static void syncGeneralAudioProperties(ProjectItem* item, harken::studio::types::ObjectId objectId,
                                         const FieldGroupEffectiveSnapshot& snapshot)
 {
     auto& manager = ProjectManager::instance();
@@ -341,13 +340,13 @@ static void syncGeneralAudioProperties(ProjectItem* item, harkenstudio::ObjectId
     const auto& groups = snapshot.definitions.at(toFieldGroupGuid(item->guid));
     if (item->comp<VMixNode>())
         manager.pushItemPitchLive(item, snapshot);
-    Bridge::setObjectOutputBus(objectId,
+    bridge::setObjectOutputBus(objectId,
         manager.busRuntimeHandleForId(
             snapshot.objects.at(groups.output.outputBusRef)->objectID));
     engine.setVoiceVolumeByName(item->name, manager.aggregateVolumeDbForItem(item));
     engine.setVoiceOutputVolumeByName(item->name, groups.output.outputBusVolume);
     if (item->type == ProjectItem::Type::Sound) {
-        std::vector<std::pair<harkenstudio::ObjectId, float>> sends;
+        std::vector<std::pair<harken::studio::types::ObjectId, float>> sends;
         for (const auto& send : groups.send.sends) {
             if (send.mode != SendMode::Mix) continue;
             sends.emplace_back(manager.busRuntimeHandleForId(
@@ -365,7 +364,7 @@ static void syncGeneralAudioProperties(ProjectItem* item, harkenstudio::ObjectId
 }
 
 
-static harkenstudio::ObjectId syncItemToRuntimeOne(ProjectItem* item, harkenstudio::ObjectId parentRuntimeId,
+static harken::studio::types::ObjectId syncItemToRuntimeOne(ProjectItem* item, harken::studio::types::ObjectId parentRuntimeId,
                                      const FieldGroupEffectiveSnapshot& snapshot)
 {
     if (!item)
@@ -375,22 +374,22 @@ static harkenstudio::ObjectId syncItemToRuntimeOne(ProjectItem* item, harkenstud
         return parentRuntimeId;
 
     auto& engine = AudioEngine::instance();
-    harkenstudio::ObjectId createdId = {};
+    harken::studio::types::ObjectId createdId = {};
     if (SyncHandler handler = findSyncHandler(item->type))
         createdId = handler(item, parentRuntimeId, engine, snapshot);
-    if (!harkenstudio::IsNull(createdId))
+    if (!harken::studio::types::IsNull(createdId))
         syncGeneralAudioProperties(item, createdId, snapshot);
-    if (!harkenstudio::IsNull(createdId) && !harkenstudio::IsNull(parentRuntimeId))
-        Bridge::addLayerChild(parentRuntimeId, createdId);
-    return !harkenstudio::IsNull(createdId) ? createdId : parentRuntimeId;
+    if (!harken::studio::types::IsNull(createdId) && !harken::studio::types::IsNull(parentRuntimeId))
+        bridge::addLayerChild(parentRuntimeId, createdId);
+    return !harken::studio::types::IsNull(createdId) ? createdId : parentRuntimeId;
 }
 
-static void syncItemToRuntime(ProjectItem* item, harkenstudio::ObjectId parentRuntimeId,
+static void syncItemToRuntime(ProjectItem* item, harken::studio::types::ObjectId parentRuntimeId,
                                const FieldGroupEffectiveSnapshot& snapshot)
 {
     if (!item) return;
 
-    const harkenstudio::ObjectId childParentId = syncItemToRuntimeOne(item, parentRuntimeId, snapshot);
+    const harken::studio::types::ObjectId childParentId = syncItemToRuntimeOne(item, parentRuntimeId, snapshot);
     for (const auto& child : item->children)
         syncItemToRuntime(child.get(), childParentId, snapshot);
 }
@@ -411,7 +410,7 @@ void ProjectManager::unregisterItemFromRuntime(ProjectItem* item)
 
     switch (runtimePresenceEntry(item->type).teardown) {
         case RuntimeTeardown::RemoveActionName:
-            Bridge::unregisterActionNameForPreview(runtimeStableIdForItem(item));
+            bridge::unregisterActionNameForPreview(runtimeStableIdForItem(item));
             return;
         case RuntimeTeardown::RemoveObject:
             AudioEngine::instance().removeRuntimeObject(runtimeStableIdForItem(item));
@@ -456,8 +455,8 @@ void ProjectManager::resyncRefreshedSourceToRuntime(uint32_t sourceId)
                 asset->absolutePath, asset->contentHash, file.size(),
                 file.lastModified().toMSecsSinceEpoch(), *source, sound->scheduleOffsetSec};
             if (!file.isFile() || cached->key != key || cached->revision == 0
-                || Bridge::registeredSoundRevision(item->runtimeId()) != cached->revision
-                || !Bridge::runtimeObjectExists(item->runtimeId())) {
+                || bridge::registeredSoundRevision(item->runtimeId()) != cached->revision
+                || !bridge::runtimeObjectExists(item->runtimeId())) {
                 current = false;
                 break;
             }
@@ -510,7 +509,7 @@ void ProjectManager::syncPlayablePropertyToRuntime(ProjectItem* item, uint8_t pr
     if (!item || !project) return;
     const auto registered = [&](const ProjectItem* node, const auto& self) -> bool {
         if (node->objectID != 0 && findSyncHandler(node->type)
-            && !Bridge::runtimeObjectExists(runtimeStableIdForItem(node)))
+            && !bridge::runtimeObjectExists(runtimeStableIdForItem(node)))
             return false;
         return std::all_of(node->children.begin(), node->children.end(),
             [&](const auto& child) { return self(child.get(), self); });
@@ -549,7 +548,7 @@ void ProjectManager::resyncItemsToRuntime(std::span<ProjectItem* const> items)
             continue;
         }
 
-        const harkenstudio::ObjectId runtimeID = runtimeStableIdForItem(item);
+        const harken::studio::types::ObjectId runtimeID = runtimeStableIdForItem(item);
         auto& ae = AudioEngine::instance();
         const auto* project = ProjectManager::instance().currentProject();
         if (!project)
@@ -563,12 +562,12 @@ void ProjectManager::resyncItemsToRuntime(std::span<ProjectItem* const> items)
         }
         ae.removeRuntimeObject(runtimeID);
 
-        harkenstudio::ObjectId parentRuntimeId = {};
+        harken::studio::types::ObjectId parentRuntimeId = {};
         ProjectItem* parentItem = item->parent;
         while (parentItem) {
-            if (!harkenstudio::IsNull(parentItem->runtimeId())) {
-                const harkenstudio::ObjectId candidateId = runtimeStableIdForItem(parentItem);
-                if (Bridge::runtimeObjectExists(candidateId)) {
+            if (!harken::studio::types::IsNull(parentItem->runtimeId())) {
+                const harken::studio::types::ObjectId candidateId = runtimeStableIdForItem(parentItem);
+                if (bridge::runtimeObjectExists(candidateId)) {
                     parentRuntimeId = candidateId;
                     break;
                 }
@@ -602,11 +601,11 @@ void ProjectManager::syncActionNameForPreview(ProjectItem* actionItem)
 {
     if (!actionItem || actionItem->type != ProjectItem::Type::Action) return;
 
-    Bridge::ActionNameMapping mapping;
+    bridge::ActionNameMapping mapping;
     mapping.id = runtimeStableIdForItem(actionItem);
     mapping.name = actionItem->name;
 
-    if (!Bridge::registerActionNameForPreview(mapping))
+    if (!bridge::registerActionNameForPreview(mapping))
     {
         qWarning() << "[PreviewActionName] registration failed:" << actionItem->name;
         return;
@@ -616,7 +615,7 @@ void ProjectManager::syncActionNameForPreview(ProjectItem* actionItem)
 }
 
 bool ProjectManager::prepareRuntimeSounds(const ProjectData& project,
-    Bridge::CurrentWorldSoundPreparation& preparation, QString* error)
+    bridge::CurrentWorldSoundPreparation& preparation, QString* error)
 {
     const auto snapshot = buildFieldGroupEffectiveSnapshot(
         project, toFieldGroupScope(currentWorldPlatformScope(PlatformContextService::instance().context())));
@@ -624,7 +623,7 @@ bool ProjectManager::prepareRuntimeSounds(const ProjectData& project,
 }
 
 bool ProjectManager::prepareRuntimeSounds(const FieldGroupEffectiveSnapshot& snapshot,
-    Bridge::CurrentWorldSoundPreparation& preparation, QString* error)
+    bridge::CurrentWorldSoundPreparation& preparation, QString* error)
 {
     if (!snapshot.ok()) {
         if (error && !snapshot.diagnostics.empty())
@@ -661,7 +660,7 @@ bool ProjectManager::prepareRuntimeSounds(const FieldGroupEffectiveSnapshot& sna
             const auto cached = cache.constFind(item->runtimeId());
             if (file.isFile() && cached != cache.cend() && cached->key == key
                 && cached->revision != 0
-                && Bridge::registeredSoundRevision(item->runtimeId()) == cached->revision) {
+                && bridge::registeredSoundRevision(item->runtimeId()) == cached->revision) {
                 revision = cached->revision;
                 preparation.sounds.push_back({*binding, asset->absolutePath, {}});
                 continue;
@@ -670,7 +669,7 @@ bool ProjectManager::prepareRuntimeSounds(const FieldGroupEffectiveSnapshot& sna
                 asset->absolutePath, *source, sound->scheduleOffsetSec,
                 ConversionSettings{}, &mediaError);
             if (media) {
-                revision = Bridge::soundPcmContentRevision(
+                revision = bridge::soundPcmContentRevision(
                     media->samples, media->channels, media->sampleRate,
                     media->loopStartFrame, media->loopEndFrame);
                 if (revision != 0) {
@@ -734,7 +733,7 @@ void ProjectManager::syncProjectToRuntimeAsync(ProjectData* project,
 
     struct PendingNode {
         ProjectItem* item = nullptr;
-        harkenstudio::ObjectId parentRuntimeId = {};
+        harken::studio::types::ObjectId parentRuntimeId = {};
     };
     struct State {
         std::shared_ptr<ProjectData> project;
@@ -814,7 +813,7 @@ void ProjectManager::syncProjectToRuntimeAsync(ProjectData* project,
             }
             if (!state->nodes.isEmpty()) {
                 const PendingNode pending = state->nodes.takeFirst();
-                const harkenstudio::ObjectId childParentId =
+                const harken::studio::types::ObjectId childParentId =
                     syncItemToRuntimeOne(pending.item, pending.parentRuntimeId, state->snapshot);
                 for (const auto& child : pending.item->children)
                     state->nodes.append({child.get(), childParentId});

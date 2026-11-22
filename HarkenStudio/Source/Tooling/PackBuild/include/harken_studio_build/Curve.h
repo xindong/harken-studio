@@ -3,7 +3,7 @@
 
 #include <cstdint>
 
-namespace harkenstudiobuild {
+namespace harken::studio::build {
 
 inline constexpr std::uint32_t kMaxCurvePoints = 8;
 

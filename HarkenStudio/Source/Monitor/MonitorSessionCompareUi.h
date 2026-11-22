@@ -7,7 +7,7 @@
 #include <cstdint>
 #include <string>
 
-namespace VNX {
+namespace harken::studio {
 namespace Monitor {
 
 enum class MonitorComparePicker
@@ -54,4 +54,4 @@ std::string compareExportText(const MonitorCompareSummary& summary);
 const char* compareResultText(uint32_t result);
 
 } // namespace Monitor
-} // namespace VNX
+} // namespace harken::studio

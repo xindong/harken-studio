@@ -15,7 +15,7 @@
 #include <functional>
 #include <utility>
 
-namespace VNX {
+namespace harken::studio {
 
 class MigrationManager;
 

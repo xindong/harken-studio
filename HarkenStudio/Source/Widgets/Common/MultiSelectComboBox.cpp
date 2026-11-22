@@ -10,7 +10,7 @@
 #include <QStylePainter>
 #include <QWheelEvent>
 
-namespace VNX {
+namespace harken::studio {
 
 MultiSelectComboBox::MultiSelectComboBox(QWidget* parent)
     : QComboBox(parent)

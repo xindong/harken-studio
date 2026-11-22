@@ -14,8 +14,8 @@
 
 #include <memory>
 
-using VNH::HandoffArea;
-using VNH::UpdateQueue;
+using harken::hub::HandoffArea;
+using harken::hub::UpdateQueue;
 
 namespace {
 
@@ -129,14 +129,14 @@ TEST_F(UpdateQueueTest, DiscardRemovesQueueMarker)
 TEST_F(UpdateQueueTest, CompletedResultSurvivesHandoffCleanupUntilAcknowledged)
 {
     const auto transaction = HandoffArea::newTransactionId();
-    VNH::InstallOutcome outcome;
+    harken::hub::InstallOutcome outcome;
     outcome.failureCode = "PackageRejected";
     outcome.error = "Package verification failed";
     QString error;
     ASSERT_TRUE(UpdateQueue::markStudioInstall(transaction, &error));
-    ASSERT_TRUE(UpdateQueue::writeStudioResult(transaction, outcome, VNH::currentUserId(), &error));
+    ASSERT_TRUE(UpdateQueue::writeStudioResult(transaction, outcome, harken::hub::currentUserId(), &error));
     ASSERT_TRUE(HandoffArea::discard(transaction));
-    VNH::TransactionReclaimer::reclaimAtStartup(QDateTime::currentDateTimeUtc().addDays(2));
+    harken::hub::TransactionReclaimer::reclaimAtStartup(QDateTime::currentDateTimeUtc().addDays(2));
     const auto retained = UpdateQueue::studioResult(transaction, &error);
     ASSERT_TRUE(retained.has_value()) << error.toStdString();
     EXPECT_FALSE(retained->ok);
@@ -151,14 +151,14 @@ TEST_F(UpdateQueueTest, CompletedResultSurvivesHandoffCleanupUntilAcknowledged)
 TEST_F(UpdateQueueTest, InvalidOrForeignResultsCannotReplaceATransactionsOutcome)
 {
     const auto transaction = HandoffArea::newTransactionId();
-    VNH::InstallOutcome outcome;
+    harken::hub::InstallOutcome outcome;
     outcome.failureCode = "PackageRejected";
     QString error;
-    ASSERT_TRUE(UpdateQueue::writeStudioResult(transaction, outcome, VNH::currentUserId(), &error));
+    ASSERT_TRUE(UpdateQueue::writeStudioResult(transaction, outcome, harken::hub::currentUserId(), &error));
     auto invalid = outcome;
     invalid.failureCode = "InstallBusy";
-    EXPECT_FALSE(UpdateQueue::writeStudioResult(transaction, invalid, VNH::currentUserId(), &error));
-    EXPECT_FALSE(UpdateQueue::writeStudioResult("../outside", outcome, VNH::currentUserId(), &error));
+    EXPECT_FALSE(UpdateQueue::writeStudioResult(transaction, invalid, harken::hub::currentUserId(), &error));
+    EXPECT_FALSE(UpdateQueue::writeStudioResult("../outside", outcome, harken::hub::currentUserId(), &error));
     ASSERT_EQ(UpdateQueue::studioResult(transaction, &error)->failureCode, outcome.failureCode);
     const auto path = HandoffArea::rootDir() + QLatin1Char('/') + transaction + ".result";
     QFile file(path);

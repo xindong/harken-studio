@@ -4,7 +4,7 @@
 #include <QMainWindow>
 #include <QStatusTipEvent>
 
-namespace VNX {
+namespace harken::studio {
 
 inline void showStatusTip(QWidget* source, const QString& message)
 {

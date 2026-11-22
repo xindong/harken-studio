@@ -8,15 +8,15 @@
 #include <array>
 #include <numbers>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 
-harkenstudiobuild::CurveDomain runtimeDomain(CurveAxisScale scale)
+harken::studio::build::CurveDomain runtimeDomain(CurveAxisScale scale)
 {
-    return scale == CurveAxisScale::LinearValue ? harkenstudiobuild::CurveDomain::LinearValue
-        : scale == CurveAxisScale::AmplitudeDb ? harkenstudiobuild::CurveDomain::AmplitudeDb
-        : harkenstudiobuild::CurveDomain::MirroredAmplitudeDb;
+    return scale == CurveAxisScale::LinearValue ? harken::studio::build::CurveDomain::LinearValue
+        : scale == CurveAxisScale::AmplitudeDb ? harken::studio::build::CurveDomain::AmplitudeDb
+        : harken::studio::build::CurveDomain::MirroredAmplitudeDb;
 }
 
 }
@@ -55,12 +55,12 @@ CurveHandlePairDef curvePresetHandles(CurvePreset preset,
 
 double curveAxisCoordinate(CurveAxisScale scale, float value)
 {
-    return harkenstudiobuild::CurveValueToCoordinate(value, runtimeDomain(scale));
+    return harken::studio::build::CurveValueToCoordinate(value, runtimeDomain(scale));
 }
 
 float curveAxisValueFromCoordinate(CurveAxisScale scale, double coordinate)
 {
-    return harkenstudiobuild::CurveValueFromCoordinate(coordinate, runtimeDomain(scale));
+    return harken::studio::build::CurveValueFromCoordinate(coordinate, runtimeDomain(scale));
 }
 
 void curveNormalize(float yMin, float yMax,
@@ -107,7 +107,7 @@ float curveBezierValueAt(const QVector<CurvePointDef>& points,
     const CurvePointDef& a = points.at(seg);
     const CurvePointDef& b = points.at(seg + 1);
     const CurveHandlePairDef& h = handles.at(seg);
-    harkenstudiobuild::Curve curve;
+    harken::studio::build::Curve curve;
     curve.points[0] = {a.x, a.value};
     curve.points[1] = {b.x, b.value};
     curve.handles[0] = {h.h1x, h.h1y, h.h2x, h.h2y};

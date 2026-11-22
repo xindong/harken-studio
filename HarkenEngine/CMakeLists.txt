@@ -280,7 +280,7 @@ if(HARKEN_BUILD_RUNTIME_UNIT_TESTS)
     # Native lifetime observation belongs to the test-linked static runtime.
     # It does not change capacity or enter the shared shipping runtime.
     target_compile_definitions(harken_core PUBLIC
-        HARKEN_TEST_PACK_RESOURCE_OBSERVATION)
+        HARKEN_TEST_PACK_RESOURCE_OBSERVATION HARKEN_TEST_VOICE_RELEASE_HOOK)
 endif()
 if(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
     # Internal Engine headers must use the same test layout as this library.
@@ -312,7 +312,7 @@ if(HARKEN_BUILD_RUNTIME_UNIT_TESTS)
         PRIVATE ${HARKEN_RUNTIME_PRIVATE_INCLUDES}
                 ${HARKEN_CORE_DIR}/api/src)
     target_compile_definitions(harken_core_release PUBLIC
-        HARKEN_ENGINE_DEV=0 HARKEN_TEST_PACK_RESOURCE_OBSERVATION)
+        HARKEN_ENGINE_DEV=0 HARKEN_TEST_PACK_RESOURCE_OBSERVATION HARKEN_TEST_VOICE_RELEASE_HOOK)
     if(HARKEN_PLATFORM_AUDIO_LIBS)
         target_link_libraries(harken_core_release PUBLIC ${HARKEN_PLATFORM_AUDIO_LIBS})
     endif()
@@ -325,24 +325,6 @@ if(HARKEN_BUILD_RUNTIME_UNIT_TESTS)
     if(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
         target_compile_definitions(harken_core_release PUBLIC
             HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
-    endif()
-
-    add_library(harken_core_hub_absent STATIC ${HARKEN_CORE_SOURCES} ${HARKEN_DEVELOPMENT_SOURCES})
-    target_link_libraries(harken_core_hub_absent PRIVATE harken_buildinfo)
-    target_include_directories(harken_core_hub_absent
-        PUBLIC ${HARKEN_CORE_DIR}/api/include ${HARKEN_DEVELOPMENT_DIR}/include
-        PRIVATE ${HARKEN_RUNTIME_PRIVATE_INCLUDES}
-                ${HARKEN_DEVELOPMENT_PRIVATE_INCLUDES}
-                ${HARKEN_CORE_DIR}/api/src)
-    target_compile_definitions(harken_core_hub_absent PUBLIC HARKEN_ENGINE_DEV=1 PRIVATE HARKEN_MONITOR_HUB_ABSENT)
-    if(HARKEN_ENABLE_STAGE_TAPS)
-        target_compile_definitions(harken_core_hub_absent PRIVATE HARKEN_ENABLE_STAGE_TAPS)
-    endif()
-    if(HARKEN_PLATFORM_AUDIO_LIBS)
-        target_link_libraries(harken_core_hub_absent PUBLIC ${HARKEN_PLATFORM_AUDIO_LIBS})
-    endif()
-    if(WIN32)
-        target_link_libraries(harken_core_hub_absent PUBLIC advapi32 ws2_32 iphlpapi)
     endif()
 endif()
 
@@ -439,20 +421,17 @@ if(HARKEN_BUILD_ENGINE_DEV)
     target_compile_definitions(harken_engine_dev PRIVATE
         HARKEN_ENGINE_DEV=1
         HARKEN_DEVELOPMENT_PREVIEW=$<BOOL:${HARKEN_DEVELOPMENT_PREVIEW}>)
-    file(STRINGS "${HARKEN_CORE_DIR}/api/abi/HarkenEngine.def" _dev_exports
-        REGEX "^[ \t]+Vn_[A-Za-z0-9_]+$")
-    list(TRANSFORM _dev_exports STRIP)
-    foreach(_header IN LISTS HARKEN_ENGINE_DEV_PUBLIC_HEADERS)
-        file(READ "${_header}" _dev_header)
-        string(REGEX MATCHALL "Vn(Preview)?_[A-Za-z0-9_]+[ \r\n]*\\(" _dev_entries "${_dev_header}")
-        foreach(_entry IN LISTS _dev_entries)
-            string(REGEX REPLACE "[ \r\n]*\\(" "" _entry "${_entry}")
-            list(APPEND _dev_exports "${_entry}")
-        endforeach()
+    set(_abi_manifest "${HARKEN_CORE_DIR}/api/abi/generated/harken_abi_manifest.g.json")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_abi_manifest}")
+    file(READ "${_abi_manifest}" _abi_json)
+    string(JSON _public_exports GET "${_abi_json}" contract nativeAbi publicExports)
+    string(JSON _export_count LENGTH "${_public_exports}")
+    math(EXPR _last_export "${_export_count} - 1")
+    set(_dev_exports)
+    foreach(_index RANGE 0 ${_last_export})
+        string(JSON _export GET "${_public_exports}" ${_index})
+        list(APPEND _dev_exports "${_export}")
     endforeach()
-    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-        ${HARKEN_ENGINE_DEV_PUBLIC_HEADERS}
-        "${HARKEN_CORE_DIR}/api/abi/HarkenEngine.def")
     if(WIN32)
         list(JOIN _dev_exports "\n    " _dev_exports)
         file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/HarkenEngineDev.def"

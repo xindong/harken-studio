@@ -1,7 +1,7 @@
 #include "PlatformFieldMerge.h"
 #include "Core/PropertyDescriptor.h"
 
-namespace VNX {
+namespace harken::studio {
 
 PlatformFieldView platformFieldView(ProjectItem& owner,
                                    const PlayablePropertyLocatorV1& locator,

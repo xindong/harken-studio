@@ -5,7 +5,7 @@
 
 #include <algorithm>
 
-namespace VNH {
+namespace harken::hub {
 
 LogTailer::LogTailer(QObject* parent)
     : QObject(parent)

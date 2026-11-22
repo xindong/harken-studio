@@ -3,7 +3,7 @@
 #include "../EffectChainSemantics.h"
 #include "../PropertyDescriptor.h"
 
-namespace VNX {
+namespace harken::studio {
 
 class VEffect : public ReflectedComponent<VEffect>
 {

@@ -8,7 +8,7 @@
 #include <cstdint>
 #include <cstring>
 
-namespace harkenstudiobuild {
+namespace harken::studio::build {
 
 struct PackEffectSchemaRow {
     const char* manifestName;
@@ -31,11 +31,11 @@ inline constexpr const char kPackEffectManifestNameList[] =
     "\"feedbackDelay\", \"threeBandTone\", \"gain\", \"limiter\", \"compressor\"";
 
 static_assert(sizeof(kPackEffectSchema) / sizeof(kPackEffectSchema[0]) == kPackEffectSchemaRowCount);
-static_assert(harkenstudio::kEffectFeedbackDelay == HK_PACK_EFFECT_FEEDBACK_DELAY);
-static_assert(harkenstudio::kEffectThreeBandTone == HK_PACK_EFFECT_THREE_BAND_TONE);
-static_assert(harkenstudio::kEffectGain == HK_PACK_EFFECT_GAIN);
-static_assert(harkenstudio::kEffectLimiter == HK_PACK_EFFECT_LIMITER);
-static_assert(harkenstudio::kEffectCompressor == HK_PACK_EFFECT_COMPRESSOR);
+static_assert(harken::studio::types::kEffectFeedbackDelay == HK_PACK_EFFECT_FEEDBACK_DELAY);
+static_assert(harken::studio::types::kEffectThreeBandTone == HK_PACK_EFFECT_THREE_BAND_TONE);
+static_assert(harken::studio::types::kEffectGain == HK_PACK_EFFECT_GAIN);
+static_assert(harken::studio::types::kEffectLimiter == HK_PACK_EFFECT_LIMITER);
+static_assert(harken::studio::types::kEffectCompressor == HK_PACK_EFFECT_COMPRESSOR);
 
 inline const PackEffectSchemaRow* FindPackEffectSchemaByType(std::uint32_t type) {
     for (const PackEffectSchemaRow& row : kPackEffectSchema) {

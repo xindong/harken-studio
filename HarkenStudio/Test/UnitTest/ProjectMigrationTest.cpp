@@ -28,13 +28,13 @@ TEST(ProjectMigration, WrongTargetVersionStopsBeforeFlush)
     writeObject(source.filePath(relative),
                 QJsonObject{{QStringLiteral("schemaVersion"), 1}});
 
-    VNX::ProjectMigrationRegistry registry;
-    VNX::ProjectMigrationStep step;
+    harken::studio::ProjectMigrationRegistry registry;
+    harken::studio::ProjectMigrationStep step;
     step.id = QStringLiteral("project-1-to-2");
     step.fromSchema = 1;
     step.toSchema = 2;
     step.writeSet = {relative};
-    step.transform = [relative](VNX::ProjectMigrationWorkspace& workspace,
+    step.transform = [relative](harken::studio::ProjectMigrationWorkspace& workspace,
                                 QStringList*, QString* error) {
         QJsonObject root;
         if (!workspace.readObject(relative, &root, error))
@@ -44,13 +44,13 @@ TEST(ProjectMigration, WrongTargetVersionStopsBeforeFlush)
     };
     ASSERT_TRUE(registry.registerStep(std::move(step)));
 
-    const VNX::ProjectMigrationPlan plan = registry.plan(1, 2, source.path());
-    VNX::ProjectMigrationWorkspace workspace(source.path(), staging.path(),
+    const harken::studio::ProjectMigrationPlan plan = registry.plan(1, 2, source.path());
+    harken::studio::ProjectMigrationWorkspace workspace(source.path(), staging.path(),
                                              plan.writeSet, relative);
     QString error;
     EXPECT_FALSE(registry.execute(
         plan, workspace, nullptr, &error, {},
-        [&relative](VNX::ProjectMigrationWorkspace& current, int expected,
+        [&relative](harken::studio::ProjectMigrationWorkspace& current, int expected,
                     QString* validationError) {
             QJsonObject root;
             if (!current.readObject(relative, &root, validationError))
@@ -70,7 +70,7 @@ TEST(ProjectMigration, WriteOutsideDeclaredSetIsRejected)
     QTemporaryDir staging;
     ASSERT_TRUE(source.isValid());
     ASSERT_TRUE(staging.isValid());
-    VNX::ProjectMigrationWorkspace workspace(
+    harken::studio::ProjectMigrationWorkspace workspace(
         source.path(), staging.path(), {QStringLiteral("Demo.hsp")});
     QString error;
     EXPECT_FALSE(workspace.writeObject(QStringLiteral("AudioSources/source.wav"),
@@ -79,39 +79,39 @@ TEST(ProjectMigration, WriteOutsideDeclaredSetIsRejected)
 
 TEST(ProjectMigration, MissingDependencyStopsThePlan)
 {
-    VNX::ProjectMigrationRegistry registry;
-    VNX::ProjectMigrationStep step;
+    harken::studio::ProjectMigrationRegistry registry;
+    harken::studio::ProjectMigrationStep step;
     step.id = QStringLiteral("root");
     step.fromSchema = 1;
     step.toSchema = 2;
     step.dependencies = {QStringLiteral("missing")};
-    step.transform = [](VNX::ProjectMigrationWorkspace&, QStringList*, QString*) {
+    step.transform = [](harken::studio::ProjectMigrationWorkspace&, QStringList*, QString*) {
         return true;
     };
     ASSERT_TRUE(registry.registerStep(std::move(step)));
 
-    const VNX::ProjectMigrationPlan plan = registry.plan(1, 2);
+    const harken::studio::ProjectMigrationPlan plan = registry.plan(1, 2);
     EXPECT_FALSE(plan.ok);
 }
 
 TEST(ProjectMigration, CyclicDependenciesStopThePlan)
 {
-    VNX::ProjectMigrationRegistry registry;
+    harken::studio::ProjectMigrationRegistry registry;
     for (const QString& id : {QStringLiteral("first"), QStringLiteral("second")}) {
-        VNX::ProjectMigrationStep step;
+        harken::studio::ProjectMigrationStep step;
         step.id = id;
         step.fromSchema = 1;
         step.toSchema = 2;
         step.dependencies = {id == QStringLiteral("first")
                                  ? QStringLiteral("second")
                                  : QStringLiteral("first")};
-        step.transform = [](VNX::ProjectMigrationWorkspace&, QStringList*, QString*) {
+        step.transform = [](harken::studio::ProjectMigrationWorkspace&, QStringList*, QString*) {
             return true;
         };
         ASSERT_TRUE(registry.registerStep(std::move(step)));
     }
 
-    const VNX::ProjectMigrationPlan plan = registry.plan(1, 2);
+    const harken::studio::ProjectMigrationPlan plan = registry.plan(1, 2);
     EXPECT_FALSE(plan.ok);
 }
 

@@ -6,7 +6,7 @@
 #include "FieldGroupInspectorView.h"
 #include "InspectorLayout.h"
 
-namespace VNX {
+namespace harken::studio {
 
 inline PropertyDescriptor effectsInspectorDescriptor()
 {

@@ -10,7 +10,7 @@
 #include <limits>
 #include <utility>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 

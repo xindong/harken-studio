@@ -2,7 +2,7 @@
 
 #include "Core/SoundSourceSemantics.h"
 
-namespace VNX {
+namespace harken::studio {
 
 SourceWaveformView::SourceWaveformView(const SoundSourceDef& source, uint64_t totalFrames)
     : source_(SoundSourceSemantics::canonicalized(source, totalFrames))

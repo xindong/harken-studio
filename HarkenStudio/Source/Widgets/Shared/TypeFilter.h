@@ -6,7 +6,7 @@
 #include <algorithm>
 #include <vector>
 
-namespace VNX::TypeFilter {
+namespace harken::studio::TypeFilter {
 
 inline bool matches(ProjectItem::Type type,
                     ProjectItem::Type singleFilter,

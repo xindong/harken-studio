@@ -143,7 +143,7 @@ bool ImmediateLaneTimelineFinalizer::Capture(std::uint64_t quantum) noexcept {
 bool ImmediateLaneTimelineFinalizer::AdmitQuantum(
     std::uint32_t availableBytes, std::uint32_t blockFrames,
     const DecisionTable* decisions,
-    const Plan03ScratchDecisionState* currentSlices,
+    const ScratchDecisionState* currentSlices,
     std::uint32_t currentSliceCount) const noexcept {
     if (impl_ == nullptr || !impl_->prepared) {
         return voices_.AdmitTimelineQuantum(availableBytes, blockFrames,
@@ -182,7 +182,7 @@ bool ImmediateLaneTimelineFinalizer::AdmitQuantum(
 bool ImmediateLaneTimelineFinalizer::ProveQuantumAdmission(
     const BlockArena& arena, std::uint32_t blockFrames,
     NativeTimelineQuantumAdmissionProof* admitted,
-    const DecisionTable* decisions, const Plan03ScratchDecisionState* currentSlices,
+    const DecisionTable* decisions, const ScratchDecisionState* currentSlices,
     std::uint32_t currentSliceCount) const noexcept {
     if (admitted == nullptr || admitted->state_ != nullptr || impl_ == nullptr ||
         !impl_->prepared || blockFrames == 0 || blockFrames != impl_->blockFrames ||
@@ -302,13 +302,13 @@ void ImmediateLaneTimelineFinalizer::Apply(std::uint64_t quantum) noexcept {
         }
         const bool grouped = admittedGroups != 0;
         bool continuation = false;
-        const auto isInitialQueueCompletion = [](const Plan03PageGroupView& view) noexcept {
+        const auto isInitialQueueCompletion = [](const SchedulePageGroupView& view) noexcept {
             return view.frontier != nullptr && view.frontier->role == FrontierGroupRole::Future &&
                 view.frontier->queueInitial.Valid() && !view.frontier->queueConditional.Valid() &&
                 !view.frontier->variableSide.Valid() && view.frontier->transition.Valid() &&
                 view.identity.sliceIndex == 1u && view.memberCount == 2u && view.sourceControlCount == 1u;
         };
-        const auto hasConditionalTargetSpans = [&](const Plan03PageGroupView& view) noexcept {
+        const auto hasConditionalTargetSpans = [&](const SchedulePageGroupView& view) noexcept {
             if (view.frontier == nullptr || !view.frontier->queueConditional.Valid() ||
                 view.frontier->queueInitial.Valid() || view.frontier->variableSide.Valid() ||
                 !view.frontier->transition.Valid() || view.members == nullptr) return false;
@@ -336,14 +336,14 @@ void ImmediateLaneTimelineFinalizer::Apply(std::uint64_t quantum) noexcept {
                 bucket->attemptGeneration)) && futureCount == admittedEvents && valid;
         if (grouped) {
             valid = state.frontier != nullptr && state.pool != nullptr &&
-                admittedGroups <= state.pool->MaxPlan03GroupHeadersPerPage() && valid;
+                admittedGroups <= state.pool->MaxScheduleGroupHeadersPerPage() && valid;
             if (valid) {
                 const auto* groups = state.lane->Groups(slot, bucket);
                 valid = groups != nullptr;
                 for (std::uint32_t i = 0; valid && i < bucket->groupCount; ++i) {
                     if (!state.lane->IsGroupAdmitted(slot, bucket, bucket->firstGroup + i)) continue;
-                    Plan03PageGroupView view{};
-                    valid = state.pool->ResolvePlan03GroupSliceRt(groups[i].identity, &view) &&
+                    SchedulePageGroupView view{};
+                    valid = state.pool->ResolveScheduleGroupSliceRt(groups[i].identity, &view) &&
                         view.frontier != nullptr && state.frontier->CollectGroup(view);
                     if (valid && view.frontier->role == FrontierGroupRole::Coordinator &&
                         view.frontier->prerequisite.Valid()) continuation = true;
@@ -445,8 +445,8 @@ void ImmediateLaneTimelineFinalizer::Apply(std::uint64_t quantum) noexcept {
                 for (std::uint32_t index = 0; bucketGroups != nullptr && index < bucket->groupCount; ++index) {
                     if (!state.lane->IsGroupAdmitted(slot, bucket, bucket->firstGroup + index) ||
                         !(bucketGroups[index].identity == event.frontier.group)) continue;
-                    Plan03PageGroupView group{};
-                    if (!state.pool->ResolvePlan03GroupSliceRt(bucketGroups[index].identity, &group) ||
+                    SchedulePageGroupView group{};
+                    if (!state.pool->ResolveScheduleGroupSliceRt(bucketGroups[index].identity, &group) ||
                         group.frontier == nullptr) {
                         valid = false;
                         break;
@@ -623,11 +623,11 @@ void ImmediateLaneTimelineFinalizer::Apply(std::uint64_t quantum) noexcept {
             valid = voices_.StageReservedLaneTimelineEvent(scratch.reservation, 0, voice) &&
                 voices_.ProveTimelineReservation(scratch.reservation, &scratch.voiceProof);
             if (valid && events[i].futureGroupedStart) {
-                Plan03PageGroupView group{};
+                SchedulePageGroupView group{};
                 const ImmediateLaneEvent* mapped = nullptr;
                 std::uint16_t memberIndex = UINT16_MAX;
                 valid = state.pool != nullptr &&
-                    state.pool->ResolvePlan03GroupSliceRt(
+                    state.pool->ResolveScheduleGroupSliceRt(
                         event.frontier.group, &group) &&
                     group.frontier != nullptr && group.lease != nullptr &&
                     group.frontier->role == FrontierGroupRole::EntryMember &&

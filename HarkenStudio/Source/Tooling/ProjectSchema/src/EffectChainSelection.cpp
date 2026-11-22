@@ -7,7 +7,7 @@
 #include <utility>
 #include <vector>
 
-namespace harkenprojectschema {
+namespace harken::studio::project_schema {
 namespace {
 
 // One clip's placement facts, gathered so occurrences can be enumerated in the
@@ -295,4 +295,4 @@ EffectChainSelectionResult BuildEffectChainSelection(
     return result;
 }
 
-}  // namespace harkenprojectschema
+}  // namespace harken::studio::project_schema

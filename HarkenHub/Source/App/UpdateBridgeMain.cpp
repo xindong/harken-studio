@@ -10,7 +10,7 @@ int main(int argc, char* argv[])
 {
     QCoreApplication::setOrganizationName(QStringLiteral("HarkenSound"));
     QCoreApplication::setApplicationName(QStringLiteral("HarkenHub"));
-    VNH::FileLog::install(QStringLiteral("bridge"));
+    harken::hub::FileLog::install(QStringLiteral("bridge"));
     QCoreApplication app(argc, argv);
 
     bool consume = false;
@@ -24,10 +24,10 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    const auto report = VNH::UpdateBridgeConsumer::run(
-        VNH::TrustAnchors::manifestPublicKey(),
+    const auto report = harken::hub::UpdateBridgeConsumer::run(
+        harken::hub::TrustAnchors::manifestPublicKey(),
         QDateTime::currentDateTimeUtc(),
-        VNH::UpdateBridgeConsumer::defaultHooks());
+        harken::hub::UpdateBridgeConsumer::defaultHooks());
     for (const QString& detail : report.details)
         qInfo().noquote() << detail;
     qInfo().noquote()

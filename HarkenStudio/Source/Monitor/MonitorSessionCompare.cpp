@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <cstdint>
 
-namespace VNX::Monitor {
+namespace harken::studio::Monitor {
 
 namespace {
 

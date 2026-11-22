@@ -1,7 +1,7 @@
 #include "Core/Build/PackagingBridge.h"
 #include "RuntimeBridge/ProjectSyncBridge.h"
 #include "Utils/AudioFileReader.h"
-#include "Tooling/Harkenizer/ResourceCompilerClient.h"
+#include "Tooling/Harkenizer/BuildIdentity.h"
 #include "Tooling/Harkenizer/ResourceCompiler/ResourceCompiler.h"
 #include <harken_studio_build/BindingTransition.h>
 #include <harken_studio_build/BindingTargets.h>
@@ -39,8 +39,8 @@
 #include <unordered_set>
 #include <utility>
 
-namespace HarkenEditor {
-namespace Bridge {
+namespace harken::studio {
+namespace bridge {
 
 namespace {
 
@@ -211,7 +211,7 @@ bool parseAiff(const QByteArray& bytes, AiffDescriptor& out)
 
 bool readAiffFile(const QString& path, QByteArray& bytes, AiffDescriptor& descriptor)
 {
-    VNX::AudioFileReader file(path);
+    harken::studio::AudioFileReader file(path);
     if (!file.openReadOnly())
         return false;
     bytes = file.readAll();
@@ -317,7 +317,7 @@ int oggClose(void*)
     return 0;
 }
 
-bool openOgg(const QString& path, VNX::AudioFileReader& file, OggVorbis_File& vorbis)
+bool openOgg(const QString& path, harken::studio::AudioFileReader& file, OggVorbis_File& vorbis)
 {
     file.setFileName(path);
     if (!file.openReadOnly())
@@ -329,7 +329,7 @@ bool openOgg(const QString& path, VNX::AudioFileReader& file, OggVorbis_File& vo
 bool decodeOggFile(const QString& path, std::vector<float>& outInterleaved,
                    int& outChannels, int& outSampleRate)
 {
-    VNX::AudioFileReader file;
+    harken::studio::AudioFileReader file;
     OggVorbis_File vorbis{};
     if (!openOgg(path, file, vorbis))
         return false;
@@ -445,7 +445,7 @@ AudioFileInfoData aiffFileInfo(const QString& path)
 AudioFileInfoData oggFileInfo(const QString& path)
 {
     AudioFileInfoData out;
-    VNX::AudioFileReader file;
+    harken::studio::AudioFileReader file;
     OggVorbis_File vorbis{};
     if (!openOgg(path, file, vorbis))
         return out;
@@ -475,19 +475,19 @@ AudioFileInfoData oggFileInfo(const QString& path)
     return out;
 }
 
-bool initAudioDecoder(VNX::AudioFileReader& file, ma_decoder& decoder)
+bool initAudioDecoder(harken::studio::AudioFileReader& file, ma_decoder& decoder)
 {
     if (!file.openReadOnly())
         return false;
     const auto read = [](ma_decoder* decoder, void* output, size_t bytes, size_t* bytesRead) -> ma_result {
-        auto* file = static_cast<VNX::AudioFileReader*>(decoder->pUserData);
+        auto* file = static_cast<harken::studio::AudioFileReader*>(decoder->pUserData);
         const qint64 count = file->read(static_cast<char*>(output), static_cast<qint64>(bytes));
         if (bytesRead)
             *bytesRead = count > 0 ? static_cast<size_t>(count) : 0;
         return count < 0 ? MA_IO_ERROR : (count == 0 ? MA_AT_END : MA_SUCCESS);
     };
     const auto seek = [](ma_decoder* decoder, ma_int64 offset, ma_seek_origin origin) -> ma_result {
-        auto* file = static_cast<VNX::AudioFileReader*>(decoder->pUserData);
+        auto* file = static_cast<harken::studio::AudioFileReader*>(decoder->pUserData);
         const int whence = origin == ma_seek_origin_start ? SEEK_SET
             : (origin == ma_seek_origin_current ? SEEK_CUR : SEEK_END);
         return seekAudioFile(file, offset, whence) == 0 ? MA_SUCCESS : MA_BAD_SEEK;
@@ -532,7 +532,7 @@ public:
         for (uint32_t channel = 0; channel < channels; ++channel)
             planes[channel] = samples.data() + channel;
         uint64_t revision = 0;
-        if (!harkenstudiobuild::ComputeMediaPcmContentRevisionV1(
+        if (!harken::studio::build::ComputeMediaPcmContentRevisionV1(
                 sampleRate, channels, samples.size() / channels, planes, channels,
                 &revision, loopStartFrame, loopEndFrame))
             return 0;
@@ -570,7 +570,7 @@ bool decodeAudioFileInterleaved(const QString& filePath,
         return decodeAiffFile(filePath, outInterleaved, outChannels, outSampleRate);
 
     ma_decoder decoder{};
-    VNX::AudioFileReader file(filePath);
+    harken::studio::AudioFileReader file(filePath);
     if (!initAudioDecoder(file, decoder))
         return false;
 
@@ -634,7 +634,7 @@ bool computePackMediaContentRevision(const PackMediaDesc& media, uint64_t* revis
         || interleaved->size() % static_cast<std::size_t>(channels) != 0) return false;
     std::vector<const float*> planes(static_cast<std::size_t>(channels));
     for (int c = 0; c < channels; ++c) planes[c] = interleaved->data() + c;
-    return harkenstudiobuild::ComputeMediaPcmContentRevisionV1(
+    return harken::studio::build::ComputeMediaPcmContentRevisionV1(
         static_cast<uint32_t>(sampleRate), static_cast<uint32_t>(channels),
         interleaved->size() / static_cast<std::size_t>(channels), planes.data(),
         static_cast<uint32_t>(channels), revision,
@@ -650,7 +650,7 @@ AudioFileInfoData audioFileInfo(const QString& path)
 
     AudioFileInfoData out;
     ma_decoder decoder{};
-    VNX::AudioFileReader file(path);
+    harken::studio::AudioFileReader file(path);
     if (!initAudioDecoder(file, decoder))
         return out;
     ma_uint64 frameCount = 0;
@@ -672,75 +672,6 @@ AudioFileInfoData audioFileInfo(const QString& path)
     return out;
 }
 
-bool encodePackVorbis(const std::vector<float>&, int, int,
-                      const PackVorbisEncodeSettings&,
-                      std::vector<uint8_t>& outData,
-                      PackCodecMetadata& outMetadata,
-                      std::vector<uint8_t>* outSharedCodebook)
-{
-    outData.clear();
-    outMetadata = {};
-    if (outSharedCodebook)
-        outSharedCodebook->clear();
-    return false;
-}
-
-bool encodePackOpus(const std::vector<float>&, int, int,
-                    std::vector<uint8_t>& outData,
-                    PackCodecMetadata& outMetadata)
-{
-    outData.clear();
-    outMetadata = {};
-    return false;
-}
-
-void applyLoopRegion(PackCodecMetadata& metadata,
-                     uint64_t loopStartFrame,
-                     uint64_t loopEndFrame)
-{
-    Q_UNUSED(metadata);
-    Q_UNUSED(loopStartFrame);
-    Q_UNUSED(loopEndFrame);
-}
-
-QString packCodecName(uint16_t codecId)
-{
-    return codecId == 0 ? QStringLiteral("PCMFloat") : QStringLiteral("Unavailable");
-}
-
-QString packCodecContainerName(uint16_t containerId)
-{
-    return containerId == 0 ? QStringLiteral("PackF32Planar") : QStringLiteral("Unavailable");
-}
-
-PackCodecFlagsView decodePackCodecFlags(uint32_t flags)
-{
-    PackCodecFlagsView view;
-    view.fullDecodeFallback = flags == 0;
-    return view;
-}
-
-bool parsePackCodecMetadataSection(const QByteArray&, std::vector<PackCodecEntryInfo>& out,
-                                   QString* error)
-{
-    out.clear();
-    if (error)
-        *error = QStringLiteral("Legacy CODC metadata is unavailable for .pack artifacts");
-    return false;
-}
-
-bool parsePackCodecCodebookSection(const QByteArray&, std::vector<PackCodecCodebookInfo>& out,
-                                   QString* error)
-{
-    out.clear();
-    if (error)
-        *error = QStringLiteral("Legacy CDBK metadata is unavailable for .pack artifacts");
-    return false;
-}
-
-bool isPackCodecMetadataSection(uint32_t) { return false; }
-bool isPackCodecCodebookSection(uint32_t) { return false; }
-
 struct PackBuildSession::Impl
 {
     bool initPack = false;
@@ -749,16 +680,16 @@ struct PackBuildSession::Impl
     QStringList pendingWarnings;
     std::vector<PackMediaDesc> media;
     std::shared_ptr<harkenizer::resourcecompiler::MediaCache> mediaCache;
-    std::unordered_set<harkenstudio::ObjectId> mediaIds;
+    std::unordered_set<harken::studio::types::ObjectId> mediaIds;
     std::vector<PackBus> buses;
     std::vector<PackBusSend> busSends;
     std::vector<PackAttenuation> attenuations;
     std::vector<PackEffectPreset> effectPresets;
-    std::vector<harkenstudio::ObjectId> discreteVariables;
+    std::vector<harken::studio::types::ObjectId> discreteVariables;
     std::vector<PackMeterWiring> meterWirings;
     std::vector<PackParameterBinding> bindings;
     std::vector<PackBindingAttachment> bindingAttachments;
-    std::vector<std::pair<harkenstudio::ObjectId, PackModulator>> modulatorBindings;
+    std::vector<std::pair<harken::studio::types::ObjectId, PackModulator>> modulatorBindings;
 
     void warn(const QString& message)
     {
@@ -832,33 +763,33 @@ struct PackBuildSession::Impl
         QJsonObject result = bindingSections(true);
         QJsonArray busValues;
         QJsonArray effectValues;
-        std::unordered_set<harkenstudio::ObjectId> seenBuses;
+        std::unordered_set<harken::studio::types::ObjectId> seenBuses;
         for (const PackBus& bus : buses)
         {
-            if (harkenstudio::IsNull(bus.id))
+            if (harken::studio::types::IsNull(bus.id))
                 continue;
-            if (bus.id == harkenstudio::kMasterBusObjectId) {
+            if (bus.id == harken::studio::types::kMasterBusObjectId) {
                 lastError = QStringLiteral("The Runtime output root cannot be an authored Bus");
                 return {};
             }
             if (!seenBuses.insert(bus.id).second)
             {
                 warn(QStringLiteral("Bus '%1' repeats id %2 and was dropped")
-                         .arg(bus.name, VNX::objectIdString(bus.id)));
+                         .arg(bus.name, harken::studio::objectIdString(bus.id)));
                 continue;
             }
-            const harkenstudio::ObjectId parent =
-                (harkenstudio::IsNull(bus.parentId) || bus.parentId == bus.id) ? harkenstudio::kMasterBusObjectId
+            const harken::studio::types::ObjectId parent =
+                (harken::studio::types::IsNull(bus.parentId) || bus.parentId == bus.id) ? harken::studio::types::kMasterBusObjectId
                                                                      : bus.parentId;
             busValues.append(QJsonObject{
-                {QStringLiteral("id"), VNX::objectIdString(bus.id)},
-                {QStringLiteral("parent"), VNX::objectIdString(parent)},
+                {QStringLiteral("id"), harken::studio::objectIdString(bus.id)},
+                {QStringLiteral("parent"), harken::studio::objectIdString(parent)},
                 {QStringLiteral("volume"), bus.volume},
                 {QStringLiteral("outputBusVolume"), bus.outputBusVolume}});
             for (size_t slot = 0; slot < bus.effects.size(); ++slot) {
                 const auto& effect = bus.effects[slot];
-                const auto* schema = harkenstudiobuild::FindPackEffectSchemaByType(effect.type);
-                if (!schema || harkenstudio::IsNull(effect.id)) {
+                const auto* schema = harken::studio::build::FindPackEffectSchemaByType(effect.type);
+                if (!schema || harken::studio::types::IsNull(effect.id)) {
                     lastError = QStringLiteral("Bus '%1' contains an invalid effect identity or type")
                         .arg(bus.name);
                     return {};
@@ -866,8 +797,8 @@ struct PackBuildSession::Impl
                 QJsonArray parameters;
                 for (float value : effect.parameters) parameters.append(value);
                 effectValues.append(QJsonObject{
-                    {QStringLiteral("effectId"), VNX::objectIdString(effect.id)},
-                    {QStringLiteral("bus"), VNX::objectIdString(bus.id)},
+                    {QStringLiteral("effectId"), harken::studio::objectIdString(effect.id)},
+                    {QStringLiteral("bus"), harken::studio::objectIdString(bus.id)},
                     {QStringLiteral("slot"), static_cast<int>(slot)},
                     {QStringLiteral("type"), QString::fromLatin1(schema->manifestName)},
                     {QStringLiteral("descriptorVintage"), static_cast<int>(schema->descriptorVintage)},
@@ -882,37 +813,37 @@ struct PackBuildSession::Impl
             result.insert(QStringLiteral("busEffects"), effectValues);
 
         QJsonArray sendValues;
-        std::set<std::pair<harkenstudio::ObjectId, harkenstudio::ObjectId>> seenEdges;
+        std::set<std::pair<harken::studio::types::ObjectId, harken::studio::types::ObjectId>> seenEdges;
         for (const PackBusSend& send : busSends)
         {
-            if (harkenstudio::IsNull(send.fromBusId) || harkenstudio::IsNull(send.toBusId) ||
+            if (harken::studio::types::IsNull(send.fromBusId) || harken::studio::types::IsNull(send.toBusId) ||
                 send.fromBusId == send.toBusId)
                 continue;
             if (!seenEdges.insert({send.fromBusId, send.toBusId}).second)
                 continue;
             sendValues.append(QJsonObject{
-                {QStringLiteral("from"), VNX::objectIdString(send.fromBusId)},
-                {QStringLiteral("to"), VNX::objectIdString(send.toBusId)},
+                {QStringLiteral("from"), harken::studio::objectIdString(send.fromBusId)},
+                {QStringLiteral("to"), harken::studio::objectIdString(send.toBusId)},
                 {QStringLiteral("levelDb"), send.levelDb}});
         }
         if (!sendValues.isEmpty())
             result.insert(QStringLiteral("busSends"), sendValues);
 
         QJsonArray attenuationValues;
-        std::unordered_set<harkenstudio::ObjectId> seenAttenuations;
+        std::unordered_set<harken::studio::types::ObjectId> seenAttenuations;
         for (const PackAttenuation& att : attenuations)
         {
-            if (harkenstudio::IsNull(att.id) || !seenAttenuations.insert(att.id).second)
+            if (harken::studio::types::IsNull(att.id) || !seenAttenuations.insert(att.id).second)
                 continue;
             if (!(att.maxDistance > 0.0f))
             {
                 warn(QStringLiteral("Attenuation %1: maxDistance must be > 0; "
-                                    "the profile was dropped").arg(VNX::objectIdString(att.id)));
+                                    "the profile was dropped").arg(harken::studio::objectIdString(att.id)));
                 continue;
             }
             const float minDistance = std::min(1.0f, att.maxDistance * 0.5f);
             QJsonObject value{
-                {QStringLiteral("id"), VNX::objectIdString(att.id)},
+                {QStringLiteral("id"), harken::studio::objectIdString(att.id)},
                 {QStringLiteral("rolloff"), QStringLiteral("linear")},
                 {QStringLiteral("minDistance"), minDistance},
                 {QStringLiteral("maxDistance"), att.maxDistance},
@@ -923,7 +854,7 @@ struct PackBuildSession::Impl
                 if (slot.slot != 0)
                     continue;
                 const QString context = QStringLiteral("Attenuation %1 slot %2")
-                                            .arg(VNX::objectIdString(att.id)).arg(slot.slot);
+                                            .arg(harken::studio::objectIdString(att.id)).arg(slot.slot);
                 std::vector<CurvePoint> points;
                 points.reserve(slot.points.size());
                 for (const auto& point : slot.points)
@@ -948,13 +879,13 @@ struct PackBuildSession::Impl
     {
         QJsonObject result;
         QJsonArray bindingValues;
-        std::unordered_set<harkenstudio::ObjectId> seenBindings;
+        std::unordered_set<harken::studio::types::ObjectId> seenBindings;
         for (const PackParameterBinding& binding : bindings)
         {
-            const QString context = QStringLiteral("Binding %1").arg(VNX::objectIdString(binding.id));
-            const auto* targetMeta = harkenstudiobuild::FindTargetMeta(binding.scope, binding.target);
+            const QString context = QStringLiteral("Binding %1").arg(harken::studio::objectIdString(binding.id));
+            const auto* targetMeta = harken::studio::build::FindTargetMeta(binding.scope, binding.target);
             const uint32_t transitionMs = binding.transitionMs;
-            if (!harkenstudiobuild::IsValidBindingTransitionMs(transitionMs)) {
+            if (!harken::studio::build::IsValidBindingTransitionMs(transitionMs)) {
                 lastError = QStringLiteral("%1: transitionMs must be 0..60000").arg(context);
                 return {};
             }
@@ -1000,8 +931,8 @@ struct PackBuildSession::Impl
                 continue;
             }
             bindingValues.append(QJsonObject{
-                {QStringLiteral("id"), VNX::objectIdString(binding.id)},
-                {QStringLiteral("variable"), VNX::objectIdString(binding.variableId)},
+                {QStringLiteral("id"), harken::studio::objectIdString(binding.id)},
+                {QStringLiteral("variable"), harken::studio::objectIdString(binding.variableId)},
                 {QStringLiteral("scope"), binding.scope == 1 ? QStringLiteral("bus")
                                                              : QStringLiteral("voice")},
                 {QStringLiteral("target"), static_cast<qint64>(binding.target)},
@@ -1012,14 +943,14 @@ struct PackBuildSession::Impl
             result.insert(QStringLiteral("bindings"), bindingValues);
 
         QJsonArray attachmentValues;
-        std::set<std::tuple<harkenstudio::ObjectId, uint8_t, harkenstudio::ObjectId>> seenAttachments;
+        std::set<std::tuple<harken::studio::types::ObjectId, uint8_t, harken::studio::types::ObjectId>> seenAttachments;
         for (const PackBindingAttachment& attachment : bindingAttachments)
         {
             if (attachment.scope > 1)
             {
                 warn(QStringLiteral("Attachment of binding %1: scope %2 has no "
                                     "pack representation and was dropped")
-                         .arg(VNX::objectIdString(attachment.bindingId)).arg(attachment.scope));
+                         .arg(harken::studio::objectIdString(attachment.bindingId)).arg(attachment.scope));
                 continue;
             }
             if (resident && attachment.scope == 0)
@@ -1027,7 +958,7 @@ struct PackBuildSession::Impl
                 warn(QStringLiteral("Attachment of binding %1: voice-scope "
                                     "attachments reference content-pack playables "
                                     "and were dropped from the resident pack")
-                         .arg(VNX::objectIdString(attachment.bindingId)));
+                         .arg(harken::studio::objectIdString(attachment.bindingId)));
                 continue;
             }
             if (!seenAttachments
@@ -1035,10 +966,10 @@ struct PackBuildSession::Impl
                      .second)
                 continue;
             attachmentValues.append(QJsonObject{
-                {QStringLiteral("binding"), VNX::objectIdString(attachment.bindingId)},
+                {QStringLiteral("binding"), harken::studio::objectIdString(attachment.bindingId)},
                 {QStringLiteral("scope"), attachment.scope == 1 ? QStringLiteral("bus")
                                                                 : QStringLiteral("voice")},
-                {QStringLiteral("object"), VNX::objectIdString(attachment.objectId)}});
+                {QStringLiteral("object"), harken::studio::objectIdString(attachment.objectId)}});
         }
         if (!attachmentValues.isEmpty())
             result.insert(QStringLiteral("attachments"), attachmentValues);
@@ -1054,10 +985,10 @@ struct PackBuildSession::Impl
         std::sort(effectPresets.begin(), effectPresets.end(), [](const auto& a, const auto& b) {
             return a.id < b.id;
         });
-        harkenstudio::ObjectId previousId{};
+        harken::studio::types::ObjectId previousId{};
         for (const auto& preset : effectPresets) {
-            const auto* schema = harkenstudiobuild::FindPackEffectSchemaByType(preset.type);
-            if (harkenstudio::IsNull(preset.id) || preset.id == previousId || !schema
+            const auto* schema = harken::studio::build::FindPackEffectSchemaByType(preset.type);
+            if (harken::studio::types::IsNull(preset.id) || preset.id == previousId || !schema
                 || preset.parameters.size() != schema->paramCount) {
                 lastError = QStringLiteral("Effect preset identity or descriptor is invalid");
                 return false;
@@ -1067,20 +998,20 @@ struct PackBuildSession::Impl
             entry.kind = HK_PACK_ENTRY_KIND_EFFECT_PRESET;
             entry.vintage = HK_PACK_EFFECT_PRESET_VINTAGE;
             entry.id = preset.id;
-            entry.payload.resize(harkenstudiobuild::kPackBytes<HkPackEffectPresetHeader>
-                + preset.parameters.size() * harkenstudiobuild::kPackBytes<HkPackEffectPresetParameter>);
-            harkenstudiobuild::PackWireBuffer<uint8_t> buffer{
+            entry.payload.resize(harken::studio::build::kPackBytes<HkPackEffectPresetHeader>
+                + preset.parameters.size() * harken::studio::build::kPackBytes<HkPackEffectPresetParameter>);
+            harken::studio::build::PackWireBuffer<uint8_t> buffer{
                 entry.payload.data(), entry.payload.size()};
-            const harkenstudiobuild::PackEffectPresetHeader header{
+            const harken::studio::build::PackEffectPresetHeader header{
                 preset.id, preset.type, schema->descriptorVintage, schema->paramCount};
-            if (!harkenstudiobuild::AppendPackRow<HkPackEffectPresetHeader>(buffer, header)) {
+            if (!harken::studio::build::AppendPackRow<HkPackEffectPresetHeader>(buffer, header)) {
                 lastError = QStringLiteral("Effect preset header could not be encoded");
                 return false;
             }
             for (uint32_t i = 0; i < schema->paramCount; ++i) {
-                if (!harkenstudiobuild::PackEffectParamInAuthoredRange(preset.type, i, preset.parameters[i])
-                    || !harkenstudiobuild::AppendPackRow<HkPackEffectPresetParameter>(buffer,
-                        harkenstudiobuild::PackEffectPresetParameter{
+                if (!harken::studio::build::PackEffectParamInAuthoredRange(preset.type, i, preset.parameters[i])
+                    || !harken::studio::build::AppendPackRow<HkPackEffectPresetParameter>(buffer,
+                        harken::studio::build::PackEffectPresetParameter{
                             i, std::bit_cast<uint32_t>(preset.parameters[i])})) {
                     lastError = QStringLiteral("Effect preset parameter is invalid");
                     return false;
@@ -1144,7 +1075,7 @@ void PackBuildSession::addBusSend(const PackBusSend& send)
     impl_->busSends.push_back(send);
 }
 
-void PackBuildSession::addModulatorBinding(harkenstudio::ObjectId targetObjectId,
+void PackBuildSession::addModulatorBinding(harken::studio::types::ObjectId targetObjectId,
                                            const PackModulator& modulator)
 {
     impl_->modulatorBindings.emplace_back(targetObjectId, modulator);
@@ -1160,7 +1091,7 @@ void PackBuildSession::addEffectPreset(const PackEffectPreset& preset)
     impl_->effectPresets.push_back(preset);
 }
 
-void PackBuildSession::addDiscreteVariable(harkenstudio::ObjectId variableId)
+void PackBuildSession::addDiscreteVariable(harken::studio::types::ObjectId variableId)
 {
     impl_->discreteVariables.push_back(variableId);
 }
@@ -1188,7 +1119,7 @@ void PackBuildSession::addWarning(const QString& warning)
 
 void PackBuildSession::addMedia(const PackMediaDesc& media)
 {
-    if (!harkenstudio::IsNull(media.sourceId)
+    if (!harken::studio::types::IsNull(media.sourceId)
         && impl_->mediaIds.insert(media.sourceId).second) impl_->media.push_back(media);
 }
 
@@ -1204,9 +1135,9 @@ bool writeCanonicalPack(const QString& outputPath,
                         PackBuildSession::CanonicalPackKind packKind,
                         QString* error)
 {
-    const std::uint64_t dirOffset = harkenstudiobuild::kPackBytes<HkPackFileHeader>;
+    const std::uint64_t dirOffset = harken::studio::build::kPackBytes<HkPackFileHeader>;
     const std::uint64_t dirBytes =
-        static_cast<std::uint64_t>(entries.size()) * harkenstudiobuild::kPackBytes<HkPackDirectoryEntry>;
+        static_cast<std::uint64_t>(entries.size()) * harken::studio::build::kPackBytes<HkPackDirectoryEntry>;
     std::uint64_t cursor = alignUp(dirOffset + dirBytes, HK_PACK_PAYLOAD_ALIGN);
     std::vector<std::uint64_t> offsets(entries.size(), 0);
     std::vector<std::uint64_t> payloadSizes(entries.size(), 0);
@@ -1214,7 +1145,7 @@ bool writeCanonicalPack(const QString& outputPath,
     for (std::size_t i = 0; i < entries.size(); ++i) {
         offsets[i] = cursor;
         payloadSizes[i] = entries[i].kind == HK_PACK_ENTRY_KIND_MEDIA
-            ? harkenstudiobuild::kPackBytes<HkPackMedia>
+            ? harken::studio::build::kPackBytes<HkPackMedia>
             : entries[i].payload.size();
         contentEnd = cursor + payloadSizes[i];
         cursor = alignUp(contentEnd, HK_PACK_PAYLOAD_ALIGN);
@@ -1224,7 +1155,7 @@ bool writeCanonicalPack(const QString& outputPath,
     for (std::size_t i = 0; i < entries.size(); ++i) {
         if (entries[i].kind != HK_PACK_ENTRY_KIND_MEDIA)
             continue;
-        if (entries[i].payload.size() < harkenstudiobuild::kPackBytes<HkPackMedia>) {
+        if (entries[i].payload.size() < harken::studio::build::kPackBytes<HkPackMedia>) {
             if (error)
                 *error = QStringLiteral("Media entry is missing its TOC payload");
             return false;
@@ -1233,7 +1164,7 @@ bool writeCanonicalPack(const QString& outputPath,
         fileBytes = blobOffsets[i] + entries[i].mediaBytes();
     }
     std::vector<std::uint8_t> directory(static_cast<std::size_t>(dirBytes));
-    std::vector<std::array<std::uint8_t, harkenstudiobuild::kPackBytes<HkPackMedia>>>
+    std::vector<std::array<std::uint8_t, harken::studio::build::kPackBytes<HkPackMedia>>>
         mediaPayloads;
     mediaPayloads.reserve(std::count_if(entries.begin(), entries.end(), [](const auto& entry) {
         return entry.kind == HK_PACK_ENTRY_KIND_MEDIA;
@@ -1241,15 +1172,15 @@ bool writeCanonicalPack(const QString& outputPath,
     for (std::size_t i = 0; i < entries.size(); ++i) {
         const std::uint8_t* payload = entries[i].payload.data();
         if (entries[i].kind == HK_PACK_ENTRY_KIND_MEDIA) {
-            harkenstudiobuild::PackTocEntry toc =
-                harkenstudiobuild::ReadPackMedia(payload);
+            harken::studio::build::PackTocEntry toc =
+                harken::studio::build::ReadPackMedia(payload);
             toc.blobOffset = blobOffsets[i];
             toc.blobBytes = entries[i].mediaBytes();
             auto& mediaPayload = mediaPayloads.emplace_back();
-            harkenstudiobuild::SerializePackRow<HkPackMedia>(toc, mediaPayload.data());
+            harken::studio::build::SerializePackRow<HkPackMedia>(toc, mediaPayload.data());
             payload = mediaPayload.data();
         }
-        harkenstudiobuild::PackDirectoryEntry record;
+        harken::studio::build::PackDirectoryEntry record;
         record.kind = entries[i].kind;
         record.vintage = entries[i].vintage;
         record.id = entries[i].id;
@@ -1257,21 +1188,21 @@ bool writeCanonicalPack(const QString& outputPath,
         record.offset = offsets[i];
         record.size = payloadSizes[i];
         record.payloadChecksum =
-            harkenstudiobuild::Fnv1a64(payload, static_cast<std::size_t>(record.size));
-        harkenstudiobuild::SerializePackRow<HkPackDirectoryEntry>(
-            record, directory.data() + i * harkenstudiobuild::kPackBytes<HkPackDirectoryEntry>);
+            harken::studio::build::Fnv1a64(payload, static_cast<std::size_t>(record.size));
+        harken::studio::build::SerializePackRow<HkPackDirectoryEntry>(
+            record, directory.data() + i * harken::studio::build::kPackBytes<HkPackDirectoryEntry>);
     }
-    harkenstudiobuild::PackFileHeader header;
+    harken::studio::build::PackFileHeader header;
     header.formatVersion = HK_PACK_FORMAT_VERSION;
-    header.headerBytes = harkenstudiobuild::kPackBytes<HkPackFileHeader>;
+    header.headerBytes = harken::studio::build::kPackBytes<HkPackFileHeader>;
     header.fileBytes = fileBytes;
     header.packKind = static_cast<std::uint32_t>(packKind);
     header.entryCount = static_cast<std::uint32_t>(entries.size());
     header.directoryOffset = dirOffset;
     header.directoryChecksum =
-        harkenstudiobuild::Fnv1a64(directory.data(), directory.size());
-    std::array<std::uint8_t, harkenstudiobuild::kPackBytes<HkPackFileHeader>> headerBytes;
-    harkenstudiobuild::SerializePackRow<HkPackFileHeader>(header, headerBytes.data());
+        harken::studio::build::Fnv1a64(directory.data(), directory.size());
+    std::array<std::uint8_t, harken::studio::build::kPackBytes<HkPackFileHeader>> headerBytes;
+    harken::studio::build::SerializePackRow<HkPackFileHeader>(header, headerBytes.data());
     QDir().mkpath(QFileInfo(outputPath).absolutePath());
     QFile file(outputPath);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
@@ -1337,13 +1268,13 @@ bool collectExistingEntries(const QString& sourcePath,
         return false;
     }
     const QByteArray bytes = file.readAll();
-    if (bytes.size() < static_cast<int>(harkenstudiobuild::kPackBytes<HkPackFileHeader>)) {
+    if (bytes.size() < static_cast<int>(harken::studio::build::kPackBytes<HkPackFileHeader>)) {
         if (error)
             *error = QStringLiteral("Pack '%1' is too small").arg(sourcePath);
         return false;
     }
-    harkenstudiobuild::PackFileHeader header;
-    if (!harkenstudiobuild::ReadPackFileHeader(reinterpret_cast<const std::uint8_t*>(bytes.constData()),
+    harken::studio::build::PackFileHeader header;
+    if (!harken::studio::build::ReadPackFileHeader(reinterpret_cast<const std::uint8_t*>(bytes.constData()),
                                   &header) ||
         header.formatVersion != HK_PACK_FORMAT_VERSION) {
         if (error)
@@ -1352,9 +1283,9 @@ bool collectExistingEntries(const QString& sourcePath,
     }
     harkenizer::resourcecompiler::MediaCache mediaCache;
     for (std::uint32_t i = 0; i < header.entryCount; ++i) {
-        const harkenstudiobuild::PackDirectoryEntry record = harkenstudiobuild::ReadPackDirectoryEntry(
+        const harken::studio::build::PackDirectoryEntry record = harken::studio::build::ReadPackDirectoryEntry(
             reinterpret_cast<const std::uint8_t*>(bytes.constData()) +
-            header.directoryOffset + i * harkenstudiobuild::kPackBytes<HkPackDirectoryEntry>);
+            header.directoryOffset + i * harken::studio::build::kPackBytes<HkPackDirectoryEntry>);
         PackBuildSession::CanonicalPackEntry entry;
         entry.kind = record.kind;
         entry.vintage = record.vintage;
@@ -1365,7 +1296,7 @@ bool collectExistingEntries(const QString& sourcePath,
             reinterpret_cast<const std::uint8_t*>(bytes.constData()) + record.offset +
                 record.size);
         if (record.kind == HK_PACK_ENTRY_KIND_MEDIA) {
-            const harkenstudiobuild::PackTocEntry toc = harkenstudiobuild::ReadPackMedia(entry.payload.data());
+            const harken::studio::build::PackTocEntry toc = harken::studio::build::ReadPackMedia(entry.payload.data());
             entry.media = mediaCache.intern(
                 reinterpret_cast<const std::uint8_t*>(bytes.constData()) + toc.blobOffset,
                 static_cast<std::size_t>(toc.blobBytes), toc.blobChecksum);
@@ -1463,16 +1394,6 @@ bool PackBuildSession::buildEntries(std::vector<CanonicalPackEntry>* entries)
     return impl_->appendEffectPresetEntries(entries);
 }
 
-bool PackBuildSession::buildToFile(const QString& outputPath)
-{
-    std::vector<CanonicalPackEntry> entries;
-    if (!buildEntries(&entries)) return false;
-    const auto kind = impl_->initPack ? HK_PACK_KIND_RESIDENT
-                                     : HK_PACK_KIND_CONTENT;
-    return writeCanonicalPackFile(outputPath, static_cast<CanonicalPackKind>(kind),
-                                  entries, &impl_->lastError);
-}
-
 QString PackBuildSession::inputFingerprint()
 {
     impl_->lastError.clear();
@@ -1491,7 +1412,7 @@ QString PackBuildSession::inputFingerprint()
     if (!impl_->initPack) {
         for (const auto& source : impl_->media) {
             const QJsonObject identity{
-                {QStringLiteral("id"), VNX::objectIdString(source.sourceId)},
+                {QStringLiteral("id"), harken::studio::objectIdString(source.sourceId)},
                 {QStringLiteral("sampleRate"), static_cast<qint64>(source.sampleRate)},
                 {QStringLiteral("channels"), source.channels},
                 {QStringLiteral("downmixToMono"), source.downmixToMono},
@@ -1537,5 +1458,5 @@ QStringList PackBuildSession::warnings() const
     return impl_->warnings;
 }
 
-} // namespace Bridge
-} // namespace HarkenEditor
+} // namespace bridge
+} // namespace harken::studio

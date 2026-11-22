@@ -8,7 +8,7 @@
 
 #include <cmath>
 
-namespace VNH {
+namespace harken::hub {
 
 BoundedHeaderView::BoundedHeaderView(Qt::Orientation orientation,
                                      QWidget* parent)

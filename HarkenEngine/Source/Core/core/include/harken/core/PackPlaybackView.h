@@ -98,7 +98,6 @@ public:
     VnObjectId ProjectId() const noexcept;
     std::uint64_t CompositeGeneration() const noexcept;
     std::uint64_t WorldSemanticFingerprint() const noexcept;
-    std::uint64_t RootPackStableId() const noexcept;
     std::uint32_t OwnerCount() const noexcept;
     std::uint64_t AttenuationGeneration(VnAttenuationId id) const noexcept;
     const PackEffectPresetSnapshot* ResolveEffectPreset(VnObjectId id) const noexcept;
@@ -123,9 +122,6 @@ public:
         VnObjectId parentStableId, std::uint32_t ordinal) const noexcept;
     const TransitionProgramViewV1* ResolveTransition(
         VnObjectId ownerContainerStableId) const noexcept;
-    bool ResolveSoundResource(
-        VnObjectId stableId, std::uint64_t expectedRevision,
-        const PackClosureOwnerSnapshot** outOwner) const noexcept;
     std::uint32_t ResolveVoiceBindings(
         VnObjectId objectId, const PackVoiceBinding** out,
         std::uint32_t capacity) const noexcept;

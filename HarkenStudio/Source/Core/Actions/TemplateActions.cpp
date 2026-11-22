@@ -11,7 +11,7 @@
 
 #include <functional>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 

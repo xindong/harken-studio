@@ -6,7 +6,7 @@
 #include <QFocusEvent>
 #include <QVBoxLayout>
 
-namespace VNX {
+namespace harken::studio {
 
 QString SourceEditorPanel::typeId()
 {
@@ -88,7 +88,7 @@ void SourceEditorPanel::bindSource(uint32_t sourceId, const QUuid& soundGuid, co
     editor_->bindSource(sourceId, soundGuid, entryId);
 }
 
-void SourceEditorPanel::setAuditionManager(HarkenEditor::AuditionManager* audition)
+void SourceEditorPanel::setAuditionManager(harken::studio::AuditionManager* audition)
 {
     editor_->setAuditionManager(audition);
 }

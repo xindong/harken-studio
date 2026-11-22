@@ -12,7 +12,7 @@
 #include <utility>
 #include <vector>
 
-namespace harkenprojectschema {
+namespace harken::studio::project_schema {
 
 namespace detail {
 
@@ -275,4 +275,4 @@ std::optional<SegmentProgram> BuildSegmentProgram(const SegmentIR& ir) {
                                               capabilities, fingerprint);
 }
 
-}  // namespace harkenprojectschema
+}  // namespace harken::studio::project_schema

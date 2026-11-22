@@ -41,7 +41,7 @@ class QGraphicsPathItem;
 class QLabel;
 class QVariantAnimation;
 
-namespace VNX {
+namespace harken::studio {
 class SignalPathGainEditSession;
 class ToastPresenter;
 struct SignalPathConnectPlan;

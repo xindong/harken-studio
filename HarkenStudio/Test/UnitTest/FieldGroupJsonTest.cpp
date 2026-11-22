@@ -8,10 +8,10 @@
 #include <string>
 #include <string_view>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
-using namespace harkenprojectschema;
+using namespace harken::studio::project_schema;
 
 constexpr char kInherit[] = R"({"inherit":true})";
 constexpr char kOutput[] = R"({"outputBusRef":"12345678-9abc-def0-0123-456789abcdef","outputBusVolume":0})";

@@ -9,7 +9,7 @@
 #include <QToolButton>
 #include <QVBoxLayout>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 

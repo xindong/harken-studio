@@ -12,7 +12,7 @@
 #include <QVariantAnimation>
 #include <QWidget>
 
-namespace VNX::TreeRowPing {
+namespace harken::studio::TreeRowPing {
 
 namespace {
 

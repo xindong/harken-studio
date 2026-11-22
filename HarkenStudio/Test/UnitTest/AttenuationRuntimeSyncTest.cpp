@@ -8,7 +8,7 @@
 
 namespace {
 
-using HarkenEditor::Bridge::PackAttenuation;
+using harken::studio::bridge::PackAttenuation;
 
 VnAttenuationDesc probeDesc()
 {
@@ -66,7 +66,7 @@ protected:
 TEST_F(AttenuationRuntimeSync, RegistersFullCurveUnderGivenId)
 {
     const PackAttenuation att = linearAttenuation(0x100001001ull, 100.0f, 2);
-    ASSERT_TRUE(HarkenEditor::Bridge::syncAttenuation(att));
+    ASSERT_TRUE(harken::studio::bridge::syncAttenuation(att));
 
     const VnAttenuationDesc probe = probeDesc();
     EXPECT_EQ(VN_OK, Vn_ReplaceAttenuation(harkentest::ToRuntime(att.id), &probe));

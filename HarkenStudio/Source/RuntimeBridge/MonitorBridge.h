@@ -2,30 +2,30 @@
 
 #include "Monitor/MonitorTypes.h"
 
-namespace HarkenEditor::Bridge::Monitoring {
+namespace harken::studio::bridge::Monitoring {
 
-int32_t openSession(const VNX::Monitor::MonitorSessionDesc* desc, uint64_t* handle);
-int32_t openEventSession(const VNX::Monitor::MonitorSessionDesc* desc, uint64_t* handle);
+int32_t openSession(const harken::studio::Monitor::MonitorSessionDesc* desc, uint64_t* handle);
+int32_t openEventSession(const harken::studio::Monitor::MonitorSessionDesc* desc, uint64_t* handle);
 int32_t closeSession(uint64_t handle);
 int32_t sealEventSession(uint64_t handle);
-int32_t getEventSessionStatus(uint64_t handle, VNX::Monitor::MonitorEventSessionStatus* out);
-int32_t getCapabilities(VNX::Monitor::MonitorCapabilities* out);
-int32_t poll(uint64_t handle, const VNX::Monitor::MonitorPollDesc* desc,
-             VNX::Monitor::MonitorPollResult* out);
-int32_t getSubscriptionStatus(uint64_t handle, VNX::Monitor::MonitorSubscriptionStatus* out);
-int32_t getConsumerStatus(uint64_t handle, VNX::Monitor::MonitorDropSummary* out,
+int32_t getEventSessionStatus(uint64_t handle, harken::studio::Monitor::MonitorEventSessionStatus* out);
+int32_t getCapabilities(harken::studio::Monitor::MonitorCapabilities* out);
+int32_t poll(uint64_t handle, const harken::studio::Monitor::MonitorPollDesc* desc,
+             harken::studio::Monitor::MonitorPollResult* out);
+int32_t getSubscriptionStatus(uint64_t handle, harken::studio::Monitor::MonitorSubscriptionStatus* out);
+int32_t getConsumerStatus(uint64_t handle, harken::studio::Monitor::MonitorDropSummary* out,
                           uint32_t capacity, uint32_t* required);
-int32_t getCaptureControlStatus(uint64_t handle, VNX::Monitor::MonitorCaptureControlStatus* out);
-int32_t acquireCaptureControl(uint64_t handle, VNX::Monitor::MonitorCaptureControlStatus* out);
+int32_t getCaptureControlStatus(uint64_t handle, harken::studio::Monitor::MonitorCaptureControlStatus* out);
+int32_t acquireCaptureControl(uint64_t handle, harken::studio::Monitor::MonitorCaptureControlStatus* out);
 int32_t releaseCaptureControl(uint64_t handle, uint64_t lease);
 int32_t validateCapturePlan(uint64_t handle, uint64_t lease,
-                            const VNX::Monitor::MonitorCapturePlan* plan,
-                            VNX::Monitor::MonitorEffectiveCapturePlan* out);
+                            const harken::studio::Monitor::MonitorCapturePlan* plan,
+                            harken::studio::Monitor::MonitorEffectiveCapturePlan* out);
 int32_t applyCapturePlan(uint64_t handle, uint64_t lease,
-                         const VNX::Monitor::MonitorCapturePlan* plan,
-                         VNX::Monitor::MonitorEffectiveCapturePlan* out);
-int32_t stopCapture(uint64_t handle, uint64_t lease, VNX::Monitor::MonitorEffectiveCapturePlan* out);
+                         const harken::studio::Monitor::MonitorCapturePlan* plan,
+                         harken::studio::Monitor::MonitorEffectiveCapturePlan* out);
+int32_t stopCapture(uint64_t handle, uint64_t lease, harken::studio::Monitor::MonitorEffectiveCapturePlan* out);
 int32_t getEffectiveCapturePlan(uint64_t handle, uint64_t generation,
-                                VNX::Monitor::MonitorEffectiveCapturePlan* out);
+                                harken::studio::Monitor::MonitorEffectiveCapturePlan* out);
 
 }

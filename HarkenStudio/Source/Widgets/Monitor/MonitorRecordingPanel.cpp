@@ -5,7 +5,7 @@
 #include <QPushButton>
 #include <QVBoxLayout>
 
-namespace VNX {
+namespace harken::studio {
 
 MonitorRecordingPanel::MonitorRecordingPanel(QWidget* parent)
     : QWidget(parent)
@@ -122,4 +122,4 @@ void MonitorRecordingPanel::onClose()
     }
 }
 
-} // namespace VNX
+} // namespace harken::studio

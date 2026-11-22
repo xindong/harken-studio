@@ -4,7 +4,7 @@
 
 class QTableWidget;
 
-namespace VNX {
+namespace harken::studio {
 
 class MatrixHeaderView;
 

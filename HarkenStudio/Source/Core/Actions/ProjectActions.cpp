@@ -60,7 +60,7 @@
 #include <utility>
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 
 ProjectItem* findItemByPath(ProjectItem* root, const QString& path);
 ProjectItem* findItemByPathInProject(ProjectData* project, const QString& path);
@@ -297,9 +297,9 @@ bool validatePlayableReference(
     using Role = harkenplayableproperties::PlayablePropertyReferenceRoleV1;
     if (field.referenceRole == Role::None) return true;
     if (!value.isString()) return false;
-    harkenstudio::ObjectId stableId{};
+    harken::studio::types::ObjectId stableId{};
     if (!parseObjectIdJson(value, &stableId)) return false;
-    if (harkenstudio::IsNull(stableId)) return true;
+    if (harken::studio::types::IsNull(stableId)) return true;
     ProjectItem* target = manager.findItemByRuntimeStableId(stableId);
     return target && itemMatchesReferenceRole(*target, field.referenceRole);
 }
@@ -405,8 +405,8 @@ ActionResult handleStepsItemProperty(ProjectManager* projectManager, ProjectItem
 
     if (ProjectData* project = projectManager ? projectManager->currentProject() : nullptr)
     {
-        const VNX::EditorUtils::ActionTargetLookup lookup =
-            VNX::EditorUtils::makeProjectTargetLookup(*project);
+        const harken::studio::EditorUtils::ActionTargetLookup lookup =
+            harken::studio::EditorUtils::makeProjectTargetLookup(*project);
         for (size_t index = 0; index < newSteps.size(); ++index)
         {
             VActionStep& step = newSteps[index];
@@ -422,16 +422,16 @@ ActionResult handleStepsItemProperty(ProjectManager* projectManager, ProjectItem
                 continue;
             }
 
-            const auto resolution = VNX::EditorUtils::resolveActionStepTarget(
+            const auto resolution = harken::studio::EditorUtils::resolveActionStepTarget(
                 step.type, step.targetObjectID, step.targetName, lookup,
                 item->objectID);
-            const VNX::EditorUtils::ActionTargetRecord* resolvedTarget =
-                resolution.state == VNX::EditorUtils::ActionTargetState::Resolved
+            const harken::studio::EditorUtils::ActionTargetRecord* resolvedTarget =
+                resolution.state == harken::studio::EditorUtils::ActionTargetState::Resolved
                     ? lookup.findByObjectID(resolution.objectID) : nullptr;
             if (!resolvedTarget && step.targetObjectID != 0) {
-                const VNX::EditorUtils::ActionTargetRecord* target =
+                const harken::studio::EditorUtils::ActionTargetRecord* target =
                     lookup.findByObjectID(step.targetObjectID);
-                if (target && !VNX::EditorUtils::canActionStepReferenceObject(
+                if (target && !harken::studio::EditorUtils::canActionStepReferenceObject(
                                   step.type, target->type, target->objectID,
                                   item->objectID)) {
                     return {false, {}, "INVALID_TARGET",
@@ -466,12 +466,12 @@ ActionResult handleStepsItemProperty(ProjectManager* projectManager, ProjectItem
             }
 
             const auto* catalogEntry =
-                VNX::EditorUtils::actionStepCatalogEntry(step.type);
+                harken::studio::EditorUtils::actionStepCatalogEntry(step.type);
             const bool supportsQuantize =
                 catalogEntry && catalogEntry->supportsQuantize;
-            const VNX::EditorUtils::ActionTargetRecord* resolvedReference = nullptr;
+            const harken::studio::EditorUtils::ActionTargetRecord* resolvedReference = nullptr;
             if (supportsQuantize && step.quantize.referenceObjectID != 0) {
-                const VNX::EditorUtils::ActionTargetRecord* reference =
+                const harken::studio::EditorUtils::ActionTargetRecord* reference =
                     lookup.findByObjectID(step.quantize.referenceObjectID);
                 if (reference && !ItemTypeCatalog::isContentObject(reference->type)) {
                     return {false, {}, "INVALID_TARGET",
@@ -480,9 +480,9 @@ ActionResult handleStepsItemProperty(ProjectManager* projectManager, ProjectItem
                 }
                 resolvedReference = reference;
             } else if (supportsQuantize && !step.quantize.referenceName.isEmpty()) {
-                const auto reference = VNX::EditorUtils::resolveActionStepTarget(
+                const auto reference = harken::studio::EditorUtils::resolveActionStepTarget(
                     VActionStep::Type::Play, 0, step.quantize.referenceName, lookup);
-                if (reference.state == VNX::EditorUtils::ActionTargetState::Resolved)
+                if (reference.state == harken::studio::EditorUtils::ActionTargetState::Resolved)
                     resolvedReference = lookup.findByObjectID(reference.objectID);
             }
             if (resolvedReference) {
@@ -491,7 +491,7 @@ ActionResult handleStepsItemProperty(ProjectManager* projectManager, ProjectItem
             }
             authoredSteps->steps.push_back(step);
         }
-        const QString cycle = VNX::EditorUtils::postActionCycleError(
+        const QString cycle = harken::studio::EditorUtils::postActionCycleError(
             item->objectID, newSteps, lookup);
         if (!cycle.isEmpty())
             return {false, {}, "POST_ACTION_CYCLE", cycle};
@@ -1969,7 +1969,7 @@ ActionResult handleEffectsItemProperty(ProjectManager* projectManager, ProjectIt
     std::vector<EffectEntry> entries = parsed.entries();
     const auto* project = projectManager->currentProject();
     for (EffectEntry& effect : entries) {
-        if (effect.typed && harkenstudio::IsNull(effect.runtimeId()))
+        if (effect.typed && harken::studio::types::IsNull(effect.runtimeId()))
             effect.guid = QUuid::createUuid();
         if (!project || !EffectChainSemantics::resolve(effect, *project))
             return {false, {}, "INVALID_ARGS", "Effect reference does not resolve"};
@@ -2194,53 +2194,6 @@ void registerProjectActions(ActionManager& mgr,
             if (!projectManager->closeProject())
                 return {false, {}, "CLOSE_PROJECT_FAILED", "Cannot close the active project"};
             return {true, QJsonObject{{"success", true}, {"closing", projectManager->isClosing()}}};
-        };
-        mgr.registerAction(def);
-    }
-
-    {
-        ActionDef def;
-        def.id = "create_pack";
-        def.displayName = "Create Pack";
-        def.category = "project";
-        def.undoable = false;
-        def.handler = [projectManager](const QJsonObject& args) -> ActionResult {
-            if (!projectManager)
-                return {false, {}, "PROJECT_MANAGER_NOT_AVAILABLE", "ProjectManager is not available"};
-
-            Q_UNUSED(args);
-            return {false, {}, "ACTION_DEPRECATED",
-                    "create_pack is no longer supported; use create_item with the desired ProjectItem type instead"};
-        };
-        mgr.registerAction(def);
-    }
-
-    {
-        ActionDef def;
-        def.id = "rename_pack";
-        def.displayName = "Rename Pack";
-        def.category = "project";
-        def.undoable = false;
-        def.handler = [projectManager](const QJsonObject& args) -> ActionResult {
-            Q_UNUSED(projectManager);
-            Q_UNUSED(args);
-            return {false, {}, "ACTION_DEPRECATED",
-                    "rename_pack is no longer supported; rename the underlying ProjectItem instead"};
-        };
-        mgr.registerAction(def);
-    }
-
-    {
-        ActionDef def;
-        def.id = "delete_pack";
-        def.displayName = "Delete Pack";
-        def.category = "project";
-        def.undoable = false;
-        def.handler = [projectManager](const QJsonObject& args) -> ActionResult {
-            Q_UNUSED(projectManager);
-            Q_UNUSED(args);
-            return {false, {}, "ACTION_DEPRECATED",
-                    "delete_pack is no longer supported; delete the underlying ProjectItem instead"};
         };
         mgr.registerAction(def);
     }
@@ -2990,20 +2943,6 @@ void registerProjectActions(ActionManager& mgr,
 
     {
         ActionDef def;
-        def.id = "set_target_platforms";
-        def.displayName = "Set Target Platforms";
-        def.category = "project";
-        def.undoable = false;
-        def.paramSchema = QJsonObject{{"platforms", "array"}};
-        def.handler = [](const QJsonObject&) -> ActionResult {
-            return {false, {}, "UNSUPPORTED_PLATFORM_FORMAT",
-                    "Base platform lists are no longer supported"};
-        };
-        mgr.registerAction(def);
-    }
-
-    {
-        ActionDef def;
         def.id = "set_project_languages";
         def.displayName = "Set Target Languages";
         def.category = "project";
@@ -3210,11 +3149,11 @@ void registerProjectActions(ActionManager& mgr,
                 || (args.contains("platform_ids") && !args.value("platform_ids").isArray()))
                 return {false, {}, "INVALID_ARGS", "Use the 'platform_ids' array argument"};
 
-            harkenstudio::ObjectId stableId{};
-            if (!parseObjectIdJson(args.value("stableId"), &stableId) || harkenstudio::IsNull(stableId))
+            harken::studio::types::ObjectId stableId{};
+            if (!parseObjectIdJson(args.value("stableId"), &stableId) || harken::studio::types::IsNull(stableId))
                 return {false, {}, "INVALID_ARGS", "'stableId' argument is required"};
 
-            const std::set<harkenstudio::ObjectId> validIds =
+            const std::set<harken::studio::types::ObjectId> validIds =
                 ProjectPackExporter::CollectActionStableIds(*projectManager->currentProject());
             if (!validIds.count(stableId))
                 return {false, {}, "ACTION_NOT_FOUND",

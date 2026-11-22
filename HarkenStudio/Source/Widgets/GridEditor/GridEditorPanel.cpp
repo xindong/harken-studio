@@ -4,7 +4,7 @@
 #include <QFocusEvent>
 #include <QVBoxLayout>
 
-namespace VNX {
+namespace harken::studio {
 
 GridEditorPanel::GridEditorPanel(QWidget* parent)
     : QWidget(parent)

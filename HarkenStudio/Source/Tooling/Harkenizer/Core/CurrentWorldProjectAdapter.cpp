@@ -36,13 +36,13 @@
 #include <unordered_map>
 #include <unordered_set>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
-using BridgeRequest = HarkenEditor::Build::CurrentWorldSyncRequest;
-using ContentKind = harkenprojectschema::ContentKind;
+using BridgeRequest = harken::studio::build::CurrentWorldSyncRequest;
+using ContentKind = harken::studio::project_schema::ContentKind;
 using ProjectIndex =
-    HarkenEditor::Bridge::CanonicalRuntimeProjectSourceIndexV1;
+    harken::studio::bridge::CanonicalRuntimeProjectSourceIndexV1;
 
 void setError(QString* error, const QString& value)
 {
@@ -57,7 +57,7 @@ void setStatus(CurrentWorldBuildStatus* status,
         *status = value;
 }
 
-harkenprojectschema::AuthoringGuid authoringGuid(const QUuid& guid)
+harken::studio::project_schema::AuthoringGuid authoringGuid(const QUuid& guid)
 {
     const QByteArray bytes = guid.toRfc4122();
     if (bytes.size() != 16)
@@ -241,91 +241,91 @@ std::unordered_set<ProjectItem*> runtimeDefinitions(
     return included;
 }
 
-std::optional<harkenstudiobuild::ActionOpcodeV1> actionOpcode(VActionStep::Type type)
+std::optional<harken::studio::build::ActionOpcodeV1> actionOpcode(VActionStep::Type type)
 {
     switch (type) {
-        case VActionStep::Type::Play: return harkenstudiobuild::ActionOpcodeV1::Play;
-        case VActionStep::Type::Stop: return harkenstudiobuild::ActionOpcodeV1::Stop;
+        case VActionStep::Type::Play: return harken::studio::build::ActionOpcodeV1::Play;
+        case VActionStep::Type::Stop: return harken::studio::build::ActionOpcodeV1::Stop;
         case VActionStep::Type::PostAction:
-            return harkenstudiobuild::ActionOpcodeV1::PostAction;
+            return harken::studio::build::ActionOpcodeV1::PostAction;
         case VActionStep::Type::SetVariable:
-            return harkenstudiobuild::ActionOpcodeV1::SetVariable;
-        case VActionStep::Type::Reset: return harkenstudiobuild::ActionOpcodeV1::Reset;
+            return harken::studio::build::ActionOpcodeV1::SetVariable;
+        case VActionStep::Type::Reset: return harken::studio::build::ActionOpcodeV1::Reset;
     }
     return std::nullopt;
 }
 
-std::optional<harkenstudiobuild::ActionTargetKindV1> actionTargetKind(ProjectItem::Type type)
+std::optional<harken::studio::build::ActionTargetKindV1> actionTargetKind(ProjectItem::Type type)
 {
     switch (type) {
         case ProjectItem::Type::Sound:
-            return harkenstudiobuild::ActionTargetKindV1::Sound;
+            return harken::studio::build::ActionTargetKindV1::Sound;
         case ProjectItem::Type::Container:
-            return harkenstudiobuild::ActionTargetKindV1::Container;
+            return harken::studio::build::ActionTargetKindV1::Container;
         case ProjectItem::Type::Track:
-            return harkenstudiobuild::ActionTargetKindV1::Track;
+            return harken::studio::build::ActionTargetKindV1::Track;
         case ProjectItem::Type::Segment:
-            return harkenstudiobuild::ActionTargetKindV1::Segment;
+            return harken::studio::build::ActionTargetKindV1::Segment;
         case ProjectItem::Type::Action:
-            return harkenstudiobuild::ActionTargetKindV1::Action;
+            return harken::studio::build::ActionTargetKindV1::Action;
         case ProjectItem::Type::Variable:
-            return harkenstudiobuild::ActionTargetKindV1::Variable;
+            return harken::studio::build::ActionTargetKindV1::Variable;
         case ProjectItem::Type::Bus:
-            return harkenstudiobuild::ActionTargetKindV1::Bus;
+            return harken::studio::build::ActionTargetKindV1::Bus;
         default:
             return std::nullopt;
     }
 }
 
-std::optional<harkenstudiobuild::ActionQuantizeTimingV1> actionQuantizeTiming(
+std::optional<harken::studio::build::ActionQuantizeTimingV1> actionQuantizeTiming(
     QuantizeTiming timing)
 {
     switch (timing) {
         case QuantizeTiming::Immediate:
-            return harkenstudiobuild::ActionQuantizeTimingV1::Immediate;
+            return harken::studio::build::ActionQuantizeTimingV1::Immediate;
         case QuantizeTiming::NextBeat:
-            return harkenstudiobuild::ActionQuantizeTimingV1::NextBeat;
+            return harken::studio::build::ActionQuantizeTimingV1::NextBeat;
         case QuantizeTiming::NextBar:
-            return harkenstudiobuild::ActionQuantizeTimingV1::NextBar;
+            return harken::studio::build::ActionQuantizeTimingV1::NextBar;
         case QuantizeTiming::NextMarker:
-            return harkenstudiobuild::ActionQuantizeTimingV1::NextMarker;
+            return harken::studio::build::ActionQuantizeTimingV1::NextMarker;
         case QuantizeTiming::NaturalEnd:
-            return harkenstudiobuild::ActionQuantizeTimingV1::NaturalEnd;
+            return harken::studio::build::ActionQuantizeTimingV1::NaturalEnd;
         case QuantizeTiming::CurrentLoopEnd:
-            return harkenstudiobuild::ActionQuantizeTimingV1::CurrentLoopEnd;
+            return harken::studio::build::ActionQuantizeTimingV1::CurrentLoopEnd;
         case QuantizeTiming::EntryMarker:
             return std::nullopt;
         case QuantizeTiming::ExitMarker:
-            return harkenstudiobuild::ActionQuantizeTimingV1::ExitMarker;
+            return harken::studio::build::ActionQuantizeTimingV1::ExitMarker;
     }
     return std::nullopt;
 }
 
-std::optional<harkenstudiobuild::ActionIfSilentV1> actionIfSilent(QuantizeIfSilent value)
+std::optional<harken::studio::build::ActionIfSilentV1> actionIfSilent(QuantizeIfSilent value)
 {
     switch (value) {
         case QuantizeIfSilent::Immediate:
-            return harkenstudiobuild::ActionIfSilentV1::Immediate;
+            return harken::studio::build::ActionIfSilentV1::Immediate;
         case QuantizeIfSilent::Drop:
-            return harkenstudiobuild::ActionIfSilentV1::Drop;
+            return harken::studio::build::ActionIfSilentV1::Drop;
     }
     return std::nullopt;
 }
 
-std::optional<harkenstudiobuild::ActionScopeV1> actionResetScope(ResetScope scope)
+std::optional<harken::studio::build::ActionScopeV1> actionResetScope(ResetScope scope)
 {
     switch (scope) {
-        case ResetScope::Emitter: return harkenstudiobuild::ActionScopeV1::Emitter;
-        case ResetScope::Global: return harkenstudiobuild::ActionScopeV1::Global;
+        case ResetScope::Emitter: return harken::studio::build::ActionScopeV1::Emitter;
+        case ResetScope::Global: return harken::studio::build::ActionScopeV1::Global;
     }
     return std::nullopt;
 }
 
-std::optional<harkenstudiobuild::ActionScopeV1> variableWriteScope(VariableScope scope)
+std::optional<harken::studio::build::ActionScopeV1> variableWriteScope(VariableScope scope)
 {
     switch (scope) {
-        case VariableScope::Global: return harkenstudiobuild::ActionScopeV1::Global;
-        case VariableScope::Emitter: return harkenstudiobuild::ActionScopeV1::Emitter;
+        case VariableScope::Global: return harken::studio::build::ActionScopeV1::Global;
+        case VariableScope::Emitter: return harken::studio::build::ActionScopeV1::Emitter;
     }
     return std::nullopt;
 }
@@ -348,15 +348,15 @@ bool buildDefinitionNode(ProjectItem& item, const ProjectIndex& index,
     const auto kind = contentKind(item.type);
     const auto locator = PlayablePropertyAuthoringV1::definitionLocator(item);
     if (!kind || !locator || request == nullptr || !request->identityIndex
-        || harkenstudio::IsNull(item.runtimeId())) {
+        || harken::studio::types::IsNull(item.runtimeId())) {
         setError(error, QStringLiteral("Playable definition identity is invalid"));
         return false;
     }
-    harkenprojectschema::InputNode node;
+    harken::studio::project_schema::InputNode node;
     node.kind = *kind;
     node.guid = authoringGuid(item.guid);
     node.editorOrder = editorOrder;
-    if (!HarkenEditor::Bridge::copyStudioDefinitionPayload(
+    if (!harken::studio::bridge::copyStudioDefinitionPayload(
             item, scope, index, groups, *request->identityIndex, &node, error,
             exportPresetReferences)) {
         return false;
@@ -367,7 +367,7 @@ bool buildDefinitionNode(ProjectItem& item, const ProjectIndex& index,
         for (std::size_t i = 0; i < node.signalGraph.nodes.size(); ++i) {
             const auto& compiled = node.signalGraph.nodes[i];
             const auto& authored = entries[i];
-            HarkenEditor::Bridge::PreviewEffectSource effect;
+            harken::studio::bridge::PreviewEffectSource effect;
             effect.id = compiled.effectId;
             effect.type = compiled.effectType;
             effect.bypass = (compiled.flags & 1u) != 0;
@@ -397,7 +397,7 @@ bool buildDefinitionNode(ProjectItem& item, const ProjectIndex& index,
         return a->guid.toString() < b->guid.toString();
     });
     for (ProjectItem* child : ownedChildren) {
-        harkenprojectschema::InputOwnershipEdge edge;
+        harken::studio::project_schema::InputOwnershipEdge edge;
         edge.childGuid = authoringGuid(child->guid);
         node.ownedChildren.push_back(std::move(edge));
     }
@@ -417,10 +417,10 @@ bool buildDefinitionNode(ProjectItem& item, const ProjectIndex& index,
             }
             if (included.find(child) == included.end())
                 continue;
-            harkenprojectschema::InputContainerChildOccurrence authored;
+            harken::studio::project_schema::InputContainerChildOccurrence authored;
             authored.childGuid = authoringGuid(row.childGuid);
             authored.stableOccurrenceOrdinal = row.stableOccurrenceOrdinal;
-            if (!HarkenEditor::Bridge::copyStudioOccurrencePayload(
+            if (!harken::studio::bridge::copyStudioOccurrencePayload(
                     item, *occurrence, scope, &authored, error)) {
                 setError(error,
                          QStringLiteral("Container occurrence payload is invalid"));
@@ -448,14 +448,14 @@ bool buildDefinitionNode(ProjectItem& item, const ProjectIndex& index,
                 setError(error, QStringLiteral("Track occurrence identity is invalid"));
                 return false;
             }
-            harkenprojectschema::InputClip clip;
+            harken::studio::project_schema::InputClip clip;
             clip.guid = authoringGuid(source.clipGuid);
             clip.targetGuid = authoringGuid(source.targetGuid);
             clip.stableOccurrenceOrdinal = source.stableOccurrenceOrdinal;
             clip.time = source.start;
             clip.duration = source.duration;
             clip.semanticOrderKey = source.stableOccurrenceOrdinal;
-            if (!HarkenEditor::Bridge::copyStudioOccurrencePayload(
+            if (!harken::studio::bridge::copyStudioOccurrencePayload(
                     item, *occurrence, scope, &clip, error)) {
                 setError(error, QStringLiteral("Track occurrence payload is invalid"));
                 return false;
@@ -470,10 +470,10 @@ bool buildDefinitionNode(ProjectItem& item, const ProjectIndex& index,
             setError(error, QStringLiteral("Segment timeline is unavailable"));
             return false;
         }
-        harkenprojectschema::InputSegmentTimeSpec time;
+        harken::studio::project_schema::InputSegmentTimeSpec time;
         time.kind = timeline->segmentTime.domain == TimelineDomain::Musical
-            ? harkenprojectschema::SegmentTimeKind::Musical
-            : harkenprojectschema::SegmentTimeKind::Absolute;
+            ? harken::studio::project_schema::SegmentTimeKind::Musical
+            : harken::studio::project_schema::SegmentTimeKind::Absolute;
         for (const TempoPoint& source : timeline->segmentTime.tempoMap)
             time.tempoMap.push_back({source.tick,
                                      source.microsecondsPerQuarter});
@@ -488,17 +488,17 @@ bool buildDefinitionNode(ProjectItem& item, const ProjectIndex& index,
                  static_cast<uint16_t>(source.denominator)});
         }
         node.timeSpec = std::move(time);
-        node.startPoint = harkenprojectschema::InputStartPoint{};
+        node.startPoint = harken::studio::project_schema::InputStartPoint{};
         uint32_t markerId = 1;
         for (const Marker& source : timeline->markers.items) {
             if (source.kind == MarkerKind::Entry)
                 continue;
-            harkenprojectschema::InputMarker marker;
+            harken::studio::project_schema::InputMarker marker;
             marker.guid = authoringGuid(source.markerGuid);
             marker.markerId = markerId++;
             marker.kind = source.kind == MarkerKind::Exit
-                ? harkenprojectschema::MarkerKind::Exit
-                : harkenprojectschema::MarkerKind::Custom;
+                ? harken::studio::project_schema::MarkerKind::Exit
+                : harken::studio::project_schema::MarkerKind::Custom;
             marker.position = source.position;
             node.markers.push_back(std::move(marker));
         }
@@ -508,15 +508,15 @@ bool buildDefinitionNode(ProjectItem& item, const ProjectIndex& index,
     return true;
 }
 
-std::optional<harkenstudiobuild::PlayableKindV1> transitionPlayableKind(
+std::optional<harken::studio::build::PlayableKindV1> transitionPlayableKind(
     ProjectItem::Type type)
 {
     switch (type) {
-        case ProjectItem::Type::Sound: return harkenstudiobuild::PlayableKindV1::Sound;
+        case ProjectItem::Type::Sound: return harken::studio::build::PlayableKindV1::Sound;
         case ProjectItem::Type::Container:
-            return harkenstudiobuild::PlayableKindV1::Container;
-        case ProjectItem::Type::Track: return harkenstudiobuild::PlayableKindV1::Track;
-        case ProjectItem::Type::Segment: return harkenstudiobuild::PlayableKindV1::Segment;
+            return harken::studio::build::PlayableKindV1::Container;
+        case ProjectItem::Type::Track: return harken::studio::build::PlayableKindV1::Track;
+        case ProjectItem::Type::Segment: return harken::studio::build::PlayableKindV1::Segment;
         default: return std::nullopt;
     }
 }
@@ -527,7 +527,7 @@ bool accumulateBoundedTransitionSoundLeaves(
     std::uint32_t* leafCount)
 {
     const std::uint32_t leafCapacity =
-        harkenstudiobuild::WorldCapacitySummaryV1{}.maxKnownScheduleLeaves;
+        harken::studio::build::WorldCapacitySummaryV1{}.maxKnownScheduleLeaves;
     if (active == nullptr || leafCount == nullptr
         || leafCapacity == 0 || *leafCount > leafCapacity)
         return false;
@@ -586,7 +586,7 @@ bool transitionEndpointHasBoundedSounds(const ProjectItem& item,
     std::unordered_set<const ProjectItem*> active;
     std::uint32_t leafCount = 0;
     const std::uint32_t leafCapacity =
-        harkenstudiobuild::WorldCapacitySummaryV1{}.maxKnownScheduleLeaves;
+        harken::studio::build::WorldCapacitySummaryV1{}.maxKnownScheduleLeaves;
     return accumulateBoundedTransitionSoundLeaves(
                item, index, &active, &leafCount)
         && leafCount != 0
@@ -596,7 +596,7 @@ bool transitionEndpointHasBoundedSounds(const ProjectItem& item,
 bool appendTransitionFade(
     const TransitionFadeDef& source, std::uint32_t sampleRate,
     std::uint32_t* nextCurveId,
-    std::vector<harkenstudiobuild::CurveV1>* curves, harkenstudiobuild::TransitionFadeV1* output)
+    std::vector<harken::studio::build::CurveV1>* curves, harken::studio::build::TransitionFadeV1* output)
 {
     if (nextCurveId == nullptr || curves == nullptr || output == nullptr ||
         sampleRate == 0 ||
@@ -612,8 +612,8 @@ bool appendTransitionFade(
         static_cast<double>(sampleRate));
     if (frameCount > static_cast<double>(UINT32_MAX)) return false;
 
-    std::array<harkenstudiobuild::CurvePoint, harkenstudiobuild::kMaxCurvePoints> points{};
-    std::array<harkenstudiobuild::CurveHandlePair, harkenstudiobuild::kMaxCurvePoints - 1> handles{};
+    std::array<harken::studio::build::CurvePoint, harken::studio::build::kMaxCurvePoints> points{};
+    std::array<harken::studio::build::CurveHandlePair, harken::studio::build::kMaxCurvePoints - 1> handles{};
     for (qsizetype i = 0; i < source.curve.size(); ++i) {
         points[static_cast<std::size_t>(i)] = {
             source.curve[i].x, source.curve[i].value};
@@ -623,7 +623,7 @@ bool appendTransitionFade(
             source.handles[i].h1x, source.handles[i].h1y,
             source.handles[i].h2x, source.handles[i].h2y};
     }
-    harkenstudiobuild::CurveV1 curve;
+    harken::studio::build::CurveV1 curve;
     curve.curveLocalId = *nextCurveId;
     if (!curve.curve.SetPoints(
             points.data(), handles.data(),
@@ -718,7 +718,7 @@ bool appendBasicTransitionProgram(
     }
 
     const auto endpoint = [&](const QUuid& guid,
-                              harkenstudiobuild::PlayableRefV1* output) {
+                              harken::studio::build::PlayableRefV1* output) {
         const auto children = index.children.find(&item);
         if (children == index.children.end() || output == nullptr) return false;
         const auto found = std::find_if(
@@ -727,7 +727,7 @@ bool appendBasicTransitionProgram(
                 return child != nullptr && child->guid == guid;
             });
         if (found == children->second.end() || *found == nullptr ||
-            harkenstudio::IsNull((*found)->runtimeId())) {
+            harken::studio::types::IsNull((*found)->runtimeId())) {
             return false;
         }
         const auto kind = transitionPlayableKind((*found)->type);
@@ -769,7 +769,7 @@ bool appendBasicTransitionProgram(
             return false;
         }
 
-        harkenstudiobuild::TransitionRuleViewV1 rule;
+        harken::studio::build::TransitionRuleViewV1 rule;
         rule.stableRuleOrdinal = static_cast<std::uint32_t>(i);
         rule.authoredStableOrder = static_cast<std::uint32_t>(i);
         rule.sourceAny = source.source ? 0u : 1u;
@@ -780,9 +780,9 @@ bool appendBasicTransitionProgram(
                      QStringLiteral("Transition endpoint is not a direct runtime child"));
             return false;
         }
-        rule.sourceExit = static_cast<harkenstudiobuild::TransitionSourceExitV1>(
+        rule.sourceExit = static_cast<harken::studio::build::TransitionSourceExitV1>(
             static_cast<std::uint32_t>(source.exitTiming));
-        rule.targetEntry = harkenstudiobuild::TransitionTargetEntryV1::FromEntryMarker;
+        rule.targetEntry = harken::studio::build::TransitionTargetEntryV1::FromEntryMarker;
         if (!appendTransitionFade(source.sourceFadeOut, sampleRate, nextCurveId,
                                   &container->curves, &rule.sourceFade) ||
             !appendTransitionFade(source.targetFadeIn, sampleRate, nextCurveId,
@@ -807,13 +807,13 @@ bool appendBasicTransitionProgram(
 }
 
 harkencurrentworldcompiler::ContainerAuthoringV1 structuralContainerAuthoring(
-    harkenstudio::ObjectId stableId, std::uint32_t authoredOrder,
-    const harkenprojectschema::InputNode& node)
+    harken::studio::types::ObjectId stableId, std::uint32_t authoredOrder,
+    const harken::studio::project_schema::InputNode& node)
 {
     harkencurrentworldcompiler::ContainerAuthoringV1 row;
     row.containerStableId = stableId;
     row.authoredStableOrder = authoredOrder;
-    row.mode = harkenstudiobuild::ContainerModeV1::Sequence;
+    row.mode = harken::studio::build::ContainerModeV1::Sequence;
     for (const auto& occurrence : node.containerChildOccurrences) {
         harkencurrentworldcompiler::ContainerChildAuthoringV1 child;
         child.stableOccurrenceOrdinal = occurrence.stableOccurrenceOrdinal;
@@ -850,8 +850,8 @@ bool buildContainerAuthoring(ProjectItem& item, const ProjectIndex& index,
     row.authoredStableOrder = authoredOrder;
     row.memoryScope = selection->behavior.memoryScope ==
             SelectionMemoryScope::Global
-        ? harkenstudiobuild::MemoryScopeV1::Global
-        : harkenstudiobuild::MemoryScopeV1::Emitter;
+        ? harken::studio::build::MemoryScopeV1::Global
+        : harken::studio::build::MemoryScopeV1::Emitter;
     if (selection->behavior.avoidRepeat < 0) {
         setError(error, QStringLiteral("Container avoid-repeat is invalid"));
         return false;
@@ -859,31 +859,31 @@ bool buildContainerAuthoring(ProjectItem& item, const ProjectIndex& index,
     row.avoidLastN = static_cast<uint32_t>(ContainerBehaviorSemantics::effectiveAvoidRepeat(*selection, scope));
     switch (selection->mode) {
         case SelectionMode::Random:
-            row.mode = selection->isQueue() ? harkenstudiobuild::ContainerModeV1::RandomQueue
-                                           : harkenstudiobuild::ContainerModeV1::Random;
+            row.mode = selection->isQueue() ? harken::studio::build::ContainerModeV1::RandomQueue
+                                           : harken::studio::build::ContainerModeV1::Random;
             row.randomDiscipline = selection->isQueue() || selection->behavior.discipline ==
                     RandomDiscipline::Shuffle
-                ? harkenstudiobuild::RandomDisciplineV1::Rotation
-                : harkenstudiobuild::RandomDisciplineV1::Draw;
+                ? harken::studio::build::RandomDisciplineV1::Rotation
+                : harken::studio::build::RandomDisciplineV1::Draw;
             break;
         case SelectionMode::Sequence:
-            row.mode = selection->isQueue() ? harkenstudiobuild::ContainerModeV1::SequenceQueue
-                                           : harkenstudiobuild::ContainerModeV1::Sequence;
+            row.mode = selection->isQueue() ? harken::studio::build::ContainerModeV1::SequenceQueue
+                                           : harken::studio::build::ContainerModeV1::Sequence;
             row.avoidLastN = 0;
             break;
         case SelectionMode::Match:
         case SelectionMode::Blend:
-            row.mode = harkenstudiobuild::ContainerModeV1::VariableControl;
+            row.mode = harken::studio::build::ContainerModeV1::VariableControl;
             row.avoidLastN = 0;
             break;
     }
-    const bool queueMode = row.mode == harkenstudiobuild::ContainerModeV1::RandomQueue
-        || row.mode == harkenstudiobuild::ContainerModeV1::SequenceQueue;
+    const bool queueMode = row.mode == harken::studio::build::ContainerModeV1::RandomQueue
+        || row.mode == harken::studio::build::ContainerModeV1::SequenceQueue;
     const bool variableControl =
-        row.mode == harkenstudiobuild::ContainerModeV1::VariableControl;
+        row.mode == harken::studio::build::ContainerModeV1::VariableControl;
     std::uint32_t nextCurveId = 1;
     if (variableControl) {
-        row.memoryScope = harkenstudiobuild::MemoryScopeV1::Emitter;
+        row.memoryScope = harken::studio::build::MemoryScopeV1::Emitter;
     }
     if (queueMode) {
         const auto locator = PlayablePropertyAuthoringV1::definitionLocator(item);
@@ -895,20 +895,20 @@ bool buildContainerAuthoring(ProjectItem& item, const ProjectIndex& index,
             return false;
         }
         const auto loopCount = static_cast<std::uint32_t>(state->value.toInteger());
-        row.memoryScope = harkenstudiobuild::MemoryScopeV1::Emitter;
+        row.memoryScope = harken::studio::build::MemoryScopeV1::Emitter;
         if (loopCount == 0) {
-            row.queueCycle = harkenstudiobuild::QueueCycleV1::Loop;
+            row.queueCycle = harken::studio::build::QueueCycleV1::Loop;
             row.queueCycleCount = 0;
         } else if (loopCount == 1) {
-            row.queueCycle = harkenstudiobuild::QueueCycleV1::Once;
+            row.queueCycle = harken::studio::build::QueueCycleV1::Once;
             row.queueCycleCount = 0;
         } else {
-            row.queueCycle = harkenstudiobuild::QueueCycleV1::Loop;
+            row.queueCycle = harken::studio::build::QueueCycleV1::Loop;
             row.queueCycleCount = loopCount;
         }
         row.queueSplice = selection->spliceByMarker
-            ? harkenstudiobuild::QueueSpliceV1::MarkerAligned
-            : harkenstudiobuild::QueueSpliceV1::Butt;
+            ? harken::studio::build::QueueSpliceV1::MarkerAligned
+            : harken::studio::build::QueueSpliceV1::Butt;
         row.resumePosition = selection->behavior.resumeFromLast;
     }
     uint32_t order = 0;
@@ -945,20 +945,20 @@ bool buildContainerAuthoring(ProjectItem& item, const ProjectIndex& index,
                 && streamingState->value.toInteger() == 0
                 && loopState->value.toInteger() != 0) {
                 authored.completion.completionClass =
-                    harkenstudiobuild::AuthoredCompletionClassV1::FiniteMediaCandidate;
+                    harken::studio::build::AuthoredCompletionClassV1::FiniteMediaCandidate;
                 harkencurrentworldcompiler::CompletionLeafAuthoringV1 leaf;
                 leaf.value.stableLeafOrdinal = 1;
-                leaf.value.content.kind = harkenstudiobuild::PlayableKindV1::Sound;
+                leaf.value.content.kind = harken::studio::build::PlayableKindV1::Sound;
                 leaf.value.content.stableId = child->runtimeId();
                 leaf.value.startOffset = {
-                    harkenstudiobuild::AuthoredTimeDomainV1::SourceFrames, 0, 1};
+                    harken::studio::build::AuthoredTimeDomainV1::SourceFrames, 0, 1};
                 leaf.value.duration = {
-                    harkenstudiobuild::AuthoredTimeDomainV1::NaturalMediaEnd, 0, 1};
+                    harken::studio::build::AuthoredTimeDomainV1::NaturalMediaEnd, 0, 1};
                 authored.completion.leaves.push_back(std::move(leaf));
             }
         }
-        if (row.mode == harkenstudiobuild::ContainerModeV1::Random
-                && row.randomDiscipline == harkenstudiobuild::RandomDisciplineV1::Draw) {
+        if (row.mode == harken::studio::build::ContainerModeV1::Random
+                && row.randomDiscipline == harken::studio::build::RandomDisciplineV1::Draw) {
                 const int authoredWeight =
                     ContainerBehaviorSemantics::effectiveChildWeight(
                         *selection, occurrenceRow.stableOccurrenceOrdinal, scope);
@@ -972,8 +972,8 @@ bool buildContainerAuthoring(ProjectItem& item, const ProjectIndex& index,
                 }
                 const uint32_t weight = static_cast<uint32_t>(authoredWeight);
                 authored.frequencyWeight = weight;
-        } else if (row.mode == harkenstudiobuild::ContainerModeV1::Random
-                       || row.mode == harkenstudiobuild::ContainerModeV1::RandomQueue) {
+        } else if (row.mode == harken::studio::build::ContainerModeV1::Random
+                       || row.mode == harken::studio::build::ContainerModeV1::RandomQueue) {
                 const int authoredWeight = std::clamp(
                     ContainerBehaviorSemantics::effectiveChildWeight(
                         *selection, occurrenceRow.stableOccurrenceOrdinal, scope),
@@ -994,7 +994,7 @@ bool buildContainerAuthoring(ProjectItem& item, const ProjectIndex& index,
             return true;
         };
         const auto appendAxes = [&](const std::vector<QUuid>& axes,
-                                    std::vector<harkenstudiobuild::GridAxisV1>* out) {
+                                    std::vector<harken::studio::build::GridAxisV1>* out) {
             if (out == nullptr || axes.size() > 32)
                 return false;
             for (uint32_t axisIndex = 0;
@@ -1003,7 +1003,7 @@ bool buildContainerAuthoring(ProjectItem& item, const ProjectIndex& index,
                     index.byGuid.find(authoringGuid(axes[axisIndex]));
                 if (found == index.byGuid.end() || found->second == nullptr
                     || found->second->type != ProjectItem::Type::Variable
-                    || harkenstudio::IsNull(found->second->runtimeId()))
+                    || harken::studio::types::IsNull(found->second->runtimeId()))
                     return false;
                 out->push_back(
                     {axisIndex, axisIndex,
@@ -1046,7 +1046,7 @@ bool buildContainerAuthoring(ProjectItem& item, const ProjectIndex& index,
             }
             for (size_t axis = 0; axis < source.cells.size(); ++axis) {
                 const auto& sourceCell = source.cells[axis];
-                harkenstudiobuild::DiscreteGridCellV1 cell;
+                harken::studio::build::DiscreteGridCellV1 cell;
                 if (sourceCell) {
                     const auto found = index.byGuid.find(authoringGuid(matches.axes[axis]));
                     const auto* variable = found != index.byGuid.end() && found->second
@@ -1057,7 +1057,7 @@ bool buildContainerAuthoring(ProjectItem& item, const ProjectIndex& index,
                             .arg(item.name).arg(rowIndex + 1).arg(axis + 1));
                         return false;
                     }
-                    cell.kind = harkenstudiobuild::DiscreteCellKindV1::Exact;
+                    cell.kind = harken::studio::build::DiscreteCellKindV1::Exact;
                     cell.exactValue = *value;
                 }
                 authored.cells.push_back(cell);
@@ -1093,22 +1093,22 @@ bool buildContainerAuthoring(ProjectItem& item, const ProjectIndex& index,
                     setError(error, QStringLiteral("Mixing curve is invalid"));
                     return false;
                 }
-                std::array<harkenstudiobuild::CurvePoint, harkenstudiobuild::kMaxCurvePoints> points{};
-                std::array<harkenstudiobuild::CurveHandlePair, harkenstudiobuild::kMaxCurvePoints - 1> handles{};
+                std::array<harken::studio::build::CurvePoint, harken::studio::build::kMaxCurvePoints> points{};
+                std::array<harken::studio::build::CurveHandlePair, harken::studio::build::kMaxCurvePoints - 1> handles{};
                 for (int i = 0; i < child.points.size(); ++i)
                     points[i] = {child.points[i].x, child.points[i].value};
                 for (int i = 0; i < child.handles.size(); ++i) {
                     const auto& handle = child.handles[i];
                     handles[i] = {handle.h1x, handle.h1y, handle.h2x, handle.h2y};
                 }
-                harkenstudiobuild::CurveV1 curve;
+                harken::studio::build::CurveV1 curve;
                 curve.curveLocalId = nextCurveId++;
                 if (!curve.curve.SetPoints(points.data(), handles.data(), static_cast<uint32_t>(child.points.size()))) {
                     setError(error, QStringLiteral("Mixing curve cannot be compiled"));
                     return false;
                 }
                 auto& cell = row.continuousRows[mixingMembers.value(child.target)].cells[mixingAxisIndex];
-                cell.kind = harkenstudiobuild::ContinuousCellKindV1::Interval;
+                cell.kind = harken::studio::build::ContinuousCellKindV1::Interval;
                 cell.lower = child.points.front().x;
                 cell.upper = child.points.back().x;
                 cell.lowerInclusive = 1;
@@ -1163,7 +1163,7 @@ ActionTargetResolution resolveActionTarget(
     }
     const auto item = index.byObjectId.find(resolved.objectID);
     if (item == index.byObjectId.end() || item->second == nullptr
-        || harkenstudio::IsNull(item->second->runtimeId())) {
+        || harken::studio::types::IsNull(item->second->runtimeId())) {
         setError(error, QStringLiteral("Action step target is invalid"));
         return ActionTargetResolution::Invalid;
     }
@@ -1232,7 +1232,7 @@ ActionTargetResolution resolveActionQuantizeReference(
         && languageUnavailable.find(item) != languageUnavailable.end())
         return ActionTargetResolution::Skipped;
     if (item == nullptr || !isPlayableActionReference(item->type)
-        || harkenstudio::IsNull(item->runtimeId())
+        || harken::studio::types::IsNull(item->runtimeId())
         || included.find(item) == included.end()) {
         setError(error,
                  QStringLiteral("Action quantize reference is unresolved"));
@@ -1245,9 +1245,9 @@ ActionTargetResolution resolveActionQuantizeReference(
 
 struct ActionBuildClosure
 {
-    std::set<harkenstudio::ObjectId> actions;
-    std::set<harkenstudio::ObjectId> definitions;
-    std::set<harkenstudio::ObjectId> variables;
+    std::set<harken::studio::types::ObjectId> actions;
+    std::set<harken::studio::types::ObjectId> definitions;
+    std::set<harken::studio::types::ObjectId> variables;
 };
 
 ActionBuildClosure actionBuildClosure(
@@ -1332,14 +1332,14 @@ bool appendActionPrograms(
     BridgeRequest* request, QString* error,
     const CurrentWorldBuildOptions* options, CurrentWorldBuildStatus* status)
 {
-    std::unordered_set<harkenstudio::ObjectId> unavailableActions;
+    std::unordered_set<harken::studio::types::ObjectId> unavailableActions;
     for (ProjectItem* item : index.actions) {
         if (item && options && options->includedActionIds
             && options->includedActionIds->count(item->runtimeId()) == 0)
             continue;
         const auto lowerAction = [&]() {
             const auto* source = item != nullptr ? item->comp<VAction>() : nullptr;
-            if (source == nullptr || harkenstudio::IsNull(item->runtimeId())) {
+            if (source == nullptr || harken::studio::types::IsNull(item->runtimeId())) {
                 setError(error, QStringLiteral("Action definition is invalid"));
                 return false;
             }
@@ -1408,7 +1408,7 @@ bool appendActionPrograms(
                         setError(error, QStringLiteral("Action timing is invalid"));
                         return false;
                     }
-                    if (!harkenstudiobuild::ActionQuantizeTimingSupportedV1(
+                    if (!harken::studio::build::ActionQuantizeTimingSupportedV1(
                             *opcode, *timing)) {
                         setStatus(status, CurrentWorldBuildStatus::CapabilityUnavailable);
                         setError(error, QStringLiteral(
@@ -1486,14 +1486,14 @@ bool appendActionPrograms(
         for (auto& action : request->actions) {
             if (options && options->isolateUnavailable) {
                 if (std::any_of(action.steps.begin(), action.steps.end(), [&](const auto& step) {
-                        return step.opcode == harkenstudiobuild::ActionOpcodeV1::PostAction
+                        return step.opcode == harken::studio::build::ActionOpcodeV1::PostAction
                             && unavailableActions.count(step.target.stableId) != 0;
                     }))
                     changed = unavailableActions.insert(action.actionStableId).second || changed;
                 continue;
             }
             const auto removed = std::erase_if(action.steps, [&](const auto& step) {
-                return step.opcode == harkenstudiobuild::ActionOpcodeV1::PostAction
+                return step.opcode == harken::studio::build::ActionOpcodeV1::PostAction
                     && unavailableActions.count(step.target.stableId) != 0;
             });
             if (removed != 0 && action.steps.empty())
@@ -1514,7 +1514,7 @@ bool appendActionPrograms(
 
 } // namespace
 
-HarkenEditor::Build::CurrentWorldSyncRequestPtr
+harken::studio::build::CurrentWorldSyncRequestPtr
 buildCurrentWorldSyncRequestForContext(ProjectData& project, PlatformScope scope,
                              QString* error,
                              CurrentWorldBuildStatus* status,
@@ -1538,11 +1538,11 @@ buildCurrentWorldSyncRequestForContext(ProjectData& project, PlatformScope scope
     const auto sourceIndex = options && options->canonicalContext
         ? options->canonicalContext->sourceIndex
         : options && options->sourceIndex ? options->sourceIndex
-            : HarkenEditor::Bridge::canonicalRuntimeProjectSourceIndex(project);
-    std::optional<HarkenEditor::Bridge::CanonicalRuntimeProjectContextV1> ownedCanonical;
+            : harken::studio::bridge::canonicalRuntimeProjectSourceIndex(project);
+    std::optional<harken::studio::bridge::CanonicalRuntimeProjectContextV1> ownedCanonical;
     const auto& canonical = options && options->canonicalContext
         ? *options->canonicalContext
-        : ownedCanonical.emplace(HarkenEditor::Bridge::canonicalRuntimeProjectContext(
+        : ownedCanonical.emplace(harken::studio::bridge::canonicalRuntimeProjectContext(
             project, projectGeneration, std::nullopt, scope, sourceIndex));
     if (!canonical.ok()) {
         if (!canonical.compileTargetProfile)
@@ -1697,15 +1697,15 @@ buildCurrentWorldSyncRequestForContext(ProjectData& project, PlatformScope scope
             && (!closureRoot
                 || closure.variables.count(root->runtimeId()) != 0)) {
             const auto* source = root->comp<VVariable>();
-            if (source == nullptr || harkenstudio::IsNull(root->runtimeId())) {
+            if (source == nullptr || harken::studio::types::IsNull(root->runtimeId())) {
                 setError(error, QStringLiteral("Variable definition is invalid"));
                 variablesValid = false;
                 return;
             }
-            harkenstudiobuild::VariableDefinitionV1 variable;
+            harken::studio::build::VariableDefinitionV1 variable;
             variable.variableId = root->runtimeId();
             variable.kind = source->kind == VariableKind::Step
-                ? harkenstudiobuild::VariableKindV1::Step : harkenstudiobuild::VariableKindV1::Smooth;
+                ? harken::studio::build::VariableKindV1::Step : harken::studio::build::VariableKindV1::Smooth;
             variable.rangeMin = source->rangeMin;
             variable.rangeMax = source->rangeMax;
             variable.defaultValue = source->defaultValue;
@@ -1732,9 +1732,9 @@ buildCurrentWorldSyncRequestForContext(ProjectData& project, PlatformScope scope
     }
     if (options && options->includePreviewDucking) {
         request->includePreviewDucking = true;
-        const auto appendDucking = [&](const ProjectItem& source, harkenstudiobuild::SignalEndpointKindV1 kind,
-                                       harkenstudio::ObjectId target, float level) {
-            const auto targetBytes = harkenstudio::ObjectIdBytes(target);
+        const auto appendDucking = [&](const ProjectItem& source, harken::studio::build::SignalEndpointKindV1 kind,
+                                       harken::studio::types::ObjectId target, float level) {
+            const auto targetBytes = harken::studio::types::ObjectIdBytes(target);
             QByteArray name("harken-preview-ducking-v1:");
             name.append(reinterpret_cast<const char*>(targetBytes.data()), static_cast<qsizetype>(targetBytes.size()));
             const auto relation = runtimeObjectId(QUuid::createUuidV5(source.guid, name));
@@ -1749,13 +1749,13 @@ buildCurrentWorldSyncRequestForContext(ProjectData& project, PlatformScope scope
             const auto effective = groups.definitions.find(toFieldGroupGuid(item->guid));
             if (effective == groups.definitions.end()) continue;
             for (const auto& send : effective->second.send.sends) {
-                if (send.mode != harkenprojectschema::SendMode::Ducking) continue;
+                if (send.mode != harken::studio::project_schema::SendMode::Ducking) continue;
                 const auto* target = request->identityIndex->find(send.targetBusID);
-                if (!target || target->kind != harkenprojectschema::RuntimeIdentityKindV1::Bus) {
+                if (!target || target->kind != harken::studio::project_schema::RuntimeIdentityKindV1::Bus) {
                     setError(error, QStringLiteral("Ducking target Bus identity is missing"));
                     return {};
                 }
-                appendDucking(*item, harkenstudiobuild::SignalEndpointKindV1::Sound,
+                appendDucking(*item, harken::studio::build::SignalEndpointKindV1::Sound,
                               target->stableId, send.sendLevel);
             }
         }
@@ -1770,16 +1770,16 @@ buildCurrentWorldSyncRequestForContext(ProjectData& project, PlatformScope scope
             }
             for (const auto& value : state->value.toArray()) {
                 const auto row = value.toObject();
-                if (row.value(QStringLiteral("mode")).toInt() != static_cast<int>(harkenprojectschema::SendMode::Ducking)) continue;
+                if (row.value(QStringLiteral("mode")).toInt() != static_cast<int>(harken::studio::project_schema::SendMode::Ducking)) continue;
                 const auto handle = static_cast<std::uint32_t>(row.value(QStringLiteral("targetBusID")).toDouble());
                 const auto* target = request->identityIndex->findBySourceHandle(
-                    harkenprojectschema::RuntimeIdentityKindV1::Bus,
+                    harken::studio::project_schema::RuntimeIdentityKindV1::Bus,
                     handle == kMasterBusID ? project.busses.front().rootItem->objectID : static_cast<std::uint32_t>(handle));
                 if (!target) {
                     setError(error, QStringLiteral("Bus Ducking target identity is missing"));
                     return {};
                 }
-                appendDucking(*bus, harkenstudiobuild::SignalEndpointKindV1::Bus,
+                appendDucking(*bus, harken::studio::build::SignalEndpointKindV1::Bus,
                               target->stableId, static_cast<float>(row.value(QStringLiteral("sendLevel")).toDouble()));
             }
         }
@@ -1793,12 +1793,12 @@ buildCurrentWorldSyncRequestForContext(ProjectData& project, PlatformScope scope
 }
 
 void retainCurrentWorldSyncRequestInputs(
-    HarkenEditor::Build::CurrentWorldSyncRequest& request,
-    const HarkenEditor::Bridge::CanonicalRuntimeProjectSourceIndexV1& sourceIndex,
-    const std::set<harkenstudio::ObjectId>& actionIds,
-    const std::set<harkenstudio::ObjectId>& definitionIds)
+    harken::studio::build::CurrentWorldSyncRequest& request,
+    const harken::studio::bridge::CanonicalRuntimeProjectSourceIndexV1& sourceIndex,
+    const std::set<harken::studio::types::ObjectId>& actionIds,
+    const std::set<harken::studio::types::ObjectId>& definitionIds)
 {
-    std::set<harkenstudio::ObjectId> retainedIds = definitionIds;
+    std::set<harken::studio::types::ObjectId> retainedIds = definitionIds;
     for (ProjectItem* item : sourceIndex.definitions) {
         if (definitionIds.count(item->runtimeId()) == 0)
             continue;
@@ -1807,10 +1807,10 @@ void retainCurrentWorldSyncRequestInputs(
              parent = sourceIndex.parentDefinition.find(parent->second))
             retainedIds.insert(parent->second->runtimeId());
     }
-    const auto stableId = [&](const harkenprojectschema::AuthoringGuid& guid) {
+    const auto stableId = [&](const harken::studio::project_schema::AuthoringGuid& guid) {
         return sourceIndex.byGuid.at(guid)->runtimeId();
     };
-    const auto retainedGuid = [&](const harkenprojectschema::AuthoringGuid& guid) {
+    const auto retainedGuid = [&](const harken::studio::project_schema::AuthoringGuid& guid) {
         const auto item = sourceIndex.byGuid.find(guid);
         return item != sourceIndex.byGuid.end()
             && retainedIds.count(item->second->runtimeId()) != 0;
@@ -1818,8 +1818,8 @@ void retainCurrentWorldSyncRequestInputs(
     std::erase_if(request.project.nodes, [&](const auto& node) {
         return !retainedGuid(node.guid);
     });
-    std::set<harkenprojectschema::AuthoringGuid> childGuids;
-    std::map<harkenstudio::ObjectId, const harkenprojectschema::InputNode*> nodes;
+    std::set<harken::studio::project_schema::AuthoringGuid> childGuids;
+    std::map<harken::studio::types::ObjectId, const harken::studio::project_schema::InputNode*> nodes;
     std::int64_t editorOrder = 0;
     for (auto& node : request.project.nodes) {
         node.editorOrder = editorOrder++;
@@ -1868,7 +1868,7 @@ void retainCurrentWorldSyncRequestInputs(
     std::erase_if(request.transitions, [&](const auto& row) {
         return definitionIds.count(row.ownerContainerStableId) == 0;
     });
-    std::map<harkenstudio::ObjectId, std::uint32_t> transitionIndices;
+    std::map<harken::studio::types::ObjectId, std::uint32_t> transitionIndices;
     for (std::uint32_t i = 0; i < request.transitions.size(); ++i)
         transitionIndices.emplace(request.transitions[i].ownerContainerStableId, i);
     std::uint32_t containerOrder = 0;
@@ -1884,7 +1884,7 @@ bool isCurrentWorldPlayableForContext(ProjectData& project, const ProjectItem& i
                                      PlatformScope scope, const QString& languageFallback)
 {
     const auto canonical =
-        HarkenEditor::Bridge::canonicalRuntimeProjectContext(project, 0, std::nullopt, scope);
+        harken::studio::bridge::canonicalRuntimeProjectContext(project, 0, std::nullopt, scope);
     if (!canonical.ok())
         return false;
     const auto included = runtimeDefinitions(
@@ -1895,7 +1895,7 @@ bool isCurrentWorldPlayableForContext(ProjectData& project, const ProjectItem& i
 
 bool readCurrentWorldScalarUpdate(
     ProjectItem& item, PlatformScope scope, std::uint8_t propertyId,
-    HarkenEditor::Build::CurrentWorldScalarUpdate* output)
+    harken::studio::build::CurrentWorldScalarUpdate* output)
 {
     using Property = harkenplayableproperties::PlayablePropertyIdV1;
     const auto property = static_cast<Property>(propertyId);
@@ -1907,7 +1907,7 @@ bool readCurrentWorldScalarUpdate(
     const auto state = locator
         ? PlayablePropertyAuthoringV1::readProperty(item, *locator, propertyId, scope)
         : std::nullopt;
-    if (!state || harkenstudio::IsNull(item.runtimeId()))
+    if (!state || harken::studio::types::IsNull(item.runtimeId()))
         return false;
     *output = {authoringGuid(item.guid), item.runtimeId(), propertyId,
                state->present,
@@ -1976,4 +1976,4 @@ bool affectsCurrentWorld(ProjectItemType itemType,
     }
 }
 
-} // namespace VNX
+} // namespace harken::studio

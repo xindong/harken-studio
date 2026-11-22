@@ -3,7 +3,7 @@
 #include "AssetPipeline/AssetRegistry.h"
 #include "SoundSourceSemantics.h"
 
-namespace VNX::SoundSourceEditing {
+namespace harken::studio::SoundSourceEditing {
 
 QString previewLanguage(const ProjectItem& item, const QString& contextLanguage)
 {

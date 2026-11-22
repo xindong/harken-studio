@@ -15,7 +15,7 @@
 #include <type_traits>
 #include <vector>
 
-namespace VNX {
+namespace harken::studio {
 
 enum class PropType : uint8_t { Float, Int, Bool, Enum, Color, ObjectRef, String, List, Range, Struct };
 enum class ListPresentation : uint8_t { Configuration, Display };
@@ -261,22 +261,22 @@ private:
 };
 
 #define VNX_PROP_GET(Comp, member) \
-    [](const VNX::IComponent* c) -> QVariant { return QVariant(static_cast<const Comp*>(c)->member); }
+    [](const harken::studio::IComponent* c) -> QVariant { return QVariant(static_cast<const Comp*>(c)->member); }
 #define VNX_PROP_GETI(Comp, member) \
-    [](const VNX::IComponent* c) -> QVariant { return QVariant(static_cast<int>(static_cast<const Comp*>(c)->member)); }
+    [](const harken::studio::IComponent* c) -> QVariant { return QVariant(static_cast<int>(static_cast<const Comp*>(c)->member)); }
 
 #define VNX_PROP_SET_F(Comp, member) \
-    [](VNX::IComponent* c, const QVariant& v) -> bool { static_cast<Comp*>(c)->member = v.toFloat(); return true; }
+    [](harken::studio::IComponent* c, const QVariant& v) -> bool { static_cast<Comp*>(c)->member = v.toFloat(); return true; }
 #define VNX_PROP_SET_D(Comp, member) \
-    [](VNX::IComponent* c, const QVariant& v) -> bool { static_cast<Comp*>(c)->member = v.toDouble(); return true; }
+    [](harken::studio::IComponent* c, const QVariant& v) -> bool { static_cast<Comp*>(c)->member = v.toDouble(); return true; }
 #define VNX_PROP_SET_I(Comp, member) \
-    [](VNX::IComponent* c, const QVariant& v) -> bool { static_cast<Comp*>(c)->member = v.toInt(); return true; }
+    [](harken::studio::IComponent* c, const QVariant& v) -> bool { static_cast<Comp*>(c)->member = v.toInt(); return true; }
 #define VNX_PROP_SET_B(Comp, member) \
-    [](VNX::IComponent* c, const QVariant& v) -> bool { static_cast<Comp*>(c)->member = v.toBool(); return true; }
+    [](harken::studio::IComponent* c, const QVariant& v) -> bool { static_cast<Comp*>(c)->member = v.toBool(); return true; }
 #define VNX_PROP_SET_U32(Comp, member) \
-    [](VNX::IComponent* c, const QVariant& v) -> bool { static_cast<Comp*>(c)->member = v.toUInt(); return true; }
+    [](harken::studio::IComponent* c, const QVariant& v) -> bool { static_cast<Comp*>(c)->member = v.toUInt(); return true; }
 #define VNX_PROP_SET_U64(Comp, member) \
-    [](VNX::IComponent* c, const QVariant& v) -> bool { \
+    [](harken::studio::IComponent* c, const QVariant& v) -> bool { \
         bool ok = false; \
         const qulonglong raw = v.toULongLong(&ok); \
         if (!ok) return false; \
@@ -284,10 +284,10 @@ private:
         return true; \
     }
 #define VNX_PROP_SET_U16(Comp, member) \
-    [](VNX::IComponent* c, const QVariant& v) -> bool { static_cast<Comp*>(c)->member = static_cast<uint16_t>(v.toInt()); return true; }
+    [](harken::studio::IComponent* c, const QVariant& v) -> bool { static_cast<Comp*>(c)->member = static_cast<uint16_t>(v.toInt()); return true; }
 #define VNX_PROP_SET_U8(Comp, member) \
-    [](VNX::IComponent* c, const QVariant& v) -> bool { static_cast<Comp*>(c)->member = static_cast<uint8_t>(v.toInt()); return true; }
+    [](harken::studio::IComponent* c, const QVariant& v) -> bool { static_cast<Comp*>(c)->member = static_cast<uint8_t>(v.toInt()); return true; }
 #define VNX_PROP_SET_S(Comp, member) \
-    [](VNX::IComponent* c, const QVariant& v) -> bool { static_cast<Comp*>(c)->member = v.toString(); return true; }
+    [](harken::studio::IComponent* c, const QVariant& v) -> bool { static_cast<Comp*>(c)->member = v.toString(); return true; }
 
 }

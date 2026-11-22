@@ -2,7 +2,7 @@
 
 #include "Monitor/MonitorScopePanel.h"
 
-namespace VNX {
+namespace harken::studio {
 
 void MonitorScopeSource::attach(MonitorScopePanel* panel,
                                 MonitorCursorModel* sharedCursor)
@@ -29,4 +29,4 @@ void MonitorScopeSource::pushToPanel() const
         panel_->bindSnapshot(snapshot_, stateStreamSubscribed_);
 }
 
-} // namespace VNX
+} // namespace harken::studio

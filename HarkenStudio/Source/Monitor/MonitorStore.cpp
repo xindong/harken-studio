@@ -5,7 +5,7 @@
 #include <string>
 #include <unordered_set>
 
-namespace VNX {
+namespace harken::studio {
 namespace Monitor {
 namespace {
 
@@ -171,7 +171,7 @@ uint64_t MonitorStore::telemetryKey(const MonitorRecordHeader& header)
 {
     return header.traceCorrelationId ^
            (header.telemetry.arrangingInstance * 0x9e3779b97f4a7c15ull) ^
-           harkenstudio::HashObjectId(header.telemetry.clipId);
+           harken::studio::types::HashObjectId(header.telemetry.clipId);
 }
 
 uint64_t MonitorStore::recordCharge(const MonitorDecodedRecord& rec, bool indexed)
@@ -339,4 +339,4 @@ bool MonitorStore::usable() const
 }
 
 } // namespace Monitor
-} // namespace VNX
+} // namespace harken::studio

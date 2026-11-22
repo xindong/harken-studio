@@ -9,7 +9,7 @@
 
 class QToolButton;
 
-namespace VNX {
+namespace harken::studio {
 
 struct ProjectItem;
 class TableWidget;
@@ -24,7 +24,7 @@ public:
     ~BindingFieldEditor() override;
 
     void bind(ProjectItem* item, const BindingAddress& address);
-    void selectBinding(const QUuid& owner, harkenstudio::ObjectId stableId);
+    void selectBinding(const QUuid& owner, harken::studio::types::ObjectId stableId);
     void showAddMenu();
 
 signals:
@@ -60,7 +60,7 @@ private:
     BindingAddMenu* addMenu_ = nullptr;
     QToolButton* remove_ = nullptr;
     std::vector<Row> entries_;
-    harkenstudio::ObjectId selectedId_{};
+    harken::studio::types::ObjectId selectedId_{};
     int selected_ = -1;
 };
 

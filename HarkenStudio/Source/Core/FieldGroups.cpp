@@ -4,11 +4,11 @@
 #include <set>
 #include <utility>
 
-namespace VNX {
+namespace harken::studio {
 namespace {
 
-using harkenprojectschema::AuthoringGuid;
-using harkenprojectschema::ContentKind;
+using harken::studio::project_schema::AuthoringGuid;
+using harken::studio::project_schema::ContentKind;
 
 using DiagnosticCode = FieldGroupDiagnosticCode;
 using Diagnostics = std::vector<FieldGroupDiagnostic>;
@@ -93,7 +93,7 @@ void ValidateAuthoredGroup(const AuthoredGroup<Payload>& authored,
 {
     ValidateState(authored.shared, group, {}, definition, diagnostics);
     for (const auto& [platform, state] : authored.platforms) {
-        if (harkenstudio::IsNull(platform)) {
+        if (harken::studio::types::IsNull(platform)) {
             diagnostics.push_back({DiagnosticCode::InvalidPlatform, definition,
                                    group, platform, "platforms", {}, {}});
         }
@@ -136,7 +136,7 @@ FieldGroupResolutionResult ResolveGroup(
         const auto& authored = definition->groups->*member;
         Diagnostics diagnostics;
         ValidateAuthoredGroup(authored, group, definition->guid, diagnostics);
-        if (harkenstudio::IsNull(definition->parentGuid))
+        if (harken::studio::types::IsNull(definition->parentGuid))
             ValidateRootGroup(authored, group, definition->guid, diagnostics);
         if (!diagnostics.empty()) return {{}, std::move(diagnostics)};
         const auto selected = ResolveFieldGroupLocal(authored, scope);
@@ -147,7 +147,7 @@ FieldGroupResolutionResult ResolveGroup(
             result.effectiveInherit = selected.mode == FieldGroupMode::Inherit;
         }
         if (selected.mode == FieldGroupMode::Local
-            || harkenstudio::IsNull(definition->parentGuid)) {
+            || harken::studio::types::IsNull(definition->parentGuid)) {
             if (!selected.localHistory || selected.localFields != FieldGroupPropertyMask(group)) {
                 diagnostics.push_back({DiagnosticCode::MissingLocalHistory, definition->guid,
                                        group, scope, "values", {}, {}});
@@ -166,7 +166,7 @@ FieldGroupResolutionResult ResolveGroup(
 
 bool IsFieldGroupScopeValid(FieldGroupScope scope) noexcept
 {
-    return !scope || !harkenprojectschema::IsNull(*scope);
+    return !scope || !harken::studio::project_schema::IsNull(*scope);
 }
 
 DefinitionFieldGroups MakeRootFieldGroups(AuthoringGuid masterBusGuid)
@@ -247,7 +247,7 @@ std::vector<FieldGroupDiagnostic> ValidateFieldGroupPayload(
             AddDiagnostic(diagnostics, DiagnosticCode::PayloadGroupMismatch, group);
             break;
         }
-        if (harkenstudio::IsNull(output->outputBusRef))
+        if (harken::studio::types::IsNull(output->outputBusRef))
             AddDiagnostic(diagnostics, DiagnosticCode::EmptyRequiredReference,
                           group, "outputBusRef");
         if (!std::isfinite(output->outputBusVolume))
@@ -263,17 +263,17 @@ std::vector<FieldGroupDiagnostic> ValidateFieldGroupPayload(
         }
         for (std::size_t i = 0; i < send->sends.size(); ++i) {
             const auto& row = send->sends[i];
-            if (!harkenprojectschema::IsValidSendMode(row.mode))
+            if (!harken::studio::project_schema::IsValidSendMode(row.mode))
                 AddDiagnostic(diagnostics, DiagnosticCode::InvalidValue,
                               group, "mode", i);
-            if (harkenstudio::IsNull(row.targetBusID))
+            if (harken::studio::types::IsNull(row.targetBusID))
                 AddDiagnostic(diagnostics, DiagnosticCode::EmptyRequiredReference,
                               group, "targetBusID", i);
             if (!InRange(row.sendLevel, -96.0f, 24.0f))
                 AddDiagnostic(diagnostics, DiagnosticCode::InvalidValue,
                               group, "sendLevel", i);
             for (const auto& [mode, volume] : row.modeVolumesDb)
-                if (!harkenprojectschema::IsValidSendMode(mode) || mode == row.mode
+                if (!harken::studio::project_schema::IsValidSendMode(mode) || mode == row.mode
                     || !InRange(volume, -96.0f, 24.0f))
                     AddDiagnostic(diagnostics, DiagnosticCode::InvalidValue,
                                   group, "modeVolumes", i);
@@ -300,15 +300,15 @@ std::vector<FieldGroupDiagnostic> ValidateFieldGroupPayload(
             AddDiagnostic(diagnostics, DiagnosticCode::PayloadGroupMismatch, group);
             break;
         }
-        std::set<harkenstudio::ObjectId> identities;
+        std::set<harken::studio::types::ObjectId> identities;
         const auto& rows = effects->effects.entries();
         if (rows.size() > EffectChainLedger::kCapacity)
             AddDiagnostic(diagnostics, DiagnosticCode::InvalidValue, group, "effects");
         for (std::size_t i = 0; i < rows.size(); ++i) {
             const auto& row = rows[i];
             if (!EffectChainSemantics::validate(row)
-                || harkenstudio::IsNull(row.runtimeId())
-                || row.runtimeId() == harkenstudio::kMasterBusObjectId
+                || harken::studio::types::IsNull(row.runtimeId())
+                || row.runtimeId() == harken::studio::types::kMasterBusObjectId
                 || !identities.insert(row.runtimeId()).second)
                 AddDiagnostic(diagnostics, DiagnosticCode::InvalidValue, group, "effects", i);
         }
@@ -349,7 +349,7 @@ FieldGroupReferenceCatalog::FieldGroupReferenceCatalog(
                                target.kind == FieldGroupReferenceKind::Attenuation ||
                                target.kind == FieldGroupReferenceKind::Effect ||
                                target.kind == FieldGroupReferenceKind::Other;
-        if (harkenstudio::IsNull(target.guid) || !validKind ||
+        if (harken::studio::types::IsNull(target.guid) || !validKind ||
             !targets_.emplace(target.guid, target.kind).second)
             invalidTargets_.push_back(target.guid);
     }
@@ -383,7 +383,7 @@ std::vector<FieldGroupDiagnostic> FieldGroupReferenceCatalog::Validate(
                           FieldGroupReferenceKind::Bus, "outputBusRef");
         break;
     case FieldGroupId::Send: {
-        std::set<std::pair<AuthoringGuid, harkenprojectschema::SendMode>> seen;
+        std::set<std::pair<AuthoringGuid, harken::studio::project_schema::SendMode>> seen;
         const auto& sends = std::get<SendFieldGroup>(payload).sends;
         for (std::size_t i = 0; i < sends.size(); ++i) {
             const auto guid = sends[i].targetBusID;
@@ -396,7 +396,7 @@ std::vector<FieldGroupDiagnostic> FieldGroupReferenceCatalog::Validate(
     }
     case FieldGroupId::SpatialRating: {
         const auto guid = std::get<SpatialRatingFieldGroup>(payload).spatialAttenuationRef;
-        if (!harkenstudio::IsNull(guid))
+        if (!harken::studio::types::IsNull(guid))
             validateReference(guid, FieldGroupReferenceKind::Attenuation,
                               "spatialAttenuationRef");
         break;
@@ -424,11 +424,11 @@ FieldGroupResolver::FieldGroupResolver(
     std::span<const FieldGroupDefinitionView> definitions,
     AuthoringGuid masterBusGuid)
 {
-    if (harkenstudio::IsNull(masterBusGuid))
+    if (harken::studio::types::IsNull(masterBusGuid))
         AddDiagnostic(diagnostics_, DiagnosticCode::InvalidMasterBus);
     for (const auto& definition : definitions) {
         const auto first = diagnostics_.size();
-        if (harkenstudio::IsNull(definition.guid))
+        if (harken::studio::types::IsNull(definition.guid))
             AddDiagnostic(diagnostics_, DiagnosticCode::InvalidDefinitionGuid);
         if (!IsContentKindValid(definition.kind))
             AddDiagnostic(diagnostics_, DiagnosticCode::InvalidContentKind);
@@ -438,7 +438,7 @@ FieldGroupResolver::FieldGroupResolver(
             auto stateDiagnostics = ValidateDefinitionFieldGroups(*definition.groups);
             diagnostics_.insert(diagnostics_.end(), stateDiagnostics.begin(),
                                 stateDiagnostics.end());
-            if (harkenstudio::IsNull(definition.parentGuid)) {
+            if (harken::studio::types::IsNull(definition.parentGuid)) {
                 ValidateRootGroup(definition.groups->output,
                     FieldGroupId::Output, definition.guid, diagnostics_);
                 ValidateRootGroup(definition.groups->send,
@@ -449,14 +449,14 @@ FieldGroupResolver::FieldGroupResolver(
                     FieldGroupId::Effect, definition.guid, diagnostics_);
             }
         }
-        if (!harkenstudio::IsNull(definition.guid) &&
+        if (!harken::studio::types::IsNull(definition.guid) &&
             !definitions_.emplace(definition.guid, definition).second)
             AddDiagnostic(diagnostics_, DiagnosticCode::DuplicateDefinitionGuid);
         for (auto i = first; i < diagnostics_.size(); ++i)
             diagnostics_[i].definition = definition.guid;
     }
     for (const auto& [guid, definition] : definitions_) {
-        if (harkenstudio::IsNull(definition.parentGuid)) continue;
+        if (harken::studio::types::IsNull(definition.parentGuid)) continue;
         const auto parent = definitions_.find(definition.parentGuid);
         if (parent == definitions_.end()) {
             diagnostics_.push_back({DiagnosticCode::MissingParent, guid, {}, {},
@@ -473,7 +473,7 @@ FieldGroupResolver::FieldGroupResolver(
         if (colors[guid] != 0) continue;
         std::vector<AuthoringGuid> path;
         auto current = guid;
-        while (!harkenstudio::IsNull(current) && definitions_.contains(current)) {
+        while (!harken::studio::types::IsNull(current) && definitions_.contains(current)) {
             auto& color = colors[current];
             if (color == 2) break;
             if (color == 1) {

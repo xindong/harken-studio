@@ -5,8 +5,8 @@
 #include <functional>
 #include <limits>
 
-namespace HarkenEditor {
-namespace Bridge {
+namespace harken::studio {
+namespace bridge {
 namespace Detail {
 
 namespace {
@@ -20,7 +20,7 @@ bool SameFloat(float left, float right)
 } // namespace
 
 BusTopologySync::BusTopologySync(BusTopologyBackend backend,
-                                 harkenstudio::ObjectId masterBusId)
+                                 harken::studio::types::ObjectId masterBusId)
     : m_backend(std::move(backend)),
       m_masterBusId(masterBusId)
 {
@@ -98,20 +98,20 @@ bool BusTopologySync::BuildDesired(
     const std::vector<RuntimeBusDefinition>& buses,
     const std::vector<RuntimeBusSendDefinition>& sends)
 {
-    std::map<harkenstudio::ObjectId, RuntimeBusDefinition> desiredBuses;
+    std::map<harken::studio::types::ObjectId, RuntimeBusDefinition> desiredBuses;
     RuntimeBusDefinition master;
     master.id = m_masterBusId;
     master.name = QStringLiteral("Master");
     desiredBuses.emplace(m_masterBusId, master);
 
     for (RuntimeBusDefinition bus : buses) {
-        if (harkenstudio::IsNull(bus.id)) {
+        if (harken::studio::types::IsNull(bus.id)) {
             Fail(BusTopologyOperation::ApplySnapshot, kEngineInvalidArg,
                  bus.id, bus.parentId, bus.name);
             return false;
         }
         if (bus.id == m_masterBusId) {
-            if (!harkenstudio::IsNull(bus.parentId)) {
+            if (!harken::studio::types::IsNull(bus.parentId)) {
                 Fail(BusTopologyOperation::ApplySnapshot,
                      kEngineInvalidArg, bus.id, bus.parentId,
                      bus.name);
@@ -138,7 +138,7 @@ bool BusTopologySync::BuildDesired(
         }
     }
 
-    std::vector<harkenstudio::ObjectId> parentFirst;
+    std::vector<harken::studio::types::ObjectId> parentFirst;
     if (!BuildParentFirstOrder(desiredBuses, parentFirst)) {
         Fail(BusTopologyOperation::ApplySnapshot, kEngineInvalidArg,
              {}, {}, QString());
@@ -147,7 +147,7 @@ bool BusTopologySync::BuildDesired(
 
     std::map<SendKey, RuntimeBusSendDefinition> desiredSends;
     for (const RuntimeBusSendDefinition& send : sends) {
-        if (harkenstudio::IsNull(send.sourceId) || harkenstudio::IsNull(send.targetId) ||
+        if (harken::studio::types::IsNull(send.sourceId) || harken::studio::types::IsNull(send.targetId) ||
             desiredBuses.find(send.sourceId) == desiredBuses.end() ||
             desiredBuses.find(send.targetId) == desiredBuses.end()) {
             Fail(BusTopologyOperation::ApplySnapshot, kEngineUnknownId,
@@ -168,12 +168,12 @@ bool BusTopologySync::BuildDesired(
 }
 
 bool BusTopologySync::BuildParentFirstOrder(
-    const std::map<harkenstudio::ObjectId, RuntimeBusDefinition>& buses,
-    std::vector<harkenstudio::ObjectId>& outOrder) const
+    const std::map<harken::studio::types::ObjectId, RuntimeBusDefinition>& buses,
+    std::vector<harken::studio::types::ObjectId>& outOrder) const
 {
     enum class Visit : uint8_t { None, Visiting, Done };
-    std::map<harkenstudio::ObjectId, Visit> visits;
-    std::function<bool(harkenstudio::ObjectId)> visit = [&](harkenstudio::ObjectId id) {
+    std::map<harken::studio::types::ObjectId, Visit> visits;
+    std::function<bool(harken::studio::types::ObjectId)> visit = [&](harken::studio::types::ObjectId id) {
         Visit& state = visits[id];
         if (state == Visit::Done)
             return true;
@@ -238,14 +238,14 @@ bool BusTopologySync::BuildOperations(uint32_t propertyFadeMs)
         m_pendingRevision = m_confirmedRevision + 1;
     }
 
-    std::vector<harkenstudio::ObjectId> desiredOrder;
+    std::vector<harken::studio::types::ObjectId> desiredOrder;
     if (!BuildParentFirstOrder(m_desiredBuses, desiredOrder)) {
         Fail(BusTopologyOperation::ApplySnapshot,
              kEngineInvalidArg, {}, {}, QString());
         return false;
     }
 
-    for (const harkenstudio::ObjectId id : desiredOrder) {
+    for (const harken::studio::types::ObjectId id : desiredOrder) {
         const RuntimeBusDefinition& desired = m_desiredBuses.at(id);
         const auto confirmed = m_confirmedBuses.find(id);
         const RuntimeBusDefinition baseline =
@@ -325,7 +325,7 @@ void BusTopologySync::BeginConfirmedPropertyReplay(
     const std::vector<ConfirmedBusPropertyPatch>& patches,
     uint32_t propertyFadeMs)
 {
-    std::map<harkenstudio::ObjectId, RuntimeBusDefinition> desiredById;
+    std::map<harken::studio::types::ObjectId, RuntimeBusDefinition> desiredById;
     for (std::size_t i = m_nextPropertyReplayOperation;
          i < m_propertyReplayOperations.size(); ++i) {
         const Operation& operation = m_propertyReplayOperations[i];
@@ -482,7 +482,7 @@ void BusTopologySync::ApplyConfirmed(const Operation& operation)
 {
     switch (operation.kind) {
     case BusTopologyOperation::ApplySnapshot: {
-        std::map<harkenstudio::ObjectId, RuntimeBusDefinition> confirmed;
+        std::map<harken::studio::types::ObjectId, RuntimeBusDefinition> confirmed;
         for (const auto& entry : m_desiredBuses) {
             RuntimeBusDefinition bus = entry.second;
             const auto old = m_confirmedBuses.find(entry.first);
@@ -526,8 +526,8 @@ void BusTopologySync::ApplyConfirmed(const Operation& operation)
 }
 
 void BusTopologySync::Fail(BusTopologyOperation operation,
-                           EngineResult result, harkenstudio::ObjectId busId,
-                           harkenstudio::ObjectId relatedBusId,
+                           EngineResult result, harken::studio::types::ObjectId busId,
+                           harken::studio::types::ObjectId relatedBusId,
                            const QString& busName)
 {
     m_failure.operation = operation;
@@ -538,9 +538,9 @@ void BusTopologySync::Fail(BusTopologyOperation operation,
     m_state = BusTopologyState::Failed;
 }
 
-std::vector<harkenstudio::ObjectId> BusTopologySync::ConfirmedBusIds() const
+std::vector<harken::studio::types::ObjectId> BusTopologySync::ConfirmedBusIds() const
 {
-    std::vector<harkenstudio::ObjectId> ids;
+    std::vector<harken::studio::types::ObjectId> ids;
     ids.reserve(m_confirmedBuses.size());
     for (const auto& entry : m_confirmedBuses)
         ids.push_back(entry.first);
@@ -557,5 +557,5 @@ std::vector<RuntimeBusDefinition> BusTopologySync::ConfirmedBuses() const
 }
 
 } // namespace Detail
-} // namespace Bridge
-} // namespace HarkenEditor
+} // namespace bridge
+} // namespace harken::studio

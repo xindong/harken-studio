@@ -15,7 +15,7 @@
 #include <QShowEvent>
 #include <QVBoxLayout>
 
-namespace VNX {
+namespace harken::studio {
 
 namespace {
 

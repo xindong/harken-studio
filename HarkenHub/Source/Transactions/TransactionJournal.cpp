@@ -9,7 +9,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 
-namespace VNH {
+namespace harken::hub {
 
 QString TransactionJournal::filePath()
 {

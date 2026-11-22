@@ -12,7 +12,7 @@
 #include <QSet>
 #include <memory>
 
-namespace VNX {
+namespace harken::studio {
 
 class AssetRegistry : public QObject
 {
@@ -130,7 +130,7 @@ signals:
 
     void assetModified(uint32_t sourceID);
 
-    void cacheInvalidated(uint32_t sourceID, VNX::ProjectPlatformId platform);
+    void cacheInvalidated(uint32_t sourceID, harken::studio::ProjectPlatformId platform);
 
 private:
     explicit AssetRegistry(QObject* parent = nullptr);

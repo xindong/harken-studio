@@ -10,7 +10,7 @@ class QComboBox;
 class QDialogButtonBox;
 class QLineEdit;
 
-namespace VNX {
+namespace harken::studio {
 
 class ProportionalTreeWidget;
 class TableWidget;

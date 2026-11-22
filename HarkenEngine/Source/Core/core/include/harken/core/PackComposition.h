@@ -307,10 +307,6 @@ public:
     VnResult PrepareLookup(VnObjectId stableId, PackLeaseSlice slice,
                            PackIdentityLookup* out,
                            OriginalLeaseEpisode* original = nullptr) const noexcept;
-    VnResult BuildResourceClosure(
-        const PackPartitionLease& lease,
-        PackResourceRevisionToken* outTokens, std::size_t tokenCapacity,
-        std::size_t* outTokenCount) const noexcept;
     VnResult PreparedResourceClosureBacking(const PackPartitionLease& lease,
         std::shared_ptr<const std::vector<PackResourceRevisionToken>>* out) const noexcept;
     VnResult CommitPreparedLease(
@@ -398,7 +394,6 @@ private:
                           const PackPartitionLease& b) noexcept;
     static bool SameLeaseIdentity(const PackPartitionLease& a,
                                   const PackPartitionLease& b) noexcept;
-    VnResult DecodeOwner(CandidateOwner& owner) const;
     VnResult BuildIndex(PublishedView& view,
                         PackOwnerLocalFacts* facts) const;
     VnResult PrepareLease(const PublishedOwner& owner, PackLeaseSlice slice,

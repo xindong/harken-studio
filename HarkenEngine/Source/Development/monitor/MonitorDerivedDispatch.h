@@ -63,7 +63,6 @@ private:
 };
 
 std::uint64_t DerivedDrainCapturePlanGeneration();
-void ResetDerivedHandlersForTests();
 
 } // namespace monitor
 } // namespace harken

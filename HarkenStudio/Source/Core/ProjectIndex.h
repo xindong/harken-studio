@@ -12,7 +12,7 @@
 #include "ProjectTypes.h"
 class QLockFile;
 
-namespace VNX {
+namespace harken::studio {
 
 class ProjectIndex
 {

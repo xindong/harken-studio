@@ -11,7 +11,7 @@
 #include <QSet>
 #include <QMenu>
 
-namespace VNX {
+namespace harken::studio {
 
 AttenuationFieldDecorator::AttenuationFieldDecorator(
     AttenuationDimension dimension, QWidget* parent)

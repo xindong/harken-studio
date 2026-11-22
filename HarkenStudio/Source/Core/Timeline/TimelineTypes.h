@@ -13,7 +13,7 @@
 
 #include "../PlayablePropertyAuthoringV1.h"
 
-namespace VNX {
+namespace harken::studio {
 
 struct ProjectItem;
 
@@ -63,7 +63,7 @@ struct Clip
     QUuid targetGuid;
     int64_t start = 0;
     int64_t duration = 0;
-    harkenstudio::ObjectId runtimeId() const { return runtimeObjectId(clipGuid); }
+    harken::studio::types::ObjectId runtimeId() const { return runtimeObjectId(clipGuid); }
     uint32_t stableOccurrenceOrdinal = 0;
     PlayablePropertyOccurrenceV1 playableProperties;
     PlatformOverrideLedgerV1 platformOverrides;
@@ -88,7 +88,7 @@ struct Marker
     MarkerKind kind = MarkerKind::Custom;
     QString name;
     int64_t position = 0;
-    harkenstudio::ObjectId runtimeId() const { return runtimeObjectId(markerGuid); }
+    harken::studio::types::ObjectId runtimeId() const { return runtimeObjectId(markerGuid); }
 
     QJsonObject toJson() const;
     static std::optional<Marker> fromJson(const QJsonObject& json,

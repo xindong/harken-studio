@@ -107,19 +107,19 @@ public:
         blockFrames_ = blockFrames;
     }
 
-    bool AttachPlan03ScratchAuthority(
+    bool AttachScheduleScratchAuthority(
         DecisionTable& decisions,
         const ScheduledTransactionPool& pool) {
         if (!decisions.Valid() || !pool.Valid() ||
-            pool.MaxPlan03GroupHeadersPerPage() == 0) {
+            pool.MaxScheduleGroupHeadersPerPage() == 0) {
             return false;
         }
         decisions_ = &decisions;
         pool_ = &pool;
-        pageGroups_.assign(pool.MaxPlan03GroupHeadersPerPage(),
-                           Plan03PageGroupView{});
+        pageGroups_.assign(pool.MaxScheduleGroupHeadersPerPage(),
+                           SchedulePageGroupView{});
         currentSlices_.assign(decisions.Capacity(),
-                              Plan03ScratchDecisionState{});
+                              ScratchDecisionState{});
         authoredStopFences_.assign(pool.MaxScheduledTransactions(), nullptr);
         if (!frontier_.Attach(decisions, pool) ||
             !laneFrontier_.Attach(decisions, pool, true)) return false;
@@ -190,19 +190,19 @@ public:
             return admitted;
         }
         std::fill(currentSlices_.begin(), currentSlices_.end(),
-                  Plan03ScratchDecisionState{});
-        const std::size_t count = pool_->CapturePlan03PageGroupsRt(
+                  ScratchDecisionState{});
+        const std::size_t count = pool_->CaptureSchedulePageGroupsRt(
             quantumIndex, pageGroups_.data(), pageGroups_.size());
         if (count > pageGroups_.size()) {
             return false;
         }
         for (std::size_t index = 0; index < count; ++index) {
-            const Plan03PageGroupView& view = pageGroups_[index];
+            const SchedulePageGroupView& view = pageGroups_[index];
             if (!view.identity.decision.Valid() || view.lease == nullptr ||
                 view.identity.decision.slot >= currentSlices_.size()) {
                 return false;
             }
-            Plan03ScratchDecisionState& state =
+            ScratchDecisionState& state =
                 currentSlices_[view.identity.decision.slot];
             if (state.generation != 0 &&
                 state.generation != view.identity.decision.generation) {
@@ -239,7 +239,7 @@ public:
 
     bool CollectFrontierGroups(std::uint64_t pageQuantum) noexcept override {
         if (pool_ == nullptr) return true;
-        const auto count = pool_->CapturePlan03PageGroupsRt(pageQuantum,
+        const auto count = pool_->CaptureSchedulePageGroupsRt(pageQuantum,
             pageGroups_.data(), pageGroups_.size());
         if (count > pageGroups_.size()) return false;
         for (std::size_t i = 0; i < count; ++i)
@@ -298,12 +298,12 @@ public:
             ApplyAuthoredStopFence(descriptor, quantumIndex);
     }
 
-    bool ApplyPlan03Groups(std::uint64_t quantumIndex) noexcept override {
+    bool ApplyScheduleGroups(std::uint64_t quantumIndex) noexcept override {
         if (armGroups_ == nullptr || decisions_ == nullptr ||
             pool_ == nullptr) {
             return true;
         }
-        const std::size_t count = pool_->CapturePlan03PageGroupsRt(
+        const std::size_t count = pool_->CaptureSchedulePageGroupsRt(
             quantumIndex, pageGroups_.data(), pageGroups_.size());
         if (count > pageGroups_.size()) return false;
         for (std::size_t index = 0; index < count; ++index)
@@ -311,7 +311,7 @@ public:
         return true;
     }
 
-    bool ApplyNativeGroup(const Plan03PageGroupView& group, std::uint64_t quantumIndex) noexcept {
+    bool ApplyNativeGroup(const SchedulePageGroupView& group, std::uint64_t quantumIndex) noexcept {
         if (group.frontier != nullptr) return true;
         DecisionCommittedSnapshot decision{};
         if (!decisions_->CaptureCommitted(group.identity.decision,
@@ -346,9 +346,9 @@ public:
         if (group.lease == nullptr) {
             return false;
         }
-        Plan03PageGroupView checked{};
+        SchedulePageGroupView checked{};
         if (!decision.pages.Valid() || group.identity.sliceIndex >= decision.sliceCount ||
-            !pool_->ResolvePlan03GroupSliceRt(group.identity, &checked) ||
+            !pool_->ResolveScheduleGroupSliceRt(group.identity, &checked) ||
             checked.lease != group.lease || checked.members != group.members) return false;
         TransitionInstanceSnapshot transitionSnapshot{};
         const bool transitionCaptured =
@@ -603,8 +603,8 @@ public:
         };
         // Validate every member before the Queue's existing whole-slice claim.
         for (std::uint32_t index = 0; index < bucket->groupCount; ++index) {
-            Plan03PageGroupView group{};
-            if (!pool_->ResolvePlan03GroupSliceRt(groups[index].identity, &group) || !owner->Owns(group)) return false;
+            SchedulePageGroupView group{};
+            if (!pool_->ResolveScheduleGroupSliceRt(groups[index].identity, &group) || !owner->Owns(group)) return false;
         }
         for (std::uint32_t index = 0; index < bucket->eventCount; ++index) {
             const auto& event = events[index].event;
@@ -644,8 +644,8 @@ public:
         *claimed = lane.ClaimRetainingCaptureOnRefusal(handle, bucket);
         if (!*claimed) return false;
         for (std::uint32_t index = 0; index < bucket->groupCount; ++index) {
-            Plan03PageGroupView group{};
-            if (!pool_->ResolvePlan03GroupSliceRt(groups[index].identity, &group) ||
+            SchedulePageGroupView group{};
+            if (!pool_->ResolveScheduleGroupSliceRt(groups[index].identity, &group) ||
                 !owner->Owns(group) || !ApplyNativeGroup(group, quantum)) return false;
         }
         for (std::uint32_t index = 0; index < bucket->eventCount; ++index) {
@@ -868,7 +868,7 @@ public:
         return cancelled;
     }
 
-    void FailPlan03Deadline(DecisionToken decision,
+    void FailScheduleDeadline(DecisionToken decision,
                             std::uint64_t quantumIndex) noexcept override {
         (void)decision;
         (void)quantumIndex;
@@ -1543,8 +1543,8 @@ private:
     std::uint64_t plainQuantum_ = 0;
     DecisionTable* decisions_ = nullptr;
     const ScheduledTransactionPool* pool_ = nullptr;
-    mutable std::vector<Plan03PageGroupView> pageGroups_;
-    mutable std::vector<Plan03ScratchDecisionState> currentSlices_;
+    mutable std::vector<SchedulePageGroupView> pageGroups_;
+    mutable std::vector<ScratchDecisionState> currentSlices_;
     QueueInstanceTable* queues_ = nullptr;
     VariableControlInstanceTable* variableControls_ = nullptr;
     TransitionInstancePool* transitions_ = nullptr;

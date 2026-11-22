@@ -7,7 +7,7 @@
 
 #include <string>
 
-namespace VNX {
+namespace harken::studio {
 namespace Monitor {
 
 // Studio-owned query host for P3-7. Opens a session only to read
@@ -43,4 +43,4 @@ private:
 };
 
 } // namespace Monitor
-} // namespace VNX
+} // namespace harken::studio

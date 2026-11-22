@@ -6,7 +6,7 @@
 #include <QStringList>
 #include <optional>
 
-namespace VNX {
+namespace harken::studio {
 
 class MockLLMProvider : public ILLMProvider
 {

@@ -7,7 +7,7 @@
 
 class QWidget;
 
-namespace VNX {
+namespace harken::studio {
 
 class ProjectInstance : public QObject
 {

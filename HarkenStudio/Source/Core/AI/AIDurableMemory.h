@@ -4,7 +4,7 @@
 #include <QString>
 #include <QtGlobal>
 
-namespace VNX {
+namespace harken::studio {
 
 enum class AIDurableMemoryKind
 {

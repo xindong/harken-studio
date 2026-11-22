@@ -21,7 +21,7 @@
 #include <optional>
 #include <vector>
 
-namespace harkenprojectschema {
+namespace harken::studio::project_schema {
 
 // The clamp applied to the summed cent offset before it becomes a ratio, in
 // cents each way. It matches the legacy runtime-link bound.
@@ -88,6 +88,6 @@ private:
     std::map<StableId, StableId> parent_;  // child -> its structural owner
 };
 
-}  // namespace harkenprojectschema
+}  // namespace harken::studio::project_schema
 
 #endif  // HARKEN_PROJECT_SCHEMA_PROPERTY_FOLD_H

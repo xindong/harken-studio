@@ -6,7 +6,7 @@
 #include <QStringList>
 #include <QWidget>
 
-namespace VNX {
+namespace harken::studio {
 
 class ThemeManager;
 struct ComponentRecipe;
@@ -34,7 +34,7 @@ public:
     void applyRecipe();
 
 signals:
-    void recipeApplied(VNX::ComponentRecipeVariant variant);
+    void recipeApplied(harken::studio::ComponentRecipeVariant variant);
 
 private:
     class SlotContainer;

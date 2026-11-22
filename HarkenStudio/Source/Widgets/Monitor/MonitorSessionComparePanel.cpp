@@ -4,7 +4,7 @@
 #include <QLabel>
 #include <QVBoxLayout>
 
-namespace VNX {
+namespace harken::studio {
 
 MonitorSessionComparePanel::MonitorSessionComparePanel(QWidget* parent)
     : QWidget(parent)
@@ -60,4 +60,4 @@ QString MonitorSessionComparePanel::exportText() const
     return exportLabel_ ? exportLabel_->text() : QString();
 }
 
-} // namespace VNX
+} // namespace harken::studio

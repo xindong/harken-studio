@@ -7,7 +7,7 @@
 
 #include <QJsonObject>
 
-namespace VNX {
+namespace harken::studio {
 
 class VAttenuation : public ReflectedComponent<VAttenuation>
 {

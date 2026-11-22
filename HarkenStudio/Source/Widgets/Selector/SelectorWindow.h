@@ -23,7 +23,7 @@ class QPushButton;
 class QTreeWidget;
 class QTreeWidgetItem;
 
-namespace VNX {
+namespace harken::studio {
 
 constexpr int kRoleObjectID   = Qt::UserRole;
 constexpr int kRoleSelectable = Qt::UserRole + 2;
