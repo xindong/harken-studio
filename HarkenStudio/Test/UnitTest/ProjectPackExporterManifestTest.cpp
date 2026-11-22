@@ -4790,6 +4790,7 @@ TEST(EditorProjectPackExporterManifest, PartialPublicationCombinesScheduleAndEff
         }
     }
     auto config = harkentest::MakeNullConfig(8, 64, 48000);
+    config.maxPackDecodeStagingBytes = 256ull << 20;
     harkentest::EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
     ASSERT_NO_FATAL_FAILURE(activateExportedNames(output.path(),
