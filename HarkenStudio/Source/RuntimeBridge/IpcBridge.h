@@ -28,30 +28,9 @@
 
 #include <QString>
 #include <cstdint>
-#include <vector>
 
 namespace harken::studio {
 namespace bridge {
-
-//==============================================================================
-// Plugins. The old-runtime plugin-host command surface is gone; this listing
-// query remains as the capability-map probe (reports NoEngine/Unavailable,
-// never fabricates plugins).
-//==============================================================================
-
-struct PluginDesc {
-    QString  name, vendor;
-    uint32_t typeId = 0, version = 0;
-    bool     isSource = false;
-    uint32_t paramCount = 0;
-    struct Param {
-        QString name, unit;
-        float defaultValue = 0, minValue = 0, maxValue = 0;
-    };
-    std::vector<Param> params;
-};
-
-IpcQueryStatus pluginList(std::vector<PluginDesc>& out, uint32_t& outCount);
 
 // Mixer format introspection (buffer-config reply's sample-rate half; 0 when
 // no session, as before).

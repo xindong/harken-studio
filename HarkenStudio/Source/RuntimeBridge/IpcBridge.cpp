@@ -10,27 +10,6 @@
 namespace harken::studio {
 namespace bridge {
 
-namespace {
-
-IpcQueryStatus unavailableStatus()
-{
-    return Detail::runtimeIsActive() ? IpcQueryStatus::Unavailable
-                                     : IpcQueryStatus::NoEngine;
-}
-
-} // namespace
-
-//==============================================================================
-// Plugins.
-//==============================================================================
-
-IpcQueryStatus pluginList(std::vector<PluginDesc>& out, uint32_t& outCount)
-{
-    out.clear();
-    outCount = 0;
-    return unavailableStatus();
-}
-
 int32_t mixerSampleRate()
 {
     return Detail::runtimeIsActive() ? Detail::runtimeActualSampleRate() : 0;
