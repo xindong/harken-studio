@@ -1134,17 +1134,10 @@ bool VoiceLedger::IsStolen(VnVoiceHandle renderHandle) const {
 
 void VoiceLedger::MarkTerminating(VnVoiceHandle renderHandle, const MonitorControlCause& cause,
                                   bool recordControlCause) {
-    if (renderHandle == 0) {
-        return;
-    }
-    for (std::uint32_t i = 0; i < m_entries.ConstructedCount(); ++i) {
-        Entry& entry = m_entries[i];
-        if (entry.state == EntryState::Live &&
-            entry.renderHandle == renderHandle) {
-            if (recordControlCause && !entry.stolen && !entry.terminating && !entry.monitorCancellationAccepted) entry.controlCause = cause;
-            entry.terminating = true;
-            return;
-        }
+    if (auto* entry = EntryForRender(renderHandle)) {
+        if (recordControlCause && !entry->stolen && !entry->terminating && !entry->monitorCancellationAccepted)
+            entry->controlCause = cause;
+        entry->terminating = true;
     }
 }
 

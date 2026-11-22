@@ -134,6 +134,31 @@ TEST(VoiceCapacity, DefaultCanMixAnotherVoiceWhileAll256Continue) {
     }
 }
 
+TEST(VoiceCapacity, CapturedStopPreservesEachFade) {
+    auto config = harkentest::MakeNullConfig(4, 64, 48000);
+    harkentest::EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    const auto samples = harkentest::MakeDC(4800, 0.1f);
+    const auto pcm = harkentest::MonoDesc(samples, 48000);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSoundId, &pcm));
+    auto play = harkentest::MakePlayDesc(kSoundId);
+    VnVoiceHandle first{}, second{};
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &first));
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &second));
+    engine.nullBackend.Pump(2);
+    const auto immediate = harkentest::RenderHandle(&engine, first);
+    const auto fading = harkentest::RenderHandle(&engine, second);
+    const auto slot = engine.commands.PrepareGroupStop();
+    ASSERT_NE(UINT32_MAX, slot);
+    ASSERT_TRUE(engine.commands.PublishGroupStop(slot, {{immediate, 0}, {fading, 10}}));
+    engine.nullBackend.Pump(1);
+    EXPECT_EQ(nullptr, engine.voices.Resolve(immediate));
+    EXPECT_NE(nullptr, engine.voices.Resolve(fading));
+    engine.nullBackend.Pump(9);
+    EXPECT_EQ(nullptr, engine.voices.Resolve(fading));
+}
+
 TEST(VoiceCapacity, RenderRefusalLeavesIdentityAndPcmResourcesUntouched) {
     VnConfig config =
         harkentest::MakeNullConfig(/*maxVoices=*/2, kBlockFrames, kSampleRate);
