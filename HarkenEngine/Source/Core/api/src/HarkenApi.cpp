@@ -6840,12 +6840,14 @@ namespace harken::detail {
 // Single engine instance. The API is externally synchronized, so plain
 // pointer state is sufficient — no atomics, no locks.
 Engine* g_engine = nullptr;
+// A replacement engine can reuse the same address, including in the release edition.
+static std::uint64_t g_engineLifetime = 0;
 
 thread_local ApiCallScope* g_apiCall = nullptr;
 
 ApiCallScope::ApiCallScope() noexcept : previous_(g_apiCall) {
     faultedAtEntry = g_engine != nullptr && g_engine->runtimeRecreateRequired ? g_engine : nullptr;
-    faultedInstanceAtEntry = faultedAtEntry ? faultedAtEntry->monitorRequests.EngineInstance() : 0;
+    faultedInstanceAtEntry = g_engineLifetime;
     g_apiCall = this;
 }
 
@@ -6857,7 +6859,7 @@ VnResult NormalizeApiResult(VnResult result) noexcept {
     if (result == VN_RUNTIME_RECREATE_REQUIRED ||
         (g_engine != nullptr && g_engine->runtimeRecreateRequired &&
          (g_engine != g_apiCall->faultedAtEntry ||
-          g_engine->monitorRequests.EngineInstance() != g_apiCall->faultedInstanceAtEntry)))
+          g_engineLifetime != g_apiCall->faultedInstanceAtEntry)))
         return VN_RUNTIME_RECREATE_REQUIRED;
     return g_apiCall->Failure().site == LogicAllocSite::None ? result : VN_OUT_OF_MEMORY;
 }
@@ -7119,6 +7121,7 @@ void TeardownEngine(Engine* engine) {
     delete g_engineOwner;
     g_engineOwner = nullptr;
     g_engine = nullptr;
+    ++g_engineLifetime;
     g_termPending = false;
     memguard::Uninstall();
 }
