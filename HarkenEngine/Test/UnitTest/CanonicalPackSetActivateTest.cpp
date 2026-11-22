@@ -385,12 +385,14 @@ struct Provider {
 std::vector<std::uint8_t> Build(bool init, std::uint64_t id, std::uint64_t revision = 1,
                                 std::uint32_t actions = 1,
                                 std::uint64_t actionBase = harkentest::packfoundation::kActionBase,
-                                VnObjectId variableId = harkentest::packfoundation::kVariableId) {
+                                VnObjectId variableId = harkentest::packfoundation::kVariableId,
+                                std::uint32_t stepsPerAction = 1) {
     using namespace harkentest::packfoundation;
     const auto bus = DefaultRuntimeBusFixture();
     std::uint64_t size = 0;
     auto partition = PartitionPayload(id, revision, init ? 0 : actions,
-        std::bit_cast<std::uint32_t>(0.5f), &size, 64, project, bus.triple, actionBase, variableId);
+        std::bit_cast<std::uint32_t>(0.5f), &size, std::max(64u, actions), project, bus.triple,
+        actionBase, variableId, stepsPerAction);
     ImageBuilder image(init ? harken::kPackKindInit : harken::kPackKindCanonicalContent);
     image.AddEntry(harken::kPackEntryKindPackRequirementBlock, id,
         RequirementPayload(id, revision, revision, init ? 0 : actions + 1, size, bus.triple));
@@ -2318,6 +2320,61 @@ int ReplayCompanionTrace(const std::filesystem::path& tracePath, std::string& ou
 #else
     return pclose(pipe);
 #endif
+}
+
+TEST(CanonicalPackSetActivate, DefaultBudgetsLoadBeyondFormerResidentAndIndexLimits) {
+    using namespace companionfixture;
+    constexpr std::uint32_t packCount = 8, actionsPerPack = 10000, stepsPerAction = 3;
+    EngineSession session(harkentest::MakeNullConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    const auto initId = PackId("Init");
+    Provider init{Build(true, initId, 1, actionsPerPack, harkentest::packfoundation::kActionBase,
+        harkentest::packfoundation::kVariableId, stepsPerAction)};
+    VnPackNamesV1 initNames{sizeof(VnPackNamesV1), 0, project, {}, "", "", 0, 0, nullptr, nullptr};
+    std::vector<VnCanonicalPackSetMemberV2> members{Member(initId, true, &init, &initNames)};
+    VnCanonicalPackSetActivationReportV1 report{};
+    ASSERT_EQ(VN_OK, Activate(members, report));
+    members[0] = Member(initId, true, nullptr, nullptr, report.initHandle, VN_PACK_MEMBER_KEEP);
+    for (std::uint32_t i = 0; i < packCount; ++i) {
+        SCOPED_TRACE(i);
+        const auto actionBase = harkentest::packfoundation::kActionBase + i * actionsPerPack;
+        const auto root = harkentest::ObjectId(actionBase);
+        const auto id = harken::CompanionActionPackId(initId, root, "");
+        const auto label = "Play_Part_" + std::to_string(i);
+        Provider source{Build(false, id, 1, actionsPerPack, actionBase,
+            harkentest::ObjectId(100 + i), stepsPerAction)};
+        ASSERT_FALSE(source.bytes.empty());
+        VnPackNamesV1 names{sizeof(VnPackNamesV1), 0, project, root, label.c_str(), "", 0, 0, nullptr, nullptr};
+        const auto at = std::lower_bound(members.begin() + 1, members.end(), id,
+            [](const auto& row, auto key) { return row.source.packStableId < key; });
+        const auto inserted = members.insert(at, Member(id, false, &source, &names));
+        ASSERT_EQ(VN_OK, Activate(members, report, report.resultSetRevision));
+        *inserted = Member(id, false, nullptr, nullptr, inserted->source.expectedHandle, VN_PACK_MEMBER_KEEP);
+        VnActionResolved resolved{};
+        ASSERT_EQ(VN_OK, Resolve(label.c_str(), &resolved));
+        EXPECT_EQ(root, resolved.actionId);
+    }
+    const auto& published = *session.Engine()->packComposition.Published();
+    std::uint64_t definitionBytes = 0;
+    for (const auto& owner : published.owners) definitionBytes += owner.definitionBytes;
+    const auto indexBytes = published.index.size() * sizeof(published.index.front());
+    ASSERT_GT(definitionBytes, 32ull << 20);
+    ASSERT_GT(indexBytes, 2ull << 20);
+    RecordProperty("resident_definition_bytes", std::to_string(definitionBytes));
+    RecordProperty("identity_index_bytes", std::to_string(indexBytes));
+    VnPostActionDesc post{};
+    post.structSize = sizeof(post);
+    post.actionId = harkentest::ObjectId(harkentest::packfoundation::kActionBase +
+        packCount * actionsPerPack - 1);
+    VnActionFiringHandle firing = 0;
+    ASSERT_EQ(VN_OK, Vn_PostAction(&post, &firing));
+    ASSERT_NE(0u, firing);
+    VnActionFiringInfo info{};
+    info.structSize = sizeof(info);
+    ASSERT_EQ(VN_OK, Vn_QueryActionFiring(firing, &info));
+    EXPECT_EQ(VN_ACTION_OUTCOME_SUCCEEDED, info.outcome);
+    EXPECT_EQ(stepsPerAction, info.directStepTerminalCount);
+    EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
 }
 
 TEST(CanonicalPackSetActivate, BothVintagesLoadAndReplay257Members) {

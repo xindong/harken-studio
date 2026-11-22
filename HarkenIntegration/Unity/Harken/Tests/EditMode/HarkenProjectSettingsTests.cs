@@ -77,7 +77,7 @@ namespace Harken.Unity.Tests
             {
                 Assert.That(File.Exists(settingsPath), Is.True);
                 var generated = new SerializedObject(settings);
-                Assert.That(generated.FindProperty("maxVoices").longValue, Is.EqualTo(256L));
+                Assert.That(generated.FindProperty("maxVoices").longValue, Is.EqualTo(0L));
                 Assert.That(generated.FindProperty("maxPacks"), Is.Null);
                 Assert.That(generated.FindProperty("maxActions"), Is.Null);
                 Assert.That(generated.FindProperty("emitterVariableSlots"), Is.Null);
@@ -85,7 +85,7 @@ namespace Harken.Unity.Tests
                 Assert.That(generated.FindProperty("maxActionFirings"), Is.Null);
                 var config = new VnConfig();
                 HarkenProjectSettings.ApplyStartupCapacity(ref config);
-                Assert.That(config.maxVoices, Is.EqualTo(256u));
+                Assert.That(config.maxVoices, Is.EqualTo(0u));
                 Assert.That(config.maxPacks, Is.Zero);
                 Assert.That(config.maxActions, Is.Zero);
                 Assert.That(config.maxActionFirings, Is.Zero);
@@ -101,7 +101,7 @@ namespace Harken.Unity.Tests
                 var asset = AssetDatabase.LoadAssetAtPath<HarkenProjectSettings>(path);
                 Assert.That(asset, Is.Not.Null);
                 var serialized = new SerializedObject(asset);
-                Assert.That(serialized.FindProperty("maxVoices").longValue, Is.EqualTo(256L));
+                Assert.That(serialized.FindProperty("maxVoices").longValue, Is.EqualTo(0L));
                 Assert.That(serialized.FindProperty("maxPacks"), Is.Null);
                 Assert.That(serialized.FindProperty("maxActions"), Is.Null);
                 Assert.That(serialized.FindProperty("maxActionFirings"), Is.Null);
@@ -477,6 +477,9 @@ namespace Harken.Unity.Tests
                 system.GetType().GetField("maxVoices", BindingFlags.Instance | BindingFlags.NonPublic)
                     .SetValue(system, 32u);
                 VnConfig config = HarkenEngine.DefaultConfig();
+                HarkenProjectSettings.ApplyStartupCapacity(ref config);
+                Assert.That(config.maxVoices, Is.EqualTo(0u));
+                settings.SetMaxVoices(256);
                 HarkenProjectSettings.ApplyStartupCapacity(ref config);
                 Assert.That(config.maxVoices, Is.EqualTo(256u));
                 settings.SetMaxVoices(20000);

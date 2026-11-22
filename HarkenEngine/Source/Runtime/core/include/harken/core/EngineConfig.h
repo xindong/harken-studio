@@ -92,6 +92,10 @@ private:
 // PendingStart, and Parked states.
 class VoiceCapacityModel {
 public:
+    // This is the existing platform admission range. The prefix actually used
+    // by a session is constructed on the logic thread as voices are accepted.
+    static constexpr std::uint32_t kMaxRenderVoices = 1u << 14;
+    static constexpr std::uint32_t kInitialRenderVoices = 256;
     constexpr VoiceCapacityModel() noexcept = default;
 
     // Forms the single authoritative relationship L = R + V. False means the
@@ -129,7 +133,12 @@ struct EngineConfig {
     std::uint32_t fxSlotsPerVoice = 8;
     std::uint32_t arenaBytes = UINT32_MAX;
     bool nullDevice = true;
+    bool automaticRenderVoices = false;
+    std::uint32_t InitialRenderVoices() const noexcept {
+        return automaticRenderVoices ? VoiceCapacityModel::kInitialRenderVoices : voiceCapacity.Render();
+    }
     std::uint32_t maxBuses = 1; // Initial Master directory; not an admission limit.
+    bool automaticStopTransport = true;
     std::uint32_t commandQueueDepth = 256;
     // Most control commands one MixQuantum will apply. The drain used to run
     // until the queue was empty, which tied its cost to the queue depth and to
@@ -278,8 +287,8 @@ struct EngineConfig {
     std::uint32_t maxArmsPerGroup = 128;
     std::uint32_t maxCatalogEntries = 65536;
     std::uint64_t maxCatalogBytes = 4ull * 1024ull * 1024ull;
-    std::uint64_t maxResidentDefinitionBytes = 32ull * 1024ull * 1024ull;
-    std::uint64_t maxCompositeIndexBytes = 2ull * 1024ull * 1024ull;
+    std::uint64_t maxResidentDefinitionBytes = 0;
+    std::uint64_t maxCompositeIndexBytes = 0;
     std::uint64_t maxPackDecodeStagingBytes = UINT64_MAX;
     std::uint64_t maxPackResourceBytes = 0;
     std::uint64_t maxPackReplacementPeakBytes = 96ull * 1024ull * 1024ull;

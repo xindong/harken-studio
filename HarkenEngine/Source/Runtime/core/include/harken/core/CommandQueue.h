@@ -28,6 +28,7 @@
 #include <cstdint>
 #include <cstring>
 #include <type_traits>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -100,6 +101,13 @@ inline constexpr std::uint32_t kSpatialScalarKindWidth = 0;
 inline constexpr std::uint32_t kSpatialScalarKindSpatializationMix = 1;
 inline constexpr std::uint32_t kEffectActionBypass = 0;
 inline constexpr std::uint32_t kEffectActionReset = 1;
+struct CapturedStopTarget {
+    VnVoiceHandle render;
+    std::uint32_t fadeMs;
+    bool operator==(const CapturedStopTarget&) const noexcept = default;
+};
+
+inline constexpr std::uint32_t kStopModeCapturedGroup = 2;
 inline constexpr std::uint32_t kStopModeOrdinary = 0;
 inline constexpr std::uint32_t kStopModeStreamPark = 1;
 
@@ -1332,6 +1340,60 @@ public:
 
     // Pushes one record, stamping its sequence number. Returns false (and
     // counts the refusal) when the queue is full.
+    // Large group stops retain the exact slot generations selected by the logic
+    // thread. The existing raw command frontier also owns their retirement.
+    void ReclaimGroupStops() {
+        if (m_groupStopsInFlight == 0) return;
+        const auto settled = SettledFrontier();
+        for (auto& group : m_groupStops) {
+            if (group.frontier != 0 && group.frontier <= settled) {
+                group = {};
+                --m_groupStopsInFlight;
+            }
+        }
+    }
+
+    std::uint32_t PrepareGroupStop() {
+        ReclaimGroupStops();
+        if (m_groupStops.empty()) m_groupStops.resize(Capacity());
+        for (std::uint32_t i = 0; i < m_groupStops.size(); ++i)
+            if (m_groupStops[i].frontier == 0) return i;
+        return UINT32_MAX;
+    }
+
+    bool PublishGroupStop(std::uint32_t slot, std::vector<CapturedStopTarget>&& targets) {
+        // Consecutive identical fades in the same raw publication position
+        // share one pending command. A later cut or a new fade keeps its order.
+        if (m_lastGroupStop < m_groupStops.size()) {
+            const auto& last = m_groupStops[m_lastGroupStop];
+            if (last.frontier != 0 && last.frontier == PublishedHead() &&
+                last.targets == targets) return true;
+        }
+        auto& group = m_groupStops[slot];
+        group.targets = std::move(targets);
+        group.frontier = PublishedHead() + 1;
+        CommandRecord stop{};
+        stop.opcode = kOpcodeStop;
+        stop.payload.stop.mode = kStopModeCapturedGroup;
+        stop.payload.stop.handle = slot;
+        stop.payload.stop.parkRequestSequence = group.frontier;
+        if (!TryPush(stop)) {
+            group = {};
+            return false;
+        }
+        m_lastGroupStop = slot;
+        ++m_groupStopsInFlight;
+        return true;
+    }
+
+    std::span<const CapturedStopTarget> GroupStopTargets(const CommandRecord& stop) const {
+        const auto slot = stop.payload.stop.handle;
+        if (slot >= m_groupStops.size()) return {};
+        const auto& group = m_groupStops[slot];
+        return group.frontier != 0 && group.frontier == stop.payload.stop.parkRequestSequence
+            ? std::span<const CapturedStopTarget>{group.targets} : std::span<const CapturedStopTarget>{};
+    }
+
     bool TryPush(CommandRecord record) {
         if (m_reservationLive) {
             return false;
@@ -1965,6 +2027,13 @@ private:
     std::atomic<std::uint64_t> m_sourceAcceptedTail{0};
     std::uint64_t m_nextSourcePublication = 0;
     const TimelineArmTable* const m_controlReceiver;
+    struct GroupStop {
+        std::vector<CapturedStopTarget> targets;
+        std::uint64_t frontier = 0;
+    };
+    std::vector<GroupStop> m_groupStops;
+    std::uint32_t m_groupStopsInFlight = 0;
+    std::uint32_t m_lastGroupStop = UINT32_MAX;
     std::vector<CommandRecord> m_publicationScratch;
     std::vector<OriginalBatchRange*> m_originalRanges;
     std::vector<BusActivityAttachment*> m_busActivities;

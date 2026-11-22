@@ -200,8 +200,8 @@ typedef struct VnConfig {
     uint32_t sampleRate;     /* Hz; 0 = native rate on a real device, with
                               * 48000 used by NullBackend or as query fallback */
     uint32_t blockFrames;    /* frames per render block; 0 = 256 */
-    uint32_t maxVoices;      /* legacy field name: Render Voice capacity;
-                              * 0 = 256 */
+    uint32_t maxVoices;      /* explicit Render Voice limit; 0 grows on demand
+                              * within the supported 16384-voice range */
     uint32_t fxSlotsPerVoice;/* insert-effect slots per voice; 0 = 8 */
     uint32_t arenaBytes;     /* per-block arena reserve; 0 = automatic, committed on demand */
     uint32_t deviceMode;     /* VN_DEVICE_REAL or VN_DEVICE_NULL */
@@ -412,9 +412,9 @@ typedef struct VnConfig {
     uint32_t reserved11;                   /* keeps 8-byte alignment; must be 0 */
     uint64_t maxCatalogBytes;              /* catalog payload budget; 0 = 4 MiB */
     uint64_t maxResidentDefinitionBytes;   /* loaded partition-body budget;
-                                            * 0 = 32 MiB */
+                                            * 0 = no explicit byte limit */
     uint64_t maxCompositeIndexBytes;       /* published identity-index budget;
-                                            * 0 = 2 MiB */
+                                            * 0 = no explicit byte limit */
     uint64_t maxPackDecodeStagingBytes;    /* encoded Pack + decode staging;
                                             * 0 = grow as needed during loading */
     uint64_t maxPackResourceBytes;         /* resident resource budget;

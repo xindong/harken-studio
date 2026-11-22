@@ -44,7 +44,7 @@ namespace {
 // bounds, not tuning parameters.
 constexpr std::uint32_t kMaxSampleRate = 384000;
 constexpr std::uint32_t kMaxBlockFrames = 1 << 16;
-constexpr std::uint32_t kMaxVoicesCeiling = 1 << 14;
+
 constexpr std::uint32_t kMaxArenaBytes = UINT32_MAX;
 constexpr std::uint32_t kMaxQueueDepthCeiling = 1 << 20;
 // The per-block control-command ceiling is counted in the same unit as the
@@ -288,7 +288,11 @@ VnResult ResolveConfigForInitialDevice(const VnConfig* config,
     }
 
     EngineConfig resolved;
-    std::uint32_t renderVoiceCapacity = resolved.voiceCapacity.Render();
+    resolved.automaticRenderVoices = config->maxVoices == 0;
+    resolved.automaticStopTransport = resolved.automaticRenderVoices &&
+        (!hasTransportFields || config->commandQueueDepth == 0) &&
+        (!hasTopologySnapshotFields || config->maxControlCommandsPerQuantum == 0);
+    std::uint32_t renderVoiceCapacity = VoiceCapacityModel::kMaxRenderVoices;
     std::uint32_t virtualVoiceCapacity = resolved.voiceCapacity.Virtual();
     resolved.nullDevice = (config->deviceMode == VN_DEVICE_NULL);
     if (config->sampleRate != 0) {
@@ -545,7 +549,7 @@ VnResult ResolveConfigForInitialDevice(const VnConfig* config,
     // refused here on the same over-ceiling path as every other field.
     if (resolved.mixRate.SampleRate() > kMaxSampleRate ||
         resolved.blockFrames > kMaxBlockFrames ||
-        resolved.voiceCapacity.Render() > kMaxVoicesCeiling ||
+        resolved.voiceCapacity.Render() > VoiceCapacityModel::kMaxRenderVoices ||
         resolved.fxSlotsPerVoice > kMaxFxSlotsPerVoice ||
         resolved.arenaBytes > kMaxArenaBytes ||
         resolved.commandQueueDepth > kMaxQueueDepthCeiling ||
