@@ -1509,9 +1509,6 @@ public:
         std::uint32_t step) noexcept {
         privateMaterializationFaultStepForTest_ = step;
     }
-    std::uint32_t PrivateMaterializationFaultStepForTest() const noexcept {
-        return privateMaterializationFaultStepForTest_;
-    }
     struct PrivateMaterializationSnapshotForTest {
         std::uint64_t preparedEvents = 0;
         std::uint64_t preparedGroups = 0;

@@ -399,21 +399,6 @@ VnResult PackTable::SetResourceClosureGenerationForTests(
     return VN_OK;
 }
 
-VnResult PackTable::SetSlotGenerationForTests(
-    std::size_t rowIndex, std::uint32_t generation) noexcept {
-    if (rowIndex >= m_slots.Capacity() || generation == 0) {
-        return VN_INVALID_ARG;
-    }
-    if (!m_slots.ConstructThrough(static_cast<std::uint32_t>(rowIndex + 1u)))
-        return VN_BACKPRESSURE;
-    Slot& slot = m_slots[rowIndex];
-    if (slot.loaded || generation < slot.generation) {
-        return VN_IN_USE;
-    }
-    slot.generation = generation;
-    return VN_OK;
-}
-
 VnResult PackTable::ReleaseResourceClosure(
     PackResourceClosureToken closureToken) noexcept {
     ResourceClosureRow* row = ResourceClosureRowFor(closureToken);

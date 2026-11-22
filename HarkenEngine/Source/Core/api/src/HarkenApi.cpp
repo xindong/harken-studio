@@ -6993,21 +6993,6 @@ void SetPlayableCapacitiesForTests(std::uint32_t playable, std::uint32_t modes) 
     g_testModeCapacity = modes;
 }
 
-VnResult AcquireMasterClaimForTests(std::uint8_t kind, std::uint64_t fingerprint) {
-    Engine* engine = g_engine;
-    if (engine == nullptr) {
-        return VN_NOT_INITIALIZED;
-    }
-    return harken::AcquireMasterClaimKind(*engine, kind, fingerprint);
-}
-
-void ReleaseMasterClaimForTests(std::uint8_t kind) noexcept {
-    Engine* engine = g_engine;
-    if (engine == nullptr) {
-        return;
-    }
-    harken::ReleaseMasterClaimKind(*engine, kind);
-}
 #endif
 
 } // namespace harken::detail

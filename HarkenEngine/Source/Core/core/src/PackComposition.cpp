@@ -3933,13 +3933,6 @@ VnResult PackComposition::PrepareLookup(
     return out->result;
 }
 
-VnResult PackComposition::BuildResourceClosure(
-    const PackPartitionLease& lease,
-    PackResourceRevisionToken* outTokens, std::size_t tokenCapacity,
-    std::size_t* outTokenCount) const noexcept {
-    return BuildPublishedResourceClosure(published_.get(), lease, outTokens, tokenCapacity, outTokenCount);
-}
-
 VnResult PackComposition::PreparedResourceClosureBacking(const PackPartitionLease& lease,
     std::shared_ptr<const std::vector<PackResourceRevisionToken>>* out) const noexcept {
     if (out == nullptr) return VN_INVALID_ARG;
@@ -4226,10 +4219,6 @@ std::uint64_t PackPlaybackView::WorldSemanticFingerprint() const noexcept {
     return ownerStore_ != nullptr ? ownerStore_->worldSemanticFingerprint : 0;
 }
 
-std::uint64_t PackPlaybackView::RootPackStableId() const noexcept {
-    return closure_ != nullptr ? closure_->rootPackStableId : 0;
-}
-
 std::uint32_t PackPlaybackView::OwnerCount() const noexcept {
     return closure_ != nullptr ? closure_->ownerCount : 0;
 }
@@ -4471,38 +4460,6 @@ const TransitionProgramViewV1* PackPlaybackView::ResolveTransition(
         }
     }
     return nullptr;
-}
-
-bool PackPlaybackView::ResolveSoundResource(
-    VnObjectId stableId, std::uint64_t expectedRevision,
-    const PackClosureOwnerSnapshot** outOwner) const noexcept {
-    if (outOwner != nullptr) {
-        *outOwner = nullptr;
-    }
-    if (closure_ == nullptr || ownerStore_ == nullptr) {
-        return false;
-    }
-    for (std::uint32_t i = 0; i < closure_->ownerCount; ++i) {
-        const auto* owner = OwnerAt(i);
-        if (owner == nullptr) {
-            return false;
-        }
-        const PlayablePropertyProgramViewV1* property = FindPlayableProperty(
-            owner->snapshot.definitionView,
-            playableproperties::ContentPropertyKindV1::Sound, stableId);
-        if (property == nullptr) {
-            continue;
-        }
-        if (!FingerprintMatches(expectedRevision,
-                                 owner->snapshot.resourceRevision)) {
-            return false;
-        }
-        if (outOwner != nullptr) {
-            *outOwner = &owner->snapshot;
-        }
-        return true;
-    }
-    return false;
 }
 
 std::uint32_t PackPlaybackView::ResolveVoiceBindings(

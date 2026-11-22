@@ -627,7 +627,6 @@ struct ProcessOwner {
     std::uint64_t nextDropSourceSequence = 1ull << 32;
     std::atomic<std::uint32_t> publishMutexHits{0};
     bool failInitAfterThread = false;
-    bool dropStateCutEnd = false;
     std::atomic<std::uint64_t> leaseExpiryFrame{0};
     LeaseState lease{};
     std::array<PlanSlot, kTotalPlanSlots> planSlots{};
@@ -2931,8 +2930,6 @@ bool FillLogicRingLeavingFreeSlotsForTests(std::uint32_t freeSlots) {
 
 std::uint32_t LogicRingFreeSlotsForTests() { return Owner().logicRing.FreeSlots(); }
 
-void ObserveDspGapForTests() { harken::ObserveMonitorDspGap(); }
-
 VnResult RequireEngineAndLogicThread(bool pollPath) {
     ProcessOwner& owner = Owner();
     if (harken::detail::ActiveEngine() == nullptr || owner.engine == nullptr) {
@@ -4504,12 +4501,7 @@ VnResult RequestStateCut(VnMonitorSessionHandle handle,
         packed, sizeof(packed), cut.endSourceSequence, cut.id, expectedEpoch,
         VN_MONITOR_STATE_CUT_COMPLETE, checksum);
     owner.nextStateSequence += 1;
-    if (owner.dropStateCutEnd) {
-        owner.dropStateCutEnd = false;
-        cut.endEnqueued = false;
-    } else {
-        cut.endEnqueued = endSize > 0 && PublishLogicPacked(packed, endSize);
-    }
+    cut.endEnqueued = endSize > 0 && PublishLogicPacked(packed, endSize);
     cut.checksum = checksum;
     cut.result = VN_MONITOR_STATE_CUT_ABORTED;
     cut.emittedCount = 0;
@@ -5188,10 +5180,6 @@ VnResult GrantMonitorPermissionsForTests(std::uint32_t mask) {
     return VN_OK;
 }
 
-bool MonitorEndpointEmitsRawAudioForTests() {
-    return false;
-}
-
 std::uint32_t InternalQueuedCountForTests(std::uint32_t index) {
     ProcessOwner& owner = Owner();
     if (index >= kInternalConsumerCount || !owner.internals[index]) {
@@ -5361,32 +5349,6 @@ void SetHostPrincipalForTests(bool authenticated, std::uint32_t observeMask) {
 void ClearHostPrincipalForTests() {
     t_hostPrincipal = DefaultHostPrincipal();
     t_hostPrincipalOverride = false;
-}
-
-bool PublishStateCutBeginForTests() {
-    ProcessOwner& owner = Owner();
-    std::uint8_t packed[kScratchBytes];
-    const std::uint64_t sourceSequence =
-        owner.nextTimeSeriesSequence.fetch_add(1, std::memory_order_relaxed);
-    const std::uint32_t size =
-        PackStateCutBegin(packed, sizeof(packed), sourceSequence, sourceSequence,
-                          0);
-    return size > 0 && PublishLogicPacked(packed, size);
-}
-
-bool PublishStateCutEndForTests() {
-    ProcessOwner& owner = Owner();
-    std::uint8_t packed[kScratchBytes];
-    const std::uint64_t sourceSequence =
-        owner.nextTimeSeriesSequence.fetch_add(1, std::memory_order_relaxed);
-    const std::uint32_t size = PackStateCutEnd(
-        packed, sizeof(packed), sourceSequence, sourceSequence, 0,
-        VN_MONITOR_STATE_CUT_COMPLETE, 0);
-    return size > 0 && PublishLogicPacked(packed, size);
-}
-
-void SetDropStateCutEndForTests(bool drop) {
-    Owner().dropStateCutEnd = drop;
 }
 
 bool PublishEpochBoundaryForTests() {

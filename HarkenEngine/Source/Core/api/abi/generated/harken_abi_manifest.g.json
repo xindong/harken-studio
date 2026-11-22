@@ -3590,6 +3590,7 @@
         },
         {
           "callingConvention": "cdecl",
+          "deprecated": "Use Vn_ActivateCanonicalPackSetV2.",
           "edition": "core",
           "name": "Vn_ActivateCanonicalPackSetV1",
           "parameters": [
@@ -3634,6 +3635,9 @@
         },
         {
           "callingConvention": "cdecl",
+          "deprecatedDescriptors": {
+            "VnPackDesc": "Use VnPackLoadDesc for current Pack files."
+          },
           "edition": "core",
           "name": "Vn_LoadPack",
           "parameters": [
@@ -4122,6 +4126,7 @@
         },
         {
           "callingConvention": "cdecl",
+          "deprecated": "Use Vn_ActivateCanonicalPackSetV2 to replace canonical Pack set members.",
           "edition": "core",
           "name": "Vn_ReplacePack",
           "parameters": [
@@ -4676,6 +4681,7 @@
         },
         {
           "callingConvention": "cdecl",
+          "deprecated": "Use canonical Pack activation for runtime content.",
           "edition": "core",
           "name": "Vn_LoadCurrentWorld",
           "parameters": [
@@ -5902,6 +5908,7 @@
         },
         {
           "callingConvention": "cdecl",
+          "deprecated": "Use VnPreview_PrepareProjectV4.",
           "edition": "development",
           "name": "VnPreview_PrepareProjectV2",
           "parameters": [
@@ -5918,6 +5925,7 @@
         },
         {
           "callingConvention": "cdecl",
+          "deprecated": "Use VnPreview_PrepareProjectV4.",
           "edition": "development",
           "name": "VnPreview_PrepareProjectV3",
           "parameters": [
@@ -26455,7 +26463,7 @@
       }
     }
   },
-  "contractSha256": "fd6ae9d131f4363a20cb7ea81ffcd5d37e6403cc2f7c3f2e428394874c587456",
+  "contractSha256": "214043968a3c30d9991fe142b678c4d05cf38a019ed07590b52f51ff79dae6c7",
   "kind": "harken-contract-suite-manifest",
   "schemaVersion": 1
 }

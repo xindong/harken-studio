@@ -1329,8 +1329,10 @@ private:
     DynamicRouteSystem& m_dynamicRoutes;
     std::atomic<void (*)(void*)> m_cancelTimelineReadHook{nullptr};
     std::atomic<void*> m_cancelTimelineReadContext{nullptr};
+#if defined(HARKEN_TEST_VOICE_RELEASE_HOOK)
     std::atomic<void (*)(void*)> m_releaseHeldHookForTest{nullptr};
     std::atomic<void*> m_releaseHeldContextForTest{nullptr};
+#endif
     TimelineArmTable* m_timelineArms = nullptr;
     StreamSeekHandoffTable* m_streamSeekHandoffs = nullptr;
     const SourceCommandInstallProof* m_commandMetadataProof = nullptr;

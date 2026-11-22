@@ -15811,45 +15811,6 @@ inline bool Engine::OriginalPlayableServiceLifetimePin::Borrow(OriginalPlayableS
     return out != this && Valid() && engine_->BorrowOriginalPlayableServiceLifetime(*original_, out);
 }
 
-inline VnResult AcquireMasterClaimKind(Engine& engine, std::uint8_t kind,
-                                      std::uint64_t fingerprint) {
-    auto& claim = engine.masterClaim;
-    std::uint8_t* bit = nullptr;
-    if (kind == 1) {
-        bit = &claim.packHeld;
-    } else if (kind == 2) {
-        bit = &claim.previewHeld;
-    } else if (kind == 3) {
-        bit = &claim.directHeld;
-    } else {
-        return VN_INVALID_ARG;
-    }
-    if (claim.packHeld == 0 && claim.previewHeld == 0 && claim.directHeld == 0) {
-        claim.fingerprint = fingerprint;
-        *bit = 1;
-        return VN_OK;
-    }
-    if (claim.fingerprint != fingerprint) {
-        return VN_IN_USE;
-    }
-    *bit = 1;
-    return VN_OK;
-}
-
-inline void ReleaseMasterClaimKind(Engine& engine, std::uint8_t kind) noexcept {
-    auto& claim = engine.masterClaim;
-    if (kind == 1) {
-        claim.packHeld = 0;
-    } else if (kind == 2) {
-        claim.previewHeld = 0;
-    } else if (kind == 3) {
-        claim.directHeld = 0;
-    }
-    if (claim.packHeld == 0 && claim.previewHeld == 0 && claim.directHeld == 0) {
-        claim.fingerprint = 0;
-    }
-}
-
 namespace detail {
 
 inline bool ActionConsumerCanReachImmediateQuantum(
@@ -15877,9 +15838,6 @@ bool CommitPreparedVariableControlOwnerForTests(
 // Internal construction-only limits; zero restores the resolved default.
 // Tests can reduce either bound before Init without mutating a live config.
 void SetPlayableCapacitiesForTests(std::uint32_t playable, std::uint32_t modes) noexcept;
-// kind: 1=pack, 2=preview, 3=direct. Same-F is idempotent; different F is VN_IN_USE.
-VnResult AcquireMasterClaimForTests(std::uint8_t kind, std::uint64_t fingerprint);
-void ReleaseMasterClaimForTests(std::uint8_t kind) noexcept;
 #endif
 bool CancelPreparedQueueInstanceOwnerForTests(
     EngineActionPlayScratch::PreparedQueueInstanceOwnerContext* context)

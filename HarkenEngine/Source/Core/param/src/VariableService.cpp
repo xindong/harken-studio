@@ -1745,40 +1745,6 @@ bool VariableServiceV1::CanSupersede(
     return true;
 }
 
-void VariableServiceV1::SupersedeIntersectingPendingBatches(
-    const PreparedVariableBatchToken& batch,
-    LogicCommitSequence sequence) noexcept {
-    const LogicCommitTicket related{sequence};
-    for (WriteRow& prior : history_) {
-        if (!prior.used || prior.state != RowState::Pending) {
-            continue;
-        }
-        bool hit = false;
-        for (std::uint32_t i = 0; i < batch.count_; ++i) {
-            const WriteRow& next = history_[batch.rows_[i].slot_];
-            if (BatchSupersedeKeyIntersect(prior, next) &&
-                CanSupersede(prior, next, sequence)) {
-                hit = true;
-                break;
-            }
-        }
-        if (!hit) {
-            continue;
-        }
-        const std::uint64_t batchId = prior.batchId;
-        if (batchId == 0) {
-            FinalizeRow(prior, VariableOutcomeKind::Superseded, related, 0);
-            continue;
-        }
-        for (WriteRow& row : history_) {
-            if (row.used && row.state == RowState::Pending &&
-                row.batchId == batchId) {
-                FinalizeRow(row, VariableOutcomeKind::Superseded, related, 0);
-            }
-        }
-    }
-}
-
 VariableAcceptResult VariableServiceV1::AcceptBatch(
     WriteOperation operation, const VariableScopeKey& scope,
     const VnVariableWriteV1* writes, std::uint32_t writeCount,
@@ -2101,22 +2067,6 @@ VariableServiceV1::FindCurrentOverride(const EmitterBank& bank,
                                        VnVariableId id) const noexcept {
     const OverrideRow* row = FindOverride(bank, id);
     return row != nullptr && row->currentBankOrdinal != 0 ? row : nullptr;
-}
-
-VariableServiceV1::OverrideRow* VariableServiceV1::EnsureOverride(
-    EmitterBank& bank, VnVariableId id) noexcept {
-    if (OverrideRow* existing = FindOverride(bank, id)) {
-        return existing;
-    }
-    for (OverrideRow& row : bank.overrides) {
-        if (!row.used) {
-            row = OverrideRow{};
-            row.used = true;
-            row.variableId = id;
-            return &row;
-        }
-    }
-    return nullptr;
 }
 
 std::array<VariableServiceV1::WriteRow*, kVariableBatchWriteCapacity>
@@ -2660,65 +2610,6 @@ void VariableServiceV1::RunVariableEvaluators(Engine& engine) {
     engine.bindings.EvaluateDirtyEffectParamBindings(
         engine.params, engine.effectParamTargets, &engine.emitters);
     engine.params.EvaluateDirtyBindings(&engine.emitters);
-}
-
-bool VariableServiceV1::SnapshotCandidateBaselines(Engine& engine,
-                                                   WriteRow& row) noexcept {
-    const std::uint32_t count = slices_.TargetCount(row.slice);
-    for (std::uint32_t i = 0; i < count; ++i) {
-        const VariableSliceTarget* target = slices_.Target(row.slice, i);
-        if (target == nullptr) {
-            return false;
-        }
-        switch (target->locator.scope) {
-        case VariableTargetScope::Voice:
-            if (!engine.params.CaptureCandidateBaseline(
-                    static_cast<VnVoiceHandle>(target->locator.object),
-                    target->locator.targetId, row.slice)) {
-                return false;
-            }
-            break;
-        case VariableTargetScope::Bus:
-            if (!engine.busTargets.CaptureCandidateBaseline(
-                    static_cast<std::uint32_t>(target->locator.object),
-                    target->locator.objectGeneration,
-                    target->locator.targetId, row.slice)) {
-                return false;
-            }
-            break;
-        case VariableTargetScope::VoiceEffect:
-        case VariableTargetScope::BusEffect:
-            break;
-        }
-    }
-    return true;
-}
-
-void VariableServiceV1::ClearCandidateBaselines(Engine& engine,
-                                                WriteRow& row) noexcept {
-    const std::uint32_t count = slices_.TargetCount(row.slice);
-    for (std::uint32_t i = 0; i < count; ++i) {
-        const VariableSliceTarget* target = slices_.Target(row.slice, i);
-        if (target == nullptr) {
-            continue;
-        }
-        switch (target->locator.scope) {
-        case VariableTargetScope::Voice:
-            engine.params.ClearCandidateBaseline(
-                static_cast<VnVoiceHandle>(target->locator.object),
-                target->locator.targetId, row.slice);
-            break;
-        case VariableTargetScope::Bus:
-            engine.busTargets.ClearCandidateBaseline(
-                static_cast<std::uint32_t>(target->locator.object),
-                target->locator.objectGeneration, target->locator.targetId,
-                row.slice);
-            break;
-        case VariableTargetScope::VoiceEffect:
-        case VariableTargetScope::BusEffect:
-            break;
-        }
-    }
 }
 
 VariableServiceV1::CandidateCaptureResult
@@ -3728,17 +3619,6 @@ void VariableServiceV1::EndService(Engine& engine) {
     observedBlock_ = blocksRendered;
     ReclaimHistoryRows();
     slices_.ReclaimSettled(blocksRendered);
-}
-
-VnResult VariableServiceV1::ReplacePackDefinitions(
-    const VariableDefinitionV1* definitions, std::uint32_t count) {
-    PreparedPackDefinitions prepared;
-    const VnResult result =
-        PreparePackDefinitions(definitions, count, &prepared);
-    if (result == VN_OK) {
-        CommitPreparedPackDefinitions(&prepared);
-    }
-    return result;
 }
 
 VariableServiceV1::PreparedPackDefinitions::PreparedPackDefinitions(
