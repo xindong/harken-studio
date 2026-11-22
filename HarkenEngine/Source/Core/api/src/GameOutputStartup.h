@@ -7,6 +7,7 @@
 #include <thread>
 
 namespace harken {
+#if defined(_WIN32)
 // Owned by the control thread. The WASAPI context is opened and released on
 // the same lifecycle thread. The callback stays silent until control commits.
 class GameOutputStartup {
@@ -94,6 +95,16 @@ private:
     std::uint64_t generation_{};
     VnResult stopResult_ = VN_OK;
 };
+#else
+// Other backends open their device directly and have no pending preparation.
+class GameOutputStartup {
+public:
+    constexpr bool Opening() const noexcept { return false; }
+    constexpr bool OwnsDevice() const noexcept { return false; }
+    constexpr VnResult Finish(DeviceBackend&) noexcept { return VN_CAPABILITY_UNAVAILABLE; }
+    constexpr VnResult Stop() noexcept { return VN_OK; }
+};
+#endif
 
 // The backend address stays stable from endpoint activation to final shutdown.
 struct GameOutputResources {
