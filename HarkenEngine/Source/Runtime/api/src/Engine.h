@@ -8269,6 +8269,17 @@ public:
         QueueInstanceTable::BackingPreparation queues;
         std::uint32_t queueCount = 0;
         std::uint32_t conditionalCount = 0;
+        StableStoragePreparation banks;
+        EngineQueueScheduleStorage::Preparation schedules;
+        QueueScheduleShape scheduleShape{};
+        std::uint32_t bankCount = 0;
+        bool AddQueueBanks(std::uint32_t queues, std::uint32_t continuations, QueueScheduleShape shape) noexcept {
+            const auto count = static_cast<std::uint64_t>(queues) + continuations;
+            if (count > UINT32_MAX - bankCount) return false;
+            bankCount += static_cast<std::uint32_t>(count);
+            scheduleShape = QueueScheduleShape::Maximum(scheduleShape, shape);
+            return true;
+        }
         DecisionTable::BackingPreparation decisions;
         ArmGroupTable::BackingPreparation groups;
         std::uint32_t groupCount = 0;
@@ -8331,6 +8342,9 @@ public:
     }
     bool PrepareDeferredTrees(DeferredTreeBacking& backing) noexcept {
         if (backing.armCount && !timelineArms.PrepareBacking(backing.armCount, &backing.arms)) return false;
+        if (backing.bankCount && (!PrepareQueueProgramBankBacking(backing.bankCount, &backing.banks) ||
+            !queueScheduleStorage.Prepare(backing.scheduleShape, backing.bankCount, &backing.schedules,
+                [this]() noexcept { return AllowNativeBackingAllocation(); }))) return false;
         if (backing.count == 0) return true;
         if (!backing.completionWidths.empty() &&
             !compositeCompletionOwners.PrepareBacking(backing.completionWidths, &backing.completions)) return false;
@@ -8365,10 +8379,16 @@ public:
         std::optional<ArmGroupTable::PreparedUse> groups;
         std::optional<StableStoragePreparedUse> decisions;
         std::optional<StableStoragePreparedUse> arms;
+        std::optional<StableStoragePreparedUse> banks;
+        std::optional<EngineQueueScheduleStorage::PreparedUse> schedules;
         BorrowedTree(Engine& engine, const DeferredTreeBacking* held, ActionFiringHandle owner, bool stopping) noexcept
             : active(engine.borrowedTreeWidth), previous(active), use(held ? held->attempts.Use() : decltype(use){}),
               controlOwner(engine.preparingDeferredTreeOwner), previousOwner(controlOwner) {
             if (held) {
+                if (owner && held->bankCount && !engine.nativeRuntimeBackingInUse) {
+                    banks.emplace(held->banks.Use());
+                    schedules.emplace(held->schedules.Use());
+                }
                 if ((owner || stopping) && held->arms.Valid() && !engine.nativeRuntimeBackingInUse)
                     arms.emplace(held->arms.Use());
                 active = held->width;

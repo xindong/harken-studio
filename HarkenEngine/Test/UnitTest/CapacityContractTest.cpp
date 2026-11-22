@@ -208,6 +208,26 @@ TEST(EngineQueueScheduleStorage, EachReservationCanOnlyBorrowItsOwnShare) {
     ASSERT_TRUE(storage.Acquire(a, {1, 1}, &loanA, noGrowth));
 }
 
+TEST(EngineQueueScheduleStorage, FailingTheReservationRecordLeavesPreparedRowsAvailable) {
+    harken::EngineQueueScheduleStorage storage;
+    harken::EngineQueueScheduleStorage::Preparation initial, refused;
+    ASSERT_TRUE(storage.Prepare({1, 1}, 1, &initial));
+    const auto originalBytes = storage.StorageBytes();
+    unsigned allocations = 0;
+    // First count all allocation sites, then refuse just the final reservation record.
+    {
+        harken::EngineQueueScheduleStorage copy;
+        harken::EngineQueueScheduleStorage::Preparation a, b;
+        ASSERT_TRUE(copy.Prepare({1, 1}, 1, &a));
+        ASSERT_TRUE(copy.Prepare({1, 1}, 1, &b, [&] { ++allocations; return true; }));
+    }
+    ASSERT_GT(allocations, 0u);
+    EXPECT_FALSE(storage.Prepare({1, 1}, 1, &refused, [&] { return --allocations != 0; }));
+    EXPECT_FALSE(refused.Valid());
+    EXPECT_EQ(originalBytes, storage.StorageBytes());
+    ASSERT_TRUE(storage.Prepare({1, 1}, 1, &refused));
+}
+
 TEST(EngineQueueScheduleStorage, FailedShapeRaisePreservesExistingSupplyAndPointers) {
     using Storage = harken::EngineQueueScheduleStorage;
     Storage storage;

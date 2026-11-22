@@ -27716,6 +27716,17 @@ TEST(PlayableStart, QueueStaggeredCompositeSuccessorWaitsUntilAllStartsEnterWind
     const auto started = harken::StartPlayable(*engine, image.world, request);
     ASSERT_EQ(harken::PlayableStartStatus::Accepted, started.status);
 
+    // Leave only one free voice when both successor leaves first enter the window.
+    std::vector<VnVoiceHandle> held;
+    while (engine->voices.AvailableSlotCount() > 1) {
+        VnVoiceHandle voice = 0;
+        ASSERT_EQ(VN_OK, engine->voices.Play(engine->registry.Lookup(kSound), 0.0f, 1.0, 0,
+            false, 0.0f, 0.0f, 0.0f, harken::ResolvePanGains(engine->config.mixChannelLayout, 0.0f),
+            0, 512, 1, harken::ResampleProfile::LegacyCompatibility, &voice, 1, UINT32_MAX, 0, true));
+        held.push_back(voice);
+    }
+    ASSERT_FALSE(held.empty());
+    bool retriedBeforeDeadline = false;
     bool sawPartiallyReadySuccessor = false;
     std::uint64_t firstPositiveFrame = UINT64_MAX;
     std::uint64_t firstNegativeFrame = UINT64_MAX;
@@ -27724,6 +27735,14 @@ TEST(PlayableStart, QueueStaggeredCompositeSuccessorWaitsUntilAllStartsEnterWind
     const auto listenBlocks =
         (first.size() + secondOffsetFrames + leafDurationFrames) / config.blockFrames + 128u;
     for (std::uint64_t block = 0; block < listenBlocks; ++block) {
+        if (!held.empty() && firstPositiveFrame != UINT64_MAX &&
+            firstPositiveFrame + first.size() + secondOffsetFrames + 2u * config.blockFrames <
+                engine->timelinePool.WindowEndFrame()) {
+            ASSERT_EQ(1u, engine->voices.AvailableSlotCount());
+            for (const auto voice : held) ASSERT_TRUE(engine->voices.CancelPreparedVoice(voice));
+            held.clear();
+            retriedBeforeDeadline = true;
+        }
         ASSERT_EQ(VN_OK, Vn_Update());
         if (firstPositiveFrame != UINT64_MAX) {
             const auto completionFrame = firstPositiveFrame + first.size();
@@ -27744,6 +27763,7 @@ TEST(PlayableStart, QueueStaggeredCompositeSuccessorWaitsUntilAllStartsEnterWind
             }
         }
     }
+    EXPECT_TRUE(retriedBeforeDeadline);
     EXPECT_TRUE(sawPartiallyReadySuccessor);
     ASSERT_NE(UINT64_MAX, firstPositiveFrame);
     ASSERT_NE(UINT64_MAX, firstNegativeFrame);

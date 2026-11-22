@@ -38292,6 +38292,7 @@ TEST(ActionFiringApi,
      ImmediateTrackFuturePageStartsWithoutAnotherLogicUpdate) {
     (void)Vn_Term();
     constexpr std::uint32_t kBlockFrames = 64;
+    constexpr std::uint32_t separation = 10;
     harkentest::EngineSession session(
         harkentest::MakeNullConfig(8, kBlockFrames, 48000));
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -38313,7 +38314,7 @@ TEST(ActionFiringApi,
         engine->registry.Lookup(CanonicalActionWorld::kSecondSound)
             .contentRevision);
     image.MakeImmediateCompositeTrackPlayAction(
-        (2 * kBlockFrames * INT64_C(1000000000) + 47999) / 48000);
+        (separation * kBlockFrames * INT64_C(1000000000) + 47999) / 48000);
     ASSERT_EQ(harken::WorldInstallStatus::Ok,
               harken::InstallContainerWorldV1(*engine, image.world).status);
     VnPostActionDesc desc = ValidPostDesc();
@@ -38365,7 +38366,7 @@ TEST(ActionFiringApi,
         engine->ReadPlayableMember(base + 1u).startFrame / kBlockFrames;
     EXPECT_EQ(expectedFirstStart, firstStart);
     ASSERT_GT(firstStart, publishUpdateBlock);
-    ASSERT_EQ(2u, secondStart - firstStart);
+    ASSERT_EQ(separation, secondStart - firstStart);
     ::testing::Test::RecordProperty("post_block", postedBlock);
     ::testing::Test::RecordProperty("arm_ack_sequence",
         afterAudio.armedCompletionSequence);
@@ -38383,7 +38384,7 @@ TEST(ActionFiringApi,
                  << engine->timelineExecutor.Stats().deadlineMissQuanta);
     bool heardFirstAtExpectedBlock = false;
     bool heardSecondAtExpectedBlock = false;
-    for (std::uint32_t block = 0; block < 8; ++block) {
+    for (std::uint32_t block = 0; block < separation + 6; ++block) {
         const auto renderedBlock = engine->mixer.BlocksRendered();
         const auto allocationHitsBefore = harken::memguard::HitCount();
         engine->nullBackend.Pump(1);
@@ -65231,7 +65232,81 @@ TEST(ActionFiringApi,
     }
 }
 
-static void CaptureDelayedQueueUnderProgramPressure(bool pressure, std::vector<float>& output) {
+
+static void CaptureStaggeredTracks(unsigned count, std::vector<float>& output) {
+    (void)Vn_Term();
+    constexpr unsigned blockFrames = 256;
+    constexpr unsigned tailBlock = 528;
+    constexpr unsigned spacing = 2;
+    harkentest::EngineSession session(harkentest::MakeNullConfig(4, blockFrames, 48000));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    std::vector<float> first(32, 0.25f), second(32, -0.125f);
+    const auto firstPcm = harkentest::MonoDesc(first, 48000);
+    const auto secondPcm = harkentest::MonoDesc(second, 48000);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(CanonicalActionWorld::kFirstSound, &firstPcm));
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(CanonicalActionWorld::kSecondSound, &secondPcm));
+    CanonicalActionWorld image(engine.registry.Lookup(CanonicalActionWorld::kFirstSound).contentRevision,
+                               engine.registry.Lookup(CanonicalActionWorld::kSecondSound).contentRevision);
+    image.MakeImmediateCompositeTrackPlayAction(INT64_C(1000000000) * tailBlock * blockFrames / 48000);
+    ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(engine, image.world).status);
+    auto desc = ValidPostDesc();
+    desc.actionId = image.actions[9].actionStableId;
+    std::vector<VnActionFiringHandle> firings(count);
+    VnEmitterHandle emitter = 0;
+    ASSERT_EQ(VN_OK, Vn_CreateEmitter(&emitter));
+    desc.emitter = emitter;
+    const auto totalBlocks = tailBlock + (count - 1) * spacing + 24;
+    for (unsigned block = 0; block < totalBlocks; ++block) {
+        if (block % spacing == 0 && block / spacing < count) {
+            const auto index = block / spacing;
+            const auto freeVoices = engine.voices.AvailableSlotCount();
+            ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firings[index])) << "request " << index
+                << ", free voices before posting " << freeVoices;
+        }
+        if (count > 1 && block == count * spacing + 4) {
+            ASSERT_GE(engine.playableInstances.LiveCount(), count);
+            ASSERT_GE(engine.actionFirings.LiveCount(), count);
+            for (unsigned index = 0; index < count; index += 5)
+                ASSERT_EQ(VN_OK, Vn_StopActionFiring(firings[index], 0)) << index;
+        }
+        engine.nullBackend.Pump(1);
+        const auto* data = engine.nullBackend.LastBlock();
+        output.insert(output.end(), data, data + blockFrames * engine.nullBackend.Channels());
+        ASSERT_EQ(VN_OK, Vn_Update());
+    }
+    for (unsigned index = 0; index < count; ++index) {
+        VnActionFiringInfo info{};
+        info.structSize = sizeof(info);
+        ASSERT_EQ(VN_OK, Vn_QueryActionFiring(firings[index], &info));
+        const bool cancelled = count > 1 && index % 5 == 0;
+        ASSERT_EQ(cancelled ? VN_ACTION_OUTCOME_CANCELLED : VN_ACTION_OUTCOME_SUCCEEDED, info.outcome) << index;
+        ASSERT_EQ(VN_OK, Vn_ReleaseActionFiring(firings[index])) << index;
+    }
+    EXPECT_EQ(0u, engine.playableInstances.LiveCount());
+    EXPECT_EQ(0u, engine.actionFirings.LiveCount());
+}
+
+TEST(ActionFiringApi, DistantTrackLeafLeavesRoomForTheNextImmediateTrack) {
+    std::vector<float> one, many;
+    ASSERT_NO_FATAL_FAILURE(CaptureStaggeredTracks(1, one));
+    const auto secondHalf = one.size() / 2;
+    ASSERT_GT(harkentest::Peak(one.data(), secondHalf), harkentest::kSilenceFloor);
+    ASSERT_GT(harkentest::Peak(one.data() + secondHalf, one.size() - secondHalf), harkentest::kSilenceFloor);
+    constexpr unsigned count = 2;
+    ASSERT_NO_FATAL_FAILURE(CaptureStaggeredTracks(count, many));
+    std::vector<float> expected(many.size());
+    for (unsigned index = 0; index < count; ++index) {
+        const auto offset = index * 2u * 256u * 2u;
+        const auto length = index % 5 == 0 ? secondHalf : one.size();
+        for (std::size_t sample = 0; sample < length; ++sample)
+            expected[offset + sample] += one[sample];
+    }
+    const auto difference = std::mismatch(expected.begin(), expected.end(), many.begin());
+    ASSERT_EQ(expected.end(), difference.first) << "sample " << (difference.first - expected.begin());
+}
+
+static void CaptureDelayedQueueUnderProgramPressure(bool pressure, std::vector<float>& output, bool forbidGrowth = false) {
     (void)Vn_Term();
     harkentest::EngineSession session(
         harkentest::MakeNullConfig(8, 64, 48000));
@@ -65251,10 +65326,11 @@ static void CaptureDelayedQueueUnderProgramPressure(bool pressure, std::vector<f
             .contentRevision,
         engine->registry.Lookup(CanonicalActionWorld::kSecondSound)
             .contentRevision);
+    const auto dueFrame = engine->timelinePool.WindowEndFrame() + 8u * engine->config.blockFrames;
     image.MakeImmediateSequenceQueuePlayAction();
     image.MakeFirstQueueChildCompositeTrack();
     {
-        SetAbsoluteTime(&image.steps[11].delay, DelayNanosecondsForTargetFrame(*engine, 4096));
+        SetAbsoluteTime(&image.steps[11].delay, DelayNanosecondsForTargetFrame(*engine, dueFrame));
         image.actions[9].directFeatureMask = image.actions[9].transitiveFeatureMask = 1;
         image.actions[9].programSemanticFingerprint = harken::ComputeActionProgramFingerprintV1(image.actions[9]);
         image.world.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV4(image.world);
@@ -65269,6 +65345,7 @@ static void CaptureDelayedQueueUnderProgramPressure(bool pressure, std::vector<f
     desc.emitter = emitter;
     VnActionFiringHandle firing = 0;
     ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
+    ASSERT_EQ(0u, engine->playableInstances.LiveCount());
     std::vector<harken::EngineQueueProgramBank::OriginalLifetimePin> pins;
     if (pressure) {
         const auto oldCount = 2u * engine->config.maxPlayableInstances + engine->config.maxScheduledTransactions;
@@ -65282,7 +65359,17 @@ static void CaptureDelayedQueueUnderProgramPressure(bool pressure, std::vector<f
             ASSERT_TRUE(origin->baseline.Borrow(&pins.back()));
         }
     }
-    for (unsigned block = 0; block < 88; ++block) {
+    harken::EngineQueueScheduleStorage::Preparation noUnreservedSchedules;
+    if (forbidGrowth) {
+        engine->queueProgramBanks.SetCommitPageLimitForTests(0);
+        while (auto* bank = engine->ReserveOriginalQueueBank()) {
+            pins.emplace_back();
+            ASSERT_TRUE(engine->OriginalQueueBankHolderFor(bank)->baseline.Borrow(&pins.back()));
+        }
+        ASSERT_TRUE(engine->queueScheduleStorage.Prepare({}, 0, &noUnreservedSchedules));
+    }
+    auto noScheduleGrowth = noUnreservedSchedules.Use();
+    for (unsigned block = 0; block < dueFrame / engine->config.blockFrames + 28; ++block) {
         engine->nullBackend.Pump(1);
         const auto* data = engine->nullBackend.LastBlock();
         output.insert(output.end(), data, data + engine->nullBackend.BlockFrames() * engine->nullBackend.Channels());
@@ -65302,6 +65389,9 @@ TEST(ActionFiringApi, AcceptedCompositeQueueKeepsItsAudioWhenOtherProgramsFillTh
     ASSERT_NO_FATAL_FAILURE(CaptureDelayedQueueUnderProgramPressure(false, reference));
     ASSERT_NO_FATAL_FAILURE(CaptureDelayedQueueUnderProgramPressure(true, pressured));
     EXPECT_TRUE(reference == pressured);
+    std::vector<float> noGrowth;
+    ASSERT_NO_FATAL_FAILURE(CaptureDelayedQueueUnderProgramPressure(true, noGrowth, true));
+    EXPECT_TRUE(reference == noGrowth);
 }
 
 static void CheckCompositePlaybackPastCapacity(bool delayed) {

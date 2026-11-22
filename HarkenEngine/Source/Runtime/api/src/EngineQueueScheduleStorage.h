@@ -277,6 +277,7 @@ public:
         }
         std::shared_ptr<Share> share;
         if (count) {
+            if (!allow()) { DestroySlots(additions); return false; }
             try {
                 share = std::make_shared<Share>(Share{shape, count});
             } catch (...) {

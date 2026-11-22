@@ -31150,6 +31150,8 @@ struct PreparedQueueContinuationTree {
     }
 };
 
+std::uint64_t QueueEarliestContinuationFrame(const harken::Engine& engine) noexcept;
+
 QueueContinuationPrepareStatus PrepareCompositeQueueContinuation(
     harken::Engine& engine, const harken::PlayableWorldViewV1& world,
     const harken::ContainerProgramViewV3& program,
@@ -31335,6 +31337,9 @@ QueueContinuationPrepareStatus PrepareCompositeQueueContinuation(
     if (sourceControlCount > UINT32_MAX - targetCommandCount) return QueueContinuationPrepareStatus::Failed;
     const std::uint32_t combinedCommandCount =
         targetCommandCount + sourceControlCount;
+    if (row.queueDeferredNeedsFullPreparation && firstRequiredFrame > QueueEarliestContinuationFrame(engine) &&
+        (materialized.leafCount > engine.voices.AvailableSlotCount() ||
+         materialized.leafCount > engine.ledger.AvailableEntryCount())) return QueueContinuationPrepareStatus::Deferred;
     const harken::PlayableStartStatus schedulePreflight =
         materialized.leafCount == 0
             ? harken::PlayableStartStatus::Accepted
@@ -33829,6 +33834,9 @@ QueueContinuationPrepareStatus PrepareQueueContinuation(
         row.QueuePayload().queueRetiringOccurrence = {};
         movedRetiringOccurrence = true;
     }
+    const auto* backing = engine.nativeRuntimeBackingInUse ? nullptr : engine.DeferredBackingFor(&row);
+    auto banks = backing ? backing->banks.Use() : harken::StableStoragePreparedUse{};
+    auto schedules = backing ? backing->schedules.Use() : harken::EngineQueueScheduleStorage::PreparedUse{};
     const auto ready = PrepareQueueContinuationReady(
         engine, world, program, row, retiredSource);
     if (ready == QueueContinuationPrepareStatus::NaturalEnd && movedRetiringOccurrence) {
@@ -61544,7 +61552,10 @@ engine.RequireRecreation(VN_RUNTIME_FAULT_INTERNAL_STATE);
             }
             // Publish scheduled members as playback approaches them. Freezing the
             // whole window for a distant member would refuse intervening starts.
-            requireRollingPublication(latestScheduledStart);
+            if (latestScheduledStart >= engine.timelinePool.WindowEndFrame())
+                requireRollingPublication(latestScheduledStart);
+            else
+                requirePublication(latestScheduledStart);
             std::optional<std::array<harken::TimelineArmObservation,
                                      kMaxObservedMemberSpan>> ackArms;
             bool allObserved = true;
@@ -87019,6 +87030,11 @@ VnResult CountDeferredInstanceRows(const ImmediateActionPlan& plan,
             if (stop) return VN_OK;
             if (result.profile.instanceRows > UINT32_MAX - rows) return VN_OUT_OF_MEMORY;
             rows += result.profile.instanceRows;
+            if (result.profile.queueRows != 0) {
+                if (!trees) trees = std::make_unique<harken::Engine::DeferredTreeBacking>();
+                if (!trees->AddQueueBanks(result.profile.queueRows, result.profile.conditionalRows,
+                        {result.profile.queue.programs, result.profile.queue.events})) return VN_OUT_OF_MEMORY;
+            }
             if (result.profile.preparationTrees != 0) {
                 const auto width = 2ull * result.profile.instanceRows + 1u;
                 if (width > UINT32_MAX) return VN_OUT_OF_MEMORY;
