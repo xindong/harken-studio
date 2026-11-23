@@ -338,6 +338,7 @@ enum : std::uint16_t {
     kTraceCallCreateEmitterEx = 198, // u32 flags, u64 trace-local emitter ordinal
     kTraceCallSetEmitterDistanceScale = 199, // u64 emitter ordinal, f32 scale
     kTraceCallSetListenerDistanceReference = 200, // u64 emitter ordinal (0 clears)
+    kTraceCallRegisterResidentVorbis = 201,
 };
 
 enum class TraceCurrentWorldImageTagV1 : std::uint32_t {

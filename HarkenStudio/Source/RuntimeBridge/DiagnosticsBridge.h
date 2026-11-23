@@ -147,6 +147,8 @@ struct DebugBusData {
 
 struct DebugPerfData {
     float    audioCpuPercent    = 0.0f;
+    uint32_t vorbisDecodeLastUs = 0;
+    uint32_t vorbisDecoderCount = 0;
     uint32_t activeVoices       = 0;
     uint32_t virtualVoices      = 0;
     uint32_t maxVoices          = 0;

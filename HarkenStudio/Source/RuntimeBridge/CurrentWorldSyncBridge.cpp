@@ -37,7 +37,7 @@ struct PreparedProjectGenerationHold {
     std::uint64_t installedWorldGeneration = 0;
     bool committed = false;
     bool testOpen = false;
-    bool soundPcmRegistered = false;
+    bool soundMediaRegistered = false;
     bool emptyWorldClose = false;
     bool effectDefinitionChanged = false;
     PreviewEffectDefinitions voiceEffects;
@@ -138,7 +138,7 @@ CurrentWorldSyncResult registerPreparedSounds(PreparedProjectGenerationHold& hol
     CurrentWorldSyncResult result;
     result.token = hold.token;
     result.status = CurrentWorldSyncStatus::Ok;
-    if (!hold.soundPreparation || hold.soundPcmRegistered)
+    if (!hold.soundPreparation || hold.soundMediaRegistered)
         return result;
     for (const auto& sound : hold.soundPreparation->sounds) {
         const auto revision = hold.soundPreparation->contentRevisions.find(sound.binding.soundId);
@@ -166,7 +166,7 @@ CurrentWorldSyncResult registerPreparedSounds(PreparedProjectGenerationHold& hol
                 : CurrentWorldSyncStatus::InstallFailed;
         return result;
     }
-    hold.soundPcmRegistered = true;
+    hold.soundMediaRegistered = true;
     return result;
 }
 

@@ -23,7 +23,7 @@ static_assert(VN_VOICE_STATE_DRAINING == harken::kVoiceSnapshotDraining);
 static_assert(VN_VOICE_STATE_PREPARING == harken::kVoiceSnapshotPreparing);
 static_assert(VN_MAX_EFFECT_TYPE_STATS == harken::kMaxEffectTypeStats);
 static_assert(std::is_trivially_copyable_v<VnSnapshot>);
-static_assert(sizeof(VnSnapshot) == 5400);
+static_assert(sizeof(VnSnapshot) == 5408);
 
 using harken::detail::BusEffectivelyAudible;
 using harken::detail::PinnedGenerationCount;
@@ -140,6 +140,8 @@ VnResult Vn_CaptureSnapshot(VnSnapshot* outSnapshot) {
     const std::uint32_t snapshotVintage18Size = static_cast<std::uint32_t>(
         offsetof(VnSnapshot, busChannelPeaks) +
         sizeof(VnSnapshot::busChannelPeaks));
+    const std::uint32_t snapshotVintage19Size = static_cast<std::uint32_t>(
+        offsetof(VnSnapshot, vorbisDecoderCount) + sizeof(VnSnapshot::vorbisDecoderCount));
     if (outSnapshot == nullptr ||
         (outSnapshot->structSize != sizeof(VnSnapshot) &&
          outSnapshot->structSize != snapshotVintage1Size &&
@@ -159,7 +161,8 @@ VnResult Vn_CaptureSnapshot(VnSnapshot* outSnapshot) {
          outSnapshot->structSize != snapshotVintage15Size &&
          outSnapshot->structSize != snapshotVintage16Size &&
          outSnapshot->structSize != snapshotVintage17Size &&
-         outSnapshot->structSize != snapshotVintage18Size)) {
+         outSnapshot->structSize != snapshotVintage18Size &&
+         outSnapshot->structSize != snapshotVintage19Size)) {
         return VN_INVALID_ARG;
     }
     const bool hasPlaybackFields =
@@ -594,6 +597,15 @@ VnResult Vn_CaptureSnapshot(VnSnapshot* outSnapshot) {
     if (hasBusChannelPeakFields) {
         std::memcpy(outSnapshot->busChannelPeaks, payload.busChannelPeaks,
                     sizeof(outSnapshot->busChannelPeaks));
+    }
+    if (outSnapshot->structSize >= snapshotVintage19Size) {
+#if HARKEN_ENGINE_DEV
+        outSnapshot->vorbisDecodeLastUs = payload.vorbisDecodeLastUs;
+        outSnapshot->vorbisDecoderCount = engine->vorbis.states.ActiveCount();
+#else
+        outSnapshot->vorbisDecodeLastUs = 0;
+        outSnapshot->vorbisDecoderCount = 0;
+#endif
     }
     return VN_OK;
     });

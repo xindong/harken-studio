@@ -55,9 +55,14 @@ TEST(VorbisPlayback, ResidentMatchesPcmThroughRenderPitchLoopSeekAndWorkers) {
                 VnVoiceHandle voices[2]{};
                 const auto& view = compressed ? encoded : pcm;
                 for (auto& voice : voices) ASSERT_EQ(Start(engine, view, pitch, 3, 149, voice), VN_OK);
+                EXPECT_EQ(engine.vorbis.states.ActiveCount(), compressed ? 2u : 0u);
+                std::uint64_t decodeUs = 0;
                 for (unsigned block = 0; block < 96; ++block) {
                     if (block == 48) for (auto voice : voices) engine.voices.CommitSeek(voice, 503);
                     ASSERT_TRUE(PumpQuantum(engine));
+                    harken::SnapshotPayload snapshot;
+                    ASSERT_TRUE(engine.mixer.Snapshots().Capture(snapshot));
+                    decodeUs += snapshot.vorbisDecodeLastUs;
                     const auto* output = engine.nullBackend.LastBlock();
                     for (unsigned i = 0; i < 128; ++i) {
                         if (!compressed) expected.push_back(output[i]);
@@ -65,6 +70,8 @@ TEST(VorbisPlayback, ResidentMatchesPcmThroughRenderPitchLoopSeekAndWorkers) {
                     }
                 }
                 for (auto voice : voices) Stop(engine, voice);
+                EXPECT_EQ(decodeUs != 0, compressed);
+                EXPECT_EQ(engine.vorbis.states.ActiveCount(), 0u);
                 EXPECT_EQ(engine.vorbis.states.ActiveBytes(), 0u);
             }
             EXPECT_GT(*std::max_element(expected.begin(), expected.end()), 0.001f);

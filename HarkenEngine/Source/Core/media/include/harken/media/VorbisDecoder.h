@@ -75,6 +75,10 @@ public:
     std::size_t HighWater() const noexcept;
 private:
     friend class VorbisStatePool;
+    friend class VorbisCodec;
+#if HARKEN_ENGINE_DEV
+    std::uint64_t decodeTicks_ = 0;
+#endif
     std::unique_ptr<std::max_align_t[]> storage_;
     std::size_t count_ = 0;
     HvWorkspace* workspace_ = nullptr;
@@ -117,6 +121,9 @@ public:
     void Collect() noexcept;
     std::size_t Bytes() const noexcept { return bytes_; }
     std::size_t ActiveBytes() const noexcept { return activeBytes_.load(std::memory_order_relaxed); }
+#if HARKEN_ENGINE_DEV
+    std::uint32_t ActiveCount() const noexcept;
+#endif
     std::size_t HighWater() const noexcept { return highWater_; }
     static std::size_t RequiredBytes(const VorbisSettings& settings) noexcept;
 private:
@@ -134,6 +141,9 @@ private:
 class VorbisCodec {
 public:
     explicit VorbisCodec(unsigned renderWorkers, bool compactCodebooks = false);
+#if HARKEN_ENGINE_DEV
+    std::uint64_t TakeDecodeTicks() noexcept;
+#endif
     std::uint64_t nextGeneration = 1;
     VorbisSettingsCache settings;
     VorbisStatePool states;

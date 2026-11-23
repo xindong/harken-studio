@@ -7244,7 +7244,7 @@ public:
           sourceCursors(resolved.voiceCapacity.Render()),
           timelinePrograms(2),
            timelineSink(voices, timelineArms),
-           mixer(resolved, voices, buses, dynamicRoutes, commands, actionSeeks,
+           mixer(resolved, vorbis, voices, buses, dynamicRoutes, commands, actionSeeks,
                 streamSeekHandoffs,
                 notifications, logRing, sourceCursors, meterRing,
                 &timelineArms, &timelineExecutor, &timelineSink,

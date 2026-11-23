@@ -606,7 +606,7 @@ static_assert(offsetof(VnBusTopologyDesc, sendStructSize) == 52,
 static_assert(offsetof(VnBusTopologyDesc, sends) == 56,
               "wire table offset drift: VnBusTopologyDesc.sends");
 
-static_assert(sizeof(VnSnapshot) == 5400,
+static_assert(sizeof(VnSnapshot) == 5408,
               "wire table size drift: VnSnapshot");
 static_assert(offsetof(VnSnapshot, structSize) == 0,
               "wire table offset drift: VnSnapshot.structSize");
@@ -900,6 +900,10 @@ static_assert(offsetof(VnSnapshot, variableTerminationCount) == 4368,
               "wire table offset drift: VnSnapshot.variableTerminationCount");
 static_assert(offsetof(VnSnapshot, busChannelPeaks) == 4376,
               "wire table offset drift: VnSnapshot.busChannelPeaks");
+static_assert(offsetof(VnSnapshot, vorbisDecodeLastUs) == 5400,
+              "wire table offset drift: VnSnapshot.vorbisDecodeLastUs");
+static_assert(offsetof(VnSnapshot, vorbisDecoderCount) == 5404,
+              "wire table offset drift: VnSnapshot.vorbisDecoderCount");
 
 static_assert(sizeof(VnPropertyTargetInfo) == 64,
               "wire table size drift: VnPropertyTargetInfo");

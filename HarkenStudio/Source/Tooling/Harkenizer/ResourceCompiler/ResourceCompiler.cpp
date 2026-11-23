@@ -33,7 +33,7 @@ using harken::studio::pack::ManifestVoiceRecipe;
 
 struct PackEntry {
     std::string path;
-    std::shared_ptr<const harken::studio::VorbisEncoder::EncodedMedia> encodedMedia;
+    std::shared_ptr<const ResidentVorbisBlob> residentVorbis;
     std::uint32_t sampleRate = 0;
     std::uint16_t channelCount = 0;
     std::uint64_t frameCount = 0;
@@ -203,15 +203,13 @@ bool SerializeEntryPayload(const Manifest& manifest,
     switch (placement.kind) {
     case HK_PACK_ENTRY_KIND_MEDIA: {
         const PackEntry& entry = entries[placement.index];
-        if (entry.encodedMedia)
-            return Fail(diag, "Vorbis Pack writing is not integrated");
-        const std::uint64_t blobBytes =
+        const std::uint64_t blobBytes = entry.residentVorbis ? entry.residentVorbis->bytes.size() :
             entry.frameCount * entry.channelCount * sizeof(float);
         harken::studio::build::PackTocEntry toc;
         toc.soundId = entry.soundId;
         toc.sampleRate = entry.sampleRate;
         toc.channelCount = entry.channelCount;
-        toc.sampleFormat = HK_PACK_SAMPLE_FORMAT_F32_PLANAR;
+        toc.sampleFormat = entry.residentVorbis ? HK_PACK_SAMPLE_FORMAT_VORBIS_RESIDENT : HK_PACK_SAMPLE_FORMAT_F32_PLANAR;
         toc.frameCount = entry.frameCount;
         toc.blobOffset = 0;
         toc.blobBytes = blobBytes;
@@ -527,10 +525,22 @@ std::shared_ptr<const std::vector<float>> MediaCache::intern(
     return samples;
 }
 
+std::shared_ptr<const ResidentVorbisBlob> MediaCache::prepareVorbis(const std::string& derivativeKey,
+    const harken::studio::VorbisEncoder::EncodedMedia& media, QString* error)
+{
+    const std::lock_guard lock(mutex_);
+    const auto found = vorbis_.find(derivativeKey);
+    if (found != vorbis_.end()) return found->second;
+    auto blob = harken::studio::VorbisEncoder::prepareResidentVorbis(media, error);
+    if (blob) vorbis_.emplace(derivativeKey, blob);
+    return blob;
+}
+
 void MediaCache::clear()
 {
     std::lock_guard lock(mutex_);
     prepared_.clear();
+    vorbis_.clear();
     blobs_.clear();
 }
 
@@ -585,8 +595,8 @@ bool compileEntries(const std::string& logicSections, bool resident,
         entry.loopable = input.loopable;
         entry.loopStartFrame = input.loopStartFrame;
         entry.loopEndFrame = input.loopEndFrame;
-        if (input.encodedMedia) {
-            entry.encodedMedia = input.encodedMedia;
+        if (input.residentVorbis) {
+            entry.residentVorbis = input.residentVorbis;
             entry.sampleRate = input.sampleRate;
             entry.channelCount = input.channels;
             entry.frameCount = input.frameCount;
@@ -605,11 +615,14 @@ bool compileEntries(const std::string& logicSections, bool resident,
         resource.kind = placement.kind;
         resource.vintage = harken::studio::build::PackEntryVintage(placement.kind);
         resource.id = placement.id;
-        const auto audio = input.encodedMedia ? PreparedMediaBlob{} : mediaCache->prepare(input);
+        const auto audio = input.residentVorbis ? PreparedMediaBlob{} : mediaCache->prepare(input);
         resource.media = audio.samples;
+        if (input.residentVorbis)
+            resource.encodedBytes = {input.residentVorbis, &input.residentVorbis->bytes};
+        const auto checksum = input.residentVorbis ? input.residentVorbis->checksum : audio.checksum;
         resource.payload.resize(static_cast<std::size_t>(placement.size));
         if (!SerializeEntryPayload(manifest, prepared, placement, resource.payload.data(), &diag,
-                                   audio.checksum)) return refuse();
+                                   checksum)) return refuse();
         compiled.push_back(std::move(resource));
     }
     if (!ValidateLogicSections(manifest, &diag)) return refuse();

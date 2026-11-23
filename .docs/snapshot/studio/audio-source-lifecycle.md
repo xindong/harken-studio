@@ -157,7 +157,7 @@ Inspector 的组内导入高光仅围住目标语言组的标题、音源行和�
 | 对象试听与打包 | 共用媒体处理，在裁剪后、重采样与调度前置静音之前将包络写入 PCM；引擎直接播放处理后的媒体，不再重复计算 Source fade |
 | 转换缓存 | 有效淡入淡出时长与曲线参与派生媒体身份；修改、撤销与重做后使用对应媒体，未启用的曲线形状不生成不同派生媒体 |
 
-## 10. Conversion 与试听媒体（Part A）
+## 10. Conversion 与试听媒体
 
 | 操作／条件 | 业务结果 |
 |---|---|
@@ -166,10 +166,10 @@ Inspector 的组内导入高光仅围住目标语言组的标题、音源行和�
 | 默认引用 | 项目设置按平台指定 Default Conversion，只在新根对象创建时写成对应平台覆写；Shared 始终为空（不转换）；不改已有对象。默认工程只有 Low Quality（Vorbis 质量 4，≤1 MB Original，>1 MB 32000 Hz），仅 Android／iOS 默认使用；新增平台沿用同基础平台已有平台的默认值，否则为空 |
 | Original／Converted | Toolbar 与语言、平台同区切换，本机按工程记忆；只作用于进入混音管线的内容：Toolbar 播放 Sound 时按模式与当前主平台选择处理后的原件或转换产物，External Editor 的 Sources 行文件属性随模式切换；File Viewer 不受影响，始终显示和播放源文件 |
 | 空 Settings | 不转换：以原始采样率输出 PCM，裁剪、淡入淡出等 Source 处理照常生效 |
-| Converted 首次播放 | 没有产物时按需转换后播放，不做后台预转换；PCM 注册处理后的样本，Vorbis 经独立过渡模块解为 PCM 后注册 |
+| Converted 首次播放 | 没有产物时按需转换后播放。PCM 注册处理后的样本，Vorbis 将与 Pack 相同的常驻编码块注册到开发版 Engine，由 Engine 解码播放 |
 | 转换入口 | 预设双击或 Settings 双击打开下方独立 Conversion Editor；Convert 处理当前主平台、有效引用该预设的各语言 Active Source，按文件并行、共享缓存且可取消 |
 | 显示边界 | 转换过程不显示进度、状态或失败文字，错误只进日志。结果表的 Active Source 列以只读波形显示当前主平台、该行语言下的激活条目及其裁剪与循环。未转换的产物字段留空 |
 | External Editor File Properties | Sound → Sources 引用行打开的 External Editor 在波形下方用表格显示工程相对路径、绝对路径、声道、采样率、时长、大小与音频编码。Original 显示原文件，Converted 显示已有产物。有预设但未转换时留空，无有效预设则显示原文件 |
 | 刷新与失效 | 转换完成、预设／引用修改、平台或模式变化刷新结果及文件属性；相关试听停止，下次播放按新输入重建 |
 | 层级树状态 | Missing／Orphaned／Error 保持原语义；可用 Sound 按当前平台的有效预设和缓存 key 显示 Converted／Not Converted；无预设显示 Available，不再有 Outdated 警告色 |
-| Pack 边界 | PCM 可导出；Vorbis Pack 写入尚未接入并明确失败。Engine 解码试听、Vorbis Pack 和 Integration 接入留在 Part B |
+| Pack 媒体 | 按有效规则导出 PCM 或常驻 Vorbis。Vorbis 支持 1、2、4、6、8 声道 |

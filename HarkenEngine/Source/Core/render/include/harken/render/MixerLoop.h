@@ -36,6 +36,7 @@
 #include <vector>
 
 namespace harken {
+class VorbisCodec;
 namespace detail {
 struct OriginalControlOriginTestAccess;
 struct MixerCurrentSliceStorageTestAccess;
@@ -43,7 +44,7 @@ struct MixerCurrentSliceStorageTestAccess;
 
 class MixerLoop {
 public:
-    MixerLoop(const EngineConfig& config, VoicePool& voices, BusTree& buses,
+    MixerLoop(const EngineConfig& config, VorbisCodec& vorbis, VoicePool& voices, BusTree& buses,
               DynamicRouteSystem& dynamicRoutes, CommandQueue& commands,
               ActionSeekTable& actionSeeks,
               StreamSeekHandoffTable& streamSeekHandoffs,
@@ -250,6 +251,9 @@ private:
     // is retuning the ceiling while a callback is live -- any such writer makes
     // this a mutable cross-thread read and must make the field atomic first.
     std::uint32_t m_maxCommandsPerQuantum;
+#if HARKEN_ENGINE_DEV
+    VorbisCodec& m_vorbis;
+#endif
     // Records this block declined to apply, and the most ever declined at once.
     // Written by the audio thread each block, read by the logic thread through
     // the published snapshot.

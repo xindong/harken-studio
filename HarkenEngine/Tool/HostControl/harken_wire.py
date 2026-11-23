@@ -146,7 +146,8 @@ TABLE_JSON = r'''
           "logRingHighWater",
           "logQuantumBudgetDropCount",
           "variableAcceptedCount",
-          "busChannelPeaks"
+          "busChannelPeaks",
+          "vorbisDecodeLastUs"
         ],
         "missingFields": "caller-tail-untouched",
         "unknownSize": "reject"
@@ -2102,6 +2103,14 @@ TABLE_JSON = r'''
               256
             ]
           }
+        ],
+        [
+          "vorbisDecodeLastUs",
+          "u32"
+        ],
+        [
+          "vorbisDecoderCount",
+          "u32"
         ]
       ]
     },
@@ -12040,6 +12049,40 @@ TABLE_JSON = r'''
           "name": "loopEndFrame",
           "ctype": "uint64_t",
           "wire": "u64"
+        },
+        {
+          "name": "outContentRevision",
+          "ctype": "uint64_t*",
+          "wire": "out"
+        }
+      ]
+    },
+    {
+      "name": "VnPreview_ValidateResidentVorbis",
+      "note": "Development preview; process-local, no remote opcode.",
+      "params": [
+        {
+          "name": "media",
+          "ctype": "const VnPackByteSpan*",
+          "wire": "desc",
+          "type": "VnPackByteSpan"
+        }
+      ]
+    },
+    {
+      "name": "VnPreview_RegisterResidentVorbis",
+      "note": "Development preview; process-local, no remote opcode.",
+      "params": [
+        {
+          "name": "soundId",
+          "ctype": "VnSoundId",
+          "wire": "objectid"
+        },
+        {
+          "name": "media",
+          "ctype": "const VnPackByteSpan*",
+          "wire": "desc",
+          "type": "VnPackByteSpan"
         },
         {
           "name": "outContentRevision",

@@ -147,6 +147,8 @@ bool getDebugPerformance(DebugPerfData& out)
         return false;
 
     out.audioCpuPercent = blockCpuPercent(snapshot.audioCpuLastUs);
+    out.vorbisDecodeLastUs = snapshot.vorbisDecodeLastUs;
+    out.vorbisDecoderCount = snapshot.vorbisDecoderCount;
     out.activeVoices = snapshot.activeVoiceCount;
     out.virtualVoices = static_cast<uint32_t>(
         std::min<uint64_t>(snapshot.parkedVoiceCount, UINT32_MAX));

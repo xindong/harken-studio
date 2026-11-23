@@ -136,6 +136,7 @@ harken> help exit
 | 试听定位 | `audition_set_position` 等待所返回请求的实际 `applied/failed` 结果；`audition_get_seek_status` 使用 `audition_seek_request_id` 查询相同请求 |
 | Voice 查询 | `get_active_voices.count` 是原生活跃 Voice 数，`reported_count` 是公开明细行数，二者可能不同 |
 | 电平 | `get_performance.master_peak_l/r` 是线性幅度；mixer/metering 快照使用 dB，测量位于主输出增益之前 |
+| Vorbis 性能 | `get_performance` 和 `get_engine_snapshot.performance` 提供 `vorbis_decode_last_us`（上一个音频块的常驻 Vorbis 解码工作时间，各渲染线程累加，单位为微秒）与 `vorbis_decoder_count`（当前持有解码状态的实例数） |
 | 搜索 | `search_fulltext` 查询当前工程索引；不可用返回 `SEARCH_UNAVAILABLE`，不伪装为空结果 |
 | 文件比较 | `compare_files` 的 `reference_path/candidate_path` 为两个文件；结果 `identical/compared_bytes/different_bytes/length_match` 均按原始字节解释 |
 
@@ -183,7 +184,7 @@ harken> save_project
 
 `get_conversion_results` 仅检查现有缓存，不触发编码。返回 `sources`，每行包含 Sound、Source、语言、`original` 和 `converted`；未转换时 `converted:null`，已有结果带格式、采样率、声道、帧数、字节数、时长和路径。`convert` 使用相同范围，覆盖该平台各工程语言下实际引用预设的有效 Source，同步等待完成后返回 `conversion_result`（`converted/cached/canceled/errors`）与 `sources`。失败返回 `CONVERSION_FAILED`，成功生成的缓存保留。该同步命令不使用旧作业协议：独立 CLI 进程内执行不受异步作业等待期限约束；`--instance` 附加模式仍受 `--timeout` 的传输等待期限约束，等待超时不会取消 Studio 侧正在执行的同步转换。旧 `set_conversion_settings/transcode_asset/batch_convert_media/get_transcode_status/cancel_transcode` 已移除。
 
-Part A 支持 PCM Pack 导出；Vorbis 转换缓存和 Converted 试听通过 Studio 过渡解码可用，但导出仍明确返回 `Vorbis Pack writing is not integrated`。原生 Engine 解码、Vorbis Pack 接入和采样率解耦属于 Part B。
+导出按每个 Source 的有效规则写入 PCM 或常驻 Vorbis。Vorbis 支持 1、2、4、6、8 声道，Converted 试听使用相同的编码块和 Engine 解码器。
 
 ## 两种打包输入
 

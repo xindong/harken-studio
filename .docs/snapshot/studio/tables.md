@@ -114,7 +114,7 @@
 | Convert | Convert 是 Configuration 右下角的独立按钮，位于规则表下方，与表格右缘对齐。点击后为当前平台引用该预设的源文件生成产物，已有缓存直接跳过。收起 Result 后仍可执行转换。转换不显示进度或状态，Esc 可取消未完成工作 |
 | 文件属性 | Sound → Sources 引用行打开的 External Editor（波形编辑）下半区显示 File Properties 表，可拖动分隔条调整高度。Relative Path 相对工程根目录，Absolute Path 指向同一文件。两种路径均使用操作系统的目录分隔符。表中还显示声道、采样率、时长、大小与音频编码 |
 | 属性切换 | 跟随 Toolbar 的 Original／Converted 与当前平台；Converted 无缓存时留空，有效 Conversion 为空时显示原件；File Viewer 不显示 Studio 处理后的信息，始终显示并播放源文件 |
-| Part A 播放边界 | Studio 的 Vorbis 试听使用过渡解码路径；Pack 编译仍拒绝 Vorbis，Engine 原生解码与 Pack 放开留待 Part B |
+| Vorbis 试听与导出 | Converted 试听和 Pack 播放共用 Engine 的常驻 Vorbis 解码器，支持 1、2、4、6、8 声道 |
 
 ## Selection Editor
 

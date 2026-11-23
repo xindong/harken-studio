@@ -135,7 +135,7 @@ Studio、CLI、IPC 与 AI 使用同一组命令、参数校验和创作入口：
 
 `get_item_info` 对可播放定义返回 `conversion` 与 `fieldGroups.shared.conversion`；预设配置位于 `components.conversion`。`get_project_info.default_conversion` 返回默认预设 GUID 或 `null`。`get_conversion_results` 不触发编码，尚未生成的 `converted` 为 `null`。`convert` 等待本次转换结束，成功缓存可复用；失败返回 `CONVERSION_FAILED` 并保留逐项错误和已有结果，不使用旧转码作业身份或状态/取消命令。
 
-Part A 已提供 PCM / Vorbis 转换缓存和 Converted 试听；Vorbis 试听使用 Studio 过渡解码。PCM Pack 可导出，Vorbis Pack 写入仍明确报错 `Vorbis Pack writing is not integrated`。原生 Engine Vorbis 解码、Pack 接入与采样率解耦属于 Part B。
+导出与 Converted 试听共用 PCM／Vorbis 转换缓存。Vorbis 以常驻媒体写入 Pack，支持 1、2、4、6、8 声道。Studio 试听将相同格式的编码块交给开发版 Engine。
 
 ## 桌面扩展
 

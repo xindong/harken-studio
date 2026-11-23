@@ -145,6 +145,14 @@ bool readAll(const QString& path, QByteArray* bytes, QString* error)
     return true;
 }
 
+bool sameMedia(const bridge::PackBuildSession::CanonicalPackEntry& left,
+               const bridge::PackBuildSession::CanonicalPackEntry& right)
+{
+    const auto bytes = left.mediaBytes();
+    return bytes == right.mediaBytes() && (bytes == 0 || left.mediaData() == right.mediaData()
+        || std::memcmp(left.mediaData(), right.mediaData(), bytes) == 0);
+}
+
 bool appendEntry(bridge::PackBuildSession::CanonicalPackEntry entry, const QString& path,
                  std::vector<bridge::PackBuildSession::CanonicalPackEntry>* entries, QString* error)
 {
@@ -156,13 +164,11 @@ bool appendEntry(bridge::PackBuildSession::CanonicalPackEntry entry, const QStri
     if (existing != entries->end()) {
         const bool samePayload = entry.kind == HK_PACK_ENTRY_KIND_MEDIA
             ? existing->payload.size() == entry.payload.size()
-                && existing->mediaBytes() == entry.mediaBytes()
                 && std::equal(entry.payload.begin(), entry.payload.begin() + offsetof(HkPackMedia, blobOffset),
                               existing->payload.begin())
                 && std::equal(entry.payload.begin() + offsetof(HkPackMedia, blobBytes), entry.payload.end(),
                               existing->payload.begin() + offsetof(HkPackMedia, blobBytes))
-                && (existing->media == entry.media || entry.mediaBytes() == 0
-                    || std::memcmp(existing->mediaData(), entry.mediaData(), entry.mediaBytes()) == 0)
+                && sameMedia(*existing, entry)
             : existing->payload == entry.payload;
         if (existing->vintage != entry.vintage || !samePayload) {
             if (error)
@@ -226,16 +232,16 @@ bool collectEntries(const QByteArray& bytes, const QString& path,
             harken::studio::build::StorePackMediaBlobOffset(entry.payload.data(), 0);
             if (toc.blobBytes != 0) {
                 const auto* blob = reinterpret_cast<const std::uint8_t*>(bytes.constData()) + toc.blobOffset;
-                if (toc.blobBytes % sizeof(float) != 0) {
-                    if (error) *error = QStringLiteral("Pack '%1' contains invalid PCM media").arg(path);
+                if (toc.sampleFormat == HK_PACK_SAMPLE_FORMAT_VORBIS_RESIDENT) {
+                    entry.encodedBytes = std::make_shared<const std::vector<uint8_t>>(blob, blob + toc.blobBytes);
+                } else if (toc.sampleFormat != HK_PACK_SAMPLE_FORMAT_F32_PLANAR || toc.blobBytes % sizeof(float) != 0) {
+                    if (error) *error = QStringLiteral("Pack '%1' contains invalid media").arg(path);
                     return false;
-                }
-                if (mediaCache) {
+                } else if (mediaCache) {
                     entry.media = mediaCache->intern(blob, static_cast<std::size_t>(toc.blobBytes), toc.blobChecksum);
                 } else {
-                    auto samples = std::make_shared<std::vector<float>>(
-                        static_cast<std::size_t>(toc.blobBytes / sizeof(float)));
-                    std::memcpy(samples->data(), blob, static_cast<std::size_t>(toc.blobBytes));
+                    auto samples = std::make_shared<std::vector<float>>(static_cast<size_t>(toc.blobBytes / sizeof(float)));
+                    std::memcpy(samples->data(), blob, static_cast<size_t>(toc.blobBytes));
                     entry.media = std::move(samples);
                 }
             }
@@ -2894,37 +2900,42 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
             }
             if (entry.kind != HK_PACK_ENTRY_KIND_MEDIA)
                 continue;
-            if (meta.soundContentRevisions.count(entry.id) != 0) {
-                ++meta.ownedResources;
-                continue;
-            }
             unit.success = false;
-            unit.error = QStringLiteral("Pack '%1' contains invalid PCM media %2")
+            unit.error = QStringLiteral("Pack '%1' contains invalid media %2")
                 .arg(meta.fileName).arg(harken::studio::objectIdString(entry.id));
-            if (entry.payload.size() < harken::studio::build::kPackBytes<HkPackMedia>)
-                return unit;
+            if (entry.payload.size() != sizeof(HkPackMedia)) return unit;
             const auto media = harken::studio::build::ReadPackMedia(entry.payload.data());
-            const auto pcmBytes = entry.mediaBytes();
-            if (media.sampleFormat != HK_PACK_SAMPLE_FORMAT_F32_PLANAR
-                || media.blobBytes != pcmBytes || pcmBytes % sizeof(float) != 0
-                || media.channelCount == 0 || media.frameCount == 0)
-                return unit;
-            const auto sampleCount = pcmBytes / sizeof(float);
-            if (sampleCount % media.channelCount != 0
-                || sampleCount / media.channelCount != media.frameCount)
-                return unit;
-            std::vector<const float*> channels(media.channelCount);
-            for (std::uint16_t channel = 0; channel < media.channelCount; ++channel)
-                channels[channel] = entry.media->data() + channel * media.frameCount;
             std::uint64_t revision = 0;
-            const bool loopable =
-                (media.flags & HK_PACK_MEDIA_FLAG_LOOPABLE) != 0;
-            if (!harken::studio::build::ComputeMediaPcmContentRevisionV1(
-                    media.sampleRate, media.channelCount, media.frameCount,
-                    channels.data(), 1, &revision,
-                    loopable ? media.loopStartFrame : 0,
-                    loopable ? media.loopEndFrame : 0))
-                return unit;
+            if (media.sampleFormat == HK_PACK_SAMPLE_FORMAT_VORBIS_RESIDENT) {
+                if (!entry.encodedBytes || entry.mediaBytes() != media.blobBytes) return unit;
+                revision = media.blobChecksum ? media.blobChecksum : 1;
+            } else if (meta.soundContentRevisions.count(entry.id) != 0) {
+                ++meta.ownedResources;
+                unit.success = true;
+                unit.error.clear();
+                continue;
+            } else {
+                const auto pcmBytes = entry.mediaBytes();
+                if (media.sampleFormat != HK_PACK_SAMPLE_FORMAT_F32_PLANAR
+                    || media.blobBytes != pcmBytes || pcmBytes % sizeof(float) != 0
+                    || media.channelCount == 0 || media.frameCount == 0)
+                    return unit;
+                const auto sampleCount = pcmBytes / sizeof(float);
+                if (sampleCount % media.channelCount != 0
+                    || sampleCount / media.channelCount != media.frameCount)
+                    return unit;
+                std::vector<const float*> channels(media.channelCount);
+                for (std::uint16_t channel = 0; channel < media.channelCount; ++channel)
+                    channels[channel] = entry.media->data() + channel * media.frameCount;
+                const bool loopable =
+                    (media.flags & HK_PACK_MEDIA_FLAG_LOOPABLE) != 0;
+                if (!harken::studio::build::ComputeMediaPcmContentRevisionV1(
+                        media.sampleRate, media.channelCount, media.frameCount,
+                        channels.data(), 1, &revision,
+                        loopable ? media.loopStartFrame : 0,
+                        loopable ? media.loopEndFrame : 0))
+                    return unit;
+            }
             const auto [found, inserted] = meta.soundContentRevisions.emplace(media.soundId, revision);
             if (!inserted && found->second != revision) {
                 unit.error = QStringLiteral("Control and packed media revisions disagree for Sound %1")
@@ -3570,7 +3581,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
                 return std::any_of(pack.previousEntries.begin(), pack.previousEntries.end(), [&](const auto& previous) {
                     return entry.kind == previous.kind && entry.vintage == previous.vintage
                         && entry.id == previous.id && entry.relationOrdinal == previous.relationOrdinal
-                        && entry.payload == previous.payload && entry.media == previous.media;
+                        && entry.payload == previous.payload && sameMedia(entry, previous);
                 });
             })) {
             pack.contentRevision = pack.previousRow.value(QStringLiteral("contentRevision")).toVariant().toULongLong();
@@ -3743,7 +3754,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         const auto sameEntry = [](const auto& first, const auto& second) {
             return first.kind == second.kind && first.vintage == second.vintage
                 && first.id == second.id && first.relationOrdinal == second.relationOrdinal
-                && first.payload == second.payload && first.media == second.media;
+                && first.payload == second.payload && sameMedia(first, second);
         };
         if ((meta.current || (meta.previousValid && !request.options.forceReexport
                 && meta.packKind == HK_PACK_KIND_INIT))

@@ -342,6 +342,10 @@ public:
     VnResult PrepareResidentVorbis(VnSoundId soundId, std::vector<std::uint8_t> bytes,
         std::size_t budget, PreparedPackSamples* out, const std::uint64_t* verifiedChecksum = nullptr);
 
+#if HARKEN_ENGINE_DEV
+    VnResult PublishResidentVorbis(PreparedPackSamples& samples);
+#endif
+
     // Range-only record. A caller that has proven bit-exact equality with an
     // earlier prepared record of the same id passes it to share that entry.
     VnResult PreparePackRangeSamples(VnSoundId soundId,

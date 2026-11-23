@@ -106,8 +106,8 @@ bool AssetConverter::processSamples(std::vector<float>& samples, int& sampleRate
                                     uint32_t targetSampleRateHz, LoopInfo& loop,
                                     QString* error)
 {
-    if (channels < 1 || channels > 2 || sampleRate <= 0 || samples.empty()) {
-        if (error) *error = QStringLiteral("Only nonempty mono and stereo media are supported");
+    if (channels < 1 || sampleRate <= 0 || samples.empty() || samples.size() % channels != 0) {
+        if (error) *error = QStringLiteral("Invalid source samples for resampling");
         return false;
     }
     const auto inputRate = static_cast<uint32_t>(sampleRate);

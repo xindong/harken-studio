@@ -28,6 +28,7 @@
 #include <vector>
 
 namespace harken::studio::SoundSourceDerivative { struct MaterializedArtifact; }
+namespace harken::studio::VorbisEncoder { struct ResidentVorbisBlob; }
 
 namespace harken::studio {
 namespace bridge {
@@ -70,8 +71,8 @@ inline constexpr EngineResult kEngineDeviceError =
 
 struct PreparedPreviewMedia
 {
-    std::shared_ptr<const harken::studio::SoundSourceDerivative::MaterializedArtifact> artifact;
-    std::shared_ptr<const std::vector<float>> samples;
+    std::shared_ptr<const SoundSourceDerivative::MaterializedArtifact> pcm;
+    std::shared_ptr<const VorbisEncoder::ResidentVorbisBlob> vorbis;
     uint64_t contentRevision = 0;
 };
 

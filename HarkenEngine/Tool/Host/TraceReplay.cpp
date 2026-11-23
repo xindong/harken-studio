@@ -796,6 +796,16 @@ int ExecuteCall(std::uint16_t callId, ByteReader& r, BlobStore& blobs,
                  ReplayStats& stats) {
     VnResult result = VN_OK;
     switch (callId) {
+    case harken::kTraceCallRegisterResidentVorbis: {
+        const auto soundId = r.ObjectId();
+        const auto resource = r.U64();
+        const auto expectedRevision = r.U64();
+        if (r.failed || !resource || resource > blobs.packs.size() || !expectedRevision) return 1;
+        std::uint64_t revision = 0;
+        result = VnPreview_RegisterResidentVorbis(soundId, &blobs.packs[resource - 1], &revision);
+        if (result != VN_OK || revision != expectedRevision) return 1;
+        break;
+    }
     case harken::kTraceCallRegisterPCM:
     case harken::kTraceCallReplacePCM: {
         const VnObjectId soundId = r.ObjectId();

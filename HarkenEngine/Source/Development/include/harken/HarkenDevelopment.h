@@ -346,6 +346,8 @@ typedef struct VnSnapshot {
     uint64_t variablePendingCount;
     uint64_t variableTerminationCount;
     float busChannelPeaks[VN_SNAPSHOT_MAX_BUSES * VN_MAX_CHANNELS];
+    uint32_t vorbisDecodeLastUs;
+    uint32_t vorbisDecoderCount;
 } VnSnapshot;
 
 typedef uint32_t VnCompressorRuntimeFlags;
@@ -2732,6 +2734,9 @@ VnResult VnPreview_EnableChannelPeakMetering(void);
 VnResult VnPreview_TakeChannelPeaks(VnPreviewChannelPeaksV1* outPeaks);
 VnResult VnPreview_RegisterPcm(VnSoundId soundId, const VnPCMDesc* desc,
     uint64_t loopStartFrame, uint64_t loopEndFrame, uint64_t* outContentRevision);
+VnResult VnPreview_RegisterResidentVorbis(VnSoundId soundId, const VnPackByteSpan* media,
+    uint64_t* outContentRevision);
+VnResult VnPreview_ValidateResidentVorbis(const VnPackByteSpan* media);
 VnResult VnPreview_PlayVoiceRaw(const VnPlayDesc* desc, VnVoiceHandle* outHandle);
 #define VN_PREVIEW_EFFECT_CHAIN_CAPACITY 8u
 

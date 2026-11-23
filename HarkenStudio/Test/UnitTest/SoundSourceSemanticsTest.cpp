@@ -11,8 +11,10 @@
 #include "Tooling/Harkenizer/Core/VorbisEncoder.h"
 #include "Core/SoundSourceSemantics.h"
 #include "RuntimeBridge/PlaybackBridge.h"
+#include "RuntimeBridge/PreviewBridge.h"
 #include "RuntimeBridge/ProjectSyncBridge.h"
 #include "RuntimeBridge/MediaServices.h"
+#include <harken/HarkenDevelopment.h>
 
 #include <QDateTime>
 #include <QDir>
@@ -1183,14 +1185,14 @@ TEST(SoundSourceSemanticsTest, SharedMediaCanBePublishedToIndependentDestination
     }
 }
 
-TEST(SoundSourceSemanticsTest, PreviewMediaPreparationPreservesDecodedChannelsFramesAndRevision)
+TEST(SoundSourceSemanticsTest, ConvertedPreviewRendersLikeTheIndependentReference)
 {
     namespace Bridge = harken::studio::bridge;
     const auto previousServices = Bridge::mediaServices();
     const auto restoreServices = qScopeGuard([&] { Bridge::setMediaServices(previousServices); });
     Bridge::setMediaServices(Bridge::makeBuildMediaServices());
     struct Case { uint16_t channels; uint32_t sampleRate; uint64_t frames; };
-    const Case cases[]{{1, 8000, 4097}, {2, 44100, 16397}, {6, 48000, 16397},
+    const Case cases[]{{1, 8000, 4097}, {2, 44100, 16397}, {4, 48000, 4097}, {6, 48000, 16397},
         {8, 32000, 8193}, {2, 48000, 1}, {6, 48000, 127}};
     for (const auto& item : cases) {
         SCOPED_TRACE(::testing::Message() << item.channels << "/" << item.sampleRate << "/" << item.frames);
@@ -1203,12 +1205,6 @@ TEST(SoundSourceSemanticsTest, PreviewMediaPreparationPreservesDecodedChannelsFr
         artifact.loopEndFrame = item.frames > 2 ? item.frames - 1 : 0;
         artifact.loopable = artifact.loopEndFrame != 0;
         QString error;
-        const auto pcm = Bridge::preparePreviewMedia(artifact, &error);
-        ASSERT_TRUE(pcm) << error.toStdString();
-        ASSERT_TRUE(pcm->samples);
-        EXPECT_EQ(*pcm->samples, *artifact.samples);
-        EXPECT_EQ(pcm->contentRevision, Bridge::soundPcmContentRevision(*pcm->samples,
-            artifact.channels, artifact.sampleRate, artifact.loopStartFrame, artifact.loopEndFrame));
         auto encoded = VorbisEncoder::encode(*artifact.samples, item.sampleRate, item.channels,
             0.6f, artifact.loopStartFrame, artifact.loopEndFrame, &error);
         ASSERT_TRUE(encoded) << error.toStdString();
@@ -1219,25 +1215,64 @@ TEST(SoundSourceSemanticsTest, PreviewMediaPreparationPreservesDecodedChannelsFr
         artifact.encodedMedia = std::make_shared<const VorbisEncoder::EncodedMedia>(std::move(*encoded));
         const auto preview = Bridge::preparePreviewMedia(artifact, &error);
         ASSERT_TRUE(preview) << error.toStdString();
-        ASSERT_TRUE(preview->samples);
-        ASSERT_EQ(preview->samples->size(), item.frames * item.channels);
-        ASSERT_EQ(preview->samples->size(), reference->size());
+        ASSERT_EQ(reference->size(), item.frames * item.channels);
+        artifact.loopEndFrame = item.frames + 1;
+        EXPECT_FALSE(Bridge::preparePreviewMedia(artifact, &error));
+        artifact.loopEndFrame = artifact.encodedMedia->loopEndFrame;
+
         const int surround[]{0, 2, 1, 4, 5, 3};
         const int surround71[]{0, 2, 1, 6, 7, 4, 5, 3};
+        std::vector<float> referencePcm(reference->size());
         for (uint16_t channel = 0; channel < item.channels; ++channel) {
             const int outputChannel = item.channels == 6 ? surround[channel]
                 : item.channels == 8 ? surround71[channel] : channel;
-            float maximumDifference = 0.0f;
             for (uint64_t frame = 0; frame < item.frames; ++frame)
-                maximumDifference = std::max(maximumDifference, std::abs(
-                    (*preview->samples)[frame * item.channels + outputChannel]
-                    - (*reference)[frame * item.channels + channel]));
-            EXPECT_FLOAT_EQ(maximumDifference, 0.0f) << "channel " << channel;
+                referencePcm[frame * item.channels + outputChannel] = (*reference)[frame * item.channels + channel];
         }
-        EXPECT_NE(preview->contentRevision, 0u);
-        EXPECT_EQ(preview->contentRevision, Bridge::soundPcmContentRevision(*preview->samples,
+        artifact.format = ConversionFormat::PCM;
+        artifact.encodedMedia.reset();
+        artifact.samples = std::make_shared<const std::vector<float>>(std::move(referencePcm));
+        const auto pcm = Bridge::preparePreviewMedia(artifact, &error);
+        ASSERT_TRUE(pcm) << error.toStdString();
+        EXPECT_EQ(pcm->contentRevision, Bridge::soundPcmContentRevision(*artifact.samples,
             artifact.channels, artifact.sampleRate, artifact.loopStartFrame, artifact.loopEndFrame));
-        artifact.loopEndFrame = item.frames + 1;
-        EXPECT_FALSE(Bridge::preparePreviewMedia(artifact, &error));
+        const auto render = [&](const Bridge::PreparedPreviewMedia& media, std::vector<float>& peaks) {
+            const Bridge::EngineSessionConfig config{static_cast<int>(item.sampleRate), 256, 4,
+                                                     Bridge::EngineDeviceMode::Null};
+            auto session = Bridge::EngineSession::create(config);
+            ASSERT_TRUE(session);
+            ASSERT_EQ(session->startOutput(), Bridge::kEngineOk);
+            const auto id = createObjectId();
+            ASSERT_EQ(Bridge::registerPreviewMedia(id, media), Bridge::kEngineOk);
+            EXPECT_EQ(Bridge::registeredSoundRevision(id), media.contentRevision);
+            VnPlayDesc play{};
+            play.structSize = sizeof(play);
+            play.soundId = {id.high, id.low};
+            play.busId = VN_BUS_MASTER;
+            play.loopCount = 2;
+            VnVoiceHandle voice = 0;
+            ASSERT_EQ(VnPreview_PlayVoiceRaw(&play, &voice), VN_OK);
+            for (uint64_t offset = 0; offset < item.frames * 2 + 512; offset += 256) {
+                ASSERT_EQ(Vn_Update(), VN_OK);
+                VnPreview_PumpNullMixer(1);
+                VnPreviewChannelPeaksV1 levels{};
+                levels.structSize = sizeof(levels);
+                ASSERT_EQ(VnPreview_TakeChannelPeaks(&levels), VN_OK);
+                for (uint32_t bus = 0; bus < levels.busCount; ++bus) {
+                    if (levels.busIds[bus] != VN_BUS_MASTER) continue;
+                    const auto* channels = levels.channelPeaks + bus * VN_MAX_CHANNELS;
+                    peaks.insert(peaks.end(), channels, channels + levels.mixChannelCount);
+                }
+            }
+        };
+        std::vector<float> expected, actual;
+        ASSERT_NO_FATAL_FAILURE(render(*pcm, expected));
+        ASSERT_NO_FATAL_FAILURE(render(*preview, actual));
+        ASSERT_FALSE(expected.empty());
+        if (item.frames > 1)
+            EXPECT_GT(*std::max_element(expected.begin(), expected.end()), 0.01f);
+        ASSERT_EQ(actual.size(), expected.size());
+        for (size_t sample = 0; sample < expected.size(); ++sample)
+            ASSERT_NEAR(actual[sample], expected[sample], 1e-4f) << sample;
     }
 }

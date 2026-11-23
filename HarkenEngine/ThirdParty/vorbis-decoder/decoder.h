@@ -60,7 +60,7 @@ enum HvResult hv_decode_packet(HvState* state, HvWorkspace* workspace,
 enum HvResult hv_decode_resident_packet(HvState* state, HvWorkspace* workspace,
     const uint8_t* packet, size_t bytes, uint64_t generation, uint64_t offset,
     float*** pcm, unsigned* frames);
-void hv_predecode_next(HvState* s, HvWorkspace* w, const uint8_t* packet, size_t bytes,
+int hv_predecode_next(HvState* s, HvWorkspace* w, const uint8_t* packet, size_t bytes,
                        uint64_t generation, uint64_t offset);
 long hv_packet_blocksize(const HvSetup* setup, const uint8_t* packet, size_t bytes);
 

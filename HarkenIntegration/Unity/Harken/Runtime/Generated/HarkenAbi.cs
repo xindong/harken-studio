@@ -308,7 +308,7 @@ namespace Harken
             Off(f, "VnBusTopologyDesc", "sendCount", Marshal.OffsetOf<VnBusTopologyDesc>("sendCount"), 48);
             Off(f, "VnBusTopologyDesc", "sendStructSize", Marshal.OffsetOf<VnBusTopologyDesc>("sendStructSize"), 52);
             Off(f, "VnBusTopologyDesc", "sends", Marshal.OffsetOf<VnBusTopologyDesc>("sends"), 56);
-            Size(f, "VnSnapshot", Marshal.SizeOf<VnSnapshot>(), 5400);
+            Size(f, "VnSnapshot", Marshal.SizeOf<VnSnapshot>(), 5408);
             Off(f, "VnSnapshot", "structSize", Marshal.OffsetOf<VnSnapshot>("structSize"), 0);
             Off(f, "VnSnapshot", "activeVoiceCount", Marshal.OffsetOf<VnSnapshot>("activeVoiceCount"), 4);
             Off(f, "VnSnapshot", "blockIndex", Marshal.OffsetOf<VnSnapshot>("blockIndex"), 8);
@@ -455,6 +455,8 @@ namespace Harken
             Off(f, "VnSnapshot", "variablePendingCount", Marshal.OffsetOf<VnSnapshot>("variablePendingCount"), 4360);
             Off(f, "VnSnapshot", "variableTerminationCount", Marshal.OffsetOf<VnSnapshot>("variableTerminationCount"), 4368);
             Off(f, "VnSnapshot", "busChannelPeaks", Marshal.OffsetOf<VnSnapshot>("busChannelPeaks"), 4376);
+            Off(f, "VnSnapshot", "vorbisDecodeLastUs", Marshal.OffsetOf<VnSnapshot>("vorbisDecodeLastUs"), 5400);
+            Off(f, "VnSnapshot", "vorbisDecoderCount", Marshal.OffsetOf<VnSnapshot>("vorbisDecoderCount"), 5404);
             Size(f, "VnPropertyTargetInfo", Marshal.SizeOf<VnPropertyTargetInfo>(), 64);
             Off(f, "VnPropertyTargetInfo", "structSize", Marshal.OffsetOf<VnPropertyTargetInfo>("structSize"), 0);
             Off(f, "VnPropertyTargetInfo", "scopeKind", Marshal.OffsetOf<VnPropertyTargetInfo>("scopeKind"), 4);

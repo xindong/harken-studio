@@ -14,5 +14,6 @@ target_link_libraries(harken_studio_pack_build PUBLIC
     harken_studio_types
     harken_buildinfo
     Harken::PackFormat
+    PRIVATE Harken::EngineDev
 )
 target_compile_features(harken_studio_pack_build PUBLIC cxx_std_20)

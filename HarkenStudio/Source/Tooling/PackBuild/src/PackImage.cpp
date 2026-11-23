@@ -7,6 +7,8 @@
 #include "harken_studio_build/WorldValidation.h"
 #include "harken_studio_build/EffectEncoding.h"
 
+#include <harken/HarkenDevelopment.h>
+
 #include <algorithm>
 #include <exception>
 #include <cmath>
@@ -20,9 +22,21 @@
 namespace harken::studio::build {
 
 namespace {
+bool ValidateResidentVorbis(const PackTocEntry& media, const std::uint8_t* blob) {
+    const auto loopEnd = LoadLE64(blob + offsetof(HkPackVorbisHeader, loopEndFrame));
+    const VnPackByteSpan span{sizeof(VnPackByteSpan), 0, blob, media.blobBytes};
+    return LoadLE32(blob + offsetof(HkPackVorbisHeader, sampleRate)) == media.sampleRate &&
+        LoadLE16(blob + offsetof(HkPackVorbisHeader, channels)) == media.channelCount &&
+        LoadLE64(blob + offsetof(HkPackVorbisHeader, frameCount)) == media.frameCount &&
+        LoadLE64(blob + offsetof(HkPackVorbisHeader, loopStartFrame)) == media.loopStartFrame &&
+        loopEnd == media.loopEndFrame && bool(loopEnd) == bool(media.flags & HK_PACK_MEDIA_FLAG_LOOPABLE) &&
+        VnPreview_ValidateResidentVorbis(&span) == VN_OK;
+}
+
 bool ValidateV2MediaEntry(const PackTocEntry& e, std::uint64_t fileBytes,
                           std::uint64_t blobRegionStart) {
-    if (e.sampleFormat != HK_PACK_SAMPLE_FORMAT_F32_PLANAR) {
+    const bool vorbis = e.sampleFormat == HK_PACK_SAMPLE_FORMAT_VORBIS_RESIDENT;
+    if (!vorbis && e.sampleFormat != HK_PACK_SAMPLE_FORMAT_F32_PLANAR) {
         return false;
     }
     if ((e.flags & ~HK_PACK_MEDIA_KNOWN_FLAGS) != 0) {
@@ -33,10 +47,10 @@ bool ValidateV2MediaEntry(const PackTocEntry& e, std::uint64_t fileBytes,
         return false;
     }
     const std::uint64_t channels = e.channelCount;
-    if (e.frameCount > UINT64_MAX / (channels * sizeof(float))) {
-        return false;
-    }
-    if (e.blobBytes != e.frameCount * channels * sizeof(float)) {
+    if (vorbis) {
+        if (e.blobBytes < sizeof(HkPackVorbisHeader)) return false;
+    } else if (e.frameCount > UINT64_MAX / (channels * sizeof(float)) ||
+               e.blobBytes != e.frameCount * channels * sizeof(float)) {
         return false;
     }
     if (e.blobOffset % HK_PACK_BLOB_ALIGN != 0) {
@@ -278,6 +292,7 @@ harken::studio::build::PackResult ParsePackV2Image(const std::uint8_t* bytes, st
             }
             const PackTocEntry media = ReadPackMedia(payload);
             if (media.soundId != entry.id ||
+                media.sampleFormat != HK_PACK_SAMPLE_FORMAT_F32_PLANAR ||
                 !ValidateV2MediaEntry(media, fileBytes, dirEnd)) {
                 return harken::studio::build::kPackInvalid;
             }
@@ -1195,13 +1210,12 @@ harken::studio::build::PackResult ParsePackCanonicalImage(const std::uint8_t* by
                 return harken::studio::build::kPackInvalid;
             }
             const PackTocEntry media = ReadPackMedia(payload);
-            if (media.soundId != entry.id ||
-                !ValidateV2MediaEntry(media, fileBytes, dirEnd)) {
+            if (media.soundId != entry.id || !ValidateV2MediaEntry(media, fileBytes, dirEnd)) {
                 return harken::studio::build::kPackInvalid;
             }
-            if (Fnv1a64(bytes + media.blobOffset,
-                        static_cast<std::size_t>(media.blobBytes)) !=
-                media.blobChecksum) {
+            const auto* blob = bytes + media.blobOffset;
+            if (Fnv1a64(blob, static_cast<std::size_t>(media.blobBytes)) != media.blobChecksum ||
+                (media.sampleFormat == HK_PACK_SAMPLE_FORMAT_VORBIS_RESIDENT && !ValidateResidentVorbis(media, blob))) {
                 return harken::studio::build::kPackInvalid;
             }
             ranges.emplace_back(media.blobOffset, media.blobBytes);
