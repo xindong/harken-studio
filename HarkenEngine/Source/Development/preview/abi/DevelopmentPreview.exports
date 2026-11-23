@@ -44,6 +44,7 @@ EXPORTS
     VnPreview_QueryVoiceWorldGeneration
     VnPreview_RefreshVoiceBindings
     VnPreview_RegisterPcm
+    VnPreview_RegisterResidentVorbis
     VnPreview_ResetPlayable
     VnPreview_SetBusEffect
     VnPreview_SetVoiceEffect
@@ -51,6 +52,7 @@ EXPORTS
     VnPreview_SetVoiceProperty
     VnPreview_StopPlayable
     VnPreview_TakeChannelPeaks
+    VnPreview_ValidateResidentVorbis
 
 ; The identifier prefixes and the capability name this surface owns. A token
 ; here appearing anywhere in a gameplay product, or in a generator input, means

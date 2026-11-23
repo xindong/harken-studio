@@ -347,11 +347,11 @@ static void hv_store(HvWorkspace* w, const vorbis_block* b, uint64_t generation,
 #endif
 }
 
-void hv_predecode_next(HvState* s, HvWorkspace* w, const uint8_t* packet, size_t bytes,
+int hv_predecode_next(HvState* s, HvWorkspace* w, const uint8_t* packet, size_t bytes,
                        uint64_t generation, uint64_t offset) {
     if (!s || !w || !generation || !packet || !bytes || bytes > 65535 ||
         w->ownerAddress != (uintptr_t)s || w->consecutive < 2 || w->preparedPcm ||
-        hv_find(w, generation, offset)) return;
+        hv_find(w, generation, offset)) return 0;
     vorbis_block block = s->block;
     ogg_packet p = {0};
     p.packet = (unsigned char*)packet; p.bytes = (long)bytes;
@@ -359,7 +359,7 @@ void hv_predecode_next(HvState* s, HvWorkspace* w, const uint8_t* packet, size_t
     w->used = 0; block.internal = w; w->preparing = 1;
     if (setjmp(w->failure)) {
         w->preparing = 0;
-        return;
+        return 1;
     }
     if (vorbis_synthesis(&block, &p) == 0) {
         w->preparedGeneration = generation;
@@ -369,6 +369,7 @@ void hv_predecode_next(HvState* s, HvWorkspace* w, const uint8_t* packet, size_t
         w->preparedEnd = block.pcmend;
     }
     w->preparing = 0;
+    return 1;
 }
 
 enum HvResult hv_decode_packet(HvState* s, HvWorkspace* w, const uint8_t* packet, size_t bytes,

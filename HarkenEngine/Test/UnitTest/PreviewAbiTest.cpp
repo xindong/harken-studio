@@ -1,5 +1,6 @@
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/TestUtil.h"
+#include "Common/VorbisFixture.h"
 
 #include "Engine.h"
 #include "MonitorCaptureHubTestHooks.h"
@@ -558,6 +559,54 @@ bool PumpUntilNonSilent(harken::Engine& engine) {
 }
 
 #if HARKEN_DEVELOPMENT_PREVIEW
+
+TEST(PreviewAbi, MediaReplacementPreservesPlaybackAndRejectsInvalidInputAtomically) {
+    auto encoded = harken::test::MakeVorbisFixture(2, false, 257, 1023, 4096, true);
+    const VnPackByteSpan media{sizeof(VnPackByteSpan), 0, encoded.media.data(), encoded.media.size()};
+    ASSERT_EQ(VnPreview_ValidateResidentVorbis(&media), VN_OK);
+    PreviewSession fixture;
+    auto& engine = *fixture.session.Engine();
+    const auto pcmRevision = engine.registry.Lookup(kSound).contentRevision;
+    std::uint64_t revision = 0;
+    ASSERT_EQ(VnPreview_RegisterResidentVorbis(kSound, &media, &revision), VN_OK);
+    const auto encodedRevision = revision;
+    EXPECT_NE(encodedRevision, pcmRevision);
+    ASSERT_NE(encodedRevision, 0u);
+
+    encoded.media.front() = 0;
+    EXPECT_EQ(VnPreview_ValidateResidentVorbis(&media), VN_BAD_PACK);
+    EXPECT_EQ(VnPreview_RegisterResidentVorbis(kSound, &media, &revision), VN_BAD_PACK);
+    EXPECT_EQ(revision, 0u);
+    EXPECT_EQ(engine.registry.Lookup(kSound).contentRevision, encodedRevision);
+    const auto play = harkentest::MakePlayDesc(kSound);
+    VnVoiceHandle voice = 0;
+    ASSERT_EQ(VnPreview_PlayVoiceRaw(&play, &voice), VN_OK);
+    ASSERT_TRUE(PumpUntilNonSilent(engine));
+    VnSnapshot snapshot{};
+    snapshot.structSize = sizeof(snapshot);
+    for (int block = 0; block < 32; ++block) {
+        ASSERT_EQ(Vn_CaptureSnapshot(&snapshot), VN_OK);
+        ASSERT_EQ(snapshot.vorbisDecoderCount, 1u);
+        if (snapshot.vorbisDecodeLastUs) break;
+        engine.nullBackend.Pump(1);
+    }
+    EXPECT_GT(snapshot.vorbisDecodeLastUs, 0u);
+
+    const auto pcm = harkentest::MonoDesc(fixture.samples, 48000);
+    ASSERT_EQ(VnPreview_RegisterPcm(kSound, &pcm, 0, 0, &revision), VN_OK);
+    EXPECT_EQ(revision, pcmRevision);
+    EXPECT_TRUE(engine.registry.HasRetired(kSound));
+    ASSERT_TRUE(PumpUntilNonSilent(engine));
+    ASSERT_EQ(Vn_Stop(voice, 0), VN_OK);
+    for (int block = 0; block < 16 && engine.registry.HasRetired(kSound); ++block) {
+        engine.nullBackend.Pump(1);
+        ASSERT_EQ(Vn_Update(), VN_OK);
+    }
+    EXPECT_FALSE(engine.registry.HasRetired(kSound));
+    ASSERT_EQ(Vn_CaptureSnapshot(&snapshot), VN_OK);
+    EXPECT_EQ(snapshot.vorbisDecoderCount, 0u);
+    EXPECT_EQ(Vn_UnregisterPCM(kSound), VN_OK);
+}
 
 void ExpectPublicPreviewAudible(
     harken::ContainerModeV1 mode,

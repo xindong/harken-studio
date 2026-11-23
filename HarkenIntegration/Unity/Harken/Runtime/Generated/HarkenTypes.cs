@@ -1363,6 +1363,8 @@ namespace Harken
     public ulong variablePendingCount;
     public ulong variableTerminationCount;
     public fixed float busChannelPeaks[256];
+    public uint vorbisDecodeLastUs;
+    public uint vorbisDecoderCount;
     }
 
     [StructLayout(LayoutKind.Sequential)]

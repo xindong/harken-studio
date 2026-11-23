@@ -37,11 +37,11 @@ struct CodecState
 constexpr std::array<std::array<uint8_t, 8>, 8> kVorbisChannels{{
     {{0}},
     {{0, 1}},
-    {{0, 2, 1}},
+    {},
     {{0, 1, 2, 3}},
-    {{0, 2, 1, 3, 4}},
+    {},
     {{0, 2, 1, 4, 5, 3}},
-    {{0, 2, 1, 5, 6, 4, 3}},
+    {},
     {{0, 2, 1, 6, 7, 4, 5, 3}}
 }};
 
@@ -142,8 +142,12 @@ std::optional<EncodedMedia> encode(const std::vector<float>& samples,
                                   uint64_t loopEnd,
                                   QString* error)
 {
+    if (!supportsChannels(channels)) {
+        fail(error, QStringLiteral("Vorbis supports 1, 2, 4, 6 or 8 channels"));
+        return std::nullopt;
+    }
     if (sampleRate == 0 || sampleRate > static_cast<uint32_t>(std::numeric_limits<int32_t>::max())
-        || channels == 0 || channels > kVorbisChannels.size() || samples.empty()
+        || samples.empty()
         || samples.size() % channels != 0 || !std::isfinite(quality)
         || quality < 0.0f || quality > 1.0f) {
         fail(error, QStringLiteral("Vorbis encoding parameters are invalid"));
@@ -251,7 +255,7 @@ std::optional<EncodedMedia> encode(const std::vector<float>& samples,
 
 bool validate(const EncodedMedia& media, QString* error)
 {
-    if (media.sampleRate == 0 || media.channels == 0 || media.channels > kVorbisChannels.size()
+    if (media.sampleRate == 0 || !supportsChannels(media.channels)
         || media.frameCount == 0 || media.frameCount > static_cast<uint64_t>(std::numeric_limits<int64_t>::max())
         || media.seekGrainFrames == 0 || media.encoderVersion.isEmpty()
         || (media.loopEndFrame == 0 ? media.loopStartFrame != 0

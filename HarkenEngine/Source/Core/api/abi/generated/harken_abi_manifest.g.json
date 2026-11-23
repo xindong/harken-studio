@@ -6251,6 +6251,38 @@
         {
           "callingConvention": "cdecl",
           "edition": "development",
+          "name": "VnPreview_ValidateResidentVorbis",
+          "parameters": [
+            {
+              "ctype": "const VnPackByteSpan*",
+              "name": "media"
+            }
+          ],
+          "returnType": "VnResult"
+        },
+        {
+          "callingConvention": "cdecl",
+          "edition": "development",
+          "name": "VnPreview_RegisterResidentVorbis",
+          "parameters": [
+            {
+              "ctype": "VnSoundId",
+              "name": "soundId"
+            },
+            {
+              "ctype": "const VnPackByteSpan*",
+              "name": "media"
+            },
+            {
+              "ctype": "uint64_t*",
+              "name": "outContentRevision"
+            }
+          ],
+          "returnType": "VnResult"
+        },
+        {
+          "callingConvention": "cdecl",
+          "edition": "development",
           "name": "VnPreview_PlayVoiceRaw",
           "parameters": [
             {
@@ -6748,6 +6780,7 @@
         "VnPreview_QueryVoiceWorldGeneration",
         "VnPreview_RefreshVoiceBindings",
         "VnPreview_RegisterPcm",
+        "VnPreview_RegisterResidentVorbis",
         "VnPreview_ResetPlayable",
         "VnPreview_SetBusEffect",
         "VnPreview_SetVoiceEffect",
@@ -6755,6 +6788,7 @@
         "VnPreview_SetVoiceProperty",
         "VnPreview_StopPlayable",
         "VnPreview_TakeChannelPeaks",
+        "VnPreview_ValidateResidentVorbis",
         "Vn_ActivateCanonicalPackSetV1",
         "Vn_ActivateCanonicalPackSetV2",
         "Vn_ActivateNamedResidentDirectoryV1",
@@ -25444,9 +25478,29 @@
                 "kind": "array"
               },
               "size": 1024
+            },
+            {
+              "alignment": 4,
+              "name": "vorbisDecodeLastUs",
+              "offset": 5400,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "vorbisDecoderCount",
+              "offset": 5404,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
             }
           ],
-          "size": 5400
+          "size": 5408
         },
         "VnStreamSourceInfoV1": {
           "alignment": 4,
@@ -27346,7 +27400,8 @@
               4296,
               4336,
               4376,
-              5400
+              5400,
+              5408
             ],
             "boundaries": [
               {
@@ -27412,6 +27467,10 @@
               {
                 "field": "busChannelPeaks",
                 "size": 4376
+              },
+              {
+                "field": "vorbisDecodeLastUs",
+                "size": 5400
               }
             ],
             "boundaryFields": [
@@ -27430,9 +27489,10 @@
               "logRingHighWater",
               "logQuantumBudgetDropCount",
               "variableAcceptedCount",
-              "busChannelPeaks"
+              "busChannelPeaks",
+              "vorbisDecodeLastUs"
             ],
-            "currentSize": 5400,
+            "currentSize": 5408,
             "missingFields": "caller-tail-untouched",
             "mode": "exact-discrete-prefix",
             "source": "explicit",
@@ -27514,7 +27574,7 @@
       }
     }
   },
-  "contractSha256": "40b8660ecd5194fe824b74c1995d91b9030a183d2dca4b17168e24e58d181b1f",
+  "contractSha256": "8b86bee12f1a8af34accf31cc8616a8920ebe4a6d32e447a1073da66bd2c4ce6",
   "kind": "harken-contract-suite-manifest",
   "schemaVersion": 1
 }

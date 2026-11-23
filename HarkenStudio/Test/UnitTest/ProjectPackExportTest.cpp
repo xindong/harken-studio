@@ -24,6 +24,9 @@
 #include "Tooling/Harkenizer/Core/ProjectPackBuildService.h"
 #include "Tooling/Harkenizer/Core/ProjectBuildSnapshot.h"
 #include "Tooling/Harkenizer/Core/VorbisEncoder.h"
+#include "Tooling/Harkenizer/Core/SoundSourceDerivative.h"
+#include "Tooling/Harkenizer/ResourceCompiler/ResidentVorbis.h"
+#include "RuntimeBridge/PlaybackBridge.h"
 #include "ProjectSerializer.h"
 #include "ProjectSchemaGenerated.h"
 #include "ItemTypeCatalog.h"
@@ -35,6 +38,7 @@
 #include "harken_buildinfo.h"
 
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 #include "harken_studio_build/WorldCodec.h"
 #include "harken_studio_build/MediaContentRevision.h"
 #include "harken_studio_build/WorldValidation.h"
@@ -67,6 +71,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <limits>
@@ -3702,6 +3707,185 @@ TEST(ProjectPackExport, ProjectBuildReuseOnlyDependsOnSelectedPlatformSources)
     EXPECT_EQ(readFileBytes(context.live.filePath(QStringLiteral("One.bytes"))), windowsBytes);
 }
 
+TEST(ResidentVorbisPackPlayback, ConvertedSampleRatesPreserveSupportedSourceLayouts)
+{
+    using namespace harken::studio;
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    SoundSourceDef source;
+    source.entryId = QUuid::createUuid();
+    source.loopRegion = SoundLoopRegion{240, 2400};
+    const auto platform = HarkenTest::platformId("Windows");
+    for (uint16_t channels : {3, 4, 5, 6, 7, 8}) {
+        const auto path = directory.filePath(QStringLiteral("signal-%1.wav").arg(channels));
+        const std::vector<float> samples(4800 * channels, 0.25f);
+        ASSERT_NO_FATAL_FAILURE(writeWavF32(path, samples, channels, 48000));
+        for (uint32_t rate : {48000u, 32000u}) {
+            SCOPED_TRACE(::testing::Message() << channels << " channels at " << rate << " Hz");
+            const ResolvedConversion conversion{.format = ConversionFormat::Vorbis, .sampleRate = rate};
+            QString error;
+            const auto artifact = SoundSourceDerivative::materialize(path, source, 0.0, platform, {}, conversion, &error);
+            if (channels % 2) {
+                EXPECT_FALSE(artifact);
+                EXPECT_TRUE(error.contains(QStringLiteral("1, 2, 4, 6 or 8"))) << error.toStdString();
+                continue;
+            }
+            ASSERT_TRUE(artifact && artifact->encodedMedia) << error.toStdString();
+            EXPECT_EQ(artifact->channels, channels);
+            EXPECT_EQ(artifact->sampleRate, rate);
+            EXPECT_EQ(artifact->encodedMedia->frameCount, rate / 10);
+            EXPECT_EQ(artifact->loopStartFrame, rate / 200);
+            EXPECT_EQ(artifact->loopEndFrame, rate / 20);
+            const auto preview = bridge::preparePreviewMedia(*artifact, &error);
+            ASSERT_TRUE(preview && preview->vorbis) << error.toStdString();
+            const auto& bytes = preview->vorbis->bytes;
+            const VnPackByteSpan span{sizeof(span), 0, bytes.data(), bytes.size()};
+            EXPECT_EQ(VnPreview_ValidateResidentVorbis(&span), VN_OK);
+        }
+    }
+}
+
+TEST(ResidentVorbisPackPlayback, EnginePlaysSeeksAndLoopsStudioExport)
+{
+    using namespace harken::studio;
+    constexpr uint32_t rate = 48000, block = 128;
+    constexpr uint32_t loopStart = 4321, loopEnd = 12513, seekFrame = 10721;
+    std::vector<float> samples(16000);
+    for (size_t i = 0; i < samples.size(); ++i) {
+        float level = 0.02f;
+        if (i < 2048) level = 0.12f;
+        if (i >= loopStart && i < loopStart + 1024) level = 0.72f;
+        if (i >= seekFrame && i < loopEnd) level = 0.36f;
+        samples[i] = level * static_cast<float>(std::sin(i * (2.0 * 3.141592653589793 / 48.0)));
+    }
+
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    auto& registry = AssetRegistry::instance();
+    registry.clear();
+    const auto clearRegistry = qScopeGuard([&] { registry.clear(); });
+    registry.setProjectRoot(dir.path());
+    const auto source = registerPcmAsset(dir.path(), "markers.wav", samples, 1);
+    ProjectData project;
+    ASSERT_NO_FATAL_FAILURE(buildProject(project, dir.path(), source, source,
+        {{QStringLiteral("Play"), 21, kSharedSoundObjectId}}));
+    auto& sound = *project.layers.front().rootItem->children.front();
+    sound.comp<VAudio>()->loopCount = 0;
+    sound.comp<VSound>()->sources.plain.entries.front().loopRegion = SoundLoopRegion{loopStart, loopEnd};
+    auto preset = makeItem("Vorbis", ProjectItem::Type::Conversion, 601);
+    auto& rules = preset->comp<VConversion>()->config.rules;
+    rules = {{std::nullopt, rate}};
+    rules.front().setFormat(ConversionFormat::Vorbis);
+    project.conversionItems.push_back({preset});
+    sound.fieldGroups.conversion.shared = {FieldGroupMode::Local, ConversionFieldGroup{toFieldGroupGuid(preset->guid)}};
+
+    const QDir output(dir.filePath("published"));
+    ProjectPackExporter::ExportOptions options;
+    options.platform = HarkenTest::platformIdString("Windows");
+    const auto result = ProjectPackExporter().ExportAllPacks(project, output.path(), options);
+    ASSERT_TRUE(result.success) << result.error.toStdString();
+    const auto content = readFileBytes(output.filePath("Play.bytes"));
+    build::PackCanonicalImage image;
+    ASSERT_EQ(VN_OK, build::ParsePackCanonicalImage(reinterpret_cast<const uint8_t*>(content.constData()),
+        static_cast<uint64_t>(content.size()), &image));
+    ASSERT_EQ(1u, image.media.size());
+    ASSERT_EQ(HK_PACK_SAMPLE_FORMAT_VORBIS_RESIDENT, image.media.front().sampleFormat);
+    const auto* asset = registry.getAsset(source);
+    ASSERT_NE(nullptr, asset);
+    const auto conversion = ResolvedConversion{.format = ConversionFormat::Vorbis,
+        .vorbisQuality = rules.front().vorbisQuality, .sampleRate = rate};
+    QString error;
+    const auto derivative = SoundSourceDerivative::materialize(asset->absolutePath,
+        sound.comp<VSound>()->sources.plain.entries.front(), 0.0, QUuid(options.platform), {}, conversion, &error);
+    ASSERT_TRUE(derivative) << error.toStdString();
+    const auto preview = bridge::preparePreviewMedia(*derivative, &error);
+    ASSERT_TRUE(preview && preview->vorbis) << error.toStdString();
+    const auto& packedMedia = image.media.front();
+    ASSERT_EQ(preview->vorbis->bytes.size(), packedMedia.blobBytes);
+    EXPECT_EQ(0, std::memcmp(preview->vorbis->bytes.data(),
+        content.constData() + packedMedia.blobOffset, preview->vorbis->bytes.size()));
+    EXPECT_EQ(preview->contentRevision, packedMedia.blobChecksum ? packedMedia.blobChecksum : 1);
+    const auto packs = readPublication(output.path());
+    const QByteArray paths[] = {output.filePath("Init.bytes").toUtf8(), output.filePath("Play.bytes").toUtf8()};
+    VnCanonicalPackSetMemberV1 members[2]{};
+    for (size_t i = 0; i < 2; ++i) {
+        auto& member = members[i];
+        member.structSize = sizeof(member);
+        member.packKind = i == 0 ? VN_CANONICAL_PACK_SET_MEMBER_INIT : VN_CANONICAL_PACK_SET_MEMBER_CONTENT;
+        member.packStableId = findByName(packs, i == 0 ? "Init" : "Play").value("packStableId").toString().toULongLong();
+        ASSERT_NE(member.packStableId, 0u);
+        member.utf8Path = paths[i].constData();
+    }
+    VnConfig config{};
+    config.structSize = sizeof(config);
+    config.deviceMode = VN_DEVICE_NULL;
+    config.sampleRate = rate;
+    config.blockFrames = block;
+    ASSERT_EQ(VN_OK, Vn_Init(&config));
+    const auto terminate = qScopeGuard([] { Vn_Term(); });
+    VnCanonicalPackSetMemberResultV1 rows[2]{};
+    for (auto& row : rows) row.structSize = sizeof(row);
+    VnCanonicalPackSetActivationDescV1 load{};
+    load.structSize = sizeof(load);
+    load.setRevision = 1;
+    load.memberCount = load.outputMemberCapacity = 2;
+    load.memberStructSize = sizeof(members[0]);
+    load.outputMemberStructSize = sizeof(rows[0]);
+    load.members = members;
+    load.outputMembers = rows;
+    VnCanonicalPackSetActivationReportV1 report{};
+    report.structSize = sizeof(report);
+    ASSERT_EQ(VN_OK, Vn_ActivateCanonicalPackSetV1(&load, &report));
+    ASSERT_EQ(VN_OK, VnPreview_EnableChannelPeakMetering());
+    VnPostActionDesc post{};
+    post.structSize = sizeof(post);
+    post.actionId = harkentest::ObjectId(kStableIdBias + 21);
+    ASSERT_EQ(VN_OK, Vn_CreateEmitter(&post.emitter));
+    VnActionFiringHandle firing{};
+    ASSERT_EQ(VN_OK, Vn_PostAction(&post, &firing));
+
+    const auto renderPeak = [&]() -> float {
+        EXPECT_EQ(VN_OK, Vn_Update());
+        VnPreview_PumpNullMixer(1);
+        VnPreviewChannelPeaksV1 levels{};
+        levels.structSize = sizeof(levels);
+        EXPECT_EQ(VN_OK, VnPreview_TakeChannelPeaks(&levels));
+        for (uint32_t bus = 0; bus < levels.busCount; ++bus)
+            if (levels.busIds[bus] == VN_BUS_MASTER)
+                return levels.channelPeaks[bus * VN_MAX_CHANNELS];
+        ADD_FAILURE() << "Missing master bus";
+        return 0.0f;
+    };
+    float startPeak = 0.0f;
+    for (int i = 0; i < 8; ++i) startPeak = renderPeak();
+    ASSERT_GT(startPeak, 0.03f);
+
+    VnActionSeekDescV1 seek{};
+    seek.structSize = sizeof(seek);
+    seek.firing = firing;
+    seek.positionMs = 1000.0 * seekFrame / rate;
+    seek.mode = VN_ACTION_SEEK_ABSOLUTE;
+    VnActionSeekTicket ticket{};
+    ASSERT_EQ(VN_OK, Vn_SeekActionFiring(&seek, &ticket));
+    renderPeak();
+    VnActionSeekInfoV1 info{};
+    info.structSize = sizeof(info);
+    ASSERT_EQ(VN_OK, Vn_QueryActionSeek(ticket, &info));
+    ASSERT_EQ(VN_ACTION_SEEK_APPLIED, info.state);
+    ASSERT_EQ(seekFrame, info.minimumAppliedSourceFrame);
+    ASSERT_EQ(VN_OK, Vn_ReleaseActionSeek(ticket));
+
+    constexpr unsigned firstWrap = (loopEnd - seekFrame) / block;
+    constexpr unsigned secondWrap = firstWrap + (loopEnd - loopStart) / block;
+    for (unsigned i = 1; i <= secondWrap + 2; ++i) {
+        const float peak = renderPeak();
+        if (i == 4 || i == firstWrap - 2 || i == secondWrap - 2)
+            EXPECT_NEAR(peak / startPeak, 3.0f, 0.35f) << "seek marker, block " << i;
+        if (i == firstWrap + 2 || i == secondWrap + 2)
+            EXPECT_NEAR(peak / startPeak, 6.0f, 0.6f) << "loop marker, block " << i;
+    }
+}
+
 TEST(ProjectPackExport, EffectiveMediaChangesRebuildOnlyTheirConsumers)
 {
     using namespace harken::studio;
@@ -3867,21 +4051,25 @@ TEST(ProjectPackExport, EffectiveMediaChangesRebuildOnlyTheirConsumers)
     const auto publishedReport = mediaReport(inherited);
     ASSERT_NO_FATAL_FAILURE(expectPcmReport(publishedReport));
     const auto published = readFileBytes(context.live.filePath(QStringLiteral("One.bytes")));
-    const auto publishedPackMetadata = readFileBytes(context.live.filePath(QStringLiteral("One.json")));
     firstConfig->rules.front().setFormat(ConversionFormat::Vorbis);
-    const auto refused = build();
-    EXPECT_FALSE(refused.allPlatformsSucceeded);
-    QString diagnostic = refused.preflightError;
-    for (const auto& platform : refused.platforms) diagnostic += platform.result.error;
-    EXPECT_TRUE(diagnostic.contains(QStringLiteral("Vorbis Pack writing is not integrated")))
-        << diagnostic.toStdString();
-    EXPECT_EQ(readFileBytes(context.live.filePath(QStringLiteral("One.bytes"))), published);
-    EXPECT_EQ(readFileBytes(context.live.filePath(QStringLiteral("One.json"))), publishedPackMetadata);
-    const auto refusedReport = mediaReport(refused);
-    ASSERT_EQ(refusedReport.size(), 2);
-    EXPECT_EQ(refusedReport.value(QStringLiteral("Two.bytes")),
-        publishedReport.value(QStringLiteral("Two.bytes")));
-    const auto encodedReport = refusedReport.value(QStringLiteral("One.bytes"));
+    const auto compressed = build();
+    QString diagnostic = compressed.preflightError;
+    for (const auto& platform : compressed.platforms) diagnostic += platform.result.error;
+    ASSERT_TRUE(compressed.allPlatformsSucceeded) << diagnostic.toStdString();
+    ASSERT_TRUE(compressed.finalizationResult.success) << compressed.finalizationResult.error.toStdString();
+    const auto packed = readFileBytes(context.live.filePath(QStringLiteral("One.bytes")));
+    EXPECT_NE(packed, published);
+    harken::studio::build::PackCanonicalImage compressedImage;
+    ASSERT_EQ(VN_OK, harken::studio::build::ParsePackCanonicalImage(
+        reinterpret_cast<const uint8_t*>(packed.constData()), static_cast<uint64_t>(packed.size()), &compressedImage));
+    ASSERT_EQ(compressedImage.media.size(), 1u);
+    const auto& compressedMedia = compressedImage.media.front();
+    ASSERT_EQ(compressedMedia.sampleFormat, HK_PACK_SAMPLE_FORMAT_VORBIS_RESIDENT);
+    EXPECT_EQ(compressedMedia.sampleRate, 32000u);
+    const auto compressedReport = mediaReport(compressed);
+    ASSERT_EQ(compressedReport.size(), 2);
+    EXPECT_EQ(compressedReport.value(QStringLiteral("Two.bytes")), publishedReport.value(QStringLiteral("Two.bytes")));
+    const auto encodedReport = compressedReport.value(QStringLiteral("One.bytes"));
     EXPECT_EQ(encodedReport.value(QStringLiteral("format")).toString(), QStringLiteral("Vorbis"));
     const auto* asset = AssetRegistry::instance().getAsset(source.sourceId);
     ASSERT_NE(asset, nullptr);
@@ -3900,6 +4088,12 @@ TEST(ProjectPackExport, EffectiveMediaChangesRebuildOnlyTheirConsumers)
     EXPECT_LT(payloadBytes, static_cast<uint64_t>(encodedFiles.front().size()));
     EXPECT_EQ(encodedReport.value(QStringLiteral("outputBytes")).toInteger(),
         static_cast<qint64>(payloadBytes));
+    for (bool force : {false, true}) {
+        const auto rebuilt = build(force);
+        ASSERT_TRUE(rebuilt.allPlatformsSucceeded) << rebuilt.preflightError.toStdString();
+        ASSERT_TRUE(rebuilt.finalizationResult.success) << rebuilt.finalizationResult.error.toStdString();
+        EXPECT_EQ(packed, readFileBytes(context.live.filePath(QStringLiteral("One.bytes"))));
+    }
     const auto remainingBytes = readFileBytes(context.live.filePath(QStringLiteral("Two.bytes")));
     harken::studio::build::PackCanonicalImage previousImage;
     harken::studio::build::PackCanonicalImage remainingImage;

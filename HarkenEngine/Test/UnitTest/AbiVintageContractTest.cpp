@@ -16,10 +16,10 @@ constexpr std::array<std::uint32_t, 16> kConfigVintages = {
     32, 64, 80, 88, 112, 184, 192, 208, 224, 232, 240, 264, 280, 288, 344,
     352,
 };
-constexpr std::array<std::uint32_t, 18> kSnapshotVintages = {
+constexpr std::array<std::uint32_t, 19> kSnapshotVintages = {
     1832, 2560, 2568, 2656, 2680, 2752,
     3144, 3152, 3160, 3416, 3536, 4280,
-    4288, 4296, 4320, 4336, 4376, 5400,
+    4288, 4296, 4320, 4336, 4376, 5400, 5408,
 };
 
 static_assert(offsetof(VnConfig, onNotification) == 32);
@@ -91,7 +91,8 @@ static_assert(offsetof(VnSnapshot, lateConsumedEvents) == 4328);
 static_assert(offsetof(VnSnapshot, variableAcceptedCount) == 4336);
 static_assert(offsetof(VnSnapshot, variableTerminationCount) == 4368);
 static_assert(offsetof(VnSnapshot, busChannelPeaks) == 4376);
-static_assert(sizeof(VnSnapshot) == 5400);
+static_assert(offsetof(VnSnapshot, vorbisDecodeLastUs) == 5400);
+static_assert(sizeof(VnSnapshot) == 5408);
 
 static_assert(sizeof(VnCurrentWorldLoadDesc) == 16);
 static_assert(offsetof(VnCurrentWorldLoadDesc, structSize) == 0);
@@ -130,7 +131,7 @@ struct VintageBoundary {
         #field, offsetof(VnSnapshot, field), sizeof(VnSnapshot::field)       \
     }
 
-const std::array<VintageBoundary, 15> kSnapshotBoundaries = {{
+const std::array<VintageBoundary, 16> kSnapshotBoundaries = {{
     HARKEN_SNAPSHOT_BOUNDARY(voicePublicHandles),
     HARKEN_SNAPSHOT_BOUNDARY(logicLogDropCount),
     HARKEN_SNAPSHOT_BOUNDARY(nestedTriggerDroppedCount),
@@ -146,6 +147,7 @@ const std::array<VintageBoundary, 15> kSnapshotBoundaries = {{
     HARKEN_SNAPSHOT_BOUNDARY(deadlineMissQuanta),
     HARKEN_SNAPSHOT_BOUNDARY(variableAcceptedCount),
     HARKEN_SNAPSHOT_BOUNDARY(busChannelPeaks),
+    HARKEN_SNAPSHOT_BOUNDARY(vorbisDecodeLastUs),
 }};
 
 #undef HARKEN_SNAPSHOT_BOUNDARY

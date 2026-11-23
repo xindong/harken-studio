@@ -297,6 +297,7 @@ class RuntimeAbiManifestTest(unittest.TestCase):
                 4336,
                 4376,
                 5400,
+                5408,
             ],
             policies["VnSnapshot"]["acceptedSizes"],
         )

@@ -544,6 +544,28 @@ VnResult PCMRegistry::PrepareVorbisSamples(VnSoundId soundId, VorbisCodec& codec
     return VN_OK;
 }
 
+#if HARKEN_ENGINE_DEV
+VnResult PCMRegistry::PublishResidentVorbis(PreparedPackSamples& samples) {
+    const auto soundId = samples.SoundId();
+    const auto cookie = CookieOf(soundId);
+    if (cookie && HasRetired(soundId)) return VN_IN_USE;
+    PackReferenceRegistration registration{};
+    registration.soundId = soundId;
+    registration.samples = &samples;
+    PreparedPackMutation mutation;
+    const auto result = PreparePackMutation(&registration, 1, cookie ? 1 : 0, &mutation);
+    if (result != VN_OK) return result;
+    if (cookie) {
+        m_retired.reserve(m_retired.size() + 1);
+        RetiredGeneration old;
+        if (!ExtractRetiring(soundId, cookie, &old)) return VN_IN_USE;
+        if (!old.Drained()) m_retired.push_back(std::move(old));
+    }
+    CommitPreparedPackMutation(&mutation);
+    return VN_OK;
+}
+#endif
+
 VnResult PCMRegistry::PreparePackRangeSamples(VnSoundId soundId,
     std::shared_ptr<const PackMediaRange> range, PreparedPackSamples* out,
     const PreparedPackSamples* provenEqual) {

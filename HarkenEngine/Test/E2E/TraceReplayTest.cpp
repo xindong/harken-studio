@@ -16,6 +16,7 @@
 
 #include "Common/RecipePackTestUtil.h"
 #include "Common/TestUtil.h"
+#include "Common/VorbisFixture.h"
 #include "TraceCodec.h"
 #include "ActionAdmission.h"
 #include "ProjectGenerationTransaction.h"
@@ -103,21 +104,27 @@ void CaptureLastBlock(harken::Engine* engine,
 float PeakOfRawF32(const std::vector<std::uint8_t>& bytes);
 
 #if HARKEN_DEVELOPMENT_PREVIEW
-TEST(TraceReplayE2E,
-     CurrentWorldQueueOriginPcmAndTypedPreviewReplayDeterministically) {
+void ExpectTypedPreviewReplay(const harken::test::VorbisFixture* encoded) {
     constexpr VnObjectId kSound = harkentest::ObjectId(0x9501);
     constexpr VnObjectId kContainer = harkentest::ObjectId(0x9502);
-    const std::string tracePath = TempPath("preview_playable_vtrc4.vtrc");
-    const std::string out1 = TempPath("preview_playable_vtrc4_1.f32");
-    const std::string out2 = TempPath("preview_playable_vtrc4_2.f32");
+    const std::string name = encoded ? "preview_vorbis" : "preview_playable_vtrc4";
+    const std::string tracePath = TempPath(name + ".vtrc");
+    const std::string out1 = TempPath(name + "_1.f32");
+    const std::string out2 = TempPath(name + "_2.f32");
     std::filesystem::remove(tracePath);
     std::filesystem::remove(out1);
     std::filesystem::remove(out2);
     std::vector<float> samples(4096, 0.25f);
     const float* channels[1] = {samples.data()};
     std::uint64_t contentRevision = 0;
-    ASSERT_TRUE(harken::ComputeMediaPcmContentRevisionV1(
-        48000, 1, samples.size(), channels, 1, &contentRevision));
+    if (encoded) {
+        harken::VorbisMedia parsed;
+        ASSERT_TRUE(harken::ParseResidentVorbis(encoded->media.data(), encoded->media.size(), parsed));
+        contentRevision = parsed.revision;
+    } else {
+        ASSERT_TRUE(harken::ComputeMediaPcmContentRevisionV1(
+            48000, 1, samples.size(), channels, 1, &contentRevision));
+    }
 
     std::vector<std::uint8_t> original;
     {
@@ -196,8 +203,15 @@ TEST(TraceReplayE2E,
         ASSERT_EQ(harken::InstallContainerWorldV1(*engine, world).status,
                   harken::WorldInstallStatus::Ok);
         ASSERT_EQ(VN_OK, Vn_TraceStart(tracePath.c_str()));
-        const VnPCMDesc pcm = harkentest::MonoDesc(samples, 48000);
-        ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSound, &pcm));
+        if (encoded) {
+            const VnPackByteSpan media{sizeof(VnPackByteSpan), 0, encoded->media.data(), encoded->media.size()};
+            std::uint64_t revision = 0;
+            ASSERT_EQ(VN_OK, VnPreview_RegisterResidentVorbis(kSound, &media, &revision));
+            ASSERT_EQ(contentRevision, revision);
+        } else {
+            const VnPCMDesc pcm = harkentest::MonoDesc(samples, 48000);
+            ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSound, &pcm));
+        }
 
         VnPreviewPlayPlayableDescV2 desc{};
         desc.structSize = sizeof(desc);
@@ -235,6 +249,15 @@ TEST(TraceReplayE2E,
     ASSERT_FALSE(replay1.empty());
     EXPECT_EQ(replay1, replay2);
     EXPECT_EQ(original, replay1);
+}
+
+TEST(TraceReplayE2E, CurrentWorldQueueOriginPcmAndTypedPreviewReplayDeterministically) {
+    ExpectTypedPreviewReplay(nullptr);
+}
+
+TEST(TraceReplayE2E, ResidentVorbisPreviewReplaysDeterministically) {
+    const auto encoded = harken::test::MakeVorbisFixture(1, false, 0, 0, 4096, true);
+    ExpectTypedPreviewReplay(&encoded);
 }
 
 TEST(TraceReplayE2E,

@@ -6,8 +6,8 @@
 #include "DiagnosticsBridge.h"
 #include "MediaRegistry.h"
 #include "MediaServices.h"
-#include "TransitionalVorbisPreviewDecoder.h"
 #include "Tooling/Harkenizer/Core/SoundSourceDerivative.h"
+#include "Tooling/Harkenizer/ResourceCompiler/ResidentVorbis.h"
 #include "CurrentWorldSyncBridgeInternal.h"
 
 #include <harken/Harken.h>
@@ -1145,46 +1145,61 @@ std::optional<PreparedPreviewMedia> runtimePreparePreviewMedia(
         return std::nullopt;
     };
     PreparedPreviewMedia prepared;
-    if (artifact.format == harken::studio::ConversionFormat::PCM) {
-        prepared.samples = artifact.samples;
-    } else if (artifact.format == harken::studio::ConversionFormat::Vorbis) {
+    if (artifact.format == ConversionFormat::Vorbis) {
         if (!artifact.encodedMedia)
             return fail(QStringLiteral("Vorbis preview has no encoded media"));
         const auto& encoded = *artifact.encodedMedia;
         if (encoded.channels != artifact.channels || encoded.sampleRate != artifact.sampleRate
             || encoded.loopStartFrame != artifact.loopStartFrame || encoded.loopEndFrame != artifact.loopEndFrame)
             return fail(QStringLiteral("Vorbis preview metadata does not match the artifact"));
-        auto decoded = decodeTransitionalVorbisPreview(encoded, error);
-        if (!decoded) return std::nullopt;
-        prepared.samples = std::make_shared<const std::vector<float>>(std::move(*decoded));
-    } else {
-        return fail(QStringLiteral("Preview media format is invalid"));
+        prepared.vorbis = VorbisEncoder::prepareResidentVorbis(encoded, error);
+        if (!prepared.vorbis) return std::nullopt;
+        prepared.contentRevision = prepared.vorbis->revision();
+        return prepared;
     }
-    if (!prepared.samples || artifact.channels == 0 || artifact.channels > 8 || artifact.sampleRate == 0
-        || prepared.samples->empty() || prepared.samples->size() % artifact.channels != 0)
+    if (artifact.format != ConversionFormat::PCM)
+        return fail(QStringLiteral("Preview media format is invalid"));
+    if (!artifact.samples || artifact.channels == 0 || artifact.channels > 8 || artifact.sampleRate == 0
+        || artifact.samples->empty() || artifact.samples->size() % artifact.channels != 0)
         return fail(QStringLiteral("Preview media samples are invalid"));
-    const auto frames = prepared.samples->size() / artifact.channels;
+    const auto frames = artifact.samples->size() / artifact.channels;
     if (artifact.loopEndFrame == 0 ? artifact.loopStartFrame != 0
         : artifact.loopStartFrame >= artifact.loopEndFrame || artifact.loopEndFrame > frames)
         return fail(QStringLiteral("Preview media loop range is invalid"));
-    prepared.contentRevision = soundPcmContentRevision(*prepared.samples, artifact.channels,
+    prepared.contentRevision = soundPcmContentRevision(*artifact.samples, artifact.channels,
         artifact.sampleRate, artifact.loopStartFrame, artifact.loopEndFrame);
     if (prepared.contentRevision == 0)
         return fail(QStringLiteral("Cannot compute preview media revision"));
-    prepared.artifact = std::make_shared<const harken::studio::SoundSourceDerivative::MaterializedArtifact>(artifact);
+    prepared.pcm = std::make_shared<const SoundSourceDerivative::MaterializedArtifact>(artifact);
     return prepared;
 }
 
 VnResult runtimeRegisterPreviewMedia(harken::studio::types::ObjectId soundId, const PreparedPreviewMedia& media)
 {
-    if (!media.artifact || !media.samples || media.contentRevision == 0)
+    if (types::IsNull(soundId) || media.contentRevision == 0)
         return VN_INVALID_ARG;
-    const auto& artifact = *media.artifact;
-    const auto result = registerDecodedSound(soundId, *media.samples, artifact.channels,
-        artifact.sampleRate, artifact.loopStartFrame, artifact.loopEndFrame, media.contentRevision);
-    if (result == VN_OK)
-        g_runtime.preparedSounds.insert(soundId);
-    return result;
+    if (media.vorbis) {
+        if (media.vorbis->revision() != media.contentRevision)
+            return VN_REVISION_CONFLICT;
+        if (runtimeRegisteredSoundRevision(soundId) != media.contentRevision) {
+            uint64_t revision = 0;
+            const auto& bytes = media.vorbis->bytes;
+            const VnPackByteSpan span{sizeof(VnPackByteSpan), 0, bytes.data(), bytes.size()};
+            const auto result = VnPreview_RegisterResidentVorbis(
+                toNative(soundId), &span, &revision);
+            if (result != VN_OK) return result;
+            g_runtime.registeredSounds.insert(soundId);
+            g_runtime.registeredSoundRevisions[soundId] = revision;
+        }
+    } else {
+        if (!media.pcm || !media.pcm->samples) return VN_INVALID_ARG;
+        const auto& pcm = *media.pcm;
+        const auto result = registerDecodedSound(soundId, *pcm.samples, pcm.channels,
+            pcm.sampleRate, pcm.loopStartFrame, pcm.loopEndFrame, media.contentRevision);
+        if (result != VN_OK) return result;
+    }
+    g_runtime.preparedSounds.insert(soundId);
+    return VN_OK;
 }
 
 VnResult runtimeRegisterSoundPcm(harken::studio::types::ObjectId soundId, const std::vector<float>& samples,

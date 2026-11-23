@@ -1,10 +1,12 @@
 #include "harken/media/VorbisDecoder.h"
 #include "harken/media/VorbisSetupBatch.h"
 #include "harken/media/PackFormat.h"
+#include "harken/core/CpuClock.h"
 #include "../../../../ThirdParty/vorbis-decoder/decoder.h"
 #include <algorithm>
 #include <cstring>
 #include <new>
+#include <utility>
 
 namespace harken {
 VorbisCodec::VorbisCodec(unsigned workers, bool compactCodebooks) : settings(compactCodebooks) {
@@ -15,6 +17,22 @@ VorbisCodec::VorbisCodec(unsigned workers, bool compactCodebooks) : settings(com
         workspaces.push_back(std::move(workspace));
     }
 }
+
+#if HARKEN_ENGINE_DEV
+std::uint64_t VorbisCodec::TakeDecodeTicks() noexcept {
+    std::uint64_t ticks = 0;
+    for (const auto& workspace : workspaces)
+        ticks += std::exchange(workspace->decodeTicks_, 0);
+    return ticks;
+}
+
+std::uint32_t VorbisStatePool::ActiveCount() const noexcept {
+    std::uint32_t count = 0;
+    for (auto* state = all_; state; state = state->next)
+        if (!state->available && !state->retired.load(std::memory_order_acquire)) ++count;
+    return count;
+}
+#endif
 
 std::shared_ptr<VorbisResident> VorbisResident::Prepare(VorbisCodec& codec,
     std::vector<std::uint8_t> bytes, std::size_t budget, VorbisPrepareResult& result, bool packFormat,
@@ -103,8 +121,15 @@ bool VorbisStatePool::State::Read(std::uint64_t frame, std::uint32_t requested,
         resident->codec_->states.ActiveBytes() == backingBytes + sizeof(State)) {
         const std::uint8_t* nextPacket = nullptr;
         std::uint32_t nextBytes = 0;
-        if (media.Packet(packetOffset, nextPacket, nextBytes))
+        if (media.Packet(packetOffset, nextPacket, nextBytes)) {
+#if HARKEN_ENGINE_DEV
+            const auto begin = CpuClockTicks();
+            if (hv_predecode_next(decoder, workspace.workspace_, nextPacket, nextBytes, resident->generation_, packetOffset))
+                workspace.decodeTicks_ += CpuClockTicks() - begin;
+#else
             hv_predecode_next(decoder, workspace.workspace_, nextPacket, nextBytes, resident->generation_, packetOffset);
+#endif
+        }
     }
     while (decodedOffset == decodedFrames) {
         const std::uint8_t* packet = nullptr;
@@ -325,7 +350,14 @@ void VorbisStatePool::State::Restart() noexcept {
 bool VorbisStatePool::State::Decode(VorbisWorkspace& workspace, const std::uint8_t* packet,
     std::size_t bytes, const float* (&pcm)[8], unsigned& frames, std::uint64_t generation) noexcept {
     float** decoded = nullptr;
-    if (hv_decode_resident_packet(decoder, workspace.workspace_, packet, bytes, generation, packetOffset, &decoded, &frames) != HV_OK) return false;
+#if HARKEN_ENGINE_DEV
+    const auto begin = CpuClockTicks();
+#endif
+    const auto result = hv_decode_resident_packet(decoder, workspace.workspace_, packet, bytes, generation, packetOffset, &decoded, &frames);
+#if HARKEN_ENGINE_DEV
+    workspace.decodeTicks_ += CpuClockTicks() - begin;
+#endif
+    if (result != HV_OK) return false;
     static constexpr unsigned map6[] = {0, 2, 1, 5, 3, 4};
     static constexpr unsigned map8[] = {0, 2, 1, 7, 5, 6, 3, 4};
     const unsigned channels = settings->Channels();

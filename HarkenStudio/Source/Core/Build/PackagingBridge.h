@@ -34,9 +34,8 @@ namespace harkenizer::resourcecompiler {
 class MediaCache;
 }
 
-namespace harken::studio::VorbisEncoder { struct EncodedMedia; }
-
 namespace harken::studio {
+namespace VorbisEncoder { struct ResidentVorbisBlob; }
 namespace bridge {
 
 //==============================================================================
@@ -209,7 +208,8 @@ struct PackMediaDesc
     uint32_t authoringSourceId = 0; // editor source row, for diagnostics/UI only
     QString sourcePath;
     std::shared_ptr<const std::vector<float>> interleavedSamples;
-    std::shared_ptr<const harken::studio::VorbisEncoder::EncodedMedia> encodedMedia;
+    std::shared_ptr<const VorbisEncoder::ResidentVorbisBlob> residentVorbis;
+    uint64_t encodedFrameCount = 0;
     QString contentHash;
     bool downmixToMono = false;
     bool loopable = false;
@@ -259,14 +259,17 @@ public:
         uint64_t relationOrdinal = 0;
         std::vector<uint8_t> payload;
         std::shared_ptr<const std::vector<float>> media;
+        std::shared_ptr<const std::vector<uint8_t>> encodedBytes;
 
         const uint8_t* mediaData() const
         {
+            if (encodedBytes) return encodedBytes->data();
             return media ? reinterpret_cast<const uint8_t*>(media->data()) : nullptr;
         }
 
         std::size_t mediaBytes() const
         {
+            if (encodedBytes) return encodedBytes->size();
             return media ? media->size() * sizeof(float) : 0;
         }
 

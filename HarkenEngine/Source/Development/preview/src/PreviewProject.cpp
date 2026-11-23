@@ -7,6 +7,7 @@
 #include "harken/core/CurrentWorldCodec.h"
 #include "harken/core/PcmRegistration.h"
 #include "harken/media/PackLogicImage.h"
+#include "harken/media/VorbisDecoder.h"
 
 #include <algorithm>
 #include <array>
@@ -40,6 +41,11 @@ VnPreviewProjectHandle nextHandle = 1;
 harken::Engine* ActiveEngine() {
     std::erase_if(prepared, [](const auto& entry) { return !entry.second->transaction.Valid(); });
     return enabled ? harken::ActiveEngineForProjectGenerationV1() : nullptr;
+}
+
+bool ValidMediaSpan(const VnPackByteSpan* media) {
+    return media && media->structSize == sizeof(*media) && !media->reserved0 &&
+        media->bytes && media->byteCount && media->byteCount <= PTRDIFF_MAX;
 }
 
 VnPreviewPrepareStatus PrepareStatus(harken::ProjectGenerationPrepareStatusV1 status) {
@@ -575,6 +581,33 @@ VnResult VnPreview_RegisterPcm(VnSoundId id, const VnPCMDesc* desc,
     if (!ActiveEngine()) return VN_NOT_INITIALIZED;
     if (!desc || !revision) return VN_INVALID_ARG;
     return harken::RegisterPcmWithLoopRegionV1(id, *desc, {loopStartFrame, loopEndFrame}, revision);
+}
+
+VnResult VnPreview_RegisterResidentVorbis(VnSoundId id, const VnPackByteSpan* media,
+    uint64_t* revision) {
+    if (revision) *revision = 0;
+    if (!ActiveEngine()) return VN_NOT_INITIALIZED;
+    if (!ValidMediaSpan(media) || !revision) return VN_INVALID_ARG;
+    return harken::RegisterResidentVorbis(id, *media, *revision);
+}
+
+VnResult VnPreview_ValidateResidentVorbis(const VnPackByteSpan* media) {
+    if (!enabled) return VN_CAPABILITY_UNAVAILABLE;
+    if (!ValidMediaSpan(media)) return VN_INVALID_ARG;
+    constexpr std::size_t budget = harken::EngineConfig::kDefaultPackDecodeStagingBytes;
+    try {
+        harken::VorbisMedia parsed;
+        if (!harken::ParseResidentVorbis(media->bytes, static_cast<std::size_t>(media->byteCount),
+                                        parsed, budget)) return VN_BAD_PACK;
+        const auto indexBytes = parsed.seek.capacity() * sizeof(harken::VorbisSeekPoint) +
+            parsed.segmentChecksums.capacity() * sizeof(std::uint64_t);
+        if (indexBytes > budget) return VN_PACK_RESIDENT_CAPACITY;
+        const auto result = harken::InspectResidentVorbis(parsed, budget - indexBytes);
+        if (result == harken::VorbisPrepareResult::OutOfMemory) return VN_PACK_RESIDENT_CAPACITY;
+        return result == harken::VorbisPrepareResult::Ok ? VN_OK : VN_BAD_PACK;
+    } catch (const std::bad_alloc&) {
+        return VN_PACK_RESIDENT_CAPACITY;
+    }
 }
 
 VnResult VnPreview_PlayVoiceRaw(const VnPlayDesc* desc, VnVoiceHandle* outHandle) {

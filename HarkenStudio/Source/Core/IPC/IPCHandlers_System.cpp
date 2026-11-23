@@ -633,6 +633,8 @@ QJsonObject IPCServer::handleGetEngineSnapshot(const QJsonObject& args)
     {
         QJsonObject perfJson;
         perfJson["cpu_percent"]    = static_cast<double>(perf.audioCpuPercent);
+        perfJson["vorbis_decode_last_us"] = static_cast<qint64>(perf.vorbisDecodeLastUs);
+        perfJson["vorbis_decoder_count"] = static_cast<qint64>(perf.vorbisDecoderCount);
         perfJson["active_voices"]  = static_cast<int>(perf.activeVoices);
         perfJson["virtual_voices"] = static_cast<int>(perf.virtualVoices);
         perfJson["voice_high_water"]     = static_cast<int>(perf.maxVoices);
@@ -919,6 +921,8 @@ QJsonObject IPCServer::handleGetPerformance(const QJsonObject& args)
 
     QJsonObject result;
     result["cpu_percent"]    = static_cast<double>(perf.audioCpuPercent);
+    result["vorbis_decode_last_us"] = static_cast<qint64>(perf.vorbisDecodeLastUs);
+    result["vorbis_decoder_count"] = static_cast<qint64>(perf.vorbisDecoderCount);
     result["active_voices"]  = static_cast<int>(perf.activeVoices);
     result["virtual_voices"] = static_cast<int>(perf.virtualVoices);
     result["voice_high_water"] = static_cast<int>(perf.maxVoices);

@@ -212,4 +212,6 @@ TEST(ProfilingTiming, TimingFieldsReadZeroBeforeAnyBlockOrUpdate) {
     EXPECT_EQ(0u, snapshot.audioBusesLastUs);
     EXPECT_EQ(0u, snapshot.updateCpuLastUs);
     EXPECT_EQ(0u, snapshot.updateCpuPeakUs);
+    EXPECT_EQ(0u, snapshot.vorbisDecodeLastUs);
+    EXPECT_EQ(0u, snapshot.vorbisDecoderCount);
 }

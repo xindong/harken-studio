@@ -10,6 +10,7 @@
 #include "harken/core/ChannelLayout.h"
 #include "harken/core/CpuClock.h"
 #include "harken/core/FloatMode.h"
+#include "harken/media/VorbisDecoder.h"
 #include "harken/dsp/DownmixSum.h"
 
 #if defined(HARKEN_RT_PROBE_MIX_PUBLICATION)
@@ -74,7 +75,7 @@ CompressorPreparedParameters RestoreCompressorParameters(
 
 } // namespace
 
-MixerLoop::MixerLoop(const EngineConfig& config, VoicePool& voices,
+MixerLoop::MixerLoop(const EngineConfig& config, [[maybe_unused]] VorbisCodec& vorbis, VoicePool& voices,
                      BusTree& buses, DynamicRouteSystem& dynamicRoutes,
                      CommandQueue& commands,
                      ActionSeekTable& actionSeeks,
@@ -92,6 +93,9 @@ MixerLoop::MixerLoop(const EngineConfig& config, VoicePool& voices,
                      OriginalSourceSubmissionRegistry* originalSources)
     : m_blockFrames(config.blockFrames),
       m_maxCommandsPerQuantum(config.maxControlCommandsPerQuantum),
+#if HARKEN_ENGINE_DEV
+      m_vorbis(vorbis),
+#endif
       m_voices(voices),
       m_buses(buses),
       m_dynamicRoutes(dynamicRoutes),
@@ -2227,6 +2231,9 @@ void MixerLoop::PublishSnapshot(std::uint64_t blockIndex, bool blockRendered,
     payload.voiceCompletedCount = m_voices.CompletedCount();
     payload.blocksRendered = blockIndex + 1;
     payload.audioCpuLastUs = timing.wholeUs;
+#if HARKEN_ENGINE_DEV
+    payload.vorbisDecodeLastUs = CpuTicksToMicros(0, m_vorbis.TakeDecodeTicks(), m_cpuTicksPerSecond);
+#endif
     payload.audioCpuPeakUs = m_audioCpuPeakUs;
     payload.audioDrainLastUs = timing.drainUs;
     payload.audioVoicesLastUs = timing.voicesUs;

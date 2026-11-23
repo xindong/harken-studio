@@ -1608,6 +1608,24 @@
         "wire": "out"
       }
     ],
+    "VnPreview_ValidateResidentVorbis": [
+      {
+        "wire": "desc",
+        "type": "VnPackByteSpan"
+      }
+    ],
+    "VnPreview_RegisterResidentVorbis": [
+      {
+        "wire": "objectid"
+      },
+      {
+        "wire": "desc",
+        "type": "VnPackByteSpan"
+      },
+      {
+        "wire": "out"
+      }
+    ],
     "VnPreview_PlayVoiceRaw": [
       {
         "wire": "desc",

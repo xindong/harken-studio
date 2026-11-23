@@ -11,6 +11,11 @@ namespace harken::studio::VorbisEncoder {
 inline constexpr uint32_t kSeekGrainFrames = 4096;
 inline constexpr uint32_t kFormatVersion = 1;
 
+inline constexpr bool supportsChannels(uint32_t channels)
+{
+    return channels == 1 || channels == 2 || channels == 4 || channels == 6 || channels == 8;
+}
+
 struct Packet
 {
     QByteArray bytes;

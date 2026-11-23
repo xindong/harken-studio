@@ -67,7 +67,7 @@ bool readVorbisHeader(const QByteArray& bytes, qint64 fileSize, VorbisCacheHeade
         + header.setupBytes + static_cast<uint64_t>(header.packetCount) * 13
         + static_cast<uint64_t>(header.seekCount) * 28;
     if (fields.status() != QDataStream::Ok || magic != kVorbisCacheMagic
-        || version != VorbisEncoder::kFormatVersion || header.channels == 0 || header.channels > 8
+        || version != VorbisEncoder::kFormatVersion || !VorbisEncoder::supportsChannels(header.channels)
         || !header.sampleRate || !header.frameCount || !header.seekGrainFrames
         || header.frameCount > static_cast<quint64>(std::numeric_limits<qint64>::max())
         || (header.loopEndFrame == 0 ? header.loopStartFrame != 0

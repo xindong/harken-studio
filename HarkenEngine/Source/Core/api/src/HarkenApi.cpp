@@ -124014,6 +124014,59 @@ VnResult RegisterPcmWithLoopRegionV1(
     }
 }
 
+#if HARKEN_ENGINE_DEV
+static VnResult PublishResidentVorbis(Engine& engine, VnSoundId soundId, const VnPackByteSpan& media,
+                                      std::uint64_t& outContentRevision) {
+    try {
+        SweepRetiredGenerations(engine);
+        const auto current = engine.registry.Lookup(soundId);
+        if (current.Valid()) {
+            if (engine.registry.HasRetired(soundId)) return VN_IN_USE;
+            if (CurrentPcmGenerationTouchesGuardedVoice(engine, current.useCount)) {
+                engine.commands.NoteBackpressure();
+                return VN_BACKPRESSURE;
+            }
+        } else {
+            StreamManager::StreamFacts streamFacts;
+            if (engine.registry.CookieOf(soundId) || engine.streams.FindFile(soundId, &streamFacts) ||
+                engine.streams.HasPendingSource(soundId)) return VN_IN_USE;
+        }
+        const auto budget = std::min<std::uint64_t>(engine.config.maxPackDecodeStagingBytes, SIZE_MAX);
+        std::vector<std::uint8_t> copy;
+        if (media.byteCount > budget || media.byteCount > copy.max_size())
+            return VN_PACK_RESIDENT_CAPACITY;
+        copy.assign(media.bytes, media.bytes + static_cast<std::size_t>(media.byteCount));
+        PCMRegistry::PreparedPackSamples samples;
+        const auto prepared = engine.registry.PrepareResidentVorbis(
+            soundId, std::move(copy), static_cast<std::size_t>(budget), &samples);
+        if (prepared != VN_OK) return prepared;
+        const auto revision = samples.View().contentRevision;
+        const auto result = engine.registry.PublishResidentVorbis(samples);
+        if (result == VN_OK) outContentRevision = revision;
+        return result;
+    } catch (const std::bad_alloc&) {
+        detail::RecordCurrentLogicAllocFailure(detail::LogicAllocSite::EngineStorage);
+        return VN_DEVICE_ERROR;
+    }
+}
+
+VnResult RegisterResidentVorbis(VnSoundId soundId, const VnPackByteSpan& media,
+                                std::uint64_t& outContentRevision) {
+    auto* engine = detail::g_engine;
+    if (!engine || engine->callbackFatalSticky) return VN_NOT_INITIALIZED;
+    if (detail::CanonicalSetMutationBlocked()) return VN_IN_USE;
+    const auto result = PublishResidentVorbis(*engine, soundId, media, outContentRevision);
+    const auto resource = result == VN_OK && engine->trace
+        ? tracing::RecordPackBytes(engine->trace.get(), media.bytes, media.byteCount) : 0;
+    auto trace = ::TraceStateful(engine, kTraceCallRegisterResidentVorbis);
+    if (result == VN_OK)
+        trace.ObjectId(soundId).U64(resource).U64(outContentRevision);
+    else
+        trace.MarkUnreplayable();
+    return result;
+}
+#endif
+
 VnResult PrepareAndApplyInitialPackLogic(
     Engine& engine, ::PackStaging& staging,
     VnPackHandle* outHandle, VnPackHandle existingMediaHandle = 0,

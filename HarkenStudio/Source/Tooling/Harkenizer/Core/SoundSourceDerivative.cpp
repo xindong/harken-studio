@@ -378,6 +378,11 @@ std::optional<PreparedMedia> prepare(const QString& inputPath,
         fail(error, QStringLiteral("source format is not supported"));
         return std::nullopt;
     }
+    const bool vorbis = conversion && conversion->format == ConversionFormat::Vorbis;
+    if (vorbis && !VorbisEncoder::supportsChannels(channels)) {
+        fail(error, QStringLiteral("Vorbis supports 1, 2, 4, 6 or 8 channels"));
+        return std::nullopt;
+    }
     const uint64_t totalFrames = static_cast<uint64_t>(
         samples.size() / static_cast<size_t>(channels));
     const auto range = mapFrameRange(source, totalFrames);
@@ -400,6 +405,10 @@ std::optional<PreparedMedia> prepare(const QString& inputPath,
     }
     const auto targetSampleRateHz = conversion ? conversion->sampleRate : 0;
     if (targetSampleRateHz != 0 && targetSampleRateHz != static_cast<uint32_t>(sampleRate)) {
+        if (!vorbis && channels > 2) {
+            fail(error, QStringLiteral("Only nonempty mono and stereo media are supported"));
+            return std::nullopt;
+        }
         if (!AssetConverter::processSamples(trimmed, sampleRate, channels, targetSampleRateHz, loop, error))
             return std::nullopt;
     } else if (loop.enabled) {

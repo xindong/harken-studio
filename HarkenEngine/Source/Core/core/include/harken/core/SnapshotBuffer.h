@@ -121,6 +121,9 @@ struct SnapshotPayload {
     // read, no allocation, no locks. Zero when rendering serially. Occupies the
     // slot the timing reserve held, so the echo stays 8-byte aligned.
     std::uint32_t renderWorkerBusyPeakUs = 0;
+#if HARKEN_ENGINE_DEV
+    std::uint32_t vorbisDecodeLastUs = 0;
+#endif
     // Audio-owned Dynamic Route and Compressor session diagnostics. These
     // counters cannot be read directly by the logic thread; publishing them
     // here preserves both the no-data-race rule and snapshot coherence.
