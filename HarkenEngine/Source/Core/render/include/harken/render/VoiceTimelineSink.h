@@ -1,6 +1,7 @@
 #ifndef HARKEN_RENDER_VOICE_TIMELINE_SINK_H
 #define HARKEN_RENDER_VOICE_TIMELINE_SINK_H
 
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/core/ArmGroupTable.h"
 #include "harken/core/TimelineExecutor.h"
 #include "harken/core/OccurrenceStatePool.h"
@@ -28,17 +29,26 @@ class VoiceTimelineSink final : public TimelineExecutorSink {
 public:
     VoiceTimelineSink(VoicePool& voices, TimelineArmTable& arms)
         : voices_(voices), arms_(arms), frontier_(voices, arms),
-          laneFrontier_(voices, arms), immediate_(voices, arms),
-          plainResults_(voices.Capacity() * 2u * kTimelineMaxEventsPerVoiceQuantum),
-          retiringPlainArms_(arms.Capacity()), retiringPlainArmSlots_(arms.Capacity()) {
-        if (!pendingVariableStarts_.Reserve(voices.Capacity()) ||
+          laneFrontier_(voices, arms), immediate_(voices, arms) {
+        if (!plainResults_.Reserve(voices.Capacity() * 2u * kTimelineMaxEventsPerVoiceQuantum) ||
+            !pendingVariableStarts_.Reserve(voices.Capacity()) ||
             !voices.AttachSlotStoragePreparation(slotStorageRegistration_, this,
                 [](void* context, std::uint32_t count) noexcept {
-                    return static_cast<VoiceTimelineSink*>(context)->pendingVariableStarts_.ConstructThrough(count);
-                })) throw std::bad_alloc{};
+                    auto& sink = *static_cast<VoiceTimelineSink*>(context);
+                    return sink.pendingVariableStarts_.ConstructThrough(count) &&
+                        sink.plainResults_.ConstructThrough(count * 2u * kTimelineMaxEventsPerVoiceQuantum);
+                })) throw harken::detail::LogicPreparationFailure{};
+        if (!arms_.AttachReader(this, [](void* context, std::uint32_t count) noexcept {
+            auto& sink = *static_cast<VoiceTimelineSink*>(context);
+            return sink.retiringPlainArms_.ConstructThrough(count) &&
+                sink.retiringPlainArmSlots_.ConstructThrough(count);
+        })) throw harken::detail::LogicPreparationFailure{};
     }
 
-    ~VoiceTimelineSink() override { slotStorageRegistration_.Detach(); }
+    ~VoiceTimelineSink() override {
+        arms_.DetachReader(this);
+        slotStorageRegistration_.Detach();
+    }
 
 #if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
     struct FrontierStageRecordForTest {
@@ -118,9 +128,10 @@ public:
         pool_ = &pool;
         pageGroups_.assign(pool.MaxScheduleGroupHeadersPerPage(),
                            SchedulePageGroupView{});
-        currentSlices_.assign(decisions.Capacity(),
+        currentSlices_.assign(pageGroups_.size(),
                               ScratchDecisionState{});
-        authoredStopFences_.assign(pool.MaxScheduledTransactions(), nullptr);
+        // An execution pass decodes at most two pages. Each fence comes from a decoded event.
+        authoredStopFences_.assign(2ull * pool.MaxEventsPerQuantum(), nullptr);
         if (!frontier_.Attach(decisions, pool) ||
             !laneFrontier_.Attach(decisions, pool, true)) return false;
         return immediate_.AttachFrontier(laneFrontier_, pool);
@@ -189,8 +200,6 @@ public:
             arenaCapacityRefused_ = !admitted;
             return admitted;
         }
-        std::fill(currentSlices_.begin(), currentSlices_.end(),
-                  ScratchDecisionState{});
         const std::size_t count = pool_->CaptureSchedulePageGroupsRt(
             quantumIndex, pageGroups_.data(), pageGroups_.size());
         if (count > pageGroups_.size()) {
@@ -199,24 +208,32 @@ public:
         for (std::size_t index = 0; index < count; ++index) {
             const SchedulePageGroupView& view = pageGroups_[index];
             if (!view.identity.decision.Valid() || view.lease == nullptr ||
-                view.identity.decision.slot >= currentSlices_.size()) {
+                view.identity.decision.slot >= decisions_->Capacity()) {
                 return false;
             }
-            ScratchDecisionState& state =
-                currentSlices_[view.identity.decision.slot];
-            if (state.generation != 0 &&
-                state.generation != view.identity.decision.generation) {
-                return false;
+            currentSlices_[index] = {view.identity.decision,
+                view.lease->Capture().state == AudioSliceState::SliceClaimed};
+        }
+        // Multiple slices of one decision contribute a single claim for this quantum.
+        std::sort(currentSlices_.begin(), currentSlices_.begin() + count,
+            [](const auto& a, const auto& b) { return a.decision.slot < b.decision.slot; });
+        std::uint32_t decisionsInPage = 0;
+        for (std::size_t i = 0; i < count; ++i) {
+            const auto slice = currentSlices_[i];
+            if (decisionsInPage != 0) {
+                auto& previous = currentSlices_[decisionsInPage - 1u];
+                if (previous.decision.slot == slice.decision.slot) {
+                    if (previous.decision.generation != slice.decision.generation) return false;
+                    previous.currentSliceClaimed |= slice.currentSliceClaimed;
+                    continue;
+                }
             }
-            state.generation = view.identity.decision.generation;
-            state.currentSliceClaimed =
-                state.currentSliceClaimed ||
-                view.lease->Capture().state == AudioSliceState::SliceClaimed;
+            currentSlices_[decisionsInPage++] = slice;
         }
         const bool admitted = immediate_.AdmitQuantum(
             arenaAvailableBytes_, blockFrames_, decisions_,
             currentSlices_.data(),
-            static_cast<std::uint32_t>(currentSlices_.size()));
+            decisionsInPage);
         arenaCapacityRefused_ = !admitted;
         return admitted;
     }
@@ -1535,9 +1552,9 @@ private:
     StableRowStorage<PendingVariableStart> pendingVariableStarts_;
     bool pendingVariableStartSeen_ = false;
     VoicePool::SlotStorageRegistration slotStorageRegistration_;
-    std::vector<PlainTransactionResult> plainResults_;
-    std::vector<PlainArmRetirement> retiringPlainArms_;
-    std::vector<std::uint32_t> retiringPlainArmSlots_;
+    StableRowStorage<PlainTransactionResult> plainResults_;
+    GrowingRowStorage<PlainArmRetirement> retiringPlainArms_;
+    GrowingRowStorage<std::uint32_t> retiringPlainArmSlots_;
     std::uint32_t retiringPlainArmCount_ = 0;
     std::uint32_t plainResultCount_ = 0;
     std::uint64_t plainQuantum_ = 0;

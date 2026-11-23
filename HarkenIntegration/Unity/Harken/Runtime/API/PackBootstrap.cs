@@ -331,7 +331,6 @@ namespace Harken
 
     public static partial class PackBootstrap
     {
-        private const uint DefaultMaxPacks = 256;
 
         public static VnResult ApplyRecommendations(
             ref VnConfig config, in InitPackInspection inspection,
@@ -351,14 +350,6 @@ namespace Harken
                 return VnResult.VN_INVALID_ARG;
             }
 
-            ulong requiredPacks = (ulong)startupPackCount + 1;
-            ulong configuredPacks = config.maxPacks == 0
-                ? DefaultMaxPacks
-                : config.maxPacks;
-            if (requiredPacks > configuredPacks)
-            {
-                return VnResult.VN_INVALID_CONFIG;
-            }
             if (config.maxCatalogEntries != 0 &&
                 config.maxCatalogEntries < inspection.CatalogEntries)
             {
@@ -368,12 +359,6 @@ namespace Harken
                 config.maxCatalogBytes < inspection.CatalogBytes)
             {
                 return VnResult.VN_PACK_CATALOG_CAPACITY;
-            }
-            if (config.maxActions != 0 &&
-                inspection.RecommendedMaxActions != 0 &&
-                config.maxActions < inspection.RecommendedMaxActions)
-            {
-                return VnResult.VN_PACK_RESIDENT_CAPACITY;
             }
             if (config.maxResidentDefinitionBytes != 0 &&
                 config.maxResidentDefinitionBytes <
@@ -387,20 +372,10 @@ namespace Harken
                 config.maxCatalogEntries =
                     inspection.RecommendedMaxCatalogEntries;
             }
-            if (config.maxActions == 0 &&
-                inspection.RecommendedMaxActions != 0)
-            {
-                config.maxActions = inspection.RecommendedMaxActions;
-            }
             if (config.maxCatalogBytes == 0)
             {
                 config.maxCatalogBytes =
                     inspection.RecommendedCatalogBytes;
-            }
-            if (config.maxResidentDefinitionBytes == 0)
-            {
-                config.maxResidentDefinitionBytes =
-                    inspection.RecommendedResidentDefinitionBytes;
             }
             return VnResult.VN_OK;
         }

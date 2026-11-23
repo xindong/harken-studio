@@ -459,7 +459,7 @@ public:
     std::uint32_t SeedEmitterGeneration(std::uint32_t slot,
                                         std::uint32_t generation) const noexcept {
         if (slot == UINT32_MAX ||
-            (config_.maxEmitters != 0 && slot == config_.maxEmitters - 1u)) {
+            slot == 128u) {
             return generation;
         }
         return generation > config_.emitterGenerationFloor

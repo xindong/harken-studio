@@ -2,6 +2,7 @@
 #define HARKEN_CORE_STABLE_ROW_STORAGE_H
 
 #include "harken/core/AllocGuard.h"
+#include "harken/core/LogicAllocCheckpoint.h"
 
 #include <algorithm>
 #include <atomic>
@@ -27,6 +28,8 @@ public:
     bool Reserve(std::size_t bytes, std::size_t alignment, bool sparse = false) noexcept;
     bool CommitThrough(std::size_t bytes) noexcept;
     bool CommitRange(std::size_t offset, std::size_t bytes) noexcept;
+    // Monotone two-ended backing without a per-page sparse directory.
+    bool CommitSuffixFrom(std::size_t offset) noexcept;
     void Swap(StablePageReservation& other) noexcept;
     void* Address() const noexcept { return address_; }
     std::size_t ReservedBytes() const noexcept { return reservedBytes_; }
@@ -42,6 +45,8 @@ private:
     void* address_ = nullptr;
     std::size_t reservedBytes_ = 0;
     std::size_t committedBytes_ = 0;
+    std::size_t suffixCommittedBytes_ = 0;
+    std::size_t suffixEndBytes_ = 0;
     std::size_t pageBytes_ = 0;
     std::size_t remainingPagesForTests_ = SIZE_MAX;
     std::unique_ptr<std::uint64_t[]> committedPages_;
@@ -87,7 +92,23 @@ public:
         return *this;
     }
     bool Valid() const noexcept { return state_ != nullptr; }
+    std::uint32_t ReservedRows() const noexcept { return count_; }
     StableStoragePreparedUse Use() const noexcept { return StableStoragePreparedUse(state_); }
+    bool Split(std::uint32_t count, StableStoragePreparation* out) noexcept {
+        if (memguard::IsAudioTagged() || !Valid() || out == nullptr || out->Valid() || count > count_) return false;
+        out->state_ = state_;
+        out->count_ = count;
+        count_ -= count;
+        return true;
+    }
+    bool ReturnTo(StableStoragePreparation* parent) noexcept {
+        if (memguard::IsAudioTagged() || !Valid() || parent == nullptr || parent == this ||
+            parent->state_ != state_ || count_ > UINT32_MAX - parent->count_) return false;
+        parent->count_ += count_;
+        state_ = nullptr;
+        count_ = 0;
+        return true;
+    }
     void Release() noexcept {
         if (state_ != nullptr) {
             assert(!memguard::IsAudioTagged() && state_->heldRows >= count_);
@@ -156,7 +177,7 @@ public:
             slot == capacity_ || !reservation_.CommitThrough((static_cast<std::size_t>(slot) + 1u) * sizeof(T)))
             return false;
         try { std::construct_at(AddressOf(slot), std::forward<Args>(args)...); }
-        catch (...) { return false; }
+        catch (...) { detail::RecordCurrentLogicAllocFailure(detail::LogicAllocSite::EngineStorage); return false; }
         constructed_.store(slot + 1u, std::memory_order_release);
         return true;
     }

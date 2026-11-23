@@ -3,6 +3,7 @@
 #include "harken/core/AllocGuard.h"
 #include "harken/core/CpuClock.h"
 #include "harken/core/FloatMode.h"
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/render/RenderWorkerPoolWakeConfig.h"
 
 #if defined(HARKEN_RT_PROBE_WORKER_BARRIER)
@@ -469,6 +470,7 @@ bool RenderWorkerPool::CreateThreadSet(
             return false;
         }
     } catch (...) {
+        detail::RecordCurrentLogicAllocFailure(detail::LogicAllocSite::EngineStorage);
         if (!m_threads.empty()) {
             m_stop.store(true, std::memory_order_release);
             m_epoch.fetch_add(1, std::memory_order_release);

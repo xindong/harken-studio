@@ -120,11 +120,6 @@ namespace Harken.Unity.Editor
             EditorGUILayout.LabelField("Startup limits", EditorStyles.boldLabel);
             project.Update();
             DrawCapacity(project, "maxVoices", "Max Voices");
-            DrawCapacity(project, "maxPacks", "Max Packs");
-            DrawCapacity(project, "maxActions", "Max Actions");
-            DrawCapacity(project, "maxActionFirings", "Max Simultaneous Playbacks");
-            DrawCapacity(project, "maxEmitters", "Max Emitters");
-            DrawCapacity(project, "emitterVariableSlots", "Emitter Variable Slots");
             EditorGUILayout.PropertyField(project.FindProperty("language"), new GUIContent("Language"));
             EditorGUILayout.PropertyField(project.FindProperty("packPlatform"), new GUIContent("Platform Name"));
             EditorGUILayout.PropertyField(project.FindProperty("initPack"), new GUIContent("Init Pack"));

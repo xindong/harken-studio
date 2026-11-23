@@ -532,6 +532,7 @@ struct ProcessOwner {
     std::vector<float> interleaveScratch{};
     bool captureResourcesReady = false;
     bool failCaptureResourcesForTests = false;
+    std::uint64_t processBudgetForTests = VN_MONITOR_HARD_PROCESS_QUEUE_BYTES;
     bool drainPausedForTests = false;
     AtomicDropAccum producerDrop{};
     std::array<std::unique_ptr<ConsumerQueue>, kInternalConsumerCount> internals{};
@@ -571,6 +572,9 @@ struct ProcessOwner {
     std::thread drainThread;
     std::atomic<bool> drainStop{true};
     std::atomic<bool> drainRunning{false};
+    std::atomic<bool> drainFailed{false};
+    bool drainFailureReported = false; // Logic thread only.
+    std::atomic<unsigned> drainThrowForTests{0};
     std::atomic<bool> drainHold{false};
     std::atomic<std::uint32_t> drainEntered{0};
     std::atomic<bool> fanoutHold{false};
@@ -689,8 +693,8 @@ struct ProcessOwner {
         std::uint64_t bytes = 0;
         for (const Session& session : sessions) {
             if (session.live.load(std::memory_order_acquire)) {
-                bytes += session.consumerQueueBytes + session.identity.rows.size() * sizeof(MonitorExecutionFact) +
-                    session.identity.symbols.size() * sizeof(MonitorHostSymbolValue);
+                bytes += session.consumerQueueBytes + session.identity.rows.capacity() * sizeof(MonitorExecutionFact) +
+                    session.identity.symbols.capacity() * sizeof(MonitorHostSymbolValue);
             }
         }
         return bytes;
@@ -715,7 +719,7 @@ struct ProcessOwner {
         const std::uint64_t bytes =
             LiveQueueBytesLocked() + RetiredQueueBytesLocked() + identityStorageBytes + symbolStorageBytes + extraBytes;
         return slots > VN_MONITOR_HARD_PROCESS_SESSION_SLOTS ||
-               bytes > VN_MONITOR_HARD_PROCESS_QUEUE_BYTES;
+               bytes > processBudgetForTests;
     }
 
     bool InitWouldExceedLocked() {
@@ -2738,7 +2742,7 @@ bool DrainOneRound(ProcessOwner& owner, std::uint8_t* scratch, std::uint32_t scr
     return typed || logic || audio;
 }
 
-void DrainLoop(ProcessOwner* owner) {
+void DrainLoopBody(ProcessOwner* owner) {
     if (owner->drainScratch.size() < PackedProducerSlotBytes()) {
         owner->drainScratch.assign(PackedProducerSlotBytes(), 0);
     }
@@ -2746,6 +2750,9 @@ void DrainLoop(ProcessOwner* owner) {
     const std::uint32_t scratchBytes =
         static_cast<std::uint32_t>(owner->drainScratch.size());
     while (!owner->drainStop.load(std::memory_order_acquire)) {
+        const auto failure = owner->drainThrowForTests.exchange(0, std::memory_order_relaxed);
+        if (failure == 1) throw std::bad_alloc{};
+        if (failure == 2) throw std::runtime_error("injected monitor drain failure");
         const std::uint64_t wakeGeneration =
             owner->drainWakeGeneration.load(std::memory_order_acquire);
         if (PendingReadyToActivate(*owner)) {
@@ -2760,6 +2767,21 @@ void DrainLoop(ProcessOwner* owner) {
     }
     while (DrainOneRound(*owner, scratch, scratchBytes)) {
     }
+}
+
+void DrainLoop(ProcessOwner* owner) noexcept {
+    try {
+        DrainLoopBody(owner);
+    } catch (...) {
+        // Keep ownership intact for teardown; never write a logic/audio SPSC log
+        // ring from this worker. The logic thread reports the failure once.
+        owner->drainFailed.store(true, std::memory_order_release);
+        owner->drainStop.store(true, std::memory_order_release);
+        owner->liveTimeSeriesCadenceHz.store(0, std::memory_order_release);
+        owner->liveAudioArmed.store(0, std::memory_order_release);
+        owner->internalEnabledMask.store(0, std::memory_order_release);
+    }
+    owner->drainRunning.store(false, std::memory_order_release);
 }
 
 void StopDrain(ProcessOwner& owner) {
@@ -2826,9 +2848,13 @@ void EnsureCaptureResources(ProcessOwner& owner) {
 }
 
 bool StartDrain(ProcessOwner& owner) {
+    if (owner.drainFailed.load(std::memory_order_acquire)) return false;
     if (owner.drainRunning.load(std::memory_order_acquire)) {
         return true;
     }
+    // A failed worker may have exited between the two atomic loads above.
+    // It still owns a joinable thread until StopDrain performs the join.
+    if (owner.drainThread.joinable()) return false;
 #if defined(__APPLE__)
     if (owner.drainWakeSemaphore == nullptr) {
         return false;
@@ -2840,16 +2866,17 @@ bool StartDrain(ProcessOwner& owner) {
         return true;
     }
     owner.drainStop.store(false, std::memory_order_release);
+    owner.drainRunning.store(true, std::memory_order_release);
     try {
         owner.drainThread = std::thread(DrainLoop, &owner);
     } catch (...) {
         owner.drainStop.store(true, std::memory_order_release);
+        owner.drainRunning.store(false, std::memory_order_release);
         if (!hadResources) {
             ReleaseCaptureResources(owner);
         }
         return false;
     }
-    owner.drainRunning.store(true, std::memory_order_release);
     return true;
 }
 
@@ -3047,6 +3074,9 @@ VnResult OnEngineInit(Engine* engine) {
             return VN_IN_USE;
         }
         owner.engine = engine;
+        owner.drainFailed.store(false, std::memory_order_release);
+        owner.drainFailureReported = false;
+        owner.drainThrowForTests.store(0, std::memory_order_relaxed);
         engine->monitorEmitters.SetChangeSink(ObserveEmitterChange);
         owner.logicThread = std::this_thread::get_id();
         owner.nextTimeSeriesSequence.store(1, std::memory_order_relaxed);
@@ -3295,6 +3325,25 @@ bool CaptureSymbolSlot(const ProcessOwner& owner, std::size_t slot, MonitorHostS
         value.origin, value.description);
 }
 
+// Both the old and new allocation are live while reserve copies the rows.
+template<class T>
+bool GrowDiagnosticRows(ProcessOwner& owner, std::vector<T>& rows,
+                        std::size_t count, std::uint64_t* sharedBytes = nullptr) {
+    if (count <= rows.size()) return true;
+    if (count > rows.max_size()) return false;
+    if (count > rows.capacity()) {
+        const auto before = rows.capacity();
+        auto next = std::max(count, before + before / 2u);
+        if (next > rows.max_size() || owner.WouldExceedLocked(0, next * sizeof(T))) next = count;
+        if (owner.WouldExceedLocked(0, next * sizeof(T))) return false;
+        try { rows.reserve(next); }
+        catch (const std::bad_alloc&) { return false; }
+        if (sharedBytes) *sharedBytes += (rows.capacity() - before) * sizeof(T);
+    }
+    rows.resize(count);
+    return true;
+}
+
 // Called with owner.mutex held, after a complete logical-boundary refresh.
 VnResult FreezeIdentityCut(ProcessOwner& owner, Session& session, std::uint32_t hint) {
     auto& stage = session.identity;
@@ -3304,6 +3353,10 @@ VnResult FreezeIdentityCut(ProcessOwner& owner, Session& session, std::uint32_t 
         if (!session.queue->deferredSymbols.empty()) return VN_BACKPRESSURE;
     }
     if (owner.nextIdentitySequence == 0) return VN_MONITOR_UNSUPPORTED;
+    const auto identities = owner.identityMirror.Capacity();
+    const auto symbols = WantsSymbols(session) ? owner.symbolMirror.Capacity() : 0u;
+    const bool storageComplete = identities + UINT64_C(3) * symbols <= UINT32_MAX - 2 &&
+        GrowDiagnosticRows(owner, stage.rows, identities) && GrowDiagnosticRows(owner, stage.symbols, symbols);
     const auto domain = stage.rows.size() + UINT64_C(3) * stage.symbols.size();
     const auto capacity = hint == 0 ? domain : std::min<std::uint64_t>(hint, domain);
     stage.begin = {};
@@ -3317,7 +3370,7 @@ VnResult FreezeIdentityCut(ProcessOwner& owner, Session& session, std::uint32_t 
         std::span<MonitorExecutionFact>(stage.rows.data(), std::min<std::uint64_t>(capacity, stage.rows.size())),
         stage.identityCount, stage.begin.namespaceTrueCount);
     stage.count = stage.identityCount;
-    stage.sourceComplete &= owner.identityProducer.Unavailable() == 0;
+    stage.sourceComplete &= storageComplete && owner.identityProducer.Unavailable() == 0;
     if (WantsSymbols(session)) {
         stage.begin.symbolProducerId = kHostSymbolProducer;
         stage.begin.symbolSourceSequence = owner.symbolProducer.Published();
@@ -3383,8 +3436,36 @@ void SealAtIdentityBoundary(ProcessOwner& owner, Session& session) {
 
 void RefreshIdentityBoundary() noexcept {
     auto& owner = Owner();
+    if (owner.drainFailed.load(std::memory_order_acquire)) {
+        if (!owner.drainFailureReported && owner.engine != nullptr) {
+            owner.drainFailureReported = true;
+            LogRecord record{};
+            record.timestampNs = LogTimestampNs();
+            record.level = VN_LOG_ERROR;
+            record.code = kLogCodeMonitorDrainFailed;
+            owner.engine->logicLogRing.Push(record);
+            std::lock_guard<std::mutex> lock(owner.mutex);
+            owner.activeSlot = -1;
+            owner.pendingSlot = -1;
+            owner.publishedPending.store(-1, std::memory_order_release);
+            owner.PublishLivePlanLocked();
+        }
+        return;
+    }
     if ((owner.identityObservers == 0 && owner.symbolObservers == 0 && owner.pendingIdentitySeals == 0) ||
         !IdentitySafeBoundary(owner)) return;
+    const auto identitySize = IdentitySlotCapacity(*owner.engine);
+    const auto symbolSize = owner.engine->monitorEmitters.Capacity();
+    if ((owner.identityObservers && identitySize > owner.identityMirror.Capacity()) ||
+        (owner.symbolObservers && symbolSize > owner.symbolMirror.Capacity())) {
+        std::lock_guard<std::mutex> lock(owner.mutex);
+        if (owner.identityObservers && !owner.identityMirror.Grow(IdentityDomainCounts(*owner.engine),
+            [&](auto& rows, auto count) { return GrowDiagnosticRows(owner, rows, count, &owner.identityStorageBytes); }))
+            owner.identityMirror.NoteUnavailable();
+        if (owner.symbolObservers && !owner.symbolMirror.Grow(symbolSize,
+            [&](auto& rows, auto count) { return GrowDiagnosticRows(owner, rows, count, &owner.symbolStorageBytes); }))
+            owner.symbolMirror.NoteUnavailable();
+    }
     const auto beforeIdentity = owner.identityMirror.Revision();
     const auto beforeSymbols = owner.symbolMirror.Revision();
     const bool canAdvance = owner.observationRevision != UINT64_MAX;
@@ -3392,7 +3473,7 @@ void RefreshIdentityBoundary() noexcept {
     if (owner.identityObservers != 0) {
         ++owner.identityRefreshes;
         owner.identityMirror.Refresh(
-        [&](std::size_t slot, MonitorExecutionFact& fact) { return CaptureIdentitySlot(*owner.engine, slot, fact); },
+        [&](std::size_t domain, std::size_t slot, MonitorExecutionFact& fact) { return CaptureIdentitySlot(*owner.engine, domain, slot, fact); },
         [&](const MonitorExecutionFact& fact, std::uint64_t) {
             MonitorIdentityDelta delta{};
             delta.engine = fact.engine;
@@ -3573,7 +3654,7 @@ VnResult OpenSessionWithPermissions(const VnMonitorSessionDesc* desc,
         if (identityRequested) {
             slot->identity.rows.assign(identityCapacity, {});
             if (!owner.identityResourcesReady.load(std::memory_order_acquire)) {
-                owner.identityMirror.Reset(identityCapacity);
+                owner.identityMirror.Reset(IdentityDomainCounts(*owner.engine));
                 owner.identityRing.Init(identitySlots, sizeof(MonitorIdentityDelta));
                 owner.identityStorageBytes = identityStagingBytes + identitySlots * identitySlotBytes;
                 owner.identityResourcesReady.store(true, std::memory_order_release);
@@ -3790,6 +3871,7 @@ VnResult OpenEventSession(const VnMonitorSessionDesc* desc,
 VnResult SealEventSession(VnMonitorSessionHandle handle) {
     const auto gate = RequireEngineAndLogicThread(false);
     if (gate != VN_OK) return gate;
+    if (Owner().drainFailed.load(std::memory_order_acquire)) return VN_DEVICE_ERROR;
     auto& owner = Owner();
     if (owner.engine->callbackDispatchDepth != 0) return VN_BACKPRESSURE;
     RefreshIdentityBoundary();
@@ -3817,6 +3899,7 @@ VnResult GetEventSessionStatus(VnMonitorSessionHandle handle,
         requestedSize != sizeof(VnMonitorEventSessionStatusV2)) return VN_INVALID_ARG;
     const auto gate = RequireEngineAndLogicThread(false);
     if (gate != VN_OK) return gate;
+    if (Owner().drainFailed.load(std::memory_order_acquire)) return VN_DEVICE_ERROR;
     auto& owner = Owner();
     std::lock_guard<std::mutex> lock(owner.mutex);
     auto* session = FindLive(owner, handle);
@@ -3889,11 +3972,13 @@ VnResult GetEventSessionStatus(VnMonitorSessionHandle handle,
 }
 
 bool EventCatalogEnabled() {
-    return Owner().eventObservers.load(std::memory_order_acquire) != 0 && LogicThreadReady();
+    return !Owner().drainFailed.load(std::memory_order_acquire) &&
+        Owner().eventObservers.load(std::memory_order_acquire) != 0 && LogicThreadReady();
 }
 
 bool ExecutionObservationEnabled() noexcept {
-    return Owner().executionObservers.load(std::memory_order_acquire) != 0;
+    return !Owner().drainFailed.load(std::memory_order_acquire) &&
+        Owner().executionObservers.load(std::memory_order_acquire) != 0;
 }
 
 std::uint64_t ExecutionEngineInstance() noexcept {
@@ -3915,7 +4000,8 @@ void CaptureStreamIdentity(std::uint32_t ledgerSlot, std::uint64_t render, VnMon
 }
 
 bool StreamObservationEnabled() noexcept {
-    return Owner().streamObservers.load(std::memory_order_acquire) != 0;
+    return !Owner().drainFailed.load(std::memory_order_acquire) &&
+        Owner().streamObservers.load(std::memory_order_acquire) != 0;
 }
 
 bool PublishStreamFact(VnMonitorStreamFactV1 value, bool audioProducer) noexcept {
@@ -4270,6 +4356,7 @@ VnResult Poll(VnMonitorSessionHandle handle, const VnMonitorPollDesc* desc,
     {
         std::lock_guard<std::mutex> lock(owner.mutex);
         if (owner.engine == nullptr) return VN_NOT_INITIALIZED;
+        if (owner.drainFailed.load(std::memory_order_acquire)) return VN_DEVICE_ERROR;
     }
     if (!ValidStructSize(desc->structSize, sizeof(VnMonitorPollDesc)) ||
         !ValidStructSize(outResult->structSize, sizeof(VnMonitorPollResult))) {
@@ -4436,6 +4523,7 @@ VnResult RequestStateCut(VnMonitorSessionHandle handle,
     if (gate != VN_OK) {
         return gate;
     }
+    if (Owner().drainFailed.load(std::memory_order_acquire)) return VN_DEVICE_ERROR;
     if (!ValidStructSize(desc->structSize, sizeof(VnMonitorStateCutDesc))) {
         return VN_INVALID_ARG;
     }
@@ -4534,6 +4622,7 @@ VnResult GetStateCutStatus(VnMonitorSessionHandle handle, uint64_t stateCutId,
     if (gate != VN_OK) {
         return gate;
     }
+    if (Owner().drainFailed.load(std::memory_order_acquire)) return VN_DEVICE_ERROR;
     if (!ValidStructSize(outStatus->structSize,
                          sizeof(VnMonitorStateCutStatus))) {
         return VN_INVALID_ARG;
@@ -4693,6 +4782,7 @@ VnResult ApplyCapturePlan(VnMonitorSessionHandle handle,
     if (gate != VN_OK) {
         return gate;
     }
+    if (Owner().drainFailed.load(std::memory_order_acquire)) return VN_DEVICE_ERROR;
     if (plan == nullptr || outAccepted == nullptr) {
         return VN_INVALID_ARG;
     }
@@ -4777,6 +4867,7 @@ VnResult StopCapture(VnMonitorSessionHandle handle, uint64_t leaseGeneration,
         return VN_INVALID_ARG;
     }
     ProcessOwner& owner = Owner();
+    if (owner.drainFailed.load(std::memory_order_acquire)) RefreshIdentityBoundary();
     std::lock_guard<std::mutex> lock(owner.mutex);
     ExpireLeaseIfDueLocked(owner);
     Session* session = FindLive(owner, handle);
@@ -4833,6 +4924,7 @@ VnResult GetEffectiveCapturePlan(VnMonitorSessionHandle handle,
         return VN_INVALID_ARG;
     }
     ProcessOwner& owner = Owner();
+    if (owner.drainFailed.load(std::memory_order_acquire)) RefreshIdentityBoundary();
     std::lock_guard<std::mutex> lock(owner.mutex);
     ExpireLeaseIfDueLocked(owner);
     if (FindLive(owner, handle) == nullptr) {
@@ -5286,6 +5378,17 @@ void StopDrainForTests() {
     EnsureCaptureResources(owner);
     owner.drainPausedForTests = true;
     StopDrain(owner);
+}
+
+void SetMonitorProcessBudgetForTests(std::uint64_t bytes) {
+    auto& owner = Owner();
+    std::lock_guard<std::mutex> lock(owner.mutex);
+    owner.processBudgetForTests = bytes;
+}
+
+void FailDrainForTests(unsigned kind) {
+    Owner().drainThrowForTests.store(kind, std::memory_order_relaxed);
+    Owner().WakeDrain();
 }
 
 void StartDrainForTests() {

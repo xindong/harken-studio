@@ -62,17 +62,19 @@ namespace Harken
                 SharedPack[] owners = packOwners;
                 byte[] init = initBytes;
                 VnObjectId project = VnObjectId.Parse(ProjectId);
+                ulong retained = 0;
                 foreach (SharedPack owner in owners)
                 {
                     if (!owner.Handle.IsValid) continue;
                     PackMetadataCapture captured = await source.CaptureAsync(owner.Names.Name, project,
-                        init, operationToken, SetReadCallbackPhase);
+                        init, operationToken, SetReadCallbackPhase, retained);
                     if (RequireOwnerThread() != VnResult.VN_OK) return VnResult.VN_INVALID_ARG;
                     if (!active) return VnResult.VN_NOT_INITIALIZED;
                     if (captured.Result != VnResult.VN_OK) return captured.Result;
                     PackMetadataInput input = captured.Input;
                     if (input.Names.RootId != owner.Names.RootId) return VnResult.VN_PACK_STALE_REVISION;
                     captures.Add(input);
+                    retained += input.RetainedResidentBytes;
                     // A missing localized variant keeps an already loaded generic Pack unchanged.
                     if (owner.Names.Language.Length == 0 && input.Names.Language.Length == 0) continue;
                     nextPacks.Remove(owner.StableId);

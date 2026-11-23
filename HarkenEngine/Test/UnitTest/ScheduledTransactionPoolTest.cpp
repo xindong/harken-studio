@@ -1022,8 +1022,8 @@ TEST(ScheduledTransactionPool, PrivateLaneTransferProofReservedSpansRequireAllFo
     config.maxScheduleGroupHeadersPerPage = 4;
     config.maxArmsPerGroup = 1;
     config.maxImmediateLaneGroupRows = 4;
-    config.maxImmediateLaneOwnerGates = 4;
-    config.maxImmediateLaneDecisionGates = 4;
+    config.initialImmediateLaneOwnerGates = 4;
+    config.initialImmediateLaneDecisionGates = 4;
     ASSERT_TRUE(pool.Reset(config, 0, kEpoch));
     harken::TimelineArmTable arms{4};
     harken::DecisionTable decisions{4, 1};
@@ -1159,8 +1159,8 @@ TEST(ScheduledTransactionPool, PrivateLaneEntriesRetainActualFactorySourcesAndOr
     config.maxScheduleGroupHeadersPerPage = 6;
     config.maxArmsPerGroup = 1;
     config.maxImmediateLaneGroupRows = 6;
-    config.maxImmediateLaneOwnerGates = 6;
-    config.maxImmediateLaneDecisionGates = 6;
+    config.initialImmediateLaneOwnerGates = 6;
+    config.initialImmediateLaneDecisionGates = 6;
     ASSERT_TRUE(pool.Reset(config, 0, kEpoch));
     ASSERT_TRUE(foreignPool.Reset(config, 0, kEpoch));
     harken::TimelineArmTable arms{4};
@@ -1351,8 +1351,8 @@ TEST(ScheduledTransactionPool, AcceptedPrivateEntryRequiresNestedControllersAndO
         config.maxScheduleGroupHeadersPerPage = 8;
         config.maxArmsPerGroup = 2;
         config.maxImmediateLaneGroupRows = 8;
-        config.maxImmediateLaneOwnerGates = 5;
-        config.maxImmediateLaneDecisionGates = 8;
+        config.initialImmediateLaneOwnerGates = 5;
+        config.initialImmediateLaneDecisionGates = 8;
         ScheduledTransactionPool pool;
         ASSERT_TRUE(pool.Reset(config, 0, kEpoch));
         harken::TimelineArmTable arms{4};
@@ -1651,8 +1651,8 @@ TEST(ScheduledTransactionPool, PrivateLaneEntryMappingsUseRealInterleavedFutureE
         config.maxScheduleGroupHeadersPerPage = 6;
         config.maxArmsPerGroup = 1;
         config.maxImmediateLaneGroupRows = 6;
-        config.maxImmediateLaneOwnerGates = 6;
-        config.maxImmediateLaneDecisionGates = 6;
+        config.initialImmediateLaneOwnerGates = 6;
+        config.initialImmediateLaneDecisionGates = 6;
         ScheduledTransactionPool pool;
         ASSERT_TRUE(pool.Reset(config, 0, kEpoch));
         harken::TimelineArmTable arms{4}, foreignArms{4};
@@ -2411,8 +2411,8 @@ struct MixedTimeGroupHarness {
         config.maxScheduleGroupHeadersPerPage = 4;
         config.maxArmsPerGroup = 1;
         config.maxImmediateLaneGroupRows = 4;
-        config.maxImmediateLaneOwnerGates = 4;
-        config.maxImmediateLaneDecisionGates = 4;
+        config.initialImmediateLaneOwnerGates = 4;
+        config.initialImmediateLaneDecisionGates = 4;
         ASSERT_TRUE(pool.Reset(config, 0, kEpoch));
         ASSERT_TRUE(lane.Reset({2, 2, 1, 100, false, maxGroups}));
     }
@@ -2893,8 +2893,8 @@ TEST(ScheduledTransactionPool, MixedTimePinnedCrossSliceFuturePrecedesSlidUnrela
     config.maxScheduleGroupHeadersPerPage = 3;
     config.maxArmsPerGroup = 2;
     config.maxImmediateLaneGroupRows = 3;
-    config.maxImmediateLaneOwnerGates = 4;
-    config.maxImmediateLaneDecisionGates = 4;
+    config.initialImmediateLaneOwnerGates = 4;
+    config.initialImmediateLaneDecisionGates = 4;
     ScheduledTransactionPool pool;
     ASSERT_TRUE(pool.Reset(config, 0, kEpoch));
     harken::TimelineArmTable arms{3};
@@ -3117,8 +3117,8 @@ TEST(ScheduledTransactionPool, NativeDisposalReportsPartialSuccessBeforeSlotReus
     config.maxScheduleGroupHeadersPerPage = 2;
     config.maxArmsPerGroup = 1;
     config.maxImmediateLaneGroupRows = 2;
-    config.maxImmediateLaneOwnerGates = 2;
-    config.maxImmediateLaneDecisionGates = 2;
+    config.initialImmediateLaneOwnerGates = 2;
+    config.initialImmediateLaneDecisionGates = 2;
     ASSERT_TRUE(pool.Reset(config, 0, kEpoch));
     harken::TimelineArmTable arms(1);
     harken::DecisionTable decisions(2, 2);
@@ -3236,8 +3236,8 @@ TEST(ScheduledTransactionPool, OriginalQueueGroupScopePreservesIssuedInputsAfter
     config.maxScheduleGroupHeadersPerPage = 1;
     config.maxArmsPerGroup = 2;
     config.maxImmediateLaneGroupRows = 1;
-    config.maxImmediateLaneOwnerGates = 1;
-    config.maxImmediateLaneDecisionGates = 1;
+    config.initialImmediateLaneOwnerGates = 1;
+    config.initialImmediateLaneDecisionGates = 1;
     ASSERT_TRUE(pool.Reset(config, 0, kEpoch));
     harken::TimelineArmTable arms(2);
     harken::DecisionTable decisions(1, 1);
@@ -3303,8 +3303,8 @@ TEST(ScheduledTransactionPool, PrivateLaneTransferProofMaximumGenerationIsRealAn
     config.maxScheduleGroupHeadersPerPage = 1;
     config.maxArmsPerGroup = 1;
     config.maxImmediateLaneGroupRows = 1;
-    config.maxImmediateLaneOwnerGates = 2;
-    config.maxImmediateLaneDecisionGates = 2;
+    config.initialImmediateLaneOwnerGates = 2;
+    config.initialImmediateLaneDecisionGates = 2;
     ASSERT_TRUE(pool.Reset(config, 0, kEpoch));
     harken::TimelineArmTable arms(1);
     harken::DecisionTable decisions(1, 1);
@@ -5003,6 +5003,7 @@ TEST(ScheduledTransactionPool, UnplacedHolderMaterializesAndRollsBackItsExactPag
     struct StoragePreparation {
         unsigned calls = 0;
         bool allowed = true;
+        std::uint32_t readerSlots = 0;
     } storage;
     const auto& preparations = storage.calls;
     pool.AttachPendingEventStorage(pendingStorage, &storage,
@@ -5010,6 +5011,10 @@ TEST(ScheduledTransactionPool, UnplacedHolderMaterializesAndRollsBackItsExactPag
             auto& state = *static_cast<StoragePreparation*>(context);
             ++state.calls;
             return state.allowed;
+        }, [](void* context, std::uint32_t rows) noexcept {
+            auto& state = *static_cast<StoragePreparation*>(context);
+            state.readerSlots = rows;
+            return true;
         });
     harken::TimelineArmTable arms(1);
     harken::UnplacedBatchCredit credit{};
@@ -5018,7 +5023,7 @@ TEST(ScheduledTransactionPool, UnplacedHolderMaterializesAndRollsBackItsExactPag
         harken::detail::ScheduledTransactionPoolCancelTestAccess::SetEventDirectoryCommitPageLimit(
             pool, storageIndex, 0);
     ASSERT_GT(preparations, 0u);
-    const auto preparationsAtAcceptance = preparations;
+
     storage.allowed = false;
     ScheduledEventInput event{};
     event.executeFrame = 210;
@@ -5038,6 +5043,12 @@ TEST(ScheduledTransactionPool, UnplacedHolderMaterializesAndRollsBackItsExactPag
     std::uint32_t page = 0;
     ASSERT_TRUE(pool.PageForFrame(210, &page));
 
+    auto competing = request;
+    competing.transactionId = 12;
+    ASSERT_EQ(ReserveRefusal::PageEventCapacity,
+        pool.Reserve(competing, PrePublishLatePolicy::Refuse).refusal);
+    ASSERT_EQ(2u, storage.readerSlots);
+    const auto preparationsAtAcceptance = preparations;
     unsigned preparationsAfterRefusals = 0;
     {
         ScheduledTransactionPool::PrivateMaterializationTransaction lease;
@@ -5091,6 +5102,7 @@ TEST(ScheduledTransactionPool, UnplacedHolderMaterializesAndRollsBackItsExactPag
     std::array<ConsumedEvent, 1> consumed{};
     ASSERT_EQ(1u, pool.ConsumePageRt(2, consumed.data(), consumed.size()));
     EXPECT_EQ(13u, consumed[0].transactionId);
+    EXPECT_LT(consumed[0].txnSlot, storage.readerSlots);
 }
 
 TEST(ScheduledTransactionPool, PrivateCommitRejectsLostGroupBeforeTransactionPublication) {

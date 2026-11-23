@@ -3,6 +3,9 @@
 
 #include <harken/ObjectId.h>
 #include "PlayableRuntime.h"
+#include "BusSendTable.h"
+#include "BusEffectSettings.h"
+#include "VoiceSendConfig.h"
 #include "SignalPublication.h"
 #include "harken/core/CommandQueue.h"
 #include "harken/core/CurrentWorld.h"
@@ -19,8 +22,8 @@
 namespace harken {
 
 struct Engine;
-struct ProjectGenerationReservationDomainV1;
 struct BusSlotRef;
+struct ProjectGenerationReservationDomainV1;
 
 struct BusTopologyOwnerRecord {
     bool live = false;
@@ -48,7 +51,7 @@ std::uint64_t NeutralMasterFingerprintV1(const Engine& engine) noexcept;
 bool PreviewMasterCompatible(const Engine& engine, std::uint64_t fingerprint,
     std::uint64_t ownerId = 0) noexcept;
 bool HasPreviewEffectAttachment(const Engine& engine, BusSlotRef host) noexcept;
-std::uint32_t SelectPreviewOwnerDestination(const Engine& engine, std::uint64_t ownerId) noexcept;
+std::uint32_t SelectPreviewOwnerDestination(Engine& engine, std::uint64_t ownerId) noexcept;
 inline constexpr std::uint64_t kCanonicalPackSetMasterOwnerId = 0x5053434E00000001ull;
 bool CanResetNeutralBusPropertiesV1(const Engine& engine, std::uint32_t slot,
     std::uint64_t allowedEffectOwner = 0) noexcept;
@@ -70,6 +73,16 @@ void CommitRetireTopologyBusV1(Engine& engine, BusSlotRef ref, std::uint64_t rev
 void ClearRetiredBusPropertiesV1(Engine& engine, BusSlotRef ref) noexcept;
 bool HasTopologyBusConsumersV1(Engine& engine, BusSlotRef ref) noexcept;
 std::uint32_t DrainTopologyRetirementsV1(Engine& engine) noexcept;
+struct VoiceSendMirrorMigrationV1 {
+    VoiceSendConfigs* destination = nullptr;
+    VoiceSendConfigs before;
+    VoiceSendConfigs after;
+    bool accountLive = false;
+};
+std::vector<VoiceSendMirrorMigrationV1> PrepareVoiceSendMirrorMigrationV1(Engine& engine,
+    const std::uint32_t* generations, const std::uint8_t* alive, std::uint32_t count);
+bool CanCommitVoiceSendMirrorMigrationV1(std::span<const VoiceSendMirrorMigrationV1> rows) noexcept;
+void CommitVoiceSendMirrorMigrationV1(Engine& engine, std::span<const VoiceSendMirrorMigrationV1> rows) noexcept;
 void CommitMigratedLogicVoiceMirrorsV1(Engine& engine, const std::uint32_t* migrationTargets,
     const std::uint32_t* generations, const std::uint8_t* alive, std::uint32_t slotCount) noexcept;
 struct EnginePreparedTimelineVoiceStart;
@@ -96,6 +109,30 @@ struct ProspectiveTopologyView {
     std::uint32_t* emittedFeeders = nullptr;
     std::uint8_t* emitted = nullptr;
     const float* sendLevelsDb = nullptr;
+    const BusSendTable* sends = nullptr;
+
+    template<class Visitor> void ForEachSend(std::uint32_t from,
+        std::uint32_t legacySlots, Visitor&& visit) const {
+        if (sends != nullptr) {
+            for (const auto& edge : sends->From(from)) visit(edge, sends->IndexOf(edge));
+            return;
+        }
+        // Compatibility input for older topology producers while they migrate.
+        if (sendTargets == nullptr) return;
+        for (std::uint32_t slot = 0; slot < legacySlots; ++slot) {
+            const auto index = static_cast<std::size_t>(from) * legacySlots + slot;
+            if (sendTargets[index] == UINT32_MAX) continue;
+            BusSendRecord edge;
+            edge.source = from;
+            edge.target = sendTargets[index];
+            edge.slot = slot;
+            edge.preparedGain = sendLevels != nullptr ? sendLevels[index] : 1.0f;
+            edge.applyLevel = sendLevels != nullptr &&
+                (sendLevelApply == nullptr || sendLevelApply[index] != 0);
+            edge.levelDb = sendLevelsDb != nullptr ? sendLevelsDb[index] : 0.0f;
+            visit(edge, static_cast<std::uint32_t>(index));
+        }
+    }
 };
 
 struct SlotAssignmentV1 {
@@ -114,9 +151,7 @@ struct SlotPlanV1 {
     std::uint32_t sourceBusCount = 0;
     std::vector<std::uint64_t> busOwnerIds;
     std::vector<VnPackHandle> busCookies;
-    std::vector<std::uint64_t> sendOwnerIds;
-    std::vector<VnPackHandle> sendCookies;
-    std::vector<float> sendLevelDb;
+    BusSendTable sends;
     std::vector<std::uint8_t> neutralSlots;
     std::vector<std::uint32_t> migrationTargets;
     std::uint32_t busCount = 0;
@@ -129,10 +164,6 @@ struct SlotPlanV1 {
     std::vector<VnBusId> busIds;
     std::vector<std::uint32_t> generations;
     std::vector<std::uint32_t> parents;
-    std::vector<std::uint32_t> sendTargets;
-    std::vector<float> sendLevels;
-    std::vector<std::uint8_t> sendLevelApply;
-    std::vector<std::uint32_t> sendLevelRampMs;
 };
 
 bool BuildSlotPlanFromProspective(Engine& engine, const ProspectiveTopologyView* prospective,
@@ -141,7 +172,7 @@ bool BuildPreviewSlotPlan(Engine& engine, const ProspectiveTopologyView* incomin
     std::uint64_t ownerId, SlotPlanV1& out);
 void ApplySlotPlanToProspective(SlotPlanV1& plan, ProspectiveTopologyView& view) noexcept;
 bool SlotPlanMatchesLive(const Engine& engine, const SlotPlanV1& plan) noexcept;
-void InstallSlotPlanLogic(Engine& engine, const SlotPlanV1& plan) noexcept;
+void InstallSlotPlanLogic(Engine& engine, SlotPlanV1& plan) noexcept;
 std::uint32_t FindAssignedSlot(const SlotPlanV1& plan, VnBusId id) noexcept;
 
 class PreparedBusEffectsV1 {
@@ -156,13 +187,13 @@ public:
         std::uint64_t allowedOwner, std::uint64_t nextOwner,
         bool deferStructureWhilePlaying = false);
     bool CanCommit() const noexcept;
+    bool AppendSettingsWrites(std::vector<BusEffectSettings::Write>& writes) const noexcept;
     void Commit() noexcept;
     std::span<const CommandRecord> Commands() const noexcept;
 private:
     struct State;
     std::unique_ptr<State> state_;
 };
-
 
 #if HARKEN_ENGINE_DEV
 std::uint32_t DrainProjectGenerationInstallAcksV1(Engine& engine) noexcept;

@@ -36,6 +36,9 @@ namespace Harken.Test
             bool requireNative = false;
             string exportRoot = null;
             string archiveRoot = null;
+            string residentBudgetRoot = null;
+            string residentMemberRoot = null;
+            string residentLanguageRoot = null;
             for (int i = 0; i < args.Length; i++)
             {
                 string arg = args[i];
@@ -49,17 +52,35 @@ namespace Harken.Test
                     archiveRoot = args[++i];
                     continue;
                 }
+                if (arg == "--resident-language-budget-root" && i + 1 < args.Length)
+                {
+                    residentLanguageRoot = args[++i];
+                    continue;
+                }
+                if (arg == "--resident-member-root" && i + 1 < args.Length)
+                {
+                    residentMemberRoot = args[++i];
+                    continue;
+                }
+                if (arg == "--resident-budget-root" && i + 1 < args.Length)
+                {
+                    residentBudgetRoot = args[++i];
+                    continue;
+                }
                 if (arg == "--export-root" && i + 1 < args.Length)
                 {
                     exportRoot = args[++i];
                     continue;
                 }
                 Console.Error.WriteLine("Unknown argument: " + arg);
-                Console.Error.WriteLine("Usage: dotnet run --project HarkenIntegration/Test/ContractTest -- [--require-native] [--export-root path | --archive-root path]");
+                Console.Error.WriteLine("Usage: dotnet run --project HarkenIntegration/Test/ContractTest -- [--require-native] [--export-root path | --archive-root path | --resident-budget-root path | --resident-member-root path | --resident-language-budget-root path]");
                 return 2;
             }
 
             InstallNativeResolver(requireNative);
+            if (residentLanguageRoot != null) return ExportedPackContract.RunResidentLanguageBudget(residentLanguageRoot) ? 0 : 1;
+            if (residentMemberRoot != null) return ExportedPackContract.RunResidentMember(residentMemberRoot) ? 0 : 1;
+            if (residentBudgetRoot != null) return ExportedPackContract.RunResidentBudget(residentBudgetRoot) ? 0 : 1;
             if (archiveRoot != null) return ArchivePublicationContract.Run(archiveRoot) ? 0 : 1;
             if (exportRoot != null) return ExportedPackContract.Run(exportRoot) ? 0 : 1;
 
@@ -423,9 +444,9 @@ namespace Harken.Test
                 ref config, inspection, 3);
             bool ok = result == VnResult.VN_OK &&
                 config.maxCatalogEntries == 50000 &&
-                config.maxActions == 1024 &&
+                config.maxActions == 0 &&
                 config.maxCatalogBytes == 15200088 &&
-                config.maxResidentDefinitionBytes == (8UL << 20);
+                config.maxResidentDefinitionBytes == 0;
 
             VnConfig catalogCountLow = HarkenEngine.DefaultConfig();
             catalogCountLow.maxCatalogEntries = 49999;
@@ -449,15 +470,15 @@ namespace Harken.Test
             actionsLow.maxActions = 1023;
             ok &= PackBootstrap.ApplyRecommendations(
                 ref actionsLow, inspection, 3) ==
-                VnResult.VN_PACK_RESIDENT_CAPACITY;
+                VnResult.VN_OK;
 
             VnConfig packCountDefault = HarkenEngine.DefaultConfig();
             ok &= PackBootstrap.ApplyRecommendations(
                 ref packCountDefault, inspection, 255) == VnResult.VN_OK;
             VnConfig packCountLow = HarkenEngine.DefaultConfig();
+            packCountLow.maxPacks = 1;
             ok &= PackBootstrap.ApplyRecommendations(
-                ref packCountLow, inspection, 256) ==
-                VnResult.VN_INVALID_CONFIG;
+                ref packCountLow, inspection, 256) == VnResult.VN_OK;
 
             if (ok)
             {
@@ -503,6 +524,7 @@ namespace Harken.Test
 
             try
             {
+                if (!CheckRuntimeFaultDiagnostics()) return 1;
                 if (!CheckCurrentWorldContract())
                 {
                     return 1;
@@ -517,6 +539,75 @@ namespace Harken.Test
             {
                 HarkenEngine.Term();
             }
+        }
+
+        private static unsafe bool CheckRuntimeFaultDiagnostics()
+        {
+            int reports = 0;
+            int forwarded = 0;
+            bool queryOk = true;
+            Action<RuntimeFaultInfo> observer = info =>
+            {
+                ++reports;
+                var queryResult = HarkenEngine.QueryRuntimeFault(out _);
+                queryOk &= queryResult == VnResult.VN_OK;
+                if (queryResult != VnResult.VN_OK) Console.WriteLine("[Fault query] " + queryResult);
+                RuntimeFaultDiagnostics.ObserveResult(VnResult.VN_RUNTIME_RECREATE_REQUIRED);
+            };
+            RuntimeFaultDiagnostics.Reported += observer;
+            VnConfig config = HarkenEngine.DefaultConfig();
+            config.deviceMode = (uint)VnDeviceMode.VN_DEVICE_NULL;
+            using var notify = HarkenCallbacks.InstallNotification(ref config,
+                (in VnNotification notification, object state) => ++forwarded);
+            using var log = HarkenCallbacks.InstallLog(ref config, (level, code, text, state) => { });
+            var notifyThunk = Marshal.GetDelegateForFunctionPointer<VnNotificationCallback>(config.onNotification);
+            var logThunk = Marshal.GetDelegateForFunctionPointer<VnLogFn>(config.logCallback);
+            VnNotification fault = default;
+            fault.type = (uint)VnNotificationType.VN_NOTIFY_RUNTIME_RECREATE_REQUIRED;
+            bool passed;
+            try
+            {
+                RuntimeFaultDiagnostics.ObserveResult(VnResult.VN_OK);
+                passed = reports == 0 && HarkenEngine.QueryRuntimeFault(out var none) == VnResult.VN_OK &&
+                    none.Category == VnRuntimeFaultCategory.VN_RUNTIME_FAULT_NONE &&
+                    none.ToString() == "No runtime fault recorded.";
+                // Drive the actual managed callback thunks; native first-fault capture is covered in Runtime tests.
+                notifyThunk((IntPtr)(&fault), config.notificationUserData);
+                logThunk(config.logUserData, (uint)VnLogLevel.VN_LOG_ERROR,
+                    VnConstants.VN_LOG_RUNTIME_RECREATE_REQUIRED, IntPtr.Zero);
+                RuntimeFaultDiagnostics.ObserveResult(VnResult.VN_RUNTIME_RECREATE_REQUIRED);
+                passed &= reports == 1 && forwarded == 1 && queryOk;
+                passed &= HarkenEngine.Init(config) != VnResult.VN_OK;
+                RuntimeFaultDiagnostics.ObserveResult(VnResult.VN_RUNTIME_RECREATE_REQUIRED);
+                passed &= reports == 1;
+                passed &= HarkenEngine.Term() == VnResult.VN_OK && HarkenEngine.Init(config) == VnResult.VN_OK;
+                notifyThunk((IntPtr)(&fault), config.notificationUserData);
+                passed &= reports == 2 && forwarded == 2;
+            }
+            finally { RuntimeFaultDiagnostics.Reported -= observer; }
+            Action<RuntimeFaultInfo> ending = info =>
+            {
+                ++reports;
+                notify.Dispose();
+                HarkenEngine.Term();
+                throw new InvalidOperationException("diagnostic observer failure");
+            };
+            RuntimeFaultDiagnostics.Reported += ending;
+            try
+            {
+                passed &= HarkenEngine.Term() == VnResult.VN_OK && HarkenEngine.Init(config) == VnResult.VN_OK;
+                notifyThunk((IntPtr)(&fault), config.notificationUserData);
+                passed &= reports == 3 && forwarded == 2;
+                passed &= HarkenEngine.QueryRuntimeFault(out _) == VnResult.VN_NOT_INITIALIZED;
+            }
+            finally { RuntimeFaultDiagnostics.Reported -= ending; }
+            config.onNotification = IntPtr.Zero;
+            config.notificationUserData = IntPtr.Zero;
+            config.logCallback = IntPtr.Zero;
+            config.logUserData = IntPtr.Zero;
+            passed &= HarkenEngine.Init(config) == VnResult.VN_OK;
+            Console.WriteLine("Runtime fault diagnostics: " + (passed ? "PASS" : "FAIL"));
+            return passed;
         }
 
         private static bool CheckCurrentWorldContract()

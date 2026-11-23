@@ -1,5 +1,5 @@
 // The occurrence-state pool: live state for each active placement of a clip,
-// held in a fixed pool that is deliberately not the playable-instance table.
+// held separately from public playable instances.
 //
 // A clip is never a public instance. It compiles to an event template plus
 // lineage, and what exists at runtime is an occurrence: one arranging instance
@@ -32,6 +32,7 @@
 #ifndef HARKEN_CORE_OCCURRENCE_STATE_POOL_H
 #define HARKEN_CORE_OCCURRENCE_STATE_POOL_H
 
+#include "harken/core/GrowingRowStorage.h"
 #include <harken/ObjectId.h>
 #include "harken/core/CheckedIssuer.h"
 #include "harken/core/CompletionProgress.h"
@@ -151,9 +152,6 @@ public:
         const OriginalCompositeCompletionOwnerPin& original, const CompletionOwnerRef& owner,
         const CompletionProgressRow* progress, std::uint32_t renderGeneration,
         std::uint64_t scheduleEpoch) const noexcept;
-    // Capacity covers every record that owns a slot at once: preparing,
-    // active, logically done, and waiting on the fence. Allocated here and
-    // never grown.
     // A short logic-thread exclusion on this actual prepared Single row.
     // It is separate from structural loans and never publishes audio or a fence.
     class PreparedSingleCompletionCommitProof {
@@ -211,14 +209,21 @@ public:
         std::uint64_t scheduleEpoch, PlayableInstanceHandle arrangingInstance) const noexcept;
     static void ConsumePreparedSingleCompletionCommit(PreparedSingleCompletionCommitProof&& proof) noexcept;
 
+    OccurrenceStatePool() = default;
     explicit OccurrenceStatePool(std::uint32_t capacity);
+    void SetRowPreparation(void* context, bool (*prepare)(void*, std::uint32_t) noexcept) noexcept {
+        preparationContext_ = context;
+        prepareRows_ = prepare;
+    }
+    bool PrepareStorage(std::uint32_t count) noexcept;
+    void SetCommitPageLimitForTests(std::size_t pages) noexcept { m_entries.SetCommitPageLimitForTests(pages); }
     ~OccurrenceStatePool();
     OccurrenceStatePool(const OccurrenceStatePool&) = delete;
     OccurrenceStatePool& operator=(const OccurrenceStatePool&) = delete;
     OccurrenceStatePool(OccurrenceStatePool&&) = delete;
     OccurrenceStatePool& operator=(OccurrenceStatePool&&) = delete;
 
-    // Physical storage reserved at construction. FreeCount reports the
+    // Currently constructed storage. FreeCount reports the
     // currently reusable subset after generation exhaustion is accounted for.
     std::uint32_t Capacity() const {
         return static_cast<std::uint32_t>(m_entries.size());
@@ -439,7 +444,10 @@ private:
         const OriginalSingleCompletionOwnerPin* originalBaseline) const noexcept;
     std::uint64_t m_nextOriginalSingleMarker = 1;
     bool m_originalSingleMarkerExhausted = false;
-    std::vector<Entry> m_entries;
+    GrowingRowStorage<Entry> m_entries;
+    std::uint32_t limit_ = UINT32_MAX;
+    void* preparationContext_ = nullptr;
+    bool (*prepareRows_)(void*, std::uint32_t) noexcept = nullptr;
     std::uint64_t m_nextScheduleEpoch = 1;
     bool m_scheduleEpochExhausted = false;
     std::uint32_t m_occupiedCount = 0;

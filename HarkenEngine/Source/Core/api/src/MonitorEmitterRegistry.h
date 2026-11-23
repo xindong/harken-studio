@@ -18,9 +18,9 @@ public:
     enum class Change { Created, BindingChanged, Destroyed };
     using ChangeSink = void (*)(Change, const MonitorEmitterOrigin&) noexcept;
 
-    MonitorEmitterRegistry(const EmitterTable& emitters, std::uint32_t capacity,
+    MonitorEmitterRegistry(const EmitterTable& emitters, std::uint32_t /*capacity*/,
         std::uint64_t engineInstance, std::uint64_t lastSession = 0)
-        : emitters_(emitters), slots_(capacity), engineInstance_(engineInstance),
+        : emitters_(emitters), engineInstance_(engineInstance),
           lastSession_(lastSession) {}
 
     std::uint32_t Capacity() const noexcept { return static_cast<std::uint32_t>(slots_.size()); }
@@ -49,9 +49,14 @@ public:
         return true;
     }
 
+    bool PrepareSlot(std::uint64_t emitter) noexcept {
+        const auto index = static_cast<std::uint32_t>(emitter);
+        return index != UINT32_MAX && slots_.ConstructThrough(index + 1u);
+    }
+
     void NoteCreated(std::uint64_t emitter) noexcept {
         const auto index = static_cast<std::uint32_t>(emitter);
-        if (index < slots_.size() && emitters_.IsPublicLive(emitter)) {
+        if (emitters_.IsPublicLive(emitter) && PrepareSlot(emitter)) {
             auto& slot = slots_[index];
             slot = {emitter};
             slot.kind = emitters_.Context(emitter).spatialEmitter == 0
@@ -225,7 +230,7 @@ private:
     void NoteUnavailable() noexcept { if (unavailable_ != UINT64_MAX) ++unavailable_; }
 
     const EmitterTable& emitters_;
-    std::vector<Slot> slots_;
+    GrowingRowStorage<Slot> slots_;
     std::uint64_t engineInstance_ = 0;
     std::uint64_t lastSession_ = 0;
     std::uint64_t session_ = 0;
@@ -248,6 +253,7 @@ namespace harken {
 class MonitorEmitterRegistry {
 public:
     MonitorEmitterRegistry(const EmitterTable&, std::uint32_t, std::uint64_t) noexcept {}
+    bool PrepareSlot(std::uint64_t) noexcept { return true; }
     void NoteCreated(std::uint64_t) noexcept {}
     void NoteDestroyed(std::uint64_t) noexcept {}
     MonitorEmitterOrigin CaptureOrigin(std::uint64_t) const noexcept { return {}; }

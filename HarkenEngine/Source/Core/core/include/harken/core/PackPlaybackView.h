@@ -143,6 +143,7 @@ bool BuildProgramCapabilitySummariesV1(
     const ContainerWorldInstallViewV1* worlds, std::uint32_t worldCount,
     std::vector<ProgramCapabilitySummaryV1>& out);
 
+// The attachment index supplies one row per (object, binding) pair.
 std::uint32_t CollectCutVoiceBindings(
     const ResolvedPlayablePathRowV1* path, std::uint32_t pathCount,
     const PackVoiceBinding* catalog, std::uint32_t catalogCount,

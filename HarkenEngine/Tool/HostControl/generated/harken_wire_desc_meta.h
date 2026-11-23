@@ -221,6 +221,24 @@ struct WireDescMeta<VnResidentPackVisitDescV1> {
     }
 };
 
+template <>
+struct WireDescMeta<VnRuntimeFaultInfoV1> {
+    static bool DecodeSections(WireReader& reader, WireArena& arena,
+                               VnRuntimeFaultInfoV1* desc, std::uint32_t declared) {
+        if (offsetof(VnRuntimeFaultInfoV1, file) + sizeof(void*) <= declared) {
+            if (!ReadStringSection(reader, arena, &desc->file)) {
+                return false;
+            }
+        }
+        if (offsetof(VnRuntimeFaultInfoV1, function) + sizeof(void*) <= declared) {
+            if (!ReadStringSection(reader, arena, &desc->function)) {
+                return false;
+            }
+        }
+        return true;
+    }
+};
+
 } // namespace harkenremote
 
 #endif // HARKEN_REMOTE_WIRE_DESC_META_H

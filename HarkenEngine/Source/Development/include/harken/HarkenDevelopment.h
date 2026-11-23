@@ -91,9 +91,7 @@ typedef struct VnSnapshot {
     uint64_t voiceHighWater;      /* most Render Voices ever live at once */
     uint64_t voiceCompletedCount; /* voices that finished or were stopped */
     uint64_t staleHandleCount;    /* operations refused on stale handles */
-    uint64_t noVoiceCount;        /* voice admissions refused with VN_NO_VOICE,
-                                   * including capacity, policy, or controlled
-                                   * logic-side allocation failures */
+    uint64_t noVoiceCount;        /* render voice admission refusals recorded by the voice pool */
     uint64_t backpressureCount;   /* commands refused by a full queue */
     uint64_t notificationDropCount;      /* notifications lost to drop-oldest */
     uint64_t logDropCount;        /* audio-side log records lost to drop-oldest
@@ -2033,6 +2031,38 @@ typedef struct VnRemoteStatus {
  * VN_NOT_INITIALIZED. */
 VnResult Vn_CaptureSnapshot(VnSnapshot* outSnapshot);
 
+typedef uint32_t VnBusStateFlags;
+enum {
+    VN_BUS_STATE_VALID = 1,
+    VN_BUS_STATE_WORKING = 2,
+    VN_BUS_STATE_RENDERED = 4
+};
+
+typedef struct VnBusState {
+    VnBusId busId;
+    uint64_t blockSequence;
+    uint32_t busIndex;
+    uint32_t busGeneration;
+    VnBusStateFlags flags;
+    float peakPreFader;
+    float peakPostFader;
+    float peakPostEffects;
+} VnBusState;
+
+/* Logic-thread, passive enumeration of live Bus definitions into caller storage.
+ * Start at firstBusIndex = 0 and continue at outNextBusIndex until UINT32_MAX.
+ * Entries carry their own completed audio blockSequence (one-based); they need
+ * not come from the same block. VALID absent means no matching audio publication
+ * is available yet, never proof of silence. VALID without WORKING is dormant
+ * with zero peaks. WORKING without RENDERED describes a degraded silent block.
+ * Queries neither wake Buses nor advance Update. Caller serializes with other
+ * logic APIs; enumeration may change between calls when definitions change.
+ * states may be NULL only when capacity is zero. outCount and outNextBusIndex
+ * are required. This API has no fixed Bus count or array-length limit. */
+VnResult Vn_CaptureBusStates(uint32_t firstBusIndex, VnBusState* states,
+                           uint32_t capacity, uint32_t* outCount,
+                           uint32_t* outNextBusIndex);
+
 /* Captures the generated built-in effect registry without allocation.
  * Always writes *requiredCount; writes min(capacity, requiredCount) rows and
  * returns VN_OK when truncated. A NULL requiredCount, a NULL out with nonzero
@@ -2528,6 +2558,20 @@ typedef struct VnPreviewPlaybackPathV1 {
     VnPreviewPlaybackSendV1 sends[VN_PREVIEW_PATH_SEND_CAPACITY];
 } VnPreviewPlaybackPathV1;
 
+/* Sends are stored in a caller-owned flat array. sendOffset/sendCount select
+ * each path's range; there is no per-path Send capacity. */
+typedef struct VnPreviewPlaybackPathV2 {
+    uint32_t structSize;
+    uint32_t rowCount;
+    uint32_t sendCount;
+    uint32_t reserved0;
+    uint64_t sendOffset;
+    uint64_t voiceInstance;
+    VnObjectId soundId;
+    VnObjectId outputBusId;
+    VnPreviewPlaybackPathRowV1 rows[VN_PREVIEW_PATH_ROW_CAPACITY];
+} VnPreviewPlaybackPathV2;
+
 VnPreviewResult VnPreview_PlayPlayable(
     const VnPreviewPlayPlayableDescV2* desc,
     VnPreviewPlayableHandle* outHandle);
@@ -2539,6 +2583,13 @@ VnPreviewResult VnPreview_QueryPlayable(VnPreviewPlayableHandle handle,
                                         VnPreviewPlayableStateV2* outState);
 VnPreviewResult VnPreview_CapturePlaybackPaths(
     VnPreviewPlaybackPathV1* outPaths, uint32_t capacity, uint32_t* requiredCount);
+
+/* Logic-thread capture. Returns required counts even when a buffer is too small.
+ * Only complete Send ranges are written. Retry after resizing both buffers;
+ * required counts and records always describe the same capture. */
+VnPreviewResult VnPreview_CapturePlaybackPathsV2(
+    VnPreviewPlaybackPathV2* outPaths, uint32_t capacity, uint32_t* requiredCount,
+    VnPreviewPlaybackSendV1* outSends, uint64_t sendCapacity, uint64_t* requiredSendCount);
 
 typedef uint64_t VnPreviewProjectHandle;
 

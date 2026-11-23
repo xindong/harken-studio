@@ -523,28 +523,34 @@ inline std::vector<std::uint8_t> PartitionPayload(
     std::uint32_t actionCount, std::uint32_t valueBits,
     std::uint64_t* bodyBytes, std::uint32_t maxActionDefinitions = 64,
     VnObjectId projectId = {},
-    harken::CanonicalBusTriple triple = DefaultFixtureBusTriple()) {
+    harken::CanonicalBusTriple triple = DefaultFixtureBusTriple(),
+    std::uint64_t actionBase = kActionBase, VnObjectId variableId = kVariableId,
+    std::uint32_t stepsPerAction = 1) {
     harken::VariableDefinitionV1 variable{};
-    variable.variableId = kVariableId;
+    variable.variableId = variableId;
     variable.kind = harken::VariableKindV1::Smooth;
     variable.rangeMin = -1.0f;
     variable.rangeMax = 1.0f;
 
-    std::vector<harken::ActionStepProgramViewV1> steps(actionCount);
+    std::vector<harken::ActionStepProgramViewV1> steps(stepsPerAction);
+    for (std::uint32_t j = 0; j < stepsPerAction; ++j) {
+        auto& step = steps[j];
+        step.authoredEventIndex = j;
+        step.opcode = harken::ActionOpcodeV1::SetVariable;
+        step.target.kind = harken::ActionTargetKindV1::Variable;
+        step.target.stableId = variableId;
+        step.valueBits = valueBits;
+        SetAbsoluteTime(&step.delay);
+        SetAbsoluteTime(&step.fade);
+        SetAbsoluteTime(&step.cooldown);
+    }
+
     std::vector<harken::ActionProgramViewV1> actions(actionCount);
     for (std::uint32_t i = 0; i < actionCount; ++i) {
-        steps[i].opcode = harken::ActionOpcodeV1::SetVariable;
-        steps[i].target.kind = harken::ActionTargetKindV1::Variable;
-        steps[i].target.stableId = kVariableId;
-        steps[i].valueBits = valueBits;
-        SetAbsoluteTime(&steps[i].delay);
-        SetAbsoluteTime(&steps[i].fade);
-        SetAbsoluteTime(&steps[i].cooldown);
-
-        actions[i].actionStableId = harkentest::ObjectId(kActionBase + i);
-        actions[i].steps = &steps[i];
-        actions[i].stepCount = 1;
-        actions[i].expandedStepOccurrenceCount = 1;
+        actions[i].actionStableId = harkentest::ObjectId(actionBase + i);
+        actions[i].steps = steps.data();
+        actions[i].stepCount = stepsPerAction;
+        actions[i].expandedStepOccurrenceCount = stepsPerAction;
         actions[i].expandedFiringCount = 1;
         actions[i].programSemanticFingerprint =
             harken::ComputeActionProgramFingerprintV1(actions[i]);
@@ -553,6 +559,10 @@ inline std::vector<std::uint8_t> PartitionPayload(
     harken::ContainerWorldInstallViewV1 world{};
     world.identity.projectId = projectId;
     world.capacity.maxActionDefinitions = maxActionDefinitions;
+    if (stepsPerAction > 1) {
+        world.capacity.maxActionStepsTotal = std::max(world.capacity.maxActionStepsTotal,
+            maxActionDefinitions * stepsPerAction);
+    }
     world.identity.capabilityMask =
         (actionCount == 0 ? 0 : harken::kWorldCapabilityVariableDefinitions) |
         (actionCount == 0 ? 0 : harken::kWorldCapabilityActionDefinitions);
@@ -593,7 +603,8 @@ inline std::vector<std::uint8_t> BuildContent(
     std::uint64_t revision, std::uint32_t actionCount,
     std::uint32_t valueBits, std::uint64_t* bodyBytes) {
     std::vector<std::uint8_t> partition = PartitionPayload(
-        kResidentPackStableId, revision, actionCount, valueBits, bodyBytes);
+        kResidentPackStableId, revision, actionCount, valueBits, bodyBytes,
+        std::max(64u, actionCount));
     if (partition.empty()) {
         return {};
     }
@@ -653,7 +664,8 @@ inline bool BuildFixture(std::uint32_t residentCount,
     }
 
     std::vector<std::uint8_t> initPartition = PartitionPayload(
-        kInitPackStableId, 1, 0, 0, &next.initBodyBytes);
+        kInitPackStableId, 1, 0, 0, &next.initBodyBytes,
+        std::max(64u, residentCount));
     if (initPartition.empty()) {
         return false;
     }

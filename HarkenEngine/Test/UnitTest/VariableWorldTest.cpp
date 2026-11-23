@@ -526,7 +526,7 @@ TEST(VariableWorld, EqualGlobalWriteRemovesEmitterOverride) {
 TEST(VariableWorld, EmitterBanksAndOverrideSlotsHonorResolvedCapacity) {
     {
         VnConfig config = MakeNullConfig();
-        config.maxEmitters = 129;
+        config.maxVoices = 4;
         EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());
         harken::Engine* engine = session.Engine();
@@ -538,17 +538,21 @@ TEST(VariableWorld, EmitterBanksAndOverrideSlotsHonorResolvedCapacity) {
         for (std::uint32_t i = 0; i < 129; ++i) {
             ASSERT_EQ(VN_OK, Vn_CreateEmitter(&emitter));
         }
-        EXPECT_EQ(VN_OK, Vn_SetEmitterValue(emitter, harkentest::ObjectId(9001), 0.5f));
+        ASSERT_EQ(VN_OK, Vn_SetEmitterValue(emitter, harkentest::ObjectId(9001), 0.5f));
+        harkentest::AdvanceVariableWrite(engine);
+        float value = 0;
+        ASSERT_TRUE(engine->variables.CurrentValue(emitter, harkentest::ObjectId(9001), &value));
+        EXPECT_FLOAT_EQ(0.5f, value);
     }
     {
         VnConfig config = MakeNullConfig();
         config.maxEmitters = 1;
-        config.emitterVariableSlots = 17;
+        config.emitterVariableSlots = 1;
         EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());
         harken::Engine* engine = session.Engine();
         std::vector<harken::VariableDefinitionV1> definitions;
-        for (std::uint32_t i = 0; i < 17; ++i) {
+        for (std::uint32_t i = 0; i < 32; ++i) {
             definitions.push_back(MakeVariableDefinition(
                 harkentest::ObjectId(9100 + i), harken::VariableKindV1::Smooth,
                 0.0f, 1.0f, 0.0f));
@@ -558,10 +562,65 @@ TEST(VariableWorld, EmitterBanksAndOverrideSlotsHonorResolvedCapacity) {
                       engine, definitions.data(), definitions.size()).status);
         VnEmitterHandle emitter = 0;
         ASSERT_EQ(VN_OK, Vn_CreateEmitter(&emitter));
-        for (std::uint32_t i = 0; i < 17; ++i) {
+        for (std::uint32_t i = 0; i < 32; ++i) {
             ASSERT_EQ(VN_OK,
-                      Vn_SetEmitterValue(emitter, harkentest::ObjectId(9100 + i), 0.5f));
+                      Vn_SetEmitterValue(emitter, harkentest::ObjectId(9100 + i), static_cast<float>(i) / 32.0f));
         }
+        harkentest::AdvanceVariableWrite(engine);
+        for (std::uint32_t i = 0; i < 32; ++i) {
+            float value = -1.0f;
+            ASSERT_TRUE(engine->variables.CurrentValue(emitter, harkentest::ObjectId(9100 + i), &value));
+            EXPECT_FLOAT_EQ(static_cast<float>(i) / 32.0f, value);
+            ASSERT_TRUE(engine->emitters.LocalValue(emitter, harkentest::ObjectId(9100 + i), &value));
+            EXPECT_FLOAT_EQ(static_cast<float>(i) / 32.0f, value);
+        }
+        const auto storageBeforeDestroy = engine->emitters.VariableProjectionStorageBytes();
+        const auto serviceBeforeDestroy = engine->variables.StorageBytes();
+        ASSERT_EQ(VN_OK, Vn_DestroyEmitter(emitter));
+        EXPECT_LT(engine->emitters.VariableProjectionStorageBytes(), storageBeforeDestroy);
+        EXPECT_LT(engine->variables.StorageBytes(), serviceBeforeDestroy);
+        ASSERT_EQ(VN_OK, Vn_CreateEmitter(&emitter));
+        EXPECT_EQ(0u, engine->emitters.LocalValueCapacity(emitter));
+        ASSERT_EQ(VN_OK, Vn_SetEmitterValue(emitter, harkentest::ObjectId(9100), 0.75f));
+        harkentest::AdvanceVariableWrite(engine);
+        float recreatedValue = -1.0f;
+        ASSERT_TRUE(engine->variables.CurrentValue(emitter, harkentest::ObjectId(9100), &recreatedValue));
+        EXPECT_FLOAT_EQ(0.75f, recreatedValue);
+    }
+}
+
+TEST(VariableWorld, EmitterGrowthFailurePreservesValuesAndAdmissionAtEveryAllocation) {
+    for (std::size_t allocation = 1; allocation <= 3; ++allocation) {
+        VnConfig config = MakeNullConfig();
+        config.maxEmitters = 1;
+        config.emitterVariableSlots = 1;
+        EngineSession session(config);
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto* engine = session.Engine();
+        const auto definitions = DefaultDefinitions();
+        ASSERT_EQ(harken::WorldInstallStatus::Ok,
+            InstallDefinitionsWorld(engine, definitions.data(), definitions.size()).status);
+        VnEmitterHandle emitter = 0;
+        ASSERT_EQ(VN_OK, Vn_CreateEmitter(&emitter));
+        ASSERT_EQ(VN_OK, Vn_SetEmitterValue(emitter, kStepVar, 3.0f));
+        harkentest::AdvanceVariableWrite(engine);
+        const auto issued = engine->logicCommits.IssuedCount();
+        harken::detail::ArmLogicAllocFaultForTests(allocation,
+            harken::detail::LogicAllocSite::VariableValueStorage);
+        EXPECT_EQ(VN_OUT_OF_MEMORY, Vn_SetEmitterValue(emitter, kSmoothVar, -12.0f));
+        EXPECT_EQ(0u, harken::detail::g_logicAllocFault.remaining);
+        harken::detail::DisarmLogicAllocFaultForTests();
+        EXPECT_EQ(issued, engine->logicCommits.IssuedCount());
+        float value = 0;
+        ASSERT_TRUE(engine->variables.CurrentValue(emitter, kStepVar, &value));
+        EXPECT_FLOAT_EQ(3.0f, value);
+        EXPECT_FALSE(engine->emitters.LocalValue(emitter, kSmoothVar, &value));
+        ASSERT_EQ(VN_OK, Vn_SetEmitterValue(emitter, kSmoothVar, -12.0f));
+        harkentest::AdvanceVariableWrite(engine);
+        ASSERT_TRUE(engine->variables.CurrentValue(emitter, kSmoothVar, &value));
+        EXPECT_FLOAT_EQ(-12.0f, value);
+        ASSERT_TRUE(engine->emitters.LocalValue(emitter, kStepVar, &value));
+        EXPECT_FLOAT_EQ(3.0f, value);
     }
 }
 
@@ -596,8 +655,11 @@ TEST(VariableWorld,
         engine->logicCommits.IssuedCount();
     const std::uint64_t acceptedAfterFirst =
         engine->variables.AcceptedCount();
-    EXPECT_EQ(VN_VARIABLE_EMITTER_SLOT_EXHAUSTED,
+    harken::detail::ArmLogicAllocFaultForTests(1, harken::detail::LogicAllocSite::VariableValueStorage);
+    EXPECT_EQ(VN_OUT_OF_MEMORY,
               Vn_SetEmitterValue(emitter, harkentest::ObjectId(9202), 0.75f));
+    EXPECT_EQ(0u, harken::detail::g_logicAllocFault.remaining);
+    harken::detail::DisarmLogicAllocFaultForTests();
     EXPECT_EQ(issuedAfterFirst, engine->logicCommits.IssuedCount());
     EXPECT_EQ(acceptedAfterFirst, engine->variables.AcceptedCount());
     EXPECT_EQ(1u, engine->variables.PendingCount());
@@ -635,8 +697,11 @@ TEST(VariableWorld,
         engine->variables.SupersededCount();
     ASSERT_EQ(VN_OK, Vn_SetEmitterValue(emitter, harkentest::ObjectId(9201), 0.5f));
     ASSERT_EQ(VN_OK, Vn_SetValue(harkentest::ObjectId(9201), 0.1f));
-    EXPECT_EQ(VN_VARIABLE_EMITTER_SLOT_EXHAUSTED,
+    harken::detail::ArmLogicAllocFaultForTests(1, harken::detail::LogicAllocSite::VariableValueStorage);
+    EXPECT_EQ(VN_OUT_OF_MEMORY,
               Vn_SetEmitterValue(emitter, harkentest::ObjectId(9202), 0.25f));
+    EXPECT_EQ(0u, harken::detail::g_logicAllocFault.remaining);
+    harken::detail::DisarmLogicAllocFaultForTests();
     harkentest::AdvanceVariableWrite(engine);
     ASSERT_EQ(VN_OK, Vn_SetEmitterValue(emitter, harkentest::ObjectId(9202), 0.25f));
     EXPECT_EQ(issuedBeforeSupersede + 3u,
@@ -720,8 +785,11 @@ TEST(VariableWorld,
         engine->logicCommits.IssuedCount();
     const std::uint64_t acceptedBeforeRefusal =
         engine->variables.AcceptedCount();
-    EXPECT_EQ(VN_VARIABLE_EMITTER_SLOT_EXHAUSTED,
+    harken::detail::ArmLogicAllocFaultForTests(1, harken::detail::LogicAllocSite::VariableValueStorage);
+    EXPECT_EQ(VN_OUT_OF_MEMORY,
               Vn_SetEmitterValue(emitter, harkentest::ObjectId(9212), 0.5f));
+    EXPECT_EQ(0u, harken::detail::g_logicAllocFault.remaining);
+    harken::detail::DisarmLogicAllocFaultForTests();
     EXPECT_EQ(issuedBeforeRefusal, engine->logicCommits.IssuedCount());
     EXPECT_EQ(acceptedBeforeRefusal, engine->variables.AcceptedCount());
     EXPECT_EQ(1u, engine->variables.PendingCount());
@@ -1013,7 +1081,7 @@ TEST(VariableWorld, MoreDefinitionsThanRevisionCapacityKeepEveryCompletedCurrent
     EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& e = *session.Engine();
-    const auto capacity = e.variables.RevisionCapacity();
+    constexpr unsigned capacity = 4354;
     std::vector<harken::VariableDefinitionV1> defs;
     for (unsigned i = 0; i < capacity + 1; ++i)
         defs.push_back(MakeVariableDefinition(harkentest::ObjectId(10000+i), harken::VariableKindV1::Smooth, 0, 8, 2));
@@ -1022,7 +1090,7 @@ TEST(VariableWorld, MoreDefinitionsThanRevisionCapacityKeepEveryCompletedCurrent
         ASSERT_EQ(VN_OK, Vn_SetValue(d.variableId, 7));
         harkentest::AdvanceVariableWrite(&e);
     }
-    EXPECT_EQ(capacity, e.variables.RevisionCapacity());
+    EXPECT_LT(e.variables.ConstructedRevisionCount(), capacity);
     for (const auto& d : defs) {
         float value = 0;
         ASSERT_TRUE(e.variables.CurrentValue(d.variableId, &value));

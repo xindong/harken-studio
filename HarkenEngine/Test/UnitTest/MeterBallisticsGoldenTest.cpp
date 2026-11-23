@@ -274,7 +274,7 @@ TEST(MeterBallisticsGolden, FiniteAudioRecoversAfterBusOverflow) {
     const auto overflowBlock = snapshot.blockIndex;
 
     ASSERT_EQ(VN_OK, Vn_SetBusVolume(VN_BUS_MASTER, -30.0f, 0));
-    engine->nullBackend.Pump(1);
+    engine->nullBackend.Pump(2); // Observe a full finite block after the transition.
     ASSERT_EQ(VN_OK, Vn_Update());
     ASSERT_EQ(VN_OK, Vn_CaptureSnapshot(&snapshot));
     ASSERT_GT(snapshot.blockIndex, overflowBlock);

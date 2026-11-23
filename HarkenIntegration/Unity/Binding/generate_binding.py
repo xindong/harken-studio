@@ -612,8 +612,27 @@ def emit_native(table, policy):
         development = fn.get("edition") == "development"
         if development:
             lines.append("#if HARKEN_ENGINE_DEV")
+        # The shared observer is allocation-free for ordinary results. Keep
+        # diagnostics outside the P/Invoke and never alter the native result.
+        raw_name = name + "Native"
         lines.append('        [DllImport(LibraryName, EntryPoint = "%s", CallingConvention = CallingConvention.Cdecl)]' % entry_point)
-        lines.append("        public static extern VnResult %s(%s);" % (name, ps))
+        lines.append("        private static extern VnResult %s(%s);" % (raw_name, ps))
+        call_args = []
+        for param in params:
+            kind = param["wire"]
+            modifier = ("out " if kind in {"out", "outu32"} else
+                        "ref " if kind in {"outstruct", "structref"} else
+                        "in " if kind in {"desc", "pathdesc", "postactiondesc"} else "")
+            call_args.append(modifier + cs_identifier(param["name"]))
+        lines.append("        public static VnResult %s(%s)" % (name, ps))
+        lines.append("        {")
+        lines.append("            VnResult result = %s(%s);" % (raw_name, ", ".join(call_args)))
+        if entry_point in {"Vn_Init", "Vn_InitWithOutputPreparation"}:
+            lines.append("            if (result == VnResult.VN_OK) RuntimeFaultDiagnostics.Reset();")
+        if entry_point != "Vn_GetRuntimeFaultInfo":
+            lines.append("            RuntimeFaultDiagnostics.ObserveResult(result);")
+        lines.append("            return result;")
+        lines.append("        }")
         if development:
             lines.append("#endif")
         lines.append("")

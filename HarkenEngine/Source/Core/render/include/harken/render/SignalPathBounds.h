@@ -4,6 +4,7 @@
 #include "harken/dsp/Biquad.h"
 #include "harken/dsp/GainRamp.h"
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <limits>
 
@@ -32,6 +33,21 @@ inline double SignalIncrementBound(float current, float target, float increment,
 class SignalBiquadBound {
 public:
     void Reset() noexcept { *this = {}; }
+    bool SameState(const SignalBiquadBound& other) const noexcept {
+        const auto same = [](double a, double b) {
+            return std::bit_cast<std::uint64_t>(a) == std::bit_cast<std::uint64_t>(b);
+        };
+        const auto sameFloat = [](float a, float b) {
+            return std::bit_cast<std::uint32_t>(a) == std::bit_cast<std::uint32_t>(b);
+        };
+        return valid_ == other.valid_ && same(alpha_, other.alpha_) &&
+            same(delta_, other.delta_) && same(state_, other.state_) && same(cached_, other.cached_) &&
+            sameFloat(coefficients_.b0, other.coefficients_.b0) &&
+            sameFloat(coefficients_.b1, other.coefficients_.b1) &&
+            sameFloat(coefficients_.b2, other.coefficients_.b2) &&
+            sameFloat(coefficients_.a1, other.coefficients_.a1) &&
+            sameFloat(coefficients_.a2, other.coefficients_.a2);
+    }
     double Advance(const BiquadCoeffs& c, std::uint32_t frames) noexcept {
         if (valid_ && BiquadCoeffsEqual(c, coefficients_) && frames == 0)
             return cached_;
@@ -84,6 +100,12 @@ private:
 // Keep the same ownership for the dimensionless state certificates.
 class SignalSmoothedBiquadBound {
 public:
+    // Only when the owning section has no active or pending transition.
+    SignalBiquadBound CaptureSettled() const noexcept { return active_; }
+    void RestoreSettled(const SignalBiquadBound& saved) noexcept {
+        active_ = saved;
+        target_.Reset();
+    }
     template<std::size_t Channels>
     double Advance(bool enabled, BiquadCoeffs coefficients,
                    const BiquadTransitionState<Channels>& transition,

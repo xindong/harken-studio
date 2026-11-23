@@ -1,3 +1,4 @@
+#include "harken/core/LogicAllocCheckpoint.h"
 #include <harken_pack/PackChecksum.h>
 #include "harken/core/CurrentWorld.h"
 #include "harken/core/MediaContentRevision.h"
@@ -1904,7 +1905,7 @@ static bool ValidateResolvedSectionGroupPayloadCore(
 bool ValidateResolvedSectionGroupPayloadV1(
     const PlayablePropertyPayloadViewV1& payload) noexcept {
     try { return ValidateResolvedSectionGroupPayloadCore(payload, {}); }
-    catch (...) { return false; }
+    catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return false; }
 }
 
 PlayablePropertyPayloadViewV1 MakeStructuralAncestorPayloadV1(
@@ -1966,14 +1967,14 @@ static bool ValidateCurrentWorldSectionGroupsCore(
 bool ValidateCurrentWorldSectionGroupsV1(
     const ContainerWorldInstallViewV1& world) noexcept {
     try { return ValidateCurrentWorldSectionGroupsCore(world, {}); }
-    catch (...) { return false; }
+    catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return false; }
 }
 
 WorldInstallStatus detail::ValidateCurrentWorldSectionGroupsWithBudget(
     const ContainerWorldInstallViewV1& world, const PackDecodeBudget& budget) noexcept {
     try { return ValidateCurrentWorldSectionGroupsCore(world, budget)
         ? WorldInstallStatus::Ok : WorldInstallStatus::InvalidWorld; }
-    catch (...) { return WorldInstallStatus::Capacity; }
+    catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return WorldInstallStatus::Capacity; }
 }
 
 TransitionProgramClassV1 ClassifyTransitionProgramV1(
@@ -3132,7 +3133,7 @@ WorldInstallStatus ValidateCurrentWorldImpl(
         world.trackScheduleCount > world.capacity.maxTrackSchedulePrograms ||
         world.segmentScheduleCount > world.capacity.maxSegmentSchedulePrograms ||
         world.containerCount > world.capacity.maxContainerPrograms ||
-        world.actionCount > world.capacity.maxActionDefinitions ||
+        (composite == nullptr && world.actionCount > world.capacity.maxActionDefinitions) ||
         world.capacity.maxVariableDefinitions > kHardVariableDefinitionCapacity ||
         world.capacity.maxContainerPrograms > kHardContainerProgramCapacity ||
         world.capacity.maxPlayablePropertyPrograms >
@@ -4172,7 +4173,7 @@ WorldInstallStatus ValidateCurrentWorldImpl(
             return WorldInstallStatus::InvalidWorld;
         }
         actionStepTotal += action.stepCount;
-        if (actionStepTotal > world.capacity.maxActionStepsTotal ||
+        if ((composite == nullptr && actionStepTotal > world.capacity.maxActionStepsTotal) ||
             (action.directFeatureMask & ~15u) != 0 ||
             (action.transitiveFeatureMask & ~15u) != 0 ||
             action.expandedStepOccurrenceCount == 0 ||
@@ -4632,7 +4633,7 @@ WorldInstallStatus detail::ValidateCurrentWorldWithBudget(
             return WorldInstallStatus::InvalidWorld;
         return ValidateCurrentWorldImpl(
             world, world.sourceBodyVintage, ValidationScope::ExactWorld, budget);
-    } catch (...) {
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage);
         return WorldInstallStatus::Capacity;
     }
 }
@@ -4653,7 +4654,7 @@ WorldInstallStatus detail::ValidateCurrentWorldCompositeV1(
             return WorldInstallStatus::InvalidWorld;
         return ValidateCurrentWorldImpl(
             world, world.sourceBodyVintage, ValidationScope::ExactWorld, budget, &vintages);
-    } catch (...) {
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage);
         return WorldInstallStatus::Capacity;
     }
 }
@@ -4672,7 +4673,7 @@ WorldInstallStatus detail::ValidateCurrentWorldPartitionLocalWithBudget(
             return WorldInstallStatus::InvalidWorld;
         return ValidateCurrentWorldImpl(
             world, world.sourceBodyVintage, ValidationScope::PartitionLocal, budget);
-    } catch (...) {
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage);
         return WorldInstallStatus::Capacity;
     }
 }

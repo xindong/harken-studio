@@ -247,6 +247,7 @@ namespace Harken
                 var nextNames = new Dictionary<string, SharedPack>(metadataNames, StringComparer.Ordinal);
                 var changes = new Dictionary<SharedPack, PackMetadataInput>();
                 VnObjectId project = initNames.Project;
+                ulong retained = 0;
                 for (int i = 0; i < names.Length; ++i)
                 {
                     string name = names[i];
@@ -261,7 +262,7 @@ namespace Harken
                     VnResult result;
                     if (captured != null && captured.TryGetValue(name, out input))
                         result = packSource.Validate(input);
-                    else result = packSource.Capture(name, project, initBytes, out input);
+                    else result = packSource.Capture(name, project, initBytes, out input, retained);
                     if (!active) return VnResult.VN_NOT_INITIALIZED;
                     if (result != VnResult.VN_OK) return result;
                     if (expectedId != 0 && input.Facts.packStableId != expectedId) return VnResult.VN_PACK_STALE_REVISION;
@@ -290,6 +291,7 @@ namespace Harken
                     nextPacks[input.Facts.packStableId] = owner;
                     nextNames.Add(name, owner);
                     changes.Add(owner, input);
+                    retained += input.RetainedResidentBytes;
                     acquired[i] = owner;
                 }
                 if (changes.Count != 0)
@@ -634,6 +636,7 @@ namespace Harken
             out PackBootstrapSession session, CancellationToken cancellation, ulong outputTicket = 0)
         {
             session = null;
+            source = source.WithResidentInputBudget(config.maxPackDecodeStagingBytes);
             VnResult result = source.Capture(null, default, null, out PackMetadataInput init);
             cancellation.ThrowIfCancellationRequested();
             return result == VnResult.VN_OK ? StartCaptured(source, init, ref config, out session,

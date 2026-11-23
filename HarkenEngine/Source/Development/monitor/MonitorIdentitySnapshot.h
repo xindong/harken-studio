@@ -7,23 +7,27 @@
 
 namespace harken::monitor {
 
-// Stable diagnostic slot order. These are value copies, not native owners.
-inline std::size_t IdentitySlotCapacity(const Engine& engine) noexcept {
-    return static_cast<std::size_t>(engine.playableInstances.Capacity()) + engine.actionFirings.Capacity() +
-        engine.ledger.Capacity() + engine.monitorEmitters.Capacity() + 1;
+enum IdentityDomain : std::size_t { Playables, Actions, LogicalVoices, PublicEmitters, DefaultEmitter };
+inline std::array<std::size_t, 5> IdentityDomainCounts(const Engine& engine) noexcept {
+    return {engine.playableInstances.Capacity(), engine.actionFirings.Capacity(),
+        engine.ledger.ConstructedEntryCount(), engine.monitorEmitters.Capacity(), 1};
 }
-
-inline bool CaptureIdentitySlot(const Engine& engine, std::size_t slot,
-    MonitorExecutionFact& out) noexcept {
+inline std::size_t IdentitySlotCapacity(const Engine& engine) noexcept {
+    std::size_t size = 0;
+    for (auto count : IdentityDomainCounts(engine)) size += count;
+    return size;
+}
+inline bool CaptureIdentitySlot(const Engine& engine, std::size_t domain,
+    std::size_t slot, MonitorExecutionFact& out) noexcept {
     out = {};
     MonitorLifecycleFacts values{};
     values.reasonKnown = false;
     std::uint64_t handle = 0;
     unsigned subject = 0;
-    if (slot < engine.playableInstances.Capacity()) {
+    if (domain == Playables) {
         handle = engine.playableInstances.CaptureMonitorIdentityAt(static_cast<std::uint32_t>(slot), &values);
         subject = VN_MONITOR_SUBJECT_PLAYABLE;
-    } else if ((slot -= engine.playableInstances.Capacity()) < engine.actionFirings.Capacity()) {
+    } else if (domain == Actions) {
         ActionFiringSnapshot action{};
         handle = engine.actionFirings.CaptureMonitorIdentityAt(static_cast<std::uint32_t>(slot), &action);
         subject = VN_MONITOR_SUBJECT_ACTION;
@@ -39,15 +43,14 @@ inline bool CaptureIdentitySlot(const Engine& engine, std::size_t slot,
         values.programSemanticFingerprint = action.programSemanticFingerprint;
         values.projectId = action.owner.projectId;
         values.logicCommitSequence = action.acceptedLogicSequence;
-    } else if ((slot -= engine.actionFirings.Capacity()) < engine.ledger.Capacity()) {
+    } else if (domain == LogicalVoices) {
         handle = engine.ledger.CaptureMonitorIdentityAt(static_cast<std::uint32_t>(slot), &values);
         subject = VN_MONITOR_SUBJECT_LOGICAL_VOICE;
     } else {
-        slot -= engine.ledger.Capacity();
         subject = VN_MONITOR_SUBJECT_EMITTER;
-        if (slot < engine.monitorEmitters.Capacity()) {
+        if (domain == PublicEmitters) {
             if (!engine.monitorEmitters.CaptureAt(static_cast<std::uint32_t>(slot), &values.emitterOrigin)) return false;
-        } else if (slot == engine.monitorEmitters.Capacity()) {
+        } else if (domain == DefaultEmitter && slot == 0) {
             values.emitterOrigin = engine.monitorEmitters.CaptureOrigin(engine.emitters.DefaultState());
         } else return false;
         handle = values.emitterOrigin.emitter;

@@ -35,7 +35,7 @@ extern "C" {
 VnResult Vn_CaptureEffectDynamicRoutes(VnEffectDynamicRouteInfo* out,
                                        uint32_t capacity,
                                        uint32_t* requiredCount) {
-    try {
+    return harken::detail::InvokeApi([&]() -> VnResult {
     harken::Engine* engine = harken::detail::g_engine;
     if (engine == nullptr) {
         return VN_NOT_INITIALIZED;
@@ -99,16 +99,13 @@ VnResult Vn_CaptureEffectDynamicRoutes(VnEffectDynamicRouteInfo* out,
     }
     FinishCaptureTrace(trace, result, requiredCount);
     return result;
-    } catch (const std::bad_alloc&) {
-        return VN_DEVICE_ERROR;
-    } catch (...) {
-        return VN_DEVICE_ERROR;
-    }}
+    });
+}
 
 VnResult Vn_CaptureCompressorRuntimeInfo(
     VnCompressorRuntimeInfo* out, uint32_t capacity,
     uint32_t* requiredCount) {
-    try {
+    return harken::detail::InvokeApi([&]() -> VnResult {
     harken::Engine* engine = harken::detail::g_engine;
     if (engine == nullptr) {
         return VN_NOT_INITIALIZED;
@@ -127,14 +124,11 @@ VnResult Vn_CaptureCompressorRuntimeInfo(
         *engine, out, capacity, requiredCount);
     FinishCaptureTrace(trace, result, requiredCount);
     return result;
-    } catch (const std::bad_alloc&) {
-        return VN_DEVICE_ERROR;
-    } catch (...) {
-        return VN_DEVICE_ERROR;
-    }}
+    });
+}
 
 VnResult Vn_TraceStart(const char* utf8Path) {
-    try {
+    return harken::detail::InvokeApi([&]() -> VnResult {
     if (harken::detail::CanonicalSetMutationBlocked()) { return VN_IN_USE; }
     harken::Engine* engine = harken::detail::g_engine;
     if (engine == nullptr) {
@@ -171,18 +165,14 @@ VnResult Vn_TraceStart(const char* utf8Path) {
         engine->traceFailedSticky = false;
         engine->trace = std::move(recorder);
         return VN_OK;
-    } catch (...) {
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::ApiEntry);
         return VN_BAD_TRACE_FILE;
     }
-
-    } catch (const std::bad_alloc&) {
-        return VN_DEVICE_ERROR;
-    } catch (...) {
-        return VN_DEVICE_ERROR;
-    }}
+    });
+}
 
 VnResult Vn_TraceStop(void) {
-    try {
+    return harken::detail::InvokeApi([&]() -> VnResult {
     if (harken::detail::CanonicalSetMutationBlocked()) { return VN_IN_USE; }
     harken::Engine* engine = harken::detail::g_engine;
     if (engine == nullptr) {
@@ -200,17 +190,13 @@ VnResult Vn_TraceStop(void) {
         engine->trace.reset();
     }
     return VN_OK;
-
-    } catch (const std::bad_alloc&) {
-        return VN_DEVICE_ERROR;
-    } catch (...) {
-        return VN_DEVICE_ERROR;
-    }}
+    });
+}
 
 VnResult Vn_CaptureEffectCapabilities(VnEffectCapability* out,
                                       uint32_t capacity,
                                       uint32_t* requiredCount) {
-    try {
+    return harken::detail::InvokeApi([&]() -> VnResult {
     harken::Engine* engine = harken::detail::g_engine;
     if (engine == nullptr) {
         return VN_NOT_INITIALIZED;
@@ -229,17 +215,13 @@ VnResult Vn_CaptureEffectCapabilities(VnEffectCapability* out,
         *engine, out, capacity, requiredCount);
     FinishCaptureTrace(trace, result, requiredCount);
     return result;
-
-    } catch (const std::bad_alloc&) {
-        return VN_DEVICE_ERROR;
-    } catch (...) {
-        return VN_DEVICE_ERROR;
-    }}
+    });
+}
 
 VnResult Vn_CaptureEffectParameterCapabilities(
     VnEffectParameterCapability* out, uint32_t capacity,
     uint32_t* requiredCount) {
-    try {
+    return harken::detail::InvokeApi([&]() -> VnResult {
     harken::Engine* engine = harken::detail::g_engine;
     if (engine == nullptr) {
         return VN_NOT_INITIALIZED;
@@ -259,17 +241,13 @@ VnResult Vn_CaptureEffectParameterCapabilities(
             *engine, out, capacity, requiredCount);
     FinishCaptureTrace(trace, result, requiredCount);
     return result;
-
-    } catch (const std::bad_alloc&) {
-        return VN_DEVICE_ERROR;
-    } catch (...) {
-        return VN_DEVICE_ERROR;
-    }}
+    });
+}
 
 VnResult Vn_CaptureEffectDynamicCapabilities(
     VnEffectDynamicCapability* out, uint32_t capacity,
     uint32_t* requiredCount) {
-    try {
+    return harken::detail::InvokeApi([&]() -> VnResult {
     harken::Engine* engine = harken::detail::g_engine;
     if (engine == nullptr) {
         return VN_NOT_INITIALIZED;
@@ -289,16 +267,13 @@ VnResult Vn_CaptureEffectDynamicCapabilities(
             *engine, out, capacity, requiredCount);
     FinishCaptureTrace(trace, result, requiredCount);
     return result;
-    } catch (const std::bad_alloc&) {
-        return VN_DEVICE_ERROR;
-    } catch (...) {
-        return VN_DEVICE_ERROR;
-    }}
+    });
+}
 
 VnResult Vn_CaptureEffectDynamicParameterCapabilities(
     VnEffectDynamicParameterCapability* out, uint32_t capacity,
     uint32_t* requiredCount) {
-    try {
+    return harken::detail::InvokeApi([&]() -> VnResult {
     harken::Engine* engine = harken::detail::g_engine;
     if (engine == nullptr) {
         return VN_NOT_INITIALIZED;
@@ -319,16 +294,13 @@ VnResult Vn_CaptureEffectDynamicParameterCapabilities(
             *engine, out, capacity, requiredCount);
     FinishCaptureTrace(trace, result, requiredCount);
     return result;
-    } catch (const std::bad_alloc&) {
-        return VN_DEVICE_ERROR;
-    } catch (...) {
-        return VN_DEVICE_ERROR;
-    }}
+    });
+}
 
 VnResult Vn_CapturePropertyTargets(VnPropertyTargetInfo* out,
                                    uint32_t capacity,
                                    uint32_t* requiredCount) {
-    try {
+    return harken::detail::InvokeApi([&]() -> VnResult {
     harken::Engine* engine = harken::detail::g_engine;
     if (engine == nullptr) {
         return VN_NOT_INITIALIZED;
@@ -353,17 +325,13 @@ VnResult Vn_CapturePropertyTargets(VnPropertyTargetInfo* out,
         *engine, out, capacity, requiredCount);
     FinishCaptureTrace(trace, result, requiredCount);
     return result;
-
-    } catch (const std::bad_alloc&) {
-        return VN_DEVICE_ERROR;
-    } catch (...) {
-        return VN_DEVICE_ERROR;
-    }}
+    });
+}
 
 VnResult Vn_CapturePropertyBindings(VnPropertyBindingInfo* out,
                                     uint32_t capacity,
                                     uint32_t* requiredCount) {
-    try {
+    return harken::detail::InvokeApi([&]() -> VnResult {
     harken::Engine* engine = harken::detail::g_engine;
     if (engine == nullptr) {
         return VN_NOT_INITIALIZED;
@@ -382,11 +350,7 @@ VnResult Vn_CapturePropertyBindings(VnPropertyBindingInfo* out,
         *engine, out, capacity, requiredCount);
     FinishCaptureTrace(trace, result, requiredCount);
     return result;
-
-    } catch (const std::bad_alloc&) {
-        return VN_DEVICE_ERROR;
-    } catch (...) {
-        return VN_DEVICE_ERROR;
-    }}
+    });
+}
 
 } // extern "C"

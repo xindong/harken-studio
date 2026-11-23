@@ -1,3 +1,4 @@
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/render/VoicePool.h"
 #include "harken/render/BuiltinEffects.h"
 #include <algorithm>
@@ -97,7 +98,7 @@ VnResult VoicePool::PrepareEffectChainUpdate(VnVoiceHandle handle,
         }
         *out = update;
         return VN_OK;
-    } catch (...) {
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage);
         if (update != nullptr && update->phase.load(std::memory_order_relaxed) ==
             EffectChainUpdate::Phase::Preparing) CancelEffectChainUpdate(*update);
         return VN_DEVICE_ERROR;

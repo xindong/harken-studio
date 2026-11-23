@@ -1,3 +1,4 @@
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/media/StreamManager.h"
 
 #include "harken/core/MediaContentRevision.h"
@@ -157,30 +158,22 @@ StreamManager::StreamManager(const EngineConfig& config)
     : m_ringFrames(static_cast<std::uint32_t>(
           RoundUpPow2(config.streamRingFrames))),
       m_prebufferMs(config.prebufferMs),
-      m_slots(config.maxStreams) {
-    const auto channelSamples = static_cast<std::uint64_t>(config.maxStreams) * m_ringFrames;
-    if (channelSamples > UINT32_MAX) throw std::bad_alloc();
-    for (auto& column : m_ringStorage) {
-        if (!column.Reserve(static_cast<std::uint32_t>(channelSamples)))
-            throw std::bad_alloc();
-    }
-    for (std::uint32_t s = 0; s < config.maxStreams; ++s) {
-        float* planes[kMaxChannels];
-        for (std::uint32_t ch = 0; ch < kMaxChannels; ++ch) {
-            planes[ch] = m_ringStorage[ch].data() +
-                static_cast<std::size_t>(s) * m_ringFrames;
-        }
-        m_slots[s].ring.Wire(planes, m_ringFrames);
+      m_slotLimit(config.maxStreams == 0 ? UINT32_MAX / m_ringFrames : config.maxStreams) {
+    for (auto& column : m_ringStorage) column.AlignSegments(m_ringFrames);
+    if (!m_slots.ConstructThrough(config.maxStreams)) throw detail::LogicPreparationFailure{};
+    for (std::uint32_t i = 0; i < m_slots.size(); ++i) {
+        m_slots[i].index = i;
+        m_slots[i].ring.capacity = m_ringFrames;
     }
     try {
         // Source validation/cleanup cannot occupy slot prebuffer execution,
         // and neither preparation domain borrows a steady refill worker.
-        const auto lanes = config.maxStreams == 0 ? 1u : 2u + std::min(2u, config.maxStreams);
+        const auto lanes = 2u + std::min(2u, m_slotLimit);
         for (unsigned i = 0; i < lanes; ++i) m_ioLanes.push_back(std::make_unique<IoLane>());
         for (unsigned i = 0; i < lanes; ++i)
             m_ioLanes[i]->thread = std::thread(&StreamManager::IoMain, this, i);
         m_thread = std::thread(&StreamManager::ThreadMain, this);
-    } catch (...) { StopIo(); throw; }
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::StreamStorage); StopIo(); throw; }
 
     // Startup handshake. Synchronous callers require a running manager, so a
     // thread that died on the way up must refuse initialization. Wait until it has published a verdict; it always
@@ -386,7 +379,7 @@ VnResult StreamManager::ResolvePackSource(
         fill(index, *record);
         *empty = std::move(record);
         return VN_OK;
-    } catch (const std::bad_alloc&) {
+    } catch (const std::bad_alloc&) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::StreamStorage);
         return VN_BACKPRESSURE;
     }
 }
@@ -468,11 +461,13 @@ bool StreamManager::PeekFreeSlot(std::uint32_t* outSlot) const {
             return true;
         }
     }
-    return false;
+    if (m_slots.size() >= m_slotLimit) return false;
+    *outSlot = m_slots.size();
+    return true;
 }
 
 std::uint32_t StreamManager::FreeSlotCount() const {
-    std::uint32_t count = 0;
+    std::uint32_t count = m_slotLimit - m_slots.size();
     for (const StreamSlot& slot : m_slots) {
         if (slot.ring.state.load(std::memory_order_acquire) ==
             StreamSlotState::Free) {
@@ -488,7 +483,7 @@ StreamRing* StreamManager::RingOf(std::uint32_t slot) {
 
 bool StreamManager::PrepareSlotWorkingSet(
     std::uint32_t slot, std::uint32_t channels) noexcept {
-    return slot < m_slots.size() &&
+    return slot < m_slotLimit &&
         PrepareRingStorage(std::max(slot + 1u, OccupiedSlotPrefix()), channels);
 }
 
@@ -545,6 +540,10 @@ std::uint64_t StreamManager::InitializeSlot(
     std::uint64_t startFrame, std::uint64_t loopStartFrame,
     std::uint64_t loopEndFrame, std::uint32_t loopCount) {
     StreamSlot& s = m_slots[slot];
+    float* planes[kMaxChannels]{};
+    for (std::uint32_t ch = 0; ch < file.toc.channelCount; ++ch)
+        planes[ch] = m_ringStorage[ch].TryAt(slot * m_ringFrames);
+    s.ring.Wire(planes, m_ringFrames);
 #if HARKEN_ENGINE_DEV
     PublishPlaybackObservation(s);
 #endif
@@ -893,7 +892,7 @@ VnResult StreamManager::PostAndWait(Request& request) {
             throw std::bad_alloc{};
         }
         m_requests.push_back(&request);
-    } catch (...) {
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::StreamStorage);
         request.result = VN_BAD_STREAM_FILE;
         return request.result;
     }
@@ -987,11 +986,21 @@ std::uint32_t StreamManager::OccupiedSlotPrefix() const noexcept {
 
 bool StreamManager::PrepareRingStorage(
     std::uint32_t slotPrefix, std::uint32_t channels, bool pending) noexcept {
-    if (memguard::IsAudioTagged() || slotPrefix > m_slots.size() ||
+    if (memguard::IsAudioTagged() || slotPrefix > m_slotLimit ||
         channels == 0 || channels > kMaxChannels) return false;
+    // One control owner constructs stable descriptors before the IO thread can see
+    // an active generation. Accepted pending starts also own this backing.
+    const auto needed = std::min<std::uint64_t>(m_slotLimit,
+        std::uint64_t{slotPrefix} + m_pendingRingSlots[0] + (pending ? 1u : 0u));
+    const auto previous = m_slots.size();
+    if (!m_slots.ConstructThrough(static_cast<std::uint32_t>(needed))) return false;
+    for (auto i = previous; i < needed; ++i) {
+        m_slots[i].index = i;
+        m_slots[i].ring.capacity = m_ringFrames;
+    }
     for (std::uint32_t ch = 0; ch < kMaxChannels; ++ch) {
         if (ch >= channels && m_pendingRingSlots[ch] == 0) continue;
-        const auto required = std::min<std::uint64_t>(m_slots.size(),
+        const auto required = std::min<std::uint64_t>(m_slotLimit,
             static_cast<std::uint64_t>(slotPrefix) + m_pendingRingSlots[ch] +
                 (pending && ch < channels ? 1u : 0u));
         if (!m_ringStorage[ch].ConstructThrough(

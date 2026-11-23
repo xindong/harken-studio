@@ -41,12 +41,11 @@ public:
     };
     static_assert(sizeof(Identity) == 16 && sizeof(Due) == 32);
 
-    bool Reserve(std::uint32_t capacity) noexcept { return nodes_.Reserve(capacity); }
     bool PrepareOwner(Identity id) noexcept {
-        if (memguard::IsAudioTagged() || !id.Valid() || id.slot >= nodes_.Capacity()) return false;
+        if (memguard::IsAudioTagged() || !id.Valid()) return false;
         if (nodes_.IsConstructed(id.slot) && nodes_[id.slot].owner.Valid())
             return nodes_[id.slot].owner == id;
-        if (prepared_ == nodes_.Capacity() || !nodes_.ConstructPageFor(id.slot) ||
+        if (prepared_ == UINT32_MAX || !nodes_.ConstructPageFor(id.slot) ||
             !nodes_.ConstructThrough(prepared_ + 1u)) return false;
         auto& node = nodes_[id.slot];
         // The other column may already locate a different owner's heap entry.
@@ -180,7 +179,7 @@ private:
 
     SparseRowStorage<Due> nodes_;
     std::uint32_t size_ = 0;
-    std::uint32_t prepared_ = 0;
+    std::atomic<std::uint32_t> prepared_{0};
 };
 
 enum class RuntimeActivitySet : std::uint8_t { Active, Ready, NextBlock, Dirty, Retiring, Count };
@@ -189,34 +188,14 @@ template <class Family>
 class RuntimeActivityIndex {
 public:
     using Identity = RuntimeIndexIdentity<Family>;
-    bool Reserve(std::uint32_t capacity) noexcept {
-        if (capacity_ != 0 || memguard::IsAudioTagged()) return false;
-        const auto pages = capacity / 256u + (capacity % 256u != 0);
-        std::uint32_t bits = pages, total = 0, levels = 0;
-        do {
-            offsets_[levels] = total;
-            const auto words = bits / 64u + (bits % 64u != 0);
-            total += words;
-            bits = words;
-            ++levels;
-        } while (bits > 1u);
-        if (!pages_.Reserve(pages) || !summaries_.Reserve(total * kSetCount)) return false;
-        capacity_ = capacity;
-        summaryStride_ = total;
-        levelCount_ = levels;
-        return true;
-    }
     bool Prepare(Identity id) noexcept {
-        if (memguard::IsAudioTagged() || !id.Valid() || id.slot >= capacity_) return false;
+        if (memguard::IsAudioTagged() || !id.Valid()) return false;
         const auto page = id.slot / 256u;
         if (!pages_.ConstructPageFor(page)) return false;
-        for (std::uint32_t set = 0; set < kSetCount; ++set) {
-            auto bit = page;
-            for (std::uint32_t level = 0; level < levelCount_; ++level) {
-                if (!summaries_.ConstructPageFor(set * summaryStride_ + offsets_[level] + bit / 64u))
-                    return false;
-                bit /= 64u;
-            }
+        auto bit = page;
+        for (auto& level : summaries_) {
+            bit /= 64u;
+            if (!level.ConstructPageFor(bit)) return false;
         }
         return true;
     }
@@ -225,8 +204,8 @@ public:
     template <class Matches>
     bool SetMembership(Identity id, RuntimeActivitySet set, bool present, Matches&& matches) noexcept {
         const auto index = static_cast<std::uint32_t>(set);
-        if (!id.Valid() || id.slot >= capacity_ || index >= kSetCount || !matches(id) ||
-            !Prepared(id.slot, index)) return false;
+        if (!id.Valid() || index >= kSetCount || !matches(id) ||
+            !Prepared(id.slot)) return false;
         const auto page = id.slot / 256u;
         auto& bitmap = pages_[page].sets[index];
         const auto word = (id.slot % 256u) / 64u;
@@ -250,7 +229,7 @@ public:
     }
     template <class Matches>
     bool Remove(Identity id, Matches&& matches) noexcept {
-        if (!id.Valid() || id.slot >= capacity_ || !matches(id)) return false;
+        if (!id.Valid() || !matches(id)) return false;
         for (std::uint32_t set = 0; set < kSetCount; ++set)
             if (!SetMembership(id, static_cast<RuntimeActivitySet>(set), false, matches)) return false;
         return true;
@@ -259,7 +238,7 @@ public:
     Identity Next(RuntimeActivitySet set, std::uint32_t* cursor, ResolveOwner&& resolve) const noexcept {
         const auto index = static_cast<std::uint32_t>(set);
         if (cursor == nullptr || index >= kSetCount) return {};
-        while (*cursor < capacity_) {
+        while (*cursor != UINT32_MAX) {
             auto page = *cursor / 256u;
             const auto start = *cursor % 256u;
             auto slot = NextInPage(index, page, start);
@@ -269,37 +248,53 @@ public:
                 slot = NextInPage(index, page, 0);
                 assert(slot != UINT32_MAX);
             }
-            if (slot >= capacity_) break;
+            if (slot == UINT32_MAX) break;
             *cursor = slot + 1u;
             const auto id = resolve(slot);
             if (id.Valid() && id.slot == slot) return id;
         }
-        *cursor = capacity_;
+        *cursor = UINT32_MAX;
         return {};
     }
-    std::size_t RequestedBytes() const noexcept { return pages_.RequestedBytes() + summaries_.RequestedBytes(); }
-    std::size_t DirectoryBytes() const noexcept { return pages_.DirectoryBytes() + summaries_.DirectoryBytes(); }
-    std::size_t CommittedBytes() const noexcept { return pages_.CommittedBytes() + summaries_.CommittedBytes(); }
-    std::size_t ReservedBytes() const noexcept { return pages_.ReservedBytes() + summaries_.ReservedBytes(); }
+    std::size_t RequestedBytes() const noexcept {
+        auto bytes = pages_.RequestedBytes();
+        for (const auto& level : summaries_) bytes += level.RequestedBytes();
+        return bytes;
+    }
+    std::size_t DirectoryBytes() const noexcept {
+        auto bytes = pages_.DirectoryBytes();
+        for (const auto& level : summaries_) bytes += level.DirectoryBytes();
+        return bytes;
+    }
+    std::size_t CommittedBytes() const noexcept {
+        auto bytes = pages_.CommittedBytes();
+        for (const auto& level : summaries_) bytes += level.CommittedBytes();
+        return bytes;
+    }
+    std::size_t ReservedBytes() const noexcept {
+        auto bytes = pages_.ReservedBytes();
+        for (const auto& level : summaries_) bytes += level.ReservedBytes();
+        return bytes;
+    }
 
 private:
     static constexpr std::uint32_t kSetCount = static_cast<std::uint32_t>(RuntimeActivitySet::Count);
     struct Bitmap256 { std::uint64_t leaves[4]{}; std::uint64_t summary = 0; };
     struct Page { Bitmap256 sets[kSetCount]; std::uint64_t pageDirectory = 0; };
     static_assert(sizeof(Page) == 208);
-    bool Prepared(std::uint32_t slot, std::uint32_t set) const noexcept {
+    bool Prepared(std::uint32_t slot) const noexcept {
         auto bit = slot / 256u;
         if (!pages_.IsConstructed(bit)) return false;
-        for (std::uint32_t level = 0; level < levelCount_; ++level) {
-            if (!summaries_.IsConstructed(set * summaryStride_ + offsets_[level] + bit / 64u)) return false;
+        for (std::uint32_t level = 0; level < kLevelCount; ++level) {
+            if (!summaries_[level].IsConstructed(bit / 64u)) return false;
             bit /= 64u;
         }
         return true;
     }
     void SetPage(std::uint32_t set, std::uint32_t page, bool present) noexcept {
         auto bit = page;
-        for (std::uint32_t level = 0; level < levelCount_; ++level) {
-            auto& word = summaries_[set * summaryStride_ + offsets_[level] + bit / 64u];
+        for (std::uint32_t level = 0; level < kLevelCount; ++level) {
+            auto& word = summaries_[level][bit / 64u][set];
             const auto mask = std::uint64_t{1} << (bit % 64u);
             if (present) word |= mask;
             else word &= ~mask;
@@ -308,16 +303,16 @@ private:
         }
     }
     std::uint32_t NextSummaryBit(std::uint32_t set, std::uint32_t level, std::uint32_t start) const noexcept {
-        const auto bitCount = level == 0 ? pages_.Capacity() : offsets_[level] - offsets_[level - 1u];
+        const auto bitCount = pageCounts_[level];
         if (start >= bitCount) return UINT32_MAX;
         auto wordIndex = start / 64u;
         const auto read = [&](std::uint32_t word) noexcept {
-            const auto slot = set * summaryStride_ + offsets_[level] + word;
-            return summaries_.IsConstructed(slot) ? summaries_[slot] : std::uint64_t{0};
+            const auto slot = word;
+            return summaries_[level].IsConstructed(slot) ? summaries_[level][slot][set] : std::uint64_t{0};
         };
         auto bits = read(wordIndex) & (UINT64_MAX << (start % 64u));
         if (bits == 0) {
-            if (level + 1u == levelCount_) return UINT32_MAX;
+            if (level + 1u == kLevelCount) return UINT32_MAX;
             wordIndex = NextSummaryBit(set, level + 1u, wordIndex + 1u);
             if (wordIndex == UINT32_MAX) return UINT32_MAX;
             bits = read(wordIndex);
@@ -340,11 +335,10 @@ private:
     }
 
     SparseRowStorage<Page> pages_;
-    SparseRowStorage<std::uint64_t> summaries_;
-    std::array<std::uint32_t, 5> offsets_{};
-    std::uint32_t capacity_ = 0;
-    std::uint32_t summaryStride_ = 0;
-    std::uint32_t levelCount_ = 0;
+    static constexpr unsigned kLevelCount = 4;
+    static constexpr std::array<std::uint32_t, kLevelCount> pageCounts_{
+        1u << 24, 1u << 18, 1u << 12, 1u << 6};
+    std::array<SparseRowStorage<std::array<std::uint64_t, kSetCount>>, kLevelCount> summaries_;
 };
 
 } // namespace harken

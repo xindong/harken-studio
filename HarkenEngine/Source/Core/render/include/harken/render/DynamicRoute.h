@@ -6,6 +6,7 @@
 #ifndef HARKEN_RENDER_DYNAMIC_ROUTE_H
 #define HARKEN_RENDER_DYNAMIC_ROUTE_H
 
+#include "harken/core/LogicAllocCheckpoint.h"
 #include <harken/ObjectId.h>
 #include <harken/Harken.h>
 #if HARKEN_ENGINE_DEV
@@ -140,7 +141,7 @@ public:
         if (!m_busTapSamples.Reserve(static_cast<std::size_t>(m_busTapCapacity) *
                 kMaxChannels * m_blockFrames) ||
             !m_voiceTapSamples.Reserve(static_cast<std::size_t>(m_voiceTapCapacity) * 2u *
-                kMaxChannels * m_blockFrames)) throw std::bad_alloc{};
+                kMaxChannels * m_blockFrames)) throw harken::detail::LogicPreparationFailure{};
         m_routeFree.reserve(m_routeCapacity);
         m_busTapFree.reserve(m_busTapCapacity);
         m_voiceTapFree.reserve(m_voiceTapCapacity);
@@ -236,6 +237,12 @@ public:
     }
     std::uint32_t RouteCapacity() const { return m_routeCapacity; }
     DynamicRoutePlanView InstalledPlan() const { return View(m_currentPlanIndex); }
+    // Audio owner, after EndBlock: this is the newly committed next-block
+    // detector input, not the status published from the bank just consumed.
+    bool HasPendingVoiceInput(const DynamicRoutePlanRow& row) const noexcept {
+        return row.sourceKind == VN_DYNAMIC_SOURCE_VOICE && row.tapSlot < m_voiceTapCapacity &&
+            TapMatches(m_voiceTaps[row.tapSlot], row) && m_voiceReadValid[row.tapSlot] != 0;
+    }
     bool InstalledBusTapMatches(const DynamicRoutePlanRow& row) const {
         return row.sourceKind == VN_DYNAMIC_SOURCE_BUS && row.tapSlot < m_busTapCapacity &&
             TapMatches(m_busTaps[row.tapSlot], row);

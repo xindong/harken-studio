@@ -38,10 +38,9 @@ TEST(StreamConfig, OldVintageIgnoresStreamFieldGarbage) {
     ASSERT_EQ(VN_OK, session.InitResult());
     const harken::EngineConfig& resolved = session.Engine()->config;
     EXPECT_EQ(16384u, resolved.streamRingFrames);
-    EXPECT_EQ(16u, resolved.maxStreams);
+    EXPECT_EQ(0u, resolved.maxStreams);
     EXPECT_EQ(100u, resolved.prebufferMs);
     EXPECT_EQ(32u, resolved.starvationCooldownBlocks);
-    EXPECT_EQ(256u, resolved.maxPacks);
 }
 
 TEST(StreamConfig, FullVintageStreamFieldsResolve) {
@@ -50,7 +49,7 @@ TEST(StreamConfig, FullVintageStreamFieldsResolve) {
     config.maxStreams = 8;
     config.prebufferMs = 50;
     config.starvationCooldownBlocks = 16;
-    config.maxPacks = 8;
+    config.maxPacks = UINT32_MAX;
 
     EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -59,7 +58,6 @@ TEST(StreamConfig, FullVintageStreamFieldsResolve) {
     EXPECT_EQ(8u, resolved.maxStreams);
     EXPECT_EQ(50u, resolved.prebufferMs);
     EXPECT_EQ(16u, resolved.starvationCooldownBlocks);
-    EXPECT_EQ(8u, resolved.maxPacks);
 }
 
 TEST(StreamConfig, ZeroStreamFieldsSelectDefaults) {
@@ -69,10 +67,9 @@ TEST(StreamConfig, ZeroStreamFieldsSelectDefaults) {
     ASSERT_EQ(VN_OK, session.InitResult());
     const harken::EngineConfig& resolved = session.Engine()->config;
     EXPECT_EQ(16384u, resolved.streamRingFrames);
-    EXPECT_EQ(16u, resolved.maxStreams);
+    EXPECT_EQ(0u, resolved.maxStreams);
     EXPECT_EQ(100u, resolved.prebufferMs);
     EXPECT_EQ(32u, resolved.starvationCooldownBlocks);
-    EXPECT_EQ(256u, resolved.maxPacks);
 }
 
 TEST(StreamConfig, PerFieldCeilingsRefused) {
@@ -91,8 +88,6 @@ TEST(StreamConfig, PerFieldCeilingsRefused) {
          [](VnConfig* c) {
              c->starvationCooldownBlocks = (1u << 20) + 1u;
          }},
-        {"maxPacks above 1<<12",
-         [](VnConfig* c) { c->maxPacks = (1u << 12) + 1u; }},
     };
     for (const OverCeiling& over : cases) {
         VnConfig config = MakeNullConfig();

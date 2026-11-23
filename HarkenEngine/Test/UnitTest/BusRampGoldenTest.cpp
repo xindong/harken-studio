@@ -62,6 +62,59 @@ protected:
     VnPCMDesc desc{};
 };
 
+TEST_F(BusRampGolden, SecondCommandBeforeFirstMix) {
+    ASSERT_EQ(VN_OK, Vn_SetBusVolume(harkentest::ObjectId(10), 0.f, 500));
+    PlayThroughBus();
+    ASSERT_EQ(VN_OK, Vn_SetBusVolume(harkentest::ObjectId(10), kHalfDb, 200));
+    Capture out;
+    harkentest::PumpAndCapture(session->Engine(), 38, out);
+    constexpr float length = 9600.f;
+    for (std::size_t i = 0; i < out.left.size(); ++i) {
+        const float expected = 1.f - .5f * std::min(1.f, static_cast<float>(i + 1) / length);
+        ASSERT_NEAR(expected, out.left[i], .001f) << i;
+    }
+}
+
+TEST_F(BusRampGolden, FirstCommandAfterMixUsesFloor) {
+    PlayThroughBus();
+    session->Engine()->nullBackend.Pump(1);
+    ASSERT_EQ(VN_OK, Vn_SetBusVolume(harkentest::ObjectId(10), kHalfDb, 0));
+    Capture out;
+    harkentest::PumpAndCapture(session->Engine(), 1, out);
+    constexpr float length = 240.f;
+    for (std::size_t i = 0; i < out.left.size(); ++i) {
+        const float expected = 1.f - .5f * std::min(1.f, static_cast<float>(i + 1) / length);
+        ASSERT_NEAR(expected, out.left[i], .001f) << i;
+    }
+}
+
+TEST_F(BusRampGolden, FirstCommandAfterMixUsesRequestedTime) {
+    PlayThroughBus();
+    session->Engine()->nullBackend.Pump(1);
+    ASSERT_EQ(VN_OK, Vn_SetBusVolume(harkentest::ObjectId(10), kHalfDb, 200));
+    Capture out;
+    harkentest::PumpAndCapture(session->Engine(), 38, out);
+    constexpr float length = 9600.f;
+    for (std::size_t i = 0; i < out.left.size(); ++i) {
+        const float expected = 1.f - .5f * std::min(1.f, static_cast<float>(i + 1) / length);
+        ASSERT_NEAR(expected, out.left[i], .001f) << i;
+    }
+}
+
+TEST_F(BusRampGolden, LaterCommandUsesRequestedTime) {
+    ASSERT_EQ(VN_OK, Vn_SetBusVolume(harkentest::ObjectId(10), 0.f, 500));
+    PlayThroughBus();
+    session->Engine()->nullBackend.Pump(1);
+    ASSERT_EQ(VN_OK, Vn_SetBusVolume(harkentest::ObjectId(10), kHalfDb, 200));
+    Capture out;
+    harkentest::PumpAndCapture(session->Engine(), 38, out);
+    constexpr float length = 9600.f;
+    for (std::size_t i = 0; i < out.left.size(); ++i) {
+        const float expected = 1.f - .5f * std::min(1.f, static_cast<float>(i + 1) / length);
+        ASSERT_NEAR(expected, out.left[i], .001f) << i;
+    }
+}
+
 TEST_F(BusRampGolden, RampFollowsClosedFormAndStaysStepBounded) {
     // Establish a snapped starting gain of 1.0 (first set always snaps).
     ASSERT_EQ(VN_OK, Vn_SetBusVolume(harkentest::ObjectId(10), 0.0f, 0));
@@ -144,7 +197,7 @@ TEST_F(BusRampGolden, TwentyMsAt48kLandsOnFrame960Not1024) {
     }
 }
 
-TEST_F(BusRampGolden, ZeroRampSnapsAtNextBlockBoundary) {
+TEST_F(BusRampGolden, ZeroRampUsesFiveMillisecondTransitionAfterRendering) {
     ASSERT_EQ(VN_OK, Vn_SetBusVolume(harkentest::ObjectId(10), 0.0f, 0));
     PlayThroughBus();
 
@@ -152,17 +205,15 @@ TEST_F(BusRampGolden, ZeroRampSnapsAtNextBlockBoundary) {
     harkentest::PumpAndCapture(session->Engine(), 1, out);
     HARKENTEST_ASSERT_NON_SILENT(out.left);
 
-    // rampMs 0: the whole next block renders at the new value — the first
-    // sample already carries it, with no intra-block ramp.
+    // A zero request on a rendered object completes at sample 240.
     ASSERT_EQ(VN_OK, Vn_SetBusVolume(harkentest::ObjectId(10), kHalfDb, 0));
     harkentest::PumpAndCapture(session->Engine(), 1, out);
 
     for (std::size_t n = 0; n < kBlockFrames; ++n) {
-        ASSERT_NEAR(0.5f, out.left[kBlockFrames + n], 1e-5f)
-            << "snapped sample " << n;
+        const float expected = 1.f - .5f * std::min(1.f, float(n + 1) / 240.f);
+        ASSERT_NEAR(expected, out.left[kBlockFrames + n], 1e-5f) << n;
     }
-    // Constant gain over DC: the block is exactly flat.
-    ASSERT_EQ(out.left[kBlockFrames], out.left[2 * kBlockFrames - 1]);
+    ASSERT_NEAR(.5f, out.left[kBlockFrames + 239], 1e-5f);
 }
 
 TEST_F(BusRampGolden, FirstVolumeSetSnapsEvenWithNonzeroRamp) {

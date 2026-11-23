@@ -37,7 +37,7 @@ struct VariableControlInstanceTableTestAccess {
     }
     static bool SeedFreeGeneration(VariableControlInstanceTable& table, std::uint32_t slot,
                                   std::uint32_t generation) {
-        if (slot >= table.capacity_ || generation == 0 || !table.entries_.ConstructThrough(slot + 1u) ||
+        if (slot >= table.limit_ || generation == 0 || !table.entries_.ConstructThrough(slot + 1u) ||
             table.entries_[slot].state.load() != VariableControlInstanceTable::SlotState::Free) return false;
         table.entries_[slot].generation.store(generation);
         return true;
@@ -522,6 +522,41 @@ TEST(VariableControlInstance, PreparedAcquireStaysHidden) {
     EXPECT_EQ(0u, table.HighWater());
     harken::VariableControlInstanceSnapshot snapshot{};
     EXPECT_FALSE(table.Capture(token, &snapshot));
+}
+
+TEST(VariableControlInstance, NestedReservationSurvivesCompetingControllersAndPageRefusal) {
+    harken::VariableControlInstanceTable table;
+    harken::VariableControlInstanceCreateRequest request{};
+    request.world = 7;
+    request.containerStableId = harkentest::ObjectId(13);
+    request.programSemanticFingerprint = 17;
+    harken::StableStoragePreparation held;
+    ASSERT_TRUE(table.PrepareBacking(1, &held));
+    std::vector<harken::VariableControlInstanceToken> live;
+    harken::VariableControlInstanceToken token{};
+    for (unsigned i = 0; i < 257; ++i) {
+        request.rootInstance = i + 1u;
+        ASSERT_EQ(harken::VariableControlInstanceStatus::Ok, table.Acquire(request, &token));
+        live.push_back(token);
+    }
+    table.SetCommitPageLimitForTests(0);
+    while (table.Acquire(request, &token) == harken::VariableControlInstanceStatus::Ok)
+        live.push_back(token);
+    {
+        auto use = held.Use();
+        ASSERT_EQ(harken::VariableControlInstanceStatus::Ok, table.Acquire(request, &token));
+        EXPECT_TRUE(table.Release(token));
+    }
+    held.Release();
+    harken::VariableControlInstanceSnapshot snapshot{};
+    ASSERT_TRUE(table.Capture(live.front(), &snapshot));
+    EXPECT_EQ(1u, snapshot.rootInstance);
+    table.SetCommitPageLimitForTests(SIZE_MAX);
+    ASSERT_EQ(harken::VariableControlInstanceStatus::Ok, table.Acquire(request, &token));
+    EXPECT_TRUE(table.Release(token));
+    for (auto existing : live) EXPECT_TRUE(table.Release(existing));
+    EXPECT_FALSE(table.Capture(live.front(), &snapshot));
+    EXPECT_EQ(0u, table.LiveCount());
 }
 
 TEST(VariableControlInstance,

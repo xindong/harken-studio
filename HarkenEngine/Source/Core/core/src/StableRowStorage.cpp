@@ -1,4 +1,6 @@
 #include "harken/core/StableRowStorage.h"
+#include "harken/core/detail/PageCommitFault.h"
+#include "harken/core/LogicAllocCheckpoint.h"
 
 #include <exception>
 
@@ -71,20 +73,35 @@ bool StablePageReservation::Reserve(std::size_t bytes, std::size_t alignment, bo
             const auto count = reservedBytes / pageBytes;
             committedPageWords = count / 64u + (count % 64u != 0);
             committedPages = std::make_unique<std::uint64_t[]>(committedPageWords);
-        } catch (...) { return false; }
+        } catch (...) {
+            RecordCurrentLogicAllocFailure(LogicAllocSite::EngineStorage);
+            return false;
+        }
     }
-    if (std::exchange(failNextReservationForTests, false)) return false;
+    if (std::exchange(failNextReservationForTests, false)) {
+        RecordLogicAllocFailure(LogicAllocSite::EngineStorage);
+        return false;
+    }
 #if defined(_WIN32)
     void* address = VirtualAlloc(nullptr, reservedBytes, MEM_RESERVE, PAGE_NOACCESS);
-    if (address == nullptr) return false;
+    if (address == nullptr) {
+        RecordLogicAllocFailure(LogicAllocSite::EngineStorage);
+        return false;
+    }
 #else
     void* address = mmap(nullptr, reservedBytes, PROT_NONE,
                          MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    if (address == MAP_FAILED) return false;
+    if (address == MAP_FAILED) {
+        RecordLogicAllocFailure(LogicAllocSite::EngineStorage);
+        return false;
+    }
 #endif
     address_ = address;
     pageBytes_ = pageBytes;
     reservedBytes_ = reservedBytes;
+    // Reservation granularity may be larger than a page. The descending end
+    // covers the caller's requested extent, not inaccessible alignment slack.
+    if (!RoundUp(bytes, pageBytes, &suffixEndBytes_)) std::terminate();
     committedPages_.swap(committedPages);
     committedPageWords_ = committedPageWords;
     return true;
@@ -97,18 +114,43 @@ void StablePageReservation::FailNextReservationForTests() noexcept {
 bool StablePageReservation::CommitThrough(std::size_t bytes) noexcept {
     if (memguard::IsAudioTagged() || bytes > reservedBytes_) return false;
     if (committedPages_ != nullptr) return CommitRange(0, bytes);
-    if (bytes <= committedBytes_) return true;
+    const auto prefix = committedBytes_ - suffixCommittedBytes_;
+    if (bytes <= prefix) return true;
     std::size_t target = 0;
     if (!RoundUp(bytes, pageBytes_, &target) || target > reservedBytes_) return false;
-    const auto requested = (target - committedBytes_) / pageBytes_;
-    const auto committed = CommitPages(committedBytes_, requested);
+    if (suffixCommittedBytes_ != 0) {
+        if (target > suffixEndBytes_) return false;
+        target = std::min(target, suffixEndBytes_ - suffixCommittedBytes_);
+    }
+    const auto requested = (target - prefix) / pageBytes_;
+    const auto committed = CommitPages(prefix, requested);
     // Each successful page stays charged, including an unconstructed failure prefix.
     committedBytes_ += committed * pageBytes_;
     return committed == requested;
 }
 
+bool StablePageReservation::CommitSuffixFrom(std::size_t offset) noexcept {
+    if (memguard::IsAudioTagged() || committedPages_ != nullptr || offset > suffixEndBytes_)
+        return false;
+    if (offset == suffixEndBytes_) return true;
+    const auto prefix = committedBytes_ - suffixCommittedBytes_;
+    if (prefix > suffixEndBytes_) return false;
+    const auto target = std::max(prefix, (offset / pageBytes_) * pageBytes_);
+    auto begin = suffixEndBytes_ - suffixCommittedBytes_;
+    // Descending commitment keeps every partial success contiguous. Never touch
+    // an already committed page, which may hold an active audio worker's data.
+    while (begin > target) {
+        if (!CommitPage(begin - pageBytes_)) return false;
+        begin -= pageBytes_;
+        suffixCommittedBytes_ += pageBytes_;
+        committedBytes_ += pageBytes_;
+    }
+    return true;
+}
+
 std::size_t StablePageReservation::CommitPages(std::size_t offset, std::size_t count) noexcept {
     const auto permitted = std::min(count, remainingPagesForTests_);
+    if (permitted < count && ScopedPageCommitFaultForTests::Active()) RecordLogicAllocFailure(LogicAllocSite::EngineStorage);
     if (permitted == 0) return 0;
 #if defined(_WIN32)
     auto* first = static_cast<std::byte*>(address_) + offset;
@@ -128,12 +170,21 @@ std::size_t StablePageReservation::CommitPages(std::size_t offset, std::size_t c
 }
 
 bool StablePageReservation::CommitPage(std::size_t offset) noexcept {
-    if (remainingPagesForTests_ == 0) return false;
+    if (remainingPagesForTests_ == 0) {
+        if (ScopedPageCommitFaultForTests::Active()) RecordLogicAllocFailure(LogicAllocSite::EngineStorage);
+        return false;
+    }
     auto* page = static_cast<std::byte*>(address_) + offset;
 #if defined(_WIN32)
-    if (VirtualAlloc(page, pageBytes_, MEM_COMMIT, PAGE_READWRITE) == nullptr) return false;
+    if (VirtualAlloc(page, pageBytes_, MEM_COMMIT, PAGE_READWRITE) == nullptr) {
+        RecordLogicAllocFailure(LogicAllocSite::EngineStorage);
+        return false;
+    }
 #else
-    if (mprotect(page, pageBytes_, PROT_READ | PROT_WRITE) != 0) return false;
+    if (mprotect(page, pageBytes_, PROT_READ | PROT_WRITE) != 0) {
+        RecordLogicAllocFailure(LogicAllocSite::EngineStorage);
+        return false;
+    }
 #endif
     *reinterpret_cast<volatile unsigned char*>(page) = 0;
     if (remainingPagesForTests_ != SIZE_MAX) --remainingPagesForTests_;
@@ -169,6 +220,8 @@ void StablePageReservation::Swap(StablePageReservation& other) noexcept {
     std::swap(address_, other.address_);
     std::swap(reservedBytes_, other.reservedBytes_);
     std::swap(committedBytes_, other.committedBytes_);
+    std::swap(suffixCommittedBytes_, other.suffixCommittedBytes_);
+    std::swap(suffixEndBytes_, other.suffixEndBytes_);
     std::swap(pageBytes_, other.pageBytes_);
     std::swap(remainingPagesForTests_, other.remainingPagesForTests_);
     committedPages_.swap(other.committedPages_);

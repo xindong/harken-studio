@@ -111,6 +111,65 @@ float PumpBlockPeak(harken::Engine* engine) {
 
 // --- triple (a): park -> Replace makes it audible -> return, new curve ---
 
+TEST(BindingLiveness, ConcurrentVoicesKeep8192BindingInstances) {
+    EngineSession session(MakeNullConfig(256, kBlock, kRate));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto* engine = session.Engine();
+    InstallBindingVariables(engine);
+    const auto sound = harkentest::ObjectId(9100);
+    RegisterLeaf(sound);
+    for (std::uint32_t i = 0; i < 32; ++i) {
+        const auto binding = harkentest::ObjectId(9200 + i);
+        ASSERT_EQ(VN_OK, RegisterLinear(engine, binding, harkentest::ObjectId(7),
+            harken::kTargetVoiceVolume, -0.125f, -0.25f));
+        ASSERT_EQ(VN_OK, harken::AttachBinding(*engine, binding, harken::kTargetScopeVoice, sound));
+    }
+    for (unsigned round = 0; round < 2; ++round) {
+    ASSERT_EQ(VN_OK, Vn_SetValue(harkentest::ObjectId(7), 0.0f));
+    harkentest::AdvanceVariableWrite(engine);
+    std::vector<VnVoiceHandle> voices;
+    auto play = MakePlayDesc(sound);
+    play.loopCount = 0;
+    for (std::uint32_t i = 0; i < 256; ++i) {
+        VnVoiceHandle voice = 0;
+        ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice)) << i;
+        voices.push_back(voice);
+        if ((i + 1u) % 16u == 0) engine->nullBackend.Pump(1);
+    }
+    std::uint32_t instances = 0;
+    for (const auto voice : voices) {
+        const auto render = RenderHandle(engine, voice);
+        ASSERT_NE(0u, render);
+        ASSERT_EQ(32u, engine->params.VoiceBindingCount(render));
+        EXPECT_FLOAT_EQ(-4.0f, engine->params.ResolvedValue(render, harken::kTargetVoiceVolume));
+        instances += engine->params.VoiceBindingCount(render);
+    }
+    EXPECT_EQ(8192u, instances);
+    ASSERT_EQ(VN_OK, Vn_SetValue(harkentest::ObjectId(7), 1.0f));
+    harkentest::AdvanceVariableWrite(engine);
+    for (const auto voice : voices) {
+        const auto render = RenderHandle(engine, voice);
+        ASSERT_NE(0u, render);
+        EXPECT_FLOAT_EQ(-8.0f, engine->params.ResolvedValue(render, harken::kTargetVoiceVolume));
+    }
+    VnSnapshot snapshot{};
+    snapshot.structSize = sizeof(snapshot);
+    ASSERT_EQ(VN_OK, Vn_CaptureSnapshot(&snapshot));
+    EXPECT_EQ(8192u, snapshot.bindingInstanceHighWater);
+    for (std::size_t i = 0; i < voices.size(); ++i) {
+        ASSERT_EQ(VN_OK, Vn_Stop(voices[i], 0));
+        if ((i + 1u) % 16u == 0) engine->nullBackend.Pump(1);
+    }
+    for (unsigned step = 0; step < 4; ++step) {
+        engine->nullBackend.Pump(1);
+        ASSERT_EQ(VN_OK, Vn_Update());
+    }
+    EXPECT_EQ(0u, engine->voices.ActiveCount());
+    EXPECT_EQ(0u, engine->propertyPublisher.WorstCaseCommits());
+    for (const auto voice : voices) EXPECT_EQ(0u, engine->params.VoiceBindingCount(voice));
+    }
+}
+
 TEST(BindingLiveness, ReplaceReturnsParkedVoiceWithNewCurve) {
     NotificationSink sink;
     VnConfig config = ParkConfig();
@@ -592,6 +651,31 @@ TEST(BindingLiveness, DirtyBusTargetRebuildsEveryContributionAndDepartureInOrigi
     EXPECT_FLOAT_EQ(0, store.Reduce(0, harken::kBusTargetBusVolume));
 }
 
+TEST(BindingLiveness, UnsetDetachAfterEvaluationKeepsPendingDependencyStorage) {
+    harken::BindingTable table(1, 1, 1);
+    harken::BusTargetStore store(1);
+    harken::ParamSystem params(harken::EngineConfig{});
+    const auto binding = harkentest::ObjectId(1);
+    const auto variable = harkentest::ObjectId(11);
+    const auto bus = harkentest::ObjectId(50);
+    const harken::CurvePoint points[] = {{0, 0}, {1, -6}};
+    const harken::CurveHandlePair handles[] = {{0, 0, 1, -6}};
+    store.InitializeBusGeneration(0, 1);
+    ASSERT_TRUE(store.PrepareActivity(0, harken::kBusTargetBusVolume));
+    ASSERT_EQ(VN_OK, table.RegisterBinding(binding, variable, harken::kTargetScopeBus,
+        harken::kBusTargetBusVolume, points, handles, 2, 10, nullptr));
+    ASSERT_EQ(VN_OK, table.Attach(binding, harken::kTargetScopeBus, bus, 0, nullptr, 0, 1));
+    table.EvaluateDirtyBusAttachments(params, store);
+    ASSERT_EQ(VN_OK, table.Detach(binding, harken::kTargetScopeBus, bus, &store));
+    store.ReleaseUnusedActivities(table);
+    EXPECT_EQ(1u, store.ActivityCount());
+    table.NoteBusVariableWrite(variable, store);
+    table.EvaluateDirtyBusAttachments(params, store);
+    store.ReleaseUnusedActivities(table);
+    EXPECT_EQ(0u, store.ActivityCount());
+    EXPECT_EQ(0u, store.DemandCount());
+}
+
 TEST(BindingLiveness, ReusedBusGenerationRejectsOldInputsAndDepartures) {
     for (bool preparedDetach : {false, true}) {
         harken::BindingTable table(2, 2, 1);
@@ -653,10 +737,13 @@ TEST(BindingLiveness, EffectParkPreparationAndReturnKeepExactEmitterWithoutGrowt
     index.NotifyVariable(harkentest::ObjectId(11), 101);
     EXPECT_EQ(1u, CountDirtyTargets(index));
     CommitDirtyTargets(index);
+    std::uint32_t dependencySlot = UINT32_MAX;
+    table.ForEachVoiceEffectInstance([&](const auto& row, const auto&) { dependencySlot = row.dependencySlot; });
+    ASSERT_NE(UINT32_MAX, dependencySlot);
     ASSERT_TRUE(table.PrepareVoiceEffectInstancePark(1));
-    EXPECT_TRUE(index.HasBindingPreparation(2));
+    EXPECT_TRUE(index.HasBindingPreparation(dependencySlot));
     table.CancelVoiceEffectInstancePark(1);
-    EXPECT_FALSE(index.HasBindingPreparation(2));
+    EXPECT_FALSE(index.HasBindingPreparation(dependencySlot));
     ASSERT_TRUE(table.PrepareVoiceEffectInstancePark(1));
     const auto preparedBytes = index.StorageBytes();
     table.ParkVoiceEffectInstances(1);

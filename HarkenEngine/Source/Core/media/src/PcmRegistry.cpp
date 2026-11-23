@@ -1,3 +1,4 @@
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/media/PcmRegistry.h"
 #include "harken/media/VorbisDecoder.h"
 
@@ -188,7 +189,7 @@ detail::PcmSampleBuffer CopySamples(const VnPCMDesc& desc, std::size_t count,
         pages = std::make_unique<detail::StablePageReservation>();
         if (!pages->Reserve(byteCount, alignof(Sample)) ||
             !pages->CommitThrough(byteCount)) {
-            throw std::bad_alloc{};
+            throw harken::detail::LogicPreparationFailure{};
         }
         // Start the typed array lifetime without initializing sample values.
         stagedSamples.reset(::new (pages->Address()) Sample[count]);

@@ -4,6 +4,7 @@
 #include "harken/render/SignalWorldPlan.h"
 #include "harken/core/CommandQueue.h"
 #include "harken/core/PackComposition.h"
+#include "harken/render/BusTree.h"
 
 namespace harken {
 struct Engine;
@@ -30,6 +31,40 @@ void CommitSignals(Engine& engine, PreparedSignalPublication& prepared) noexcept
 WorldInstallStatus PreparePackSignals(Engine& engine, const PackComposition::PublishedView* published,
     const TopologyPlanView* topology, PreparedSignalPublication& out) noexcept;
 void RefreshRetainedPackSignals(Engine& engine) noexcept;
+struct BusActivityRoots;
+// Logic-owned routing, including the private starts in the prospective batch.
+// Membership is matched against the complete definition, not its active projection.
+bool CaptureBusActivityOwners(Engine& engine, const TopologyPlanView& topology,
+    std::span<const CommandRecord> prospective, BusActivityRoots& out) noexcept;
+struct BusActivitySelection;
+bool PrepareTopologyActivity(Engine& engine, const TopologyPlanView& topology,
+    CommandQueue::BatchReservation& reservation, std::span<const CommandRecord> commands,
+    CommandQueue::PreparedBatchProof& proof, const BusActivitySelection* selected = nullptr,
+    bool adoptsTopology = true, std::span<const BusTree::WorkBinding> providedWork = {},
+    bool conditionalSleep = false, std::span<const BusTree::WorkObservation> sleeping = {}) noexcept;
+bool PrepareBusActivityWake(Engine& engine, CommandQueue::BatchReservation& reservation,
+    std::span<const CommandRecord> commands, CommandQueue::PreparedBatchProof& proof) noexcept;
+bool AcknowledgeBusSleep(Engine& engine) noexcept;
+void ServiceBusActivity(Engine& engine) noexcept;
+
+// A control-thread batch owns its reservation and optional wake until the
+// caller finishes no-fail logical commits. The command span stays alive here.
+class PreparedBusCommandBatch {
+public:
+    explicit PreparedBusCommandBatch(Engine& engine) noexcept : engine_(engine) {}
+    ~PreparedBusCommandBatch();
+    PreparedBusCommandBatch(const PreparedBusCommandBatch&) = delete;
+    PreparedBusCommandBatch& operator=(const PreparedBusCommandBatch&) = delete;
+    bool Prepare(std::span<const CommandRecord> commands) noexcept;
+    bool PrepareWake() noexcept;
+    void Publish() noexcept;
+private:
+    Engine& engine_;
+    std::span<const CommandRecord> commands_;
+    CommandRecord wakeCommand_{};
+    CommandQueue::BatchReservation reservation_{};
+    CommandQueue::PreparedBatchProof proof_;
+};
 
 // For an owner transaction without an existing topology publication. Its
 // reservation must not span cancellation/drain work that can enqueue commands.
@@ -45,6 +80,8 @@ private:
     Engine& engine_;
     std::uint32_t index_ = UINT32_MAX;
     CommandQueue::BatchReservation reservation_{};
+    CommandQueue::PreparedBatchProof proof_;
+    std::uint64_t acceptedRevision_ = 0;
 };
 }
 #endif

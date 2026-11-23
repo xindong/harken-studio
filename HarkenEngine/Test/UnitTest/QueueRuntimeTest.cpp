@@ -468,12 +468,11 @@ TEST(QueueRuntime, PreparedRootStorageWaitsForAudioReadsBeforeReuse) {
 #endif
 
 TEST(QueueRuntime, UnusedTablesReserveIdentitySpaceWithoutConstructingRows) {
-    harken::QueueInstanceTable queues(harken::kMaxQueueInstancesHard,
-        harken::kMaxQueueInstancesHard);
-    harken::QueueCheckpointTable checkpoints(harken::kMaxQueueCheckpointRowsHard);
-    harken::PrivateSelectedQueueFutureSpanPool selected(harken::kMaxQueueInstancesHard);
+    harken::QueueInstanceTable queues(16384u,
+        16384u);
+    harken::QueueCheckpointTable checkpoints;
+    harken::PrivateSelectedQueueFutureSpanPool selected(16384u);
     EXPECT_TRUE(queues.Valid());
-    EXPECT_TRUE(checkpoints.Valid());
     EXPECT_EQ(0u, queues.ConstructedRowCount());
     EXPECT_EQ(0u, queues.ConstructedConditionalRowCount());
     EXPECT_EQ(0u, checkpoints.ConstructedRowCount());
@@ -483,7 +482,7 @@ TEST(QueueRuntime, UnusedTablesReserveIdentitySpaceWithoutConstructingRows) {
     EXPECT_EQ(0u, checkpoints.RowCommittedBytes());
     EXPECT_EQ(0u, selected.RowCommittedBytes());
     harken::QueueInstanceSnapshot snapshot;
-    EXPECT_FALSE(queues.Capture({harken::kMaxQueueInstancesHard - 1u, 1}, &snapshot));
+    EXPECT_FALSE(queues.Capture({16384u - 1u, 1}, &snapshot));
     queues.ApplyDue(19);
     checkpoints.ClearAll();
     EXPECT_EQ(0u, queues.LiveCount());
@@ -545,8 +544,7 @@ TEST(QueueRuntime, FailedBackingPreparationRetainsOnlyConstructedPrefixAndCanRet
     EXPECT_FALSE(queues.PrepareBacking(16, 4, &refused));
     EXPECT_FALSE(refused.instances.Valid());
     EXPECT_FALSE(refused.conditionals.Valid());
-    EXPECT_GT(queues.ConstructedRowCount(), 0u);
-    EXPECT_LT(queues.ConstructedRowCount(), 16u);
+    EXPECT_EQ(0u, queues.ConstructedRowCount());
     EXPECT_EQ(0u, queues.ConstructedConditionalRowCount());
     EXPECT_EQ(0u, queues.LiveCount());
     queues.SetRowCommitPageLimitForTests(SIZE_MAX);
@@ -888,7 +886,6 @@ TEST(QueueProgramBank, OriginalStorageLoansKeepActualDataAndCancelAliasUntilRetu
     static_assert(!std::is_copy_constructible_v<Bank::OriginalReservation>);
     static_assert(!std::is_copy_constructible_v<Bank::OriginalLifetimePin>);
     harken::EngineQueueScheduleStorage storage;
-    ASSERT_TRUE(storage.Configure(2));
     std::vector<Bank> banks(2);
     auto& bank = banks[0];
     Bank::OriginalReservation original;
@@ -2564,7 +2561,7 @@ TEST(QueueRuntime,
 }
 
 TEST(QueueRuntime, PreparedCheckpointBackingSurvivesCompetitionAndAudioRefusesGrowth) {
-    harken::QueueCheckpointTable checkpoints(4);
+    harken::QueueCheckpointTable checkpoints;
     harken::QueueCheckpointKey key{};
     key.world = 7;
     key.containerStableId = harkentest::ObjectId(13);
@@ -2605,7 +2602,7 @@ TEST(QueueRuntime, PreparedCheckpointBackingSurvivesCompetitionAndAudioRefusesGr
 }
 
 TEST(QueueRuntime, CheckpointStoresOnlyExplicitEffectiveStateAndClearsAtEnd) {
-    harken::QueueCheckpointTable checkpoints(1);
+    harken::QueueCheckpointTable checkpoints;
     harken::QueueCheckpointKey key{};
     key.world = 7;
     key.containerStableId = harkentest::ObjectId(13);
@@ -2637,14 +2634,15 @@ TEST(QueueRuntime, CheckpointStoresOnlyExplicitEffectiveStateAndClearsAtEnd) {
     captured.effective.version = 71;
     EXPECT_FALSE(checkpoints.Load(other, &captured));
     EXPECT_EQ(71u, captured.effective.version);
-    EXPECT_FALSE(checkpoints.Store(other, image));
+    ASSERT_TRUE(checkpoints.Store(other, image));
+    EXPECT_TRUE(checkpoints.Clear(other));
     EXPECT_TRUE(checkpoints.Clear(key));
     EXPECT_FALSE(checkpoints.Load(key, &captured));
     EXPECT_EQ(0u, checkpoints.LiveCount());
 }
 
 TEST(QueueRuntime, PreparedCheckpointResetStaysHiddenUntilCommitOrCancel) {
-    harken::QueueCheckpointTable checkpoints(1);
+    harken::QueueCheckpointTable checkpoints;
     harken::QueueCheckpointKey key{};
     key.world = 7;
     key.containerStableId = harkentest::ObjectId(13);
@@ -2909,11 +2907,23 @@ TEST(QueueRuntime,
     EXPECT_FALSE(snapshot.resetPending);
 }
 
-TEST(QueueRuntime, InvalidCheckpointCapacityFailsClosed) {
-    EXPECT_FALSE(harken::QueueCheckpointTable(0).Valid());
-    EXPECT_FALSE(harken::QueueCheckpointTable(
-                     harken::kMaxQueueCheckpointRowsHard + 1u)
-                     .Valid());
+TEST(QueueRuntime, RetiredEmitterDropsItsCheckpointWithoutReusingAPendingReset) {
+    harken::QueueCheckpointTable table;
+    harken::QueueCheckpointKey key{1, harkentest::ObjectId(2), 3, 1, 9, 1};
+    auto next = key;
+    ++next.emitterGeneration;
+    harken::QueueCheckpointImage state{};
+    state.effective.version = 1;
+    state.replayCurrent = true;
+    ASSERT_TRUE(table.Store(key, state));
+    harken::PreparedQueueCheckpointResetV1 pending;
+    ASSERT_EQ(harken::QueueResetStatusV1::Ok, table.PrepareReset(key, &pending));
+    table.RetireEmitter(key.emitterSlot, key.emitterGeneration);
+    EXPECT_FALSE(table.Load(key, &state));
+    ASSERT_TRUE(table.Store(next, state));
+    EXPECT_EQ(harken::QueueResetStatusV1::Ok, table.CommitPreparedReset(&pending, 1));
+    EXPECT_TRUE(table.Load(next, &state));
+    EXPECT_EQ(1u, table.LiveCount());
 }
 
 TEST(QueueRuntime, SequenceOnceAdvancesInCompiledOrderAndStopsAtEnd) {
@@ -5005,8 +5015,8 @@ struct GenuineUnboundConditionalClockHarness {
         config.maxScheduleGroupHeadersPerPage = 1;
         config.maxArmsPerGroup = 1;
         config.maxImmediateLaneGroupRows = 3;
-        config.maxImmediateLaneOwnerGates = 1;
-        config.maxImmediateLaneDecisionGates = 8;
+        config.initialImmediateLaneOwnerGates = 1;
+        config.initialImmediateLaneDecisionGates = 8;
         ASSERT_TRUE(pool.Reset(config, 0, 1));
         inputs[0].executeFrame = 117;
         inputs[0].decision = initialDecision;
@@ -5476,7 +5486,7 @@ struct GenuineCatalogStageHarness {
         config.maxTransactionEvents = 8; config.maxCurrentSlicesPerQuantum = 4;
         config.maxScheduleGroupHeadersPerPage = 1; config.maxArmsPerGroup = 1;
         config.maxImmediateLaneGroupRows = 2;
-        config.maxImmediateLaneOwnerGates = 1; config.maxImmediateLaneDecisionGates = 2;
+        config.initialImmediateLaneOwnerGates = 1; config.initialImmediateLaneDecisionGates = 2;
         ASSERT_TRUE(groups.Reset(config, 0, 1));
         for (std::uint32_t i = 0; i < originals.size(); ++i) {
             harken::ScheduleGroupSliceInput input{};
@@ -5732,7 +5742,7 @@ struct PrivateSelectedQueueFutureSpanTestAccess {
         pool.rows_[slot].loans = count;
     }
     static void GenerationLimit(PrivateSelectedQueueFutureSpanPool& pool) {
-        ASSERT_TRUE(pool.rows_.Emplace(0));
+        ASSERT_TRUE(pool.rows_.ConstructThrough(1));
         pool.rows_[0].generation = UINT32_MAX;
     }
 };
@@ -5863,8 +5873,8 @@ struct GenuineHiddenSelectedFuture {
         config.maxScheduleGroupHeadersPerPage = 1;
         config.maxArmsPerGroup = 1;
         config.maxImmediateLaneGroupRows = 4;
-        config.maxImmediateLaneOwnerGates = 1;
-        config.maxImmediateLaneDecisionGates = old.decisions.Capacity();
+        config.initialImmediateLaneOwnerGates = 1;
+        config.initialImmediateLaneDecisionGates = old.decisions.Capacity();
         ASSERT_TRUE(pool.Reset(config, 0, 1));
         inputs[0].decision = initialDecision;
         inputs[0].executeFrame = 117;

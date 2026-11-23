@@ -1,3 +1,4 @@
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/core/ArmGroupTable.h"
 
 #include <limits>
@@ -18,7 +19,7 @@ bool SameArm(TimelineArmToken left, TimelineArmToken right) noexcept {
 
 bool ValidConfig(std::uint32_t capacity,
                  std::uint32_t maxMembers) noexcept {
-    return capacity != 0 && capacity <= kMaxArmGroupsHard &&
+    return capacity != 0 &&
            maxMembers != 0 && maxMembers <= kMaxArmsPerGroupHard;
 }
 
@@ -29,9 +30,7 @@ ArmGroupTable::ArmGroupTable(std::uint32_t capacity,
     : capacity_(ValidConfig(capacity, maxMembersPerGroup) ? capacity : 0),
       maxMembersPerGroup_(ValidConfig(capacity, maxMembersPerGroup)
                               ? static_cast<std::uint16_t>(maxMembersPerGroup)
-                              : 0) {
-    if (!rows_.Reserve(capacity_)) throw std::bad_alloc{};
-}
+                              : 0) {}
 
 std::size_t ArmGroupTable::MemberStorageBytes() const noexcept {
     std::size_t bytes = preparedMemberBytes_;
@@ -68,7 +67,7 @@ void ArmGroupTable::BackingPreparation::Release() noexcept {
     rows_.Release();
 }
 
-ArmGroupTable::PreparedUse::PreparedUse(ArmGroupTable& owner, BackingPreparation* backing) noexcept
+ArmGroupTable::PreparedUse::PreparedUse(ArmGroupTable& owner, const BackingPreparation* backing) noexcept
     : owner_(owner), previous_(owner.activeBacking_),
       rows_(backing == nullptr ? StableStoragePreparedUse{} : backing->rows_.Use()) {
     owner_.activeBacking_ = backing;
@@ -78,12 +77,15 @@ ArmGroupTable::PreparedUse::~PreparedUse() { owner_.activeBacking_ = previous_; 
 bool ArmGroupTable::PrepareBacking(std::uint32_t groupCount, std::uint32_t totalMembers,
                                   BackingPreparation* out) noexcept {
     if (out == nullptr || out->Valid() || memguard::IsAudioTagged()) return false;
-    groupCount = std::min(groupCount, capacity_);
-    auto occupied = rows_.ConstructedCount();
-    while (occupied != 0 && rows_[occupied - 1u].slotState.load(std::memory_order_acquire) == SlotState::Free)
-        --occupied;
+    if (rows_.PreparedUseActive()) return false;
+    const auto needed = rows_.HeldRows() + groupCount;
+    const auto occupied = groupCount == 0 ? 0u : CountOccupiedUntil(needed);
+    if (needed > capacity_ - occupied) return false;
     BackingPreparation candidate;
-    if (!rows_.PrepareBacking(groupCount, occupied, &candidate.rows_)) return false;
+    if (!rows_.PrepareBacking(groupCount, occupied, &candidate.rows_)) {
+        detail::RecordLogicAllocFailure(detail::LogicAllocSite::EngineStorage);
+        return false;
+    }
     try {
         const auto nonempty = std::min(groupCount, totalMembers);
         candidate.members_.reserve(nonempty);
@@ -100,7 +102,7 @@ bool ArmGroupTable::PrepareBacking(std::uint32_t groupCount, std::uint32_t total
                 static_cast<std::size_t>(count) * sizeof(MemberRow);
             candidate.members_.push_back(std::move(member));
         }
-    } catch (...) { return false; }
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return false; }
     *out = std::move(candidate);
     return true;
 }
@@ -163,16 +165,29 @@ std::uint32_t ArmGroupTable::LiveCount() const noexcept {
     return count;
 }
 
-std::uint32_t ArmGroupTable::FreeCount() const noexcept {
-    const auto constructed = rows_.ConstructedCount();
-    std::uint32_t count = capacity_ - constructed;
-    for (std::uint32_t slot = 0; slot < constructed; ++slot) {
-        if (rows_[slot].slotState.load(std::memory_order_acquire) ==
-            SlotState::Free) {
-            ++count;
-        }
+std::uint32_t ArmGroupTable::CountOccupiedUntil(std::uint64_t needed) const noexcept {
+    std::uint32_t occupied = 0;
+    for (const auto& row : rows_) {
+        if (row.slotState.load(std::memory_order_acquire) != SlotState::Free) ++occupied;
+        else if (--needed == 0) break;
     }
-    return count;
+    return occupied;
+}
+
+std::uint32_t ArmGroupTable::FreeCount() const noexcept {
+    return Capacity() - CountOccupiedUntil(UINT64_MAX);
+}
+
+bool ArmGroupTable::PrepareAvailable(std::uint32_t count) noexcept {
+    if (count == 0) return true;
+    const auto held = rows_.PreparedUseActive() ? 0u : rows_.HeldRows();
+    const auto needed = held + count;
+    const auto occupied = CountOccupiedUntil(needed);
+    if (needed > capacity_ - occupied) return false;
+    if (rows_.ConstructThrough(occupied + count)) return true;
+    if (!rows_.PreparedUseActive() && !memguard::IsAudioTagged())
+        detail::RecordLogicAllocFailure(detail::LogicAllocSite::EngineStorage);
+    return false;
 }
 
 std::uint32_t ArmGroupTable::QuarantinedCount() const noexcept {
@@ -219,8 +234,8 @@ bool ArmGroupTable::ReserveInternal(DecisionToken parent,
             }
         }
     }
-    for (std::uint32_t slot = 0; slot < capacity_; ++slot) {
-        if (!rows_.ConstructThrough(slot + 1u)) return false;
+    if (!PrepareAvailable(1u)) return false;
+    for (std::uint32_t slot = 0; slot < rows_.ConstructedCount(); ++slot) {
         Row& row = rows_[slot];
         if (row.slotState.load(std::memory_order_acquire) != SlotState::Free ||
             row.reservation.test_and_set(std::memory_order_acquire)) {
@@ -249,7 +264,7 @@ bool ArmGroupTable::ReserveInternal(DecisionToken parent,
                     auto candidate = std::make_unique<MemberRow[]>(memberCount);
                     row.members.swap(candidate);
                     row.memberCapacity = memberCount;
-                } catch (...) {
+                } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage);
                     row.reservation.clear(std::memory_order_release);
                     return false;
                 }

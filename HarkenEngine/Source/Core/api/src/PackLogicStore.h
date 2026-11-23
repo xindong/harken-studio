@@ -11,7 +11,10 @@
 #ifndef HARKEN_API_PACK_LOGIC_STORE_H
 #define HARKEN_API_PACK_LOGIC_STORE_H
 
+#include "harken/core/GrowingRowStorage.h"
+
 #include <harken/Harken.h>
+#include "BusSendTable.h"
 
 #include "harken/core/CommandQueue.h"
 #include "harken/media/PackFormatV2.h"
@@ -130,7 +133,7 @@ struct PackPendingRevision {
     std::uint32_t planIndex = 0xFFFFFFFFu;
     std::uint32_t dynamicPlanIndex = 0xFFFFFFFFu;
     std::uint32_t levelCommands = 0;
-    std::uint32_t grownAttachments = 0;
+    std::vector<BusPublicationTarget> publicationTargets;
 
     // The post-activation ledger content, fully built (every vector
     // populated) during the call's staging so the activation only MOVES
@@ -182,12 +185,7 @@ struct PackPendingRevision {
     std::vector<std::uint32_t> prospectiveBusGenerations;
     std::vector<std::uint32_t> prospectiveParents;
     std::vector<std::uint8_t> prospectiveAlive;
-    std::vector<std::uint32_t> prospectiveSendTargets;
-    std::vector<VnPackHandle> prospectiveSendOwners;
-    std::vector<std::uint64_t> prospectiveSendTopologyOwners;
-    std::vector<float> prospectiveSendLevels;
-    std::vector<float> prospectiveSendLevelsDb;
-    std::vector<std::uint8_t> prospectiveSendLevelApply;
+    BusSendTable prospectiveSends;
     std::vector<float> prospectiveBusVolumeDb;
     std::vector<float> prospectiveBusOutputVolumeDb;
     std::vector<std::uint8_t> prospectiveBusVolumeApply;
@@ -197,8 +195,7 @@ struct PackPendingRevision {
     std::uint32_t prospectiveBusCount = 0;
 };
 
-// Fixed-capacity store indexed by pack-table slot (the handle's low 32
-// bits), sized to maxPacks at engine construction. Generation checks
+// Stable records indexed by the low 32 bits of the Pack handle. Generation checks
 // ride the stored handle, so a slot reused by a later v1-only load never
 // aliases a stale logic record.
 class PackLogicStore {
@@ -215,8 +212,6 @@ public:
         VnPackHandle m_handle = 0;
     };
 
-    explicit PackLogicStore(std::uint32_t capacity)
-        : m_records(capacity) {}
 
     PackLogicRecord* RecordFor(VnPackHandle handle) {
         const std::uint32_t slot = static_cast<std::uint32_t>(handle);
@@ -243,8 +238,8 @@ public:
         }
         *out = PreparedClaimToken{};
         const std::uint32_t slot = static_cast<std::uint32_t>(handle);
-        if (slot >= m_records.size()) {
-            return VN_INVALID_CONFIG;
+        if (slot == UINT32_MAX || !m_records.ConstructThrough(slot + 1)) {
+            return VN_BACKPRESSURE;
         }
         if (m_records[slot].used) {
             return VN_IN_USE;
@@ -344,7 +339,7 @@ public:
     }
 
 private:
-    std::vector<PackLogicRecord> m_records;
+    GrowingRowStorage<PackLogicRecord> m_records;
 };
 
 static_assert(

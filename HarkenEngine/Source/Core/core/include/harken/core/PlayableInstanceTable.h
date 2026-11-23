@@ -39,6 +39,7 @@
 #ifndef HARKEN_CORE_PLAYABLE_INSTANCE_TABLE_H
 #define HARKEN_CORE_PLAYABLE_INSTANCE_TABLE_H
 #include "harken/core/StableRowStorage.h"
+#include "harken/core/GrowingRowStorage.h"
 
 #include "harken/core/CheckedIssuer.h"
 #include "harken/core/MonitorIdentity.h"
@@ -193,15 +194,17 @@ private:
 class PlayableInstanceTable {
     struct Entry;
 public:
-    // Capacity is the number of concurrently live instances. Reservation
-    // fixes every row's address before any original lifetime can name it.
     explicit PlayableInstanceTable(std::uint32_t capacity, std::uint32_t generationFloor = 0);
     std::uint32_t GenerationHighWater() const noexcept;
-    bool PrepareStorage() noexcept {
-        return m_entries.ConstructThrough(m_entries.Capacity());
-    }
-    // Prepare the reusable rows needed by one transaction without changing capacity.
+    // Prepare reusable rows before publishing the transaction that depends on them.
     bool PrepareStorageForAcquire(std::uint32_t count) noexcept;
+    bool PrepareFutureAcquisitions(std::uint32_t count, StableStoragePreparation* hold) noexcept;
+    bool HasPreparedBacking() const noexcept { return m_entries.HasPreparedBacking(); }
+    using PrepareDependencies = bool (*)(void*, std::uint32_t) noexcept;
+    void SetStoragePreparation(void* context, PrepareDependencies prepare) noexcept {
+        storageContext_ = context;
+        prepareDependencies_ = prepare;
+    }
     std::size_t StorageBytes() const noexcept { return m_entries.RequestedBytes(); }
     std::size_t StorageCommittedBytes() const noexcept { return m_entries.CommittedBytes(); }
     std::size_t StorageReservedBytes() const noexcept { return m_entries.ReservedBytes(); }
@@ -386,13 +389,12 @@ public:
         const PreparedPlayableInstance& exactOriginal, OriginalLifetimePin* out) noexcept;
     // Stable output slots are selected only from the actual held native nodes.
     bool IssueOriginalPreparedLifetimeBaselines(const PreparedParentLinksProof& preparation,
-        std::span<OriginalLifetimePin> stableBaselines) noexcept;
+        GrowingRowStorage<OriginalLifetimePin>& stableBaselines) noexcept;
     static void ConsumePreparedParentLinks(PreparedParentLinksProof&& proof) noexcept;
 
-    // Logical capacity reserved at construction. FreeCount reports the
-    // currently reusable subset after generation exhaustion is accounted for.
+    // Published row prefix. FreeCount excludes held and quarantined rows.
     std::uint32_t Capacity() const {
-        return m_entries.Capacity();
+        return m_entries.ConstructedCount();
     }
     std::uint32_t ConstructedEntryCount() const noexcept { return m_entries.ConstructedCount(); }
 
@@ -565,6 +567,7 @@ public:
 
     // Slots that can still accept a new instance, excluding exhausted slots.
     std::uint32_t FreeCount() const;
+    std::uint32_t UnavailableRowCount() const { return ConstructedEntryCount() - FreeCount(); }
     std::uint32_t QuarantinedCount() const { return m_quarantinedCount; }
 
 private:
@@ -692,7 +695,12 @@ private:
     bool BorrowOriginalLifetime(const OriginalLifetimePin& original, OriginalLifetimePin* out) noexcept;
     void ReturnOriginalLifetime(OriginalLifetimePin& original) noexcept;
     void ReturnOriginalLifetimeRetirementHold(OriginalLifetimeRetirementHold& original) noexcept;
-    StableRowStorage<Entry> m_entries;
+    bool PrepareRowDependencies(std::uint32_t count) noexcept {
+        return prepareDependencies_ == nullptr || prepareDependencies_(storageContext_, count);
+    }
+    void* storageContext_ = nullptr;
+    PrepareDependencies prepareDependencies_ = nullptr;
+    GrowingRowStorage<Entry> m_entries;
     std::uint32_t m_initialGeneration = 1;
     std::uint32_t m_originalDispositionCount = 0;
     std::uint64_t m_nextOriginalLifetimeMarker = 1;

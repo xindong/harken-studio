@@ -117,6 +117,13 @@ TEST(MeterProbe, PreparedBusRemovalSequenceExhaustionDoesNotPartiallyRetire) {
     EXPECT_EQ(VN_BACKPRESSURE, engine->meterProbes.PrepareBusRemovalV1(*engine, refs, prepared));
     EXPECT_FALSE(engine->meterProbes.CanCommitBusRemovalV1(*engine, prepared));
     EXPECT_TRUE(engine->runtimeRecreateRequired);
+    VnRuntimeFaultInfoV1 faultInfo{};
+    faultInfo.structSize = sizeof(faultInfo);
+    EXPECT_EQ(VN_OK, Vn_GetRuntimeFaultInfo(&faultInfo));
+    EXPECT_EQ(VN_RUNTIME_FAULT_GENERATION_EXHAUSTED, faultInfo.category);
+    EXPECT_NE(nullptr, faultInfo.file);
+    EXPECT_GT(faultInfo.line, 0u);
+    EXPECT_EQ(engine->runtimeFault.line, faultInfo.line);
     EXPECT_TRUE(engine->logicCommits.Exhausted());
     EXPECT_EQ(head, engine->commands.PublishedHead());
     EXPECT_EQ(revision, engine->acceptedBusTopologyRevision);
@@ -858,6 +865,43 @@ TEST(MeterProbe, ProbeIsNeverAVariableOrDecisionInput) {
     EXPECT_FALSE(engine->variables.CurrentValue(kProbe, &unused));
 }
 
+TEST(MeterProbe, PublicDetachPreservesPrivateBindingWithTheSameId) {
+    EngineSession session(ProbeConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    const auto variable = harkentest::ObjectId(9111);
+    ASSERT_EQ(harken::WorldInstallStatus::Ok, harkentest::InstallSmoothDefinitions(&engine, {variable}, 0, 1).status);
+    ASSERT_EQ(VN_OK, Vn_CreateBus(kSourceBus, VN_BUS_MASTER));
+    ASSERT_EQ(VN_OK, Vn_CreateBus(kTargetBus, VN_BUS_MASTER));
+    std::uint32_t generation = 0;
+    ASSERT_EQ(VN_OK, harken::InstallMeterProbe(engine, kProbe, kSourceBus,
+        VN_BUS_METER_TAP_POST_EFFECTS, 0, 0, &generation));
+    ASSERT_NO_FATAL_FAILURE(DefineSidechain(&engine, kSidechain, kProbe, generation));
+    const auto target = engine.buses.FindRef(kTargetBus);
+    ASSERT_EQ(VN_OK, harken::AttachMeterProbeBinding(engine, kSidechain, VN_TARGET_SCOPE_BUS, kTargetBus, 0, target.generation));
+    VnBindingDesc def{};
+    def.structSize = sizeof(def);
+    def.targetScopeKind = VN_TARGET_SCOPE_BUS;
+    def.variableId = variable;
+    def.curve.structSize = sizeof(def.curve);
+    def.curve.pointCount = 1;
+    ASSERT_EQ(VN_OK, Vn_RegisterBinding(kSidechain, &def));
+    VnBindingAttachDesc attach{};
+    attach.structSize = sizeof(attach);
+    attach.scopeKind = VN_TARGET_SCOPE_BUS;
+    attach.objectId = VN_BUS_MASTER;
+    ASSERT_EQ(VN_OK, Vn_AttachBinding(kSidechain, &attach));
+    const auto before = engine.propertyPublisher.WorstCaseCommits();
+    attach.objectId = kTargetBus;
+    EXPECT_EQ(VN_UNKNOWN_ID, Vn_DetachBinding(kSidechain, &attach));
+    EXPECT_EQ(before, engine.propertyPublisher.WorstCaseCommits());
+    ASSERT_EQ(VN_OK, Vn_AttachBinding(kSidechain, &attach));
+    EXPECT_EQ(before + 1, engine.propertyPublisher.WorstCaseCommits());
+    ASSERT_EQ(VN_OK, Vn_DetachBinding(kSidechain, &attach));
+    EXPECT_EQ(before, engine.propertyPublisher.WorstCaseCommits());
+    EXPECT_NE(nullptr, engine.bindings.FindProbeAttachment(kSidechain, VN_TARGET_SCOPE_BUS, kTargetBus, 0, target.generation));
+}
+
 TEST(MeterProbe, SidechainWaveformReachesBoundBusAndReleases) {
     EngineSession session(ProbeConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -969,6 +1013,7 @@ TEST(MeterProbe, UninstallWithdrawsContributionToNeutral) {
     ASSERT_EQ(VN_OK, Vn_Update());
     ASSERT_EQ(VN_OK, Vn_Update());
     engine->nullBackend.Pump(2);
+    engine->nullBackend.Pump(4); // Measure the settled attenuation.
     harkentest::Capture ducked;
     harkentest::PumpAndCapture(engine, 2, ducked);
     const float duckedPeak = harkentest::Peak(ducked.left);
@@ -998,22 +1043,38 @@ TEST(MeterProbe, RepeatedWithdrawalReturnsSharedSliceResources) {
     ASSERT_TRUE(engine.variableSlices.Reset(4, 8, 8, 2));
     ASSERT_EQ(VN_OK, Vn_CreateBus(kSourceBus, VN_BUS_MASTER));
     ASSERT_EQ(VN_OK, Vn_CreateBus(kTargetBus, VN_BUS_MASTER));
+    ASSERT_EQ(VN_OK, Vn_SetBusFaderPoint(kTargetBus, engine.config.fxSlotsPerBus));
     const auto targetIndex = engine.buses.FindIndex(kTargetBus);
     for (int iteration = 0; iteration < 6; ++iteration) {
         SCOPED_TRACE(iteration);
         std::uint32_t generation = 0;
         ASSERT_EQ(VN_OK, harken::InstallMeterProbe(engine, kProbe, kSourceBus,
             VN_BUS_METER_TAP_POST_EFFECTS, 0, 0, &generation));
-        DefineSidechain(&engine, kSidechain, kProbe, generation);
+        if (iteration == 0)
+            DefineConstantProbeBinding(&engine, kSidechain, kProbe, generation,
+                VN_TARGET_SCOPE_BUS, harken::kBusTargetBusVolume, 0.0f, 0);
+        else DefineSidechain(&engine, kSidechain, kProbe, generation);
         ASSERT_EQ(VN_OK, harken::AttachMeterProbeBinding(engine, kSidechain,
             VN_TARGET_SCOPE_BUS, kTargetBus, 0,
             engine.buses.GenerationAt(targetIndex)));
         ASSERT_EQ(VN_OK, Vn_Update());
         engine.nullBackend.Pump(2);
+        if (iteration == 0) {
+            EXPECT_FALSE(engine.buses.BusState(targetIndex)->gainStarted);
+            EXPECT_EQ(0u, engine.busVolumePublished[targetIndex]);
+        }
         ASSERT_EQ(VN_OK, harken::UninstallMeterProbe(engine, kProbe, generation));
         for (int step = 0; step < 12; ++step) {
             engine.nullBackend.Pump(1);
             ASSERT_EQ(VN_OK, Vn_Update());
+        }
+        if (iteration == 0) {
+            EXPECT_TRUE(engine.buses.BusState(targetIndex)->gainStarted);
+            EXPECT_EQ(1u, engine.busVolumePublished[targetIndex]);
+            harken::BusTree::Bus rebuilt{};
+            ASSERT_EQ(VN_OK, engine.PrepareBusWorkState(targetIndex, rebuilt));
+            EXPECT_TRUE(rebuilt.gainStarted);
+            engine.CancelBusWorkState(rebuilt);
         }
         EXPECT_FALSE(engine.meterDetectors.IsProbe(kProbe));
         EXPECT_EQ(0u, engine.meterProbeWithdrawalCount);
@@ -1037,8 +1098,8 @@ TEST(MeterProbe, MultipleWithdrawalChunksShareVariablePayloadsAndRespectTheStric
     const auto proofCapacity = engine.variableSlices.Capacity();
     const auto payloadCapacity = engine.variableSlices.PayloadCapacity();
     const auto targetCapacity = engine.variableSlices.TargetPoolCapacity();
-    EXPECT_EQ(engine.variables.RevisionStorageCapacity() + 2 * config.maxBuses, proofCapacity);
-    EXPECT_EQ(engine.variables.PendingCapacity() + 2 * config.maxBuses, payloadCapacity);
+    EXPECT_EQ(engine.variables.RevisionStorageCapacity() + engine.variableSlices.TargetPoolCapacity(), proofCapacity);
+    EXPECT_EQ(engine.variableSlices.TargetPoolCapacity(), payloadCapacity);
     ASSERT_EQ(proofCapacity, engine.variableSlices.FreeRowCount());
     ASSERT_EQ(payloadCapacity, engine.variableSlices.FreePayloadCount());
     ASSERT_TRUE(engine.variableSlices.Reset(proofCapacity, 1, targetCapacity, payloadCapacity));
@@ -1085,8 +1146,8 @@ TEST(MeterProbe, MultipleWithdrawalChunksShareVariablePayloadsAndRespectTheStric
         ASSERT_TRUE(first[p].Valid());
         ASSERT_EQ(1u, engine.variableSlices.TargetCount(first[p]));
     }
-    ASSERT_EQ(proofCapacity - 2, engine.variableSlices.FreeRowCount());
-    ASSERT_EQ(payloadCapacity - 2, engine.variableSlices.FreePayloadCount());
+    ASSERT_EQ(2u, engine.variableSlices.UsedRowCount());
+    ASSERT_EQ(2u, engine.variableSlices.UsedPayloadCount());
     const auto firstPublicationEnd = engine.timelinePool.PublishCutoffFrame();
     auto observed = harken::ObserveVariableCallAt(engine.variables.CurrentWorldGeneration(),
         engine.variables.CurrentTransportEpoch(), config.blockFrames, 0, 0);
@@ -1100,8 +1161,8 @@ TEST(MeterProbe, MultipleWithdrawalChunksShareVariablePayloadsAndRespectTheStric
     ASSERT_TRUE(variableSlice.Valid());
     ASSERT_EQ(harken::VariableSliceState::PageCommitted, engine.variableSlices.State(variableSlice));
     ASSERT_EQ(0u, engine.variableSlices.TargetCount(variableSlice));
-    ASSERT_EQ(proofCapacity - 3, engine.variableSlices.FreeRowCount());
-    ASSERT_EQ(payloadCapacity - 3, engine.variableSlices.FreePayloadCount());
+    ASSERT_EQ(3u, engine.variableSlices.UsedRowCount());
+    ASSERT_EQ(3u, engine.variableSlices.UsedPayloadCount());
     engine.mixer.SetCurrentSliceScratchLimitForTest(0);
     for (unsigned step = 0; step < 32 &&
         engine.mixer.BlocksRendered() * config.blockFrames < firstPublicationEnd; ++step)
@@ -1118,7 +1179,7 @@ TEST(MeterProbe, MultipleWithdrawalChunksShareVariablePayloadsAndRespectTheStric
     ASSERT_EQ(VN_OK, Vn_Update());
     for (std::size_t p = 0; p < probes.size(); ++p)
         ASSERT_FALSE(engine.meterProbes.WithdrawalSliceForTests(engine, probes[p], generations[p]).Valid());
-    ASSERT_EQ(payloadCapacity - 3, engine.variableSlices.FreePayloadCount());
+    ASSERT_EQ(3u, engine.variableSlices.UsedPayloadCount());
     ASSERT_EQ(VN_OK, Vn_Update());
     std::array<harken::VariableSliceRef, 2> second{};
     for (std::size_t p = 0; p < probes.size(); ++p) {
@@ -1133,8 +1194,8 @@ TEST(MeterProbe, MultipleWithdrawalChunksShareVariablePayloadsAndRespectTheStric
     }
     EXPECT_NE(second[0].slot, second[1].slot);
     EXPECT_EQ(appliedBlock, engine.mixer.BlocksRendered());
-    EXPECT_EQ(proofCapacity - 5, engine.variableSlices.FreeRowCount());
-    EXPECT_EQ(payloadCapacity - 5, engine.variableSlices.FreePayloadCount());
+    EXPECT_EQ(5u, engine.variableSlices.UsedRowCount());
+    EXPECT_EQ(5u, engine.variableSlices.UsedPayloadCount());
     EXPECT_EQ(targetCapacity - 4, engine.variableSlices.FreeTargetCapacity());
     EXPECT_EQ(1u, engine.variables.PendingCount());
     EXPECT_EQ(0u, outcomes.Count());
@@ -1166,8 +1227,8 @@ TEST(MeterProbe, MultipleWithdrawalChunksShareVariablePayloadsAndRespectTheStric
     float value = 0;
     ASSERT_TRUE(engine.variables.CurrentValue(variable, &value));
     EXPECT_FLOAT_EQ(0.75f, value);
-    EXPECT_EQ(proofCapacity, engine.variableSlices.FreeRowCount());
-    EXPECT_EQ(payloadCapacity, engine.variableSlices.FreePayloadCount());
+    EXPECT_EQ(0u, engine.variableSlices.UsedRowCount());
+    EXPECT_EQ(0u, engine.variableSlices.UsedPayloadCount());
     EXPECT_EQ(targetCapacity, engine.variableSlices.FreeTargetCapacity());
     EXPECT_FALSE(outcomes.Overflowed());
 }

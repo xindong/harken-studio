@@ -191,7 +191,7 @@ private:
     void BeforeOldWrite() noexcept;
     void ReturnOldRead() noexcept;
     static constexpr std::uint64_t kAborted = 1u, kAccepted = 2u, kRead = 4u;
-    std::unique_ptr<Member[]> members_;
+    GrowingRowStorage<Member> members_;
     std::uint32_t capacity_ = 0, count_ = 0, continuationCount_ = 0, pageCount_ = 0;
     QueueInstanceTable* queues_ = nullptr;
     QueueInstanceTable::PreparedCatalogResetScope scope_;

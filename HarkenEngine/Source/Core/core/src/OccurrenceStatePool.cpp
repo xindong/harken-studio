@@ -19,7 +19,15 @@ std::uint32_t NextGeneration(std::uint32_t generation) {
 } // namespace
 
 OccurrenceStatePool::OccurrenceStatePool(std::uint32_t capacity)
-    : m_entries(capacity) {}
+    : limit_(capacity) {
+    if (!PrepareStorage(capacity)) throw detail::LogicPreparationFailure{};
+}
+
+bool OccurrenceStatePool::PrepareStorage(std::uint32_t count) noexcept {
+    return count <= limit_ && m_entries.ConstructThrough(count, [this](std::uint32_t required) noexcept {
+        return prepareRows_ == nullptr || prepareRows_(preparationContext_, required);
+    });
+}
 
 OccurrenceStatePool::~OccurrenceStatePool() {
     for (const auto& entry : m_entries)
@@ -512,7 +520,8 @@ bool OccurrenceStatePool::AcquireInternal(const OccurrenceKey& key,
     if (outToken == nullptr || (original != nullptr && original->owner_ != nullptr)) {
         return false;
     }
-    for (std::uint32_t slot = 0; slot < m_entries.size(); ++slot) {
+    for (std::uint32_t slot = 0; slot < limit_; ++slot) {
+        if (slot == m_entries.size() && !PrepareStorage(slot + 1u)) return false;
         Entry& entry = m_entries[slot];
         if (entry.stage != OccurrenceStage::Free || entry.quarantined ||
             entry.originalCompositeStorageRetired || entry.originalSinglePinCount != 0 ||

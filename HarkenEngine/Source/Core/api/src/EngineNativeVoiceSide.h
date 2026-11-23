@@ -2,6 +2,7 @@
 #define HARKEN_ENGINE_NATIVE_VOICE_SIDE_H
 
 #include "harken/core/CapturedTimelineVoiceInstall.h"
+#include "harken/core/LogicAllocCheckpoint.h"
 
 #include <array>
 #include <cstdint>
@@ -74,8 +75,10 @@ public:
         if (capacity == 0) return true;
         if (!allowAllocation()) return false;
         std::unique_ptr<Start[]> starts(new (std::nothrow) Start[capacity]{});
+        if (!starts) detail::RecordLogicAllocFailure(detail::LogicAllocSite::SourceCommandBacking);
         if (starts == nullptr || !allowAllocation()) return false;
         std::unique_ptr<Context[]> contexts(new (std::nothrow) Context[capacity]{});
+        if (!contexts) detail::RecordLogicAllocFailure(detail::LogicAllocSite::SourceCommandBacking);
         if (contexts == nullptr) return false;
         starts_ = std::move(starts);
         contexts_ = std::move(contexts);
@@ -96,6 +99,7 @@ public:
         if (capacity_ > std::numeric_limits<std::size_t>::max() /
                 sizeof(CapturedInput) || !allowAllocation()) return false;
         captures_.reset(new (std::nothrow) CapturedInput[capacity_]{});
+        if (!captures_) detail::RecordLogicAllocFailure(detail::LogicAllocSite::CapturedVoiceInstall);
         return captures_ != nullptr;
     }
 

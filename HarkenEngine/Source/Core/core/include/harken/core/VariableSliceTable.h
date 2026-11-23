@@ -4,7 +4,7 @@
 #include "harken/core/CommandQueue.h"
 #include "harken/core/VariableReadCut.h"
 
-#include "harken/core/StableRowStorage.h"
+#include "harken/core/GrowingRowStorage.h"
 
 #include <atomic>
 #include <cstddef>
@@ -135,7 +135,7 @@ public:
     bool Reserve(std::uint64_t world, std::uint64_t transport,
                  std::uint64_t ticket, std::uint64_t effectiveFrame,
                  std::uint64_t bankOrdinal, std::uint32_t exactTargetCount,
-                 VariableSliceRef* out) noexcept;
+                 VariableSliceRef* out, bool withdrawal = false) noexcept;
     bool AddTarget(VariableSliceRef ref, const VariableSliceTarget& target) noexcept;
     ReservationStatus ReservationAvailability(std::uint32_t exactTargetCount) const noexcept;
     bool CaptureSource(VariableSliceRef ref, VariableSliceSource* out) const noexcept;
@@ -166,6 +166,10 @@ public:
     void SetRowCommitPageLimitForTests(std::size_t pages) noexcept {
         rows_.SetCommitPageLimitForTests(pages);
     }
+    // Logic-owned pending payloads keep exact target incarnations alive until
+    // application is acknowledged; retained history alone is not a user.
+    bool VisitPendingTargets(void* context,
+        bool (*visit)(void*, VariableSliceRef, const VariableTargetLocator&)) const;
     bool Publish(VariableSliceRef ref) noexcept;
     bool CanPublishPrepared(VariableSliceRef ref, bool allowPreparedSources = false) const noexcept;
     VariableSliceInvalidationResult Invalidate(
@@ -176,7 +180,8 @@ public:
                void (*apply)(void*,
                              const VariableSliceTarget&) noexcept,
                std::uint64_t settledCommandFrontier = UINT64_MAX,
-               std::uint64_t settledInitialSourceFrontier = UINT64_MAX) noexcept;
+               std::uint64_t settledInitialSourceFrontier = UINT64_MAX,
+               bool (*ready)(void*, const VariableSliceTarget&) noexcept = nullptr) noexcept;
     VariableSliceState State(VariableSliceRef ref) const noexcept;
     std::uint64_t AppliedBlockSequence(VariableSliceRef ref) const noexcept;
     std::uint32_t TargetCount(VariableSliceRef ref) const noexcept;
@@ -191,6 +196,12 @@ public:
     void ReclaimSettled(std::uint64_t observedBlockSequence) noexcept;
     bool HasUnreclaimedWorldRows(std::uint64_t world) const noexcept;
     bool HasUnreclaimedTransportRows(std::uint64_t transport) const noexcept;
+    bool PrepareWriteBacking(std::uint32_t revisions) noexcept;
+    using PrepareConsumer = bool (*)(void*, std::uint32_t) noexcept;
+    void AttachConsumer(void* context, PrepareConsumer prepare) noexcept {
+        consumerContext_ = context;
+        prepareConsumer_ = prepare;
+    }
     std::uint32_t Capacity() const noexcept { return capacity_; }
     std::uint32_t MaxTargetsPerSlice() const noexcept {
         return maxTargetsPerSlice_;
@@ -199,10 +210,12 @@ public:
         return targetPoolCapacity_;
     }
     std::uint32_t FreeTargetCapacity() const noexcept;
+    std::uint32_t UsedRowCount() const noexcept { return nextUnusedRow_ - static_cast<std::uint32_t>(freeRows_.size()); }
+    std::uint32_t UsedPayloadCount() const noexcept { return nextUnusedPayload_ - static_cast<std::uint32_t>(freePayloads_.size()); }
     std::uint32_t FreeRowCount() const noexcept;
     std::uint32_t PayloadCapacity() const noexcept { return payloadCapacity_; }
     std::uint32_t FreePayloadCount() const noexcept {
-        return static_cast<std::uint32_t>(freePayloads_.size());
+        return payloadCapacity_ - nextUnusedPayload_ + static_cast<std::uint32_t>(freePayloads_.size());
     }
     std::size_t FreeRangeCount() const noexcept { return freeRanges_.size(); }
     bool SetFreeRowGenerationForTest(std::uint32_t slot,
@@ -226,6 +239,7 @@ private:
         std::uint32_t sourceObservers = 0;
         VariableSourceSubscription* sourceHead = nullptr;
         std::uint32_t subscriptionCount = 0;
+        bool withdrawal = false;
         bool logicAcknowledged = false;
         std::atomic<bool> sourceChanged{false};
         std::atomic<std::uint64_t> appliedBlockSequence{0};
@@ -259,12 +273,18 @@ private:
     std::uint32_t capacity_ = 0;
     std::uint32_t maxTargetsPerSlice_ = 0;
     std::uint32_t targetPoolCapacity_ = 0;
-    StableRowStorage<Row> rows_;
-    StableRowStorage<Payload> payloads_;
+    GrowingRowStorage<Row> rows_;
+    GrowingRowStorage<Payload> payloads_;
+    std::uint32_t nextUnusedRow_ = 0, nextUnusedPayload_ = 0;
     std::vector<std::uint32_t> freeRows_;
     std::vector<std::uint32_t> freePayloads_;
     std::vector<std::uint32_t> subscribedSources_;
-    std::uint32_t sourceWords_ = 0;
+    void* consumerContext_ = nullptr;
+    PrepareConsumer prepareConsumer_ = nullptr;
+    std::uint32_t withdrawalHeadroom_ = 0;
+    std::uint32_t writeBacking_ = 0;
+    std::uint32_t withdrawalRows_ = 0;
+    bool PrepareSharedBacking(std::uint32_t revisions, std::uint32_t withdrawals) noexcept;
     std::uint32_t payloadCapacity_ = 0;
     std::vector<FreeRange> freeRanges_;
     std::atomic<AfterAudioClaimHookForTest> afterAudioClaimHookForTest_{

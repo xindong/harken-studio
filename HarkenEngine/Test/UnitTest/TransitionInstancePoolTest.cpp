@@ -2,6 +2,7 @@
 #include "harken/core/ImmediateActionLane.h"
 
 #include <gtest/gtest.h>
+#include <vector>
 
 namespace {
 struct PrivateTimingLane {
@@ -17,6 +18,36 @@ struct PrivateTimingLane {
         return lane.TryPlace(handle, 64, 0, &anchor);
     }
 };
+}
+
+TEST(TransitionInstancePool, LiveRowsSurvivePageRefusalAndReuseAfterThirtyTwoTransitions) {
+    harken::TransitionInstancePool pool;
+    std::vector<harken::TransitionInstanceToken> live;
+    for (unsigned i = 0; i < 33; ++i) {
+        harken::TransitionInstanceToken token{};
+        ASSERT_TRUE(pool.Acquire({1000u + i, 15}, &token));
+        live.push_back(token);
+    }
+    pool.SetCommitPageLimitForTests(0);
+    harken::TransitionInstanceToken next{};
+    while (pool.Acquire({2000, 31}, &next)) live.push_back(next);
+    EXPECT_EQ(live.size(), pool.LiveCount());
+    harken::TransitionInstanceSnapshot first{};
+    ASSERT_TRUE(pool.Capture(live.front(), &first));
+    EXPECT_EQ(1000u, first.audibleFrame);
+    pool.SetCommitPageLimitForTests(SIZE_MAX);
+    ASSERT_TRUE(pool.Acquire({2100, 32}, &next));
+    ASSERT_TRUE(pool.CancelBeforePublication(live.front()));
+    harken::TransitionInstanceToken reused{};
+    ASSERT_TRUE(pool.Acquire({2200, 34}, &reused));
+    EXPECT_EQ(reused.slot, live.front().slot);
+    EXPECT_NE(reused.generation, live.front().generation);
+    EXPECT_FALSE(pool.Capture(live.front(), &first));
+    for (std::size_t i = 1; i < live.size(); ++i)
+        ASSERT_TRUE(pool.CancelBeforePublication(live[i]));
+    ASSERT_TRUE(pool.CancelBeforePublication(next));
+    ASSERT_TRUE(pool.CancelBeforePublication(reused));
+    EXPECT_EQ(0u, pool.LiveCount());
 }
 
 TEST(TransitionInstancePool, PrivateTimingBatchHoldsAllRowsBeforeChangingGeometry) {

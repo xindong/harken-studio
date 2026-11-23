@@ -294,7 +294,7 @@ TEST(BindingTable, PitchNonzeroTransitionAccepted) {
     EXPECT_EQ(VN_INVALID_ARG, Vn_RegisterBinding(harkentest::ObjectId(2), &pan));
 }
 
-TEST(BindingApi, DefinitionPoolSizeRoutesFromConfig) {
+TEST(BindingApi, DefinitionInitialReservationCanGrow) {
     VnConfig config = MakeNullConfig(4, kBlock, kRate);
     config.maxBindings = 1;
     EngineSession session(config);
@@ -304,10 +304,10 @@ TEST(BindingApi, DefinitionPoolSizeRoutesFromConfig) {
                                                kTargetVoiceVolume, 0.0f,
                                                -6.0f);
     EXPECT_EQ(VN_OK, Vn_RegisterBinding(harkentest::ObjectId(1), &desc));
-    EXPECT_EQ(VN_NO_BINDING, Vn_RegisterBinding(harkentest::ObjectId(2), &desc));
-    // Freeing the single slot re-admits.
-    EXPECT_EQ(VN_OK, Vn_UnregisterBinding(harkentest::ObjectId(1)));
     EXPECT_EQ(VN_OK, Vn_RegisterBinding(harkentest::ObjectId(2), &desc));
+    // Existing definitions survive growth and slots remain reusable.
+    EXPECT_EQ(VN_OK, Vn_UnregisterBinding(harkentest::ObjectId(1)));
+    EXPECT_EQ(VN_OK, Vn_RegisterBinding(harkentest::ObjectId(3), &desc));
 }
 
 // --- attach / detach / unregister ---
@@ -378,7 +378,7 @@ TEST(BindingApi, AttachDetachMatrixAndUnregisterReferenceRule) {
     EXPECT_EQ(VN_UNKNOWN_ID, Vn_UnregisterBinding(harkentest::ObjectId(2)));
 }
 
-TEST(BindingApi, AttachmentPoolSizeRoutesFromConfig) {
+TEST(BindingApi, AttachmentInitialReservationCanGrow) {
     VnConfig config = MakeNullConfig(4, kBlock, kRate);
     config.maxBindingAttachments = 1;
     EngineSession session(config);
@@ -393,9 +393,9 @@ TEST(BindingApi, AttachmentPoolSizeRoutesFromConfig) {
         MakeAttachDesc(VN_TARGET_SCOPE_BUS, VN_BUS_MASTER);
     const VnBindingAttachDesc second = MakeAttachDesc(VN_TARGET_SCOPE_BUS, harkentest::ObjectId(5));
     EXPECT_EQ(VN_OK, Vn_AttachBinding(harkentest::ObjectId(1), &first));
-    EXPECT_EQ(VN_NO_BINDING, Vn_AttachBinding(harkentest::ObjectId(1), &second));
-    EXPECT_EQ(VN_OK, Vn_DetachBinding(harkentest::ObjectId(1), &first));
     EXPECT_EQ(VN_OK, Vn_AttachBinding(harkentest::ObjectId(1), &second));
+    EXPECT_EQ(VN_OK, Vn_DetachBinding(harkentest::ObjectId(1), &first));
+    EXPECT_EQ(VN_IN_USE, Vn_AttachBinding(harkentest::ObjectId(1), &second));
 }
 
 // --- Vn_ReplaceBinding: frozen structural identity, live success ---
@@ -465,7 +465,7 @@ TEST(BindingApi, ApplyAndClearVoiceBindingMatrix) {
     EXPECT_EQ(VN_UNKNOWN_ID, Vn_ClearVoiceBinding(handle, harkentest::ObjectId(1)));
 }
 
-TEST(BindingApi, VoiceInstanceSlotCountRoutesFromConfig) {
+TEST(BindingApi, VoiceInstanceReservationCanGrow) {
     VnConfig config = MakeNullConfig(4, kBlock, kRate);
     config.voiceBindingInstanceSlots = 1;
     EngineSession session(config);
@@ -485,7 +485,7 @@ TEST(BindingApi, VoiceInstanceSlotCountRoutesFromConfig) {
     VnVoiceHandle handle = 0;
     ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &handle));
     EXPECT_EQ(VN_OK, Vn_ApplyVoiceBinding(handle, harkentest::ObjectId(1)));
-    EXPECT_EQ(VN_NO_BINDING, Vn_ApplyVoiceBinding(handle, harkentest::ObjectId(2)));
+    EXPECT_EQ(VN_OK, Vn_ApplyVoiceBinding(handle, harkentest::ObjectId(2)));
 }
 
 // --- Vn_Init validation of the appended config fields ---
@@ -493,8 +493,9 @@ TEST(BindingApi, VoiceInstanceSlotCountRoutesFromConfig) {
 TEST(BindingApi, InitRefusesOutOfRangePoolFields) {
     {
         VnConfig config = MakeNullConfig(4, kBlock, kRate);
-        config.voiceBindingInstanceSlots = 9; // above the slot-array capacity
-        EXPECT_EQ(VN_INVALID_CONFIG, Vn_Init(&config));
+        config.voiceBindingInstanceSlots = 9;
+        EngineSession session(config);
+        EXPECT_EQ(VN_OK, session.InitResult());
     }
     {
         VnConfig config = MakeNullConfig(4, kBlock, kRate);

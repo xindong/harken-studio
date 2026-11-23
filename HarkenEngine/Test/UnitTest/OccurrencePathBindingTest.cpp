@@ -153,10 +153,10 @@ TEST(OccurrencePath, NonFirstTrackBindingsAttachAndSiblingDoesNot) {
 
     const harken::PackVoiceBinding catalog[] = {
         HostBinding(track0.stableId, harkentest::ObjectId(11)), HostBinding(track1.stableId, harkentest::ObjectId(12))};
-    const harken::PackVoiceBinding* resolved[harken::kMaxVoiceBindingInstanceSlots]{};
+    const harken::PackVoiceBinding* resolved[8u]{};
     const std::uint32_t count = harken::CollectCutVoiceBindings(
         cut.path, cut.pathCount, catalog, 2, resolved,
-        harken::kMaxVoiceBindingInstanceSlots);
+        8u);
     ExpectBindingIds(resolved, count, {harkentest::ObjectId(12)});
 }
 
@@ -185,10 +185,10 @@ TEST(OccurrencePath, NearestExplicitReplacesInheritedList) {
               storage.Resolve(world, sound, nullptr, 0));
     const harken::PackVoiceBinding catalog[] = {
         HostBinding(harkentest::ObjectId(1), harkentest::ObjectId(21)), HostBinding(sound.stableId, harkentest::ObjectId(22))};
-    const harken::PackVoiceBinding* resolved[harken::kMaxVoiceBindingInstanceSlots]{};
+    const harken::PackVoiceBinding* resolved[8u]{};
     const std::uint32_t count = harken::CollectCutVoiceBindings(
         storage.View().path, storage.View().pathCount, catalog, 2, resolved,
-        harken::kMaxVoiceBindingInstanceSlots);
+        8u);
     ExpectBindingIds(resolved, count, {harkentest::ObjectId(22)});
 }
 
@@ -216,10 +216,10 @@ TEST(OccurrencePath, AbsenceInheritsAncestor) {
     ASSERT_EQ(harken::ResolvedPlayablePropertyCutStatusV1::Ok,
               storage.Resolve(world, sound, nullptr, 0));
     const harken::PackVoiceBinding catalog[] = {HostBinding(harkentest::ObjectId(1), harkentest::ObjectId(21))};
-    const harken::PackVoiceBinding* resolved[harken::kMaxVoiceBindingInstanceSlots]{};
+    const harken::PackVoiceBinding* resolved[8u]{};
     const std::uint32_t count = harken::CollectCutVoiceBindings(
         storage.View().path, storage.View().pathCount, catalog, 1, resolved,
-        harken::kMaxVoiceBindingInstanceSlots);
+        8u);
     ExpectBindingIds(resolved, count, {harkentest::ObjectId(21)});
 }
 
@@ -248,9 +248,9 @@ TEST(OccurrencePath, ExplicitEmptySuppressesInherited) {
               storage.Resolve(world, sound, nullptr, 0));
     const harken::PackVoiceBinding catalog[] = {
         HostBinding(harkentest::ObjectId(1), harkentest::ObjectId(21)), HostBinding(sound.stableId, harkentest::ObjectId(0))};
-    const harken::PackVoiceBinding* resolved[harken::kMaxVoiceBindingInstanceSlots]{};
+    const harken::PackVoiceBinding* resolved[8u]{};
     const std::uint32_t count = harken::CollectCutVoiceBindings(
         storage.View().path, storage.View().pathCount, catalog, 2, resolved,
-        harken::kMaxVoiceBindingInstanceSlots);
+        8u);
     EXPECT_EQ(0u, count);
 }

@@ -1307,7 +1307,7 @@ ScheduledTransactionPool::CreatePageGroupMembers(std::uint16_t count) noexcept {
         member->owner = this;
         pageMemberBytes_ += member->RequestedBytes();
         return member;
-    } catch (...) { return nullptr; }
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return nullptr; }
 }
 
 std::unique_ptr<ScheduledTransactionPool::PageGroupMemberBacking>
@@ -1323,7 +1323,7 @@ ScheduledTransactionPool::PreparePageGroupMemberBacking(std::uint32_t count) noe
             backing->members.push_back(std::move(member));
         }
         return backing;
-    } catch (...) { return nullptr; }
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return nullptr; }
 }
 
 bool ScheduledTransactionPool::PreparePageGroupMembers(std::size_t row, std::uint16_t count,
@@ -1415,7 +1415,7 @@ ScheduledTransactionPool::CreateImmediateLaneMembers(std::uint16_t count) noexce
         member->owner = this;
         immediateMemberBytes_ += member->RequestedBytes();
         return member;
-    } catch (...) { return nullptr; }
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return nullptr; }
 }
 
 bool ScheduledTransactionPool::CanReuseImmediateLaneRow(const LaneGroupRow& row) noexcept {
@@ -1462,7 +1462,7 @@ bool ScheduledTransactionPool::PrepareImmediateLaneBacking(std::uint32_t groupCo
             member->held = true;
             candidate.members_.push_back(std::move(member));
         }
-    } catch (...) { return false; }
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return false; }
     candidate.owner_ = this;
     ++immediateBackingHolds_;
     *out = std::move(candidate);
@@ -1603,8 +1603,8 @@ bool ScheduledTransactionPool::ProvePrivateImmediateLaneGroupsPublication(
         const auto& owner = row.frontier.operation.owner;
         if (!row.frontierPinsOwned || !row.frontier.Valid() || row.frontier.operation.group != identity ||
             row.frontier.operation.order.executeFrame != row.rebasedFrame ||
-            owner.serviceSlot >= config_.maxImmediateLaneOwnerGates ||
-            row.decision.slot >= config_.maxImmediateLaneDecisionGates ||
+            owner.serviceSlot >= immediateLaneOwnerGates_.size() ||
+            row.decision.slot >= immediateLaneDecisionGates_.size() ||
             immediateLaneOwnerGates_[owner.serviceSlot].state.load(std::memory_order_acquire) != 0 ||
             immediateLaneDecisionGates_[row.decision.slot].state.load(std::memory_order_acquire) != 0)
             return false;
@@ -2254,8 +2254,8 @@ bool ScheduledTransactionPool::CapturePrivateOriginalQueueClockInitialSource(
         const auto& row = immediateLaneGroups_[identity.committedRow];
         const auto& owner = row.frontier.operation.owner;
         DecisionCommittedSnapshot nativeDecision{};
-        if (!row.frontier.Valid() || owner.serviceSlot >= config_.maxImmediateLaneOwnerGates ||
-            identity.decision.slot >= config_.maxImmediateLaneDecisionGates ||
+        if (!row.frontier.Valid() || owner.serviceSlot >= immediateLaneOwnerGates_.size() ||
+            identity.decision.slot >= immediateLaneDecisionGates_.size() ||
             !decisions.CaptureCommitted(identity.decision, &nativeDecision) ||
             nativeDecision.world != row.frontier.operation.world ||
             nativeDecision.transport != row.frontier.operation.transport ||
@@ -2325,8 +2325,8 @@ bool ScheduledTransactionPool::CapturePrivateOriginalQueueC0Source(
         const auto& row = immediateLaneGroups_[identity.committedRow];
         const auto& owner = row.frontier.operation.owner;
         DecisionCommittedSnapshot nativeDecision{};
-        if (!row.frontier.Valid() || owner.serviceSlot >= config_.maxImmediateLaneOwnerGates ||
-            identity.decision.slot >= config_.maxImmediateLaneDecisionGates ||
+        if (!row.frontier.Valid() || owner.serviceSlot >= immediateLaneOwnerGates_.size() ||
+            identity.decision.slot >= immediateLaneDecisionGates_.size() ||
             !decisions.CaptureCommitted(identity.decision, &nativeDecision) ||
             nativeDecision.world != row.frontier.operation.world ||
             nativeDecision.transport != row.frontier.operation.transport ||
@@ -2623,8 +2623,8 @@ bool ScheduledTransactionPool::ProvePrivateOriginalQueueGroupClock(
             !row.laneOwner->ProvePrivateGroupPlacement({row.laneSlot, row.laneGeneration},
                 identity, row.bucketOrdinal, row.groupIndex)) return false;
         const auto& owner = row.frontier.operation.owner;
-        if (owner.serviceSlot >= config_.maxImmediateLaneOwnerGates ||
-            identity.decision.slot >= config_.maxImmediateLaneDecisionGates) return false;
+        if (owner.serviceSlot >= immediateLaneOwnerGates_.size() ||
+            identity.decision.slot >= immediateLaneDecisionGates_.size()) return false;
         const auto& ownerGate = immediateLaneOwnerGates_[owner.serviceSlot];
         const auto& decisionGate = immediateLaneDecisionGates_[identity.decision.slot];
         if (ownerGate.generation.load(std::memory_order_acquire) != owner.serviceGeneration ||
@@ -2970,12 +2970,14 @@ ScheduledTransactionPool::CapturePendingEventStorageDemand() const noexcept {
 
 void ScheduledTransactionPool::AttachPendingEventStorage(
     PendingEventStorageRegistration& registration, void* context,
-    PendingEventStorageRegistration::Prepare prepare) const noexcept {
+    PendingEventStorageRegistration::Prepare prepare,
+    PendingEventStorageRegistration::PrepareTransactions prepareTransactions) const noexcept {
     assert(!memguard::IsAudioTagged() && Valid() && prepare != nullptr);
     registration.Detach();
     registration.owner_ = this;
     registration.context_ = context;
     registration.prepare_ = prepare;
+    registration.prepareTransactions_ = prepareTransactions;
     registration.next_ = pendingEventStorage_;
     if (pendingEventStorage_ != nullptr) pendingEventStorage_->previous_ = &registration;
     pendingEventStorage_ = &registration;
@@ -3115,10 +3117,7 @@ bool ScheduledTransactionPool::Reset(const Config& config,
         (config.maxArmsPerGroup == 0)) {
         return false;
     }
-    if (config.maxImmediateLaneGroupRows != 0 &&
-        (config.maxArmsPerGroup == 0 ||
-         config.maxImmediateLaneOwnerGates == 0 ||
-         config.maxImmediateLaneDecisionGates == 0)) return false;
+    if (config.maxImmediateLaneGroupRows != 0 && config.maxArmsPerGroup == 0) return false;
     if (config.maxScheduleGroupHeadersPerPage >
             kMaxScheduleGroupHeadersPerPageHard ||
         config.maxArmsPerGroup > kMaxScheduleArmsPerGroupHard) {
@@ -3270,10 +3269,12 @@ bool ScheduledTransactionPool::Reset(const Config& config,
     StableRowStorage<LaneGroupRow> laneCandidate;
     if (!laneCandidate.Reserve(config_.maxImmediateLaneGroupRows)) return false;
     immediateLaneGroups_.Swap(laneCandidate);
-    immediateLaneOwnerGates_ = config_.maxImmediateLaneOwnerGates == 0 ? nullptr :
-        std::make_unique<LaneFrontierGate[]>(config_.maxImmediateLaneOwnerGates);
-    immediateLaneDecisionGates_ = config_.maxImmediateLaneDecisionGates == 0 ? nullptr :
-        std::make_unique<LaneFrontierGate[]>(config_.maxImmediateLaneDecisionGates);
+    GrowingRowStorage<LaneFrontierGate> ownerGates;
+    if (!ownerGates.ConstructThrough(config_.initialImmediateLaneOwnerGates)) return false;
+    immediateLaneOwnerGates_.Swap(ownerGates);
+    GrowingRowStorage<LaneFrontierGate> decisionGates;
+    if (!decisionGates.ConstructThrough(config_.initialImmediateLaneDecisionGates)) return false;
+    immediateLaneDecisionGates_.Swap(decisionGates);
     pageBatchCount_.assign(pageCount_, 0);
     pageBatchOccupiedCount_.assign(pageCount_, 0);
     StableRowStorage<FrameBatchRow, std::size_t> batchRows;
@@ -3287,19 +3288,12 @@ bool ScheduledTransactionPool::Reset(const Config& config,
         pageHeaders_[p].scheduleGroupCount = 0;
     }
 
-    transactions_.assign(config.maxScheduledTransactions, TransactionRecord{});
+    GrowingRowStorage<TransactionRecord> transactions;
+    GrowingRowStorage<PreparedTransactionClaim> claims;
+    transactions_.Swap(transactions);
+    preparedTransactionClaims_.Swap(claims);
     freeTransactions_.clear();
-    freeTransactions_.reserve(config.maxScheduledTransactions);
-    for (std::uint32_t i = config.maxScheduledTransactions; i > 0; --i) {
-        freeTransactions_.push_back(i - 1);
-    }
-    preparedTransactionClaims_.assign(
-        config.maxScheduledTransactions, PreparedTransactionClaim{});
     freePreparedTransactionClaims_.clear();
-    freePreparedTransactionClaims_.reserve(config.maxScheduledTransactions);
-    for (std::uint32_t i = config.maxScheduledTransactions; i > 0; --i) {
-        freePreparedTransactionClaims_.push_back(i - 1);
-    }
     StableRowStorage<UnplacedCreditRow, std::size_t> creditStorage;
     StableRowStorage<PreparedScheduleGroupSlice, std::size_t> preparedGroupStorage;
     StableRowStorage<CommittedScheduleGroupSlice, std::size_t> committedGroupStorage;
@@ -3349,6 +3343,45 @@ bool ScheduledTransactionPool::Reset(const Config& config,
     return true;
 }
 
+bool ScheduledTransactionPool::PrepareTransactionSlots(
+    std::size_t transactions, std::size_t claims, bool accepted) noexcept {
+    const auto prepare = [&](auto& rows, auto& free, std::uint64_t held, std::size_t additional) noexcept {
+        const auto live = rows.size() - free.size();
+        const auto limit = config_.maxScheduledTransactions;
+        if (live > limit || held > limit - live || additional > limit - live - held) return false;
+        const auto required = static_cast<std::uint32_t>(live + held + additional);
+        const auto previous = rows.size();
+        if (required <= previous) return true;
+        if (accepted || memguard::IsAudioTagged()) return false;
+        try {
+            if (free.capacity() < required) {
+                const auto doubled = static_cast<std::size_t>(std::min<std::uint64_t>(
+                    limit, 2ull * free.capacity()));
+                free.reserve(std::max<std::size_t>(required, doubled));
+            }
+        } catch (...) {
+            detail::RecordCurrentLogicAllocFailure(detail::LogicAllocSite::EngineStorage);
+            return false;
+        }
+        if constexpr (std::is_same_v<std::remove_reference_t<decltype(rows)>, GrowingRowStorage<TransactionRecord>>) {
+            // A failed later event reservation can still leave this slot at the
+            // top of the free stack. Prepare every reader before publishing it.
+            for (auto* registration = pendingEventStorage_; registration != nullptr; registration = registration->next_) {
+                if (registration->prepareTransactions_ != nullptr &&
+                    !registration->prepareTransactions_(registration->context_, required)) return false;
+            }
+        }
+        if (!rows.ConstructThrough(required)) {
+            detail::RecordLogicAllocFailure(detail::LogicAllocSite::EngineStorage);
+            return false;
+        }
+        for (auto end = required; end > previous; --end) free.push_back(end - 1u);
+        return true;
+    };
+    return prepare(transactions_, freeTransactions_, unplacedTransactions_, transactions) &&
+        prepare(preparedTransactionClaims_, freePreparedTransactionClaims_, unplacedPreparedClaims_, claims);
+}
+
 bool ScheduledTransactionPool::PreparePrivateMaterializationBacking(
     const UnplacedBatchCreditRequest& request) noexcept {
     std::size_t transactions = request.transactions;
@@ -3386,9 +3419,6 @@ bool ScheduledTransactionPool::ReserveUnplacedBatchCredit(
              request.preparedClaims == 0)) ||
         request.frameBatches > request.events ||
         nextUnplacedCreditGeneration_ == UINT64_MAX) return false;
-    if (unplacedTransactions_ + request.transactions > freeTransactions_.size() ||
-        unplacedPreparedClaims_ + request.preparedClaims >
-            freePreparedTransactionClaims_.size()) return false;
     const auto ingress = static_cast<std::uint64_t>(ingressThisQuantum_) +
         preparedIngressThisQuantum_ + unplacedIngressThisQuantum_ +
         request.transactions;
@@ -3409,7 +3439,8 @@ bool ScheduledTransactionPool::ReserveUnplacedBatchCredit(
             pageScheduleGroupRowStates_.size()) return false;
     std::size_t slot = 0;
     while (slot < unplacedCredits_.size() && unplacedCredits_[slot].active) ++slot;
-    if (slot == unplacedCredits_.Capacity() ||
+    if (!PrepareTransactionSlots(request.transactions, request.preparedClaims) ||
+        slot == unplacedCredits_.Capacity() ||
         !unplacedCredits_.ConstructThrough(slot + 1u) ||
         !PreparePrivateMaterializationBacking(request) ||
         !PrepareEventStorage(request.events) || !PrepareGroupStorage(request.groupHeaders)) return false;
@@ -3738,7 +3769,7 @@ bool ScheduledTransactionPool::TryMaterializeUnplacedBatch(
         std::any_of(privateCommittedGroups_.begin(),
                     privateCommittedGroups_.begin() + groupCount,
                     [](const auto& handle) { return handle.Valid(); })) {
-        terminalState_.store(1, std::memory_order_release);
+        MarkTerminalFault();
         *groupStatus = ScheduleGroupReserveStatus::Invalid;
         return false;
     }
@@ -3910,7 +3941,7 @@ bool ScheduledTransactionPool::TryMaterializeUnplacedCohort(
         std::any_of(privateCommittedGroups_.begin(),
                     privateCommittedGroups_.begin() + groupCount,
                     [](const auto& handle) { return handle.Valid(); })) {
-        terminalState_.store(1, std::memory_order_release);
+        MarkTerminalFault();
         *groupStatus = ScheduleGroupReserveStatus::Invalid;
         return false;
     }
@@ -4121,7 +4152,7 @@ bool ScheduledTransactionPool::RollbackPrivateMaterialization(
     PrivateMaterializationTransaction* transaction) noexcept {
     if (transaction == nullptr || transaction->owner_ != this ||
         transaction->committed_) {
-        terminalState_.store(1, std::memory_order_release);
+        MarkTerminalFault();
         return false;
     }
     const auto creditCount = transaction->cohortCreditCount_ != 0
@@ -4134,14 +4165,14 @@ bool ScheduledTransactionPool::RollbackPrivateMaterialization(
         const auto* credit = creditAt(index);
         if (credit == nullptr || !credit->Valid() ||
             credit->slot >= unplacedCredits_.size()) {
-            terminalState_.store(1, std::memory_order_release);
+            MarkTerminalFault();
             return false;
         }
         const auto& holder = unplacedCredits_[credit->slot];
         if (!holder.active || !holder.materializing ||
             holder.generation != credit->generation ||
             holder.epoch != credit->epoch) {
-            terminalState_.store(1, std::memory_order_release);
+            MarkTerminalFault();
             return false;
         }
     }
@@ -4149,7 +4180,7 @@ bool ScheduledTransactionPool::RollbackPrivateMaterialization(
     // are held from publication, and no other logic admission can run between
     // this proof and the checked cancellation below.
     if (!CanRollbackPrivateMaterialization(*transaction)) {
-        terminalState_.store(1, std::memory_order_release);
+        MarkTerminalFault();
         return false;
     }
     bool rolledBack = true;
@@ -4167,7 +4198,7 @@ bool ScheduledTransactionPool::RollbackPrivateMaterialization(
         rolledBack = CancelPreparedTransactionBatch(
             &transaction->transactions_) && rolledBack;
     if (!rolledBack) {
-        terminalState_.store(1, std::memory_order_release);
+        MarkTerminalFault();
         return false;
     }
     for (std::uint32_t index = 0; index < creditCount; ++index) {
@@ -4203,13 +4234,13 @@ bool ScheduledTransactionPool::PrivateMaterializationTransaction::Commit(
     if (transactions_.Valid() &&
         !owner_->CommitPreparedTransactionBatch(
             &transactions_, sequence, true)) {
-        owner_->terminalState_.store(1, std::memory_order_release);
+        owner_->MarkTerminalFault();
         return false;
     }
     for (std::uint32_t index = 0; index < groupCount_; ++index) {
         if (!owner_->CommitPreparedScheduleGroupSlice(
                 &groups_[index], &committedGroups_[index], true)) {
-            owner_->terminalState_.store(1, std::memory_order_release);
+            owner_->MarkTerminalFault();
             return false;
         }
     }
@@ -4231,25 +4262,25 @@ bool ScheduledTransactionPool::PrivateMaterializationTransaction::
         const auto* credit = creditAt(index);
         if (credit == nullptr || !credit->Valid() ||
             credit->slot >= owner_->unplacedCredits_.size()) {
-            owner_->terminalState_.store(1, std::memory_order_release);
+            owner_->MarkTerminalFault();
             return false;
         }
         const auto& holder = owner_->unplacedCredits_[credit->slot];
         if (!holder.active || !holder.materializing ||
             holder.generation != credit->generation ||
             holder.epoch != credit->epoch) {
-            owner_->terminalState_.store(1, std::memory_order_release);
+            owner_->MarkTerminalFault();
             return false;
         }
     }
     if (transactions_.Valid() &&
         !owner_->CanReleasePreparedTransactionPublication(transactions_)) {
-        owner_->terminalState_.store(1, std::memory_order_release);
+        owner_->MarkTerminalFault();
         return false;
     }
     for (std::uint32_t index = 0; index < groupCount_; ++index) {
         if (!committedGroups_[index].Valid()) {
-            owner_->terminalState_.store(1, std::memory_order_release);
+            owner_->MarkTerminalFault();
             return false;
         }
     }
@@ -4261,7 +4292,7 @@ bool ScheduledTransactionPool::PrivateMaterializationTransaction::
         released = owner_->ReleaseCommittedScheduleGroupSliceOwnership(
             &committedGroups_[index]) && released;
     if (!released) {
-        owner_->terminalState_.store(1, std::memory_order_release);
+        owner_->MarkTerminalFault();
         return false;
     }
     for (std::uint32_t index = 0; index < creditCount; ++index) {
@@ -4328,12 +4359,12 @@ bool ScheduledTransactionPool::CanResetForEpoch(
             (state != LaneGroupState::Free && state != LaneGroupState::Retired))
             return false;
     }
-    for (std::size_t gate = 0; gate < config_.maxImmediateLaneOwnerGates; ++gate)
+    for (std::size_t gate = 0; gate < immediateLaneOwnerGates_.size(); ++gate)
         if (immediateLaneOwnerGates_[gate].references != 0 ||
             (immediateLaneOwnerGates_[gate].state.load(std::memory_order_acquire) &
              kLaneGateClaims) != 0)
             return false;
-    for (std::size_t gate = 0; gate < config_.maxImmediateLaneDecisionGates; ++gate)
+    for (std::size_t gate = 0; gate < immediateLaneDecisionGates_.size(); ++gate)
         if (immediateLaneDecisionGates_[gate].references != 0 ||
             (immediateLaneDecisionGates_[gate].state.load(std::memory_order_acquire) &
              kLaneGateClaims) != 0)
@@ -4382,10 +4413,9 @@ bool ScheduledTransactionPool::CanResetForEpoch(
         pageBatchOccupiedCount_.size() != pageCount ||
         !exactProduct(pageCount, config_.maxFrameBatchesPerQuantum,
                       pageBatchRows_.Capacity()) ||
-        transactions_.size() != config_.maxScheduledTransactions ||
-        freeTransactions_.capacity() < config_.maxScheduledTransactions ||
-        preparedTransactionClaims_.size() !=
-            config_.maxScheduledTransactions ||
+        transactions_.size() > config_.maxScheduledTransactions ||
+        freeTransactions_.capacity() < transactions_.size() ||
+        preparedTransactionClaims_.size() > config_.maxScheduledTransactions ||
         unplacedCredits_.Capacity() !=
             static_cast<std::size_t>(config_.maxScheduledTransactions) + groupRows ||
         privatePreparedGroups_.Capacity() != groupRows ||
@@ -4394,8 +4424,7 @@ bool ScheduledTransactionPool::CanResetForEpoch(
         privateCohortRequests_.Capacity() !=
             config_.maxScheduledTransactions ||
         privateCohortGroups_.Capacity() != groupRows ||
-        freePreparedTransactionClaims_.capacity() <
-            config_.maxScheduledTransactions ||
+        freePreparedTransactionClaims_.capacity() < preparedTransactionClaims_.size() ||
         scratchEventPage_.size() != config_.maxTransactionEvents ||
         scratchEventFrame_.size() != config_.maxTransactionEvents ||
         refusalCounts_.size() !=
@@ -4549,21 +4578,21 @@ bool ScheduledTransactionPool::ResetForEpoch(
     scheduleArmTableEstablishedByPrepared_ = false;
 
     std::fill(transactions_.begin(), transactions_.end(), TransactionRecord{});
-    freeTransactions_.resize(config_.maxScheduledTransactions);
+    freeTransactions_.resize(transactions_.size());
     for (std::uint32_t index = 0;
-         index < config_.maxScheduledTransactions; ++index) {
+         index < transactions_.size(); ++index) {
         freeTransactions_[index] =
-            config_.maxScheduledTransactions - index - 1;
+            transactions_.size() - index - 1;
     }
     std::fill(preparedTransactionClaims_.begin(),
               preparedTransactionClaims_.end(),
               PreparedTransactionClaim{});
     freePreparedTransactionClaims_.resize(
-        config_.maxScheduledTransactions);
+        preparedTransactionClaims_.size());
     for (std::uint32_t index = 0;
-         index < config_.maxScheduledTransactions; ++index) {
+         index < preparedTransactionClaims_.size(); ++index) {
         freePreparedTransactionClaims_[index] =
-            config_.maxScheduledTransactions - index - 1;
+            preparedTransactionClaims_.size() - index - 1;
     }
     for (auto& credit : unplacedCredits_) credit = {};
     unplacedTransactions_ = 0;
@@ -4910,7 +4939,7 @@ ReserveResult ScheduledTransactionPool::Reserve(
         config_.maxIngressTransactionsPerQuantum) {
         return refuse(ReserveRefusal::IngressRateExceeded);
     }
-    if (freeTransactions_.size() <= unplacedTransactions_) {
+    if (AvailableTransactionSlots() <= unplacedTransactions_) {
         return refuse(ReserveRefusal::PoolFull);
     }
     if (nextCommitSerial_ == UINT64_MAX) {
@@ -4987,6 +5016,7 @@ ReserveResult ScheduledTransactionPool::Reserve(
     const auto globalBudget = CheckUnplacedPageBudget(
         request.eventCount, reservedNewBatches);
     if (globalBudget != ReserveRefusal::None) return refuse(globalBudget);
+    if (!PrepareTransactionSlots(1u, 0u)) return refuse(ReserveRefusal::PoolFull);
     if (!PrepareEventStorage(request.eventCount))
         return refuse(ReserveRefusal::PageEventCapacity);
 
@@ -5926,8 +5956,8 @@ ReserveRefusal ScheduledTransactionPool::PreflightSingleEventTransactions(
                 occupiedIngress) {
         return ReserveRefusal::IngressRateExceeded;
     }
-    if (unplacedTransactions_ > freeTransactions_.size() ||
-        additionalTransactionCount > freeTransactions_.size() - unplacedTransactions_) {
+    if (unplacedTransactions_ > AvailableTransactionSlots() ||
+        additionalTransactionCount > AvailableTransactionSlots() - unplacedTransactions_) {
         return ReserveRefusal::PoolFull;
     }
     const std::uint32_t occupiedEvents =
@@ -5976,8 +6006,8 @@ ScheduledTransactionPool::PreflightSingleEventTransactionBatch(
                                occupiedIngress) {
         return ReserveRefusal::IngressRateExceeded;
     }
-    if (unplacedTransactions_ > freeTransactions_.size() ||
-        transactionCount > freeTransactions_.size() - unplacedTransactions_) {
+    if (unplacedTransactions_ > AvailableTransactionSlots() ||
+        transactionCount > AvailableTransactionSlots() - unplacedTransactions_) {
         return ReserveRefusal::PoolFull;
     }
 
@@ -6088,8 +6118,8 @@ ReserveRefusal ScheduledTransactionPool::PreflightTransactionBatch(
                            occupiedIngress) {
         return ReserveRefusal::IngressRateExceeded;
     }
-    if (unplacedTransactions_ > freeTransactions_.size() ||
-        requestCount > freeTransactions_.size() - unplacedTransactions_) {
+    if (unplacedTransactions_ > AvailableTransactionSlots() ||
+        requestCount > AvailableTransactionSlots() - unplacedTransactions_) {
         return ReserveRefusal::PoolFull;
     }
 
@@ -6278,7 +6308,7 @@ ReserveRefusal ScheduledTransactionPool::PrepareTransactionBatchImpl(
                 return ReserveRefusal::EmptyTransaction;
         }
     }
-    if (freePreparedTransactionClaims_.size() <= unplacedPreparedClaims_) {
+    if (!PrepareTransactionSlots(requestCount, 1u, consumeAcceptedBacking)) {
         refusalCounts_[static_cast<std::size_t>(ReserveRefusal::PoolFull)] += 1;
         return ReserveRefusal::PoolFull;
     }
@@ -8845,8 +8875,8 @@ bool ScheduledTransactionPool::BindScheduleGroupFrontier(const ScheduleGroupSlic
             return false;
         if (!MatchesInitialSoundQueueCompanionBinding(identity, binding)) return false;
         const auto& owner = binding.operation.owner;
-        if (owner.serviceSlot >= config_.maxImmediateLaneOwnerGates ||
-            identity.decision.slot >= config_.maxImmediateLaneDecisionGates)
+        if (owner.serviceSlot >= immediateLaneOwnerGates_.size() ||
+            identity.decision.slot >= immediateLaneDecisionGates_.size())
             return false;
         auto& ownerGate = immediateLaneOwnerGates_[owner.serviceSlot];
         auto& decisionGate = immediateLaneDecisionGates_[identity.decision.slot];
@@ -8972,14 +9002,14 @@ bool ScheduledTransactionPool::PageReplacementScopeReady(const FrontierOwnerIden
         if (last != 0 && completed <= last) return false;
     }
     if (scope.Valid()) {
-        if (scope.slot < config_.maxImmediateLaneDecisionGates) {
+        if (scope.slot < immediateLaneDecisionGates_.size()) {
             const auto& gate = immediateLaneDecisionGates_[scope.slot];
             if (gate.generation.load(std::memory_order_acquire) == scope.generation &&
                 gate.ownerSlot.load(std::memory_order_acquire) == owner.serviceSlot &&
                 gate.ownerGeneration.load(std::memory_order_acquire) == owner.serviceGeneration &&
                 (gate.state.load(std::memory_order_acquire) & kLaneGateClaims) != 0) return false;
         }
-    } else if (owner.serviceSlot < config_.maxImmediateLaneOwnerGates) {
+    } else if (owner.serviceSlot < immediateLaneOwnerGates_.size()) {
         const auto& gate = immediateLaneOwnerGates_[owner.serviceSlot];
         if (gate.generation.load(std::memory_order_acquire) == owner.serviceGeneration &&
             (gate.state.load(std::memory_order_acquire) & kLaneGateClaims) != 0) return false;
@@ -9032,7 +9062,7 @@ FrontierOwnerInvalidationDisposition ScheduledTransactionPool::TryInvalidateFron
     }
     bool mutableOwner = true;
     bool eligible = true;
-    const auto invalidateGate = [reason](LaneFrontierGate& gate,
+    const auto invalidateGate = [reason](const LaneFrontierGate& gate,
                                          std::uint64_t generation) noexcept {
         if (gate.generation.load(std::memory_order_acquire) != generation)
             return true;
@@ -9043,14 +9073,14 @@ FrontierOwnerInvalidationDisposition ScheduledTransactionPool::TryInvalidateFron
         return (prior & kLaneGateClaims) == 0;
     };
     if (decision.Valid()) {
-        if (decision.slot < config_.maxImmediateLaneDecisionGates) {
+        if (decision.slot < immediateLaneDecisionGates_.size()) {
             auto& gate = immediateLaneDecisionGates_[decision.slot];
             if (gate.ownerSlot.load(std::memory_order_acquire) == owner.serviceSlot &&
                 gate.ownerGeneration.load(std::memory_order_acquire) ==
                     owner.serviceGeneration)
                 mutableOwner = invalidateGate(gate, decision.generation);
         }
-    } else if (owner.serviceSlot < config_.maxImmediateLaneOwnerGates) {
+    } else if (owner.serviceSlot < immediateLaneOwnerGates_.size()) {
         mutableOwner = invalidateGate(
             immediateLaneOwnerGates_[owner.serviceSlot], owner.serviceGeneration);
     }
@@ -9097,8 +9127,8 @@ void ScheduledTransactionPool::SettleInvalidatedImmediateLaneFrontiers(
         if (held != nullptr && held(context, row.cohortRoot,
                                     row.laneSlot, row.laneGeneration)) continue;
         const auto& owner = row.frontier.operation.owner;
-        if (owner.serviceSlot >= config_.maxImmediateLaneOwnerGates ||
-            row.decision.slot >= config_.maxImmediateLaneDecisionGates) continue;
+        if (owner.serviceSlot >= immediateLaneOwnerGates_.size() ||
+            row.decision.slot >= immediateLaneDecisionGates_.size()) continue;
         const auto& ownerGate = immediateLaneOwnerGates_[owner.serviceSlot];
         const auto& decisionGate = immediateLaneDecisionGates_[row.decision.slot];
         // A winning audio claim may not have claimed the shared lease yet.
@@ -10508,8 +10538,8 @@ bool ScheduledTransactionPool::PrivateImmediateLaneFrontierRollbackReady(
     const auto& row = immediateLaneGroups_[identity.committedRow];
     const auto& owner = group.frontier->operation.owner;
     if (!row.frontierPinsOwned ||
-        owner.serviceSlot >= config_.maxImmediateLaneOwnerGates ||
-        identity.decision.slot >= config_.maxImmediateLaneDecisionGates)
+        owner.serviceSlot >= immediateLaneOwnerGates_.size() ||
+        identity.decision.slot >= immediateLaneDecisionGates_.size())
         return false;
     const auto& ownerGate = immediateLaneOwnerGates_[owner.serviceSlot];
     const auto& decisionGate = immediateLaneDecisionGates_[identity.decision.slot];
@@ -10540,15 +10570,15 @@ bool ScheduledTransactionPool::ClaimImmediateLaneFrontierBound(
         !immediateLaneGroups_[identity.committedRow].frontierPinsOwned)
         return false;
     const auto& owner = group.frontier->operation.owner;
-    if (owner.serviceSlot >= config_.maxImmediateLaneOwnerGates ||
-        identity.decision.slot >= config_.maxImmediateLaneDecisionGates)
+    if (owner.serviceSlot >= immediateLaneOwnerGates_.size() ||
+        identity.decision.slot >= immediateLaneDecisionGates_.size())
         return false;
     auto& ownerGate = immediateLaneOwnerGates_[owner.serviceSlot];
     auto& decisionGate = immediateLaneDecisionGates_[identity.decision.slot];
     if (decisionGate.ownerSlot.load(std::memory_order_acquire) != owner.serviceSlot ||
         decisionGate.ownerGeneration.load(std::memory_order_acquire) !=
             owner.serviceGeneration) return false;
-    const auto claimGate = [](LaneFrontierGate& gate,
+    const auto claimGate = [](const LaneFrontierGate& gate,
                               std::uint64_t generation) noexcept {
         if (gate.generation.load(std::memory_order_acquire) != generation ||
             (gate.state.load(std::memory_order_acquire) & kLaneGateInvalid) != 0)
@@ -10578,8 +10608,8 @@ bool ScheduledTransactionPool::ClaimImmediateLaneFrontierBound(
 bool ScheduledTransactionPool::ReleaseImmediateLaneFrontier(
     ImmediateLaneFrontierClaim* claim) const noexcept {
     if (claim == nullptr || !claim->Valid() ||
-        claim->ownerSlot >= config_.maxImmediateLaneOwnerGates ||
-        claim->decisionSlot >= config_.maxImmediateLaneDecisionGates)
+        claim->ownerSlot >= immediateLaneOwnerGates_.size() ||
+        claim->decisionSlot >= immediateLaneDecisionGates_.size())
         return false;
     auto& ownerGate = immediateLaneOwnerGates_[claim->ownerSlot];
     auto& decisionGate = immediateLaneDecisionGates_[claim->decisionSlot];
@@ -10617,7 +10647,7 @@ std::uint32_t ScheduledTransactionPool::Advance() {
         // and frontier value untouched, enter the terminal invalid state, and
         // let the session recreate the Runtime under its recreate-required
         // policy.
-        terminalState_.store(1, std::memory_order_release);
+        MarkTerminalFault(true);
         return 0;
     }
     const std::uint32_t leaving = ringStart_;
@@ -10694,7 +10724,7 @@ std::uint32_t ScheduledTransactionPool::Advance() {
         if (heldIngress != 0) {
             return 0;
         }
-        terminalState_.store(1, std::memory_order_release);
+        MarkTerminalFault(true);
         return 0;
     }
     pageQuantumStamp_[leaving].store(kUnpublishedQuantumStamp,

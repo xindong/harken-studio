@@ -692,8 +692,8 @@ TEST(MonitorObserve, LegacyResidentMasterEffectRetainsIdentityAndPackOwnership) 
     ASSERT_NE(masterIndex, harken::kInvalidBusIndex);
     EXPECT_NE(masterIndex, engine.Engine()->buses.FindIndex(VN_BUS_MASTER));
     EXPECT_EQ(engine.Engine()->buses.ParentOf(masterIndex), 0u);
-    EXPECT_EQ(engine.Engine()->busEffectOwnerCookies[masterIndex][0], handle);
-    EXPECT_EQ(engine.Engine()->busEffectOwnerCookies[0][0], 0u);
+    EXPECT_EQ(engine.Engine()->busEffects.Get(masterIndex, 0).owner, handle);
+    EXPECT_EQ(engine.Engine()->busEffects.Get(0, 0).owner, 0u);
     harken::monitor::DrainOnceForTests();
     PollArgs poll;
     ASSERT_EQ(VN_OK, Vn_MonitorPoll(session, &poll.desc, &poll.result));
@@ -721,7 +721,7 @@ TEST(MonitorObserve, LegacyResidentMasterEffectRetainsIdentityAndPackOwnership) 
     ASSERT_EQ(VN_OK, Vn_Update());
     EXPECT_EQ(VN_IN_USE, Vn_UnloadPack(handle));
     EXPECT_EQ(masterIndex, engine.Engine()->buses.FindIndex(masterId));
-    EXPECT_EQ(handle, engine.Engine()->busEffectOwnerCookies[masterIndex][0]);
+    EXPECT_EQ(handle, engine.Engine()->busEffects.Get(masterIndex, 0).owner);
     harken::monitor::DrainOnceForTests();
     ASSERT_EQ(VN_OK, Vn_MonitorPoll(session, &poll.desc, &poll.result));
     for (std::uint64_t offset = 0; offset < poll.result.bytesWritten;) {
@@ -741,6 +741,8 @@ TEST(MonitorObserve, LegacyResidentMasterEffectRetainsIdentityAndPackOwnership) 
     ASSERT_EQ(VN_OK, Vn_Update());
     ASSERT_EQ(VN_OK, Vn_UnloadPack(handle));
     engine.Engine()->nullBackend.Pump(4);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    engine.Engine()->nullBackend.Pump(1);
     ASSERT_EQ(VN_OK, Vn_Update());
     harken::monitor::DrainOnceForTests();
     ASSERT_EQ(VN_OK, Vn_MonitorPoll(session, &poll.desc, &poll.result));
@@ -763,9 +765,9 @@ TEST(MonitorObserve, LegacyResidentMasterEffectRetainsIdentityAndPackOwnership) 
     }
     EXPECT_EQ(released, 1u);
     EXPECT_EQ(engine.Engine()->buses.FindIndex(masterId), harken::kInvalidBusIndex);
-    EXPECT_EQ(engine.Engine()->busEffectOwnerCookies[masterIndex][0], 0u);
+    EXPECT_EQ(engine.Engine()->busEffects.Get(masterIndex, 0).owner, 0u);
     EXPECT_EQ(engine.Engine()->buses.FindIndex(VN_BUS_MASTER), 0u);
-    EXPECT_EQ(engine.Engine()->busEffectOwnerCookies[0][0], 0u);
+    EXPECT_EQ(engine.Engine()->busEffects.Get(0, 0).owner, 0u);
     harken::monitor::StartDrainForTests();
     ASSERT_EQ(VN_OK, Vn_MonitorCloseSession(session));
 }
@@ -828,7 +830,7 @@ TEST(MonitorObserve, LifecycleActionQueueTransitionProducerPath) {
     harken::monitor::StopDrainForTests();
 
     harken::ActionFiringTable actions;
-    ASSERT_TRUE(actions.Reset(3));
+    ASSERT_TRUE(actions.Reset());
     harken::ActionFiringStepResult pending{};
     pending.state = harken::ActionStepState::Pending;
     pending.authoredEventIndex = 0;
@@ -1042,7 +1044,7 @@ TEST(MonitorActionActivity, ChildResultsRetainIndependentIdentityAndTerminalOrde
         MonitorRequestOrigin::NativeAPI, VN_MONITOR_OPERATION_POST_ACTION};
     const auto origin = engine.Engine()->monitorEmitters.CaptureOrigin(emitter);
     ActionFiringTable actions;
-    ASSERT_TRUE(actions.Reset(2));
+    ASSERT_TRUE(actions.Reset());
     PreparedActionFiring root, child;
     const auto project = harkentest::ObjectId(100);
     const auto owner = ActionFiringOwnerStamp::DirectWorld(7, project);
@@ -1133,7 +1135,7 @@ TEST(MonitorActionActivity, TerminalWaitsForPlayableRetirementAndKeepsOriginalRe
     const auto session = OpenActivityEvents();
     for (const bool stop : {false, true}) {
         ActionFiringTable actions;
-        ASSERT_TRUE(actions.Reset(1));
+        ASSERT_TRUE(actions.Reset());
         const MonitorRequestContext request{{harken::monitor::ExecutionEngineInstance(), stop ? 602u : 601u},
             MonitorRequestOrigin::NativeAPI, VN_MONITOR_OPERATION_POST_ACTION};
         PreparedActionFiring prepared;
@@ -1184,7 +1186,7 @@ TEST(MonitorActionActivity, DeferredExecutionAndActionHaveSeparateCompletionBoun
     ASSERT_EQ(VN_OK, engine.InitResult());
     const auto session = OpenActivityEvents();
     ActionFiringTable actions;
-    ASSERT_TRUE(actions.Reset(1));
+    ASSERT_TRUE(actions.Reset());
     PreparedActionFiring prepared;
     ASSERT_TRUE(actions.PrepareRoot(harkentest::ObjectId(120), 7, 1, &prepared));
     ActionFiringStepResult step;
@@ -1220,7 +1222,7 @@ TEST(MonitorActionActivity, LargeActionStepsPublishOnceAcrossUpdatesAndRowReuse)
     ASSERT_EQ(VN_OK, engine.InitResult());
     const auto session = OpenActivityEvents();
     ActionFiringTable actions;
-    ASSERT_TRUE(actions.Reset(1));
+    ASSERT_TRUE(actions.Reset());
     const std::set<std::uint32_t> indices{0, 63, 64, 127, 128, 9999};
     for (std::uint32_t reuse = 0; reuse < 2; ++reuse) {
         PreparedActionFiring prepared;
@@ -1261,7 +1263,7 @@ TEST(MonitorActionActivity, AbandonedPreparationAndUntriggeredCancellationDoNotE
     ASSERT_EQ(VN_OK, engine.InitResult());
     const auto session = OpenActivityEvents();
     ActionFiringTable actions;
-    ASSERT_TRUE(actions.Reset(1));
+    ASSERT_TRUE(actions.Reset());
     PreparedActionFiring prepared;
     ASSERT_TRUE(actions.PrepareRoot(harkentest::ObjectId(130), 7, 1, &prepared));
     ActionFiringStepResult step;
@@ -1311,7 +1313,7 @@ TEST(MonitorObserve, LifecycleZeroStepActionEmitsAcceptThenResult) {
     harken::monitor::StopDrainForTests();
 
     harken::ActionFiringTable actions;
-    ASSERT_TRUE(actions.Reset(1));
+    ASSERT_TRUE(actions.Reset());
     harken::PreparedActionFiring prepared{};
     ASSERT_TRUE(actions.PrepareRoot(harkentest::ObjectId(41), 7, 0, &prepared));
     const harken::ActionFiringHandle handle = prepared.Handle();
@@ -1391,7 +1393,7 @@ TEST(MonitorObserve, LifecycleMarkTreeStoppingEmitsActionStop) {
     harken::monitor::StopDrainForTests();
 
     harken::ActionFiringTable actions;
-    ASSERT_TRUE(actions.Reset(1));
+    ASSERT_TRUE(actions.Reset());
     harken::ActionFiringStepResult pending{};
     pending.state = harken::ActionStepState::Pending;
     pending.authoredEventIndex = 0;

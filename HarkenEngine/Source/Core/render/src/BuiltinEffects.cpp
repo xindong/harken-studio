@@ -1,4 +1,6 @@
 #include "harken/render/BuiltinEffects.h"
+#include "harken/render/BuiltinEffectDormancy.h"
+#include "harken/dsp/BiquadDormancy.h"
 #include "harken/render/SignalPathBounds.h"
 #include "harken/dsp/GainRamp.h"
 
@@ -7,6 +9,8 @@
 #include <harken/Harken.h>
 
 #include <algorithm>
+#include <bit>
+#include <type_traits>
 #include <cmath>
 #include <new>
 #include <limits>
@@ -1637,6 +1641,192 @@ void ApplyEffectDesc(std::uint32_t type, const void* desc, void* state) {
     const std::uint32_t count = EffectParamsFromDesc(type, desc, params);
     for (std::uint32_t i = 0; i < count; ++i) {
         fx.setParam(state, i, params[i]);
+    }
+}
+
+namespace {
+bool SameBits(double a, double b) noexcept {
+    return std::bit_cast<std::uint64_t>(a) == std::bit_cast<std::uint64_t>(b);
+}
+bool SameBits(float a, float b) noexcept {
+    return std::bit_cast<std::uint32_t>(a) == std::bit_cast<std::uint32_t>(b);
+}
+
+template<class State, class Equal>
+bool StableZeroStep(std::uint32_t type, const State& current,
+                    std::uint32_t channels, Equal equal) noexcept {
+    State trial = current;
+    if constexpr (std::is_same_v<State, CompressorState>) CompressorBeginBlock(&trial);
+    float zero[kMaxChannels]{};
+    float* planes[kMaxChannels]{};
+    for (std::uint32_t ch = 0; ch < channels; ++ch) planes[ch] = &zero[ch];
+    BuildEffect(type, &trial).process(&trial, planes, channels, 0, 1);
+    for (std::uint32_t ch = 0; ch < channels; ++ch)
+        if (std::bit_cast<std::uint32_t>(zero[ch]) != 0) return false;
+    return current.hasRendered == trial.hasRendered && equal(current, trial);
+}
+
+
+bool CaptureToneSections(const ToneEffectState& state, ToneDormantState& out) noexcept {
+    const BiquadState (*histories[])[kMaxChannels]{&state.lowShelfState, &state.peakState, &state.highShelfState};
+    const BiquadTransitionState<kMaxChannels>* transitions[]{
+        &state.lowShelfTransition, &state.peakTransition, &state.highShelfTransition};
+    const BiquadCoeffs coefficients[]{state.lowShelf, state.peak, state.highShelf};
+    const std::uint32_t tails[]{state.lowShelfTailFrames, state.peakTailFrames, state.highShelfTailFrames};
+    const bool enabled[]{state.lowShelfEverActive, state.peakEverActive, state.highShelfEverActive};
+    for (unsigned i = 0; i != 3; ++i) {
+        const auto& c = coefficients[i];
+        if (transitions[i]->transitioning || transitions[i]->pendingValid ||
+            !std::isfinite(c.b0) || !std::isfinite(c.b1) || !std::isfinite(c.b2) ||
+            !std::isfinite(c.a1) || !std::isfinite(c.a2) ||
+            std::isnan(state.signalBandHistory[i]) || state.signalBandHistory[i] < 0 ||
+            !CaptureBiquadZeroState(*histories[i], transitions[i]->lastInput, out.sections[i].zeroSigns)) return false;
+        out.sections[i].coefficients = c;
+        out.sections[i].tailFrames = tails[i];
+        out.sections[i].everActive = enabled[i];
+        out.sections[i].signalHistory = state.signalBandHistory[i];
+    }
+    return true;
+}
+} // namespace
+
+bool CaptureBuiltinEffectDormantState(std::uint32_t type, const void* state,
+    std::uint32_t channels, BuiltinEffectDormantState& out, ToneDormantState* tone) noexcept {
+    if (state == nullptr || channels == 0 || channels > kMaxChannels) return false;
+    BuiltinEffectDormantState next;
+    next.type = type;
+    ToneDormantState toneNext;
+    switch (type) {
+    case VN_EFFECT_GAIN: {
+        const auto& s = *static_cast<const GainState*>(state);
+        if (s.transitionFramesRemaining != 0 || !std::isfinite(s.gainLinear) ||
+            !StableZeroStep(type, s, channels, [](const auto& a, const auto& b) {
+                return SameBits(a.gainLinear, b.gainLinear);
+            })) return false;
+        next.hasRendered = s.hasRendered;
+        next.values.gain = s.gainLinear;
+        break;
+    }
+    case VN_EFFECT_LIMITER: {
+        const auto& s = *static_cast<const LimiterState*>(state);
+        if (s.transitionFramesRemaining != 0 || !std::isfinite(s.currentGain) ||
+            !std::isfinite(s.ceilingLinear) || !std::isfinite(s.releaseCoeff) ||
+            !SameBits(s.ceilingLinear, s.targetCeilingLinear) ||
+            !SameBits(s.releaseCoeff, s.targetReleaseCoeff) ||
+            !StableZeroStep(type, s, channels, [](const auto& a, const auto& b) {
+                return SameBits(a.currentGain, b.currentGain);
+            })) return false;
+        next.sampleRate = s.sampleRate;
+        next.hasRendered = s.hasRendered;
+        next.values.limiter = s.currentGain;
+        break;
+    }
+    case VN_EFFECT_COMPRESSOR: {
+        const auto& s = *static_cast<const CompressorState*>(state);
+        if (s.parameterTransitionFramesRemaining != 0 || s.resetBridgeFramesRemaining != 0 ||
+            s.resetPending || !std::isfinite(s.currentGain) || !std::isfinite(s.lastAppliedWetGain) ||
+            !std::isfinite(s.resetBridgeStartGain) ||
+            !StableZeroStep(type, s, channels, [](const auto& a, const auto& b) {
+                return SameBits(a.currentGain, b.currentGain) &&
+                    SameBits(a.lastAppliedWetGain, b.lastAppliedWetGain);
+            })) return false;
+        next.sampleRate = s.sampleRate;
+        next.hasRendered = s.hasRendered;
+        next.values.compressor = {s.currentGain, s.lastAppliedWetGain, s.resetBridgeStartGain};
+        break;
+    }
+    case VN_EFFECT_FEEDBACK_DELAY: {
+        const auto& s = *static_cast<const DelayEffectState*>(state);
+        if (s.transitionFramesRemaining != 0 || !s.hasRendered || s.lineBase == nullptr ||
+            s.lineFrames == 0 || s.writeIndex >= s.lineFrames ||
+            !std::isfinite(s.feedback) || !std::isfinite(s.maxFeedbackSinceReset) ||
+            !SameBits(s.wet, s.targetWet) || !SameBits(s.dry, s.targetDry) ||
+            !std::isfinite(s.wet) || !std::isfinite(s.dry)) return false;
+        const auto samples = static_cast<std::size_t>(s.lineFrames) * kMaxChannels;
+        for (std::size_t i = 0; i < samples; ++i)
+            if (std::bit_cast<std::uint32_t>(s.lineBase[i]) != 0) return false;
+        next.sampleRate = s.sampleRate;
+        next.hasRendered = s.hasRendered;
+        next.values.delay = {s.maxFeedbackSinceReset, s.writeIndex, s.lineFrames};
+        break;
+    }
+    case VN_EFFECT_THREE_BAND_TONE: {
+        const auto& s = *static_cast<const ToneEffectState*>(state);
+        if (tone == nullptr || !CaptureToneSections(s, toneNext) ||
+            !StableZeroStep(type, s, channels, [&](const auto&, const auto& b) {
+                ToneDormantState after;
+                if (!CaptureToneSections(b, after)) return false;
+                for (unsigned i = 0; i != 3; ++i)
+                    if (toneNext.sections[i].zeroSigns != after.sections[i].zeroSigns) return false;
+                return true;
+            })) return false;
+        next.sampleRate = s.sampleRate;
+        next.hasRendered = s.hasRendered;
+        break;
+    }
+    default: return false;
+    }
+    out = next;
+    if (type == VN_EFFECT_THREE_BAND_TONE) *tone = toneNext;
+    return true;
+}
+
+bool RestoreBuiltinEffectDormantState(void* state,
+    const BuiltinEffectDormantState& saved, const ToneDormantState* tone) noexcept {
+    if (state == nullptr) return false;
+    switch (saved.type) {
+    case VN_EFFECT_GAIN: {
+        auto& s = *static_cast<GainState*>(state);
+        s.gainLinear = s.targetGainLinear = saved.values.gain;
+        s.hasRendered = saved.hasRendered;
+        return true;
+    }
+    case VN_EFFECT_LIMITER: {
+        auto& s = *static_cast<LimiterState*>(state);
+        if (s.sampleRate != saved.sampleRate) return false;
+        s.currentGain = saved.values.limiter;
+        s.hasRendered = saved.hasRendered;
+        return true;
+    }
+    case VN_EFFECT_COMPRESSOR: {
+        auto& s = *static_cast<CompressorState*>(state);
+        if (s.sampleRate != saved.sampleRate) return false;
+        s.currentGain = saved.values.compressor.gain;
+        s.lastAppliedWetGain = saved.values.compressor.wetGain;
+        s.resetBridgeStartGain = saved.values.compressor.bridgeStart;
+        s.hasRendered = saved.hasRendered;
+        return true;
+    }
+    case VN_EFFECT_FEEDBACK_DELAY: {
+        auto& s = *static_cast<DelayEffectState*>(state);
+        if (s.sampleRate != saved.sampleRate || s.lineFrames != saved.values.delay.lineFrames ||
+            saved.values.delay.writeIndex >= s.lineFrames) return false;
+        s.maxFeedbackSinceReset = saved.values.delay.maxFeedback;
+        s.writeIndex = saved.values.delay.writeIndex;
+        s.hasRendered = saved.hasRendered;
+        return true;
+    }
+    case VN_EFFECT_THREE_BAND_TONE: {
+        auto& s = *static_cast<ToneEffectState*>(state);
+        if (s.sampleRate != saved.sampleRate || tone == nullptr) return false;
+        BiquadState (*histories[])[kMaxChannels]{&s.lowShelfState, &s.peakState, &s.highShelfState};
+        BiquadTransitionState<kMaxChannels>* transitions[]{
+            &s.lowShelfTransition, &s.peakTransition, &s.highShelfTransition};
+        BiquadCoeffs* coefficients[]{&s.lowShelf, &s.peak, &s.highShelf};
+        std::uint32_t* tails[]{&s.lowShelfTailFrames, &s.peakTailFrames, &s.highShelfTailFrames};
+        bool* enabled[]{&s.lowShelfEverActive, &s.peakEverActive, &s.highShelfEverActive};
+        for (unsigned i = 0; i != 3; ++i) {
+            const auto& section = tone->sections[i];
+            *coefficients[i] = section.coefficients;
+            *tails[i] = section.tailFrames;
+            *enabled[i] = section.everActive;
+            s.signalBandHistory[i] = section.signalHistory;
+            RestoreBiquadZeroState(*histories[i], transitions[i]->lastInput, section.zeroSigns);
+        }
+        s.hasRendered = saved.hasRendered;
+        return true;
+    }
+    default: return false;
     }
 }
 

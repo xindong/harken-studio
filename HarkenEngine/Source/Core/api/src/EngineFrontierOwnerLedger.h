@@ -1,6 +1,7 @@
 #ifndef HARKEN_API_ENGINE_FRONTIER_OWNER_LEDGER_H
 #define HARKEN_API_ENGINE_FRONTIER_OWNER_LEDGER_H
 
+#include "harken/core/LogicAllocCheckpoint.h"
 #include <harken/core/LogicAllocCheckpoint.h>
 #include <harken/core/AllocGuard.h>
 #include <algorithm>
@@ -57,15 +58,15 @@ public:
     EngineFrontierOwnerLedger& operator=(EngineFrontierOwnerLedger&&) = delete;
 
     void Initialize(const Limits& limits, std::uint32_t preparedCount = UINT32_MAX) {
-        if (generation_ != 0 || !entries_.empty()) throw std::bad_alloc{};
+        if (generation_ != 0 || !entries_.empty()) throw harken::detail::LogicPreparationFailure{};
         std::uint64_t count = 0;
         for (const auto limit : limits) count += limit;
         if (count > UINT32_MAX ||
             count > std::numeric_limits<std::size_t>::max() / sizeof(Entry))
-            throw std::bad_alloc{};
+            throw harken::detail::LogicPreparationFailure{};
         limits_ = limits;
         capacity_ = static_cast<std::uint32_t>(count);
-        if (!PrepareStorage(std::min(preparedCount, capacity_))) throw std::bad_alloc{};
+        if (!PrepareStorage(std::min(preparedCount, capacity_))) throw harken::detail::LogicPreparationFailure{};
     }
 
     bool PrepareStorage(std::uint32_t count) noexcept {
@@ -75,7 +76,26 @@ public:
             detail::CheckedGrow(entries_, count, detail::LogicAllocSite::FrontierOwnerLedgerStorage);
             entries_.resize(count);
             return true;
-        } catch (...) { return false; }
+        } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return false; }
+    }
+
+    std::uint32_t DomainCapacity(FrontierOwnerKind kind) const noexcept {
+        const auto index = static_cast<std::size_t>(kind);
+        return index < kDomainCount ? limits_[index] : 0;
+    }
+    bool PrepareDomain(FrontierOwnerKind kind, std::uint32_t required) noexcept {
+        const auto index = static_cast<std::size_t>(kind);
+        if (index >= kDomainCount) return false;
+        if (required <= limits_[index]) return true;
+        const auto extra = required - limits_[index];
+        if (extra > UINT32_MAX - capacity_ || memguard::IsAudioTagged()) return false;
+        capacity_ += extra;
+        if (!PrepareStorage(capacity_)) {
+            capacity_ -= extra;
+            return false;
+        }
+        limits_[index] = required;
+        return true;
     }
 
     bool Begin(std::uint64_t generation) noexcept {

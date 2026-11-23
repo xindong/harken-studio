@@ -27,8 +27,8 @@
 // block resumes the same recurrence without resetting the probe.
 //
 // A probe's level is the ballistics output in dBFS, floored at -96 (never
-// -inf), of the bus tap its identity selects. Logic thread only; fixed
-// storage, preallocated at construction. Lifecycle rows carry the
+// -inf), of the bus tap its identity selects. Logic thread only; stable
+// rows grow when probes are installed. Lifecycle rows carry the
 // withdrawal fence state the engine seam walks when a probe uninstalls or
 // its source bus dies: contributions ramp to neutral, publication settles,
 // an audio fence passes, then the row retires and its generation is spent.
@@ -39,6 +39,7 @@
 #include <harken/Harken.h>
 
 #include "harken/core/MeterBlockRing.h"
+#include "harken/core/GrowingRowStorage.h"
 #include "harken/core/VariableSliceTable.h"
 
 #include <cstdint>
@@ -183,6 +184,7 @@ public:
         return Find(probeStableId) != nullptr;
     }
     std::uint32_t ActiveCount() const noexcept { return activeCount_; }
+    std::uint64_t StorageBytes() const noexcept { return probes_.CommittedBytes(); }
     // The native generation mint never wraps or resets during this session.
     // Withdrawal and retirement preserve the history of the first installation.
     bool HasInstallationHistory() const noexcept {
@@ -202,13 +204,9 @@ public:
     }
 
 private:
-    std::vector<Probe> probes_;
+    GrowingRowStorage<Probe> probes_;
     std::uint32_t blockFrames_ = 0;
     std::uint32_t sampleRate_ = 0;
-    // Consumer-side landing row for the ring's overflow side-record,
-    // preallocated so the drain allocates nothing.
-    std::vector<float> overflowScratch_;
-    std::vector<std::uint32_t> overflowGenerationScratch_;
     // The overflow counter total this consumer has accounted for: a
     // nonzero delta at drain time IS the existence of one compressed
     // block, independent of lane values. Advances only when a validated

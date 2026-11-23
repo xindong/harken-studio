@@ -55,6 +55,80 @@ struct EnginePlayablePartitionTestAccess {
 namespace {
 
 using PartitionPool = harken::EnginePlayablePartitionPool;
+#if !defined(HARKEN_RT_QUALIFICATION)
+TEST(CapacityContract, CaptureRetainsPublicationAtAnUnvisitedSlotInTheSameQuantum) {
+    harkentest::EngineSession session(harkentest::MakeNullConfig(4, 64, 48000));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    const auto run = [&](bool reference, bool duringCapture, unsigned reusedSlot) {
+        SCOPED_TRACE(::testing::Message() << "reference=" << reference << " during=" << duringCapture
+                     << " reusedSlot=" << reusedSlot);
+        harken::ImmediateActionLane lane;
+        ASSERT_TRUE(lane.Reset({std::max(2u, reusedSlot + 1u), 4, 4, 64}));
+        lane.UseFullCaptureScanForTest(reference);
+        harken::ImmediateLaneTimelineFinalizer mix(engine.voices, engine.timelineArms);
+        ASSERT_TRUE(mix.Attach(lane, 64));
+        harken::TimelineProgramReadFence fences[2];
+        harken::TimelineProgramView programs[2]{};
+        harken::ImmediateLaneHandle handles[2]{};
+        const auto place = [&](unsigned i) {
+            programs[i].readFence = &fences[i];
+            harken::ImmediateLaneEvent event{};
+            event.event.program.program = &programs[i];
+            std::uint64_t anchor = 0;
+            return lane.Reserve(i + 1u, 1, &handles[i]) && lane.Prepare(handles[i], &event, 1) &&
+                lane.TryPlace(handles[i], 64, 1, &anchor) && anchor == 64;
+        };
+        ASSERT_TRUE(place(0));
+        ASSERT_TRUE(lane.Publish(handles[0]));
+        std::vector<harken::ImmediateLaneHandle> occupied(reusedSlot == 0 ? 0u : reusedSlot - 1u);
+        for (auto& handle : occupied) ASSERT_TRUE(lane.Reserve(7, 1, &handle));
+        if (reusedSlot == 0) {
+            ASSERT_TRUE(place(1));
+        } else {
+            harken::ImmediateLaneHandle previous;
+            ASSERT_TRUE(lane.Reserve(8, 1, &previous));
+            ASSERT_EQ(reusedSlot, previous.slot);
+            ASSERT_TRUE(lane.Retire(previous));
+        }
+        bool called = false;
+        auto publish = [&] {
+            if (called) return;
+            called = true;
+            if (reusedSlot != 0) {
+                ASSERT_TRUE(place(1));
+                ASSERT_EQ(reusedSlot, handles[1].slot);
+            }
+            ASSERT_TRUE(lane.Publish(handles[1]));
+        };
+        if (duringCapture) lane.SetCaptureGateHookForTest([](void* ptr) {
+            (*static_cast<decltype(publish)*>(ptr))();
+        }, &publish);
+        ASSERT_TRUE(mix.Capture(1));
+        lane.SetCaptureGateHookForTest(nullptr, nullptr);
+        if (!duringCapture) publish();
+        ASSERT_TRUE(called);
+        EXPECT_TRUE(fences[0].WasRead());
+        EXPECT_EQ(duringCapture, fences[1].WasRead());
+        mix.Discard();
+        mix.Finish();
+        EXPECT_FALSE(mix.Capture(2));
+        mix.Discard();
+        mix.Finish();
+        for (auto handle : handles) {
+            (void)lane.Cancel(handle);
+            EXPECT_TRUE(lane.Retire(handle, 3));
+        }
+        for (auto handle : occupied) EXPECT_TRUE(lane.Retire(handle));
+    };
+    for (bool reference : {true, false}) {
+        for (bool during : {true, false}) {
+            for (unsigned reusedSlot : {0u, 1u, 65u})
+                ASSERT_NO_FATAL_FAILURE(run(reference, during, reusedSlot));
+        }
+    }
+}
+#endif
 static_assert(!std::is_aggregate_v<PartitionPool::ReservationInput>);
 static_assert(!std::is_constructible_v<PartitionPool::ReservationInput,
     PartitionPool*, harken::EnginePlayablePartitionToken, harken::EnginePlayableServiceToken>);
@@ -65,21 +139,20 @@ static_assert(!std::is_copy_constructible_v<PartitionPool::PreparedCommitProof>)
 static_assert(!std::is_copy_constructible_v<PartitionPool::OriginalStoragePin>);
 static_assert(!std::is_aggregate_v<PartitionPool::OriginalStoragePin>);
 
-TEST(EngineQueueScheduleStorage, SharedEnvelopeSurvivesOwnerReleaseAndRetiredBorrower) {
+TEST(EngineQueueScheduleStorage, PreparedSupplySurvivesOwnerReleaseAndRetiredBorrower) {
     using Storage = harken::EngineQueueScheduleStorage;
     Storage storage;
-    ASSERT_TRUE(storage.Configure(3));
     harken::EngineQueueScheduleColumns old;
     Storage::Loan oldLoan;
     ASSERT_TRUE(storage.Acquire(old, {1, 1}, &oldLoan));
     old.events[0].payload = 42;
     const auto* originalEvents = old.events.data();
     Storage::Preparation first, second;
-    ASSERT_TRUE(storage.Prepare({2, 3}, &first));
+    ASSERT_TRUE(storage.Prepare({2, 3}, 3, &first));
     const auto preparedBytes = storage.StorageBytes();
     unsigned allocations = 0;
     const auto refuseAllocation = [&]() noexcept { ++allocations; return false; };
-    ASSERT_TRUE(storage.Prepare({2, 3}, &second, refuseAllocation));
+    ASSERT_TRUE(storage.Prepare({2, 3}, 0, &second, refuseAllocation));
     EXPECT_EQ(0u, allocations);
     EXPECT_EQ(preparedBytes, storage.StorageBytes());
     Storage::Preparation moved(std::move(first));
@@ -90,7 +163,7 @@ TEST(EngineQueueScheduleStorage, SharedEnvelopeSurvivesOwnerReleaseAndRetiredBor
     first.Release();
     EXPECT_FALSE(storage.CollectUnused());
     Storage::Preparation refused;
-    EXPECT_FALSE(storage.Prepare({4, 6}, &refused, refuseAllocation));
+    EXPECT_FALSE(storage.Prepare({4, 6}, 1, &refused, refuseAllocation));
     std::array<harken::EngineQueueScheduleColumns, 3> columns;
     std::array<Storage::Loan, 3> loans;
     ASSERT_TRUE(storage.Acquire(columns[0], {2, 3}, &loans[0], refuseAllocation));
@@ -114,12 +187,53 @@ TEST(EngineQueueScheduleStorage, SharedEnvelopeSurvivesOwnerReleaseAndRetiredBor
     EXPECT_EQ(0u, storage.StorageBytes());
 }
 
+TEST(EngineQueueScheduleStorage, EachReservationCanOnlyBorrowItsOwnShare) {
+    using Storage = harken::EngineQueueScheduleStorage;
+    Storage storage;
+    Storage::Preparation first, second;
+    ASSERT_TRUE(storage.Prepare({1, 1}, 1, &first));
+    ASSERT_TRUE(storage.Prepare({1, 1}, 1, &second));
+    harken::EngineQueueScheduleColumns a, b;
+    Storage::Loan loanA, loanB;
+    const auto noGrowth = [] { return false; };
+    auto firstUse = first.Use();
+    ASSERT_TRUE(storage.Acquire(a, {1, 1}, &loanA, noGrowth));
+    EXPECT_FALSE(storage.Acquire(b, {1, 1}, &loanB, noGrowth));
+    if (loanB.Valid()) loanB.Reset();
+    {
+        auto secondUse = second.Use();
+        ASSERT_TRUE(storage.Acquire(b, {1, 1}, &loanB, noGrowth));
+        loanA.Reset();
+        EXPECT_FALSE(storage.Acquire(a, {1, 1}, &loanA, noGrowth));
+    }
+    ASSERT_TRUE(storage.Acquire(a, {1, 1}, &loanA, noGrowth));
+}
+
+TEST(EngineQueueScheduleStorage, FailingTheReservationRecordLeavesPreparedRowsAvailable) {
+    harken::EngineQueueScheduleStorage storage;
+    harken::EngineQueueScheduleStorage::Preparation initial, refused;
+    ASSERT_TRUE(storage.Prepare({1, 1}, 1, &initial));
+    const auto originalBytes = storage.StorageBytes();
+    unsigned allocations = 0;
+    // First count all allocation sites, then refuse just the final reservation record.
+    {
+        harken::EngineQueueScheduleStorage copy;
+        harken::EngineQueueScheduleStorage::Preparation a, b;
+        ASSERT_TRUE(copy.Prepare({1, 1}, 1, &a));
+        ASSERT_TRUE(copy.Prepare({1, 1}, 1, &b, [&] { ++allocations; return true; }));
+    }
+    ASSERT_GT(allocations, 0u);
+    EXPECT_FALSE(storage.Prepare({1, 1}, 1, &refused, [&] { return --allocations != 0; }));
+    EXPECT_FALSE(refused.Valid());
+    EXPECT_EQ(originalBytes, storage.StorageBytes());
+    ASSERT_TRUE(storage.Prepare({1, 1}, 1, &refused));
+}
+
 TEST(EngineQueueScheduleStorage, FailedShapeRaisePreservesExistingSupplyAndPointers) {
     using Storage = harken::EngineQueueScheduleStorage;
     Storage storage;
-    ASSERT_TRUE(storage.Configure(3));
     Storage::Preparation baseline;
-    ASSERT_TRUE(storage.Prepare({1, 2}, &baseline));
+    ASSERT_TRUE(storage.Prepare({1, 2}, 2, &baseline));
     std::array<harken::EngineQueueScheduleColumns, 3> columns;
     std::array<Storage::Loan, 3> loans;
     ASSERT_TRUE(storage.Acquire(columns[0], {1, 2}, &loans[0]));
@@ -134,7 +248,7 @@ TEST(EngineQueueScheduleStorage, FailedShapeRaisePreservesExistingSupplyAndPoint
             return true;
         };
         Storage::Preparation refused;
-        EXPECT_FALSE(storage.Prepare({4, 8}, &refused, allowPrefix));
+        EXPECT_FALSE(storage.Prepare({4, 8}, 1, &refused, allowPrefix));
         EXPECT_FALSE(refused.Valid());
         EXPECT_EQ(originalBytes, storage.StorageBytes());
         EXPECT_EQ(originalEvents, columns[0].events.data());
@@ -155,7 +269,6 @@ TEST(EngineQueueScheduleStorage, FailedShapeRaisePreservesExistingSupplyAndPoint
 TEST(EngineQueueScheduleStorage, OrdinaryGrowthUpgradesOnlyOneGroupAndCleanupKeepsLoans) {
     using Storage = harken::EngineQueueScheduleStorage;
     Storage storage;
-    ASSERT_TRUE(storage.Configure(16));
     harken::EngineQueueScheduleColumns columns;
     Storage::Loan loan;
     ASSERT_TRUE(storage.Acquire(columns, {1, 2}, &loan));
@@ -192,12 +305,11 @@ TEST(EngineQueueScheduleStorage, OrdinaryGrowthUpgradesOnlyOneGroupAndCleanupKee
     EXPECT_EQ(0u, storage.StorageBytes());
 }
 
-TEST(EngineQueueScheduleStorage, ZeroShapeAndMovedLoansRespectGlobalCapacity) {
+TEST(EngineQueueScheduleStorage, ZeroShapeAndMovedLoansUseOnlyPreparedRows) {
     using Storage = harken::EngineQueueScheduleStorage;
     Storage storage;
-    ASSERT_TRUE(storage.Configure(2));
     Storage::Preparation preparation;
-    ASSERT_TRUE(storage.Prepare({}, &preparation));
+    ASSERT_TRUE(storage.Prepare({}, 2, &preparation));
     const auto metadataBytes = storage.StorageBytes();
     EXPECT_GT(metadataBytes, 0u);
     std::array<harken::EngineQueueScheduleColumns, 3> columns;
@@ -380,13 +492,13 @@ TEST(StableBackingPreparation, DependenciesPrecedePublicationAndPreparedUseCanno
     EXPECT_EQ(3u, dependencies.ConstructedCount());
 }
 
-TEST(StableBackingPreparation, SplitCheckpointAllowanceSurvivesClearAndPreservesLogicalCapacity) {
-    harken::QueueCheckpointTable checkpoints(1), foreign(1);
+TEST(StableBackingPreparation, SplitCheckpointAllowanceSurvivesClearAndRetainsBothPreparedRows) {
+    harken::QueueCheckpointTable checkpoints, foreign;
     harken::QueueCheckpointTable::BackingPreparation parent, first, second, other;
     ASSERT_TRUE(checkpoints.PrepareBacking(2, &parent));
     ASSERT_TRUE(foreign.PrepareBacking(1, &other));
-    ASSERT_TRUE(parent.Split(1, 0, &first));
-    ASSERT_TRUE(parent.Split(1, 0, &second));
+    ASSERT_TRUE(parent.Split(1, &first));
+    ASSERT_TRUE(parent.Split(1, &second));
     ASSERT_TRUE(parent.Valid());
     EXPECT_FALSE(first.ReturnTo(&other));
     harken::QueueCheckpointKey key{};
@@ -404,20 +516,20 @@ TEST(StableBackingPreparation, SplitCheckpointAllowanceSurvivesClearAndPreserves
         ASSERT_TRUE(checkpoints.Store(key, image));
         auto different = key;
         different.containerStableId = harkentest::ObjectId(4);
-        EXPECT_FALSE(checkpoints.Store(different, image));
+        EXPECT_TRUE(checkpoints.Store(different, image));
         ASSERT_TRUE(checkpoints.Clear(key));
         ASSERT_TRUE(checkpoints.Store(key, image));
         ASSERT_TRUE(first.ReturnTo(&parent));
         ASSERT_TRUE(second.ReturnTo(&parent));
-        EXPECT_EQ(1u, checkpoints.ConstructedRowCount());
-        EXPECT_EQ(1u, checkpoints.LiveCount());
+        EXPECT_EQ(2u, checkpoints.ConstructedRowCount());
+        EXPECT_EQ(2u, checkpoints.LiveCount());
     }
     EXPECT_FALSE(first.Valid());
     EXPECT_FALSE(second.Valid());
 }
 
 TEST(EnginePlayablePartitionStorage, RealStorageLoansLeaveNativeProgressAndFenceIndependent) {
-    PartitionPool pool(1);
+    PartitionPool pool;
     const harken::EnginePlayableServiceToken owner{2, 7};
     PartitionPool::ReservationInput original;
     PartitionPool::OriginalStoragePin baseline, loan;
@@ -453,7 +565,7 @@ TEST(EnginePlayablePartitionStorage, RealStorageLoansLeaveNativeProgressAndFence
 }
 
 TEST(EnginePlayablePartitionStorage, ActualMoveReturnAndForeignReceiverDoNotMintOrLeak) {
-    PartitionPool first(1), second(1);
+    PartitionPool first, second;
     const harken::EnginePlayableServiceToken owner{0, 1};
     PartitionPool::OriginalStoragePin a, b, loan, otherLoan;
     const auto at = first.Reserve(owner, nullptr, &a);
@@ -480,7 +592,7 @@ TEST(EnginePlayablePartitionStorage, ActualMoveReturnAndForeignReceiverDoNotMint
 }
 
 TEST(EnginePlayablePartitionStorage, LastTrueFactoryMarkerEndsWithoutWrapOrRegrant) {
-    PartitionPool pool(1);
+    PartitionPool pool;
     const harken::EnginePlayableServiceToken owner{0, 1};
     harken::detail::EnginePlayablePartitionTestAccess::SeedFreeStorageIssuer(pool, UINT64_MAX - 1u);
     PartitionPool::OriginalStoragePin original, foreign, refused;
@@ -501,7 +613,7 @@ TEST(EnginePlayablePartitionStorage, LastTrueFactoryMarkerEndsWithoutWrapOrRegra
 }
 
 TEST(EnginePlayablePartitionProof, ActualHeldSlotBlocksMutatorsAndReceiptReplacement) {
-    PartitionPool pool(2);
+    PartitionPool pool;
     const harken::EnginePlayableServiceToken firstOwner{0, 1}, secondOwner{1, 1};
     PartitionPool::ReservationInput first, second, duplicate;
     const auto firstToken = pool.Reserve(firstOwner, &first);
@@ -556,7 +668,7 @@ TEST(EnginePlayablePartitionProof, ActualHeldSlotBlocksMutatorsAndReceiptReplace
 }
 
 TEST(EnginePlayablePartitionProof, GenuineForeignAndChangedOriginalOwnerRefuseAndReleasePrefix) {
-    PartitionPool pool(2), foreign(1);
+    PartitionPool pool, foreign;
     const harken::EnginePlayableServiceToken firstOwner{0, 1}, secondOwner{1, 1}, replacement{2, 1};
     PartitionPool::ReservationInput first, second, foreignInput;
     const auto firstToken = pool.Reserve(firstOwner, &first);
@@ -589,8 +701,9 @@ TEST(EnginePlayablePartitionProof, GenuineForeignAndChangedOriginalOwnerRefuseAn
 }
 
 TEST(EnginePlayablePartitionProof, ActualCancelReuseAndMaxQuarantineRejectOldFactoryIssuance) {
-    PartitionPool pool(2);
+    PartitionPool pool;
     const harken::EnginePlayableServiceToken owner{0, 1};
+    ASSERT_TRUE(pool.PrepareStorage(1));
     harken::detail::EnginePlayablePartitionTestAccess::SeedFreeGeneration(pool, 0, UINT64_MAX);
     PartitionPool::ReservationInput exhausted, prior, fresh;
     const auto exhaustedToken = pool.Reserve(owner, &exhausted);
@@ -613,7 +726,7 @@ TEST(EnginePlayablePartitionProof, ActualCancelReuseAndMaxQuarantineRejectOldFac
 }
 
 TEST(EnginePlayablePartitionProof, ConsumedIssuanceNeverRegrantsAndPublishedFenceRemainsStrict) {
-    PartitionPool pool(1);
+    PartitionPool pool;
     const harken::EnginePlayableServiceToken owner{0, 1};
     PartitionPool::ReservationInput original;
     const auto token = pool.Reserve(owner, &original);
@@ -730,6 +843,7 @@ TEST(StableBackingPreparation, ServiceFeaturePromiseSurvivesResetAndFailedProtec
     EXPECT_EQ(0u, timeline.queueEvents.size());
     harken::StableStoragePreparation backing;
     engine.originalSingleCurrentHolders.SetCommitPageLimitForTests(0);
+    ASSERT_TRUE(engine.playableInstances.PrepareStorageForAcquire(2));
     EXPECT_FALSE(engine.PreparePlayableServiceBacking(2, &backing));
     EXPECT_FALSE(backing.Valid());
     EXPECT_EQ(0u, engine.originalSingleCurrentHolders.CommittedBytes());
@@ -761,10 +875,12 @@ TEST(StableBackingPreparation, ServiceFeaturePromiseSurvivesResetAndFailedProtec
     auto* transactions = timeline.transactions.data();
     auto* extraCommands = timeline.extraCommands.data();
     auto* queueEvents = timeline.queueEvents.data();
-    EXPECT_EQ(engine.originalSingleCurrentHolders.Capacity(), engine.originalSingleCurrentHolders.size());
+    ASSERT_TRUE(engine.playableInstances.PrepareStorageForAcquire(1));
+    ASSERT_TRUE(engine.PrepareOriginalSingleCurrentStorage());
+    EXPECT_EQ(engine.playableInstances.ConstructedEntryCount(), engine.originalSingleCurrentHolders.size());
     EXPECT_EQ(engine.timelineArms.Capacity(), engine.initialFrontierArmPins.size());
     EXPECT_EQ(engine.timelineArms.Capacity(), engine.initialRootArmPublicationInputs.size());
-    auto* currentHolders = engine.originalSingleCurrentHolders.data();
+    auto* currentHolders = engine.originalSingleCurrentHolders.TryAt(0);
     auto* frontierPins = engine.initialFrontierArmPins.data();
     auto* publicationInputs = engine.initialRootArmPublicationInputs.data();
     auto* retargetTree = engine.variableControlRetargetScratch.get();
@@ -973,7 +1089,7 @@ TEST(StableBackingPreparation, ServiceFeaturePromiseSurvivesResetAndFailedProtec
         engine.originalSingleCurrentHolders.SetCommitPageLimitForTests(0);
         EXPECT_TRUE(engine.PrepareOriginalSingleCurrentStorage());
         EXPECT_TRUE(engine.PreparePlayablePublicationStorage());
-        EXPECT_EQ(currentHolders, engine.originalSingleCurrentHolders.data());
+        EXPECT_EQ(currentHolders, engine.originalSingleCurrentHolders.TryAt(0));
         EXPECT_EQ(frontierPins, engine.initialFrontierArmPins.data());
         EXPECT_EQ(publicationInputs, engine.initialRootArmPublicationInputs.data());
         timeline.starts.SetCommitPageLimitForTests(0);
@@ -1003,14 +1119,12 @@ TEST(StableBackingPreparation, ServiceFeaturePromiseSurvivesResetAndFailedProtec
     for (auto& row : engine.playableServices) row.actionPrepared = false;
 }
 
-TEST(CapacityContract, StartupDefaultsAre256AndExplicitCapacitiesRemainEffective) {
+TEST(CapacityContract, AutomaticVoiceCapacityAndExplicitLimits) {
     VnConfig config = MakeNullConfig();
     harken::EngineConfig resolved;
     ASSERT_EQ(VN_OK, harken::ResolveConfig(&config, &resolved));
-    EXPECT_EQ(256u, resolved.voiceCapacity.Render());
-    EXPECT_EQ(256u, resolved.maxPacks);
-    EXPECT_EQ(256u, resolved.maxActions);
-    EXPECT_EQ(256u, resolved.maxActionFirings);
+    EXPECT_EQ(harken::VoiceCapacityModel::kMaxRenderVoices, resolved.voiceCapacity.Render());
+    EXPECT_EQ(0u, resolved.maxActions);
 
     config.maxVoices = 128;
     config.maxPacks = 8;
@@ -1018,9 +1132,9 @@ TEST(CapacityContract, StartupDefaultsAre256AndExplicitCapacitiesRemainEffective
     config.maxActionFirings = 64;
     ASSERT_EQ(VN_OK, harken::ResolveConfig(&config, &resolved));
     EXPECT_EQ(128u, resolved.voiceCapacity.Render());
-    EXPECT_EQ(8u, resolved.maxPacks);
     EXPECT_EQ(32u, resolved.maxActions);
-    EXPECT_EQ(64u, resolved.maxActionFirings);
+    config.maxActions = UINT32_MAX;
+    EXPECT_EQ(VN_OK, harken::ResolveConfig(&config, &resolved));
 }
 
 template <typename T>
@@ -1034,7 +1148,7 @@ std::uint64_t StorageBytes(const std::vector<T>& storage) {
 // accepting at the ceiling is what makes the refusal above it attributable to
 // this field, rather than to a derived budget that happened to overflow at a
 // large block size.
-TEST(CapacityContract, EmitterVariableBankUsesCheckedByteBudget) {
+TEST(CapacityContract, LegacyEmitterCountIsIgnoredAndInitialLocalShapeIsValidated) {
     harken::EngineConfig resolved;
     VnConfig config = MakeNullConfig();
     ASSERT_EQ(VN_OK, harken::ResolveConfig(&config, &resolved));
@@ -1044,14 +1158,13 @@ TEST(CapacityContract, EmitterVariableBankUsesCheckedByteBudget) {
     config.maxEmitters = 129;
     config.emitterVariableSlots = 17;
     ASSERT_EQ(VN_OK, harken::ResolveConfig(&config, &resolved));
-    EXPECT_EQ(129u, resolved.maxEmitters);
+    EXPECT_EQ(128u, resolved.maxEmitters);
     EXPECT_EQ(17u, resolved.emitterVariableSlots);
 
-    config.maxEmitters = 65536;
-    config.emitterVariableSlots = 8;
-    EXPECT_EQ(VN_OK, harken::ResolveConfig(&config, &resolved));
-
+    config.maxEmitters = UINT32_MAX;
     config.emitterVariableSlots = 4096;
+    EXPECT_EQ(VN_OK, harken::ResolveConfig(&config, &resolved));
+    config.emitterVariableSlots = 4097;
     EXPECT_EQ(VN_INVALID_CONFIG, harken::ResolveConfig(&config, &resolved));
 }
 
@@ -1179,49 +1292,38 @@ TEST(CapacityContract, ControlCommandCeilingIsIgnoredForAnOlderVintage) {
     EXPECT_EQ(256u, resolved.maxControlCommandsPerQuantum);
 }
 
-TEST(CapacityContract, ActionFiringCapacityDefaultsAndStopsAtItsHardCeiling) {
+TEST(CapacityContract, LegacyActionFiringFieldDoesNotLimitStartup) {
     VnConfig config = MakeNullConfig();
-    harken::EngineConfig resolved;
-
-    ASSERT_EQ(VN_OK, harken::ResolveConfig(&config, &resolved));
-    EXPECT_EQ(256u, resolved.maxActionFirings);
-
-    config.maxActionFirings = 4096;
-    ASSERT_EQ(VN_OK, harken::ResolveConfig(&config, &resolved));
-    EXPECT_EQ(4096u, resolved.maxActionFirings);
-
-    config.maxActionFirings = 4097;
-    EXPECT_EQ(VN_INVALID_CONFIG, harken::ResolveConfig(&config, &resolved));
+    config.maxActionFirings = UINT32_MAX;
+    for (const auto size : {static_cast<std::uint32_t>(sizeof(config)),
+            static_cast<std::uint32_t>(offsetof(VnConfig, maxCatalogEntries)),
+            static_cast<std::uint32_t>(offsetof(VnConfig, maxActionFirings))}) {
+        config.structSize = size;
+        harkentest::EngineSession session(config);
+        EXPECT_EQ(VN_OK, session.InitResult()) << size;
+    }
 }
 
-TEST(CapacityContract,
-     ActionCooldownCapacityIsVintageAwareAndStopsAtItsHardCeiling) {
+TEST(CapacityContract, ActionCooldownIgnoresLegacyQuotaAndGrowsBeyond4096) {
     VnConfig config = MakeNullConfig();
-    harken::EngineConfig resolved;
-
-    ASSERT_EQ(VN_OK, harken::ResolveConfig(&config, &resolved));
-    EXPECT_EQ(256u, resolved.maxActionCooldownRows);
-
-    config.maxActionCooldownRows = 4096;
-    ASSERT_EQ(VN_OK, harken::ResolveConfig(&config, &resolved));
-    EXPECT_EQ(4096u, resolved.maxActionCooldownRows);
-
     config.maxActionCooldownRows = 4097;
-    EXPECT_EQ(VN_INVALID_CONFIG, harken::ResolveConfig(&config, &resolved));
-
-    config.structSize =
-        static_cast<std::uint32_t>(offsetof(VnConfig, maxActionCooldownRows));
-    ASSERT_EQ(VN_OK, harken::ResolveConfig(&config, &resolved));
-    EXPECT_EQ(256u, resolved.maxActionCooldownRows);
-}
-
-TEST(CapacityContract, ActionCooldownCapacityPreallocatesAtInit) {
-    VnConfig config = MakeNullConfig();
-    config.maxActionCooldownRows = 3;
-
     harkentest::EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
-    EXPECT_EQ(3u, session.Engine()->actionCooldowns.Capacity());
+    auto& cooldowns = session.Engine()->actionCooldowns;
+    EXPECT_EQ(0u, cooldowns.Capacity());
+    harken::ActionCooldownKey key{};
+    key.owner = {harken::ActionDefinitionOwnerKind::World, 0, 7};
+    key.actionStableId = harkentest::ObjectId(1);
+    key.programSemanticFingerprint = 42;
+    for (std::uint32_t i = 0; i < 4098; ++i) {
+        key.authoredEventIndex = i;
+        auto result = cooldowns.Prepare(key, 0, 10);
+        ASSERT_TRUE(cooldowns.Commit(&result.token)) << i;
+    }
+    EXPECT_EQ(4098u, cooldowns.LiveCount());
+    EXPECT_EQ(harken::ActionCooldownPrepareStatus::Suppressed, cooldowns.Prepare(key, 9, 20).status);
+    EXPECT_EQ(4098u, cooldowns.SweepExpired(10));
+    EXPECT_EQ(0u, cooldowns.LiveCount());
 }
 
 TEST(CapacityContract, CompositeActionInternalDefaultsCoverBothLeafPlanes) {
@@ -1254,13 +1356,13 @@ TEST(CapacityContract, PlayableStorageUsesSevenCheckedFamilies) {
     EXPECT_EQ(64u, layout.endpointStride);
     EXPECT_EQ(32u, layout.continuousStride);
 
-    EXPECT_EQ(resolved.voiceCapacity.Logical(), resolved.maxPlayableInstances);
-    EXPECT_EQ(81'920u, layout.memberCount);
-    EXPECT_EQ(65'536u, layout.pairedCount);
-    EXPECT_EQ(65'536u, layout.currentEventCount);
-    EXPECT_EQ(49'152u, layout.initialProgramCount);
-    EXPECT_EQ(32'768u, layout.endpointCount);
-    EXPECT_EQ(16'384u, layout.continuousCount);
+    constexpr std::uint32_t instanceSlot = 512;
+    EXPECT_EQ(81'920u, layout.MemberBase(instanceSlot));
+    EXPECT_EQ(65'536u, layout.PairedBase(instanceSlot));
+    EXPECT_EQ(65'536u, layout.CurrentEventBase(instanceSlot));
+    EXPECT_EQ(49'152u, layout.InitialProgramBase(instanceSlot));
+    EXPECT_EQ(32'768u, layout.EndpointBase(instanceSlot));
+    EXPECT_EQ(16'384u, layout.ContinuousBase(instanceSlot));
 
     EXPECT_EQ(64u, layout.PackedDiscreteTransitionOffset(96u));
     EXPECT_EQ(127u, layout.PackedDiscreteTransitionOffset(159u));
@@ -1297,23 +1399,22 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
         static_cast<std::uint64_t>(engine->playableServices.Capacity()) *
         engine->immediateActionLane.EventsPerAttempt() * sizeof(harken::ImmediateLanePrivateEntryResultCell)));
     const harken::PlayableStorageLayout& layout = engine->playableStorage;
-    EXPECT_EQ(engine->config.maxPlayableInstances, engine->playableStarts.size());
-    EXPECT_EQ(engine->config.maxPlayableInstances, engine->playableServices.Capacity());
-    EXPECT_EQ(engine->config.maxPlayableInstances, engine->playablePartitions.Capacity());
-    EXPECT_EQ(engine->config.maxContainerInstances, engine->queueInstances.Capacity());
-    EXPECT_EQ(engine->config.maxContainerInstances, engine->variableControlInstances.Capacity());
+    EXPECT_EQ(0u, engine->playableStarts.size());
+    EXPECT_EQ(0u, engine->playableServices.Capacity());
+    EXPECT_EQ(0u, engine->playablePartitions.Capacity());
+    EXPECT_EQ(0u, engine->queueInstances.ConstructedRowCount());
+    EXPECT_EQ(0u, engine->variableControlInstances.ConstructedCount());
 
-    EXPECT_EQ(layout.memberCount + harken::QueueProgramBankCapacity(engine->config) *
-        harken::EngineQueueProgramBankBody::kProgramCapacity, engine->playableMemberRecords.size());
+    EXPECT_EQ(0u, engine->playableMemberRecords.size());
     EXPECT_EQ(0u, engine->playableMemberRecords.ConstructedCount());
     EXPECT_EQ(0u, engine->playableMemberRecords.RequestedBytes());
-    EXPECT_EQ(layout.memberCount, engine->memberRelations.Capacity());
+    EXPECT_EQ(0u, engine->memberRelations.Capacity());
     EXPECT_EQ(0u, engine->memberRelations.ConstructedCount());
     EXPECT_EQ(0u, engine->memberRelations.RequestedBytes());
     EXPECT_EQ(0u, engine->occupiedMemberRelations);
-    EXPECT_EQ(engine->config.maxPlayableInstances, engine->sourceTerminals.Capacity());
+    EXPECT_EQ(0u, engine->sourceTerminals.Capacity());
 
-    EXPECT_EQ(layout.initialProgramCount, engine->memberProgramRecords.size());
+    EXPECT_EQ(0u, engine->memberProgramRecords.size());
     EXPECT_EQ(0u, engine->memberProgramRecords.ConstructedCount());
     EXPECT_EQ(0u, engine->memberProgramRecords.RequestedBytes());
 
@@ -1369,11 +1470,10 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
     EXPECT_EQ(48u, weightBytesPerSlot);
     EXPECT_EQ(sizeof(harken::TimelineArmToken), continuousBytesPerSlot);
 
-    EXPECT_EQ(static_cast<std::uint64_t>(engine->config.maxPlayableInstances) * sizeof(harken::SourceTerminalRecord),
-              static_cast<std::uint64_t>(engine->sourceTerminals.Capacity()) * sizeof(harken::SourceTerminalRecord));
+    EXPECT_EQ(0u, engine->sourceTerminals.OccupiedCount());
 
     testing::Test::RecordProperty("removed_prebuilt_initial_continuous_arm_bytes",
-        std::to_string(layout.continuousCount * continuousBytesPerSlot));
+        std::to_string(layout.ContinuousBase(engine->config.maxPlayableInstances) * continuousBytesPerSlot));
     testing::Test::RecordProperty("initial_arm_owner_bytes", std::to_string(sizeof(harken::EngineVariableInitialArms)));
     testing::Test::RecordProperty("removed_prebuilt_queue_timing_leaf_bytes", std::to_string(
         static_cast<std::uint64_t>(engine->config.maxCompositeCompletionOwners) *
@@ -1381,30 +1481,30 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
     testing::Test::RecordProperty("private_reanchor_proof_bytes",
         std::to_string(sizeof(harken::CompositeCompletionOwnerPool::PrivateReanchorProof)));
     testing::Test::RecordProperty("removed_prebuilt_continuous_cut_bytes", std::to_string(
-        layout.continuousCount * (sizeof(harken::EnginePlayableMemberReference) +
+        layout.ContinuousBase(engine->config.maxPlayableInstances) * (sizeof(harken::EnginePlayableMemberReference) +
             2u * sizeof(harken::WeightSegmentV1) + sizeof(harken::TimelineArmToken) + sizeof(std::uint8_t))));
     testing::Test::RecordProperty("removed_prebuilt_member_weight_bytes", std::to_string(
         static_cast<std::uint64_t>(engine->config.maxPlayableInstances) *
         (layout.knownLeaves + layout.liveRows) * weightBytesPerSlot));
     testing::Test::RecordProperty("seven_family_capacity_bytes", "0");
     testing::Test::RecordProperty("removed_successor_fact_capacity_bytes",
-        std::to_string(layout.endpointCount * removedSuccessorBytesPerSlot));
+        std::to_string(layout.EndpointBase(engine->config.maxPlayableInstances) * removedSuccessorBytesPerSlot));
     testing::Test::RecordProperty("removed_prebuilt_member_bytes",
-        std::to_string(layout.memberCount * removedMemberBytesPerSlot));
+        std::to_string(layout.MemberBase(engine->config.maxPlayableInstances) * removedMemberBytesPerSlot));
     testing::Test::RecordProperty("removed_prebuilt_source_fact_bytes", std::to_string(
-        layout.pairedCount * removedPairedBytesPerSlot + layout.endpointCount * sizeof(harken::OccurrenceToken)));
+        layout.PairedBase(engine->config.maxPlayableInstances) * removedPairedBytesPerSlot + layout.EndpointBase(engine->config.maxPlayableInstances) * sizeof(harken::OccurrenceToken)));
     testing::Test::RecordProperty("playable_member_record_bytes", std::to_string(sizeof(harken::EnginePlayableMemberRecord)));
     testing::Test::RecordProperty("removed_prebuilt_program_bytes", std::to_string(
-        layout.currentEventCount * currentEventBytesPerSlot +
-        layout.initialProgramCount * initialProgramBytesPerSlot));
+        layout.CurrentEventBase(engine->config.maxPlayableInstances) * currentEventBytesPerSlot +
+        layout.InitialProgramBase(engine->config.maxPlayableInstances) * initialProgramBytesPerSlot));
     testing::Test::RecordProperty("member_program_record_bytes", std::to_string(sizeof(harken::EngineMemberProgramRecord)));
     testing::Test::RecordProperty("removed_prebuilt_control_program_bytes", std::to_string(
-        layout.continuousCount * (currentEventBytesPerSlot + initialProgramBytesPerSlot)));
+        layout.ContinuousBase(engine->config.maxPlayableInstances) * (currentEventBytesPerSlot + initialProgramBytesPerSlot)));
     testing::Test::RecordProperty("control_program_record_bytes", std::to_string(sizeof(harken::EngineControlProgramRecord)));
     testing::Test::RecordProperty("removed_prebuilt_member_reference_bytes",
-        std::to_string(layout.memberCount * removedReferenceBytesPerSlot));
+        std::to_string(layout.MemberBase(engine->config.maxPlayableInstances) * removedReferenceBytesPerSlot));
     testing::Test::RecordProperty("member_relation_bytes", std::to_string(sizeof(harken::EnginePlayableMemberRelation)));
-    testing::Test::RecordProperty("facade_capacity_bytes", std::to_string(StorageBytes(engine->playableStarts)));
+    testing::Test::RecordProperty("facade_capacity_bytes", std::to_string(engine->playableStarts.RequestedBytes()));
     testing::Test::RecordProperty("service_capacity_bytes", std::to_string(engine->playableServices.RequestedBytes()));
     testing::Test::RecordProperty("partition_capacity_bytes", std::to_string(engine->playablePartitions.StorageBytes()));
     testing::Test::RecordProperty("published_empty_page_stamp_bytes",
@@ -1525,7 +1625,7 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
     testing::Test::RecordProperty("monitor_selection_pool_capacity",
         std::to_string(engine->ledger.MonitorSelectionCapacity()));
     testing::Test::RecordProperty("removed_successor_selection_bytes",
-        std::to_string(layout.endpointCount * sizeof(harken::EngineMonitorSelection)));
+        std::to_string(layout.EndpointBase(engine->config.maxPlayableInstances) * sizeof(harken::EngineMonitorSelection)));
     testing::Test::RecordProperty("source_terminal_row_bytes", std::to_string(sizeof(harken::SourceTerminalRecord)));
     testing::Test::RecordProperty("timeline_arm_row_bytes", std::to_string(sizeof(harken::TimelineArmTable::Row)));
     testing::Test::RecordProperty("authored_control_metadata_row_bytes",
@@ -1581,14 +1681,18 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
     testing::Test::RecordProperty("variable_weight_owner_bytes", std::to_string(sizeof(harken::VariableWeightControlIdentity)));
     testing::Test::RecordProperty("authored_stop_identity_bytes", std::to_string(sizeof(harken::AuthoredStopOperationIdentity)));
     testing::Test::RecordProperty("frontier_event_family_capacity_increase_bytes",
-        std::to_string((layout.pairedCount + layout.currentEventCount + layout.continuousCount) * frontierEventBytes));
+        std::to_string((layout.PairedBase(engine->config.maxPlayableInstances) + layout.CurrentEventBase(engine->config.maxPlayableInstances) + layout.ContinuousBase(engine->config.maxPlayableInstances)) * frontierEventBytes));
 
     const auto emptyFinalizerBytes = finalizer.StorageBytes();
     harken::UnplacedBatchCredit pendingCredit{};
     finalizer.SetPendingEventCommitPageLimitForTest(0);
     EXPECT_FALSE(engine->timelinePool.ReserveUnplacedBatchCredit({1, 1, 1, 1, 0}, &pendingCredit));
     EXPECT_FALSE(pendingCredit.Valid());
-    EXPECT_EQ(emptyFinalizerBytes, finalizer.StorageBytes());
+    // A failed first commit may retain its segment directory for the next try.
+    const auto failedFinalizerBytes = finalizer.StorageBytes();
+    EXPECT_FALSE(engine->timelinePool.ReserveUnplacedBatchCredit({1, 1, 1, 1, 0}, &pendingCredit));
+    EXPECT_FALSE(pendingCredit.Valid());
+    EXPECT_EQ(failedFinalizerBytes, finalizer.StorageBytes());
     finalizer.SetPendingEventCommitPageLimitForTest(SIZE_MAX);
     ASSERT_TRUE(engine->timelinePool.ReserveUnplacedBatchCredit({1, 1, 1, 1, 0}, &pendingCredit));
     EXPECT_GT(finalizer.StorageBytes(), emptyFinalizerBytes);
@@ -1606,8 +1710,12 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
     EXPECT_FALSE(engine->timelinePool.ReserveUnplacedBatchCredit(
         {1, 1, additionalPageRows, 1, 0}, &pendingCredit));
     EXPECT_FALSE(pendingCredit.Valid());
+    const auto retainedFinalizerBytes = finalizer.StorageBytes();
+    EXPECT_FALSE(engine->timelinePool.ReserveUnplacedBatchCredit(
+        {1, 1, additionalPageRows, 1, 0}, &pendingCredit));
+    EXPECT_FALSE(pendingCredit.Valid());
     ASSERT_TRUE(engine->timelinePool.ReserveUnplacedBatchCredit({1, 1, 1, 1, 0}, &pendingCredit));
-    EXPECT_EQ(preparedFinalizerBytes, finalizer.StorageBytes());
+    EXPECT_EQ(retainedFinalizerBytes, finalizer.StorageBytes());
     ASSERT_TRUE(engine->timelinePool.CancelUnplacedBatchCredit(&pendingCredit));
     finalizer.SetPendingEventCommitPageLimitForTest(0);
     EXPECT_FALSE(engine->timelinePool.ReserveUnplacedBatchCredit({0, 0, 0, 0, 1}, &pendingCredit));
@@ -2028,10 +2136,10 @@ TEST(CapacityContract, QuantumBudgetCountersArePublishedAndStartAtZero) {
 // would report a produced high-water of two.
 TEST(CapacityContract, QuantumBudgetResetsAcrossIndependentRenderBlocks) {
     VnConfig config = harkentest::MakeNullConfig(2, 256, 48000);
-    config.arenaBytes = 64;
     harkentest::EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
+    engine->mixer.ArenaForTests().SetCapacityForTests(64);
 
     for (std::uint32_t block = 0; block < 2; ++block) {
         engine->nullBackend.Pump(1);

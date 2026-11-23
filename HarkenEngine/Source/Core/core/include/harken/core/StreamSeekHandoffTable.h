@@ -6,6 +6,7 @@
 #include <harken/Harken.h>
 
 #include <atomic>
+#include "harken/core/GrowingRowStorage.h"
 #include <cstdint>
 #include <memory>
 
@@ -99,7 +100,7 @@ private:
     static void RetireReplacement(Row& row) noexcept;
     bool Recycle(Row& row) noexcept;
 
-    std::unique_ptr<Row[]> rows_;
+    GrowingRowStorage<Row> rows_;
     std::uint32_t capacity_ = 0;
 };
 

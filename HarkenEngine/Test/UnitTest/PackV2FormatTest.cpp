@@ -511,7 +511,7 @@ TEST(PackV2Format, VoiceRecipeGainRoundTripsWithCanonicalBindings) {
     ASSERT_EQ(1u, recipe.installs.size());
     EXPECT_EQ(VN_EFFECT_GAIN, recipe.installs[0].effectType);
     EXPECT_FLOAT_EQ(-6.0f, recipe.installs[0].params[0]);
-    EXPECT_EQ((std::vector<VnBindingId>{harkentest::ObjectId(700), harkentest::ObjectId(701)}), recipe.bindings);
+    EXPECT_EQ((std::vector<VnBindingId>{harkentest::ObjectId(700), harkentest::ObjectId(701)}), *recipe.bindingStorage);
 }
 
 TEST(PackV2Format, AuthoredToneRecipeRoundTripsAndAllowsToneOnly) {

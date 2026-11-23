@@ -29,6 +29,7 @@
 #include <mutex>
 #include <thread>
 #include <vector>
+#include "harken/core/GrowingRowStorage.h"
 
 // The Windows SDK aliases ReplaceFile to its encoding-specific entry point.
 #ifdef ReplaceFile
@@ -194,6 +195,7 @@ public:
     // against the outstanding pending-start reservations so promised capacity
     // is never handed to a second claimant. Logic thread only.
     std::uint32_t FreeSlotCount() const;
+    std::uint32_t RingFrames() const noexcept { return m_ringFrames; }
 
     // The slot's ring, for wiring into the voice render context.
     StreamRing* RingOf(std::uint32_t slot);
@@ -440,6 +442,7 @@ private:
     static constexpr int kSteadyIoOwner = 2;
 
     struct StreamSlot {
+        std::uint32_t index = 0;
         StreamRing ring;
         bool promotionPending = false; // Logic-owned; not ring ownership.
         int ioLane = -1; // -1 idle, kPreparationIoLane or kSteadyIoOwner
@@ -615,7 +618,8 @@ private:
     std::uint64_t m_lastSourceGeneration = 0; // under m_mutex
     std::uint64_t m_lastPreparationGeneration = 0; // logic thread only
 
-    std::vector<StreamSlot> m_slots;
+    const std::uint32_t m_slotLimit;
+    GrowingRowStorage<StreamSlot> m_slots;
     std::uint32_t m_pendingPromotionCount = 0;
     std::vector<std::unique_ptr<SourceRequest>> m_sourceRequests;
     std::vector<std::unique_ptr<IoLane>> m_ioLanes;
@@ -628,7 +632,7 @@ private:
     std::unique_ptr<StreamFile> m_cleanup;
     std::size_t m_sourceCursor = 0, m_slotCursor = 0;
     friend struct detail::StreamManagerTestAccess;
-    std::array<StableRowStorage<float>, kMaxChannels> m_ringStorage;
+    std::array<GrowingRowStorage<float>, kMaxChannels> m_ringStorage;
     // Logic-owned backing demand follows the existing file pending references.
     std::array<std::uint32_t, kMaxChannels> m_pendingRingSlots{};
 

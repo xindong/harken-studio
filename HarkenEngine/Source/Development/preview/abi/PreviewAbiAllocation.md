@@ -10,7 +10,8 @@ runtime export, managed API, and ordinary Remote surfaces. Status values are app
 | `VnPreview_PlayPlayable` | Starts a typed Sound or supported Container root from the current world. |
 | `VnPreview_StopPlayable` | Stops the whole root with the Runtime parent-stop semantics. |
 | `VnPreview_QueryPlayable` | Reads the fixed logic-owned lifecycle state of a root. |
-| `VnPreview_CapturePlaybackPaths` | Reads the paths of currently rendering playable-owned voices, including Action and preview starts. |
+| `VnPreview_CapturePlaybackPaths` | Legacy capture with eight inline Sends per path; returns capacity refusal if a path needs more. |
+| `VnPreview_CapturePlaybackPathsV2` | Captures currently rendering playable-owned paths and an actual-size flat Send array. |
 
 The removed Segment/Advance surface has no compatibility aliases. Preview time
 advances only through normal Runtime update and audio processing.
@@ -41,11 +42,11 @@ advances only through normal Runtime update and audio processing.
 ## Frozen structures
 
 `VnPreviewPlayPlayableDescV2` is 32 bytes with 8-byte alignment.
-`VnPreviewPlayableStateV2` is 64 bytes with 8-byte alignment. The library owns
+`VnPreviewPlayableStateV2` is 72 bytes with 8-byte alignment. The library owns
 a complete literal offset table. Play clears a non-null output handle before
 validation; Query writes the caller buffer only after a successful Runtime read.
 
-`VnPreviewPlaybackPathV1` is 1192 bytes with 8-byte alignment. Capture takes a
+`VnPreviewPlaybackPathV1` is 1784 bytes with 8-byte alignment. Capture takes a
 caller-owned array and reports the required row count, including when capacity
 is zero. A capacity refusal may fill the available prefix; callers consume a
 snapshot only on success. Null output with nonzero capacity is invalid.
@@ -62,3 +63,12 @@ Preparing, cancelled, retired, and raw PCM voices are excluded; draining voices
 remain present while rendering. The capture covers the configured render capacity
 independently of the legacy snapshot prefix. It does not start a Monitor capture,
 advance playback, or substitute selection decisions for rendered activity.
+
+`VnPreviewPlaybackPathV2` is 1600 bytes with 8-byte alignment. Its `sendOffset`
+and `sendCount` locate a complete range in the caller-owned `VnPreviewPlaybackSendV1`
+array. `requiredCount` and `requiredSendCount` describe the same capture, even on
+capacity refusal. Query with zero capacities, resize both buffers, then retry;
+concurrent activity can require another retry. A short buffer never receives a
+partial Send range. Null output with nonzero capacity is invalid. Consume the
+snapshot only on success. V2 keeps the same passive, logic-thread synchronization
+and generation rules as V1; Runtime does not truncate a voice's Sends to fit V1.

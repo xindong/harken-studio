@@ -204,7 +204,11 @@
       "VnResidentDirectoryActivationV1": "required-types",
       "VnResidentPackRowV1": "tool-types",
       "VnResidentPackVisitorFn": "required-types",
-      "VnNamedResidentPostV1": "required-types"
+      "VnNamedResidentPostV1": "required-types",
+      "VnBusState": "tool-types",
+      "VnRuntimeFaultInfoV1": "tool-types",
+      "VnBusStateFlags": "tool-types",
+      "VnRuntimeFaultCategory": "required-types"
     },
     "constants": {
       "VN_ATTENUATION_MAX_CURVE_POINTS": "tool-types",
@@ -247,7 +251,8 @@
       "VN_BYTE_READ_OK": "required-types",
       "VN_BYTE_READ_CANCELLED": "required-types",
       "VN_BYTE_READ_IO_ERROR": "required-types",
-      "VN_REMOTE_PROTOCOL_MAJOR": "tool-types"
+      "VN_REMOTE_PROTOCOL_MAJOR": "tool-types",
+      "VN_LOG_RUNTIME_RECREATE_REQUIRED": "tool-types"
     }
   },
   "managed_projection": {

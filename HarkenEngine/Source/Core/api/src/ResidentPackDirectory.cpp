@@ -21,7 +21,8 @@
 #pragma comment(lib, "cabinet.lib")
 #pragma comment(lib, "bcrypt.lib")
 namespace {
-constexpr size_t Max = 16u * 1024u * 1024u;
+// Largest byte array accepted by the Windows Unity reader and publisher.
+constexpr uint64_t MaxResidentArrayBytes = 0x7fffffc7u;
 constexpr uint32_t Hrp1 = 0x31505248;
 constexpr uint32_t Hrp2 = 0x32505248;
 using Row = VnResidentPackRowV1;
@@ -149,31 +150,34 @@ VnResult Provide(void *ctx, uint64_t, const char *, uint32_t, uint64_t,
 }
 void Release(void *, uint64_t, VnPackByteSpan) {}
 bool Unpack(DECOMPRESSOR_HANDLE decoder, uint32_t format,
-            std::span<const uint8_t> input, std::span<uint8_t> output) {
+            std::span<const uint8_t> input, size_t remaining, uint8_t* output) {
   if (format == Hrp1) {
     SIZE_T written{};
-    return Decompress(decoder, input.data(), input.size(), output.data(),
-                      output.size(), &written) && written == output.size();
+    if (!output)
+      return !Decompress(decoder, input.data(), input.size(), nullptr, 0, &written) &&
+             GetLastError() == ERROR_INSUFFICIENT_BUFFER && written == remaining;
+    return Decompress(decoder, input.data(), input.size(), output, remaining, &written) &&
+           written == remaining;
   }
-  while (!output.empty()) {
+  while (remaining) {
     uint32_t stored{};
-    if (input.size() < sizeof(stored))
-      return false;
+    if (input.size() < sizeof(stored)) return false;
     memcpy(&stored, input.data(), sizeof(stored));
     input = input.subspan(sizeof(stored));
-    const size_t bytes = std::min<size_t>(8192, output.size());
-    if (!stored || stored > bytes || stored > input.size())
-      return false;
-    if (stored == bytes) {
-      memcpy(output.data(), input.data(), bytes);
-    } else {
-      SIZE_T written{};
-      if (!Decompress(decoder, input.data(), stored, output.data(), bytes,
-                      &written) || written != bytes)
-        return false;
+    const size_t bytes = std::min<size_t>(8192, remaining);
+    if (!stored || stored > bytes || stored > input.size()) return false;
+    if (output) {
+      if (stored == bytes) {
+        memcpy(output, input.data(), bytes);
+      } else {
+        SIZE_T written{};
+        if (!Decompress(decoder, input.data(), stored, output, bytes, &written) ||
+            written != bytes) return false;
+      }
+      output += bytes;
     }
     input = input.subspan(stored);
-    output = output.subspan(bytes);
+    remaining -= bytes;
   }
   return input.empty();
 }
@@ -373,22 +377,24 @@ static VnResult VisitDirectory(const VnResidentPackVisitDescV1 *desc, bool keepI
         status = CheckMemberName(owner.file, file);
         if (status != VN_OK)
           return status;
-        if (fileBytes < 48 || fileBytes > 3 * Max)
+        constexpr size_t digestBytes = 32;
+        uint32_t h[4];
+        if (fileBytes < sizeof(h) + digestBytes || fileBytes > MaxResidentArrayBytes)
+          return VN_BAD_PACK;
+        DWORD read{};
+        if (!ReadFile(owner.file, h, sizeof(h), &read, nullptr) || read != sizeof(h))
+          return VN_PACK_PROVIDER_FAILED;
+        if ((h[0] != Hrp1 && h[0] != Hrp2) || !h[1] || h[1] > MaxResidentArrayBytes ||
+            !h[2] || !h[3] || sizeof(h) + uint64_t(h[2]) + h[3] + digestBytes != fileBytes)
           return VN_BAD_PACK;
         harken::detail::PackDecodeCharge input(laneBudget);
         input.Add(fileBytes);
-        std::vector<uint8_t> image(static_cast<size_t>(fileBytes));
-        DWORD read = 0;
-        if (!ReadFile(owner.file, image.data(), DWORD(image.size()), &read,
-                      nullptr) ||
-            read != image.size())
-          return VN_PACK_PROVIDER_FAILED;
-        uint32_t h[4];
-        memcpy(h, image.data(), 16);
-        if ((h[0] != Hrp1 && h[0] != Hrp2) || h[1] == 0 || h[1] > Max || !h[2] ||
-            h[2] > Max || !h[3] || size_t(h[2]) + h[3] + 48 != image.size())
-          return VN_BAD_PACK;
         rawBytes.Add(h[1]);
+        std::vector<uint8_t> image(static_cast<size_t>(fileBytes));
+        memcpy(image.data(), h, sizeof(h));
+        const auto remaining = static_cast<DWORD>(image.size() - sizeof(h));
+        if (!ReadFile(owner.file, image.data() + sizeof(h), remaining, &read, nullptr) || read != remaining)
+          return VN_PACK_PROVIDER_FAILED;
         uint8_t digest[32];
         if (BCryptHash(BCRYPT_SHA256_ALG_HANDLE, nullptr, 0, image.data(),
                        ULONG(image.size() - 32), digest, 32) < 0)
@@ -398,8 +404,11 @@ static VnResult VisitDirectory(const VnResidentPackVisitDescV1 *desc, bool keepI
         VnObjectId id{};
         if (!Meta({reinterpret_cast<char *>(image.data() + 16), h[2]}, name, id))
           return VN_CAPABILITY_UNAVAILABLE;
+        const std::span<const uint8_t> compressed{image.data() + sizeof(h) + h[2], h[3]};
+        // Validate the declared output against the compressed data before allocating it.
+        if (!Unpack(decoder.h, h[0], compressed, h[1], nullptr)) return VN_BAD_PACK;
         owner.bytes.resize(h[1]);
-        if (!Unpack(decoder.h, h[0], {image.data() + 16 + h[2], h[3]}, owner.bytes))
+        if (!Unpack(decoder.h, h[0], compressed, h[1], owner.bytes.data()))
           return VN_BAD_PACK;
         VnPackInspectDescV1 req{};
         req.structSize = sizeof req;

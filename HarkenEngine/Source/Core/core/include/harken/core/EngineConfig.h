@@ -37,18 +37,8 @@ inline constexpr std::uint32_t kOutputChannels = 2;
 // runtime's arrays and config validation read it everywhere.
 inline constexpr std::uint32_t kMaxFxSlotsPerVoice = kMaxVoiceFxSlots;
 
-// Compile-time upper bound on a voice's send slots (kMaxVoiceSendSlots) lives
-// in the engine-free ABI layout contract included above, so the offline program
-// compiler resolves the same ceiling this runtime sizes its per-voice send
-// array to. It stays in namespace harken, so every consumer here reads it
-// unchanged.
-
-// Compile-time upper bound on a voice's binding instance slots (the
-// per-voice ceiling of the public binding system's instance layer). This is
-// the POD-layout constant sizing the pinned-attachment arrays in pending
-// records and the ceiling the resolved voiceBindingInstanceSlots config
-// value may not exceed. Single definition point, like kMaxVoiceSendSlots.
-inline constexpr std::uint32_t kMaxVoiceBindingInstanceSlots = 8;
+// kMaxVoiceSendSlots in the ABI contract is a legacy observation width.
+// Runtime Voice Sends use actual-size storage, independent of the config hint.
 
 // Compile-time upper bound on a bus's insert-effect chain. Bus effect chains
 // are pure reuse of the voice chain mechanics and share its slot maximum, so
@@ -102,6 +92,10 @@ private:
 // PendingStart, and Parked states.
 class VoiceCapacityModel {
 public:
+    // This is the existing platform admission range. The prefix actually used
+    // by a session is constructed on the logic thread as voices are accepted.
+    static constexpr std::uint32_t kMaxRenderVoices = 1u << 14;
+    static constexpr std::uint32_t kInitialRenderVoices = 256;
     constexpr VoiceCapacityModel() noexcept = default;
 
     // Forms the single authoritative relationship L = R + V. False means the
@@ -137,9 +131,15 @@ struct EngineConfig {
     std::uint32_t blockFrames = 256;
     VoiceCapacityModel voiceCapacity;
     std::uint32_t fxSlotsPerVoice = 8;
-    std::uint32_t arenaBytes = 2u << 20;
+    std::uint32_t arenaBytes = UINT32_MAX;
+    bool automaticArena = false;
     bool nullDevice = true;
-    std::uint32_t maxBuses = 32;
+    bool automaticRenderVoices = false;
+    std::uint32_t InitialRenderVoices() const noexcept {
+        return automaticRenderVoices ? VoiceCapacityModel::kInitialRenderVoices : voiceCapacity.Render();
+    }
+    std::uint32_t maxBuses = 1; // Initial Master directory; not an admission limit.
+    bool automaticStopTransport = true;
     std::uint32_t commandQueueDepth = 256;
     // Most control commands one MixQuantum will apply. The drain used to run
     // until the queue was empty, which tied its cost to the queue depth and to
@@ -175,23 +175,22 @@ struct EngineConfig {
     std::uint32_t dynamicRoutePlanPoolCapacity = 4;
     std::uint32_t dynamicBusTapCapacity = 16;
     std::uint32_t dynamicVoiceTapCapacity = 16;
-    std::uint32_t maxBusTopologyOwners = 64;
+    std::uint32_t maxBusTopologyOwners = 1; // Initial storage; grows on logic.
     std::uint64_t maxTopologyPlanBytes = 256ull * 1024ull * 1024ull;
     std::uint64_t topologyPlanPoolBytes = 0;
     std::uint64_t preparedTopologyPlanPoolBytes = 0;
     std::uint32_t streamRingFrames = 16384;
-    std::uint32_t maxStreams = 16;
+    std::uint32_t maxStreams = 0; // Zero grows stream slots as playback needs them.
     std::uint32_t prebufferMs = 100;
     std::uint32_t starvationCooldownBlocks = 32;
-    std::uint32_t maxPacks = 256;
     // Playback-management capacities. Every field defaults to
     // the value an unset (zero) config field resolves to. The container,
     // emitter, random-seed, voice-stealing, and parked-voice fields are
     // consumed by the engine; the Action/send/topology fields are validated and
     // stored for the features that own them, and their defaults keep behavior
     // identical when left unset.
-    std::uint32_t maxActions = 256;
-    std::uint32_t maxActionFirings = 256;
+    std::uint32_t maxActions = 0; // Legacy config value; no definition-count quota.
+    // Action firing storage grows on demand; the public vintage field is ignored.
     std::uint32_t maxContainers = 64;
     std::uint32_t maxContainerChildren = 1024;
     std::uint32_t containerCursorCapacity = 256;
@@ -230,11 +229,7 @@ struct EngineConfig {
     // master->device downmix triggers on the true device width. A concrete
     // deviceChannelLayout leaves this false and is used verbatim.
     bool deviceLayoutFromDefault = true;
-    // Public binding-system pools, resolved from the VnConfig tail
-    // appends; zero fields keep the defaults below.
-    // voiceBindingInstanceSlots is the
-    // per-Render-Voice instance ceiling (the instance pool is Render capacity
-    // times this) and may not exceed kMaxVoiceBindingInstanceSlots.
+    // Initial logic-side binding reservations; all three grow on demand.
     std::uint32_t maxBindings = 128;
     std::uint32_t maxBindingAttachments = 256;
     std::uint32_t voiceBindingInstanceSlots = 8;
@@ -273,10 +268,8 @@ struct EngineConfig {
     std::uint32_t maxKnownScheduleLeaves = 64;
     std::uint32_t maxVariableControlActiveRows = 16;
     std::uint32_t maxVariableControlLiveRows = 32;
-    std::uint32_t maxTransitionInstances = 32;
     std::uint32_t maxCompositeCompletionOwners = 256;
     std::uint32_t maxContainerInstances = 256;
-    std::uint32_t maxQueueCheckpoints = 256;
     std::uint32_t maxQueueChildren = 64;
     std::uint32_t maxPendingSelectionDeltasTotal = 512;
     std::uint32_t maxPendingSelectionDeltasGlobalPerRow = 512;
@@ -288,7 +281,6 @@ struct EngineConfig {
     // rather than being dropped.
     std::uint32_t maxDeferredMaterializationsPerQuantum = 32;
     std::uint32_t maxDeferredIntents = 256;
-    std::uint32_t maxActionCooldownRows = 256;
     std::uint32_t maxDecisionRows = 512;
     std::uint32_t maxParticipantsPerDecision = 128;
     std::uint32_t maxScheduleGroupHeadersPerPage = 64;
@@ -296,10 +288,10 @@ struct EngineConfig {
     std::uint32_t maxArmsPerGroup = 128;
     std::uint32_t maxCatalogEntries = 65536;
     std::uint64_t maxCatalogBytes = 4ull * 1024ull * 1024ull;
-    std::uint64_t maxResidentDefinitionBytes = 32ull * 1024ull * 1024ull;
-    std::uint64_t maxCompositeIndexBytes = 2ull * 1024ull * 1024ull;
+    std::uint64_t maxResidentDefinitionBytes = 0;
+    std::uint64_t maxCompositeIndexBytes = 0;
     static constexpr std::uint64_t kDefaultPackDecodeStagingBytes = 64ull * 1024ull * 1024ull;
-    std::uint64_t maxPackDecodeStagingBytes = kDefaultPackDecodeStagingBytes;
+    std::uint64_t maxPackDecodeStagingBytes = UINT64_MAX;
     std::uint64_t maxPackResourceBytes = 0;
     std::uint64_t maxPackReplacementPeakBytes = 96ull * 1024ull * 1024ull;
 };
@@ -369,7 +361,6 @@ inline constexpr std::uint32_t kMaxPlayableInstances = 2u * (1u << 14);
 inline constexpr std::uint32_t kMaxKnownScheduleLeaves = 64;
 inline constexpr std::uint32_t kMaxCompositeCompletionOwners = 16384;
 inline constexpr std::uint32_t kMaxContainerInstances = 16384;
-inline constexpr std::uint32_t kMaxQueueCheckpoints = 65536;
 inline constexpr std::uint32_t kMaxQueueChildren = 1024;
 
 // Validates the caller-provided config and resolves zeros to defaults.

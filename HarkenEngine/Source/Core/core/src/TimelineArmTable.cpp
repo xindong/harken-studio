@@ -1,3 +1,4 @@
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/core/TimelineArmTable.h"
 #include "harken/core/ScheduledTransactionPool.h"
 #include "harken/core/DecisionTable.h"
@@ -195,10 +196,35 @@ bool TombstoneReservedRow(TimelineArmTable::Row* row,
 
 } // namespace
 
-TimelineArmTable::TimelineArmTable(std::uint32_t capacity)
-    : capacity_(capacity), incarnation_(NextArmTableIncarnation()) {
-    if (!groupMemberScopes_.Reserve(capacity) || !rows_.Reserve(capacity))
-        throw std::bad_alloc{};
+TimelineArmTable::TimelineArmTable(std::uint32_t capacity, bool grow)
+    : initialCapacity_(capacity), capacity_(grow ? UINT32_MAX : capacity), incarnation_(NextArmTableIncarnation()) {}
+
+bool TimelineArmTable::AttachReader(void* context, PrepareReader prepare) noexcept {
+    if (memguard::IsAudioTagged() || !prepare || !prepare(context, rows_.size())) return false;
+    try { readers_.push_back({context, prepare}); }
+    catch (...) { detail::RecordCurrentLogicAllocFailure(detail::LogicAllocSite::EngineStorage); return false; }
+    return true;
+}
+
+void TimelineArmTable::DetachReader(void* context) noexcept {
+    std::erase_if(readers_, [context](const Reader& reader) { return reader.context == context; });
+}
+
+bool TimelineArmTable::PrepareAvailable(std::uint32_t count) noexcept {
+    if (!count) return true;
+    const auto size = rows_.size();
+    const auto held = rows_.PreparedUseActive() ? 0ull : rows_.HeldRows();
+    std::uint32_t available = 0;
+    for (const auto& row : rows_) {
+        if (row.state.load(std::memory_order_acquire) == ArmState::Free &&
+            !row.originalLifetimePinned.load(std::memory_order_acquire) &&
+            !row.variableReadPins.load(std::memory_order_acquire) &&
+            !row.reservation.test(std::memory_order_acquire) && ++available >= count + held) return true;
+    }
+    const auto occupied = size - available;
+    if (occupied + held + count > capacity_) return false;
+    if (rows_.PreparedUseActive()) return false;
+    return ConstructRowsThrough(occupied + count);
 }
 
 TimelineArmTable::~TimelineArmTable() {
@@ -238,6 +264,8 @@ bool TimelineArmTable::AttachRowStoragePreparation(void* context,
 }
 
 bool TimelineArmTable::PrepareRowDependencies(std::uint32_t count, bool fullSourceCommandBacking) noexcept {
+    if (count > capacity_) return false;
+    for (const auto& reader : readers_) if (!reader.prepare(reader.context, count)) return false;
     const auto sourceCount = fullSourceCommandBacking ? std::max(count, rows_.ConstructedCount()) : count;
     return groupMemberScopes_.ConstructThrough(count) &&
         (prepareRowStorage_ == nullptr ||
@@ -245,9 +273,14 @@ bool TimelineArmTable::PrepareRowDependencies(std::uint32_t count, bool fullSour
 }
 
 bool TimelineArmTable::ConstructRowsThrough(std::uint32_t count) noexcept {
-    return rows_.ConstructThrough(count, [this](std::uint32_t required) noexcept {
-        return PrepareRowDependencies(required, rows_.HasPreparedBacking());
-    });
+    if (rows_.PreparedUseActive()) return count <= rows_.ConstructedCount();
+    bool readyToConstruct = false;
+    if (rows_.ConstructThrough(count, [&](std::uint32_t required) noexcept {
+        readyToConstruct = PrepareRowDependencies(required, rows_.HasPreparedBacking());
+        return readyToConstruct;
+    })) return true;
+    if (readyToConstruct) detail::RecordLogicAllocFailure(detail::LogicAllocSite::EngineStorage);
+    return false;
 }
 
 bool TimelineArmTable::PrepareBacking(std::uint32_t count, StableStoragePreparation* out) noexcept {
@@ -260,8 +293,15 @@ bool TimelineArmTable::PrepareBacking(std::uint32_t count, StableStoragePreparat
             row.reservation.test(std::memory_order_acquire)) break;
         --occupied;
     }
-    return rows_.PrepareBacking(std::min(count, capacity_), occupied, out,
-        [this](std::uint32_t required) noexcept { return PrepareRowDependencies(required, true); });
+    const auto required = occupied + rows_.HeldRows() + count;
+    if (required > capacity_ || out == nullptr || out->Valid() || rows_.PreparedUseActive() ||
+        memguard::IsAudioTagged()) return false;
+    // Reusable rows may have only the ordinary Source record. An accepted request
+    // also needs both capture paths and the command tail before it can keep the row.
+    if (!PrepareRowDependencies(static_cast<std::uint32_t>(required), true)) return false;
+    if (rows_.PrepareBacking(count, occupied, out)) return true;
+    detail::RecordLogicAllocFailure(detail::LogicAllocSite::EngineStorage);
+    return false;
 }
 
 namespace {
@@ -381,7 +421,7 @@ bool TimelineArmTable::CompleteOriginalGroupMemberCoverage(TimelineArmToken arm,
 
 std::uint32_t TimelineArmTable::FreeCount() const noexcept {
     const auto constructed = rows_.ConstructedCount();
-    std::uint32_t count = capacity_ - constructed;
+    std::uint32_t count = Capacity() - constructed;
     for (std::uint32_t slot = 0; slot < constructed; ++slot) {
         if (rows_[slot].state.load(std::memory_order_acquire) ==
             ArmState::Free) {
@@ -902,6 +942,7 @@ bool TimelineArmTable::ReserveInternal(
         (!grouped && (parentGroup.Valid() || memberIndex != UINT16_MAX))) {
         return false;
     }
+    if (rows_.HeldRows() && !rows_.PreparedUseActive() && !PrepareAvailable(1)) return false;
     for (std::uint32_t slot = 0; slot < capacity_; ++slot) {
         if (!ConstructRowsThrough(slot + 1)) return false;
         Row& row = rows_[slot];
@@ -1054,7 +1095,7 @@ bool TimelineArmTable::PinPreparedVariableRead(const PreparedCommitProof& proof,
         row.authoredControl.stage != AuthoredControlStage::None ||
         row.authoredControl.operation != nullptr ||
         row.variableReadPins.load(std::memory_order_relaxed) == UINT32_MAX) return false;
-    const auto slot = rows_.IndexOf(row);
+    const auto slot = rows_.IndexOf(&row);
     row.variableReadPins.fetch_add(1u, std::memory_order_release);
     out->owner_ = this;
     out->row_ = &row;
@@ -1111,7 +1152,7 @@ bool TimelineArmTable::IssueOriginalArmRowOwner(const PreparedCommitProof& prepa
         row.authoredControl.stage != AuthoredControlStage::None ||
         row.originalLifetimeIssued ||
         row.originalLifetimePinned.load(std::memory_order_acquire)) return false;
-    const auto slot = rows_.IndexOf(row);
+    const auto slot = rows_.IndexOf(&row);
     assert(slot < capacity_ && row.generation != 0);
     row.originalLifetimeIssued = true;
     row.originalLifetimePinned.store(true, std::memory_order_release);
@@ -1132,7 +1173,7 @@ bool TimelineArmTable::IssueOriginalControlHeaderRowOwner(
         row.authoredControl.operation == nullptr || row.pendingImmediateStart ||
         row.startBound || row.originalLifetimeIssued ||
         row.originalLifetimePinned.load(std::memory_order_acquire)) return false;
-    const auto slot = rows_.IndexOf(row);
+    const auto slot = rows_.IndexOf(&row);
     assert(slot < capacity_ && row.generation != 0);
     row.originalLifetimeIssued = true;
     row.originalLifetimePinned.store(true, std::memory_order_release);
@@ -1858,7 +1899,7 @@ TimelineArmTable::ConsumeOriginalUnparentedUnpublishedSource(
 
 TimelineArmToken TimelineArmTable::PreparedCommitProof::OriginalPreparedToken() const noexcept {
     if (owner_ == nullptr || row_ == nullptr) return {};
-    return {owner_->rows_.IndexOf(*row_), row_->generation,
+    return {owner_->rows_.IndexOf(row_), row_->generation,
         row_->renderSlot, row_->renderGeneration};
 }
 

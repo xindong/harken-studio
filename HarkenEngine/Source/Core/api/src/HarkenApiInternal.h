@@ -7,6 +7,7 @@
 #endif
 
 #include <cstddef>
+#include "harken/core/LogicAllocCheckpoint.h"
 
 #include "PlayableRuntime.h"
 #include "TraceSeam.h"
@@ -101,7 +102,7 @@ PlayableStartStatus CaptureTimelineVoiceInstallFromCut(
     const PackPartitionLease* leaseOrNull = nullptr) noexcept;
 
 TimelineVoiceInstallDesc ProjectTimelineVoiceInstall(
-    const CapturedTimelineVoiceInstall& captured) noexcept;
+    const CapturedTimelineVoiceInstall& captured);
 
 VnResult PreflightTimelineVoiceStart(
     const Engine& engine, const TimelineVoiceInstallDesc& install) noexcept;
@@ -142,6 +143,34 @@ namespace harken::monitor { class RequestObservation; }
 namespace harken::detail {
 
 extern Engine* g_engine;
+
+// One call owns its allocation evidence and the preexisting fault snapshot.
+class ApiCallScope final : public LogicAllocCallScope {
+public:
+    ApiCallScope() noexcept;
+    ~ApiCallScope();
+    const Engine* faultedAtEntry = nullptr;
+    std::uint64_t faultedInstanceAtEntry = 0;
+private:
+    ApiCallScope* previous_;
+};
+
+// Pure selection shared by return values, reports and captured observations.
+VnResult NormalizeApiResult(VnResult result) noexcept;
+VnResult ResolveApiResult(VnResult result, const LogicAllocFailure& failure) noexcept;
+
+template<class Operation>
+VnResult InvokeApi(Operation&& operation) noexcept {
+    ApiCallScope scope;
+    VnResult result;
+    try { result = operation(); }
+    catch (const PackDecodeCapacity&) { result = VN_PACK_RESIDENT_CAPACITY; }
+    catch (const std::bad_alloc& failure) {
+        RecordLogicAllocFailure(failure, LogicAllocSite::ApiEntry);
+        result = VN_DEVICE_ERROR;
+    } catch (...) { result = VN_DEVICE_ERROR; }
+    return ResolveApiResult(result, scope.Failure());
+}
 
 bool CanonicalSetMutationBlocked() noexcept;
 

@@ -15,6 +15,12 @@ template<class T>
 class GrowingRowStorage {
 public:
     GrowingRowStorage() = default;
+    // Call before first use when adjacent elements form indivisible spans.
+    void AlignSegments(std::uint32_t span) noexcept {
+        assert(constructed_ == 0 && baseRows_ == 0 && std::has_single_bit(span));
+        baseRows_ = span;
+        baseShift_ = std::countr_zero(span);
+    }
     GrowingRowStorage(const GrowingRowStorage&) = delete;
     GrowingRowStorage& operator=(const GrowingRowStorage&) = delete;
     ~GrowingRowStorage() {
@@ -33,6 +39,29 @@ public:
 
     bool ConstructThrough(std::uint32_t count) noexcept {
         return ConstructThrough(count, [](std::uint32_t) noexcept { return true; });
+    }
+
+    // Reuse the first free identity. Only outstanding promises require counting
+    // the remaining live rows before granting storage to a different producer.
+    template<class Available, class Prepare>
+    std::uint32_t FindFreeSlot(std::uint32_t limit, Available&& available, Prepare&& prepare) noexcept {
+        const auto size = ConstructedCount();
+        std::uint32_t slot = 0;
+        while (slot < size && !available((*this)[slot])) ++slot;
+        if (slot >= limit) return UINT32_MAX;
+        auto required = slot + 1u;
+        if (!PreparedUseActive() && HeldRows() != 0) {
+            std::uint64_t free = 0;
+            for (auto next = slot; next < size; ++next) {
+                if (available((*this)[next]) && ++free > HeldRows()) return slot;
+            }
+            const auto occupied = size - static_cast<std::uint32_t>(free);
+            if (HeldRows() >= limit - occupied) return UINT32_MAX;
+            required = occupied + 1u;
+        } else if (slot < size) {
+            return slot;
+        }
+        return prepare(required) ? slot : UINT32_MAX;
     }
 
     template<class PrepareDependencies>
@@ -67,12 +96,12 @@ public:
     // Capacity, byte accounting, growth and Swap remain control-side only.
     T* TryAt(std::uint32_t slot) noexcept {
         if (slot >= ConstructedCount()) return nullptr;
-        const auto segment = SegmentFor(slot);
+        const auto segment = slot < baseRows_ ? 0u : SegmentFor(slot);
         return &(*segments_[segment])[slot - SegmentBegin(segment)];
     }
     const T* TryAt(std::uint32_t slot) const noexcept {
         if (slot >= ConstructedCount()) return nullptr;
-        const auto segment = SegmentFor(slot);
+        const auto segment = slot < baseRows_ ? 0u : SegmentFor(slot);
         return &(*segments_[segment])[slot - SegmentBegin(segment)];
     }
 
@@ -87,6 +116,22 @@ public:
         return *row;
     }
 
+    // Only directories covered by the acquired prefix are visible to a concurrent reader.
+    std::uint32_t IndexOf(const T* row) const noexcept {
+        const auto address = reinterpret_cast<std::uintptr_t>(row);
+        const auto published = ConstructedCount();
+        if (published == 0) return UINT32_MAX;
+        for (std::uint32_t i = 0; i <= SegmentFor(published - 1u); ++i) {
+            const auto begin = reinterpret_cast<std::uintptr_t>(segments_[i]->data());
+            const auto bytes = std::uint64_t{segments_[i]->ConstructedCount()} * sizeof(T);
+            if (address >= begin && address - begin < bytes && (address - begin) % sizeof(T) == 0) {
+                const auto index = SegmentBegin(i) + static_cast<std::uint32_t>((address - begin) / sizeof(T));
+                if (index < published) return index;
+            }
+        }
+        return UINT32_MAX;
+    }
+
     template<bool Const>
     class Iterator {
         using Owner = std::conditional_t<Const, const GrowingRowStorage, GrowingRowStorage>;
@@ -95,13 +140,23 @@ public:
         using reference = std::conditional_t<Const, const T&, T&>;
         using pointer = std::conditional_t<Const, const T*, T*>;
         using difference_type = std::ptrdiff_t;
-        using iterator_category = std::forward_iterator_tag;
+        using iterator_category = std::random_access_iterator_tag;
         Iterator() = default;
         Iterator(Owner* owner, std::uint32_t slot) noexcept : owner_(owner), slot_(slot) {}
         reference operator*() const noexcept { return (*owner_)[slot_]; }
         pointer operator->() const noexcept { return &**this; }
         Iterator& operator++() noexcept { ++slot_; return *this; }
         Iterator operator++(int) noexcept { auto old = *this; ++*this; return old; }
+        Iterator& operator--() noexcept { --slot_; return *this; }
+        Iterator operator--(int) noexcept { auto old = *this; --*this; return old; }
+        Iterator& operator+=(difference_type offset) noexcept { slot_ = static_cast<std::uint32_t>(slot_ + offset); return *this; }
+        Iterator& operator-=(difference_type offset) noexcept { return *this += -offset; }
+        friend Iterator operator+(Iterator it, difference_type n) noexcept { return it += n; }
+        friend Iterator operator+(difference_type n, Iterator it) noexcept { return it += n; }
+        friend Iterator operator-(Iterator it, difference_type n) noexcept { return it -= n; }
+        difference_type operator-(const Iterator& other) const noexcept { return static_cast<difference_type>(slot_) - other.slot_; }
+        reference operator[](difference_type n) const noexcept { return *(*this + n); }
+        auto operator<=>(const Iterator& other) const noexcept { return slot_ <=> other.slot_; }
         bool operator==(const Iterator& other) const noexcept {
             return owner_ == other.owner_ && slot_ == other.slot_;
         }
@@ -137,6 +192,7 @@ public:
         assert(!HasPreparedBacking() && !other.HasPreparedBacking());
         segments_.swap(other.segments_);
         std::swap(baseRows_, other.baseRows_);
+        std::swap(baseShift_, other.baseShift_);
         std::swap(pageBytes_, other.pageBytes_);
         std::swap(capacity_, other.capacity_);
         // The caller excludes all readers before swapping stable directories.
@@ -149,7 +205,7 @@ public:
 private:
     std::uint32_t SegmentFor(std::uint32_t slot) const noexcept {
         return static_cast<std::uint32_t>(std::bit_width(
-            static_cast<std::uint64_t>(slot / baseRows_) + 1u) - 1u);
+            static_cast<std::uint64_t>(slot >> baseShift_) + 1u) - 1u);
     }
     std::uint32_t SegmentBegin(std::uint32_t segment) const noexcept {
         return static_cast<std::uint32_t>(static_cast<std::uint64_t>(baseRows_) *
@@ -160,11 +216,12 @@ private:
     bool ConstructUnheldThrough(std::uint32_t count, PrepareDependencies&& prepare) noexcept {
         if (count <= constructed_) return true;
         if (memguard::IsAudioTagged() || growth_.preparedUsers != 0 || !prepare(count)) return false;
-        if (baseRows_ == 0) {
+        if (pageBytes_ == 0) {
             pageBytes_ = detail::StablePageReservation::SystemPageBytes();
             if (pageBytes_ == 0) return false;
-            baseRows_ = std::bit_floor(static_cast<std::uint32_t>(
-                std::max<std::size_t>(1u, std::min<std::size_t>(UINT32_MAX, pageBytes_ / sizeof(T)))));
+            baseRows_ = std::max(baseRows_, std::bit_floor(static_cast<std::uint32_t>(
+                std::max<std::size_t>(1u, std::min<std::size_t>(UINT32_MAX, pageBytes_ / sizeof(T))))));
+            baseShift_ = std::countr_zero(baseRows_);
         }
         auto cursor = ConstructedCount();
         while (cursor < count) {
@@ -178,7 +235,7 @@ private:
                     auto candidate = std::make_unique<StableRowStorage<T>>();
                     if (!candidate->Reserve(segmentCapacity)) return false;
                     segments_[index] = std::move(candidate);
-                } catch (...) { return false; }
+                } catch (...) { detail::RecordCurrentLogicAllocFailure(detail::LogicAllocSite::EngineStorage); return false; }
                 capacity_ = first + segmentCapacity;
             }
             auto& segment = *segments_[index];
@@ -199,6 +256,7 @@ private:
     std::array<std::unique_ptr<StableRowStorage<T>>, std::numeric_limits<std::uint32_t>::digits> segments_{};
     StableStorageGrowthState growth_;
     std::uint32_t baseRows_ = 0;
+    std::uint32_t baseShift_ = 0;
     std::uint32_t capacity_ = 0;
     std::atomic<std::uint32_t> constructed_{0};
     std::size_t pageBytes_ = 0;

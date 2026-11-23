@@ -48,6 +48,14 @@ documented event, not a regression.
 
 ## Entries (newest first)
 
+- 2026-11-19 Added `voice_send_level_ramp` and `bus_send_level_ramp` to
+  detect Send transitions rounded to a block boundary. At 48 kHz with
+  1024-frame blocks, a pulse on frame 240 of a 5 ms rise measures 0.25
+  and a pulse on frame 120 of a 5 ms fall measures 0.125 on both channels.
+  Windows clang-cl null-backend recordings match these values. Running the
+  same test against Runtime `24dee0d32` gives 0.05859375 and 0.220703125
+  respectively on both Send paths.
+
 - 2026-10-13 all baselines - moved with the Runtime tests from
   `HarkenTest/Runtime/Baselines/` to `HarkenEngine/Test/Baselines/`.
   Tests and recorded data now belong to the Engine project. Evidence:

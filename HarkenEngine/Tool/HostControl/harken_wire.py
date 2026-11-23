@@ -8533,6 +8533,131 @@ TABLE_JSON = r'''
           "u64"
         ]
       ]
+    },
+    "VnBusState": {
+      "fields": [
+        [
+          "busId",
+          {
+            "struct": "VnObjectId"
+          }
+        ],
+        [
+          "blockSequence",
+          "u64"
+        ],
+        [
+          "busIndex",
+          "u32"
+        ],
+        [
+          "busGeneration",
+          "u32"
+        ],
+        [
+          "flags",
+          "u32"
+        ],
+        [
+          "peakPreFader",
+          "f32"
+        ],
+        [
+          "peakPostFader",
+          "f32"
+        ],
+        [
+          "peakPostEffects",
+          "f32"
+        ]
+      ]
+    },
+    "VnRuntimeFaultInfoV1": {
+      "fields": [
+        [
+          "structSize",
+          "u32"
+        ],
+        [
+          "category",
+          "u32"
+        ],
+        [
+          "line",
+          "u32"
+        ],
+        [
+          "reserved",
+          "u32"
+        ],
+        [
+          "repeatCount",
+          "u64"
+        ],
+        [
+          "file",
+          {
+            "ptr": "string",
+            "ctype": "const char*"
+          }
+        ],
+        [
+          "function",
+          {
+            "ptr": "string",
+            "ctype": "const char*"
+          }
+        ]
+      ]
+    },
+    "VnPreviewPlaybackPathV2": {
+      "fields": [
+        [
+          "structSize",
+          "u32"
+        ],
+        [
+          "rowCount",
+          "u32"
+        ],
+        [
+          "sendCount",
+          "u32"
+        ],
+        [
+          "reserved0",
+          "u32"
+        ],
+        [
+          "sendOffset",
+          "u64"
+        ],
+        [
+          "voiceInstance",
+          "u64"
+        ],
+        [
+          "soundId",
+          {
+            "struct": "VnObjectId"
+          }
+        ],
+        [
+          "outputBusId",
+          {
+            "struct": "VnObjectId"
+          }
+        ],
+        [
+          "rows",
+          {
+            "array": [
+              "VnPreviewPlaybackPathRowV1",
+              64
+            ]
+          }
+        ]
+      ]
     }
   },
   "functions": [
@@ -12165,6 +12290,95 @@ TABLE_JSON = r'''
           "wire": "out"
         }
       ]
+    },
+    {
+      "name": "Vn_CaptureBusStates",
+      "params": [
+        {
+          "name": "firstBusIndex",
+          "ctype": "uint32_t",
+          "wire": "u32"
+        },
+        {
+          "name": "states",
+          "ctype": "VnBusState*",
+          "wire": "outrows",
+          "type": "VnBusState",
+          "capacityParam": "capacity",
+          "countParam": "outCount"
+        },
+        {
+          "name": "capacity",
+          "ctype": "uint32_t",
+          "wire": "u32"
+        },
+        {
+          "name": "outCount",
+          "ctype": "uint32_t*",
+          "wire": "outu32"
+        },
+        {
+          "name": "outNextBusIndex",
+          "ctype": "uint32_t*",
+          "wire": "outu32"
+        }
+      ],
+      "note": "Passive logic-thread native Bus observation with caller storage and pagination; no remote opcode."
+    },
+    {
+      "name": "Vn_GetRuntimeFaultInfo",
+      "note": "Local diagnostic query; returned string pointers are process-local, no remote opcode.",
+      "params": [
+        {
+          "name": "outInfo",
+          "ctype": "VnRuntimeFaultInfoV1*",
+          "wire": "structref",
+          "type": "VnRuntimeFaultInfoV1"
+        }
+      ]
+    },
+    {
+      "name": "VnPreview_CapturePlaybackPathsV2",
+      "note": "Development preview; process-local, no remote opcode.",
+      "returnType": "VnPreviewResult",
+      "params": [
+        {
+          "name": "outPaths",
+          "ctype": "VnPreviewPlaybackPathV2*",
+          "wire": "outrows",
+          "type": "VnPreviewPlaybackPathV2",
+          "capacityParam": "capacity",
+          "countParam": "requiredCount"
+        },
+        {
+          "name": "capacity",
+          "ctype": "uint32_t",
+          "wire": "u32"
+        },
+        {
+          "name": "requiredCount",
+          "ctype": "uint32_t*",
+          "wire": "outu32"
+        },
+        {
+          "name": "outSends",
+          "ctype": "VnPreviewPlaybackSendV1*",
+          "wire": "outrows",
+          "type": "VnPreviewPlaybackSendV1",
+          "capacityParam": "sendCapacity",
+          "countParam": "requiredSendCount"
+        },
+        {
+          "name": "sendCapacity",
+          "ctype": "uint64_t",
+          "wire": "u64"
+        },
+        {
+          "name": "requiredSendCount",
+          "ctype": "uint64_t*",
+          "wire": "out"
+        }
+      ]
     }
   ],
   "binding_overloads": [
@@ -12339,7 +12553,9 @@ TABLE_JSON = r'''
       "VnPreviewPlayableHandle": "u64",
       "VnPreviewProjectHandle": "u64",
       "VnPreviewPrepareStatus": "i32",
-      "VnPreviewCommitStatus": "i32"
+      "VnPreviewCommitStatus": "i32",
+      "VnBusStateFlags": "u32",
+      "VnRuntimeFaultCategory": "u32"
     },
     "results": {
       "backing": "i32",
@@ -12424,7 +12640,8 @@ TABLE_JSON = r'''
         "VN_GAMEPLAY_WRONG_PROJECT": -1001,
         "VN_GAMEPLAY_CONTRACT_MISMATCH": -1002,
         "VN_REMOTE_CLIENT_NO_EVENT": -1300,
-        "VN_REMOTE_CLIENT_BUFFER_TOO_SMALL": -1301
+        "VN_REMOTE_CLIENT_BUFFER_TOO_SMALL": -1301,
+        "VN_OUT_OF_MEMORY": -348
       }
     },
     "enums": {
@@ -12722,7 +12939,8 @@ TABLE_JSON = r'''
           "VN_NOTIFY_VOICE_STARVED": 3,
           "VN_NOTIFY_VOICE_STOLEN": 4,
           "VN_NOTIFY_VOICE_PARKED": 5,
-          "VN_NOTIFY_VOICE_RETURNED": 6
+          "VN_NOTIFY_VOICE_RETURNED": 6,
+          "VN_NOTIFY_RUNTIME_RECREATE_REQUIRED": 7
         }
       },
       "VnLogLevel": {
@@ -13483,6 +13701,24 @@ TABLE_JSON = r'''
           "VN_PREVIEW_COMMIT_DEVICE_ERROR": 3,
           "VN_PREVIEW_COMMIT_UNAVAILABLE": 4
         }
+      },
+      "VnBusStateFlags": {
+        "backing": "u32",
+        "values": {
+          "VN_BUS_STATE_VALID": 1,
+          "VN_BUS_STATE_WORKING": 2,
+          "VN_BUS_STATE_RENDERED": 4
+        }
+      },
+      "VnRuntimeFaultCategory": {
+        "backing": "u32",
+        "values": {
+          "VN_RUNTIME_FAULT_NONE": 0,
+          "VN_RUNTIME_FAULT_CAPACITY": 1,
+          "VN_RUNTIME_FAULT_INVALID_INPUT": 2,
+          "VN_RUNTIME_FAULT_INTERNAL_STATE": 3,
+          "VN_RUNTIME_FAULT_GENERATION_EXHAUSTED": 4
+        }
       }
     },
     "defines": {
@@ -13984,6 +14220,10 @@ TABLE_JSON = r'''
       "VN_PREVIEW_EFFECT_CHAIN_CAPACITY": {
         "type": "u32",
         "value": 8
+      },
+      "VN_LOG_RUNTIME_RECREATE_REQUIRED": {
+        "type": "u32",
+        "value": 34
       }
     },
     "callbacks": {

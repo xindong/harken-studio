@@ -16,11 +16,18 @@ double OrderedAudibility(double value) {
 
 } // namespace
 
-VoiceManager::VoiceManager(std::uint32_t renderCapacity,
-                           std::uint32_t logicalCapacity)
-    : m_claims(renderCapacity) {
-    m_requests.reserve(logicalCapacity);
-    m_candidates.reserve(renderCapacity);
+VoiceManager::VoiceManager(std::uint32_t renderCapacity, std::uint32_t logicalCapacity,
+                           std::uint32_t initialRender)
+    : m_virtualCapacity(logicalCapacity - std::min(renderCapacity, logicalCapacity)) {
+    if (!m_claims.Reserve(renderCapacity) || !m_candidates.Reserve(renderCapacity) ||
+        !m_requests.Reserve(logicalCapacity) ||
+        !PrepareRenderSlots(std::min(initialRender, renderCapacity)))
+        throw detail::LogicPreparationFailure{};
+}
+
+bool VoiceManager::PrepareRenderSlots(std::uint32_t count) noexcept {
+    return m_claims.ConstructThrough(count) && m_candidates.ConstructThrough(count) &&
+        m_requests.ConstructThrough(std::min(m_requests.Capacity(), count + m_virtualCapacity));
 }
 
 VoiceManager::Decision VoiceManager::Decide(
@@ -111,35 +118,35 @@ bool VoiceManager::ParkCandidateBefore(const LiveCandidate& lhs,
 }
 
 void VoiceManager::ClearRequests() {
-    m_requests.clear();
+    m_requestCount = 0;
 }
 
 bool VoiceManager::AddRequest(const RenderRequest& request) {
-    if (m_requests.size() == m_requests.capacity()) {
+    if (m_requestCount == m_requests.size()) {
         return false;
     }
-    m_requests.push_back(request);
+    m_requests[m_requestCount++] = request;
     return true;
 }
 
 void VoiceManager::SortRequests() {
-    std::sort(m_requests.begin(), m_requests.end(), RequestBefore);
+    std::sort(m_requests.begin(), m_requests.begin() + m_requestCount, RequestBefore);
 }
 
 void VoiceManager::ClearCandidates() {
-    m_candidates.clear();
+    m_candidateCount = 0;
 }
 
 bool VoiceManager::AddCandidate(const LiveCandidate& candidate) {
-    if (m_candidates.size() == m_candidates.capacity()) {
+    if (m_candidateCount == m_candidates.size()) {
         return false;
     }
-    m_candidates.push_back(candidate);
+    m_candidates[m_candidateCount++] = candidate;
     return true;
 }
 
 void VoiceManager::SortParkCandidates() {
-    std::sort(m_candidates.begin(), m_candidates.end(), ParkCandidateBefore);
+    std::sort(m_candidates.begin(), m_candidates.begin() + m_candidateCount, ParkCandidateBefore);
 }
 
 bool VoiceManager::PublishClaim(VnVoiceHandle victimRenderHandle,

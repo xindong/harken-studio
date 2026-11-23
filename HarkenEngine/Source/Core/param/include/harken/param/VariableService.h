@@ -1,6 +1,7 @@
 #ifndef HARKEN_PARAM_VARIABLE_SERVICE_H
 #define HARKEN_PARAM_VARIABLE_SERVICE_H
 
+#include "harken/core/GrowingRowStorage.h"
 #include <harken/ObjectId.h>
 #include <harken/Harken.h>
 
@@ -271,8 +272,8 @@ private:
 class VariableServiceV1 {
     struct ReadCutRow;
 public:
-    using ReadCutBackingPreparation = StableSlotStorage<ReadCutRow>::Preparation;
-    using ReadCutBackingUse = StableSlotStorage<ReadCutRow>::PreparedUse;
+    using ReadCutBackingPreparation = StableStoragePreparation;
+    using ReadCutBackingUse = StableStoragePreparedUse;
     friend void test::SetApiCatalogFingerprint(VariableServiceV1&,
                                                std::uint64_t) noexcept;
     friend bool test::SetDefinitionExecutionFingerprint(VariableServiceV1&,
@@ -293,7 +294,7 @@ public:
                       ScheduledTransactionPool& timeline,
                       std::uint64_t readCutCapacity,
                       std::uint32_t timelineReadUseCapacity,
-                      std::uint32_t meterProbeCapacity = 0);
+                      std::uint32_t withdrawalSliceCapacity = 0);
 
     WorldInstallResult Install(const ContainerWorldInstallViewV1& install);
     WorldInstallResult InstallWithReplacementAdmission(
@@ -453,7 +454,7 @@ public:
     VariableAcceptResult AcceptEmitter(VnEmitterHandle emitter, VnVariableId id,
                                        float value,
                                        const VariableCallObservation& observed,
-                                       const EmitterTable& emitters,
+                                       EmitterTable& emitters,
                                        ParamSystem& params);
     VariableAcceptResult AcceptGlobalBatch(
         const VnVariableWriteV1* writes, std::uint32_t writeCount,
@@ -462,7 +463,7 @@ public:
     VariableAcceptResult AcceptEmitterBatch(
         VnEmitterHandle emitter, const VnVariableWriteV1* writes,
         std::uint32_t writeCount, const VariableCallObservation& observed,
-        const EmitterTable& emitters, ParamSystem& params);
+        EmitterTable& emitters, ParamSystem& params);
     VariableAcceptResult AcceptGlobalResetBatch(
         const VnVariableWriteV1* writes, std::uint32_t writeCount,
         const VariableCallObservation& observed, ParamSystem& params,
@@ -477,7 +478,7 @@ public:
         VnEmitterHandle emitter, VnVariableId id, float value,
         const VariableCallObservation& observed,
         std::uint32_t executionOrdinal,
-        const EmitterTable& emitters,
+        EmitterTable& emitters,
         PreparedVariableWriteToken* out,
         VariableWriterIdentityV1 writer = VariableWriterIdentityV1::Game) noexcept;
     void CommitPreparedWrite(PreparedVariableWriteToken* prepared,
@@ -720,7 +721,7 @@ public:
     bool PendingTimelineReadUseMatchesArm(VariableTimelineReadUseRef use,
         VnVoiceHandle nativeHandle, TimelineArmToken arm) const noexcept;
     void AcknowledgeFinishedTimelineReadUses(std::uint64_t completedAudioSequence) noexcept;
-    std::uint32_t ReadCutCapacity() const noexcept { return readCutCapacity_; }
+    std::uint32_t NativeStartBudgetPerQuantum() const noexcept { return nativeStartBudgetPerQuantum_; }
     bool PrepareReadCutBacking(std::uint32_t count, ReadCutBackingPreparation* out) noexcept;
     bool PrepareActionResultBacking(std::uint32_t futureWrites,
         ActionVariableResultBacking* out) noexcept;
@@ -733,7 +734,7 @@ public:
     std::size_t ReadCutStorageBytes() const noexcept;
     std::size_t StorageBytes() const noexcept;
     void ReleaseUnusedReadCutBacking() noexcept;
-    std::uint32_t RevisionCapacity() const noexcept { return revisionCapacity_; }
+    void SetRevisionCommitPageLimitForTests(std::size_t pages) noexcept { history_.SetCommitPageLimitForTests(pages); }
     std::uint32_t RevisionStorageCapacity() const noexcept { return history_.Capacity(); }
     std::uint32_t ConstructedRevisionCount() const noexcept { return history_.ConstructedCount(); }
     std::uint32_t CompletionCapacity() const noexcept { return completionCapacity_; }
@@ -830,9 +831,6 @@ public:
     std::uint64_t RefusalCount() const noexcept { return refusalCount_; }
     std::uint32_t HistoryCapacity() const noexcept {
         return queryHistoryCapacity_;
-    }
-    std::uint32_t PendingCapacity() const noexcept {
-        return revisionCapacity_;
     }
     std::uint64_t ExecutionCatalogFingerprint() const noexcept;
     VnResult ResolveLabel(VnVariableId variable, VnObjectId label, float* value) const noexcept;
@@ -1385,6 +1383,7 @@ private:
 
     DefinitionRow* FindDefinition(VnVariableId id) noexcept;
     const DefinitionRow* FindDefinition(VnVariableId id) const noexcept;
+    static std::uint32_t BankIndex(std::uint32_t slot) noexcept;
     EmitterBank* FindEmitterBank(const VariableScopeKey& scope) noexcept;
     const EmitterBank* FindEmitterBank(const VariableScopeKey& scope) const noexcept;
     EmitterBank* EnsureEmitterBank(const VariableScopeKey& scope) noexcept;
@@ -1405,7 +1404,7 @@ private:
         const VnVariableWriteV1* writes, std::uint32_t writeCount,
         const VariableCallObservation& observed,
         VariableWriterIdentityV1 writer,
-        const EmitterTable* emitters,
+        EmitterTable* emitters,
         bool wholeBatchSupersede = true);
     static std::uint32_t MapPublicOutcome(VariableOutcomeKind outcome) noexcept;
     void RememberAcceptedTicket(LogicCommitSequence sequence,
@@ -1428,7 +1427,7 @@ private:
         std::uint32_t executionOrdinal,
         PreparedVariableWriteToken* out,
         VariableWriterIdentityV1 writer = VariableWriterIdentityV1::Game,
-        bool staging = false) noexcept;
+        bool staging = false, EmitterTable* emitters = nullptr) noexcept;
     void CommitPreparedWriteImpl(PreparedVariableWriteToken* prepared, LogicCommitSequence sequence,
         const LogicCommitCoordinator::ConsumedIssue* consumed,
         const ActionFiringTable::ChildActivationReceipt* activated = nullptr,
@@ -1484,9 +1483,7 @@ private:
         const HistoricalContainerWorldViewV1& install,
         std::uint32_t replayVintage);
 
-    std::uint32_t maxEmitters_ = 0;
     std::uint32_t overridesPerEmitter_ = 0;
-    const std::uint32_t maxActionDefinitions_ = 0;
     std::vector<GatheredTarget> censusScratch_;
     bool hasWorld_ = false;
     WorldIdentityV1 identity_{};
@@ -1521,30 +1518,30 @@ private:
     std::vector<EmitterBank> emitterBanks_;
     std::vector<std::uint32_t> emitterBankVersionGenerations_;
     // History reuse requires outcome delivery, zero observers and an audio fence.
-    StableRowStorage<WriteRow> history_;
-    StableRowStorage<HeldCurrentSliceToken> preparedWritePlacements_;
+    GrowingRowStorage<WriteRow> history_;
+    std::uint32_t nextHistorySlot_ = 0;
+    GrowingRowStorage<HeldCurrentSliceToken> preparedWritePlacements_;
     std::vector<std::uint32_t> historyGenerations_;
     std::vector<std::uint32_t> freeSlots_;
-    StableRowStorage<std::uint32_t> scheduledGroups_;
+    std::vector<std::uint32_t> scheduledGroups_;
     std::uint32_t scheduledGroupCount_ = 0;
     std::size_t workCandidateCount_ = 0;
     HistoryRef ordinaryDebt_{};
-    std::uint32_t revisionCapacity_ = 0;
     std::uint32_t queryHistoryCapacity_ = 0;
     std::uint32_t completionCapacity_ = 0;
     std::uint32_t applyPayloadCapacity_ = 0;
     std::uint32_t occupiedRevisions_ = 0;
-    StableRowStorage<WriteRow*> sealRows_, commitRows_, prefixRows_, readCutRows_, actionReadCutRows_;
-    StableRowStorage<WriteRow*> preparationRows_, settledRows_, supersedeRows_;
+    std::vector<WriteRow*> sealRows_, commitRows_, prefixRows_, readCutRows_, actionReadCutRows_;
+    std::vector<WriteRow*> preparationRows_, settledRows_, supersedeRows_;
     std::uint64_t candidateEpoch_ = 0;
     mutable std::vector<VariableSliceRef> dependencyVisited_;
-    std::uint32_t readCutCapacity_ = 0;
-    StableSlotStorage<ReadCutRow> readCuts_;
+    std::uint32_t nativeStartBudgetPerQuantum_ = 0;
+    GrowingRowStorage<ReadCutRow> readCuts_;
     std::vector<std::uint32_t> capturingCuts_;
     std::uint32_t timelineReadUseCapacity_ = 0;
     StableRowStorage<TimelineReadUseRow> timelineReadUses_;
     // Terminal records are delivered after each completed logic operation.
-    StableRowStorage<VariableOutcomeRecord> outcomes_;
+    GrowingRowStorage<VariableOutcomeRecord> outcomes_;
     std::size_t outcomeCount_ = 0;
     StableRowStorage<TicketQueryRecord> ticketQueryRecords_;
     std::uint32_t ticketQueryBegin_ = 0;

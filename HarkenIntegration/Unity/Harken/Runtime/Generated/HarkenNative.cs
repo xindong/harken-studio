@@ -33,496 +33,1393 @@ namespace Harken
 #endif
 
         [DllImport(LibraryName, EntryPoint = "Vn_ActivateCanonicalPackSetV2", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_ActivateCanonicalPackSetV2(in VnCanonicalPackSetActivationDescV2 desc, ref VnCanonicalPackSetActivationReportV1 outReport);
+        private static extern VnResult Vn_ActivateCanonicalPackSetV2Native(in VnCanonicalPackSetActivationDescV2 desc, ref VnCanonicalPackSetActivationReportV1 outReport);
+        public static VnResult Vn_ActivateCanonicalPackSetV2(in VnCanonicalPackSetActivationDescV2 desc, ref VnCanonicalPackSetActivationReportV1 outReport)
+        {
+            VnResult result = Vn_ActivateCanonicalPackSetV2Native(in desc, ref outReport);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_InspectCanonicalPackV1", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_InspectCanonicalPackV1(in VnPackInspectDescV1 desc, ref VnPackInspectReportV1 outReport);
+        private static extern VnResult Vn_InspectCanonicalPackV1Native(in VnPackInspectDescV1 desc, ref VnPackInspectReportV1 outReport);
+        public static VnResult Vn_InspectCanonicalPackV1(in VnPackInspectDescV1 desc, ref VnPackInspectReportV1 outReport)
+        {
+            VnResult result = Vn_InspectCanonicalPackV1Native(in desc, ref outReport);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_Init", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_Init(in VnConfig config);
+        private static extern VnResult Vn_InitNative(in VnConfig config);
+        public static VnResult Vn_Init(in VnConfig config)
+        {
+            VnResult result = Vn_InitNative(in config);
+            if (result == VnResult.VN_OK) RuntimeFaultDiagnostics.Reset();
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_BeginOutputPreparation", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_BeginOutputPreparation(in VnConfig config, out ulong outTicket);
+        private static extern VnResult Vn_BeginOutputPreparationNative(in VnConfig config, out ulong outTicket);
+        public static VnResult Vn_BeginOutputPreparation(in VnConfig config, out ulong outTicket)
+        {
+            VnResult result = Vn_BeginOutputPreparationNative(in config, out outTicket);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_InitWithOutputPreparation", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_InitWithOutputPreparation(in VnConfig config, ulong ticket);
+        private static extern VnResult Vn_InitWithOutputPreparationNative(in VnConfig config, ulong ticket);
+        public static VnResult Vn_InitWithOutputPreparation(in VnConfig config, ulong ticket)
+        {
+            VnResult result = Vn_InitWithOutputPreparationNative(in config, ticket);
+            if (result == VnResult.VN_OK) RuntimeFaultDiagnostics.Reset();
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_CancelOutputPreparation", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_CancelOutputPreparation(ulong ticket);
+        private static extern VnResult Vn_CancelOutputPreparationNative(ulong ticket);
+        public static VnResult Vn_CancelOutputPreparation(ulong ticket)
+        {
+            VnResult result = Vn_CancelOutputPreparationNative(ticket);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_Term", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_Term();
+        private static extern VnResult Vn_TermNative();
+        public static VnResult Vn_Term()
+        {
+            VnResult result = Vn_TermNative();
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_RegisterPCM", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_RegisterPCM(VnObjectId soundId, in VnPCMDesc desc);
+        private static extern VnResult Vn_RegisterPCMNative(VnObjectId soundId, in VnPCMDesc desc);
+        public static VnResult Vn_RegisterPCM(VnObjectId soundId, in VnPCMDesc desc)
+        {
+            VnResult result = Vn_RegisterPCMNative(soundId, in desc);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_UnregisterPCM", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_UnregisterPCM(VnObjectId soundId);
+        private static extern VnResult Vn_UnregisterPCMNative(VnObjectId soundId);
+        public static VnResult Vn_UnregisterPCM(VnObjectId soundId)
+        {
+            VnResult result = Vn_UnregisterPCMNative(soundId);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_Stop", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_Stop(ulong handle, uint fadeMs);
+        private static extern VnResult Vn_StopNative(ulong handle, uint fadeMs);
+        public static VnResult Vn_Stop(ulong handle, uint fadeMs)
+        {
+            VnResult result = Vn_StopNative(handle, fadeMs);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_CreateBus", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_CreateBus(VnObjectId busId, VnObjectId parentId);
+        private static extern VnResult Vn_CreateBusNative(VnObjectId busId, VnObjectId parentId);
+        public static VnResult Vn_CreateBus(VnObjectId busId, VnObjectId parentId)
+        {
+            VnResult result = Vn_CreateBusNative(busId, parentId);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_SetBusVolume", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_SetBusVolume(VnObjectId busId, float volumeDb, uint rampMs);
+        private static extern VnResult Vn_SetBusVolumeNative(VnObjectId busId, float volumeDb, uint rampMs);
+        public static VnResult Vn_SetBusVolume(VnObjectId busId, float volumeDb, uint rampMs)
+        {
+            VnResult result = Vn_SetBusVolumeNative(busId, volumeDb, rampMs);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_Update", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_Update();
+        private static extern VnResult Vn_UpdateNative();
+        public static VnResult Vn_Update()
+        {
+            VnResult result = Vn_UpdateNative();
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_SetVoiceVolume", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_SetVoiceVolume(ulong handle, float volumeDb, uint rampMs);
+        private static extern VnResult Vn_SetVoiceVolumeNative(ulong handle, float volumeDb, uint rampMs);
+        public static VnResult Vn_SetVoiceVolume(ulong handle, float volumeDb, uint rampMs)
+        {
+            VnResult result = Vn_SetVoiceVolumeNative(handle, volumeDb, rampMs);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_SetVoicePitch", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_SetVoicePitch(ulong handle, float ratio);
+        private static extern VnResult Vn_SetVoicePitchNative(ulong handle, float ratio);
+        public static VnResult Vn_SetVoicePitch(ulong handle, float ratio)
+        {
+            VnResult result = Vn_SetVoicePitchNative(handle, ratio);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_SetVoicePosition", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_SetVoicePosition(ulong handle, VnVec3 position);
+        private static extern VnResult Vn_SetVoicePositionNative(ulong handle, VnVec3 position);
+        public static VnResult Vn_SetVoicePosition(ulong handle, VnVec3 position)
+        {
+            VnResult result = Vn_SetVoicePositionNative(handle, position);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_SetListenerDistanceReference", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_SetListenerDistanceReference(ulong handle);
+        private static extern VnResult Vn_SetListenerDistanceReferenceNative(ulong handle);
+        public static VnResult Vn_SetListenerDistanceReference(ulong handle)
+        {
+            VnResult result = Vn_SetListenerDistanceReferenceNative(handle);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_SetEmitterDistanceScale", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_SetEmitterDistanceScale(ulong handle, float scale);
+        private static extern VnResult Vn_SetEmitterDistanceScaleNative(ulong handle, float scale);
+        public static VnResult Vn_SetEmitterDistanceScale(ulong handle, float scale)
+        {
+            VnResult result = Vn_SetEmitterDistanceScaleNative(handle, scale);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_SetVoiceDistanceScale", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_SetVoiceDistanceScale(ulong handle, float scale);
+        private static extern VnResult Vn_SetVoiceDistanceScaleNative(ulong handle, float scale);
+        public static VnResult Vn_SetVoiceDistanceScale(ulong handle, float scale)
+        {
+            VnResult result = Vn_SetVoiceDistanceScaleNative(handle, scale);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_SetVoiceSpatializationMix", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_SetVoiceSpatializationMix(ulong handle, float mix);
+        private static extern VnResult Vn_SetVoiceSpatializationMixNative(ulong handle, float mix);
+        public static VnResult Vn_SetVoiceSpatializationMix(ulong handle, float mix)
+        {
+            VnResult result = Vn_SetVoiceSpatializationMixNative(handle, mix);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_SetVoicePan", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_SetVoicePan(ulong handle, float pan);
+        private static extern VnResult Vn_SetVoicePanNative(ulong handle, float pan);
+        public static VnResult Vn_SetVoicePan(ulong handle, float pan)
+        {
+            VnResult result = Vn_SetVoicePanNative(handle, pan);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_SetVoiceWidth", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_SetVoiceWidth(ulong handle, float width);
+        private static extern VnResult Vn_SetVoiceWidthNative(ulong handle, float width);
+        public static VnResult Vn_SetVoiceWidth(ulong handle, float width)
+        {
+            VnResult result = Vn_SetVoiceWidthNative(handle, width);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_CommitVoiceStart", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_CommitVoiceStart(ulong handle);
+        private static extern VnResult Vn_CommitVoiceStartNative(ulong handle);
+        public static VnResult Vn_CommitVoiceStart(ulong handle)
+        {
+            VnResult result = Vn_CommitVoiceStartNative(handle);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_SetValue", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_SetValue(VnObjectId variableId, float value);
+        private static extern VnResult Vn_SetValueNative(VnObjectId variableId, float value);
+        public static VnResult Vn_SetValue(VnObjectId variableId, float value)
+        {
+            VnResult result = Vn_SetValueNative(variableId, value);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
 #if HARKEN_ENGINE_DEV
         [DllImport(LibraryName, EntryPoint = "Vn_CaptureSnapshot", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_CaptureSnapshot(ref VnSnapshot outSnapshot);
+        private static extern VnResult Vn_CaptureSnapshotNative(ref VnSnapshot outSnapshot);
+        public static VnResult Vn_CaptureSnapshot(ref VnSnapshot outSnapshot)
+        {
+            VnResult result = Vn_CaptureSnapshotNative(ref outSnapshot);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 #endif
 
         [DllImport(LibraryName, EntryPoint = "Vn_SetListener", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_SetListener(VnVec3 pos, VnVec3 forward, VnVec3 up);
+        private static extern VnResult Vn_SetListenerNative(VnVec3 pos, VnVec3 forward, VnVec3 up);
+        public static VnResult Vn_SetListener(VnVec3 pos, VnVec3 forward, VnVec3 up)
+        {
+            VnResult result = Vn_SetListenerNative(pos, forward, up);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_RegisterAttenuation", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_RegisterAttenuation(VnObjectId id, in VnAttenuationDesc desc);
+        private static extern VnResult Vn_RegisterAttenuationNative(VnObjectId id, in VnAttenuationDesc desc);
+        public static VnResult Vn_RegisterAttenuation(VnObjectId id, in VnAttenuationDesc desc)
+        {
+            VnResult result = Vn_RegisterAttenuationNative(id, in desc);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_BindVoiceAttenuation", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_BindVoiceAttenuation(ulong handle, VnObjectId attenuationId);
+        private static extern VnResult Vn_BindVoiceAttenuationNative(ulong handle, VnObjectId attenuationId);
+        public static VnResult Vn_BindVoiceAttenuation(ulong handle, VnObjectId attenuationId)
+        {
+            VnResult result = Vn_BindVoiceAttenuationNative(handle, attenuationId);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_SetVoiceOrientation", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_SetVoiceOrientation(ulong handle, VnVec3 forward);
+        private static extern VnResult Vn_SetVoiceOrientationNative(ulong handle, VnVec3 forward);
+        public static VnResult Vn_SetVoiceOrientation(ulong handle, VnVec3 forward)
+        {
+            VnResult result = Vn_SetVoiceOrientationNative(handle, forward);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_ActivateCanonicalPackSetV1", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_ActivateCanonicalPackSetV1(in VnCanonicalPackSetActivationDescV1 desc, ref VnCanonicalPackSetActivationReportV1 outReport);
+        private static extern VnResult Vn_ActivateCanonicalPackSetV1Native(in VnCanonicalPackSetActivationDescV1 desc, ref VnCanonicalPackSetActivationReportV1 outReport);
+        public static VnResult Vn_ActivateCanonicalPackSetV1(in VnCanonicalPackSetActivationDescV1 desc, ref VnCanonicalPackSetActivationReportV1 outReport)
+        {
+            VnResult result = Vn_ActivateCanonicalPackSetV1Native(in desc, ref outReport);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_UnloadCanonicalPackSetV1", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_UnloadCanonicalPackSetV1(in VnCanonicalPackSetUnloadDescV1 desc);
+        private static extern VnResult Vn_UnloadCanonicalPackSetV1Native(in VnCanonicalPackSetUnloadDescV1 desc);
+        public static VnResult Vn_UnloadCanonicalPackSetV1(in VnCanonicalPackSetUnloadDescV1 desc)
+        {
+            VnResult result = Vn_UnloadCanonicalPackSetV1Native(in desc);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_InspectInitPack", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_InspectInitPack(in VnPackLoadDesc desc, ref VnInitPackInspectReport outReport);
+        private static extern VnResult Vn_InspectInitPackNative(in VnPackLoadDesc desc, ref VnInitPackInspectReport outReport);
+        public static VnResult Vn_InspectInitPack(in VnPackLoadDesc desc, ref VnInitPackInspectReport outReport)
+        {
+            VnResult result = Vn_InspectInitPackNative(in desc, ref outReport);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_LoadPack", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_LoadPack(in VnPackDesc desc, out ulong outHandle);
+        private static extern VnResult Vn_LoadPackNative(in VnPackDesc desc, out ulong outHandle);
+        public static VnResult Vn_LoadPack(in VnPackDesc desc, out ulong outHandle)
+        {
+            VnResult result = Vn_LoadPackNative(in desc, out outHandle);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_UnloadPack", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_UnloadPack(ulong handle);
+        private static extern VnResult Vn_UnloadPackNative(ulong handle);
+        public static VnResult Vn_UnloadPack(ulong handle)
+        {
+            VnResult result = Vn_UnloadPackNative(handle);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_SetVoiceEffectBypass", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_SetVoiceEffectBypass(ulong handle, uint slot, uint bypass01);
+        private static extern VnResult Vn_SetVoiceEffectBypassNative(ulong handle, uint slot, uint bypass01);
+        public static VnResult Vn_SetVoiceEffectBypass(ulong handle, uint slot, uint bypass01)
+        {
+            VnResult result = Vn_SetVoiceEffectBypassNative(handle, slot, bypass01);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_SetVoiceEffect", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_SetVoiceEffect(ulong handle, uint slot, uint type, IntPtr desc);
+        private static extern VnResult Vn_SetVoiceEffectNative(ulong handle, uint slot, uint type, IntPtr desc);
+        public static VnResult Vn_SetVoiceEffect(ulong handle, uint slot, uint type, IntPtr desc)
+        {
+            VnResult result = Vn_SetVoiceEffectNative(handle, slot, type, desc);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_ClearVoiceEffect", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_ClearVoiceEffect(ulong handle, uint slot);
+        private static extern VnResult Vn_ClearVoiceEffectNative(ulong handle, uint slot);
+        public static VnResult Vn_ClearVoiceEffect(ulong handle, uint slot)
+        {
+            VnResult result = Vn_ClearVoiceEffectNative(handle, slot);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_SetVoiceEffectParam", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_SetVoiceEffectParam(ulong handle, uint slot, uint paramIndex, float value);
+        private static extern VnResult Vn_SetVoiceEffectParamNative(ulong handle, uint slot, uint paramIndex, float value);
+        public static VnResult Vn_SetVoiceEffectParam(ulong handle, uint slot, uint paramIndex, float value)
+        {
+            VnResult result = Vn_SetVoiceEffectParamNative(handle, slot, paramIndex, value);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_RegisterStreamFile", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_RegisterStreamFile(VnObjectId soundId, byte* utf8Path);
+        private static extern VnResult Vn_RegisterStreamFileNative(VnObjectId soundId, byte* utf8Path);
+        public static VnResult Vn_RegisterStreamFile(VnObjectId soundId, byte* utf8Path)
+        {
+            VnResult result = Vn_RegisterStreamFileNative(soundId, utf8Path);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_UnregisterStreamFile", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_UnregisterStreamFile(VnObjectId soundId);
+        private static extern VnResult Vn_UnregisterStreamFileNative(VnObjectId soundId);
+        public static VnResult Vn_UnregisterStreamFile(VnObjectId soundId)
+        {
+            VnResult result = Vn_UnregisterStreamFileNative(soundId);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_CreateEmitter", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_CreateEmitter(out ulong outHandle);
+        private static extern VnResult Vn_CreateEmitterNative(out ulong outHandle);
+        public static VnResult Vn_CreateEmitter(out ulong outHandle)
+        {
+            VnResult result = Vn_CreateEmitterNative(out outHandle);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_DestroyEmitter", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_DestroyEmitter(ulong handle);
+        private static extern VnResult Vn_DestroyEmitterNative(ulong handle);
+        public static VnResult Vn_DestroyEmitter(ulong handle)
+        {
+            VnResult result = Vn_DestroyEmitterNative(handle);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_SetEmitterPosition", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_SetEmitterPosition(ulong handle, VnVec3 position);
+        private static extern VnResult Vn_SetEmitterPositionNative(ulong handle, VnVec3 position);
+        public static VnResult Vn_SetEmitterPosition(ulong handle, VnVec3 position)
+        {
+            VnResult result = Vn_SetEmitterPositionNative(handle, position);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_SetEmitterOrientation", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_SetEmitterOrientation(ulong handle, VnVec3 forward);
+        private static extern VnResult Vn_SetEmitterOrientationNative(ulong handle, VnVec3 forward);
+        public static VnResult Vn_SetEmitterOrientation(ulong handle, VnVec3 forward)
+        {
+            VnResult result = Vn_SetEmitterOrientationNative(handle, forward);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_StopEmitter", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_StopEmitter(ulong handle, uint fadeMs);
+        private static extern VnResult Vn_StopEmitterNative(ulong handle, uint fadeMs);
+        public static VnResult Vn_StopEmitter(ulong handle, uint fadeMs)
+        {
+            VnResult result = Vn_StopEmitterNative(handle, fadeMs);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_SetEmitterValue", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_SetEmitterValue(ulong handle, VnObjectId variableId, float value);
+        private static extern VnResult Vn_SetEmitterValueNative(ulong handle, VnObjectId variableId, float value);
+        public static VnResult Vn_SetEmitterValue(ulong handle, VnObjectId variableId, float value)
+        {
+            VnResult result = Vn_SetEmitterValueNative(handle, variableId, value);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_ConnectBusSend", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_ConnectBusSend(VnObjectId fromBus, VnObjectId toBus, float levelDb);
+        private static extern VnResult Vn_ConnectBusSendNative(VnObjectId fromBus, VnObjectId toBus, float levelDb);
+        public static VnResult Vn_ConnectBusSend(VnObjectId fromBus, VnObjectId toBus, float levelDb)
+        {
+            VnResult result = Vn_ConnectBusSendNative(fromBus, toBus, levelDb);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_DisconnectBusSend", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_DisconnectBusSend(VnObjectId fromBus, VnObjectId toBus);
+        private static extern VnResult Vn_DisconnectBusSendNative(VnObjectId fromBus, VnObjectId toBus);
+        public static VnResult Vn_DisconnectBusSend(VnObjectId fromBus, VnObjectId toBus)
+        {
+            VnResult result = Vn_DisconnectBusSendNative(fromBus, toBus);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_SetBusSendLevel", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_SetBusSendLevel(VnObjectId fromBus, VnObjectId toBus, float levelDb, uint rampMs);
+        private static extern VnResult Vn_SetBusSendLevelNative(VnObjectId fromBus, VnObjectId toBus, float levelDb, uint rampMs);
+        public static VnResult Vn_SetBusSendLevel(VnObjectId fromBus, VnObjectId toBus, float levelDb, uint rampMs)
+        {
+            VnResult result = Vn_SetBusSendLevelNative(fromBus, toBus, levelDb, rampMs);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_SetVoiceSend", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_SetVoiceSend(ulong handle, uint sendSlot, VnObjectId toBus, float levelDb);
+        private static extern VnResult Vn_SetVoiceSendNative(ulong handle, uint sendSlot, VnObjectId toBus, float levelDb);
+        public static VnResult Vn_SetVoiceSend(ulong handle, uint sendSlot, VnObjectId toBus, float levelDb)
+        {
+            VnResult result = Vn_SetVoiceSendNative(handle, sendSlot, toBus, levelDb);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_ClearVoiceSend", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_ClearVoiceSend(ulong handle, uint sendSlot);
+        private static extern VnResult Vn_ClearVoiceSendNative(ulong handle, uint sendSlot);
+        public static VnResult Vn_ClearVoiceSend(ulong handle, uint sendSlot)
+        {
+            VnResult result = Vn_ClearVoiceSendNative(handle, sendSlot);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_SetVoiceSendLevel", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_SetVoiceSendLevel(ulong handle, uint sendSlot, float levelDb, uint rampMs);
+        private static extern VnResult Vn_SetVoiceSendLevelNative(ulong handle, uint sendSlot, float levelDb, uint rampMs);
+        public static VnResult Vn_SetVoiceSendLevel(ulong handle, uint sendSlot, float levelDb, uint rampMs)
+        {
+            VnResult result = Vn_SetVoiceSendLevelNative(handle, sendSlot, levelDb, rampMs);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_SetBusEffect", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_SetBusEffect(VnObjectId busId, uint slot, uint type, IntPtr desc);
+        private static extern VnResult Vn_SetBusEffectNative(VnObjectId busId, uint slot, uint type, IntPtr desc);
+        public static VnResult Vn_SetBusEffect(VnObjectId busId, uint slot, uint type, IntPtr desc)
+        {
+            VnResult result = Vn_SetBusEffectNative(busId, slot, type, desc);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_ClearBusEffect", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_ClearBusEffect(VnObjectId busId, uint slot);
+        private static extern VnResult Vn_ClearBusEffectNative(VnObjectId busId, uint slot);
+        public static VnResult Vn_ClearBusEffect(VnObjectId busId, uint slot)
+        {
+            VnResult result = Vn_ClearBusEffectNative(busId, slot);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_SetBusEffectParam", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_SetBusEffectParam(VnObjectId busId, uint slot, uint paramIndex, float value);
+        private static extern VnResult Vn_SetBusEffectParamNative(VnObjectId busId, uint slot, uint paramIndex, float value);
+        public static VnResult Vn_SetBusEffectParam(VnObjectId busId, uint slot, uint paramIndex, float value)
+        {
+            VnResult result = Vn_SetBusEffectParamNative(busId, slot, paramIndex, value);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_SetBusEffectBypass", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_SetBusEffectBypass(VnObjectId busId, uint slot, uint bypass01);
+        private static extern VnResult Vn_SetBusEffectBypassNative(VnObjectId busId, uint slot, uint bypass01);
+        public static VnResult Vn_SetBusEffectBypass(VnObjectId busId, uint slot, uint bypass01)
+        {
+            VnResult result = Vn_SetBusEffectBypassNative(busId, slot, bypass01);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_SetBusFaderPoint", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_SetBusFaderPoint(VnObjectId busId, uint faderAfterSlot);
+        private static extern VnResult Vn_SetBusFaderPointNative(VnObjectId busId, uint faderAfterSlot);
+        public static VnResult Vn_SetBusFaderPoint(VnObjectId busId, uint faderAfterSlot)
+        {
+            VnResult result = Vn_SetBusFaderPointNative(busId, faderAfterSlot);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_ReplacePCM", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_ReplacePCM(VnObjectId soundId, in VnPCMDesc desc);
+        private static extern VnResult Vn_ReplacePCMNative(VnObjectId soundId, in VnPCMDesc desc);
+        public static VnResult Vn_ReplacePCM(VnObjectId soundId, in VnPCMDesc desc)
+        {
+            VnResult result = Vn_ReplacePCMNative(soundId, in desc);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_ReplaceStreamFile", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_ReplaceStreamFile(VnObjectId soundId, byte* utf8Path);
+        private static extern VnResult Vn_ReplaceStreamFileNative(VnObjectId soundId, byte* utf8Path);
+        public static VnResult Vn_ReplaceStreamFile(VnObjectId soundId, byte* utf8Path)
+        {
+            VnResult result = Vn_ReplaceStreamFileNative(soundId, utf8Path);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_ReplacePack", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_ReplacePack(ulong handle, in VnPackDesc desc);
+        private static extern VnResult Vn_ReplacePackNative(ulong handle, in VnPackDesc desc);
+        public static VnResult Vn_ReplacePack(ulong handle, in VnPackDesc desc)
+        {
+            VnResult result = Vn_ReplacePackNative(handle, in desc);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_ReplaceAttenuation", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_ReplaceAttenuation(VnObjectId id, in VnAttenuationDesc desc);
+        private static extern VnResult Vn_ReplaceAttenuationNative(VnObjectId id, in VnAttenuationDesc desc);
+        public static VnResult Vn_ReplaceAttenuation(VnObjectId id, in VnAttenuationDesc desc)
+        {
+            VnResult result = Vn_ReplaceAttenuationNative(id, in desc);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_SetBusOutputLayout", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_SetBusOutputLayout(VnObjectId busId, uint layout);
+        private static extern VnResult Vn_SetBusOutputLayoutNative(VnObjectId busId, uint layout);
+        public static VnResult Vn_SetBusOutputLayout(VnObjectId busId, uint layout)
+        {
+            VnResult result = Vn_SetBusOutputLayoutNative(busId, layout);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_SetBusDownmixMatrix", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_SetBusDownmixMatrix(VnObjectId busId, in VnDownmixMatrixDesc desc);
+        private static extern VnResult Vn_SetBusDownmixMatrixNative(VnObjectId busId, in VnDownmixMatrixDesc desc);
+        public static VnResult Vn_SetBusDownmixMatrix(VnObjectId busId, in VnDownmixMatrixDesc desc)
+        {
+            VnResult result = Vn_SetBusDownmixMatrixNative(busId, in desc);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_ResetBusDownmixMatrix", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_ResetBusDownmixMatrix(VnObjectId busId);
+        private static extern VnResult Vn_ResetBusDownmixMatrixNative(VnObjectId busId);
+        public static VnResult Vn_ResetBusDownmixMatrix(VnObjectId busId)
+        {
+            VnResult result = Vn_ResetBusDownmixMatrixNative(busId);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_RegisterBinding", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_RegisterBinding(VnObjectId bindingId, in VnBindingDesc desc);
+        private static extern VnResult Vn_RegisterBindingNative(VnObjectId bindingId, in VnBindingDesc desc);
+        public static VnResult Vn_RegisterBinding(VnObjectId bindingId, in VnBindingDesc desc)
+        {
+            VnResult result = Vn_RegisterBindingNative(bindingId, in desc);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_UnregisterBinding", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_UnregisterBinding(VnObjectId bindingId);
+        private static extern VnResult Vn_UnregisterBindingNative(VnObjectId bindingId);
+        public static VnResult Vn_UnregisterBinding(VnObjectId bindingId)
+        {
+            VnResult result = Vn_UnregisterBindingNative(bindingId);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_ReplaceBinding", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_ReplaceBinding(VnObjectId bindingId, in VnBindingDesc desc);
+        private static extern VnResult Vn_ReplaceBindingNative(VnObjectId bindingId, in VnBindingDesc desc);
+        public static VnResult Vn_ReplaceBinding(VnObjectId bindingId, in VnBindingDesc desc)
+        {
+            VnResult result = Vn_ReplaceBindingNative(bindingId, in desc);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_AttachBinding", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_AttachBinding(VnObjectId bindingId, in VnBindingAttachDesc desc);
+        private static extern VnResult Vn_AttachBindingNative(VnObjectId bindingId, in VnBindingAttachDesc desc);
+        public static VnResult Vn_AttachBinding(VnObjectId bindingId, in VnBindingAttachDesc desc)
+        {
+            VnResult result = Vn_AttachBindingNative(bindingId, in desc);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_DetachBinding", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_DetachBinding(VnObjectId bindingId, in VnBindingAttachDesc desc);
+        private static extern VnResult Vn_DetachBindingNative(VnObjectId bindingId, in VnBindingAttachDesc desc);
+        public static VnResult Vn_DetachBinding(VnObjectId bindingId, in VnBindingAttachDesc desc)
+        {
+            VnResult result = Vn_DetachBindingNative(bindingId, in desc);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_ApplyVoiceBinding", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_ApplyVoiceBinding(ulong handle, VnObjectId bindingId);
+        private static extern VnResult Vn_ApplyVoiceBindingNative(ulong handle, VnObjectId bindingId);
+        public static VnResult Vn_ApplyVoiceBinding(ulong handle, VnObjectId bindingId)
+        {
+            VnResult result = Vn_ApplyVoiceBindingNative(handle, bindingId);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_ClearVoiceBinding", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_ClearVoiceBinding(ulong handle, VnObjectId bindingId);
+        private static extern VnResult Vn_ClearVoiceBindingNative(ulong handle, VnObjectId bindingId);
+        public static VnResult Vn_ClearVoiceBinding(ulong handle, VnObjectId bindingId)
+        {
+            VnResult result = Vn_ClearVoiceBindingNative(handle, bindingId);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
 #if HARKEN_ENGINE_DEV
         [DllImport(LibraryName, EntryPoint = "Vn_CapturePropertyTargets", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_CapturePropertyTargets(VnPropertyTargetInfo* outRows, uint capacity, out uint requiredCount);
+        private static extern VnResult Vn_CapturePropertyTargetsNative(VnPropertyTargetInfo* outRows, uint capacity, out uint requiredCount);
+        public static VnResult Vn_CapturePropertyTargets(VnPropertyTargetInfo* outRows, uint capacity, out uint requiredCount)
+        {
+            VnResult result = Vn_CapturePropertyTargetsNative(outRows, capacity, out requiredCount);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 #endif
 
 #if HARKEN_ENGINE_DEV
         [DllImport(LibraryName, EntryPoint = "Vn_CapturePropertyBindings", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_CapturePropertyBindings(VnPropertyBindingInfo* outRows, uint capacity, out uint requiredCount);
+        private static extern VnResult Vn_CapturePropertyBindingsNative(VnPropertyBindingInfo* outRows, uint capacity, out uint requiredCount);
+        public static VnResult Vn_CapturePropertyBindings(VnPropertyBindingInfo* outRows, uint capacity, out uint requiredCount)
+        {
+            VnResult result = Vn_CapturePropertyBindingsNative(outRows, capacity, out requiredCount);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 #endif
 
         [DllImport(LibraryName, EntryPoint = "Vn_SetBusMute", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_SetBusMute(VnObjectId busId, uint mute01, uint fadeMs);
+        private static extern VnResult Vn_SetBusMuteNative(VnObjectId busId, uint mute01, uint fadeMs);
+        public static VnResult Vn_SetBusMute(VnObjectId busId, uint mute01, uint fadeMs)
+        {
+            VnResult result = Vn_SetBusMuteNative(busId, mute01, fadeMs);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_SetBusSolo", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_SetBusSolo(VnObjectId busId, uint solo01, uint fadeMs);
+        private static extern VnResult Vn_SetBusSoloNative(VnObjectId busId, uint solo01, uint fadeMs);
+        public static VnResult Vn_SetBusSolo(VnObjectId busId, uint solo01, uint fadeMs)
+        {
+            VnResult result = Vn_SetBusSoloNative(busId, solo01, fadeMs);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_ReparentBus", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_ReparentBus(VnObjectId busId, VnObjectId newParentId);
+        private static extern VnResult Vn_ReparentBusNative(VnObjectId busId, VnObjectId newParentId);
+        public static VnResult Vn_ReparentBus(VnObjectId busId, VnObjectId newParentId)
+        {
+            VnResult result = Vn_ReparentBusNative(busId, newParentId);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_DestroyBus", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_DestroyBus(VnObjectId busId);
+        private static extern VnResult Vn_DestroyBusNative(VnObjectId busId);
+        public static VnResult Vn_DestroyBus(VnObjectId busId)
+        {
+            VnResult result = Vn_DestroyBusNative(busId);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_Suspend", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_Suspend();
+        private static extern VnResult Vn_SuspendNative();
+        public static VnResult Vn_Suspend()
+        {
+            VnResult result = Vn_SuspendNative();
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_Resume", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_Resume();
+        private static extern VnResult Vn_ResumeNative();
+        public static VnResult Vn_Resume()
+        {
+            VnResult result = Vn_ResumeNative();
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_SetHostOutputMute", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_SetHostOutputMute(uint mute01, uint fadeMs);
+        private static extern VnResult Vn_SetHostOutputMuteNative(uint mute01, uint fadeMs);
+        public static VnResult Vn_SetHostOutputMute(uint mute01, uint fadeMs)
+        {
+            VnResult result = Vn_SetHostOutputMuteNative(mute01, fadeMs);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
 #if HARKEN_ENGINE_DEV
         [DllImport(LibraryName, EntryPoint = "Vn_CaptureEffectCapabilities", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_CaptureEffectCapabilities(VnEffectCapability* outRows, uint capacity, out uint requiredCount);
+        private static extern VnResult Vn_CaptureEffectCapabilitiesNative(VnEffectCapability* outRows, uint capacity, out uint requiredCount);
+        public static VnResult Vn_CaptureEffectCapabilities(VnEffectCapability* outRows, uint capacity, out uint requiredCount)
+        {
+            VnResult result = Vn_CaptureEffectCapabilitiesNative(outRows, capacity, out requiredCount);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 #endif
 
 #if HARKEN_ENGINE_DEV
         [DllImport(LibraryName, EntryPoint = "Vn_CaptureEffectParameterCapabilities", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_CaptureEffectParameterCapabilities(VnEffectParameterCapability* outRows, uint capacity, out uint requiredCount);
+        private static extern VnResult Vn_CaptureEffectParameterCapabilitiesNative(VnEffectParameterCapability* outRows, uint capacity, out uint requiredCount);
+        public static VnResult Vn_CaptureEffectParameterCapabilities(VnEffectParameterCapability* outRows, uint capacity, out uint requiredCount)
+        {
+            VnResult result = Vn_CaptureEffectParameterCapabilitiesNative(outRows, capacity, out requiredCount);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 #endif
 
         [DllImport(LibraryName, EntryPoint = "Vn_SetBusEffectDynamicRoute", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_SetBusEffectDynamicRoute(VnObjectId targetBusId, uint effectSlot, uint routeSlot, in VnEffectDynamicRouteDesc desc);
+        private static extern VnResult Vn_SetBusEffectDynamicRouteNative(VnObjectId targetBusId, uint effectSlot, uint routeSlot, in VnEffectDynamicRouteDesc desc);
+        public static VnResult Vn_SetBusEffectDynamicRoute(VnObjectId targetBusId, uint effectSlot, uint routeSlot, in VnEffectDynamicRouteDesc desc)
+        {
+            VnResult result = Vn_SetBusEffectDynamicRouteNative(targetBusId, effectSlot, routeSlot, in desc);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_ClearBusEffectDynamicRoute", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_ClearBusEffectDynamicRoute(VnObjectId targetBusId, uint effectSlot, uint routeSlot, uint expectedEffectType);
+        private static extern VnResult Vn_ClearBusEffectDynamicRouteNative(VnObjectId targetBusId, uint effectSlot, uint routeSlot, uint expectedEffectType);
+        public static VnResult Vn_ClearBusEffectDynamicRoute(VnObjectId targetBusId, uint effectSlot, uint routeSlot, uint expectedEffectType)
+        {
+            VnResult result = Vn_ClearBusEffectDynamicRouteNative(targetBusId, effectSlot, routeSlot, expectedEffectType);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_ResetVoiceEffect", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_ResetVoiceEffect(ulong handle, uint effectSlot, uint expectedEffectType);
+        private static extern VnResult Vn_ResetVoiceEffectNative(ulong handle, uint effectSlot, uint expectedEffectType);
+        public static VnResult Vn_ResetVoiceEffect(ulong handle, uint effectSlot, uint expectedEffectType)
+        {
+            VnResult result = Vn_ResetVoiceEffectNative(handle, effectSlot, expectedEffectType);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_ResetBusEffect", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_ResetBusEffect(VnObjectId busId, uint effectSlot, uint expectedEffectType);
+        private static extern VnResult Vn_ResetBusEffectNative(VnObjectId busId, uint effectSlot, uint expectedEffectType);
+        public static VnResult Vn_ResetBusEffect(VnObjectId busId, uint effectSlot, uint expectedEffectType)
+        {
+            VnResult result = Vn_ResetBusEffectNative(busId, effectSlot, expectedEffectType);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
 #if HARKEN_ENGINE_DEV
         [DllImport(LibraryName, EntryPoint = "Vn_CaptureEffectDynamicCapabilities", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_CaptureEffectDynamicCapabilities(VnEffectDynamicCapability* outRows, uint capacity, out uint requiredCount);
+        private static extern VnResult Vn_CaptureEffectDynamicCapabilitiesNative(VnEffectDynamicCapability* outRows, uint capacity, out uint requiredCount);
+        public static VnResult Vn_CaptureEffectDynamicCapabilities(VnEffectDynamicCapability* outRows, uint capacity, out uint requiredCount)
+        {
+            VnResult result = Vn_CaptureEffectDynamicCapabilitiesNative(outRows, capacity, out requiredCount);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 #endif
 
 #if HARKEN_ENGINE_DEV
         [DllImport(LibraryName, EntryPoint = "Vn_CaptureEffectDynamicParameterCapabilities", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_CaptureEffectDynamicParameterCapabilities(VnEffectDynamicParameterCapability* outRows, uint capacity, out uint requiredCount);
+        private static extern VnResult Vn_CaptureEffectDynamicParameterCapabilitiesNative(VnEffectDynamicParameterCapability* outRows, uint capacity, out uint requiredCount);
+        public static VnResult Vn_CaptureEffectDynamicParameterCapabilities(VnEffectDynamicParameterCapability* outRows, uint capacity, out uint requiredCount)
+        {
+            VnResult result = Vn_CaptureEffectDynamicParameterCapabilitiesNative(outRows, capacity, out requiredCount);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 #endif
 
 #if HARKEN_ENGINE_DEV
         [DllImport(LibraryName, EntryPoint = "Vn_CaptureEffectDynamicRoutes", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_CaptureEffectDynamicRoutes(VnEffectDynamicRouteInfo* outRows, uint capacity, out uint requiredCount);
+        private static extern VnResult Vn_CaptureEffectDynamicRoutesNative(VnEffectDynamicRouteInfo* outRows, uint capacity, out uint requiredCount);
+        public static VnResult Vn_CaptureEffectDynamicRoutes(VnEffectDynamicRouteInfo* outRows, uint capacity, out uint requiredCount)
+        {
+            VnResult result = Vn_CaptureEffectDynamicRoutesNative(outRows, capacity, out requiredCount);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 #endif
 
 #if HARKEN_ENGINE_DEV
         [DllImport(LibraryName, EntryPoint = "Vn_CaptureCompressorRuntimeInfo", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_CaptureCompressorRuntimeInfo(VnCompressorRuntimeInfo* outRows, uint capacity, out uint requiredCount);
+        private static extern VnResult Vn_CaptureCompressorRuntimeInfoNative(VnCompressorRuntimeInfo* outRows, uint capacity, out uint requiredCount);
+        public static VnResult Vn_CaptureCompressorRuntimeInfo(VnCompressorRuntimeInfo* outRows, uint capacity, out uint requiredCount)
+        {
+            VnResult result = Vn_CaptureCompressorRuntimeInfoNative(outRows, capacity, out requiredCount);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 #endif
 
         [DllImport(LibraryName, EntryPoint = "Vn_StopAll", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_StopAll(uint fadeMs);
+        private static extern VnResult Vn_StopAllNative(uint fadeMs);
+        public static VnResult Vn_StopAll(uint fadeMs)
+        {
+            VnResult result = Vn_StopAllNative(fadeMs);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_ApplyBusTopology", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_ApplyBusTopology(in VnBusTopologyDesc topology);
+        private static extern VnResult Vn_ApplyBusTopologyNative(in VnBusTopologyDesc topology);
+        public static VnResult Vn_ApplyBusTopology(in VnBusTopologyDesc topology)
+        {
+            VnResult result = Vn_ApplyBusTopologyNative(in topology);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_LoadCurrentWorld", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_LoadCurrentWorld(in VnCurrentWorldLoadDesc desc, ref VnCurrentWorldLoadReport outReport);
+        private static extern VnResult Vn_LoadCurrentWorldNative(in VnCurrentWorldLoadDesc desc, ref VnCurrentWorldLoadReport outReport);
+        public static VnResult Vn_LoadCurrentWorld(in VnCurrentWorldLoadDesc desc, ref VnCurrentWorldLoadReport outReport)
+        {
+            VnResult result = Vn_LoadCurrentWorldNative(in desc, ref outReport);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_PostAction", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_PostAction(in VnPostActionDesc desc, out ulong outFiring);
+        private static extern VnResult Vn_PostActionNative(in VnPostActionDesc desc, out ulong outFiring);
+        public static VnResult Vn_PostAction(in VnPostActionDesc desc, out ulong outFiring)
+        {
+            VnResult result = Vn_PostActionNative(in desc, out outFiring);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_StopActionFiring", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_StopActionFiring(ulong firing, uint fadeMs);
+        private static extern VnResult Vn_StopActionFiringNative(ulong firing, uint fadeMs);
+        public static VnResult Vn_StopActionFiring(ulong firing, uint fadeMs)
+        {
+            VnResult result = Vn_StopActionFiringNative(firing, fadeMs);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_QueryActionFiring", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_QueryActionFiring(ulong firing, ref VnActionFiringInfo outInfo);
+        private static extern VnResult Vn_QueryActionFiringNative(ulong firing, ref VnActionFiringInfo outInfo);
+        public static VnResult Vn_QueryActionFiring(ulong firing, ref VnActionFiringInfo outInfo)
+        {
+            VnResult result = Vn_QueryActionFiringNative(firing, ref outInfo);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_QueryActionStep", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_QueryActionStep(ulong firing, uint authoredEventIndex, ref VnActionStepResult outResult);
+        private static extern VnResult Vn_QueryActionStepNative(ulong firing, uint authoredEventIndex, ref VnActionStepResult outResult);
+        public static VnResult Vn_QueryActionStep(ulong firing, uint authoredEventIndex, ref VnActionStepResult outResult)
+        {
+            VnResult result = Vn_QueryActionStepNative(firing, authoredEventIndex, ref outResult);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_ReleaseActionFiring", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_ReleaseActionFiring(ulong firing);
+        private static extern VnResult Vn_ReleaseActionFiringNative(ulong firing);
+        public static VnResult Vn_ReleaseActionFiring(ulong firing)
+        {
+            VnResult result = Vn_ReleaseActionFiringNative(firing);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_UnloadPackEx", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_UnloadPackEx(ulong handle, uint flags);
+        private static extern VnResult Vn_UnloadPackExNative(ulong handle, uint flags);
+        public static VnResult Vn_UnloadPackEx(ulong handle, uint flags)
+        {
+            VnResult result = Vn_UnloadPackExNative(handle, flags);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_SetBusOutputVolume", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_SetBusOutputVolume(VnObjectId busId, float volumeDb, uint rampMs);
+        private static extern VnResult Vn_SetBusOutputVolumeNative(VnObjectId busId, float volumeDb, uint rampMs);
+        public static VnResult Vn_SetBusOutputVolume(VnObjectId busId, float volumeDb, uint rampMs)
+        {
+            VnResult result = Vn_SetBusOutputVolumeNative(busId, volumeDb, rampMs);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_SetVoiceOutputVolume", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_SetVoiceOutputVolume(ulong handle, float volumeDb, uint rampMs);
+        private static extern VnResult Vn_SetVoiceOutputVolumeNative(ulong handle, float volumeDb, uint rampMs);
+        public static VnResult Vn_SetVoiceOutputVolume(ulong handle, float volumeDb, uint rampMs)
+        {
+            VnResult result = Vn_SetVoiceOutputVolumeNative(handle, volumeDb, rampMs);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_SetVoiceFilter", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_SetVoiceFilter(ulong handle, uint filterKind, float cutoffHz, float q, uint enable01, uint rampMs);
+        private static extern VnResult Vn_SetVoiceFilterNative(ulong handle, uint filterKind, float cutoffHz, float q, uint enable01, uint rampMs);
+        public static VnResult Vn_SetVoiceFilter(ulong handle, uint filterKind, float cutoffHz, float q, uint enable01, uint rampMs)
+        {
+            VnResult result = Vn_SetVoiceFilterNative(handle, filterKind, cutoffHz, q, enable01, rampMs);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_SetBusFilter", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_SetBusFilter(VnObjectId busId, uint filterKind, float cutoffHz, float q, uint enable01, uint rampMs);
+        private static extern VnResult Vn_SetBusFilterNative(VnObjectId busId, uint filterKind, float cutoffHz, float q, uint enable01, uint rampMs);
+        public static VnResult Vn_SetBusFilter(VnObjectId busId, uint filterKind, float cutoffHz, float q, uint enable01, uint rampMs)
+        {
+            VnResult result = Vn_SetBusFilterNative(busId, filterKind, cutoffHz, q, enable01, rampMs);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_SetBusOutputFilter", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_SetBusOutputFilter(VnObjectId busId, uint filterKind, float cutoffHz, float q, uint enable01, uint rampMs);
+        private static extern VnResult Vn_SetBusOutputFilterNative(VnObjectId busId, uint filterKind, float cutoffHz, float q, uint enable01, uint rampMs);
+        public static VnResult Vn_SetBusOutputFilter(VnObjectId busId, uint filterKind, float cutoffHz, float q, uint enable01, uint rampMs)
+        {
+            VnResult result = Vn_SetBusOutputFilterNative(busId, filterKind, cutoffHz, q, enable01, rampMs);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_SeekActionFiring", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_SeekActionFiring(in VnActionSeekDescV1 desc, out ulong outTicket);
+        private static extern VnResult Vn_SeekActionFiringNative(in VnActionSeekDescV1 desc, out ulong outTicket);
+        public static VnResult Vn_SeekActionFiring(in VnActionSeekDescV1 desc, out ulong outTicket)
+        {
+            VnResult result = Vn_SeekActionFiringNative(in desc, out outTicket);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_QueryActionSeek", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_QueryActionSeek(ulong ticket, ref VnActionSeekInfoV1 outInfo);
+        private static extern VnResult Vn_QueryActionSeekNative(ulong ticket, ref VnActionSeekInfoV1 outInfo);
+        public static VnResult Vn_QueryActionSeek(ulong ticket, ref VnActionSeekInfoV1 outInfo)
+        {
+            VnResult result = Vn_QueryActionSeekNative(ticket, ref outInfo);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_ReleaseActionSeek", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_ReleaseActionSeek(ulong ticket);
+        private static extern VnResult Vn_ReleaseActionSeekNative(ulong ticket);
+        public static VnResult Vn_ReleaseActionSeek(ulong ticket)
+        {
+            VnResult result = Vn_ReleaseActionSeekNative(ticket);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
 #if HARKEN_ENGINE_DEV
         [DllImport(LibraryName, EntryPoint = "Vn_TraceStart", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_TraceStart(byte* utf8Path);
+        private static extern VnResult Vn_TraceStartNative(byte* utf8Path);
+        public static VnResult Vn_TraceStart(byte* utf8Path)
+        {
+            VnResult result = Vn_TraceStartNative(utf8Path);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 #endif
 
 #if HARKEN_ENGINE_DEV
         [DllImport(LibraryName, EntryPoint = "Vn_TraceStop", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_TraceStop();
+        private static extern VnResult Vn_TraceStopNative();
+        public static VnResult Vn_TraceStop()
+        {
+            VnResult result = Vn_TraceStopNative();
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 #endif
 
 #if HARKEN_ENGINE_DEV
         [DllImport(LibraryName, EntryPoint = "Vn_RemoteStart", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_RemoteStart(in VnRemoteConfig config);
+        private static extern VnResult Vn_RemoteStartNative(in VnRemoteConfig config);
+        public static VnResult Vn_RemoteStart(in VnRemoteConfig config)
+        {
+            VnResult result = Vn_RemoteStartNative(in config);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 #endif
 
 #if HARKEN_ENGINE_DEV
         [DllImport(LibraryName, EntryPoint = "Vn_RemoteStop", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_RemoteStop();
+        private static extern VnResult Vn_RemoteStopNative();
+        public static VnResult Vn_RemoteStop()
+        {
+            VnResult result = Vn_RemoteStopNative();
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 #endif
 
 #if HARKEN_ENGINE_DEV
         [DllImport(LibraryName, EntryPoint = "Vn_RemoteGetStatus", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_RemoteGetStatus(ref VnRemoteStatus outStatus);
+        private static extern VnResult Vn_RemoteGetStatusNative(ref VnRemoteStatus outStatus);
+        public static VnResult Vn_RemoteGetStatus(ref VnRemoteStatus outStatus)
+        {
+            VnResult result = Vn_RemoteGetStatusNative(ref outStatus);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 #endif
 
 #if HARKEN_ENGINE_DEV
         [DllImport(LibraryName, EntryPoint = "Vn_RemoteClientCreate", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_RemoteClientCreate(in VnRemoteClientDesc desc, out ulong outClient);
+        private static extern VnResult Vn_RemoteClientCreateNative(in VnRemoteClientDesc desc, out ulong outClient);
+        public static VnResult Vn_RemoteClientCreate(in VnRemoteClientDesc desc, out ulong outClient)
+        {
+            VnResult result = Vn_RemoteClientCreateNative(in desc, out outClient);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 #endif
 
 #if HARKEN_ENGINE_DEV
         [DllImport(LibraryName, EntryPoint = "Vn_RemoteClientDestroy", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_RemoteClientDestroy(ulong client);
+        private static extern VnResult Vn_RemoteClientDestroyNative(ulong client);
+        public static VnResult Vn_RemoteClientDestroy(ulong client)
+        {
+            VnResult result = Vn_RemoteClientDestroyNative(client);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 #endif
 
 #if HARKEN_ENGINE_DEV
         [DllImport(LibraryName, EntryPoint = "Vn_RemoteClientDiscover", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_RemoteClientDiscover(ulong client, uint discoveryPort);
+        private static extern VnResult Vn_RemoteClientDiscoverNative(ulong client, uint discoveryPort);
+        public static VnResult Vn_RemoteClientDiscover(ulong client, uint discoveryPort)
+        {
+            VnResult result = Vn_RemoteClientDiscoverNative(client, discoveryPort);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 #endif
 
 #if HARKEN_ENGINE_DEV
         [DllImport(LibraryName, EntryPoint = "Vn_RemoteClientConnect", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_RemoteClientConnect(ulong client, byte* host, uint tcpPort);
+        private static extern VnResult Vn_RemoteClientConnectNative(ulong client, byte* host, uint tcpPort);
+        public static VnResult Vn_RemoteClientConnect(ulong client, byte* host, uint tcpPort)
+        {
+            VnResult result = Vn_RemoteClientConnectNative(client, host, tcpPort);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 #endif
 
 #if HARKEN_ENGINE_DEV
         [DllImport(LibraryName, EntryPoint = "Vn_RemoteClientDisconnect", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_RemoteClientDisconnect(ulong client);
+        private static extern VnResult Vn_RemoteClientDisconnectNative(ulong client);
+        public static VnResult Vn_RemoteClientDisconnect(ulong client)
+        {
+            VnResult result = Vn_RemoteClientDisconnectNative(client);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 #endif
 
 #if HARKEN_ENGINE_DEV
         [DllImport(LibraryName, EntryPoint = "Vn_RemoteClientRequest", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_RemoteClientRequest(ulong client, in VnRemoteClientRequest request, out uint outRequestId);
+        private static extern VnResult Vn_RemoteClientRequestNative(ulong client, in VnRemoteClientRequest request, out uint outRequestId);
+        public static VnResult Vn_RemoteClientRequest(ulong client, in VnRemoteClientRequest request, out uint outRequestId)
+        {
+            VnResult result = Vn_RemoteClientRequestNative(client, in request, out outRequestId);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 #endif
 
 #if HARKEN_ENGINE_DEV
         [DllImport(LibraryName, EntryPoint = "Vn_RemoteClientPoll", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_RemoteClientPoll(ulong client, ref VnRemoteClientEvent outEvent, void* buffer, ulong bufferBytes);
+        private static extern VnResult Vn_RemoteClientPollNative(ulong client, ref VnRemoteClientEvent outEvent, void* buffer, ulong bufferBytes);
+        public static VnResult Vn_RemoteClientPoll(ulong client, ref VnRemoteClientEvent outEvent, void* buffer, ulong bufferBytes)
+        {
+            VnResult result = Vn_RemoteClientPollNative(client, ref outEvent, buffer, bufferBytes);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 #endif
 
 #if HARKEN_ENGINE_DEV
         [DllImport(LibraryName, EntryPoint = "Vn_MonitorOpenEventSession", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_MonitorOpenEventSession(in VnMonitorSessionDesc desc, out ulong outHandle);
+        private static extern VnResult Vn_MonitorOpenEventSessionNative(in VnMonitorSessionDesc desc, out ulong outHandle);
+        public static VnResult Vn_MonitorOpenEventSession(in VnMonitorSessionDesc desc, out ulong outHandle)
+        {
+            VnResult result = Vn_MonitorOpenEventSessionNative(in desc, out outHandle);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 #endif
 
 #if HARKEN_ENGINE_DEV
         [DllImport(LibraryName, EntryPoint = "Vn_MonitorGetEventSessionStatus", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_MonitorGetEventSessionStatus(ulong handle, ref VnMonitorEventSessionStatus outStatus);
+        private static extern VnResult Vn_MonitorGetEventSessionStatusNative(ulong handle, ref VnMonitorEventSessionStatus outStatus);
+        public static VnResult Vn_MonitorGetEventSessionStatus(ulong handle, ref VnMonitorEventSessionStatus outStatus)
+        {
+            VnResult result = Vn_MonitorGetEventSessionStatusNative(handle, ref outStatus);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 #endif
 
 #if HARKEN_ENGINE_DEV
         [DllImport(LibraryName, EntryPoint = "Vn_MonitorCloseSession", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_MonitorCloseSession(ulong handle);
+        private static extern VnResult Vn_MonitorCloseSessionNative(ulong handle);
+        public static VnResult Vn_MonitorCloseSession(ulong handle)
+        {
+            VnResult result = Vn_MonitorCloseSessionNative(handle);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 #endif
 
 #if HARKEN_ENGINE_DEV
         [DllImport(LibraryName, EntryPoint = "Vn_MonitorPoll", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_MonitorPoll(ulong handle, in VnMonitorPollDesc desc, ref VnMonitorPollResult outResult);
+        private static extern VnResult Vn_MonitorPollNative(ulong handle, in VnMonitorPollDesc desc, ref VnMonitorPollResult outResult);
+        public static VnResult Vn_MonitorPoll(ulong handle, in VnMonitorPollDesc desc, ref VnMonitorPollResult outResult)
+        {
+            VnResult result = Vn_MonitorPollNative(handle, in desc, ref outResult);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 #endif
 
         [DllImport(LibraryName, EntryPoint = "Vn_SetValues", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_SetValues(in VnVariableBatchDescV1 desc, ref VnVariableTicketV1 outTicket);
+        private static extern VnResult Vn_SetValuesNative(in VnVariableBatchDescV1 desc, ref VnVariableTicketV1 outTicket);
+        public static VnResult Vn_SetValues(in VnVariableBatchDescV1 desc, ref VnVariableTicketV1 outTicket)
+        {
+            VnResult result = Vn_SetValuesNative(in desc, ref outTicket);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_SetEmitterValues", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_SetEmitterValues(ulong emitter, in VnVariableBatchDescV1 desc, ref VnVariableTicketV1 outTicket);
+        private static extern VnResult Vn_SetEmitterValuesNative(ulong emitter, in VnVariableBatchDescV1 desc, ref VnVariableTicketV1 outTicket);
+        public static VnResult Vn_SetEmitterValues(ulong emitter, in VnVariableBatchDescV1 desc, ref VnVariableTicketV1 outTicket)
+        {
+            VnResult result = Vn_SetEmitterValuesNative(emitter, in desc, ref outTicket);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_ResetValues", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_ResetValues(in VnVariableBatchDescV1 desc, ref VnVariableTicketV1 outTicket);
+        private static extern VnResult Vn_ResetValuesNative(in VnVariableBatchDescV1 desc, ref VnVariableTicketV1 outTicket);
+        public static VnResult Vn_ResetValues(in VnVariableBatchDescV1 desc, ref VnVariableTicketV1 outTicket)
+        {
+            VnResult result = Vn_ResetValuesNative(in desc, ref outTicket);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_QueryVariableTicket", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_QueryVariableTicket(in VnVariableTicketQueryDescV1 desc, ref VnVariableTicketQueryResultV1 @out);
+        private static extern VnResult Vn_QueryVariableTicketNative(in VnVariableTicketQueryDescV1 desc, ref VnVariableTicketQueryResultV1 @out);
+        public static VnResult Vn_QueryVariableTicket(in VnVariableTicketQueryDescV1 desc, ref VnVariableTicketQueryResultV1 @out)
+        {
+            VnResult result = Vn_QueryVariableTicketNative(in desc, ref @out);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_QueryVariable", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_QueryVariable(in VnVariableQueryDescV1 desc, ref VnVariableQueryResultV1 @out);
+        private static extern VnResult Vn_QueryVariableNative(in VnVariableQueryDescV1 desc, ref VnVariableQueryResultV1 @out);
+        public static VnResult Vn_QueryVariable(in VnVariableQueryDescV1 desc, ref VnVariableQueryResultV1 @out)
+        {
+            VnResult result = Vn_QueryVariableNative(in desc, ref @out);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_SetValueByLabelId", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_SetValueByLabelId(VnObjectId variableId, VnObjectId labelId, ulong emitter);
+        private static extern VnResult Vn_SetValueByLabelIdNative(VnObjectId variableId, VnObjectId labelId, ulong emitter);
+        public static VnResult Vn_SetValueByLabelId(VnObjectId variableId, VnObjectId labelId, ulong emitter)
+        {
+            VnResult result = Vn_SetValueByLabelIdNative(variableId, labelId, emitter);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_QueryAbiVersion", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_QueryAbiVersion(ref VnAbiVersionInfo @out);
+        private static extern VnResult Vn_QueryAbiVersionNative(ref VnAbiVersionInfo @out);
+        public static VnResult Vn_QueryAbiVersion(ref VnAbiVersionInfo @out)
+        {
+            VnResult result = Vn_QueryAbiVersionNative(ref @out);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_QueryPackFormatVersion", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_QueryPackFormatVersion(ref VnPackFormatVersionInfo @out);
+        private static extern VnResult Vn_QueryPackFormatVersionNative(ref VnPackFormatVersionInfo @out);
+        public static VnResult Vn_QueryPackFormatVersion(ref VnPackFormatVersionInfo @out)
+        {
+            VnResult result = Vn_QueryPackFormatVersionNative(ref @out);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_QueryVariableCatalog", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_QueryVariableCatalog(ref VnVariableCatalogInfoV1 @out);
+        private static extern VnResult Vn_QueryVariableCatalogNative(ref VnVariableCatalogInfoV1 @out);
+        public static VnResult Vn_QueryVariableCatalog(ref VnVariableCatalogInfoV1 @out)
+        {
+            VnResult result = Vn_QueryVariableCatalogNative(ref @out);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_CreateEmitterEx", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_CreateEmitterEx(in VnEmitterCreateDescV1 desc, out ulong outHandle);
+        private static extern VnResult Vn_CreateEmitterExNative(in VnEmitterCreateDescV1 desc, out ulong outHandle);
+        public static VnResult Vn_CreateEmitterEx(in VnEmitterCreateDescV1 desc, out ulong outHandle)
+        {
+            VnResult result = Vn_CreateEmitterExNative(in desc, out outHandle);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_BeginStreamSource", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_BeginStreamSource(VnObjectId soundId, uint mode, in VnByteSourceDescV1 source, out ulong outRequest);
+        private static extern VnResult Vn_BeginStreamSourceNative(VnObjectId soundId, uint mode, in VnByteSourceDescV1 source, out ulong outRequest);
+        public static VnResult Vn_BeginStreamSource(VnObjectId soundId, uint mode, in VnByteSourceDescV1 source, out ulong outRequest)
+        {
+            VnResult result = Vn_BeginStreamSourceNative(soundId, mode, in source, out outRequest);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_BeginStreamFile", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_BeginStreamFile(VnObjectId soundId, uint mode, byte* utf8Path, out ulong outRequest);
+        private static extern VnResult Vn_BeginStreamFileNative(VnObjectId soundId, uint mode, byte* utf8Path, out ulong outRequest);
+        public static VnResult Vn_BeginStreamFile(VnObjectId soundId, uint mode, byte* utf8Path, out ulong outRequest)
+        {
+            VnResult result = Vn_BeginStreamFileNative(soundId, mode, utf8Path, out outRequest);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_QueryStreamSource", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_QueryStreamSource(ulong request, ref VnStreamSourceInfoV1 outInfo);
+        private static extern VnResult Vn_QueryStreamSourceNative(ulong request, ref VnStreamSourceInfoV1 outInfo);
+        public static VnResult Vn_QueryStreamSource(ulong request, ref VnStreamSourceInfoV1 outInfo)
+        {
+            VnResult result = Vn_QueryStreamSourceNative(request, ref outInfo);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_CancelStreamSource", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_CancelStreamSource(ulong request);
+        private static extern VnResult Vn_CancelStreamSourceNative(ulong request);
+        public static VnResult Vn_CancelStreamSource(ulong request)
+        {
+            VnResult result = Vn_CancelStreamSourceNative(request);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_CommitStreamSource", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_CommitStreamSource(ulong request);
+        private static extern VnResult Vn_CommitStreamSourceNative(ulong request);
+        public static VnResult Vn_CommitStreamSource(ulong request)
+        {
+            VnResult result = Vn_CommitStreamSourceNative(request);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_VisitResidentPackDirectoryV1", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_VisitResidentPackDirectoryV1(in VnResidentPackVisitDescV1 desc);
+        private static extern VnResult Vn_VisitResidentPackDirectoryV1Native(in VnResidentPackVisitDescV1 desc);
+        public static VnResult Vn_VisitResidentPackDirectoryV1(in VnResidentPackVisitDescV1 desc)
+        {
+            VnResult result = Vn_VisitResidentPackDirectoryV1Native(in desc);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_ActivateResidentPackDirectoryV1", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_ActivateResidentPackDirectoryV1(in VnResidentDirectoryActivationV1 desc, ref VnCanonicalPackSetActivationReportV1 outReport);
+        private static extern VnResult Vn_ActivateResidentPackDirectoryV1Native(in VnResidentDirectoryActivationV1 desc, ref VnCanonicalPackSetActivationReportV1 outReport);
+        public static VnResult Vn_ActivateResidentPackDirectoryV1(in VnResidentDirectoryActivationV1 desc, ref VnCanonicalPackSetActivationReportV1 outReport)
+        {
+            VnResult result = Vn_ActivateResidentPackDirectoryV1Native(in desc, ref outReport);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_ActivateNamedResidentDirectoryV1", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_ActivateNamedResidentDirectoryV1(in VnResidentDirectoryActivationV1 desc, ushort* directory, uint directoryUnits, ushort* names, uint nameUnits, void* keys, uint keyCapacity, ref VnCanonicalPackSetActivationReportV1 outReport);
+        private static extern VnResult Vn_ActivateNamedResidentDirectoryV1Native(in VnResidentDirectoryActivationV1 desc, ushort* directory, uint directoryUnits, ushort* names, uint nameUnits, void* keys, uint keyCapacity, ref VnCanonicalPackSetActivationReportV1 outReport);
+        public static VnResult Vn_ActivateNamedResidentDirectoryV1(in VnResidentDirectoryActivationV1 desc, ushort* directory, uint directoryUnits, ushort* names, uint nameUnits, void* keys, uint keyCapacity, ref VnCanonicalPackSetActivationReportV1 outReport)
+        {
+            VnResult result = Vn_ActivateNamedResidentDirectoryV1Native(in desc, directory, directoryUnits, names, nameUnits, keys, keyCapacity, ref outReport);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_PostNamedResidentActionV1", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_PostNamedResidentActionV1(in VnNamedResidentPostV1 desc, out ulong outFiring);
+        private static extern VnResult Vn_PostNamedResidentActionV1Native(in VnNamedResidentPostV1 desc, out ulong outFiring);
+        public static VnResult Vn_PostNamedResidentActionV1(in VnNamedResidentPostV1 desc, out ulong outFiring)
+        {
+            VnResult result = Vn_PostNamedResidentActionV1Native(in desc, out outFiring);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
+
+#if HARKEN_ENGINE_DEV
+        [DllImport(LibraryName, EntryPoint = "Vn_CaptureBusStates", CallingConvention = CallingConvention.Cdecl)]
+        private static extern VnResult Vn_CaptureBusStatesNative(uint firstBusIndex, VnBusState* states, uint capacity, out uint outCount, out uint outNextBusIndex);
+        public static VnResult Vn_CaptureBusStates(uint firstBusIndex, VnBusState* states, uint capacity, out uint outCount, out uint outNextBusIndex)
+        {
+            VnResult result = Vn_CaptureBusStatesNative(firstBusIndex, states, capacity, out outCount, out outNextBusIndex);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
+#endif
+
+        [DllImport(LibraryName, EntryPoint = "Vn_GetRuntimeFaultInfo", CallingConvention = CallingConvention.Cdecl)]
+        private static extern VnResult Vn_GetRuntimeFaultInfoNative(ref VnRuntimeFaultInfoV1 outInfo);
+        public static VnResult Vn_GetRuntimeFaultInfo(ref VnRuntimeFaultInfoV1 outInfo)
+        {
+            VnResult result = Vn_GetRuntimeFaultInfoNative(ref outInfo);
+            return result;
+        }
 
 #if HARKEN_ENGINE_DEV
         [DllImport(LibraryName, EntryPoint = "Vn_MonitorGetEventSessionStatus", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_MonitorGetEventSessionStatusV2(ulong handle, ref VnMonitorEventSessionStatusV2 outStatus);
+        private static extern VnResult Vn_MonitorGetEventSessionStatusV2Native(ulong handle, ref VnMonitorEventSessionStatusV2 outStatus);
+        public static VnResult Vn_MonitorGetEventSessionStatusV2(ulong handle, ref VnMonitorEventSessionStatusV2 outStatus)
+        {
+            VnResult result = Vn_MonitorGetEventSessionStatusV2Native(handle, ref outStatus);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 #endif
 
 #if HARKEN_ENGINE_DEV
         [DllImport(LibraryName, EntryPoint = "Vn_MonitorOpenEventSession", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_MonitorOpenEventSessionV2(in VnMonitorSessionDescV2 desc, out ulong outHandle);
+        private static extern VnResult Vn_MonitorOpenEventSessionV2Native(in VnMonitorSessionDescV2 desc, out ulong outHandle);
+        public static VnResult Vn_MonitorOpenEventSessionV2(in VnMonitorSessionDescV2 desc, out ulong outHandle)
+        {
+            VnResult result = Vn_MonitorOpenEventSessionV2Native(in desc, out outHandle);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 #endif
 
         [DllImport(LibraryName, EntryPoint = "Vn_LoadPack", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_LoadPackV2(in VnPackLoadDesc desc, out ulong outHandle);
+        private static extern VnResult Vn_LoadPackV2Native(in VnPackLoadDesc desc, out ulong outHandle);
+        public static VnResult Vn_LoadPackV2(in VnPackLoadDesc desc, out ulong outHandle)
+        {
+            VnResult result = Vn_LoadPackV2Native(in desc, out outHandle);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
         [DllImport(LibraryName, EntryPoint = "Vn_ReplacePack", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_ReplacePackV2(ulong handle, in VnPackLoadDesc desc);
+        private static extern VnResult Vn_ReplacePackV2Native(ulong handle, in VnPackLoadDesc desc);
+        public static VnResult Vn_ReplacePackV2(ulong handle, in VnPackLoadDesc desc)
+        {
+            VnResult result = Vn_ReplacePackV2Native(handle, in desc);
+            RuntimeFaultDiagnostics.ObserveResult(result);
+            return result;
+        }
 
     }
 }

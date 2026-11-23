@@ -47,6 +47,8 @@ VnMonitorDropSummary ProducerDropForTests();
 std::uint32_t ProducerRingCapacityForTests();
 void StopDrainForTests();
 void StartDrainForTests();
+void SetMonitorProcessBudgetForTests(std::uint64_t bytes);
+void FailDrainForTests(unsigned kind);
 bool DrainRunningForTests();
 bool CaptureResourcesAllocatedForTests();
 void SetFailCaptureResourcesForTests(bool fail);

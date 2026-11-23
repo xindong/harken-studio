@@ -100,7 +100,7 @@ struct ResolvedPlayablePropertyCutViewV1 {
 
 struct ResolvedPlayablePropertyCutConfigV1 {
     std::uint32_t maxPathRows = kPlaybackPathRowCapacity;
-    std::uint32_t maxSends = 16;
+    std::uint32_t maxSends = 16; // Legacy hint; Send storage follows actual content.
     std::uint32_t maxEffectNodes = 64;
     std::uint32_t maxEffectParams = 256;
     std::uint32_t maxEffectEdges = 64;

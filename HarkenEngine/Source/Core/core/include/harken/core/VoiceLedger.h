@@ -219,7 +219,9 @@ public:
                          std::size_t monitorSelectionCapacity = 0,
                          DirectVoiceStoragePreparation prepareDirectVoiceStorage = nullptr,
                          void* directVoiceStorageContext = nullptr,
-                         std::uint32_t generationFloor = 0);
+                         std::uint32_t generationFloor = 0,
+                         std::uint32_t initialRender = UINT32_MAX);
+    bool PrepareRenderOwners(std::uint32_t count) noexcept { return m_renderOwners.ConstructThrough(count); }
     std::uint32_t GenerationHighWater() const noexcept;
     ~VoiceLedger();
     VoiceLedger(const VoiceLedger&) = delete;
@@ -838,7 +840,7 @@ private:
     std::uint64_t m_monitorControlTicket = 0;
     std::uint64_t m_monitorControlUnavailable = 0;
 #endif
-    std::vector<ReverseRenderEntry> m_renderOwners;
+    StableRowStorage<ReverseRenderEntry> m_renderOwners;
 #if HARKEN_ENGINE_DEV
     std::shared_ptr<MonitorSelectionStorage> m_monitorSelections;
 #endif

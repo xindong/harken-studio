@@ -656,7 +656,6 @@ int RunPackPlay(int argc, char** argv) {
     config.maxCatalogEntries = inspection.recommendedMaxCatalogEntries;
     config.maxCatalogBytes = inspection.recommendedCatalogBytes;
     config.maxActions = std::max(config.maxActions, inspection.recommendedMaxActions);
-    config.maxResidentDefinitionBytes = inspection.recommendedResidentDefinitionBytes;
     const VnResult init = Vn_Init(&config);
     if (init != VN_OK) {
         const harkenhost::PackPlayInitFailure failure =

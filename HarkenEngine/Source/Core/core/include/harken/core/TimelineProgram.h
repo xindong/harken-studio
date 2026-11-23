@@ -21,6 +21,8 @@
 #include <cstdint>
 #include <utility>
 #include <vector>
+#include <memory>
+#include <span>
 
 namespace harken {
 
@@ -199,7 +201,15 @@ struct TimelineVoiceInstallDesc {
     std::uint64_t streamLoopEndFrame = 0;
     bool timelineResync = false;
     std::uint32_t bindingCount = 0;
-    TimelineVoiceBindingInstall bindingStorage[kMaxVoiceBindingInstanceSlots]{};
+    std::shared_ptr<const std::vector<TimelineVoiceBindingInstall>> bindingStorage;
+    std::span<const TimelineVoiceBindingInstall> bindings{};
+    void SetBindings(std::vector<TimelineVoiceBindingInstall> rows) {
+        bindingStorage = rows.empty() ? nullptr :
+            std::make_shared<const std::vector<TimelineVoiceBindingInstall>>(std::move(rows));
+        bindings = bindingStorage ? std::span<const TimelineVoiceBindingInstall>(*bindingStorage) :
+            std::span<const TimelineVoiceBindingInstall>{};
+        bindingCount = static_cast<std::uint32_t>(bindings.size());
+    }
     PlaybackPath playbackPath{};
     VnObjectId soundId{};
     VnObjectId outputBusId{};
@@ -217,7 +227,15 @@ struct TimelineVoiceInstallDesc {
     float attenuationDistanceScaling = 1.0f;
     VnObjectId attenuationId{};
     std::uint32_t sendCount = 0;
-    TimelineVoiceSendInstall sends[kTimelineMaxVoiceSends]{};
+    std::shared_ptr<const std::vector<TimelineVoiceSendInstall>> sendStorage;
+    std::span<const TimelineVoiceSendInstall> sends{};
+    void SetSends(std::vector<TimelineVoiceSendInstall> rows) {
+        sendStorage = rows.empty() ? nullptr :
+            std::make_shared<const std::vector<TimelineVoiceSendInstall>>(std::move(rows));
+        sends = sendStorage ? std::span<const TimelineVoiceSendInstall>(*sendStorage) :
+            std::span<const TimelineVoiceSendInstall>{};
+        sendCount = static_cast<std::uint32_t>(sends.size());
+    }
     std::uint32_t effectCount = 0;
     TimelineVoiceEffectInstall effects[kTimelineMaxVoiceEffects]{};
     std::uint32_t loopCount = 1;

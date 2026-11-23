@@ -8,6 +8,8 @@
 // assertions failed under the pre-fix implementation, which used a strict '>'
 // resync and omitted post-copy revalidation.
 #include "harken/core/NotificationQueue.h"
+#include "AllocationProbe.h"
+#include "HarkenApiInternal.h"
 
 #include <harken/Harken.h>
 
@@ -61,6 +63,28 @@ TEST(NotificationQueue, DepthOneClampsCapacityToTwo) {
     harken::NotificationQueue queue(1);
 
     EXPECT_EQ(2u, queue.Capacity());
+}
+
+TEST(NotificationQueue, GrowthAllocationFailureReportsOutOfMemoryAndCanRetry) {
+    harken::NotificationQueue queue(4);
+    ASSERT_TRUE(queue.Push(MakeNotification(17)));
+    const auto grow = [&]() -> VnResult {
+        return queue.GrowOnLogicThread(8) ? VN_OK : VN_BACKPRESSURE;
+    };
+
+    allocation_probe::count = 0;
+    allocation_probe::failAt = 1;
+    allocation_probe::enabled = true;
+    const auto result = harken::detail::InvokeApi(grow);
+    allocation_probe::enabled = false;
+    allocation_probe::failAt = 0;
+
+    EXPECT_EQ(VN_OUT_OF_MEMORY, result);
+    EXPECT_EQ(4u, queue.Capacity());
+    ASSERT_EQ(VN_OK, harken::detail::InvokeApi(grow));
+    VnNotification item{};
+    ASSERT_TRUE(queue.TryPop(item));
+    EXPECT_EQ(17u, item.voiceHandle);
 }
 
 TEST(NotificationQueue, DepthOneOverflowDrainsLatestAndRemainsUsable) {

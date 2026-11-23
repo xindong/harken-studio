@@ -76,7 +76,7 @@ TEST(BusFilter, MixFilterChangesDirectAndSend) {
 
     ASSERT_EQ(VN_OK, Vn_SetBusOutputVolume(kBusA, -120.0f, 0));
     Capture sendOnly;
-    PumpAndCapture(session.Engine(), 2, sendOnly);
+    PumpAndCapture(session.Engine(), 8, sendOnly);
     ASSERT_NEAR(0.5f, sendOnly.left.back(), 1e-4f);
     ASSERT_EQ(VN_OK, Vn_SetBusOutputVolume(kBusA, 0.0f, 0));
 
@@ -195,7 +195,7 @@ TEST(BusFilter, OutputFilterChangesDirectNotSend) {
 
     ASSERT_EQ(VN_OK, Vn_SetBusOutputVolume(kBusA, -120.0f, 0));
     Capture sendOnly;
-    PumpAndCapture(session.Engine(), 4, sendOnly);
+    PumpAndCapture(session.Engine(), 8, sendOnly);
     ASSERT_NEAR(0.5f, sendOnly.left.back(), 1e-4f);
 }
 
@@ -219,7 +219,7 @@ TEST(BusFilter, OutputFilterMatchesOutputVolumeSendIsolation) {
 
     ASSERT_EQ(VN_OK, Vn_SetBusOutputVolume(kBusA, -120.0f, 0));
     Capture volumeMutedDirect;
-    PumpAndCapture(session.Engine(), 2, volumeMutedDirect);
+    PumpAndCapture(session.Engine(), 8, volumeMutedDirect);
     ASSERT_NEAR(0.5f, volumeMutedDirect.left.back(), 1e-4f);
     ASSERT_EQ(VN_OK, Vn_SetBusOutputVolume(kBusA, 0.0f, 0));
 

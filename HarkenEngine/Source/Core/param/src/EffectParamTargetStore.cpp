@@ -1,3 +1,4 @@
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/param/EffectParamTargetStore.h"
 #include "harken/param/BindingTable.h"
 
@@ -14,8 +15,8 @@ EffectParamTargetStore::EffectParamTargetStore(std::uint32_t sampleRate,
                                                std::uint32_t retiringCapacity)
     : m_sampleRate(sampleRate), m_activeCapacity(capacity),
       m_totalCapacity(capacity + retiringCapacity) {
-    if (retiringCapacity > UINT32_MAX - capacity || !m_records.Reserve(m_totalCapacity))
-        throw std::bad_alloc{};
+    if (retiringCapacity > UINT32_MAX - capacity)
+        throw harken::detail::LogicPreparationFailure{};
 }
 
 bool EffectParamTargetStore::PrepareAdditionalRecords(std::uint32_t count) noexcept {
@@ -24,7 +25,7 @@ bool EffectParamTargetStore::PrepareAdditionalRecords(std::uint32_t count) noexc
         try {
             if (m_projection.size() < required) m_projection.resize(required);
             return true;
-        } catch (...) { return false; }
+        } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return false; }
     });
 }
 
@@ -977,6 +978,13 @@ std::uint32_t EffectParamTargetStore::TargetRevision(
     const Record* record = FindExact(scope, objectId, objectGeneration, slot,
                                      paramIndex, true);
     return record == nullptr ? 0 : record->revision;
+}
+
+std::uint32_t EffectParamTargetStore::InstalledSlotRevision(
+    Scope scope, std::uint64_t objectId, std::uint32_t generation,
+    std::uint32_t slot, std::uint32_t type) const noexcept {
+    const auto* record = FindExact(scope, objectId, generation, slot, 0, false);
+    return record != nullptr && record->effectType == type ? record->revision : 0;
 }
 
 bool EffectParamTargetStore::ExactTargetRevision(

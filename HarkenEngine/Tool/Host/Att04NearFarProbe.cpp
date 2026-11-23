@@ -159,7 +159,6 @@ int RunAtt04NearFarProbe(int argc, char** argv) {
     config.maxActions = std::max(64u, inspection.recommendedMaxActions);
     config.maxCatalogEntries = inspection.recommendedMaxCatalogEntries;
     config.maxCatalogBytes = inspection.recommendedCatalogBytes;
-    config.maxResidentDefinitionBytes = inspection.recommendedResidentDefinitionBytes;
     const VnResult inited = Vn_Init(&config);
     if (inited != VN_OK) {
         std::fprintf(stderr, "error: att04-nearfar Vn_Init failed VnResult=%d\n",
