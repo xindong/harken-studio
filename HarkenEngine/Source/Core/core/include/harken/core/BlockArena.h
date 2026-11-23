@@ -37,8 +37,9 @@ namespace harken {
 
 class BlockArena {
 public:
-    enum class BackingMode { Full, OnDemand };
-    explicit BlockArena(std::uint32_t capacityBytes, BackingMode mode = BackingMode::Full);
+    enum class BackingMode { Full, OnDemand, Automatic };
+    explicit BlockArena(std::uint32_t capacityBytes, BackingMode mode = BackingMode::Full,
+                        std::uint32_t minimumBytes = 0);
 
     // Serialized control owner only. Prepare both ends before accepting their users.
     bool PrepareBacking(std::uint64_t lowBytes, std::uint64_t highBytes) noexcept;

@@ -4009,6 +4009,63 @@ static_assert(offsetof(VnNamedResidentPostV1, emitter) == 56,
 static_assert(offsetof(VnNamedResidentPostV1, callerSeed) == 64,
               "wire table offset drift: VnNamedResidentPostV1.callerSeed");
 
+static_assert(sizeof(VnBusState) == 48,
+              "wire table size drift: VnBusState");
+static_assert(offsetof(VnBusState, busId) == 0,
+              "wire table offset drift: VnBusState.busId");
+static_assert(offsetof(VnBusState, blockSequence) == 16,
+              "wire table offset drift: VnBusState.blockSequence");
+static_assert(offsetof(VnBusState, busIndex) == 24,
+              "wire table offset drift: VnBusState.busIndex");
+static_assert(offsetof(VnBusState, busGeneration) == 28,
+              "wire table offset drift: VnBusState.busGeneration");
+static_assert(offsetof(VnBusState, flags) == 32,
+              "wire table offset drift: VnBusState.flags");
+static_assert(offsetof(VnBusState, peakPreFader) == 36,
+              "wire table offset drift: VnBusState.peakPreFader");
+static_assert(offsetof(VnBusState, peakPostFader) == 40,
+              "wire table offset drift: VnBusState.peakPostFader");
+static_assert(offsetof(VnBusState, peakPostEffects) == 44,
+              "wire table offset drift: VnBusState.peakPostEffects");
+
+static_assert(sizeof(VnRuntimeFaultInfoV1) == 40,
+              "wire table size drift: VnRuntimeFaultInfoV1");
+static_assert(offsetof(VnRuntimeFaultInfoV1, structSize) == 0,
+              "wire table offset drift: VnRuntimeFaultInfoV1.structSize");
+static_assert(offsetof(VnRuntimeFaultInfoV1, category) == 4,
+              "wire table offset drift: VnRuntimeFaultInfoV1.category");
+static_assert(offsetof(VnRuntimeFaultInfoV1, line) == 8,
+              "wire table offset drift: VnRuntimeFaultInfoV1.line");
+static_assert(offsetof(VnRuntimeFaultInfoV1, reserved) == 12,
+              "wire table offset drift: VnRuntimeFaultInfoV1.reserved");
+static_assert(offsetof(VnRuntimeFaultInfoV1, repeatCount) == 16,
+              "wire table offset drift: VnRuntimeFaultInfoV1.repeatCount");
+static_assert(offsetof(VnRuntimeFaultInfoV1, file) == 24,
+              "wire table offset drift: VnRuntimeFaultInfoV1.file");
+static_assert(offsetof(VnRuntimeFaultInfoV1, function) == 32,
+              "wire table offset drift: VnRuntimeFaultInfoV1.function");
+
+static_assert(sizeof(VnPreviewPlaybackPathV2) == 1600,
+              "wire table size drift: VnPreviewPlaybackPathV2");
+static_assert(offsetof(VnPreviewPlaybackPathV2, structSize) == 0,
+              "wire table offset drift: VnPreviewPlaybackPathV2.structSize");
+static_assert(offsetof(VnPreviewPlaybackPathV2, rowCount) == 4,
+              "wire table offset drift: VnPreviewPlaybackPathV2.rowCount");
+static_assert(offsetof(VnPreviewPlaybackPathV2, sendCount) == 8,
+              "wire table offset drift: VnPreviewPlaybackPathV2.sendCount");
+static_assert(offsetof(VnPreviewPlaybackPathV2, reserved0) == 12,
+              "wire table offset drift: VnPreviewPlaybackPathV2.reserved0");
+static_assert(offsetof(VnPreviewPlaybackPathV2, sendOffset) == 16,
+              "wire table offset drift: VnPreviewPlaybackPathV2.sendOffset");
+static_assert(offsetof(VnPreviewPlaybackPathV2, voiceInstance) == 24,
+              "wire table offset drift: VnPreviewPlaybackPathV2.voiceInstance");
+static_assert(offsetof(VnPreviewPlaybackPathV2, soundId) == 32,
+              "wire table offset drift: VnPreviewPlaybackPathV2.soundId");
+static_assert(offsetof(VnPreviewPlaybackPathV2, outputBusId) == 48,
+              "wire table offset drift: VnPreviewPlaybackPathV2.outputBusId");
+static_assert(offsetof(VnPreviewPlaybackPathV2, rows) == 64,
+              "wire table offset drift: VnPreviewPlaybackPathV2.rows");
+
 } // namespace harkenremote
 
 #endif // HARKEN_REMOTE_WIRE_LAYOUT_ASSERTS_H

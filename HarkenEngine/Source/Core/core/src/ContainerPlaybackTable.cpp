@@ -129,9 +129,6 @@ void ContainerPlaybackTable::ConsumePreparedCommit(PreparedCommitProof&& proof) 
     proof.original_ = nullptr;
 }
 
-ContainerPlaybackTable::ContainerPlaybackTable(std::uint32_t capacity)
-    : rows_(capacity) {}
-
 ContainerPlaybackRow* ContainerPlaybackTable::Find(
     PlayableInstanceHandle instance) noexcept {
     if (instance == 0) {
@@ -201,6 +198,8 @@ bool ContainerPlaybackTable::PrepareInternal(PlayableInstanceTable* instanceOwne
         if (row.instance == instance && (row.live || row.phase == ContainerPlaybackPhase::Preparing ||
             row.phase == ContainerPlaybackPhase::PreparedCommitHeld)) return false;
     }
+    const auto occupied = liveCount_ + preparedCount_;
+    if (occupied == UINT32_MAX || !PrepareStorage(occupied + 1u)) return false;
     for (std::uint32_t index = 0; index < rows_.size(); ++index) {
         ContainerPlaybackRow& row = rows_[index];
         if (row.live || row.phase == ContainerPlaybackPhase::Preparing ||
@@ -425,7 +424,7 @@ ContainerPlaybackTable::ConsumeNaturalSelectionOutcome(
 
 PreparedPlayableTreeStep::PreparedPlayableTreeStep(std::uint32_t capacity, bool prepareFullStorage)
     : maxReservations_(capacity == 0 ? 1u : capacity), parentLinkProof_(0u) {
-    if (prepareFullStorage && !PrepareStorage()) throw std::bad_alloc{};
+    if (prepareFullStorage && !PrepareStorage()) throw harken::detail::LogicPreparationFailure{};
 }
 
 bool PreparedPlayableTreeStep::PrepareStorage() noexcept {
@@ -457,7 +456,7 @@ bool PreparedPlayableTreeStep::PrepareStorage() noexcept {
         reserve(parentLinkRequests_, links);
         parentLinkRequests_.resize(links);
         return parentLinkProof_.PrepareStorage(links);
-    } catch (...) { return false; }
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return false; }
 }
 
 PreparedPlayableTreeStep::PreparedPlayableTreeStep(
@@ -1304,11 +1303,11 @@ bool PlayableTreeExecutor::ProveInstanceCommits(PlayableInstanceTable* expectedO
 bool PlayableTreeExecutor::IssueOriginalPreparedInstanceLifetimes(
     PlayableInstanceTable& expectedOwner,
     std::span<const PreparedPlayableInstance* const> originals,
-    std::span<PlayableInstanceTable::OriginalLifetimePin> stableBaselines) noexcept {
+    GrowingRowStorage<PlayableInstanceTable::OriginalLifetimePin>& stableBaselines) noexcept {
     const auto stepCount = step_.instances_.size() + step_.adoptedInstanceCount_;
     const auto count = stepCount + (externalInstance_ == nullptr ? 0u : 1u);
     if (step_.Committed() || !step_.instanceCommitProofsRequired_ || !Validate() ||
-        count == 0 || originals.size() != count || stableBaselines.size() > expectedOwner.Capacity() ||
+        count == 0 || originals.size() != count ||
         (externalInstance_ != nullptr && (instanceTable_ != &expectedOwner ||
             !externalInstanceCommitProof_.AssociatedWith(*externalInstance_)))) return false;
     const auto originalAt = [&](std::size_t index) -> const PreparedPlayableInstance* {
@@ -1341,6 +1340,16 @@ bool PlayableTreeExecutor::IssueOriginalPreparedInstanceLifetimes(
     return false;
 }
 
+bool PlayableTreeExecutor::PrepareReservationCount(std::uint32_t count) noexcept {
+    if (count <= step_.maxReservations_) return true;
+    if (!CanGrowReservations()) return false;
+    const auto previous = step_.maxReservations_;
+    step_.maxReservations_ = count;
+    if (step_.PrepareStorage()) return true;
+    step_.maxReservations_ = previous;
+    return false;
+}
+
 bool PlayableTreeExecutor::PrepareStorage() noexcept {
     if (memguard::IsAudioTagged() || !step_.PrepareStorage()) return false;
     try {
@@ -1350,7 +1359,7 @@ bool PlayableTreeExecutor::PrepareStorage() noexcept {
         detail::CheckedGrow(committedOwnerTokens_, kOwnerTokenCapacity, detail::LogicAllocSite::PlayableTreeStorage);
         committedOwnerTokens_.resize(kOwnerTokenCapacity);
         return true;
-    } catch (...) { return false; }
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return false; }
 }
 
 PlayableTreeExecutor::PlayableTreeExecutor(PlayableTreeExecutor&& other) noexcept

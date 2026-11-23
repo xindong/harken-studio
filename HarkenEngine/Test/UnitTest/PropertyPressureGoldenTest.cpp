@@ -538,12 +538,12 @@ TEST(PropertyPressureGolden,
                 renderedBlock, 0, oldAmplitude, renderTolerance);
             const bool atNewAmplitude = BlockIsFlatAt(
                 renderedBlock, 0, newAmplitude, renderTolerance);
-            const bool atPartialAmplitude = BlockIsFlatAt(
-                renderedBlock, 0, partialAmplitude, renderTolerance);
-            EXPECT_TRUE(atOldAmplitude || atPartialAmplitude ||
-                        atNewAmplitude)
-                << "tick " << tick
-                << " rendered tail=" << BlockTail(renderedBlock, 0);
+            // Accepted target changes may be inside their 5 ms ramps. Keep
+            // the publication deadline and final exact plateau checks below.
+            for (const float sample : renderedBlock.left) {
+                EXPECT_GE(sample, std::min({oldAmplitude, partialAmplitude, newAmplitude}) - renderTolerance);
+                EXPECT_LE(sample, std::max({oldAmplitude, partialAmplitude, newAmplitude}) + renderTolerance);
+            }
             if (deferringTick && tick == 0) {
                 EXPECT_TRUE(atOldAmplitude)
                     << "deferred tick " << tick
@@ -714,7 +714,7 @@ TEST(PropertyPressureGolden, ConfigCapacityEstimateIsInformationalAndNotRuntimeP
         std::uint32_t queueDepth;
         std::uint64_t estimate;
         std::uint32_t resolvedQueueDepth;
-    } cases[] = {{0, 0, 1600, 256}, {8, 4, 112, 4}, {1024, 256, 6208, 256}};
+    } cases[] = {{0, 0, 98306, 256}, {8, 4, 50, 4}, {1024, 256, 6146, 256}};
     for (const auto& test : cases) {
         SCOPED_TRACE(test.voices);
         LogCodeSink sink;
@@ -750,7 +750,7 @@ TEST(PropertyPressureGolden, ConfigCapacityEstimateIsInformationalAndNotRuntimeP
     {
         LogCodeSink sink;
         VnConfig config = MakeNullConfig(2, kBlockFrames, 48000);
-        // 2 * 6 spatial + 64 bus rows = 76 <= 256: within the queue.
+        // 2 * 6 spatial + 2 Master bus rows = 14 <= 256: within the queue.
         config.logCallback = &LogCodeSink::Callback;
         config.logUserData = &sink;
         EngineSession session(config);

@@ -8,6 +8,7 @@
 // standalone here; the live bus-volume publication over it is covered by
 // the meter/sidechain suites.
 #include "harken/param/BusTargetStore.h"
+#include "harken/param/BindingTable.h"
 
 #include <cmath>
 #include <gtest/gtest.h>
@@ -32,12 +33,67 @@ TEST(BusTargetStore, FreshStoreReducesToNeutralBaseOnEveryBus) {
     }
 }
 
+TEST(BusTargetStore, ReclaimedActivityKeepsSettingsAndSameTickDirectRamp) {
+    BusTargetStore store(2);
+    harken::BindingTable bindings(1, 1, 2);
+    constexpr auto target = harken::kBusTargetBusVolume;
+    store.InitializeBusGeneration(1, 7);
+    store.SetSlot(1, target, BusTargetStore::kSlotAuthoredIndex, -2.0);
+    store.NoteApiDirect(1, target, -3.0f, 70, -5.0f);
+    EXPECT_EQ(0u, store.ActivityCount());
+    ASSERT_TRUE(store.PrepareActivity(1, target));
+    store.ReleaseUnusedActivities(bindings);
+    EXPECT_EQ(0u, store.ActivityCount());
+    EXPECT_FLOAT_EQ(-5.0f, store.Reduce(1, target));
+    EXPECT_FLOAT_EQ(-5.0f, store.LastCommitted(1, target));
+    EXPECT_EQ(70u, store.LastPublishedRampMs(1, target));
+    store.SetSlot(1, target, BusTargetStore::kSlotVariableIndex, -1.0);
+    store.MarkVariableChanged(1, target, 20);
+    unsigned visits = 0;
+    store.FlushDirty([&](auto bus, auto property, float value, auto ramp) {
+        ++visits;
+        EXPECT_EQ(1u, bus);
+        EXPECT_EQ(target, property);
+        EXPECT_FLOAT_EQ(-6.0f, value);
+        EXPECT_EQ(70u, ramp);
+        return false;
+    });
+    EXPECT_EQ(1u, visits);
+    store.ReleaseUnusedActivities(bindings);
+    EXPECT_EQ(1u, store.ActivityCount());
+    store.ClearSlot(1, target, BusTargetStore::kSlotVariableIndex);
+    store.MarkCommitted(1, target, -5.0f, 20);
+    store.ReleaseUnusedActivities(bindings);
+    EXPECT_EQ(0u, store.ActivityCount());
+    EXPECT_FLOAT_EQ(-5.0f, store.LastCommitted(1, target));
+}
+
+TEST(BusTargetStore, ActivityCopyOwnsProjectionAndReclaimsIndependently) {
+    BusTargetStore store(1);
+    harken::BindingTable bindings(1, 1, 1);
+    constexpr auto target = harken::kBusTargetBusVolume;
+    store.SetSlot(0, target, BusTargetStore::kSlotVariableIndex, -3.0);
+    store.MarkVariableChanged(0, target, 23);
+    BusTargetStore copy(store);
+    ASSERT_TRUE(copy.BeginVariableProjection());
+    copy.SetSlot(0, target, BusTargetStore::kSlotVariableIndex, -12.0);
+    copy.RestoreVariableProjection();
+    EXPECT_FLOAT_EQ(-3.0f, copy.Reduce(0, target));
+    copy.ClearSlot(0, target, BusTargetStore::kSlotVariableIndex);
+    copy.MarkCommitted(0, target, 0, 0);
+    copy.ReleaseUnusedActivities(bindings);
+    EXPECT_EQ(0u, copy.ActivityCount());
+    EXPECT_FLOAT_EQ(-3.0f, store.Reduce(0, target));
+    EXPECT_EQ(23u, store.PendingRampMs(0, target));
+}
+
 TEST(BusTargetStore, VariableProjectionRestoresDemandRampAndVariableSlot) {
     BusTargetStore store(2);
     constexpr auto target = harken::kBusTargetBusVolume;
     store.SetSlot(0, target, BusTargetStore::kSlotApiDirectIndex, -2.0f);
     store.SetSlot(0, target, BusTargetStore::kSlotVariableIndex, -3.0f);
     store.MarkVariableChanged(0, target, 23);
+    ASSERT_TRUE(store.PrepareActivity(1, target));
     store.MarkPendingInput(1, target);
     const auto demand = store.DemandCount();
     ASSERT_TRUE(store.BeginVariableProjection());
@@ -148,6 +204,7 @@ TEST(BusTargetStore, MeterProbeOverflowDoesNotWriteSlot) {
     store.InitializeBusGeneration(kBus, kGeneration);
     store.SetSlot(kBus, kTarget, BusTargetStore::kSlotAuthoredIndex, 3.0e38f);
     store.MarkCommitted(kBus, kTarget, 3.0e38f, 0);
+    ASSERT_TRUE(store.PrepareActivity(kBus, kTarget));
     store.BeginMeterProbeSweep();
     store.AccumulateMeterProbe(kBus, kGeneration, kTarget, 3.0e38f, true, 17);
     store.EndMeterProbeSweep();

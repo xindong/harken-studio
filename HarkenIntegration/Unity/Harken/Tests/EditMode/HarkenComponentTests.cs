@@ -13,6 +13,44 @@ namespace Harken.Unity.Tests
     public sealed class HarkenComponentTests
     {
         [Test]
+        public void ManagedPlaybackPreservesLiveHandlesAcrossGrowthAndSlotReuse()
+        {
+            var table = new HarkenAudioSystem.ManagedFiringTable();
+            for (int i = 0; i < 257; ++i)
+            {
+                int slot = table.Reserve();
+                table[slot].Firing = new ActionFiring((ulong)i + 1);
+            }
+            Assert.That(table.Count, Is.EqualTo(257));
+            var returned = new System.Collections.Generic.HashSet<int>();
+            for (int slot = table.First; slot >= 0;)
+            {
+                ref var row = ref table[slot];
+                int next = row.Next;
+                if (row.Firing.Handle % 2 != 0)
+                {
+                    returned.Add(slot);
+                    table.Return(slot);
+                }
+                slot = next;
+            }
+            int reused = table.Reserve();
+            Assert.That(returned, Does.Contain(reused));
+            Assert.That(table[reused].Firing.IsValid, Is.False);
+            table[reused].Firing = new ActionFiring(258);
+            int current = table.First;
+            for (ulong handle = 2; handle <= 258; handle += 2)
+            {
+                Assert.That(current, Is.GreaterThanOrEqualTo(0));
+                Assert.That(table[current].Firing.Handle, Is.EqualTo(handle));
+                current = table[current].Next;
+            }
+            Assert.That(current, Is.EqualTo(-1));
+            Assert.That(table.Last, Is.EqualTo(reused));
+            Assert.That(table.Count, Is.EqualTo(129));
+        }
+
+        [Test]
         public void ComponentsAttachToOrdinaryGameObjects()
         {
             GameObject owner = new GameObject("Runtime");
@@ -53,6 +91,43 @@ namespace Harken.Unity.Tests
                 LogAssert.NoUnexpectedReceived();
             }
             finally { Object.DestroyImmediate(owner); }
+        }
+
+        [Test]
+        public void RuntimeFaultReportsOneConsoleErrorAndOneOwnerEvent()
+        {
+            var owner = new GameObject("Runtime fault routing");
+            owner.SetActive(false);
+            var runtime = owner.AddComponent<HarkenAudioSystem>();
+            var handler = (Action<RuntimeFaultInfo>)Delegate.CreateDelegate(typeof(Action<RuntimeFaultInfo>),
+                runtime, typeof(HarkenAudioSystem).GetMethod("HandleRuntimeFault",
+                    BindingFlags.Instance | BindingFlags.NonPublic));
+            int events = 0;
+            runtime.RuntimeRecreationRequired += (sender, info) =>
+            {
+                Assert.That(sender, Is.SameAs(runtime));
+                ++events;
+                RuntimeFaultDiagnostics.ObserveResult(VnResult.VN_RUNTIME_RECREATE_REQUIRED);
+            };
+            RuntimeFaultDiagnostics.Reset();
+            RuntimeFaultDiagnostics.Reported += handler;
+            try
+            {
+                LogAssert.Expect(LogType.Error, "Runtime recreation required; fault details unavailable.");
+                RuntimeFaultDiagnostics.ObserveResult(VnResult.VN_RUNTIME_RECREATE_REQUIRED);
+                typeof(HarkenAudioSystem).GetMethod("HandleLog", BindingFlags.Instance | BindingFlags.NonPublic)
+                    .Invoke(runtime, new object[] { (uint)VnLogLevel.VN_LOG_ERROR,
+                        VnConstants.VN_LOG_RUNTIME_RECREATE_REQUIRED, "duplicate", null });
+                RuntimeFaultDiagnostics.ObserveResult(VnResult.VN_RUNTIME_RECREATE_REQUIRED);
+                Assert.That(events, Is.EqualTo(1));
+                LogAssert.NoUnexpectedReceived();
+            }
+            finally
+            {
+                RuntimeFaultDiagnostics.Reported -= handler;
+                RuntimeFaultDiagnostics.Reset();
+                Object.DestroyImmediate(owner);
+            }
         }
 
         [Test]

@@ -12,7 +12,8 @@ namespace Harken
         private readonly bool resident;
         private const int HeaderBytes = 16;
         private const int DigestBytes = 32;
-        private const int MaxPart = PackStorage.MaxGzipMemberBytes;
+        // HRP input and expanded parts are each held in a single byte array.
+        private const int MaxArrayBytes = 0x7FFFFFC7;
 
         private static readonly bool IsWindows = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
 
@@ -131,7 +132,7 @@ namespace Harken
 
         [DllImport("cabinet.dll", ExactSpelling = true)]
         private static extern bool CreateDecompressor(uint algorithm, IntPtr allocation, out IntPtr handle);
-        [DllImport("cabinet.dll", ExactSpelling = true)]
+        [DllImport("cabinet.dll", ExactSpelling = true, SetLastError = true)]
         private static extern unsafe bool Decompress(IntPtr handle, byte* input, UIntPtr inputLength,
             byte* output, UIntPtr outputLength, out UIntPtr written);
         [DllImport("cabinet.dll", ExactSpelling = true)]
@@ -140,36 +141,51 @@ namespace Harken
         private static extern unsafe int BCryptHash(IntPtr algorithm, IntPtr secret, uint secretLength,
             byte* input, uint length, byte* output, uint outputLength);
 
-        private static unsafe VnResult Unpack(byte[] image, out byte[] bytes, out byte[] json)
+        private static unsafe VnResult ReadResident(SafeFileHandle handle, int size, ulong available,
+            out byte[] bytes, out byte[] json)
         {
             bytes = json = null;
-            if (image.Length < HeaderBytes + DigestBytes)
+            uint* header = stackalloc uint[4];
+            ReadExactly(handle, (byte*)header, HeaderBytes);
+            uint format = header[0], length = header[1], meta = header[2], compressed = header[3];
+            if ((format != 0x31505248 && format != 0x32505248) ||
+                length == 0 || length > MaxArrayBytes || meta == 0 || compressed == 0 ||
+                HeaderBytes + (ulong)meta + compressed + DigestBytes != (ulong)size)
                 return VnResult.VN_BAD_PACK;
-            uint format = BitConverter.ToUInt32(image, 0);
-            if (format != 0x31505248 && format != 0x32505248)
-                return VnResult.VN_BAD_PACK;
-            uint length = BitConverter.ToUInt32(image, 4), meta = BitConverter.ToUInt32(image, 8);
-            uint compressed = BitConverter.ToUInt32(image, 12);
-            if (length == 0 || length > MaxPart || meta == 0 || meta > MaxPart || compressed == 0 ||
-                HeaderBytes + (ulong)meta + compressed + DigestBytes != (ulong)image.Length)
-                return VnResult.VN_BAD_PACK;
+            if ((ulong)size + length + meta > available)
+                return VnResult.VN_PACK_RESIDENT_CAPACITY;
+
+            // The locked file's header and budget now cover every full-size array below.
+            var image = new byte[size];
             fixed (byte* data = image)
             {
+                Buffer.MemoryCopy(header, data, HeaderBytes, HeaderBytes);
+                ReadExactly(handle, data + HeaderBytes, size - HeaderBytes);
                 byte* digest = stackalloc byte[DigestBytes];
                 int count = image.Length - DigestBytes;
                 if (BCryptHash(new IntPtr(0x41), IntPtr.Zero, 0, data, (uint)count, digest, DigestBytes) != 0)
                     return VnResult.VN_DEVICE_ERROR;
                 for (int i = 0; i < DigestBytes; ++i)
                     if (data[count + i] != digest[i]) return VnResult.VN_BAD_PACK;
-                bytes = new byte[length];
                 if (!CreateDecompressor(4, IntPtr.Zero, out IntPtr decoder)) return VnResult.VN_DEVICE_ERROR;
                 try
                 {
+                    int packedOffset = HeaderBytes + (int)meta;
+                    if (format == 0x32505248)
+                    {
+                        // Check the encoded block lengths before allocating the declared output.
+                        if (!UnpackResidentBlocks(image, packedOffset, count, decoder, data, null, (int)length))
+                            return VnResult.VN_BAD_PACK;
+                    }
+                    else if (Decompress(decoder, data + packedOffset, (UIntPtr)compressed,
+                        null, UIntPtr.Zero, out UIntPtr needed) || Marshal.GetLastWin32Error() != 122 || needed.ToUInt64() != length)
+                        return VnResult.VN_BAD_PACK;
+                    bytes = new byte[length];
                     fixed (byte* target = bytes)
                     {
                         if (format == 0x32505248)
                         {
-                            if (!UnpackResidentBlocks(image, HeaderBytes + (int)meta, count, decoder, data, target, (int)length))
+                            if (!UnpackResidentBlocks(image, packedOffset, count, decoder, data, target, (int)length))
                                 return VnResult.VN_BAD_PACK;
                         }
                         else if (!Decompress(decoder, data + HeaderBytes + meta, (UIntPtr)compressed,
@@ -194,11 +210,14 @@ namespace Harken
                 uint stored = BitConverter.ToUInt32(image, offset);
                 offset += sizeof(uint);
                 if (stored == 0 || stored > expected || stored > end - offset) return false;
-                if (stored == expected)
-                    Buffer.MemoryCopy(data + offset, target + output, expected, expected);
-                else if (!Decompress(decoder, data + offset, (UIntPtr)stored,
-                    target + output, (UIntPtr)(uint)expected, out UIntPtr written) || written.ToUInt64() != (uint)expected)
-                    return false;
+                if (target != null)
+                {
+                    if (stored == expected)
+                        Buffer.MemoryCopy(data + offset, target + output, expected, expected);
+                    else if (!Decompress(decoder, data + offset, (UIntPtr)stored,
+                        target + output, (UIntPtr)(uint)expected, out UIntPtr written) || written.ToUInt64() != (uint)expected)
+                        return false;
+                }
                 offset += (int)stored;
                 output += expected;
             }
@@ -209,23 +228,18 @@ namespace Harken
         private static extern unsafe bool ReadFile(SafeFileHandle handle, byte* destination, uint size,
             out uint read, IntPtr overlapped);
 
-        private static unsafe byte[] ReadImage(SafeFileHandle handle, int size)
+        private static unsafe void ReadExactly(SafeFileHandle handle, byte* destination, int length)
         {
-            var image = new byte[size];
-            fixed (byte* start = image)
+            while (length > 0)
             {
-                int offset = 0;
-                while (offset < size)
-                {
-                    if (!ReadFile(handle, start + offset, (uint)(size - offset), out uint count, IntPtr.Zero) || count == 0)
-                        throw new IOException("Cannot read the complete resident Pack.");
-                    offset += (int)count;
-                }
+                if (!ReadFile(handle, destination, (uint)length, out uint count, IntPtr.Zero) || count == 0)
+                    throw new IOException("Cannot read the complete resident Pack.");
+                destination += count;
+                length -= (int)count;
             }
-            return image;
         }
 
-        private VnResult CaptureResident(string name, VnObjectId project, byte[] init, out PackMetadataInput input)
+        private VnResult CaptureResident(string name, VnObjectId project, byte[] init, ulong retained, out PackMetadataInput input)
         {
             input = null;
             if (!IsWindows) return VnResult.VN_CAPABILITY_UNAVAILABLE;
@@ -244,14 +258,19 @@ namespace Harken
             using (handle)
             {
                 FileIdentity identity = FileIdentity.ReadWindows(handle);
-                if (identity.Length > 3 * MaxPart || identity.Length < HeaderBytes + DigestBytes) return VnResult.VN_BAD_PACK;
+                if (identity.Length > MaxArrayBytes || identity.Length < HeaderBytes + DigestBytes) return VnResult.VN_BAD_PACK;
+                ulong available = inputBudget == 0 ? ulong.MaxValue : inputBudget;
+                ulong initLength = (ulong)(init?.Length ?? 0);
+                if (initLength > available || retained > available - initLength)
+                    return VnResult.VN_PACK_RESIDENT_CAPACITY;
+                available -= initLength + retained;
                 string actualPath = FileIdentity.WindowsPath(handle, path.Length);
                 if (Path.GetFileName(actualPath) != basename + ".hrp" ||
                     (scope.Length != 0 && Path.GetFileName(Path.GetDirectoryName(actualPath)) != scope))
                     return VnResult.VN_BAD_PACK;
                 var selection = new ResidentSelection { Path = path, MissingPath = missing, Identity = identity,
                     ChangeTime = ReadChangeTime(handle) };
-                VnResult result = Unpack(ReadImage(handle, (int)identity.Length), out byte[] bytes, out byte[] json);
+                VnResult result = ReadResident(handle, (int)identity.Length, available, out byte[] bytes, out byte[] json);
                 if (result != VnResult.VN_OK) return result;
                 result = PackMetadata.Parse(json, bytes, name, scope, project, out PackMetadata names);
                 if (result != VnResult.VN_OK) return result;

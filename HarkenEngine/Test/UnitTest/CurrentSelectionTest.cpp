@@ -151,7 +151,7 @@ TEST(CurrentSelectionMemory, RestartIdentityOffsetPreservesRandomSequencesAndLif
             EXPECT_FALSE(restarted.Snapshot(beforeKey).found);
             EXPECT_EQ(incarnation, restarted.SeedEmitterGeneration(0, incarnation + 83));
             EXPECT_EQ(incarnation + 1, restarted.SeedEmitterGeneration(0, incarnation + 84));
-            EXPECT_EQ(1u, restarted.SeedEmitterGeneration(config.maxEmitters - 1, 1));
+            EXPECT_EQ(1u, restarted.SeedEmitterGeneration(128u, 1));
             EXPECT_EQ(0u, restarted.SeedEmitterGeneration(UINT32_MAX, 0));
         }
     }
@@ -4383,6 +4383,25 @@ TEST(GrowingRowStorage, FailedReservationAndCommitDoNotPublishIncompletePrefix) 
     harken::StableStoragePreparation impossible;
     EXPECT_FALSE(storage.PrepareBacking(UINT32_MAX, 1, &impossible));
     EXPECT_FALSE(impossible.Valid());
+}
+
+TEST(GrowingRowStorage, QueueAdmissionWithOneHeldSlotIgnoresRetiredPeak) {
+    const auto visits = [](std::uint32_t peak) {
+        harken::GrowingRowStorage<unsigned> storage;
+        if (!storage.ConstructThrough(peak)) return UINT32_MAX;
+        harken::StableStoragePreparation hold;
+        if (!storage.PrepareBacking(1, 0, &hold)) return UINT32_MAX;
+        std::uint32_t visited = 0;
+        const auto slot = storage.FindFreeSlot(UINT32_MAX, [&](unsigned row) {
+            ++visited;
+            return row == 0;
+        }, [](std::uint32_t) { return false; });
+        EXPECT_EQ(0u, slot);
+        return visited;
+    };
+    const auto cold = visits(2);
+    EXPECT_LT(cold, 5u);
+    EXPECT_EQ(cold, visits(4097));
 }
 
 TEST(CurrentSelectionMemory, PreparedShapesPreserveOtherHoldsAndOrdinaryAdmissions) {

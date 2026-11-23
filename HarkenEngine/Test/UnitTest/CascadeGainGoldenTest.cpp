@@ -132,4 +132,97 @@ TEST_F(CascadeGainGolden, TwoVoicesSumIntoMaster) {
     }
 }
 
+TEST_F(CascadeGainGolden, VolumeTransitionPreservesInitializationAndProtectsRenderedObjects) {
+    for (unsigned kind = 0; kind != 4; ++kind) {
+        for (bool rendered : {false, true}) {
+            for (bool assigned : {false, true}) {
+                for (unsigned ms : {0u, 2u, 200u, 500u}) {
+                    SCOPED_TRACE(::testing::Message() << kind << "/" << rendered
+                        << "/" << assigned << "/" << ms);
+                    EngineSession session(MakeNullConfig(2, kBlockFrames));
+                    ASSERT_EQ(VN_OK, session.InitResult());
+                    auto* engine = session.Engine();
+                    engine->buses.SetAutomaticSleepEnabledForTest(false);
+                    const auto bus = harkentest::ObjectId(2);
+                    ASSERT_EQ(VN_OK, Vn_CreateBus(bus, VN_BUS_MASTER));
+                    auto samples = harkentest::MakeDC(48000, .25f);
+                    auto pcm = MonoDesc(samples, 48000);
+                    ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(1), &pcm));
+                    auto play = MakePlayDesc(harkentest::ObjectId(1));
+                    play.busId = bus;
+                    VnVoiceHandle voice = 0;
+                    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+                    const auto set = [&](float db, unsigned duration) {
+                        return kind == 0 ? Vn_SetVoiceVolume(voice, db, duration) :
+                            kind == 1 ? Vn_SetVoiceOutputVolume(voice, db, duration) :
+                            kind == 2 ? Vn_SetBusVolume(bus, db, duration) :
+                                        Vn_SetBusOutputVolume(bus, db, duration);
+                    };
+                    if (assigned) ASSERT_EQ(VN_OK, set(-6, 0));
+                    if (rendered) engine->nullBackend.Pump(1);
+                    ASSERT_EQ(VN_OK, set(-12, ms));
+                    const auto duration = rendered ? std::max(ms, 5u) :
+                        kind == 2 && !assigned ? 0u : ms;
+                    const unsigned frames = duration * 48u;
+                    Capture out;
+                    harkentest::PumpAndCapture(engine, (frames + kBlockFrames - 1) / kBlockFrames + 1, out);
+                    const float initial = assigned ? std::pow(10.f, -6.f / 20.f) : 1.f;
+                    const float target = std::pow(10.f, -12.f / 20.f);
+                    for (std::size_t n = 0; n < out.left.size(); ++n) {
+                        const double ratio = frames == 0 ? 1.0 : std::min(1.0, double(n + 1) / frames);
+                        const float expected = .25f * static_cast<float>(initial + (target - initial) * ratio);
+                        ASSERT_NEAR(expected, out.left[n], 1e-7f) << n;
+                        ASSERT_EQ(out.left[n], out.right[n]) << n;
+                    }
+                    EXPECT_EQ(0u, harken::memguard::HitCount());
+                }
+            }
+        }
+    }
+}
+
+TEST_F(CascadeGainGolden, SendTransitionsFinishAtRequestedSampleInBothBlockSizes) {
+    for (bool voiceSend : {false, true}) {
+        for (unsigned block : {256u, 1024u}) {
+            for (unsigned ms : {0u, 100u}) {
+                SCOPED_TRACE(::testing::Message() << voiceSend << "/" << block << "/" << ms);
+                EngineSession session(MakeNullConfig(2, block));
+                ASSERT_EQ(VN_OK, session.InitResult());
+                auto* engine = session.Engine();
+                const auto bus = harkentest::ObjectId(2);
+                ASSERT_EQ(VN_OK, Vn_CreateBus(bus, VN_BUS_MASTER));
+                auto samples = harkentest::MakeDC(48000, .25f);
+                auto pcm = MonoDesc(samples, 48000);
+                ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(1), &pcm));
+                auto play = MakePlayDesc(harkentest::ObjectId(1));
+                play.busId = bus;
+                VnVoiceHandle voice = 0;
+                ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+                if (voiceSend) {
+                    ASSERT_EQ(VN_OK, Vn_SetVoiceOutputVolume(voice, -800, 0));
+                    ASSERT_EQ(VN_OK, Vn_SetVoiceSend(voice, 0, VN_BUS_MASTER, -800));
+                } else {
+                    ASSERT_EQ(VN_OK, Vn_SetBusOutputVolume(bus, -800, 0));
+                    ASSERT_EQ(VN_OK, Vn_ConnectBusSend(bus, VN_BUS_MASTER, -800));
+                }
+                engine->nullBackend.Pump(1);
+                ASSERT_EQ(VN_OK, voiceSend ? Vn_SetVoiceSendLevel(voice, 0, 0, ms) :
+                    Vn_SetBusSendLevel(bus, VN_BUS_MASTER, 0, ms));
+                const unsigned frames = std::max(ms, 5u) * 48u;
+                Capture out;
+                harkentest::PumpAndCapture(engine, (frames + block - 1) / block + 1, out);
+                for (std::size_t n = 0; n < out.left.size(); ++n) {
+                    const float expected = .25f * static_cast<float>(std::min(1.0, double(n + 1) / frames));
+                    ASSERT_NEAR(expected, out.left[n], 1e-7f) << n;
+                    ASSERT_EQ(out.left[n], out.right[n]) << n;
+                }
+                EXPECT_LT(out.left[frames - 2], .25f);
+                EXPECT_FLOAT_EQ(.25f, out.left[frames - 1]);
+                EXPECT_FLOAT_EQ(.25f, out.left[frames]);
+                EXPECT_EQ(0u, harken::memguard::HitCount());
+            }
+        }
+    }
+}
+
 } // namespace

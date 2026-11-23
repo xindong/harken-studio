@@ -14,9 +14,9 @@
 // changed binding contributions since the target last published, plus a
 // tick-stamped API-direct rampMs).
 //
-// Storage is maxBuses x kBusTargetCount x kSlotCountPerTarget slots plus
-// one publication record per (bus, target), preallocated at construction;
-// retiring targets prepare before their first claim. Logic thread only.
+// Persistent settings are compact. Binding and publication activity prepares
+// before attachment/claim and is reclaimed after service completion. All
+// allocation, copies and reclamation belong to the logic thread.
 #ifndef HARKEN_PARAM_BUS_TARGET_STORE_H
 #define HARKEN_PARAM_BUS_TARGET_STORE_H
 
@@ -26,9 +26,12 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 namespace harken {
+
+class BindingTable;
 
 class BusTargetStore {
 public:
@@ -46,6 +49,13 @@ public:
     explicit BusTargetStore(std::uint32_t maxBuses,
                             std::uint32_t retiringTargetCapacity = 0);
     BusTargetStore(const BusTargetStore& other);
+    bool PrepareBusCapacity(std::uint32_t count) noexcept;
+    bool PrepareActivity(std::uint32_t busIndex, std::uint32_t targetId) noexcept;
+    bool PrepareSettings(std::uint32_t busIndex, std::uint32_t targetId) noexcept;
+    void ReleaseUnusedActivities(BindingTable& bindings) noexcept;
+    std::size_t ActivityCount() const noexcept { return m_activities.size(); }
+    std::uint64_t StorageBytes() const noexcept;
+
 
     // Writes / clears one slot of one bus target, addressed by dense bus
     // index. Out-of-range indices are ignored (the callers own bus
@@ -131,17 +141,21 @@ public:
             ++m_flushTick;
             return;
         }
-        const std::size_t targetCount =
-            static_cast<std::size_t>(m_maxBuses) * kBusTargetCount;
+        const std::size_t targetCount = m_activities.size();
+        if (targetCount == 0) { ++m_flushTick; return; }
+        m_flushCursor %= targetCount;
         std::size_t nextCursor = m_flushCursor;
         bool stagedAny = false;
         for (std::size_t offset = 0; offset < targetCount; ++offset) {
-            const std::size_t flat = (m_flushCursor + offset) % targetCount;
+            const std::size_t ordinal = (m_flushCursor + offset) % targetCount;
+            auto& activity = *m_activities[ordinal];
+            const std::size_t flat = activity.flat;
+            auto& settings = MutableSettings(flat);
             const std::uint32_t bus =
                 static_cast<std::uint32_t>(flat / kBusTargetCount);
             const std::uint32_t t =
                 static_cast<std::uint32_t>(flat % kBusTargetCount);
-            PublishState& state = m_publish[PubIndexOf(bus, t)];
+            PublishState& state = activity.publish;
             if (!state.dirty) {
                 continue;
             }
@@ -149,20 +163,20 @@ public:
                 continue;
             }
             const float resolved = Reduce(bus, t);
-            if (resolved == state.lastCommitted) {
+            if (resolved == settings.lastCommitted) {
                 CleanDirty(state);
                 state.pendingRampMs = 0;
                 continue;
             }
             std::uint32_t rampMs = state.pendingRampMs;
-            if (state.apiRampTick == m_flushTick &&
-                state.apiRampMs > rampMs) {
-                rampMs = state.apiRampMs;
+            if (settings.apiRampTick == m_flushTick &&
+                settings.apiRampMs > rampMs) {
+                rampMs = settings.apiRampMs;
             }
             state.pendingRampMs = rampMs;
             if (fn(bus, t, resolved, rampMs)) {
                 stagedAny = true;
-                nextCursor = (flat + 1) % targetCount;
+                nextCursor = (ordinal + 1) % targetCount;
             }
         }
         if (stagedAny) {
@@ -314,26 +328,41 @@ private:
 
     // Per (bus, target) publication record — the voice TargetState mirror.
     struct PublishState {
-        float lastCommitted = 0.0f; // seeded to the neutral base at init
         bool dirty = false;
         bool pendingInput = false;
         bool suppressClaimRamp = false;
         bool claimSnapshotCaptured = false;
         std::uint32_t pendingRampMs = 0;
-        std::uint32_t apiRampMs = 0;
         std::uint32_t preparedRampMs = 0;
-        std::uint64_t apiRampTick = 0;
         std::uint32_t preCandidatePendingRampMs = 0;
         std::uint32_t preCandidateApiRampMs = 0;
         std::uint64_t preCandidateApiRampTick = 0;
         bool candidateBaselineValid = false;
-        // The rampMs the most recent committed command carried; the
-        // attribution capture's record, nothing else reads it.
-        std::uint32_t lastPublishedRampMs = 0;
         std::uint32_t revision = 1;
         TargetClaimOwner preparedOwner{};
         std::uint32_t publicationRefCount = 0;
     };
+
+    struct Activity {
+        std::size_t flat = 0;
+        Slot variable, meter;
+        PublishState publish;
+        VariableEvaluation projection;
+        double meterAccum = 0;
+        std::uint32_t meterRampMs = 0, meterDepartureRampMs = 0;
+        bool meterSeen = false, attached = false;
+    };
+    struct Settings {
+        double values[2]{};
+        std::uint64_t apiRampTick = 0;
+        Activity* activity = nullptr;
+        float lastCommitted = 0;
+        std::uint32_t lastPublishedRampMs = 0, apiRampMs = 0;
+        std::uint8_t activeMask = 0;
+    };
+    Activity* FindActivity(std::uint32_t bus, std::uint32_t target) noexcept;
+    const PublishState& Publication(std::uint32_t bus, std::uint32_t target) const noexcept;
+    Slot ReadSlot(std::uint32_t bus, std::uint32_t target, std::uint32_t slot) const noexcept;
 
     struct RetiringTarget {
         bool used = false;
@@ -350,8 +379,6 @@ private:
 
     bool InRange(std::uint32_t busIndex, std::uint32_t targetId,
                  std::uint32_t slot) const;
-    std::size_t IndexOf(std::uint32_t busIndex, std::uint32_t targetId,
-                        std::uint32_t slot) const;
     std::size_t PubIndexOf(std::uint32_t busIndex,
                            std::uint32_t targetId) const {
         return static_cast<std::size_t>(busIndex) * kBusTargetCount +
@@ -382,18 +409,17 @@ private:
         std::uint32_t targetId, TargetClaimOwner owner) const noexcept;
 
     std::uint32_t m_maxBuses = 0;
-    std::vector<Slot> m_slots;           // fixed size after construction
-    std::vector<PublishState> m_publish; // one per (bus, target)
-    std::vector<VariableEvaluation> m_projection;
+    struct SettingsRow { std::size_t flat; Settings value; };
+    Settings* FindSettings(std::size_t flat) noexcept;
+    const Settings& ReadSettings(std::size_t flat) const noexcept;
+    Settings& MutableSettings(std::size_t flat);
+    std::vector<SettingsRow> m_settings;
+    std::vector<std::unique_ptr<Activity>> m_activities;
     bool m_projectionActive = false;
     std::uint32_t m_projectionDemandCount = 0;
     std::uint32_t m_projectionPendingInputMarks = 0;
     std::vector<std::uint32_t> m_activeGenerations;
     StableRowStorage<RetiringTarget> m_retiringTargets;
-    std::vector<double> m_meterProbeAccum;
-    std::vector<std::uint32_t> m_meterProbeRampMs;
-    std::vector<std::uint32_t> m_meterProbeDepartureRampMs;
-    std::vector<std::uint8_t> m_meterProbeSeen;
     std::uint32_t m_demandCount = 0;
     std::uint32_t m_variableSlotCount = 0;
     std::uint32_t m_pendingInputMarks = 0;

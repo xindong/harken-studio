@@ -6,6 +6,7 @@
 #include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/core/StableSlotStorage.h"
 #include "harken/core/TimelineProgram.h"
+#include "harken/param/ParamTargets.h"
 #include "harken/core/QueueRuntime.h"
 #include "harken/core/CompositeCompletionOwnerPool.h"
 #include "harken/core/QueueContinuationLane.h"
@@ -29,8 +30,8 @@ class OriginalSourceSubmissionRegistry {
     friend class VoicePool;
     friend struct Engine;
 public:
-    static constexpr std::uint32_t kMaxCommands = 3u + kTimelineMaxVoiceSends +
-        kTimelineMaxVoiceEffects + 2u + kMaxVoiceBindingInstanceSlots;
+    static constexpr std::uint32_t kMaxCommands = 3u +
+        kTimelineMaxVoiceEffects + 2u + kBuiltinTargetCount;
     enum class Phase : std::uint8_t {
         Free, Preparing, QueuePrepared, Published, ConsumerOwned, CleanupPending,
         Disposed, EngineDestroyed
@@ -103,9 +104,7 @@ public:
     OriginalSourceSubmissionRegistry(TimelineArmTable& arms, VoicePool& voices,
         CommandQueue& commands, EffectPoolBank& effects)
         : arms_(arms), voices_(voices), commands_(commands), effects_(effects),
-          capacity_(arms.Capacity()), incarnation_(NextIncarnation()) {
-        if (!rows_.Reserve(capacity_)) throw std::bad_alloc{};
-    }
+          incarnation_(NextIncarnation()) {}
     ~OriginalSourceSubmissionRegistry() {
         for (auto& row : rows_) {
             assert((row.originalLifetime_.load(std::memory_order_relaxed) & kPinMask) == 0);
@@ -118,11 +117,11 @@ public:
     OriginalSourceSubmissionRegistry& operator=(const OriginalSourceSubmissionRegistry&) = delete;
 
     std::size_t StorageBytes() const noexcept {
-        return rows_.RequestedBytes() + rows_.DirectoryBytes() +
+        return rows_.RequestedBytes() +
             allocatedCommandTails_.load(std::memory_order_relaxed) * sizeof(Record::CommandTail);
     }
     bool PrepareSlotBacking(std::uint32_t slot) noexcept {
-        if (!rows_.Emplace(slot) || !EnsureCommandBacking(rows_[slot])) return false;
+        if (!rows_.ConstructThrough(slot + 1u) || !EnsureCommandBacking(rows_[slot])) return false;
         rows_[slot].retainCommandBacking_ = true;
         return true;
     }
@@ -150,8 +149,8 @@ public:
 
 private:
     bool PrepareRecordBacking(std::uint32_t slot) noexcept {
-        if (rows_.IsConstructed(slot)) return true;
-        if (!rows_.Emplace(slot)) return false;
+        if ((slot < rows_.size())) return true;
+        if (!rows_.ConstructThrough(slot + 1u)) return false;
         rows_[slot].retainCommandBacking_ = false;
         return true;
     }
@@ -161,7 +160,7 @@ private:
         try {
             detail::LogicAllocCheckpoint(detail::LogicAllocSite::SourceCommandBacking);
             row.bodyTail_ = std::make_unique<Record::CommandTail>();
-        } catch (const std::bad_alloc&) { return false; }
+        } catch (const std::bad_alloc&) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::SourceCommandBacking); return false; }
         allocatedCommandTails_.fetch_add(1u, std::memory_order_relaxed);
         return true;
     }
@@ -175,7 +174,7 @@ private:
         bool publishOnInstallation) noexcept {
         const auto token = armProof.OriginalPreparedToken();
         const auto render = voiceProof.OriginalPreparedHandle();
-        if (armProof.Owner() != &arms_ || !token.Valid() || token.slot >= capacity_ ||
+        if (armProof.Owner() != &arms_ || !token.Valid() || token.slot >= arms_.ConstructedRowCount() ||
             voiceProof.Owner() != &voices_ ||
             render == 0 || render != RenderOf(token) || !HeaderMatches(header, token) ||
             effectProofs.size() > kTimelineMaxVoiceEffects) return false;
@@ -193,7 +192,7 @@ private:
             for (std::size_t j = 0; j < i; ++j)
                 if (SameEffect(incoming[i], incoming[j])) return false;
         }
-        if (!rows_.Emplace(token.slot)) return false;
+        if (!rows_.ConstructThrough(token.slot + 1u)) return false;
         auto& row = rows_[token.slot];
         const auto phase = row.State();
         if (phase == Phase::Preparing) {
@@ -286,7 +285,7 @@ public:
         CommandRecord header{};
         if (!commands_.ReadPreparedAt(batch, offset, &header)) return false;
         const auto token = TokenOf(header);
-        if (!rows_.IsConstructed(token.slot) || count == 0 || count > kMaxCommands ||
+        if (!(token.slot < rows_.size()) || count == 0 || count > kMaxCommands ||
             !HeaderMatches(header, token) || header.payload.play.batch.batchCommandCount != count)
             return false;
         auto& row = rows_[token.slot];
@@ -960,11 +959,11 @@ public:
     }
 
     Record* Find(TimelineArmToken token) noexcept {
-        return rows_.IsConstructed(token.slot) && SameToken(rows_[token.slot].token_, token)
+        return (token.slot < rows_.size()) && SameToken(rows_[token.slot].token_, token)
             ? &rows_[token.slot] : nullptr;
     }
     const Record* Find(TimelineArmToken token) const noexcept {
-        return rows_.IsConstructed(token.slot) && SameToken(rows_[token.slot].token_, token)
+        return (token.slot < rows_.size()) && SameToken(rows_[token.slot].token_, token)
             ? &rows_[token.slot] : nullptr;
     }
 
@@ -1106,7 +1105,7 @@ public:
 private:
     bool RetireRequestedInstalledSource(const OriginalSourceInstallationLoan& installation,
         std::uint64_t blockIndex) noexcept {
-        if (!rows_.IsConstructed(installation.token_.slot)) return false;
+        if (!(installation.token_.slot < rows_.size())) return false;
         auto& row = rows_[installation.token_.slot];
         if (!MatchesInstallationForSource(installation, &row, row.token_, row.originalSourceIdentity_) ||
             row.State() != Phase::Disposed || !row.voice_.Valid() || !row.arm_.Valid()) return false;
@@ -1402,7 +1401,7 @@ private:
     bool BorrowInstallationMutation(const OriginalSourceInstallationLoan& installation,
         OriginalSourceMutationActor* out, bool beginFirstWrite = false) noexcept {
         const auto token = installation.token_;
-        if (out == nullptr || out->Valid() || !rows_.IsConstructed(token.slot) ||
+        if (out == nullptr || out->Valid() || !(token.slot < rows_.size()) ||
             !MatchesInstallationLoan(installation, &rows_[token.slot], token)) return false;
         auto& row = rows_[token.slot];
         const auto mode = OriginState(row.originWord_.load(std::memory_order_acquire));
@@ -1441,7 +1440,7 @@ private:
 
     bool MatchesInstallationLoan(const OriginalSourceInstallationLoan& installation,
         const void* actualSubmission, TimelineArmToken token) const noexcept {
-        if (installation.owner_ != this || !rows_.IsConstructed(token.slot) ||
+        if (installation.owner_ != this || !(token.slot < rows_.size()) ||
             installation.marker_ == 0 || !SameToken(installation.token_, token)) return false;
         const auto& row = rows_[token.slot];
         return actualSubmission == &row && SameToken(row.token_, token) &&
@@ -1460,7 +1459,7 @@ private:
     }
     void ReleaseInstallationLoan(OriginalSourceInstallationLoan& installation) noexcept {
         const auto token = installation.token_;
-        const bool matches = rows_.IsConstructed(token.slot) &&
+        const bool matches = (token.slot < rows_.size()) &&
             MatchesInstallationLoan(installation, &rows_[token.slot], token);
         assert(matches);
         if (!matches) return;
@@ -1480,7 +1479,7 @@ private:
     }
     bool MatchesOriginal(const OriginalSourceLifetimePin& original) const noexcept {
         if (original.owner_ != this || original.row_ == nullptr ||
-            !rows_.IsConstructed(original.token_.slot) || original.row_ != &rows_[original.token_.slot] ||
+            !(original.token_.slot < rows_.size()) || original.row_ != &rows_[original.token_.slot] ||
             original.marker_ == 0) return false;
         const auto& row = rows_[original.token_.slot];
         return row.originalMarker_ == original.marker_ && SameToken(row.token_, original.token_) &&
@@ -1546,12 +1545,8 @@ private:
     }
     Record* BorrowRange(CommandQueue::OriginalBatchRange* range) noexcept {
         if (range == nullptr) return nullptr;
-        const auto client = reinterpret_cast<std::uintptr_t>(range->Client());
-        const auto begin = reinterpret_cast<std::uintptr_t>(rows_.BackingAddress());
-        if (client < begin || client - begin >= sizeof(Record) * capacity_ ||
-            (client - begin) % sizeof(Record) != 0) return nullptr;
-        const auto slot = static_cast<std::uint32_t>((client - begin) / sizeof(Record));
-        if (!rows_.IsConstructed(slot)) return nullptr;
+        const auto slot = rows_.IndexOf(static_cast<const Record*>(range->Client()));
+        if (slot == UINT32_MAX) return nullptr;
         auto& row = rows_[slot];
         return &row.range_ == range && row.State() == Phase::Published ? &row : nullptr;
     }
@@ -1578,8 +1573,7 @@ private:
     VoicePool& voices_;
     CommandQueue& commands_;
     EffectPoolBank& effects_;
-    const std::uint32_t capacity_;
-    StableSlotStorage<Record> rows_;
+    GrowingRowStorage<Record> rows_;
     std::atomic<std::size_t> allocatedCommandTails_{0};
     const std::uint64_t incarnation_;
     Record* pending_ = nullptr;

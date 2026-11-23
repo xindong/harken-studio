@@ -27,6 +27,12 @@ namespace harken {
 
 namespace {
 
+constexpr std::uint32_t BankEmitterSlot(std::uint32_t index) noexcept {
+    if (index == 0) return EmitterTable::kDefaultSlot;
+    return index <= EmitterTable::kDefaultSlot ? index - 1u : index;
+}
+
+
 std::uint64_t PlaybackWorldFingerprint(const ContainerWorldInstallViewV1& world) noexcept {
     if (world.sourceBodyVintage != kCurrentWorldBodyVintageV20)
         return world.identity.runtimeSemanticFingerprint;
@@ -73,6 +79,13 @@ private:
 
 } // namespace
 
+// The default bank occupies the first entry even before any public emitter exists.
+std::uint32_t VariableServiceV1::BankIndex(std::uint32_t slot) noexcept {
+    if (slot == EmitterTable::kDefaultSlot) return 0;
+    return slot < EmitterTable::kDefaultSlot ? slot + 1u : slot;
+}
+
+
 WorldInstallResult InstallContainerWorldV1(
     Engine& engine, const ContainerWorldInstallViewV1& install,
     CurrentWorldTraceOwnerV1 traceOwner) noexcept {
@@ -83,7 +96,7 @@ WorldInstallResult InstallContainerWorldV1(
         if (ValidateCurrentWorldV1(install) == WorldInstallStatus::Ok &&
             (!engine.params.PrepareVariableStorage(install.variableCount) ||
              !engine.PrepareQueueSelectionStorage(install))) {
-            throw std::bad_alloc{};
+            throw harken::detail::LogicPreparationFailure{};
         }
         const bool signalOnly = engine.variables.SignalOnlyWorld(install);
         const bool hasCurrentConsumers =
@@ -161,7 +174,7 @@ WorldInstallResult InstallContainerWorldV1(
             harken::tracing::RecordCurrentWorldInstall(engine.trace.get(), install, result, encoding);
         }
         return result;
-    } catch (...) {
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::VariableValueStorage);
         WorldInstallResult result{};
         result.status = WorldInstallStatus::Capacity;
         result.priorGeneration = engine.variables.CurrentWorldGeneration();
@@ -177,7 +190,7 @@ WorldInstallResult InstallContainerWorldV2Replay(
     Engine& engine, const HistoricalContainerWorldViewV1& install) noexcept {
     try {
         return engine.variables.InstallReplayV2(install);
-    } catch (...) {
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::VariableValueStorage);
         WorldInstallResult result{};
         result.status = WorldInstallStatus::Capacity;
         result.priorGeneration = engine.variables.CurrentWorldGeneration();
@@ -189,7 +202,7 @@ WorldInstallResult InstallContainerWorldV3Replay(
     Engine& engine, const HistoricalContainerWorldViewV1& install) noexcept {
     try {
         return engine.variables.InstallReplayV3(install);
-    } catch (...) {
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::VariableValueStorage);
         WorldInstallResult result{};
         result.status = WorldInstallStatus::Capacity;
         result.priorGeneration = engine.variables.CurrentWorldGeneration();
@@ -201,7 +214,7 @@ WorldInstallResult InstallContainerWorldV4Replay(
     Engine& engine, const HistoricalContainerWorldViewV1& install) noexcept {
     try {
         return engine.variables.InstallReplayV4(install);
-    } catch (...) {
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::VariableValueStorage);
         WorldInstallResult result{};
         result.status = WorldInstallStatus::Capacity;
         result.priorGeneration = engine.variables.CurrentWorldGeneration();
@@ -221,16 +234,14 @@ WorldInstallResult InstallContainerWorldV1(
 }
 
 VariableServiceV1::VariableServiceV1(
-    std::uint32_t maxEmitters, std::uint32_t overridesPerEmitter,
+    std::uint32_t /*maxEmitters*/, std::uint32_t overridesPerEmitter,
     std::uint32_t maxPropertiesPerCurrentSlice,
-    std::uint32_t maxActionDefinitions,
+    std::uint32_t /*maxActionDefinitions*/,
     LogicCommitCoordinator& commits, TransportEpochOwner& transport,
     VariableSliceTable& slices, ScheduledTransactionPool& timeline,
     std::uint64_t readCutCapacity, std::uint32_t timelineReadUseCapacity,
-    std::uint32_t meterProbeCapacity)
-    : maxEmitters_(maxEmitters),
-      overridesPerEmitter_(overridesPerEmitter),
-      maxActionDefinitions_(maxActionDefinitions),
+    std::uint32_t withdrawalSliceCapacity)
+    : overridesPerEmitter_(overridesPerEmitter),
       censusScratch_(maxPropertiesPerCurrentSlice <=
                              kVariableSliceTargetHardLimit
                          ? maxPropertiesPerCurrentSlice
@@ -238,43 +249,14 @@ VariableServiceV1::VariableServiceV1(
       commits_(commits),
       transport_(transport), slices_(slices), timeline_(timeline) {
     definitions_.reserve(kVariableTransactionBaseline);
-    emitterBanks_.resize(maxEmitters_);
-    emitterBankVersionGenerations_.resize(maxEmitters_, 1);
-    for (EmitterBank& bank : emitterBanks_) {
-        bank.overrides.resize(overridesPerEmitter_);
-    }
-    const auto cells = std::uint64_t{kVariableTransactionBaseline} +
-        std::uint64_t{maxEmitters_} * overridesPerEmitter_;
-    if (cells > UINT32_MAX) throw std::length_error("variable cell capacity overflow");
-    queryHistoryCapacity_ = static_cast<std::uint32_t>(std::max<std::uint64_t>(kVariableHistoryCapacity, cells));
-    const auto revisions = cells + queryHistoryCapacity_;
-    const auto storage = revisions + kVariableBatchWriteCapacity;
-    const auto proofs = storage + 2ull * meterProbeCapacity;
-    if (proofs > UINT32_MAX) throw std::length_error("variable revision capacity overflow");
-    revisionCapacity_ = static_cast<std::uint32_t>(revisions);
-    completionCapacity_ = static_cast<std::uint32_t>(proofs);
-    applyPayloadCapacity_ = static_cast<std::uint32_t>(revisions + 2ull * meterProbeCapacity);
-    const auto historyCapacity = static_cast<std::uint32_t>(storage);
-    if (!history_.Reserve(historyCapacity) ||
-        !preparedWritePlacements_.Reserve(historyCapacity) ||
-        !sealRows_.Reserve(historyCapacity) || !commitRows_.Reserve(historyCapacity) ||
-        !prefixRows_.Reserve(historyCapacity) || !readCutRows_.Reserve(historyCapacity) ||
-        !actionReadCutRows_.Reserve(historyCapacity) || !preparationRows_.Reserve(historyCapacity) ||
-        !settledRows_.Reserve(historyCapacity) || !supersedeRows_.Reserve(historyCapacity) ||
-        !scheduledGroups_.Reserve(historyCapacity) || !outcomes_.Reserve(historyCapacity)) throw std::bad_alloc{};
-    historyGenerations_.resize(historyCapacity, 1);
-    dependencyVisited_.resize(completionCapacity_);
+    queryHistoryCapacity_ = kVariableHistoryCapacity;
+    completionCapacity_ = applyPayloadCapacity_ = std::max(1u, withdrawalSliceCapacity);
     if (readCutCapacity > UINT32_MAX) throw std::length_error("variable read cut capacity overflow");
-    readCutCapacity_ = static_cast<std::uint32_t>(readCutCapacity);
-    if (!readCuts_.Reserve(readCutCapacity_)) throw std::bad_alloc{};
+    nativeStartBudgetPerQuantum_ = static_cast<std::uint32_t>(readCutCapacity);
     timelineReadUseCapacity_ = timelineReadUseCapacity;
-    if (!timelineReadUses_.Reserve(timelineReadUseCapacity_)) throw std::bad_alloc{};
-    freeSlots_.reserve(historyCapacity);
-    for (std::uint32_t slot = historyCapacity; slot > 0; --slot) {
-        freeSlots_.push_back(slot - 1);
-    }
+    if (!timelineReadUses_.Reserve(timelineReadUseCapacity_)) throw harken::detail::LogicPreparationFailure{};
     if (!ticketQueryRecords_.Reserve(queryHistoryCapacity_) ||
-        !expiredTicketRecords_.Reserve(queryHistoryCapacity_)) throw std::bad_alloc{};
+        !expiredTicketRecords_.Reserve(queryHistoryCapacity_)) throw harken::detail::LogicPreparationFailure{};
 }
 
 TransportEpoch VariableServiceV1::CurrentTransportEpoch() const noexcept {
@@ -494,10 +476,6 @@ WorldInstallResult VariableServiceV1::InstallImpl(
         return result;
     }
     const ContainerWorldInstallViewV1& install = installInput;
-    if (install.actionCount > maxActionDefinitions_) {
-        result.status = WorldInstallStatus::Capacity;
-        return result;
-    }
     if (install.variableCount > install.capacity.maxVariableDefinitions) {
         result.status = WorldInstallStatus::Capacity;
         return result;
@@ -571,9 +549,6 @@ WorldInstallStatus VariableServiceV1::PrepareCurrentWorldImageV1(
         return worldStatus;
     }
     const ContainerWorldInstallViewV1& install = installInput;
-    if (install.actionCount > maxActionDefinitions_) {
-        return WorldInstallStatus::Capacity;
-    }
     if (install.variableCount > install.capacity.maxVariableDefinitions) {
         return WorldInstallStatus::Capacity;
     }
@@ -966,7 +941,7 @@ bool VariableServiceV1::PrepareWorldProjectionV1(
         batch.bankLive = bank.live;
         batch.generation = bank.generation;
         if (!bank.live) continue;
-        batch.handle = (static_cast<std::uint64_t>(bank.generation) << 32) | i;
+        batch.handle = (static_cast<std::uint64_t>(bank.generation) << 32) | BankEmitterSlot(static_cast<std::uint32_t>(i));
         batch.emitterLive = emitters.IsLive(batch.handle);
         if (!batch.emitterLive) continue;
         for (const auto& current : bank.overrides) {
@@ -1220,7 +1195,7 @@ VariableAcceptResult VariableServiceV1::Prepare(
     WriteOperation operation, const VariableScopeKey& scope, VnVariableId id,
     float value, const VariableCallObservation& observed,
     std::uint32_t executionOrdinal, PreparedVariableWriteToken* out,
-    VariableWriterIdentityV1 writer, bool staging) noexcept {
+    VariableWriterIdentityV1 writer, bool /*staging*/, EmitterTable* emitters) noexcept {
     VariableAcceptResult result{};
     result.observation = observed;
     result.observation.world = worldGeneration_;
@@ -1297,23 +1272,24 @@ VariableAcceptResult VariableServiceV1::Prepare(
             }
             return true;
         }
-        return scope.emitterSlot < emitterBankVersionGenerations_.size() &&
-            emitterBankVersionGenerations_[scope.emitterSlot] != 0 &&
-            emitterBankVersionGenerations_[scope.emitterSlot] != UINT32_MAX;
+        return BankIndex(scope.emitterSlot) < emitterBankVersionGenerations_.size() &&
+            emitterBankVersionGenerations_[BankIndex(scope.emitterSlot)] != 0 &&
+            emitterBankVersionGenerations_[BankIndex(scope.emitterSlot)] != UINT32_MAX;
     };
     if (!bankGenerationAvailable()) {
         result.result = VN_BACKPRESSURE;
         ++refusalCount_;
         return result;
     }
-    if (freeSlots_.empty() || (!staging && occupiedRevisions_ >= revisionCapacity_)) {
-        result.result = VN_VARIABLE_TRANSACTION_EXHAUSTED;
-        ++refusalCount_;
-        return result;
-    }
-    std::size_t emitterOverrideSlot = overridesPerEmitter_;
+    std::size_t emitterOverrideSlot = UINT32_MAX;
     if (operation == WriteOperation::Set &&
         scope.scope == VariableScopeV1::Emitter) {
+        if (emitters == nullptr || BankIndex(scope.emitterSlot) >= emitterBanks_.size()) {
+            result.result = VN_STALE_HANDLE;
+            ++refusalCount_;
+            return result;
+        }
+        auto& backing = emitterBanks_[BankIndex(scope.emitterSlot)].overrides;
         const EmitterBank* bank = FindEmitterBank(scope);
         if (bank != nullptr) {
             for (std::size_t i = 0; i < bank->overrides.size(); ++i) {
@@ -1324,7 +1300,7 @@ VariableAcceptResult VariableServiceV1::Prepare(
                 }
             }
         }
-        if (emitterOverrideSlot == overridesPerEmitter_) {
+        if (emitterOverrideSlot == UINT32_MAX) {
             for (const WriteRow& prepared : history_) {
                 if (prepared.reserved &&
                     prepared.emitterOverrideSlot != UINT32_MAX &&
@@ -1335,8 +1311,8 @@ VariableAcceptResult VariableServiceV1::Prepare(
                 }
             }
         }
-        if (emitterOverrideSlot == overridesPerEmitter_) {
-            for (std::size_t i = 0; i < overridesPerEmitter_; ++i) {
+        if (emitterOverrideSlot == UINT32_MAX) {
+            for (std::size_t i = 0; i < backing.size(); ++i) {
                 if (bank != nullptr && bank->overrides[i].used) {
                     continue;
                 }
@@ -1355,11 +1331,36 @@ VariableAcceptResult VariableServiceV1::Prepare(
                 }
             }
         }
-        if (emitterOverrideSlot == overridesPerEmitter_) {
-            result.result = VN_VARIABLE_EMITTER_SLOT_EXHAUSTED;
+        if (emitterOverrideSlot == UINT32_MAX) emitterOverrideSlot = backing.size();
+        const auto count = std::max(emitterOverrideSlot + 1u, backing.size());
+        const auto size = count > backing.size()
+            ? std::max(count, std::min<std::size_t>(UINT32_MAX, backing.size() * 2u)) : count;
+        if (count > UINT32_MAX) {
+            result.result = VN_BACKPRESSURE;
             ++refusalCount_;
             return result;
         }
+        try {
+            detail::CheckedGrow(backing, size, detail::LogicAllocSite::VariableValueStorage);
+            backing.reserve(size);
+        } catch (const std::bad_alloc&) {
+            detail::RecordCurrentLogicAllocFailure(detail::LogicAllocSite::VariableValueStorage);
+            result.result = VN_OUT_OF_MEMORY;
+            ++refusalCount_;
+            return result;
+        } catch (const std::length_error&) {
+            result.result = VN_BACKPRESSURE;
+            ++refusalCount_;
+            return result;
+        }
+        const auto handle = (static_cast<std::uint64_t>(scope.emitterGeneration) << 32) |
+            scope.emitterSlot;
+        result.result = emitters->PrepareLocalValueStorage(handle, size);
+        if (result.result != VN_OK) {
+            ++refusalCount_;
+            return result;
+        }
+        if (size > backing.size()) backing.resize(size);
     }
     if (publicationWorld_ != worldGeneration_ || publicationTransport_ != transport_.Current()) {
         if (publicationOwner_.generation == UINT32_MAX) {
@@ -1383,17 +1384,23 @@ VariableAcceptResult VariableServiceV1::Prepare(
     row.value = storedValue;
     row.requestedFrame = observed.requestedEffectiveFrame;
     row.executionOrdinal = executionOrdinal;
-    if (emitterOverrideSlot != overridesPerEmitter_) {
+    if (emitterOverrideSlot != UINT32_MAX) {
         row.emitterOverrideSlot =
             static_cast<std::uint32_t>(emitterOverrideSlot);
     }
-    const std::uint32_t slot = freeSlots_.back();
-    if (!PrepareHistoryBacking(slot) || !timeline_.PrepareCurrentSliceBacking(&row.calendarBacking)) {
+    const auto slot = freeSlots_.empty() ? nextHistorySlot_ : freeSlots_.back();
+    if (!PrepareHistoryBacking(slot)) {
+        result.result = VN_OUT_OF_MEMORY;
+        ++refusalCount_;
+        return result;
+    }
+    if (!timeline_.PrepareCurrentSliceBacking(&row.calendarBacking)) {
         result.result = VN_BACKPRESSURE;
         ++refusalCount_;
         return result;
     }
-    freeSlots_.pop_back();
+    if (freeSlots_.empty()) ++nextHistorySlot_;
+    else freeSlots_.pop_back();
     history_[slot] = std::move(row);
     ++occupiedRevisions_;
     ++preparedRows_;
@@ -1547,7 +1554,7 @@ bool VariableServiceV1::SealPreparedActionSourcesImpl(const ActionOrderIdentity&
     for (auto& row : history_) {
         if (row.preparedEngine == nullptr || !row.preparedIssue.SameReservation(identity)) continue;
         row.preparedSourcesSealed = false;
-        const auto& held = preparedWritePlacements_[static_cast<std::size_t>(&row - history_.data())];
+        const auto& held = preparedWritePlacements_[history_.IndexOf(&row)];
         if (!row.reserved || row.used || row.state != RowState::SlicePrepared || !row.historySlicePin ||
             !row.placementHeld || !timeline_.CanReleaseHeldCurrentSlice(held) ||
             !slices_.CanPublishPrepared(row.slice, true)) return false;
@@ -1580,8 +1587,7 @@ void VariableServiceV1::CommitPreparedActionSources(const ActionFiringTable::Chi
 
 void VariableServiceV1::CommitPreparedActionSourcesImpl(const LogicCommitCoordinator::ConsumedIssue* consumed,
     const ActionFiringTable::ChildActivationReceipt* activated) noexcept {
-    for (std::uint32_t index = 0; index < readCutCapacity_; ++index) {
-        if (!readCuts_.IsConstructed(index)) continue;
+    for (std::uint32_t index = 0; index < readCuts_.size(); ++index) {
         auto& cut = readCuts_[index];
         if (cut.state.load(std::memory_order_acquire) == ReadCutState::Capturing &&
             cut.pendingPlacement && MatchesConsumedActionOrder(cut.preparedIssue, consumed, activated))
@@ -1608,7 +1614,7 @@ void VariableServiceV1::CommitPreparedActionSourcesImpl(const LogicCommitCoordin
     // Every source is committed before any of the held pages can become visible.
     for (std::size_t index = 0; index < count; ++index) {
         auto& row = *rows[index];
-        auto& held = preparedWritePlacements_[static_cast<std::size_t>(&row - history_.data())];
+        auto& held = preparedWritePlacements_[history_.IndexOf(&row)];
         const bool released = timeline_.ReleaseHeldCurrentSlice(&held);
         assert(released);
         (void)released;
@@ -1645,8 +1651,7 @@ void VariableServiceV1::CancelPreparedWrite(
         row.preparedEngine = nullptr;
         row.cancelledBeforePublication = true;
     }
-    for (std::uint32_t index = 0; index < readCutCapacity_; ++index) {
-        if (!readCuts_.IsConstructed(index)) continue;
+    for (std::uint32_t index = 0; index < readCuts_.size(); ++index) {
         auto& cut = readCuts_[index];
         const auto state = cut.state.load(std::memory_order_acquire);
         if (state != ReadCutState::Capturing && state != ReadCutState::Published) continue;
@@ -1749,7 +1754,7 @@ VariableAcceptResult VariableServiceV1::AcceptBatch(
     WriteOperation operation, const VariableScopeKey& scope,
     const VnVariableWriteV1* writes, std::uint32_t writeCount,
     const VariableCallObservation& observed,
-    VariableWriterIdentityV1 writer, const EmitterTable* emitters,
+    VariableWriterIdentityV1 writer, EmitterTable* emitters,
     bool wholeBatchSupersede) {
     VariableAcceptResult result{};
     result.observation = observed;
@@ -1801,7 +1806,7 @@ VariableAcceptResult VariableServiceV1::AcceptBatch(
     for (std::uint32_t i = 0; i < writeCount; ++i) {
         VariableAcceptResult row = Prepare(
             operation, scope, writes[i].variableId, writes[i].value, observed,
-            0, &batch.rows_[i], writer, true);
+            0, &batch.rows_[i], writer, true, emitters);
         if (row.result != VN_OK) {
             batch.count_ = i;
             result.result = row.result;
@@ -1819,7 +1824,6 @@ VariableAcceptResult VariableServiceV1::AcceptBatch(
     }
     const auto sequence = issue.Sequence();
     std::size_t victimCount = 0;
-    std::size_t reusable = 0;
     for (auto& prior : history_) {
         if (!prior.used || !prior.batchLeader || prior.state != RowState::Pending) continue;
         const auto members = BatchRows(prior);
@@ -1836,12 +1840,9 @@ VariableAcceptResult VariableServiceV1::AcceptBatch(
         for (auto* member : members) {
             if (member == nullptr) continue;
             supersedeRows_[victimCount++] = member;
-            const auto slot = static_cast<std::size_t>(member - history_.data());
-            if (historyGenerations_[slot] != UINT32_MAX) ++reusable;
         }
     }
-    if (occupiedRevisions_ - reusable > revisionCapacity_ ||
-        victimCount > outcomes_.Capacity() - outcomeCount_) {
+    if (victimCount > outcomes_.size() - outcomeCount_) {
         result.result = VN_VARIABLE_TRANSACTION_EXHAUSTED;
         ++refusalCount_;
         return result;
@@ -1858,7 +1859,7 @@ VariableAcceptResult VariableServiceV1::AcceptBatch(
     for (std::size_t index = 0; index < victimCount; ++index) {
         auto& victim = *supersedeRows_[index];
         FinalizeRow(victim, VariableOutcomeKind::Superseded, {sequence}, 0);
-        const auto slot = static_cast<std::uint32_t>(&victim - history_.data());
+        const auto slot = history_.IndexOf(&victim);
         const bool recycled = RecycleHistoryRow(slot);
         assert(recycled);
         (void)recycled;
@@ -1929,7 +1930,7 @@ VariableAcceptResult VariableServiceV1::PrepareGlobalWrite(
 VariableAcceptResult VariableServiceV1::PrepareEmitterWrite(
     VnEmitterHandle emitter, VnVariableId id, float value,
     const VariableCallObservation& observed,
-    std::uint32_t executionOrdinal, const EmitterTable& emitters,
+    std::uint32_t executionOrdinal, EmitterTable& emitters,
     PreparedVariableWriteToken* out, VariableWriterIdentityV1 writer) noexcept {
     if (emitter == 0 || !emitters.IsLive(emitter)) {
         VariableAcceptResult result{};
@@ -1943,7 +1944,7 @@ VariableAcceptResult VariableServiceV1::PrepareEmitterWrite(
     scope.emitterSlot = static_cast<std::uint32_t>(emitter);
     scope.emitterGeneration = static_cast<std::uint32_t>(emitter >> 32);
     return Prepare(WriteOperation::Set, scope, id, value, observed,
-                   executionOrdinal, out, writer);
+                   executionOrdinal, out, writer, false, &emitters);
 }
 
 VariableAcceptResult VariableServiceV1::AcceptGlobal(
@@ -1960,7 +1961,7 @@ VariableAcceptResult VariableServiceV1::AcceptGlobal(
 
 VariableAcceptResult VariableServiceV1::AcceptEmitter(
     VnEmitterHandle emitter, VnVariableId id, float value,
-    const VariableCallObservation& observed, const EmitterTable& emitters,
+    const VariableCallObservation& observed, EmitterTable& emitters,
     ParamSystem& /*params*/) {
     VnVariableWriteV1 write{};
     write.variableId = id;
@@ -1994,7 +1995,7 @@ VariableAcceptResult VariableServiceV1::AcceptGlobalResetBatch(
 VariableAcceptResult VariableServiceV1::AcceptEmitterBatch(
     VnEmitterHandle emitter, const VnVariableWriteV1* writes,
     std::uint32_t writeCount, const VariableCallObservation& observed,
-    const EmitterTable& emitters, ParamSystem& /*params*/) {
+    EmitterTable& emitters, ParamSystem& /*params*/) {
     VariableScopeKey scope{};
     scope.scope = VariableScopeV1::Emitter;
     scope.emitterSlot = static_cast<std::uint32_t>(emitter);
@@ -2006,10 +2007,10 @@ VariableAcceptResult VariableServiceV1::AcceptEmitterBatch(
 VariableServiceV1::EmitterBank* VariableServiceV1::FindEmitterBank(
     const VariableScopeKey& scope) noexcept {
     if (scope.scope != VariableScopeV1::Emitter ||
-        scope.emitterSlot >= emitterBanks_.size()) {
+        BankIndex(scope.emitterSlot) >= emitterBanks_.size()) {
         return nullptr;
     }
-    EmitterBank& bank = emitterBanks_[scope.emitterSlot];
+    EmitterBank& bank = emitterBanks_[BankIndex(scope.emitterSlot)];
     return bank.live && bank.generation == scope.emitterGeneration ? &bank
                                                                    : nullptr;
 }
@@ -2017,10 +2018,10 @@ VariableServiceV1::EmitterBank* VariableServiceV1::FindEmitterBank(
 const VariableServiceV1::EmitterBank* VariableServiceV1::FindEmitterBank(
     const VariableScopeKey& scope) const noexcept {
     if (scope.scope != VariableScopeV1::Emitter ||
-        scope.emitterSlot >= emitterBanks_.size()) {
+        BankIndex(scope.emitterSlot) >= emitterBanks_.size()) {
         return nullptr;
     }
-    const EmitterBank& bank = emitterBanks_[scope.emitterSlot];
+    const EmitterBank& bank = emitterBanks_[BankIndex(scope.emitterSlot)];
     return bank.live && bank.generation == scope.emitterGeneration ? &bank
                                                                    : nullptr;
 }
@@ -2028,10 +2029,10 @@ const VariableServiceV1::EmitterBank* VariableServiceV1::FindEmitterBank(
 VariableServiceV1::EmitterBank* VariableServiceV1::EnsureEmitterBank(
     const VariableScopeKey& scope) noexcept {
     if (scope.scope != VariableScopeV1::Emitter ||
-        scope.emitterSlot >= emitterBanks_.size()) {
+        BankIndex(scope.emitterSlot) >= emitterBanks_.size()) {
         return nullptr;
     }
-    EmitterBank& bank = emitterBanks_[scope.emitterSlot];
+    EmitterBank& bank = emitterBanks_[BankIndex(scope.emitterSlot)];
     if (!bank.live || bank.generation != scope.emitterGeneration) {
         bank.live = true;
         bank.generation = scope.emitterGeneration;
@@ -2116,7 +2117,7 @@ void VariableServiceV1::FinalizeBatch(WriteRow& leader,
 
 void VariableServiceV1::InsertScheduledGroup(WriteRow& row) noexcept {
     if (!row.batchLeader || row.scheduled) return;
-    const auto slot = static_cast<std::uint32_t>(&row - history_.data());
+    const auto slot = history_.IndexOf(&row);
     const auto end = scheduledGroups_.begin() + scheduledGroupCount_;
     const auto position = std::lower_bound(scheduledGroups_.begin(), end, slot,
         [&](std::uint32_t left, std::uint32_t right) { return Precedes(history_[left], history_[right]); });
@@ -2129,7 +2130,7 @@ void VariableServiceV1::InsertScheduledGroup(WriteRow& row) noexcept {
 
 void VariableServiceV1::EraseScheduledGroup(WriteRow& row) noexcept {
     if (!row.scheduled) return;
-    const auto slot = static_cast<std::uint32_t>(&row - history_.data());
+    const auto slot = history_.IndexOf(&row);
     const auto end = scheduledGroups_.begin() + scheduledGroupCount_;
     const auto position = std::find(scheduledGroups_.begin(), end, slot);
     assert(position != end);
@@ -2256,9 +2257,9 @@ void VariableServiceV1::CommitAppliedBank(const WriteRow& row) {
     override->scheduledValue = row.value;
     override->currentBankOrdinal = row.bankOrdinal;
     override->scheduledBankOrdinal = row.bankOrdinal;
-    if (row.scope.emitterSlot < emitterBankVersionGenerations_.size()) {
+    if (BankIndex(row.scope.emitterSlot) < emitterBankVersionGenerations_.size()) {
         advanceGeneration(
-            emitterBankVersionGenerations_[row.scope.emitterSlot]);
+            emitterBankVersionGenerations_[BankIndex(row.scope.emitterSlot)]);
     }
 }
 
@@ -2547,7 +2548,7 @@ void VariableServiceV1::ProjectCandidate(Engine& engine,
             const EmitterBank& bank = emitterBanks_[slot];
             if (!bank.live) continue;
             const VnEmitterHandle emitter =
-                (static_cast<std::uint64_t>(bank.generation) << 32) | slot;
+                (static_cast<std::uint64_t>(bank.generation) << 32) | BankEmitterSlot(slot);
             (void)engine.emitters.ClearLocalValue(emitter, row.variableId);
         }
         engine.params.NoteVariableWrite(row.variableId);
@@ -2574,7 +2575,7 @@ void VariableServiceV1::ProjectCurrentApplied(Engine& engine,
                 const EmitterBank& bank = emitterBanks_[slot];
                 if (!bank.live) continue;
                 const VnEmitterHandle emitter =
-                    (static_cast<std::uint64_t>(bank.generation) << 32) | slot;
+                    (static_cast<std::uint64_t>(bank.generation) << 32) | BankEmitterSlot(slot);
                 const OverrideRow* override = FindCurrentOverride(bank, row.variableId);
                 if (override == nullptr) {
                     (void)engine.emitters.ClearLocalValue(emitter, row.variableId);
@@ -2814,7 +2815,7 @@ VariableServiceV1::CaptureCandidateSlice(Engine& engine, WriteRow& row, WorkSpan
 
 void VariableServiceV1::RejectPreparedRow(Engine& engine,
                                           WriteRow& row) noexcept {
-    auto& held = preparedWritePlacements_[static_cast<std::size_t>(&row - history_.data())];
+    auto& held = preparedWritePlacements_[history_.IndexOf(&row)];
     if (held.IsHeld()) (void)timeline_.CancelHeldCurrentSlice(&held, &row.calendarBacking);
     row.placementHeld = false;
     const auto members = BatchRows(row);
@@ -2836,7 +2837,7 @@ void VariableServiceV1::RejectPreparedRow(Engine& engine,
 
 void VariableServiceV1::ResetPreparedRow(Engine& engine,
                                          WriteRow& row) noexcept {
-    auto& held = preparedWritePlacements_[static_cast<std::size_t>(&row - history_.data())];
+    auto& held = preparedWritePlacements_[history_.IndexOf(&row)];
     if (held.IsHeld()) (void)timeline_.CancelHeldCurrentSlice(&held, &row.calendarBacking);
     row.placementHeld = false;
     if (row.slice.Valid()) {
@@ -3033,6 +3034,7 @@ void VariableServiceV1::CommitSliceTargets(Engine& engine,
                     ? target->command.payload.setVoicePan.pan2d : 0.0f);
             break;
         case VariableTargetScope::Bus:
+            engine.NoteBusSettingCommand(target->command);
             engine.busTargets.MarkSliceCommitted(
                 static_cast<std::uint32_t>(target->locator.object),
                 target->locator.objectGeneration, target->locator.targetId,
@@ -3128,7 +3130,7 @@ bool VariableServiceV1::ReadCutNeedsGroup(const ReadCutRow& cut, WriteRow& row) 
             (member->ticket.sequence == cut.sequence && member->executionOrdinal >= cut.executionOrdinalExclusive) ||
             (member->scope.scope != VariableScopeV1::Global &&
                 (cut.emitter == 0 || !ScopeEqual(member->scope, scope))) ||
-            !cut.candidatePins.test(static_cast<std::size_t>(member - history_.data()))) continue;
+            !cut.candidatePins.test(history_.IndexOf(member))) continue;
         for (std::uint32_t i = 0; i < cut.valueCount; ++i)
             if (cut.values[i].read && cut.values[i].variableId == member->variableId) return true;
     }
@@ -3254,7 +3256,7 @@ void VariableServiceV1::RefreshOrdinaryDebt(Engine& engine) noexcept {
         earliest = &row;
     }
     if (earliest != nullptr) {
-        const auto slot = static_cast<std::uint32_t>(earliest - history_.data());
+        const auto slot = history_.IndexOf(earliest);
         ordinaryDebt_ = {slot, historyGenerations_[slot], earliest->ticket.sequence};
     }
 }
@@ -3408,7 +3410,7 @@ void VariableServiceV1::PrepareClaimedSlicesImpl(Engine& engine, WorkSpan work,
                 row.preparedIssue.SameReservation(*privateIssue) && row.placementHeld &&
                 row.state == RowState::SlicePrepared;
             if (row.state == RowState::Terminal || row.state == RowState::PageCommitted || privateReady) continue;
-            auto& held = preparedWritePlacements_[static_cast<std::size_t>(&row - history_.data())];
+            auto& held = preparedWritePlacements_[history_.IndexOf(&row)];
             if (row.used && row.placementHeld && row.committedFrame < nextOpenFrame) {
                 // Moving the calendar does not invalidate these claims or their captured FIFO frontier.
                 const bool cancelled = timeline_.CancelHeldCurrentSlice(&held, &row.calendarBacking);
@@ -3468,7 +3470,7 @@ void VariableServiceV1::PrepareClaimedSlicesImpl(Engine& engine, WorkSpan work,
     std::uint64_t publishThrough = 0;
     for (std::size_t index = 0; index < rowCount; ++index) {
         WriteRow& row = *rows[index];
-        auto& held = preparedWritePlacements_[static_cast<std::size_t>(&row - history_.data())];
+        auto& held = preparedWritePlacements_[history_.IndexOf(&row)];
         const auto cancelPlacement = [&] {
             if (held.IsHeld()) (void)timeline_.CancelHeldCurrentSlice(&held, &row.calendarBacking);
             row.placementHeld = false;
@@ -3498,7 +3500,9 @@ void VariableServiceV1::PrepareClaimedSlicesImpl(Engine& engine, WorkSpan work,
             row.state = RowState::SlicePrepared;
             SyncBatchState(row);
         }
-        if (!slices_.SetPreparedCommandFrontier(row.slice, row.requiredCommandFrontier,
+        PreparedBusCommandBatch wake(engine);
+        if ((!row.reserved && !wake.PrepareWake()) ||
+            !slices_.SetPreparedCommandFrontier(row.slice, row.requiredCommandFrontier,
                 row.requiredInitialSourceFrontier) ||
             !PinHistorySlice(row) || (row.used && !slices_.Publish(row.slice))) {
             cancelPlacement();
@@ -3509,6 +3513,7 @@ void VariableServiceV1::PrepareClaimedSlicesImpl(Engine& engine, WorkSpan work,
             row.preparedEngine = &engine;
             continue;
         }
+        wake.Publish();
         const bool released = timeline_.ReleaseHeldCurrentSlice(&held);
         assert(released);
         (void)released;
@@ -3892,7 +3897,7 @@ void VariableServiceV1::ProjectCurrentWorld(ParamSystem& params,
             continue;
         }
         const VnEmitterHandle emitter =
-            (static_cast<std::uint64_t>(bank.generation) << 32) | slot;
+            (static_cast<std::uint64_t>(bank.generation) << 32) | BankEmitterSlot(slot);
         if (!emitters.IsLive(emitter)) {
             bank.live = false;
             continue;
@@ -4017,11 +4022,23 @@ bool VariableServiceV1::NoteEmitterCreated(
     scope.scope = VariableScopeV1::Emitter;
     scope.emitterSlot = static_cast<std::uint32_t>(emitter);
     scope.emitterGeneration = static_cast<std::uint32_t>(emitter >> 32);
-    if (scope.emitterSlot >= emitterBanks_.size() ||
-        scope.emitterGeneration == 0) {
+    if (scope.emitterSlot == UINT32_MAX || scope.emitterGeneration == 0) return false;
+    try {
+        const auto count = static_cast<std::size_t>(BankIndex(scope.emitterSlot)) + 1u;
+        if (count > emitterBanks_.size()) {
+            if (count > emitterBanks_.capacity()) emitterBanks_.reserve(std::max(count, emitterBanks_.capacity() * 2));
+            emitterBankVersionGenerations_.resize(count, 1u);
+            emitterBanks_.resize(count);
+        }
+        auto& overrides = emitterBanks_[BankIndex(scope.emitterSlot)].overrides;
+        if (overrides.empty()) overrides.resize(overridesPerEmitter_);
+    } catch (const std::bad_alloc&) {
+        detail::RecordCurrentLogicAllocFailure(detail::LogicAllocSite::VariableValueStorage);
+        return false;
+    } catch (const std::length_error&) {
         return false;
     }
-    EmitterBank& bank = emitterBanks_[scope.emitterSlot];
+    EmitterBank& bank = emitterBanks_[BankIndex(scope.emitterSlot)];
     if (bank.live) return false;
     bank.generation = scope.emitterGeneration;
     for (OverrideRow& override : bank.overrides) {
@@ -4036,14 +4053,12 @@ void VariableServiceV1::NoteEmitterDestroyed(Engine& engine,
     scope.scope = VariableScopeV1::Emitter;
     scope.emitterSlot = static_cast<std::uint32_t>(emitter);
     scope.emitterGeneration = static_cast<std::uint32_t>(emitter >> 32);
-    if (scope.emitterSlot < emitterBanks_.size()) {
-        EmitterBank& bank = emitterBanks_[scope.emitterSlot];
+    if (BankIndex(scope.emitterSlot) < emitterBanks_.size()) {
+        EmitterBank& bank = emitterBanks_[BankIndex(scope.emitterSlot)];
         if (bank.generation == scope.emitterGeneration) {
             bank.live = false;
             bank.generation = 0;
-        }
-        for (OverrideRow& override : bank.overrides) {
-            override = OverrideRow{};
+            std::vector<OverrideRow>().swap(bank.overrides);
         }
     }
     for (WriteRow& row : history_) {
@@ -4107,7 +4122,7 @@ bool VariableServiceV1::EmitterBankActiveForTests(
 }
 
 bool VariableServiceV1::PrepareHistoryBacking(std::uint32_t slot) noexcept {
-    if (memguard::IsAudioTagged() || slot >= history_.Capacity()) return false;
+    if (memguard::IsAudioTagged() || slot == UINT32_MAX) return false;
     if (prepareTargetRetirementStorage_ != nullptr &&
         !prepareTargetRetirementStorage_(targetRetirementStorageContext_)) return false;
     const auto pending = pendingRows_ + preparedRows_ + 1u;
@@ -4115,26 +4130,36 @@ bool VariableServiceV1::PrepareHistoryBacking(std::uint32_t slot) noexcept {
     const auto queries = static_cast<std::uint32_t>(std::min<std::uint64_t>(queryHistoryCapacity_, queryDemand));
     const auto expired = static_cast<std::uint32_t>(std::min<std::uint64_t>(queryHistoryCapacity_,
         expiredTicketCount_ + (queryDemand > queryHistoryCapacity_ ? queryDemand - queryHistoryCapacity_ : 0u)));
-    const auto outcomes = static_cast<std::uint32_t>(std::min<std::uint64_t>(outcomes_.Capacity(),
-        outcomeCount_ + pending));
+    if (outcomeCount_ + pending > UINT32_MAX) return false;
+    const auto outcomes = static_cast<std::uint32_t>(outcomeCount_ + pending);
     if (!outcomes_.ConstructThrough(outcomes) || !ticketQueryRecords_.ConstructThrough(queries) ||
         !expiredTicketRecords_.ConstructThrough(expired)) return false;
     const auto count = slot + 1u;
-    if (!history_.ConstructThrough(count) || !preparedWritePlacements_.ConstructThrough(count) ||
-        !sealRows_.ConstructThrough(count) || !commitRows_.ConstructThrough(count) ||
-        !prefixRows_.ConstructThrough(count) || !readCutRows_.ConstructThrough(count) ||
-        !actionReadCutRows_.ConstructThrough(count) || !preparationRows_.ConstructThrough(count) ||
-        !settledRows_.ConstructThrough(count) || !supersedeRows_.ConstructThrough(count) ||
-        !scheduledGroups_.ConstructThrough(count)) return false;
+    if (!slices_.PrepareWriteBacking(count) || !preparedWritePlacements_.ConstructThrough(count)) return false;
     try {
-        const auto words = (history_.size() + 63u) / 64u;
+        if (count > history_.size()) {
+            if (count > freeSlots_.capacity())
+                freeSlots_.reserve(std::max<std::size_t>(count, history_.size() * 2ull));
+            historyGenerations_.resize(count, 1);
+            sealRows_.resize(count);
+            commitRows_.resize(count);
+            prefixRows_.resize(count);
+            readCutRows_.resize(count);
+            actionReadCutRows_.resize(count);
+            preparationRows_.resize(count);
+            settledRows_.resize(count);
+            supersedeRows_.resize(count);
+            scheduledGroups_.resize(count);
+            dependencyVisited_.resize(count);
+        }
+        const auto words = (std::uint64_t{std::max(history_.size(), count)} + 63u) / 64u;
         for (auto index : capturingCuts_) {
             auto& pins = readCuts_[index].candidatePins.words;
             detail::CheckedGrow(pins, words, detail::LogicAllocSite::VariableReadCutColumns);
             pins.resize(words);
         }
-        return true;
-    } catch (...) { return false; }
+        return history_.ConstructThrough(count);
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::VariableValueStorage); return false; }
 }
 
 bool VariableServiceV1::PrepareActionResultBacking(
@@ -4148,12 +4173,12 @@ bool VariableServiceV1::PrepareActionResultBacking(
     const auto queries = static_cast<std::uint32_t>(std::min<std::uint64_t>(queryHistoryCapacity_, queryDemand));
     const auto expired = static_cast<std::uint32_t>(std::min<std::uint64_t>(queryHistoryCapacity_,
         expiredTicketCount_ + (queryDemand > queryHistoryCapacity_ ? queryDemand - queryHistoryCapacity_ : 0u)));
-    const auto outcomes = static_cast<std::uint32_t>(std::min<std::uint64_t>(outcomes_.Capacity(),
-        outcomeCount_ + pending));
+    if (outcomeCount_ + pending > UINT32_MAX) return false;
+    const auto outcomes = static_cast<std::uint32_t>(outcomeCount_ + pending);
     if (!outcomes_.ConstructThrough(outcomes) || !ticketQueryRecords_.ConstructThrough(queries) ||
         !expiredTicketRecords_.ConstructThrough(expired)) return false;
     ActionVariableResultBacking candidate;
-    if (!outcomes_.PrepareBacking(std::min(futureWrites, outcomes_.Capacity()), outcomes, &candidate.outcomes) ||
+    if (!outcomes_.PrepareBacking(futureWrites, outcomes, &candidate.outcomes) ||
         !ticketQueryRecords_.PrepareBacking(std::min(futureWrites, queryHistoryCapacity_), queries, &candidate.queries) ||
         !expiredTicketRecords_.PrepareBacking(std::min(futureWrites, queryHistoryCapacity_), expired, &candidate.expired)) return false;
     *out = std::move(candidate);
@@ -4205,7 +4230,7 @@ void VariableServiceV1::SubscribeReadCutHistory(ReadCutRow& cut, ReadCutValueRow
     auto* row = ResolveHistory(value.source);
     assert(row != nullptr && value.historyRetained && value.subscription.context == nullptr);
     value.subscription = {row->sourceHead, this, &NotifyReadCutSource,
-        {readCuts_.IndexOf(cut), cut.generation.load(std::memory_order_relaxed)}};
+        {readCuts_.IndexOf(&cut), cut.generation.load(std::memory_order_relaxed)}};
     row->sourceHead = &value.subscription;
     value.subscribedToSlice = false;
     // The serialized source owner rechecks the same retained history after linking.
@@ -4232,16 +4257,16 @@ void VariableServiceV1::UnsubscribeReadCutValue(ReadCutValueRow& value) noexcept
 }
 
 bool VariableServiceV1::ConstructReadCut(std::uint32_t slot) noexcept {
-    const bool constructed = readCuts_.IsConstructed(slot);
+    const bool constructed = slot < readCuts_.size();
     if (readCuts_.PreparedUseActive())
         return constructed && ReadCutBackingAvailable(readCuts_[slot]);
-    if (!constructed && !readCuts_.Emplace(slot)) return false;
+    if (!constructed && (slot == UINT32_MAX || !readCuts_.ConstructThrough(slot + 1u))) return false;
     const auto count = readCuts_.ConstructedCount();
     try {
         detail::CheckedGrow(capturingCuts_, count,
             detail::LogicAllocSite::VariableReadCutColumns);
         capturingCuts_.reserve(count);
-    } catch (...) { return false; }
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::VariableValueStorage); return false; }
     auto& cut = readCuts_[slot];
     return PrepareReadCutColumns(cut) && (cut.calendarBacking.Valid() ||
         timeline_.PrepareCurrentSliceBacking(&cut.calendarBacking));
@@ -4266,7 +4291,7 @@ bool VariableServiceV1::PrepareReadCutColumns(ReadCutRow& cut) noexcept {
         detail::CheckedGrow(cut.candidatePins.words, words, detail::LogicAllocSite::VariableReadCutColumns);
         cut.candidatePins.words.resize(words);
         return true;
-    } catch (const std::bad_alloc&) {
+    } catch (const std::bad_alloc&) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::VariableValueStorage);
         return false;
     } catch (const std::length_error&) {
         return false;
@@ -4277,19 +4302,25 @@ bool VariableServiceV1::PrepareReadCutBacking(
     std::uint32_t count, ReadCutBackingPreparation* out) noexcept {
     if (out == nullptr || out->Valid() || memguard::IsAudioTagged() ||
         readCuts_.PreparedUseActive()) return false;
-    // Refresh free rows before granting capacity; published columns remain untouched.
-    if (count != 0)
-        for (auto& cut : readCuts_)
-            if (cut.state.load(std::memory_order_acquire) == ReadCutState::Free &&
-                !ConstructReadCut(readCuts_.IndexOf(cut))) return false;
-    return readCuts_.PrepareBacking(count, 0,
-        [this](const ReadCutRow& row) noexcept { return ReadCutBackingAvailable(row); },
-        [this](std::uint32_t slot) noexcept { return ConstructReadCut(slot); }, out);
+    std::uint32_t occupied = 0;
+    if (count != 0) {
+        for (auto& cut : readCuts_) {
+            if (cut.state.load(std::memory_order_acquire) != ReadCutState::Free) ++occupied;
+            else if (!ConstructReadCut(readCuts_.IndexOf(&cut))) return false;
+        }
+    }
+    const auto previous = readCuts_.size();
+    ReadCutBackingPreparation candidate;
+    if (!readCuts_.PrepareBacking(count, occupied, &candidate)) return false;
+    for (auto index = previous; index < readCuts_.size(); ++index)
+        if (!ConstructReadCut(index)) return false;
+    *out = std::move(candidate);
+    return true;
 }
 
 VariableServiceV1::ReadCutRow* VariableServiceV1::ResolveReadCut(
     VariableReadCutRef cut) noexcept {
-    if (!cut.Valid() || !readCuts_.IsConstructed(cut.slot)) return nullptr;
+    if (!cut.Valid() || cut.slot >= readCuts_.size()) return nullptr;
     auto& row = readCuts_[cut.slot];
     if (row.generation.load(std::memory_order_acquire) != cut.generation) return nullptr;
     const auto state = row.state.load(std::memory_order_acquire);
@@ -4327,7 +4358,7 @@ bool VariableServiceV1::PreparedSourceDependsOn(VariableSliceRef source,
                 [&](const auto prior) { return prior.slot == next->slice.slot &&
                     prior.generation == next->slice.generation; });
             if (seen) continue;
-            // The completion pool bounds the private dependency graph.
+            // Retained history bounds the private dependency graph.
             if (count == visited.size()) return true;
             visited[count++] = next->slice;
         }
@@ -4393,7 +4424,7 @@ void VariableServiceV1::ReclaimHistoryRows() noexcept {
 }
 
 std::size_t VariableServiceV1::ReadCutStorageBytes() const noexcept {
-    auto bytes = readCuts_.RequestedBytes() + readCuts_.DirectoryBytes() +
+    auto bytes = readCuts_.RequestedBytes() +
         timelineReadUses_.RequestedBytes() +
         capturingCuts_.capacity() * sizeof(std::uint32_t) +
         historyGenerations_.capacity() * sizeof(std::uint32_t) +
@@ -4405,16 +4436,18 @@ std::size_t VariableServiceV1::ReadCutStorageBytes() const noexcept {
 }
 
 std::size_t VariableServiceV1::StorageBytes() const noexcept {
-    return ReadCutStorageBytes() + slices_.StorageBytes() +
+    auto emitterBytes = emitterBanks_.capacity() * sizeof(EmitterBank);
+    for (const auto& bank : emitterBanks_) emitterBytes += bank.overrides.capacity() * sizeof(OverrideRow);
+    return emitterBytes + ReadCutStorageBytes() + slices_.StorageBytes() +
         censusScratch_.capacity() * sizeof(GatheredTarget) +
         history_.RequestedBytes() + freeSlots_.capacity() * sizeof(std::uint32_t) +
         outcomes_.RequestedBytes() +
         ticketQueryRecords_.RequestedBytes() +
         expiredTicketRecords_.RequestedBytes() +
-        sealRows_.RequestedBytes() + commitRows_.RequestedBytes() + prefixRows_.RequestedBytes() +
-        readCutRows_.RequestedBytes() + actionReadCutRows_.RequestedBytes() + preparationRows_.RequestedBytes() +
-        settledRows_.RequestedBytes() + supersedeRows_.RequestedBytes() +
-        scheduledGroups_.RequestedBytes() +
+        sealRows_.capacity() * sizeof(sealRows_[0]) + commitRows_.capacity() * sizeof(commitRows_[0]) + prefixRows_.capacity() * sizeof(prefixRows_[0]) +
+        readCutRows_.capacity() * sizeof(readCutRows_[0]) + actionReadCutRows_.capacity() * sizeof(actionReadCutRows_[0]) + preparationRows_.capacity() * sizeof(preparationRows_[0]) +
+        settledRows_.capacity() * sizeof(settledRows_[0]) + supersedeRows_.capacity() * sizeof(supersedeRows_[0]) +
+        scheduledGroups_.capacity() * sizeof(scheduledGroups_[0]) +
         dependencyVisited_.capacity() * sizeof(VariableSliceRef);
 }
 
@@ -4466,22 +4499,19 @@ bool VariableServiceV1::CaptureReadCutImpl(
     if (out == nullptr) return false;
     *out = {};
     if (memguard::IsAudioTagged() || sequence == 0) return false;
-    if (emitter != 0 && (static_cast<std::uint32_t>(emitter) >= emitterBanks_.size() ||
+    if (emitter != 0 && (BankIndex(static_cast<std::uint32_t>(emitter)) >= emitterBanks_.size() ||
         static_cast<std::uint32_t>(emitter >> 32) == 0 ||
-        emitterBanks_[static_cast<std::uint32_t>(emitter)].generation != static_cast<std::uint32_t>(emitter >> 32))) return false;
+        emitterBanks_[BankIndex(static_cast<std::uint32_t>(emitter))].generation != static_cast<std::uint32_t>(emitter >> 32))) return false;
+    ReadCutBackingPreparation ordinary;
+    if (readCuts_.HasPreparedBacking() && !readCuts_.PreparedUseActive() &&
+        !PrepareReadCutBacking(1, &ordinary)) return false;
+    auto use = ordinary.Use();
     std::uint32_t slot = 0;
-    for (; slot < readCutCapacity_; ++slot) {
-        if (!readCuts_.IsConstructed(slot)) {
-            if (!readCuts_.PreparedUseActive()) break;
-            continue;
-        }
+    for (; slot < readCuts_.size(); ++slot) {
         if (readCuts_[slot].state.load(std::memory_order_acquire) == ReadCutState::Free &&
             (!readCuts_.PreparedUseActive() || ReadCutBackingAvailable(readCuts_[slot]))) break;
     }
-    if (slot == readCutCapacity_ || !ConstructReadCut(slot) ||
-        !readCuts_.ProtectBackingForAcquire(slot,
-            [this](const ReadCutRow& row) noexcept { return ReadCutBackingAvailable(row); },
-            [this](std::uint32_t index) noexcept { return ConstructReadCut(index); })) return false;
+    if (!ConstructReadCut(slot)) return false;
     auto& cut = readCuts_[slot];
     cut.world = worldGeneration_;
     cut.transport = transport_.Current();
@@ -4569,7 +4599,7 @@ bool VariableServiceV1::CaptureReadCutImpl(
                 }
             }
         }
-        const auto historySlot = static_cast<std::uint32_t>(leader - history_.data());
+        const auto historySlot = history_.IndexOf(leader);
         value.source = {historySlot, historyGenerations_[historySlot], sequenceOf(*leader)};
     }
     cut.state.store(ReadCutState::Capturing, std::memory_order_release);
@@ -4661,7 +4691,7 @@ bool VariableServiceV1::RebuildPendingReadCut(ReadCutRow& cut, std::uint64_t log
             for (std::size_t slot = 0; slot < history_.size(); ++slot)
                 if (cut.candidatePins.test(slot) && history_[slot].batchLeader &&
                     history_[slot].batchId == winner->batchId) { leader = &history_[slot]; break; }
-        const auto slot = static_cast<std::uint32_t>(leader - history_.data());
+        const auto slot = history_.IndexOf(leader);
         value.source = {slot, historyGenerations_[slot], leader->ticket.sequence};
     }
     cut.finalPlacementCaptured = true;
@@ -4748,8 +4778,8 @@ bool VariableServiceV1::ValidateReadCutPublication(VariableReadCutRef ref,
     auto* cut = ResolveReadCut(ref);
     if (cut == nullptr || cut->world != worldGeneration_ || cut->transport != transport_.Current() ||
         finalFrame != cut->executeFrame || cut->preparationFailed.load(std::memory_order_acquire)) return false;
-    if (cut->emitter != 0 && (static_cast<std::uint32_t>(cut->emitter) >= emitterBanks_.size() ||
-        emitterBanks_[static_cast<std::uint32_t>(cut->emitter)].generation != static_cast<std::uint32_t>(cut->emitter >> 32))) return false;
+    if (cut->emitter != 0 && (BankIndex(static_cast<std::uint32_t>(cut->emitter)) >= emitterBanks_.size() ||
+        emitterBanks_[BankIndex(static_cast<std::uint32_t>(cut->emitter))].generation != static_cast<std::uint32_t>(cut->emitter >> 32))) return false;
     if (cut->state.load(std::memory_order_acquire) == ReadCutState::Published) return true;
     if (cut->needsRebuild) return false;
     // Reordering private writes during placement must rebuild the captured image.
@@ -4772,7 +4802,7 @@ bool VariableServiceV1::ValidateReadCutPublication(VariableReadCutRef ref,
         for (const auto& row : history_) {
             const bool privateRow = row.reserved && row.preparedIssue.SameReservation(cut->preparedIssue) &&
                 IsPreparedActionOrderActive(row.preparedIssue);
-            if (cut->pendingPlacement && !cut->candidatePins.test(static_cast<std::size_t>(&row - history_.data())))
+            if (cut->pendingPlacement && !cut->candidatePins.test(history_.IndexOf(&row)))
                 continue;
             if ((!row.used && !privateRow) || row.world != cut->world || row.transport != cut->transport ||
                 row.variableId != value.variableId || row.requestedFrame > finalFrame || frameOf(row) > finalFrame ||
@@ -4954,8 +4984,7 @@ bool VariableServiceV1::CancelNativeReadCutCalendar(VariableReadCutRef ref,
 }
 
 bool VariableServiceV1::HasNativeReadCutsForTransport(TransportEpoch transport) const noexcept {
-    for (std::uint32_t index = 0; index < readCutCapacity_; ++index) {
-        if (!readCuts_.IsConstructed(index)) continue;
+    for (std::uint32_t index = 0; index < readCuts_.size(); ++index) {
         const auto& cut = readCuts_[index];
         const auto state = cut.state.load(std::memory_order_acquire);
         if ((state == ReadCutState::Capturing || state == ReadCutState::Published) &&
@@ -5098,7 +5127,7 @@ void VariableServiceV1::AcknowledgeFinishedNativeReadCuts() noexcept {
         const auto receipt = cut.nativeReceipt.load(std::memory_order_acquire);
         if (receipt != VariableNativeStartReceipt::Activated && receipt != VariableNativeStartReceipt::Failed)
             continue;
-        const VariableNativeStartIdentity identity{{readCuts_.IndexOf(cut), cut.generation.load(std::memory_order_relaxed)},
+        const VariableNativeStartIdentity identity{{readCuts_.IndexOf(&cut), cut.generation.load(std::memory_order_relaxed)},
             cut.nativeHandle, cut.world, cut.transport, cut.executeFrame, cut.sequence, cut.executionOrdinalExclusive};
         (void)AcknowledgeNativeReadCut(identity);
     }
@@ -5126,8 +5155,7 @@ void VariableServiceV1::ShutdownReadCutsAfterQuiescence() noexcept {
         if (state == TimelineReadUseState::Prepared || state == TimelineReadUseState::Published)
             ReleaseTimelineReadUse(use);
     }
-    for (std::uint32_t index = 0; index < readCutCapacity_; ++index) {
-        if (!readCuts_.IsConstructed(index)) continue;
+    for (std::uint32_t index = 0; index < readCuts_.size(); ++index) {
         auto& cut = readCuts_[index];
         const auto state = cut.state.load(std::memory_order_relaxed);
         if (state != ReadCutState::Capturing && state != ReadCutState::Published) continue;
@@ -5490,7 +5518,7 @@ bool VariableServiceV1::PreparePendingOrdinarySelectionReadCut(Engine& engine,
     }
     cut->needsRebuild = true;
     cut->state.store(ReadCutState::Capturing, std::memory_order_release);
-    const auto slot = readCuts_.IndexOf(*cut);
+    const auto slot = readCuts_.IndexOf(cut);
     if (!std::binary_search(capturingCuts_.begin(), capturingCuts_.end(), slot))
         capturingCuts_.insert(std::lower_bound(capturingCuts_.begin(), capturingCuts_.end(), slot), slot);
     VariableReadCutReader reader;
@@ -5512,8 +5540,8 @@ bool VariableServiceV1::BeginUnborrowedPendingVariableGroupCut(Engine& engine,
         cut->entryUse.load(std::memory_order_acquire) != EntryReadUseState::None ||
         cut->nativeReceipt.load(std::memory_order_acquire) != VariableNativeStartReceipt::None ||
         cut->nativeCalendarRequired || cut->publishedSourceCount != 0) return false;
-    if (cut->emitter != 0 && (static_cast<std::uint32_t>(cut->emitter) >= emitterBanks_.size() ||
-        emitterBanks_[static_cast<std::uint32_t>(cut->emitter)].generation !=
+    if (cut->emitter != 0 && (BankIndex(static_cast<std::uint32_t>(cut->emitter)) >= emitterBanks_.size() ||
+        emitterBanks_[BankIndex(static_cast<std::uint32_t>(cut->emitter))].generation !=
             static_cast<std::uint32_t>(cut->emitter >> 32))) return false;
     if (!RebuildPendingReadCut(*cut, anchor)) return false;
     *out = ReadCutReader(ref);
@@ -5818,7 +5846,7 @@ bool VariableServiceV1::ResetPrivatePendingVariableGroupCut(Engine& engine,
     }
     cut->needsRebuild = true;
     cut->state.store(ReadCutState::Capturing, std::memory_order_release);
-    const auto slot = readCuts_.IndexOf(*cut);
+    const auto slot = readCuts_.IndexOf(cut);
     if (!std::binary_search(capturingCuts_.begin(), capturingCuts_.end(), slot))
         capturingCuts_.insert(std::lower_bound(capturingCuts_.begin(), capturingCuts_.end(), slot), slot);
     return true;
@@ -6072,8 +6100,7 @@ bool VariableServiceV1::ReleaseFrontierEntryReadUse(ReadCutRow& cut) noexcept {
 
 bool VariableServiceV1::FinishFrontierEntryReadUse(const FrontierEntryReceiptRef& entry,
     std::uint64_t completedAudioSequence) noexcept {
-    for (std::uint32_t index = 0; index < readCutCapacity_; ++index) {
-        if (!readCuts_.IsConstructed(index)) continue;
+    for (std::uint32_t index = 0; index < readCuts_.size(); ++index) {
         auto& cut = readCuts_[index];
         if (cut.entryUse.load(std::memory_order_acquire) == EntryReadUseState::None ||
             !(cut.entryDescriptor.entry == entry)) continue;
@@ -6088,8 +6115,7 @@ bool VariableServiceV1::FinishFrontierEntryReadUse(const FrontierEntryReceiptRef
 }
 
 bool VariableServiceV1::CancelPreparedFrontierEntryReadUse(const FrontierEntryReceiptRef& entry) noexcept {
-    for (std::uint32_t index = 0; index < readCutCapacity_; ++index) {
-        if (!readCuts_.IsConstructed(index)) continue;
+    for (std::uint32_t index = 0; index < readCuts_.size(); ++index) {
         auto& cut = readCuts_[index];
         if (cut.entryUse.load(std::memory_order_acquire) == EntryReadUseState::None ||
             !(cut.entryDescriptor.entry == entry)) continue;
@@ -6271,13 +6297,13 @@ bool VariableServiceV1::CaptureCurrentBank(
     if (emitter == 0) {
         token = {0, globalBankVersionGeneration_};
     } else {
-        if (scope.emitterSlot >= emitterBanks_.size() ||
-            emitterBanks_[scope.emitterSlot].generation !=
+        if (BankIndex(scope.emitterSlot) >= emitterBanks_.size() ||
+            emitterBanks_[BankIndex(scope.emitterSlot)].generation !=
                 scope.emitterGeneration) {
             return false;
         }
         token = {scope.emitterSlot + 1u,
-                 emitterBankVersionGenerations_[scope.emitterSlot]};
+                 emitterBankVersionGenerations_[BankIndex(scope.emitterSlot)]};
     }
     if (!token.Valid()) return false;
     for (std::uint32_t index = 0; index < variableCount; ++index) {
@@ -6560,7 +6586,8 @@ void VariableServiceV1::FinishOutcomeDelivery() noexcept {
             }
         }
         assert(deliveredOutcomeCount_ <= outcomeCount_);
-        std::move(outcomes_.begin() + deliveredOutcomeCount_, outcomes_.begin() + outcomeCount_, outcomes_.begin());
+        for (std::size_t i = deliveredOutcomeCount_; i < outcomeCount_; ++i)
+            outcomes_[i - deliveredOutcomeCount_] = outcomes_[i];
         outcomeCount_ -= deliveredOutcomeCount_;
         deliveredOutcomeCount_ = 0;
         deliveredOutcomeGeneration_ = 0;

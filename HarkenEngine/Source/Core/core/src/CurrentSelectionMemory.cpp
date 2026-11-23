@@ -1,3 +1,4 @@
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/core/CurrentSelection.h"
 
 #include <algorithm>
@@ -76,7 +77,7 @@ bool SelectionMemoryTableV1::Reset(
         }
         childScratch_.swap(childScratch);
         remainingScratch_.swap(remainingScratch);
-    } catch (...) {
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage);
         return false;
     }
     config_ = config;
@@ -113,7 +114,7 @@ bool SelectionMemoryTableV1::ValidKey(
         return key.emitterSlot == UINT32_MAX && key.emitterGeneration == 0;
     }
     return key.memoryScope == MemoryScopeV1::Emitter &&
-           key.emitterSlot < config_.maxEmitters &&
+           key.emitterSlot != UINT32_MAX &&
            key.emitterGeneration != 0;
 }
 
@@ -259,7 +260,7 @@ bool SelectionMemoryTableV1::PrepareColumn(std::vector<T>& column, std::size_t c
         if (resize) column.resize(count);
         else column.reserve(count);
         return true;
-    } catch (...) {
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage);
         return NoteStorageFailure(SelectionStorageFailureKind::Allocation, count, resource);
     }
 }
@@ -1640,7 +1641,7 @@ bool SelectionMemoryTableV1::ValidBatchIdentity(const SelectionPendingBatchIdent
         identity.eventCount != 0 && identity.eventCount - 1u <= UINT32_MAX - identity.eventBegin &&
         (!identity.operationIndexed || identity.eventCount == 1u) &&
         ((identity.emitterSlot == UINT32_MAX && identity.emitterGeneration == 0) ||
-         (identity.emitterSlot < config_.maxEmitters && identity.emitterGeneration != 0));
+         (identity.emitterSlot != UINT32_MAX && identity.emitterGeneration != 0));
 }
 
 bool SelectionMemoryTableV1::MatchesBatchIdentity(const SelectionPendingBatchIdentityV1& identity,

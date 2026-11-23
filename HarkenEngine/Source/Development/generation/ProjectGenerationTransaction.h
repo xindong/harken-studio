@@ -4,6 +4,9 @@
 #include "TopologySlotPlan.h"
 #include <harken/ObjectId.h>
 #include "PlayableRuntime.h"
+#include "BusSendTable.h"
+#include "BusEffectSettings.h"
+#include "VoiceSendConfig.h"
 #include "SignalPublication.h"
 #include "harken/core/PreviewBusEffects.h"
 #include "harken/render/BusEffectChainUpdate.h"
@@ -158,6 +161,8 @@ private:
         effects_.reset();
         effectChains_.clear();
         effectSeeds_.clear();
+        preparedWork_.clear();
+        preparedCold_.clear();
     }
 
     void MoveFrom(PreparedProjectGenerationV1& other) noexcept {
@@ -196,6 +201,8 @@ private:
         effects_ = std::move(other.effects_);
         effectChains_ = std::move(other.effectChains_);
         effectSeeds_ = std::move(other.effectSeeds_);
+        preparedWork_ = std::move(other.preparedWork_);
+        preparedCold_ = std::move(other.preparedCold_);
         other.ClearFields();
     }
 
@@ -234,6 +241,8 @@ private:
     std::uint64_t bindingSourceStamp_ = 0;
     std::vector<PreparedBusEffectChain> effectChains_;
     std::vector<EffectParamTargetStore::PreparedSeedToken> effectSeeds_;
+    std::vector<BusTree::WorkBinding> preparedWork_;
+    std::vector<BusTree::DormantSource> preparedCold_;
 };
 
 ProjectGenerationPrepareResultV1 PrepareProjectGenerationV1(

@@ -653,10 +653,10 @@ struct PackBodyReadState {
         try {
             detail::DecodeResize(rows, static_cast<std::size_t>(count), *staging);
             return true;
-        } catch (const std::bad_alloc&) {
+        } catch (const std::bad_alloc&) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::CurrentWorldDecodedImage);
             result = CurrentWorldBodyDecodeResult::Capacity;
             return false;
-        } catch (...) {
+        } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::CurrentWorldDecodedImage);
             return false;
         }
     }
@@ -1251,7 +1251,7 @@ bool EncodeCurrentWorldBodyImpl(
             return false;
         }
         return true;
-    } catch (const std::bad_alloc&) {
+    } catch (const std::bad_alloc&) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage);
         if (budget != nullptr) budget->capacity = true;
         out.clear();
         return false;
@@ -1332,7 +1332,7 @@ bool EncodeCurrentWorldBodyV20(
         for (std::uint64_t i = 0; i < receivers; ++i, cursor += kPackBytes<HkPackBodyWorldSignalReceiver>)
             SerializePackRow<HkPackBodyWorldSignalReceiver>(world.signalReceivers[i], cursor);
         return true;
-    } catch (...) {
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::CurrentWorldDecodedImage);
         out.clear();
         return false;
     }
@@ -1426,8 +1426,9 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithBudget(
         impl_ = std::move(decoded);
         return CurrentWorldBodyDecodeResult::Ok;
     } catch (const std::bad_alloc&) {
+        detail::RecordCurrentLogicAllocFailure(detail::LogicAllocSite::CurrentWorldDecodedImage);
         return CurrentWorldBodyDecodeResult::Capacity;
-    } catch (...) {
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::CurrentWorldDecodedImage);
         return CurrentWorldBodyDecodeResult::Invalid;
     }
 }

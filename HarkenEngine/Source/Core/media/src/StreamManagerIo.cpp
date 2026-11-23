@@ -1,3 +1,4 @@
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/media/StreamManager.h"
 
 #include <algorithm>
@@ -74,7 +75,7 @@ VnResult StreamManager::BeginSourceImpl(VnSoundId id,
         m_serviceRequested = true;
         m_wake.notify_all();
         return VN_OK;
-    } catch (const std::bad_alloc&) { return VN_BACKPRESSURE; }
+    } catch (const std::bad_alloc&) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::StreamStorage); return VN_BACKPRESSURE; }
 }
 
 StreamManager::PreparationState StreamManager::QuerySource(SourceToken token, VnResult* error,
@@ -453,7 +454,7 @@ void StreamManager::ServeSlots() {
         if (slot.passGoal <= written) {
             std::uint64_t target = written;
             if (!m_throttled.load(std::memory_order_relaxed)) target += cursor.maxServeFrames;
-            const auto index = static_cast<std::uint32_t>(&slot - m_slots.data());
+            const auto index = slot.index;
             for (const auto* request : m_batch)
                 if (request->kind == Request::Kind::Serve)
                     for (const auto& wanted : request->targets)
@@ -525,7 +526,7 @@ void StreamManager::DispatchIo() {
         return false;
     };
     (void)source();
-    if (m_slots.empty()) return;
+    if (m_slots.size() == 0) return;
     auto& prepare = *m_ioLanes[kPreparationIoLane];
     std::size_t queuedSteady = 0;
     for (std::size_t choice = 0; choice <= m_slots.size(); ++choice) {
@@ -556,7 +557,7 @@ void StreamManager::DispatchIo() {
         ChunkJob job;
         if (!AdvanceSlot(cursor, &job)) continue;
         slot.stagedChunk = kNoChunk;
-        m_slotCursor = static_cast<std::size_t>(&slot - m_slots.data()) + 1;
+        m_slotCursor = static_cast<std::size_t>(slot.index) + 1;
         if (steady) {
             std::lock_guard<std::mutex> lock(m_ioMutex);
             // Queue insertion is the only fallible step. No ownership is

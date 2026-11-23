@@ -1,3 +1,4 @@
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/core/StreamSeekHandoffTable.h"
 
 #include <new>
@@ -43,15 +44,11 @@ std::uint64_t StreamSeekHandoffTable::GenerationOf(
 }
 
 bool StreamSeekHandoffTable::Reset(std::uint32_t capacity) {
-    if (capacity == 0 || capacity > kMaxStreamSeekHandoffsHard) return false;
-    std::unique_ptr<Row[]> rows;
-    try {
-        rows = std::make_unique<Row[]>(capacity);
-    } catch (const std::bad_alloc&) {
-        return false;
-    }
-    rows_ = std::move(rows);
-    capacity_ = capacity;
+    if (capacity > kMaxStreamSeekHandoffsHard) return false;
+    GrowingRowStorage<Row> rows;
+    if (!rows.ConstructThrough(capacity)) return false;
+    rows_.Swap(rows);
+    capacity_ = capacity == 0 ? kMaxStreamSeekHandoffsHard : capacity;
     return true;
 }
 
@@ -59,7 +56,7 @@ StreamSeekHandoffTable::Row* StreamSeekHandoffTable::Resolve(
     std::uint64_t token) noexcept {
     if (token == 0) return nullptr;
     const std::uint32_t slot = SlotOf(token);
-    if (slot >= capacity_) return nullptr;
+    if (slot >= rows_.size()) return nullptr;
     Row& row = rows_[slot];
     return row.generation == GenerationOf(token) ? &row : nullptr;
 }
@@ -84,6 +81,7 @@ bool StreamSeekHandoffTable::Prepare(
     }
     *outToken = 0;
     for (std::uint32_t slot = 0; slot < capacity_; ++slot) {
+        if (slot == rows_.size() && !rows_.ConstructThrough(slot + 1u)) return false;
         Row& row = rows_[slot];
         if (row.lifecycle.load(std::memory_order_relaxed) !=
             Value(StreamSeekHandoffLifecycle::Free)) {
@@ -199,7 +197,7 @@ bool StreamSeekHandoffTable::Abandon(std::uint64_t token) noexcept {
 
 void StreamSeekHandoffTable::ReleaseTicket(
     VnActionSeekTicket ticket) noexcept {
-    for (std::uint32_t slot = 0; slot < capacity_; ++slot) {
+    for (std::uint32_t slot = 0; slot < rows_.size(); ++slot) {
         Row& row = rows_[slot];
         const auto state = static_cast<StreamSeekHandoffLifecycle>(
             row.lifecycle.load(std::memory_order_acquire));
@@ -212,7 +210,7 @@ void StreamSeekHandoffTable::ReleaseTicket(
 }
 
 void StreamSeekHandoffTable::CancelAllAfterAudioJoin() noexcept {
-    for (std::uint32_t slot = 0; slot < capacity_; ++slot) {
+    for (std::uint32_t slot = 0; slot < rows_.size(); ++slot) {
         Row& row = rows_[slot];
         if (row.lifecycle.load(std::memory_order_relaxed) ==
             Value(StreamSeekHandoffLifecycle::Prepared)) {

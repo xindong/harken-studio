@@ -548,7 +548,12 @@ TEST(StreamRegister, SourceReadAndReleaseDoNotBlockRegisteredSlotActivation) {
         EXPECT_TRUE(WaitUntil([&] { return destroyed->load() == 1; }));
         for (unsigned i = 0; i < 2; ++i)
             EXPECT_TRUE(streams.RetirePreparedSlot(streams.RingOf(i), tokens[i]));
-        streams.SyncServe();
+        // An in-flight refill releases its file reference when both retired slots detach.
+        ASSERT_TRUE(WaitUntil([&] {
+            streams.SyncServe();
+            return streams.RingOf(0)->state.load(std::memory_order_acquire) == harken::StreamSlotState::Free &&
+                streams.RingOf(1)->state.load(std::memory_order_acquire) == harken::StreamSlotState::Free;
+        }));
         EXPECT_EQ(VN_OK, streams.UnregisterFile(spec.soundId));
     }
 }

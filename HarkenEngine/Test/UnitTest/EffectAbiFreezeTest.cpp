@@ -336,8 +336,10 @@ static_assert(harken::kCommandVersion == 8,
 // production headers (enforcement there is a frozen enum plus a Debug bounds
 // assert); this fixes the count from the test side so another opcode cannot be
 // appended without tripping a build error the reviewer must acknowledge.
-static_assert(harken::kMaxKnownOpcode == 27,
-              "audio-thread opcode ceiling includes the atomic Preview effect-chain command");
+static_assert(harken::kOpcodeApplyPreviewEffectChain == 27);
+static_assert(harken::kOpcodeSetBusActivity == 28);
+static_assert(harken::kMaxKnownOpcode == 28,
+              "audio-thread opcode ceiling includes the prepared Bus activity carrier");
 
 // --- command record transport shape (mirror of the production assert) ---
 

@@ -1,6 +1,8 @@
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/param/MeterProbe.h"
 
 #include "Engine.h"
+#include "SignalPublication.h"
 #include "harken/param/EffectParamLocator.h"
 #include "harken/param/ParamTargetTable.h"
 #include "harken/dsp/GainRamp.h"
@@ -250,7 +252,7 @@ bool MeterProbeSystem::PrepareWithdrawalChunk(
             engine.variables.CurrentWorldGeneration(),
             engine.variables.CurrentTransportEpoch(),
             0, frame,
-            probe.identity.probeGeneration, chunkCount, &slice)) {
+            probe.identity.probeGeneration, chunkCount, &slice, true)) {
         return false;
     }
     for (std::uint32_t i = 0; i < chunkCount; ++i) {
@@ -536,15 +538,17 @@ bool MeterProbeSystem::CaptureAndScheduleWithdrawalChunk(
     input.kind = CurrentSliceKind::MeterProbeWithdrawal;
     input.slice = {probe.withdrawalSlice.slot,
                    probe.withdrawalSlice.generation};
-    const ReserveResult reserved = engine.timelinePool.ReserveCurrentSlice(
-        input, PrePublishLatePolicy::ExecuteAtEarliestSafeFrame,
-        nextOpenFrame);
-    if (reserved.status != ReserveStatus::Committed) {
+    HeldCurrentSliceToken held;
+    const ReserveResult reserved = engine.timelinePool.ReserveHeldCurrentSlice(
+        input, PrePublishLatePolicy::ExecuteAtEarliestSafeFrame, nextOpenFrame, &held);
+    if (reserved.status != ReserveStatus::Committed) return false;
+    PreparedBusCommandBatch wake(engine);
+    if (!engine.timelinePool.CanReleaseHeldCurrentSlice(held) ||
+        !engine.variableSlices.CanPublishPrepared(probe.withdrawalSlice) || !wake.PrepareWake())
         return false;
-    }
-    if (!engine.variableSlices.Publish(probe.withdrawalSlice)) {
-        std::terminate();
-    }
+    if (!engine.variableSlices.Publish(probe.withdrawalSlice)) std::terminate();
+    wake.Publish();
+    if (!engine.timelinePool.ReleaseHeldCurrentSlice(&held)) std::terminate();
     probe.withdrawalPageCommitted = true;
     ReleaseWithdrawalChunkRows(engine, probe);
     engine.variables.PublishPreparedPlaybackPages(
@@ -685,6 +689,7 @@ void MeterProbeSystem::CommitSliceTargets(
                     ? target->command.payload.setVoicePan.pan2d : 0.0f);
             break;
         case VariableTargetScope::Bus:
+            engine.NoteBusSettingCommand(target->command);
             engine.busTargets.MarkSliceCommitted(
                 static_cast<std::uint32_t>(target->locator.object),
                 target->locator.objectGeneration,
@@ -855,9 +860,20 @@ VnResult MeterProbeSystem::Attach(Engine& engine, VnObjectId bindingId,
     if ((targetScope == VN_TARGET_SCOPE_VOICE &&
          !engine.params.PrepareRetiringTargetStorage()) ||
         (targetScope == VN_TARGET_SCOPE_BUS &&
-         !engine.busTargets.PrepareRetiringTargetStorage())) {
+         (!engine.busTargets.PrepareActivity(busIndex, binding->targetId) ||
+          !engine.busTargets.PrepareRetiringTargetStorage()))) {
         engine.meterDetectors.NoteRefusal();
         return VN_BACKPRESSURE;
+    }
+    const auto required = std::uint64_t{engine.bindings.AttachmentCount()} + 1u;
+    if (required > UINT32_MAX ||
+        !engine.params.PrepareMeterProbeContributionStorage(static_cast<std::uint32_t>(required)))
+        return VN_OUT_OF_MEMORY;
+    try {
+        if (withdrawalScratch_.size() < required) withdrawalScratch_.resize(static_cast<std::size_t>(required));
+    } catch (...) {
+        detail::RecordCurrentLogicAllocFailure(detail::LogicAllocSite::BindingStorage);
+        return VN_OUT_OF_MEMORY;
     }
     const VnResult result = engine.bindings.AttachProbe(
         bindingId, targetScope, targetStableId, targetInstanceHandle, busIndex, targetGeneration);
@@ -936,7 +952,7 @@ VnResult MeterProbeSystem::Uninstall(Engine& engine,
     std::uint64_t logicSequence = 0;
     if (engine.logicCommits.TryIssue(&logicSequence) !=
         LogicCommitCoordinator::IssueStatus::Issued) {
-        engine.runtimeRecreateRequired = true;
+        engine.RequireRecreation(engine.logicCommits.Exhausted() ? VN_RUNTIME_FAULT_GENERATION_EXHAUSTED : VN_RUNTIME_FAULT_INTERNAL_STATE);
         return VN_BACKPRESSURE;
     }
     RetireProbe(engine, *probe, logicSequence);
@@ -1230,7 +1246,7 @@ VnResult MeterProbeSystem::PrepareBusRemovalV1(Engine& engine,
         for (auto& row : out.probes) {
             if (row.state != MeterSystem::State::Installed) continue;
             if (engine.logicCommits.TryIssue(&row.issuedSequence) != LogicCommitCoordinator::IssueStatus::Issued) {
-                if (engine.logicCommits.Exhausted()) engine.runtimeRecreateRequired = true;
+                if (engine.logicCommits.Exhausted()) engine.RequireRecreation(VN_RUNTIME_FAULT_GENERATION_EXHAUSTED);
                 return VN_BACKPRESSURE;
             }
         }
@@ -1238,7 +1254,7 @@ VnResult MeterProbeSystem::PrepareBusRemovalV1(Engine& engine,
         out.domainEpoch = domain->epoch;
         out.owner = &engine;
         return VN_OK;
-    } catch (const std::bad_alloc&) {
+    } catch (const std::bad_alloc&) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::BindingStorage);
         return VN_BACKPRESSURE;
     }
 }
@@ -1327,7 +1343,7 @@ void MeterProbeSystem::NoteBusDestroyed(Engine& engine,
             std::uint64_t logicSequence = 0;
             if (engine.logicCommits.TryIssue(&logicSequence) !=
                 LogicCommitCoordinator::IssueStatus::Issued) {
-                engine.runtimeRecreateRequired = true;
+                engine.RequireRecreation(engine.logicCommits.Exhausted() ? VN_RUNTIME_FAULT_GENERATION_EXHAUSTED : VN_RUNTIME_FAULT_INTERNAL_STATE);
             }
             RetireProbe(engine, *probe, logicSequence);
         }

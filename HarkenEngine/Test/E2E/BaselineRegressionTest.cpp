@@ -1013,6 +1013,51 @@ TEST(BaselineRegression, BusGraphScene) {
     CompareOrRecord("bus_graph_scene", peaks);
 }
 
+TEST(BaselineRegression, SendLevelTransitionsWithinOneBlock) {
+    constexpr unsigned block = 1024;
+    for (const bool voiceSend : {false, true}) {
+        const char* scenario = voiceSend ? "voice_send_level_ramp" : "bus_send_level_ramp";
+        SCOPED_TRACE(scenario);
+        EngineSession session(MakeNullConfig(2, block, 48000));
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto* engine = session.Engine();
+        const auto bus = harkentest::ObjectId(2);
+        const auto sound = harkentest::ObjectId(1);
+        ASSERT_EQ(VN_OK, Vn_CreateBus(bus, VN_BUS_MASTER));
+
+        // Each block has one pulse, so the recorded peak samples the gain
+        // at a known frame. At 48 kHz a 5 ms ramp lasts exactly 240 frames.
+        std::vector<float> pulses(block * 4);
+        pulses[239] = pulses[block + 239] = pulses[2 * block + 119] =
+            pulses[3 * block + 119] = 0.25f;
+        const auto pcm = MonoDesc(pulses, 48000);
+        ASSERT_EQ(VN_OK, Vn_RegisterPCM(sound, &pcm));
+        auto play = MakePlayDesc(sound);
+        play.busId = bus;
+        VnVoiceHandle voice{};
+        ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+        if (voiceSend) {
+            ASSERT_EQ(VN_OK, Vn_SetVoiceOutputVolume(voice, -800, 0));
+            ASSERT_EQ(VN_OK, Vn_SetVoiceSend(voice, 0, VN_BUS_MASTER, -800));
+        } else {
+            ASSERT_EQ(VN_OK, Vn_SetBusOutputVolume(bus, -800, 0));
+            ASSERT_EQ(VN_OK, Vn_ConnectBusSend(bus, VN_BUS_MASTER, -800));
+        }
+        const auto setSend = [&](float db) {
+            return voiceSend ? Vn_SetVoiceSendLevel(voice, 0, db, 5)
+                             : Vn_SetBusSendLevel(bus, VN_BUS_MASTER, db, 5);
+        };
+        std::vector<float> peaks;
+        PumpBlockPeaks(engine, &peaks);
+        ASSERT_EQ(VN_OK, setSend(0));
+        PumpBlockPeaks(engine, &peaks);
+        ASSERT_EQ(VN_OK, setSend(-800));
+        PumpBlockPeaks(engine, &peaks);
+        PumpBlockPeaks(engine, &peaks);
+        CompareOrRecord(scenario, peaks);
+    }
+}
+
 // --- multichannel scenarios (spec M5 §11.2/§11.3, recorded regression) ---
 // These three freeze the S1 render-contract amendment's three new surfaces as
 // full end-to-end envelopes, complementing the analytic per-channel goldens:

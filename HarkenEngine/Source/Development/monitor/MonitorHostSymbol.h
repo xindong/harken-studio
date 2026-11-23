@@ -68,10 +68,14 @@ inline MonitorHostSymbolSource HostSymbolField(const MonitorHostSymbolValue& hos
 }
 
 // The mirror contains one description per live Emitter, not three wire rows.
-// All allocation occurs at setup. Seed never publishes capture-off history.
+// Seed never publishes capture-off history.
 class MonitorHostSymbolMirror {
 public:
     void Reset(std::size_t capacity) { rows_.assign(capacity, {}); revision_ = 1; unavailable_ = 0; }
+    std::size_t Capacity() const noexcept { return rows_.size(); }
+    template<class GrowRows>
+    bool Grow(std::size_t count, GrowRows&& growRows) { return growRows(rows_, count); }
+    void NoteUnavailable() noexcept { if (unavailable_ != UINT64_MAX) ++unavailable_; }
     void Clear() noexcept { std::vector<MonitorHostSymbolValue>().swap(rows_); revision_ = 1; unavailable_ = 0; }
     std::uint64_t Revision() const noexcept { return revision_; }
     std::uint64_t Unavailable() const noexcept { return unavailable_; }

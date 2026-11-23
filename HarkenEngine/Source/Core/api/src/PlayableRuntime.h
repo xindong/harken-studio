@@ -24,7 +24,7 @@ struct PlaybackPathObservation {
     VnObjectId outputBusId{};
     PlaybackPath path{};
     std::uint32_t sendCount = 0;
-    TimelineVoiceSendInstall sends[kTimelineMaxVoiceSends]{};
+    std::span<const TimelineVoiceSendInstall> sends{};
 };
 
 bool ObserveCurrentPlaybackPaths(
@@ -52,6 +52,7 @@ enum class PlayableStartStatus : std::uint8_t {
     RuntimeRecreateRequired = 7,
     NotInitialized = 8,
     GenerationConflict = 9,
+    OutOfMemory = 10,
 };
 
 enum class BusAdmissionVerdict : std::uint8_t {

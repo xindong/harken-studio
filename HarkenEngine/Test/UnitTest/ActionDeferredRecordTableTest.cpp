@@ -115,8 +115,8 @@ void ExpectPublicationRecord(const harken::ActionDeferredRecord& expected,
 TEST(ActionDeferredRecordTable, HeldPairExcludesOtherPublishAbandonAndResetUntilConsume) {
     harken::ActionDeferredRecordTable table;
     harken::ActionDeferredRecordTable other;
-    ASSERT_TRUE(table.Reset(1));
-    ASSERT_TRUE(other.Reset(1));
+    ASSERT_TRUE(table.Reset());
+    ASSERT_TRUE(other.Reset());
     harken::DeferredIntentPool pool(1, 1);
     const auto record = MakeRecord();
     auto prepared = table.Prepare(record);
@@ -140,7 +140,7 @@ TEST(ActionDeferredRecordTable, HeldPairExcludesOtherPublishAbandonAndResetUntil
     EXPECT_FALSE(pool.AbandonPrepared(added.token));
     EXPECT_FALSE(pool.CanResetForTransport());
     EXPECT_FALSE(pool.ResetForTransport());
-    EXPECT_FALSE(table.Reset(2));
+    EXPECT_FALSE(table.Reset());
     EXPECT_EQ(harken::ActionDeferredRecordState::Prepared, table.State(original));
     EXPECT_EQ(1u, table.PreparedCount());
     EXPECT_EQ(1u, pool.PreparedCount());
@@ -179,14 +179,14 @@ TEST(ActionDeferredRecordTable, HeldPairExcludesOtherPublishAbandonAndResetUntil
 
 TEST(ActionDeferredRecordTable, ReturnedPairLoanKeepsRealPreparationAndRollbackCapacity) {
     harken::ActionDeferredRecordTable table;
-    ASSERT_TRUE(table.Reset(1));
+    ASSERT_TRUE(table.Reset());
     harken::DeferredIntentPool pool(1, 1);
     const auto record = MakeRecord();
     table.SetCommitPageLimitForTests(0);
     const auto refused = table.Prepare(record);
     EXPECT_EQ(harken::ActionDeferredRecordPrepareStatus::Capacity, refused.status);
     EXPECT_FALSE(refused.token.Valid());
-    EXPECT_EQ(1u, table.Capacity());
+    EXPECT_EQ(0u, table.Capacity());
     EXPECT_EQ(0u, table.PreparedCount());
     table.SetCommitPageLimitForTests(SIZE_MAX);
     for (unsigned attempt = 0; attempt < 3; ++attempt) {
@@ -213,14 +213,14 @@ TEST(ActionDeferredRecordTable, ReturnedPairLoanKeepsRealPreparationAndRollbackC
         EXPECT_EQ(0u, pool.PreparedCount());
     }
     ASSERT_TRUE(pool.ResetForTransport());
-    ASSERT_TRUE(table.Reset(1));
+    ASSERT_TRUE(table.Reset());
 }
 
 TEST(ActionDeferredRecordTable, PairProofRejectsMismatchedFactoryOutputsWithoutHoldingEither) {
     for (unsigned mismatch = 0; mismatch < 6; ++mismatch) {
         SCOPED_TRACE(mismatch);
         harken::ActionDeferredRecordTable table;
-        ASSERT_TRUE(table.Reset(1));
+        ASSERT_TRUE(table.Reset());
         harken::DeferredIntentPool pool(1, 1);
         const auto record = MakeRecord();
         auto prepared = table.Prepare(record);
@@ -249,7 +249,7 @@ TEST(ActionDeferredRecordTable, PairProofRejectsMismatchedFactoryOutputsWithoutH
 
 TEST(ActionDeferredRecordTable, PublicationCaptureDoesNotChangeCancellationOrLiveState) {
     harken::ActionDeferredRecordTable table;
-    ASSERT_TRUE(table.Reset(1));
+    ASSERT_TRUE(table.Reset());
     auto expected = MakePublicationRecord();
     expected.stepIndex = 3;
     expected.depth = 2;
@@ -301,7 +301,7 @@ TEST(ActionDeferredRecordTable, PublicationCaptureDoesNotChangeCancellationOrLiv
 
 TEST(ActionDeferredRecordTable, PublicationCaptureFailureLeavesEveryAvailableOutputUntouched) {
     harken::ActionDeferredRecordTable table;
-    ASSERT_TRUE(table.Reset(1));
+    ASSERT_TRUE(table.Reset());
     const harken::ActionDeferredRecordToken tokenSentinel{99, 123};
     auto recordSentinel = MakePublicationRecord();
     recordSentinel.executionOrdinal = 912;
@@ -346,7 +346,7 @@ TEST(ActionDeferredRecordTable, PublicationCaptureFailureLeavesEveryAvailableOut
 
 TEST(ActionDeferredRecordTable, PublicationCaptureAfterAbandonKeepsGenerationButReturnsNewRecord) {
     harken::ActionDeferredRecordTable table;
-    ASSERT_TRUE(table.Reset(1));
+    ASSERT_TRUE(table.Reset());
     auto first = table.Prepare(MakePublicationRecord());
     ASSERT_EQ(harken::ActionDeferredRecordPrepareStatus::Prepared, first.status);
     const auto oldToken = first.token;
@@ -373,7 +373,7 @@ TEST(ActionDeferredRecordTable, PublicationCaptureAfterAbandonKeepsGenerationBut
 
 TEST(ActionDeferredRecordTable, PublicationCaptureAfterLiveFinalizationReturnsNewGeneration) {
     harken::ActionDeferredRecordTable table;
-    ASSERT_TRUE(table.Reset(1));
+    ASSERT_TRUE(table.Reset());
     auto first = table.Prepare(MakePublicationRecord());
     ASSERT_EQ(harken::ActionDeferredRecordPrepareStatus::Prepared, first.status);
     const auto oldToken = first.token;
@@ -416,7 +416,7 @@ TEST(ActionDeferredRecordTable, PublicationRecordComparatorDetectsMissingSemanti
 TEST(ActionDeferredRecordTable,
      PairedCommitPublishesMatchingRecordAndIntentTogether) {
     harken::ActionDeferredRecordTable table;
-    ASSERT_TRUE(table.Reset(1));
+    ASSERT_TRUE(table.Reset());
     harken::DeferredIntentPool pool(1, 1);
     const auto record = MakeRecord();
     auto preparedRecord = table.Prepare(record);
@@ -446,7 +446,7 @@ TEST(ActionDeferredRecordTable,
 TEST(ActionDeferredRecordTable,
      FixedPlayClaimKeepsTheExactPairAndRetriesBothSides) {
     harken::ActionDeferredRecordTable table;
-    ASSERT_TRUE(table.Reset(1));
+    ASSERT_TRUE(table.Reset());
     harken::DeferredIntentPool pool(1, 1);
     auto record = MakeRecord();
     record.firstRowFrame = 512;
@@ -492,7 +492,7 @@ TEST(ActionDeferredRecordTable,
 TEST(ActionDeferredRecordTable,
      RetryReservationBlocksBothClaimPathsAndPreservesDueOrder) {
     harken::ActionDeferredRecordTable table;
-    ASSERT_TRUE(table.Reset(2));
+    ASSERT_TRUE(table.Reset());
     harken::DeferredIntentPool pool(2, 2);
     auto first = MakeRecord();
     first.firstRowFrame = 512;
@@ -569,7 +569,7 @@ TEST(ActionDeferredRecordTable,
     const auto verify = [](harken::FixedPlayClaimMode mode,
                            std::uint64_t renderedQuantum) {
         harken::ActionDeferredRecordTable table;
-        ASSERT_TRUE(table.Reset(2));
+        ASSERT_TRUE(table.Reset());
         harken::DeferredIntentPool pool(2, 2);
         auto first = MakeRecord();
         first.firstRowFrame = 512;
@@ -644,7 +644,7 @@ TEST(ActionDeferredRecordTable,
 TEST(ActionDeferredRecordTable,
      FixedPlayClaimRejectsMismatchedHeldGenerationBeforeMutation) {
     harken::ActionDeferredRecordTable table;
-    ASSERT_TRUE(table.Reset(1));
+    ASSERT_TRUE(table.Reset());
     harken::DeferredIntentPool pool(1, 1);
     auto record = MakeRecord();
     record.firstRowFrame = 512;
@@ -680,7 +680,7 @@ TEST(ActionDeferredRecordTable,
 TEST(ActionDeferredRecordTable,
      FixedPlayClaimKeepsSameDueActionOrderBehindFutureRetry) {
     harken::ActionDeferredRecordTable table;
-    ASSERT_TRUE(table.Reset(2));
+    ASSERT_TRUE(table.Reset());
     harken::DeferredIntentPool pool(2, 2);
     harken::PlayableInstanceTable instances(1);
 
@@ -729,7 +729,7 @@ TEST(ActionDeferredRecordTable,
 TEST(ActionDeferredRecordTable,
      FixedPlayClaimHasExplicitSameDuePlayableDomainException) {
     harken::ActionDeferredRecordTable table;
-    ASSERT_TRUE(table.Reset(1));
+    ASSERT_TRUE(table.Reset());
     harken::DeferredIntentPool pool(2, 2);
     harken::PlayableInstanceTable instances(1);
     const auto owner = instances.Acquire(harken::PlayableKind::Segment, 0);
@@ -769,7 +769,7 @@ TEST(ActionDeferredRecordTable,
 
 class ActionDeferredPrerequisite : public ::testing::Test {
 protected:
-    void SetUp() override { ASSERT_TRUE(table.Reset(3)); }
+    void SetUp() override { ASSERT_TRUE(table.Reset()); }
 
     void Publish(std::uint32_t index, harken::ActionOpcodeV1 opcode, std::uint64_t frame,
                  std::uint32_t ordinal, std::uint64_t ticket, std::uint64_t firingOffset = 0) {
@@ -1011,7 +1011,7 @@ TEST_F(ActionDeferredPrerequisite, ClaimedInspectionReportsBrokenEarlierPairAndP
 TEST(ActionDeferredRecordTable,
      PairedCommitRejectsWrongPoolTokenWithoutPublishingEitherSide) {
     harken::ActionDeferredRecordTable table;
-    ASSERT_TRUE(table.Reset(1));
+    ASSERT_TRUE(table.Reset());
     harken::DeferredIntentPool pool(1, 1);
     const auto record = MakeRecord();
     auto preparedRecord = table.Prepare(record);
@@ -1043,7 +1043,7 @@ TEST(ActionDeferredRecordTable,
 TEST(ActionDeferredRecordTable,
      PairedCommitRejectsWrongStateAndOwnerWithoutPublishingPeer) {
     harken::ActionDeferredRecordTable table;
-    ASSERT_TRUE(table.Reset(2));
+    ASSERT_TRUE(table.Reset());
     harken::DeferredIntentPool pool(2, 2);
     const auto record = MakeRecord();
 
@@ -1087,7 +1087,7 @@ TEST(ActionDeferredRecordTable,
 
 TEST(ActionDeferredRecordTable, PackAnchorRoundTripsThroughPreparedCommitClaim) {
     harken::ActionDeferredRecordTable table;
-    ASSERT_TRUE(table.Reset(1));
+    ASSERT_TRUE(table.Reset());
 
     auto record = MakeRecord();
     record.owner = harken::ActionDeferredOwner::Pack({
@@ -1119,7 +1119,7 @@ TEST(ActionDeferredRecordTable, PackAnchorRoundTripsThroughPreparedCommitClaim) 
 
 TEST(ActionDeferredRecordTable, InvalidPackAnchorDoesNotReserveARecord) {
     harken::ActionDeferredRecordTable table;
-    ASSERT_TRUE(table.Reset(1));
+    ASSERT_TRUE(table.Reset());
 
     auto record = MakeRecord();
     record.owner = harken::ActionDeferredOwner::Pack({
@@ -1135,7 +1135,7 @@ TEST(ActionDeferredRecordTable, InvalidPackAnchorDoesNotReserveARecord) {
 TEST(ActionDeferredRecordTable,
      ClaimedCancellationIsFinalizedExactlyOnceByTheClaimant) {
     harken::ActionDeferredRecordTable table;
-    ASSERT_TRUE(table.Reset(1));
+    ASSERT_TRUE(table.Reset());
 
     auto prepared = table.Prepare(MakeRecord());
     ASSERT_EQ(prepared.status,
@@ -1173,7 +1173,7 @@ TEST(ActionDeferredRecordTable,
 
 TEST(ActionDeferredRecordTable, HeldCancellationHasOneCancellerFinalizer) {
     harken::ActionDeferredRecordTable table;
-    ASSERT_TRUE(table.Reset(1));
+    ASSERT_TRUE(table.Reset());
     auto prepared = table.Prepare(MakeRecord());
     ASSERT_EQ(prepared.status,
               harken::ActionDeferredRecordPrepareStatus::Prepared);
@@ -1194,7 +1194,7 @@ TEST(ActionDeferredRecordTable, HeldCancellationHasOneCancellerFinalizer) {
 TEST(ActionDeferredRecordTable,
      PreparedAbandonPreservesGenerationUntilLiveFinalization) {
     harken::ActionDeferredRecordTable table;
-    ASSERT_TRUE(table.Reset(1));
+    ASSERT_TRUE(table.Reset());
     ASSERT_TRUE(table.SetFreeGenerationForTests(0, UINT64_MAX));
 
     auto first = table.Prepare(MakeRecord());
@@ -1216,8 +1216,10 @@ TEST(ActionDeferredRecordTable,
               harken::ActionDeferredCancelOwnership::Canceller);
     ASSERT_TRUE(table.FinalizeHeld(heldToken));
     EXPECT_EQ(table.QuarantinedCount(), 1u);
-    EXPECT_EQ(table.Prepare(MakeRecord()).status,
-              harken::ActionDeferredRecordPrepareStatus::Capacity);
+    auto next = table.Prepare(MakeRecord());
+    ASSERT_EQ(harken::ActionDeferredRecordPrepareStatus::Prepared, next.status);
+    EXPECT_NE(heldToken.slot, next.token.slot);
+    EXPECT_TRUE(table.Abandon(&next.token));
 }
 
 } // namespace
@@ -1226,7 +1228,7 @@ TEST(ActionDeferredRecordTable, ClaimedResetOrderRejectsStalePairsAndSettledStep
     for (unsigned mismatch = 0; mismatch < 11; ++mismatch) {
         SCOPED_TRACE(mismatch);
         harken::ActionFiringTable firings;
-        ASSERT_TRUE(firings.Reset(1));
+        ASSERT_TRUE(firings.Reset());
         harken::PreparedActionFiring firing;
         ASSERT_TRUE(firings.PrepareRoot(harkentest::ObjectId(41), 11, 1, &firing));
         auto record = MakeRecord();
@@ -1242,7 +1244,7 @@ TEST(ActionDeferredRecordTable, ClaimedResetOrderRejectsStalePairsAndSettledStep
         ASSERT_TRUE(firings.Capture(record.firing, &snapshot));
         record.ownerCancellationEpoch = snapshot.cancellationEpoch;
         harken::ActionDeferredRecordTable records;
-        ASSERT_TRUE(records.Reset(1));
+        ASSERT_TRUE(records.Reset());
         harken::DeferredIntentPool pool(1, 1);
         auto prepared = records.Prepare(record);
         ASSERT_EQ(harken::ActionDeferredRecordPrepareStatus::Prepared, prepared.status);

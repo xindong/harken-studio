@@ -9,9 +9,9 @@
 // slot. Every operation on a stale handle is a benign no-op — the caller's
 // API layer maps that to VN_STALE_HANDLE.
 //
-// Logic thread only. All storage (the emitter array and each emitter's local
-// Variable slots) is preallocated at construction from the resolved config;
-// create, destroy, and lookups touch no heap. The audio thread never sees an
+// Logic thread only. Local Variable storage grows during write preparation
+// and is released on destroy. Projection and lookups never allocate.
+// The audio thread never sees an
 // emitter — position/orientation reach voices through the ordinary per-voice
 // spatial path, and Variable scope is resolved before curve evaluation.
 #ifndef HARKEN_PARAM_EMITTER_TABLE_H
@@ -21,6 +21,7 @@
 #include <harken/Harken.h>
 
 #include "harken/core/EngineConfig.h"
+#include "harken/core/GrowingRowStorage.h"
 
 #include <cstdint>
 #include <vector>
@@ -51,9 +52,12 @@ public:
         m_variableObserver = observer;
     }
 
-    // Mints a fresh emitter at a free slot, forming its handle. Returns false
-    // when every slot is live (the caller maps this to VN_NO_EMITTER). A new
-    // emitter starts at the origin, facing (0,0,-1), with no local overrides.
+    static constexpr std::uint32_t kDefaultSlot = 128;
+    VnResult PrepareCreate(VnEmitterHandle& candidate) noexcept;
+    void PublishCreate(VnEmitterHandle candidate, bool stateOnly) noexcept;
+    void SetCommitPageLimitForTests(std::size_t pages) noexcept {
+        m_emitters.SetCommitPageLimitForTests(pages);
+    }
     bool Create(VnEmitterHandle* outHandle, bool stateOnly = false);
     bool IsPublicLive(VnEmitterHandle handle) const noexcept;
     VnEmitterHandle DefaultState() const noexcept;
@@ -72,6 +76,7 @@ public:
     // generation matches).
     bool IsLive(VnEmitterHandle handle) const noexcept;
     std::size_t LocalValueCapacity(VnEmitterHandle handle) const noexcept;
+    VnResult PrepareLocalValueStorage(VnEmitterHandle handle, std::size_t count) noexcept;
 
     // Sets the shared position / forward orientation. False for a stale
     // handle. The forward vector is stored as given (the API layer validated
@@ -86,8 +91,8 @@ public:
     bool Pose(VnEmitterHandle handle, SpatialSourceState* out) const;
 
     // Emitter-local Variable overrides. SetLocalValue creates or updates the
-    // override (VN_NO_VARIABLE when the emitter's local table is full and the
-    // id is new; VN_STALE_HANDLE for a dead handle). ClearLocalValue removes
+    // override (VN_OUT_OF_MEMORY if growth fails; VN_STALE_HANDLE for a
+    // dead handle). ClearLocalValue removes
     // an override (a no-op if absent), reverting that Variable to global scope
     // for the emitter's voices.
     VnResult SetLocalValue(VnEmitterHandle handle, VnVariableId variableId,
@@ -117,7 +122,8 @@ private:
         bool live = false;
         bool stateOnly = false;
         SpatialSourceState spatial;
-        std::vector<LocalVar> locals; // fixed size emitterVariableSlots
+        std::vector<LocalVar> locals;
+        std::vector<LocalVar> projectionLocals;
     };
 
     static VnEmitterHandle MakeHandle(std::uint32_t slot,
@@ -132,10 +138,18 @@ private:
     const Emitter* Live(VnEmitterHandle handle) const noexcept;
     void NotifyVariableChange(VnEmitterHandle handle, VnVariableId variableId) const noexcept;
 
-    std::vector<Emitter> m_emitters;
-    std::vector<LocalVar> m_projectionLocals;
+    static std::uint32_t PublicSlot(std::uint32_t index) noexcept {
+        return index < kDefaultSlot ? index : index + 1u;
+    }
+    static std::uint32_t StorageIndex(std::uint32_t slot) noexcept {
+        return slot < kDefaultSlot ? slot : slot - 1u;
+    }
+    GrowingRowStorage<Emitter> m_emitters;
+    Emitter m_default;
+    std::uint32_t m_firstFree = 0;
+    std::uint32_t m_initialGeneration;
+    std::uint32_t m_initialLocalSlots;
     bool m_projectionActive = false;
-    std::uint32_t m_projectionStride = 0;
     std::uint32_t m_activeCount = 0;
     std::uint64_t m_highWater = 0;
     void* m_variableObserverContext = nullptr;

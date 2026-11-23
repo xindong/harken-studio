@@ -5,7 +5,7 @@
 #include "harken/core/DecisionToken.h"
 #include "harken/core/FrontierActivation.h"
 #include "harken/core/LogicCommitCoordinator.h"
-#include "harken/core/StableRowStorage.h"
+#include "harken/core/GrowingRowStorage.h"
 #include "harken/core/TimeCoordinates.h"
 #include "harken/core/TimelineProgram.h"
 #include "harken/core/TransitionInstancePool.h"
@@ -17,7 +17,6 @@
 namespace harken {
 class PrivatePendingQueueFrontierBinding;
 
-inline constexpr std::uint32_t kMaxDecisionRowsHard = 65536;
 inline constexpr std::uint32_t kMaxParticipantsPerDecisionHard = 2048;
 
 enum class DecisionCommitState : std::uint8_t {
@@ -333,7 +332,11 @@ public:
     bool ValidateFrontierMemberDecisionApply(const FrontierGroupBinding& binding,
         AudioSliceLease& lease, std::uint64_t audioSequence, FrontierDecisionApplyProof* out) noexcept;
 
-    std::uint32_t Capacity() const noexcept { return capacity_; }
+    std::uint32_t Capacity() const noexcept { return rows_.ConstructedCount(); }
+    void SetRowPreparation(void* context, bool (*prepare)(void*, std::uint32_t) noexcept) noexcept {
+        preparationContext_ = context;
+        prepareDependencies_ = prepare;
+    }
     bool Valid() const noexcept {
         return capacity_ != 0 && maxParticipantsPerDecision_ != 0;
     }
@@ -341,10 +344,12 @@ public:
         return maxParticipantsPerDecision_;
     }
     std::uint32_t LiveCount() const noexcept;
+    bool PrepareAvailable(std::uint32_t count) noexcept;
+    std::uint32_t FreeCount() const noexcept;
     std::uint32_t QuarantinedCount() const noexcept;
     std::uint32_t ConstructedRowCount() const noexcept { return rows_.ConstructedCount(); }
     std::uint64_t RowStorageBytes() const noexcept;
-    using BackingPreparation = std::array<StableStoragePreparation, 3>;
+    using BackingPreparation = StableStoragePreparation;
     bool PrepareBacking(std::uint32_t rows, BackingPreparation* out) noexcept;
     std::uint64_t RowCommittedBytes() const noexcept;
     std::uint64_t RowReservedBytes() const noexcept;
@@ -535,16 +540,20 @@ private:
 
     Row* Resolve(DecisionToken token) noexcept;
     const Row* Resolve(DecisionToken token) const noexcept;
-    DecisionParticipantRef* Participants(std::uint32_t slot) noexcept;
-    const DecisionParticipantRef* Participants(
-        std::uint32_t slot) const noexcept;
-
+    DecisionParticipantRef& Participant(std::uint32_t slot, std::uint32_t index) noexcept;
+    const DecisionParticipantRef& Participant(std::uint32_t slot, std::uint32_t index) const noexcept;
     bool PrepareSlotStorage(std::uint32_t slot) noexcept;
-    StableRowStorage<Row> rows_;
-    StableRowStorage<DecisionParticipantRef> participants_;
+    std::uint32_t FindFreeSlot() noexcept;
+    std::uint32_t CountOccupiedUntil(std::uint64_t needed) const noexcept;
+    bool PrepareDependencies(std::uint32_t count) noexcept;
+
+    GrowingRowStorage<Row> rows_;
+    GrowingRowStorage<DecisionParticipantRef> participants_;
+    void* preparationContext_ = nullptr;
+    bool (*prepareDependencies_)(void*, std::uint32_t) noexcept = nullptr;
     struct FrontierSidecar;
     void ResetFrontierStorage(std::uint32_t slot) noexcept;
-    StableRowStorage<FrontierSidecar> frontiers_;
+    GrowingRowStorage<FrontierSidecar> frontiers_;
     std::uint64_t nextOriginalLifetimeMarker_ = 1;
     bool originalLifetimeMarkerExhausted_ = false;
     std::uint32_t capacity_ = 0;

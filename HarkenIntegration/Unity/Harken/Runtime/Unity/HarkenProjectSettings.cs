@@ -16,11 +16,7 @@ namespace Harken.Unity
     public sealed class HarkenProjectSettings : ScriptableObject
     {
         public const string ResourceName = "HarkenProjectSettings";
-        public const uint DefaultMaxVoices = 256;
-        public const uint DefaultMaxPacks = 256;
-        public const uint DefaultMaxActions = 256;
-        public const uint DefaultMaxActionFirings = 256;
-        public const uint UnlimitedActionFirings = 256;
+        public const uint DefaultMaxVoices = 0;
         internal const string ObsoleteRelativePackRoot = "Audio/GeneratedPacks";
 
         [SerializeField] private bool enableCommunicationInBuilds = true;
@@ -29,11 +25,6 @@ namespace Harken.Unity
         [SerializeField, Min(0)] private int remoteDiscoveryPort;
         [SerializeField] private string remoteApplicationName = string.Empty;
         [SerializeField] private uint maxVoices = DefaultMaxVoices;
-        [SerializeField] private uint maxPacks = DefaultMaxPacks;
-        [SerializeField] private uint maxActions = DefaultMaxActions;
-        [SerializeField] private uint maxActionFirings = DefaultMaxActionFirings;
-        [SerializeField] private uint maxEmitters;
-        [SerializeField] private uint emitterVariableSlots;
         [SerializeField] private string language = string.Empty;
         [SerializeField] private string packPlatform = string.Empty;
         [SerializeField] private string initPack = "Init.bytes";
@@ -44,12 +35,7 @@ namespace Harken.Unity
         private static HarkenProjectSettings transient;
 
         public bool EnableCommunicationInBuilds => enableCommunicationInBuilds;
-        public uint MaxVoices => NonZero(maxVoices, DefaultMaxVoices);
-        public uint MaxPacks => NonZero(maxPacks, DefaultMaxPacks);
-        public uint MaxActions => NonZero(maxActions, DefaultMaxActions);
-        public uint MaxActionFirings => maxActionFirings != 0 ? maxActionFirings : UnlimitedActionFirings;
-        public uint MaxEmitters => maxEmitters;
-        public uint EmitterVariableSlots => emitterVariableSlots;
+        public uint MaxVoices => maxVoices;
         public string Language => language ?? string.Empty;
         public string PlatformName => packPlatform ?? string.Empty;
         public string InitPack => string.IsNullOrEmpty(initPack) ? "Init.bytes" : initPack;
@@ -83,23 +69,17 @@ namespace Harken.Unity
 
         internal void SetPackDirectory(string value) => packDirectory = value ?? string.Empty;
         internal void SetMaxVoices(uint value) => maxVoices = value;
-        internal void SetMaxActionFirings(uint value) => maxActionFirings = value;
 
         internal static void ApplyStartupCapacity(ref VnConfig config, HarkenProjectSettings settings = null)
         {
             settings = settings != null ? settings : ActiveForStartup();
             config.maxVoices = settings.MaxVoices;
             // A single emitter stop can address every render voice atomically.
-            if (config.maxVoices > DefaultMaxVoices)
+            if (config.maxVoices > 256u)
             {
                 config.commandQueueDepth = Math.Max(config.commandQueueDepth, config.maxVoices);
                 config.maxControlCommandsPerQuantum = Math.Max(config.maxControlCommandsPerQuantum, config.maxVoices);
             }
-            config.maxPacks = settings.MaxPacks;
-            config.maxActions = settings.MaxActions;
-            config.maxActionFirings = settings.MaxActionFirings;
-            config.maxEmitters = settings.maxEmitters;
-            config.emitterVariableSlots = settings.emitterVariableSlots;
         }
 
         internal static bool TryResolvePackDirectory(out string fullPath, out string error, HarkenProjectSettings settings = null)
@@ -274,7 +254,6 @@ namespace Harken.Unity
         }
 #endif
 
-        private static uint NonZero(uint value, uint fallback) => value != 0 ? value : fallback;
 
         private static bool PathsEqual(string left, string right)
         {

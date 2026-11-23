@@ -20,6 +20,33 @@ inline harken::ScheduleGroupSliceIdentity QueueContinuationSlice(
     return {};
 }
 
+// Expose exactly the rows that fit on the first committed storage page.
+inline bool LimitDeferredIntentPoolToFirstPage(harken::DeferredIntentPool& pool) {
+    if (!pool.PrepareAvailable(1)) return false;
+    pool.SetCommitPageLimitForTests(0);
+    while (pool.Capacity() < UINT32_MAX && pool.PrepareAvailable(pool.Capacity() + 1u)) {}
+    return pool.Capacity() >= 2u;
+}
+
+// Leave a real page boundary after the existing rows so callers can exercise
+// allocation refusal with a chosen number of already constructed slots free.
+inline bool LimitOccurrenceGrowthToCurrentPages(harken::OccurrenceStatePool& pool) {
+    if (!pool.PrepareStorage(pool.Capacity() + 1u)) return false;
+    pool.SetCommitPageLimitForTests(0);
+    while (pool.Capacity() < UINT32_MAX && pool.PrepareStorage(pool.Capacity() + 1u)) {}
+    return pool.FreeCount() != 0;
+}
+
+template<class Pool>
+inline bool LimitRowGrowthToCurrentPages(Pool& pool) {
+    if (!pool.PrepareAvailable(1u)) return false;
+    if constexpr (requires { pool.SetRowCommitPageLimitForTests(0); })
+        pool.SetRowCommitPageLimitForTests(0);
+    else pool.SetCommitPageLimitForTests(0);
+    while (pool.FreeCount() < UINT32_MAX && pool.PrepareAvailable(pool.FreeCount() + 1u)) {}
+    return pool.FreeCount() != 0;
+}
+
 class PlayableCapacityScope {
 public:
     PlayableCapacityScope(std::uint32_t playable, std::uint32_t modes) {
@@ -47,15 +74,7 @@ auto StorageIdentity(const harken::StableRowStorage<T, Index>& rows) {
 
 inline auto CapturePlayableStorage(const harken::Engine& engine) {
     return std::array{
-        StorageIdentity(engine.playableStarts),
-        StorageIdentity(engine.initialFrontierEvents),
-        StorageIdentity(engine.initialFrontierRequests),
-        StorageIdentity(engine.playableServices),
-        StorageIdentity(engine.memberRelations),
-        StorageIdentity(engine.playableMemberRecords),
-        StorageIdentity(engine.memberProgramRecords),
-        StorageIdentity(engine.variableControlRetargetPrograms),
-        StorageIdentity(engine.queueProgramBanks)};
+        StorageIdentity(engine.variableControlRetargetPrograms)};
 }
 
 class PlayableStorageObservation {
@@ -87,7 +106,18 @@ public:
     void CheckStorage() {
         if (!enabled_) return;
         EXPECT_EQ(backing_, CapturePlayableStorage(engine_));
-        EXPECT_LE(engine_.playablePartitions.OccupiedCount(), engine_.config.maxPlayableInstances);
+        if (firstBank_ != nullptr) EXPECT_EQ(firstBank_, engine_.queueProgramBanks.TryAt(0));
+        firstBank_ = engine_.queueProgramBanks.TryAt(0);
+        if (firstStart_ != nullptr) EXPECT_EQ(firstStart_, engine_.playableStarts.TryAt(0));
+        if (firstService_ != nullptr) EXPECT_EQ(firstService_, engine_.playableServices.TryAt(0));
+        if (memberRelationsBase_ != nullptr) EXPECT_EQ(memberRelationsBase_, engine_.memberRelations.TryAt(0));
+        memberRelationsBase_ = engine_.memberRelations.TryAt(0);
+        if (playableMemberRecordsBase_ != nullptr) EXPECT_EQ(playableMemberRecordsBase_, engine_.playableMemberRecords.TryAt(0));
+        playableMemberRecordsBase_ = engine_.playableMemberRecords.TryAt(0);
+        if (memberProgramRecordsBase_ != nullptr) EXPECT_EQ(memberProgramRecordsBase_, engine_.memberProgramRecords.TryAt(0));
+        memberProgramRecordsBase_ = engine_.memberProgramRecords.TryAt(0);
+        firstStart_ = engine_.playableStarts.TryAt(0);
+        firstService_ = engine_.playableServices.TryAt(0);
         peakPartitions_ = std::max(peakPartitions_, engine_.playablePartitions.OccupiedCount());
         std::uint32_t services = 0;
         for (const auto& row : engine_.playableServices) {
@@ -138,7 +168,13 @@ private:
         total.reallocationBytes += value.reallocationBytes;
     }
     harken::Engine& engine_;
+    const harken::EngineQueueProgramBank* firstBank_ = nullptr;
+    const harken::EnginePlayableStartRow* firstStart_ = nullptr;
+    const harken::EnginePlayableServiceRow* firstService_ = nullptr;
     bool enabled_;
+    const void* memberRelationsBase_ = nullptr;
+    const void* playableMemberRecordsBase_ = nullptr;
+    const void* memberProgramRecordsBase_ = nullptr;
     decltype(CapturePlayableStorage(std::declval<const harken::Engine&>())) backing_;
     bool available_ = true;
     std::uint32_t operations_ = 0;

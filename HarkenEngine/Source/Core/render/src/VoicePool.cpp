@@ -6,6 +6,7 @@
 #include "MonitorSeam.h"
 
 #include "harken/core/CommandQueue.h"
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/core/DecisionTable.h"
 #include "harken/core/ResamplerAdvance.h"
 #include "harken/render/BuiltinEffects.h"
@@ -62,6 +63,10 @@ bool VoicePool::PrepareRenderSlotBacking(std::uint32_t count, std::uint32_t chan
     bool firstOutput, std::uint32_t highRatioChannels) noexcept {
     if (count > m_slots.Capacity() || channelCount > kMaxChannels ||
         highRatioChannels > kMaxChannels) return false;
+    if (!m_originalCallbackStorage.ConstructThrough(count) ||
+        !m_streamParkMailboxes.ConstructThrough(count) ||
+        !m_signalMemberImages.ConstructThrough(count) ||
+        !m_jobSlots.ConstructThrough(count) || !m_jobGenerations.ConstructThrough(count)) return false;
 #if HARKEN_ENGINE_DEV
     const bool monitorPrepared = m_monitorPreChainPrepared.load(std::memory_order_acquire);
 #endif
@@ -69,7 +74,7 @@ bool VoicePool::PrepareRenderSlotBacking(std::uint32_t count, std::uint32_t chan
         if (!m_ringStorage[ch].ConstructThrough(count)) return false;
 #if HARKEN_ENGINE_DEV
         if (monitorPrepared &&
-            !m_monitorPreChainStorage[ch].ConstructThrough(count * m_blockFrames)) return false;
+            !m_monitorPreChainStorage[ch].ConstructThrough(count * m_monitorStride)) return false;
 #endif
     }
     highRatioChannels = std::max(channelCount, highRatioChannels);
@@ -93,7 +98,7 @@ bool VoicePool::PrepareMonitorPreChainBacking() noexcept {
     // Include every held source prefix before capture can become live.
     for (std::uint32_t ch = 0; ch < kMaxChannels; ++ch) {
         if (!m_monitorPreChainStorage[ch].ConstructThrough(
-                m_ringStorage[ch].ConstructedCount() * m_blockFrames)) return false;
+                m_ringStorage[ch].ConstructedCount() * m_monitorStride)) return false;
     }
     m_monitorPreChainPrepared.store(true, std::memory_order_release);
     return true;
@@ -111,7 +116,7 @@ bool VoicePool::RenderSlotBackingReady(std::uint32_t count, std::uint32_t channe
         if (m_ringStorage[ch].ConstructedCount() < count) return false;
 #if HARKEN_ENGINE_DEV
         if (monitorPrepared &&
-            m_monitorPreChainStorage[ch].ConstructedCount() < count * m_blockFrames) return false;
+            m_monitorPreChainStorage[ch].ConstructedCount() < count * m_monitorStride) return false;
 #endif
     }
     highRatioChannels = std::max(channelCount, highRatioChannels);
@@ -123,19 +128,21 @@ bool VoicePool::RenderSlotBackingReady(std::uint32_t count, std::uint32_t channe
 void VoicePool::BindHighRatioBacking(std::uint32_t slot) noexcept {
     // Construction always extends a channel prefix and never shrinks it.
     std::uint32_t channels = 0;
-    while (channels < kMaxChannels && m_highRatioStorage[channels].ConstructedCount() > slot)
+    auto& native = m_slots[slot];
+    while (channels < kMaxChannels && m_highRatioStorage[channels].ConstructedCount() > slot) {
+        native.highRatioColumns.channels[channels] = &m_highRatioStorage[channels][slot];
         ++channels;
-    m_slots[slot].render.resampler.BindHighRatioColumns(m_highRatioColumns, slot, channels);
+    }
+    native.render.resampler.BindHighRatioColumns(native.highRatioColumns, 0, channels);
 }
 
 #if HARKEN_ENGINE_DEV
 void VoicePool::BindMonitorPreChainBacking(std::uint32_t slot) noexcept {
     auto& render = m_slots[slot].render;
-    // Reserved addresses and source width stay fixed for this voice generation.
-    // A later capture plan constructs the backing before publishing live audio.
+    // A capture started after the voice binds these stable pointers on its first monitored block.
     for (std::uint32_t ch = 0; ch < kMaxChannels; ++ch) {
         render.monitorPreChain[ch] = ch < render.pcm.channelCount
-            ? m_monitorPreChainStorage[ch].data() + static_cast<std::size_t>(slot) * m_blockFrames
+            ? m_monitorPreChainStorage[ch].TryAt(slot * m_monitorStride)
             : nullptr;
     }
 }
@@ -251,6 +258,7 @@ VoicePool::VoicePool(const EngineConfig& config, const ResampleTables* tables,
     : m_sampleRate(config.mixRate.SampleRate()),
       m_pitchRampFrames(BiquadSmoothingFrames(config.mixRate.SampleRate())),
       m_blockFrames(config.blockFrames),
+      m_monitorStride(std::bit_ceil(config.blockFrames)),
       m_fxSlotsPerVoice(config.fxSlotsPerVoice),
       m_starvationCooldownBlocks(config.starvationCooldownBlocks),
       m_mixChannels(config.mixChannelCount),
@@ -261,35 +269,18 @@ VoicePool::VoicePool(const EngineConfig& config, const ResampleTables* tables,
       m_biquadTrig(biquadTrig),
       m_effectBank(effectBank),
       m_dynamicRoutes(dynamicRoutes),
-      m_timelineArms(timelineArms),
-      m_originalCallbackStorage(config.voiceCapacity.Render()),
-      m_streamParkMailboxes(config.voiceCapacity.Render()),
-      m_signalMemberImages(config.voiceCapacity.Render()),
-      m_jobSlots(config.voiceCapacity.Render(), 0),
-      m_jobGenerations(config.voiceCapacity.Render(), 0) {
-    if (!m_slots.Reserve(config.voiceCapacity.Render()) ||
-        !m_professionalStorage.Reserve(config.voiceCapacity.Render()) ||
-        !m_variableWeightStorage.Reserve(config.voiceCapacity.Render()) ||
-        !m_timelineEnvelopeCurves.Reserve(config.voiceCapacity.Render()) ||
-        !m_streamParkTokens.Reserve(config.voiceCapacity.Virtual())) throw std::bad_alloc{};
+      m_timelineArms(timelineArms) {
+    if (!m_originalCallbackStorage.Reserve(config.voiceCapacity.Render()) ||
+        !m_streamParkMailboxes.Reserve(config.voiceCapacity.Render()) ||
+        !m_signalMemberImages.Reserve(config.voiceCapacity.Render()) ||
+        !m_jobSlots.Reserve(config.voiceCapacity.Render()) ||
+        !m_jobGenerations.Reserve(config.voiceCapacity.Render()) ||
+        !m_slots.Reserve(config.voiceCapacity.Render()) ||
+        !m_streamParkTokens.Reserve(config.voiceCapacity.Virtual())) throw harken::detail::LogicPreparationFailure{};
     m_firstOutputStride = kFirstOutputBuiltinEndpoints + config.fxSlotsPerVoice * kMaxEffectParamCount;
-    const auto monitorCapacity = static_cast<std::uint64_t>(config.voiceCapacity.Render()) * m_blockFrames;
-    const auto endpointCapacity = static_cast<std::uint64_t>(config.voiceCapacity.Render()) * m_firstOutputStride;
-    const auto weightCapacity = static_cast<std::uint64_t>(config.voiceCapacity.Render()) * kSelectionPathNodeCapacity;
-    if (monitorCapacity > UINT32_MAX || endpointCapacity > UINT32_MAX || weightCapacity > UINT32_MAX ||
-        !m_firstOutputEndpoints.Reserve(static_cast<std::uint32_t>(endpointCapacity)) ||
-        !m_firstOutputWeights.Reserve(static_cast<std::uint32_t>(weightCapacity)) ||
-        !m_pendingTimelineVariableEvents.Reserve(config.voiceCapacity.Render())) throw std::bad_alloc{};
-    for (std::uint32_t ch = 0; ch < kMaxChannels; ++ch) {
-        if (!m_ringStorage[ch].Reserve(config.voiceCapacity.Render()) ||
-            !m_highRatioStorage[ch].Reserve(config.voiceCapacity.Render()))
-            throw std::bad_alloc{};
 #if HARKEN_ENGINE_DEV
-        if (!m_monitorPreChainStorage[ch].Reserve(static_cast<std::uint32_t>(monitorCapacity)))
-            throw std::bad_alloc{};
+    for (auto& channel : m_monitorPreChainStorage) channel.AlignSegments(m_monitorStride);
 #endif
-        m_highRatioColumns.channels[ch] = m_highRatioStorage[ch].data();
-    }
     // Create the fixed worker set on the logic thread. Real-device workers stay
     // disabled until the backend binds them to its callback scheduling domain
     // and validates that callback. The Null backend explicitly selects offline
@@ -299,10 +290,10 @@ VoicePool::VoicePool(const EngineConfig& config, const ResampleTables* tables,
     // rendering voice, which is the same bound m_jobSlots is sized from.
     if (!m_workers.Start(config.renderWorkerCount,
                          config.voiceCapacity.Render())) {
-        throw std::bad_alloc{};
+        throw harken::detail::LogicPreparationFailure{};
     }
     if (config.nullDevice && !m_workers.EnableOffline()) {
-        throw std::bad_alloc{};
+        throw harken::detail::LogicPreparationFailure{};
     }
 }
 
@@ -389,6 +380,7 @@ VnResult VoicePool::Play(const PCMView& view, float volumeDb,
     slot.monitorSourceTerminalPublished = false;
     slot.streamObservation = {};
 #endif
+    ReleaseVoiceSendSet(slot.render);
     slot.render = VoiceRenderContext{};
     BindHighRatioBacking(slotIndex);
     BindVariableWeightBacking(slotIndex);
@@ -563,6 +555,7 @@ VnResult VoicePool::PlayStream(StreamRing* ring, std::uint32_t channelCount,
     slot.monitorSourceTerminalPublished = false;
     slot.streamObservation = {};
 #endif
+    ReleaseVoiceSendSet(slot.render);
     slot.render = VoiceRenderContext{};
     BindHighRatioBacking(slotIndex);
     BindVariableWeightBacking(slotIndex);
@@ -885,8 +878,7 @@ bool VoicePool::AdmitTimelineQuantum(
     std::uint32_t currentSliceCount,
     const std::uint32_t* controlRenderGenerations,
     std::uint32_t controlRenderCount) const noexcept {
-    const bool decisionScratch = decisions != nullptr && currentSlices != nullptr &&
-        currentSliceCount != 0;
+    const bool decisionScratch = decisions != nullptr && currentSlices != nullptr;
     if (!decisionScratch && (controlRenderGenerations == nullptr || controlRenderCount == 0)) {
         return AdmitTimelineQuantum(arenaAvailableBytes, blockFrames);
     }
@@ -927,11 +919,11 @@ bool VoicePool::AdmitTimelineQuantum(
                      AudioGroupState::PostStartInvalidated ||
                  decision.audioState ==
                      AudioGroupState::PostStartDeadlineInvalidated)) {
-                const bool sliceClaimed =
-                    parent.slot < currentSliceCount &&
-                    currentSlices[parent.slot].generation ==
-                        parent.generation &&
-                    currentSlices[parent.slot].currentSliceClaimed;
+                const auto* end = currentSlices + currentSliceCount;
+                const auto* found = std::lower_bound(currentSlices, end, parent.slot,
+                    [](const auto& slice, std::uint32_t slot) { return slice.decision.slot < slot; });
+                const bool sliceClaimed = found != end && found->decision.slot == parent.slot &&
+                    found->decision.generation == parent.generation && found->currentSliceClaimed;
                 exclude = !sliceClaimed;
             }
         }
@@ -2094,7 +2086,7 @@ bool VoicePool::BindPreparedSignalPath(VnVoiceHandle handle,
         for (auto* registration = m_slotStorageRegistrations; registration != nullptr; registration = registration->next_)
             if (!registration->prepare_(registration->context_, m_slots.ConstructedCount())) return false;
         return true;
-    } catch (...) { return false; }
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::VoiceSendStorage); return false; }
 }
 
 bool VoicePool::BindPreparedNativeReadCut(VnVoiceHandle handle,
@@ -2833,6 +2825,7 @@ bool VoicePool::CancelPreparedVoice(VnVoiceHandle handle) noexcept {
     if (slot->render.sourceTerminal != nullptr)
         slot->render.sourceTerminal->bypassResult.store(
             SourceTerminalKind::Cancelled, std::memory_order_release);
+    ReleaseVoiceSendSet(slot->render);
     slot->render = VoiceRenderContext{};
     slot->nativeVariableStart = {};
     ClearFirstOutput(*slot);
@@ -2877,6 +2870,7 @@ bool VoicePool::CancelOriginalPreparedVoice(const OriginalVoiceOwner& owner) noe
     if (slot->render.sourceTerminal != nullptr)
         slot->render.sourceTerminal->bypassResult.store(
             SourceTerminalKind::Cancelled, std::memory_order_release);
+    ReleaseVoiceSendSet(slot->render);
     slot->render = VoiceRenderContext{};
     slot->nativeVariableStart = {};
     ClearFirstOutput(*slot);
@@ -4018,13 +4012,12 @@ void VoicePool::ApplySetVolume(VnVoiceHandle handle, float volumeDb,
         ++m_invalidVolumeApplies;
         return;
     }
-    const std::uint64_t rampFrames =
-        (static_cast<std::uint64_t>(rampMs) * m_sampleRate + 999) / 1000;
+    const auto rampFrames = GainTransitionFrames(rampMs, m_sampleRate, !render.firstBlock);
     if (outputOnly) {
         render.outputGain.Set(linear, rampFrames);
         return;
     }
-    // N = ceil(rampMs * rate / 1000) produced samples. rampMs 0 is a snap.
+    // Use actual produced samples, preserving pre-render initialization.
     // Do not round N up to a whole block. A re-set restarts from current.
     render.gain.Set(linear, rampFrames);
 }
@@ -4641,7 +4634,7 @@ void VoicePool::ApplyBusTombstones(const std::uint8_t* alive,
                 ctx.busGeneration = generations[ctx.busIndex];
             }
         }
-        for (std::uint32_t s = 0; s < kMaxVoiceSendSlots; ++s) {
+        for (std::uint32_t s = 0; s < ctx.voiceSends.size(); ++s) {
             VoiceSendSlot& send = ctx.voiceSends[s];
             if (send.active && send.targetBusIndex < slotCount &&
                 (alive[send.targetBusIndex] == 0 ||
@@ -4657,6 +4650,164 @@ void VoicePool::ApplyBusTombstones(const std::uint8_t* alive,
     }
 }
 
+bool VoicePool::UsesRemovedSignalNodes(const SignalRenderPlan& previous,
+    const SignalRenderPlan& next, std::span<std::uint32_t> scratch) const noexcept {
+    for (const auto& slot : m_slots) {
+        const auto state = slot.state.load(std::memory_order_relaxed);
+        if (!IsAudioRenderingState(state) && state != SlotState::VariableStartWaiting) continue;
+        const auto count = previous.MatchMember(slot.render.signalPath, scratch);
+        if (count == UINT32_MAX) return true;
+        for (std::uint32_t i = 0; i < count; ++i)
+            if (!next.ContainsNodeDefinition(previous, scratch[i])) return true;
+    }
+    return false;
+}
+
+void VoicePool::MarkPhysicalBusUsers(BusTree& buses) const noexcept {
+    for (const auto& slot : m_slots) {
+        const auto state = slot.state.load(std::memory_order_relaxed);
+        if (!IsAudioRenderingState(state) && state != SlotState::VariableStartWaiting) continue;
+        const auto& render = slot.render;
+        buses.NoteAudioBusUser({render.busIndex, render.busGeneration});
+        for (const auto& send : render.voiceSends)
+            if (send.active) buses.NoteAudioBusUser({send.targetBusIndex, send.targetBusGeneration});
+    }
+}
+
+VnResult VoicePool::PrepareVoiceSendSet(VnVoiceHandle handle,
+    std::span<const VoiceSendDefinition> definitions, bool resetEdited,
+    std::uint32_t editedSlot, VoiceSendSet** out) noexcept {
+    if (out == nullptr) return VN_INVALID_ARG;
+    *out = nullptr;
+    DrainVoiceSendSets();
+    // Future render generations may reserve backing before committing a steal.
+    // Adoption still validates the exact live/prepared host identity.
+    if (handle == 0 || static_cast<std::uint32_t>(handle) >= Capacity() ||
+        static_cast<std::uint32_t>(handle >> 32) == 0) return VN_STALE_HANDLE;
+    try {
+        if (definitions.size() > UINT32_MAX ||
+            definitions.size() > UINT64_MAX - m_retainedVoiceSends) return VN_DEVICE_ERROR;
+        detail::LogicAllocCheckpoint(detail::LogicAllocSite::VoiceSendStorage);
+        auto set = std::make_unique<VoiceSendSet>();
+        set->host = handle;
+        set->resetEdited = resetEdited;
+        set->editedSlot = editedSlot;
+        detail::LogicAllocCheckpoint(detail::LogicAllocSite::VoiceSendStorage);
+        set->definitions.assign(definitions.begin(), definitions.end());
+        std::sort(set->definitions.begin(), set->definitions.end(),
+            [](const auto& a, const auto& b) { return a.slot < b.slot; });
+        detail::LogicAllocCheckpoint(detail::LogicAllocSite::VoiceSendStorage);
+        set->states.resize(definitions.size());
+        detail::LogicAllocCheckpoint(detail::LogicAllocSite::VoiceSendStorage);
+        auto routes = std::make_shared<std::vector<VoiceSendRoute>>();
+        detail::LogicAllocCheckpoint(detail::LogicAllocSite::VoiceSendStorage);
+        routes->reserve(definitions.size());
+        for (std::size_t i = 0; i < set->definitions.size(); ++i) {
+            const auto& definition = set->definitions[i];
+            float gain = 0;
+            if (!TryVolumeGainFromDb(definition.levelDb, &gain) || (i != 0 && set->definitions[i - 1].slot == definition.slot))
+                return VN_INVALID_ARG;
+            auto& state = set->states[i];
+            state.active = true;
+            state.targetBusIndex = definition.targetBusIndex;
+            state.targetBusGeneration = definition.targetBusGeneration;
+            state.gain.Set(gain);
+            routes->push_back({true, definition.targetBusIndex, definition.targetBusGeneration,
+                definition.slot, definition.incarnation});
+        }
+        set->preparedRoutes = std::move(routes);
+        auto* prepared = set.get();
+        detail::LogicAllocCheckpoint(detail::LogicAllocSite::VoiceSendStorage);
+        m_voiceSendSets.push_back(std::move(set));
+        m_retainedVoiceSends += definitions.size();
+        *out = prepared;
+        return VN_OK;
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::VoiceSendStorage);
+        return VN_DEVICE_ERROR;
+    }
+}
+
+void VoicePool::ReleaseVoiceSendSet(VoiceRenderContext& render) noexcept {
+    auto* set = render.voiceSendSet;
+    render.voiceSendSet = nullptr;
+    render.voiceSends = {};
+    render.voiceSendActiveCount = 0;
+    if (set != nullptr) set->phase.store(VoiceSendSet::Phase::Complete, std::memory_order_release);
+}
+
+bool VoicePool::InstallPreparedVoiceSendSet(VnVoiceHandle handle, VoiceSendSet& set) noexcept {
+    auto* slot = SlotFor(handle);
+    if (slot == nullptr || set.host != handle ||
+        set.phase.load(std::memory_order_acquire) != VoiceSendSet::Phase::Preparing) return false;
+    const auto state = slot->state.load(std::memory_order_acquire);
+    if (state != SlotState::Prepared && state != SlotState::Claimed) return false;
+    ReleaseVoiceSendSet(slot->render);
+    slot->render.voiceSendSet = &set;
+    slot->render.voiceSends = set.states;
+    slot->render.voiceSendActiveCount = static_cast<std::uint32_t>(set.states.size());
+    set.phase.store(VoiceSendSet::Phase::Active, std::memory_order_release);
+    return true;
+}
+
+void VoicePool::ApplyVoiceSendSet(VoiceSendSet& set, const BusTree& buses) noexcept {
+    if (set.phase.load(std::memory_order_acquire) != VoiceSendSet::Phase::Queued) return;
+    auto* slot = SlotForCommandMetadata(set.host);
+    if (slot == nullptr) {
+        set.phase.store(VoiceSendSet::Phase::Complete, std::memory_order_release);
+        return;
+    }
+    auto& render = slot->render;
+    const auto* prior = render.voiceSendSet;
+    std::size_t old = 0;
+    std::uint32_t active = 0;
+    for (std::size_t i = 0; i < set.definitions.size(); ++i) {
+        const auto& definition = set.definitions[i];
+        auto& target = set.states[i];
+        if (prior != nullptr) {
+            while (old < prior->definitions.size() && prior->definitions[old].slot < definition.slot) ++old;
+            if (old < prior->definitions.size()) {
+                const auto& previous = prior->definitions[old];
+                if (previous.slot == definition.slot && previous.incarnation == definition.incarnation &&
+                    previous.targetBusIndex == definition.targetBusIndex &&
+                    previous.targetBusGeneration == definition.targetBusGeneration &&
+                    !(set.resetEdited && set.editedSlot == definition.slot)) target = prior->states[old];
+            }
+        }
+        if (!buses.AudioRefMatches({definition.targetBusIndex, definition.targetBusGeneration}))
+            target.active = false;
+        active += target.active;
+    }
+    ReleaseVoiceSendSet(render);
+    render.voiceSendSet = &set;
+    render.voiceSends = set.states;
+    render.voiceSendActiveCount = active;
+    set.phase.store(VoiceSendSet::Phase::Active, std::memory_order_release);
+}
+
+void VoicePool::CancelVoiceSendSet(VoiceSendSet& set) noexcept {
+    // Only unpublished candidates may be cancelled by the logic producer.
+    assert(set.phase.load(std::memory_order_acquire) == VoiceSendSet::Phase::Preparing);
+    set.phase.store(VoiceSendSet::Phase::Complete, std::memory_order_release);
+}
+
+void VoicePool::DrainVoiceSendSets() noexcept {
+    std::erase_if(m_voiceSendSets, [&](const auto& set) {
+        if (set->phase.load(std::memory_order_acquire) != VoiceSendSet::Phase::Complete) return false;
+        m_retainedVoiceSends -= set->definitions.size();
+        return true;
+    });
+}
+
+VoiceSendSlot* VoicePool::FindVoiceSend(VoiceRenderContext& render, std::uint32_t label, std::uint64_t incarnation) noexcept {
+    const auto* set = render.voiceSendSet;
+    if (set == nullptr) return nullptr;
+    const auto found = std::lower_bound(set->definitions.begin(), set->definitions.end(), label,
+        [](const auto& definition, auto value) { return definition.slot < value; });
+    return found != set->definitions.end() && found->slot == label &&
+        (incarnation == 0 || found->incarnation == incarnation)
+        ? &render.voiceSends[static_cast<std::size_t>(found - set->definitions.begin())] : nullptr;
+}
+
 void VoicePool::ApplySetVoiceSend(VnVoiceHandle handle, std::uint32_t sendSlot,
                                   std::uint32_t targetBusIndex,
                                   float levelDb,
@@ -4665,10 +4816,9 @@ void VoicePool::ApplySetVoiceSend(VnVoiceHandle handle, std::uint32_t sendSlot,
     if (slot == nullptr) {
         return; // stale in flight: benign no-op
     }
-    if (sendSlot >= kMaxVoiceSendSlots) {
-        return; // logic validated the slot; guard a corrupt record
-    }
-    VoiceSendSlot& send = slot->render.voiceSends[sendSlot];
+    auto* found = FindVoiceSend(slot->render, sendSlot);
+    if (found == nullptr) return;
+    VoiceSendSlot& send = *found;
     const bool wasActive = send.active;
     send = VoiceSendSlot{};
     send.active = true;
@@ -4676,73 +4826,57 @@ void VoicePool::ApplySetVoiceSend(VnVoiceHandle handle, std::uint32_t sendSlot,
     send.targetBusGeneration = targetBusGeneration;
     // The initial level snaps (no fictitious prior value), exactly like a
     // voice's first gain at play.
-    send.gain.SnapTo(DbToLinear(levelDb));
+    send.gain.Set(DbToLinear(levelDb));
     if (!wasActive) {
         ++slot->render.voiceSendActiveCount;
     }
 }
 
 void VoicePool::ApplyClearVoiceSend(VnVoiceHandle handle,
-                                    std::uint32_t sendSlot) {
+                                    std::uint32_t sendSlot, std::uint64_t incarnation) {
     Slot* slot = SlotForCommandMetadata(handle);
     if (slot == nullptr) {
         return;
     }
-    if (sendSlot >= kMaxVoiceSendSlots) {
-        return;
-    }
-    VoiceSendSlot& send = slot->render.voiceSends[sendSlot];
+    auto* found = FindVoiceSend(slot->render, sendSlot, incarnation);
+    if (found == nullptr) return;
+    VoiceSendSlot& send = *found;
     if (send.active) {
         send = VoiceSendSlot{};
         if (slot->render.voiceSendActiveCount > 0) {
             --slot->render.voiceSendActiveCount;
         }
     }
+    if (slot->render.voiceSendActiveCount == 0) ReleaseVoiceSendSet(slot->render);
 }
 
 void VoicePool::ApplySetVoiceSendLevel(VnVoiceHandle handle,
                                        std::uint32_t sendSlot, float levelDb,
-                                       std::uint32_t rampMs) {
+                                       std::uint32_t rampMs, std::uint64_t incarnation) {
     Slot* slot = SlotForCommandMetadata(handle);
     if (slot == nullptr) {
         return;
     }
-    if (sendSlot >= kMaxVoiceSendSlots) {
-        return;
-    }
-    VoiceSendSlot& send = slot->render.voiceSends[sendSlot];
+    auto* found = FindVoiceSend(slot->render, sendSlot, incarnation);
+    if (found == nullptr) return;
+    VoiceSendSlot& send = *found;
     if (!send.active) {
         return; // no-op on an empty slot (the API refuses this logic-side)
     }
     const float linear = DbToLinear(levelDb);
-    if (rampMs == 0) {
-        send.gain.SnapTo(linear);
-        send.ramping = false;
-        return;
-    }
-    // Same multi-block ramp formulation as the voice/bus gain: whole-block
-    // linear, landing exactly on a block boundary.
-    const std::uint64_t rampFrames =
-        (static_cast<std::uint64_t>(rampMs) * m_sampleRate + 999) / 1000;
-    std::uint64_t blocks = (rampFrames + m_blockFrames - 1) / m_blockFrames;
-    if (blocks == 0) {
-        blocks = 1;
-    }
-    send.ramping = true;
-    send.rampStartGain = send.gain.current;
-    send.rampEndGain = linear;
-    send.rampBlocksTotal = blocks;
-    send.rampBlocksDone = 0;
+    send.gain.Set(linear, GainTransitionFrames(rampMs, m_sampleRate,
+        !slot->render.firstBlock));
 }
 
 VoicePool::RenderAllResult VoicePool::RenderAll(
-    BlockArena& arena, float* const* busPlanes, std::uint32_t blockFrames,
+    BlockArena& arena, const BusRenderView& busPlanes, std::uint32_t blockFrames,
     NotificationQueue& notifications, std::uint64_t blockIndex,
     std::uint64_t jobDeadlineAt, std::uint64_t sourceFrameBegin, SignalRenderPlan* signals, BusTree* signalBuses) {
     RenderAllResult outcome;
     const bool collective = signals != nullptr && (signals->HasContent() || signals->UsesActualRouting());
     if (m_deferredJobCount == 0) {
         std::size_t pathRows = 0;
+        std::uint64_t sendCount = 0;
         std::uint32_t members = 0;
         bool singleStageMembers = true;
         if (collective) for (auto& slot : m_slots) {
@@ -4753,6 +4887,7 @@ VoicePool::RenderAllResult VoicePool::RenderAll(
             if (render.signalNodeCount == UINT32_MAX) render.signalNodeCount = 0;
             render.signalMemberActive = render.signalNodeCount != 0;
             pathRows += render.signalNodeCount;
+            if (render.signalMemberActive) sendCount += render.voiceSendActiveCount;
             if (render.signalMemberActive)
                 m_signalMemberImages[members++] = {nullptr, &render.outputGain,
                     render.signalNodeStorage.first(render.signalNodeCount), 0, 0, &render, 0};
@@ -4764,7 +4899,7 @@ VoicePool::RenderAllResult VoicePool::RenderAll(
         }
         if (signals != nullptr && signalBuses != nullptr) signals->SelectPreparedBusRouting(*signalBuses);
         if (signals != nullptr && signals->NeedsBlockRouting() &&
-            (signalBuses == nullptr || !signals->ReserveRouting(*signalBuses, arena, members, pathRows))) {
+            (signalBuses == nullptr || !signals->ReserveRouting(*signalBuses, arena, members, pathRows, sendCount))) {
             outcome.signalFailed = true;
             signals->Invalidate();
             return outcome;
@@ -4897,6 +5032,8 @@ VoicePool::RenderAllResult VoicePool::RenderAll(
             slot.render.monitorRenderSlot = i;
             slot.render.monitorRenderGeneration =
                 slot.generation.load(std::memory_order_relaxed);
+            if (!slot.render.monitorPreChain[0] && m_monitorPreChainPrepared.load(std::memory_order_acquire))
+                BindMonitorPreChainBacking(i);
             slot.render.monitorPreChainFrames = 0;
 #endif
             slot.render.dynamicVoiceTapActive =
@@ -4972,6 +5109,8 @@ VoicePool::RenderAllResult VoicePool::RenderAll(
             slot.render.monitorRenderSlot = i;
             slot.render.monitorRenderGeneration =
                 slot.generation.load(std::memory_order_relaxed);
+            if (!slot.render.monitorPreChain[0] && m_monitorPreChainPrepared.load(std::memory_order_acquire))
+                BindMonitorPreChainBacking(i);
             slot.render.monitorPreChainFrames = 0;
 #endif
             slot.render.dynamicVoiceTapActive =
@@ -5093,6 +5232,7 @@ VoicePool::RenderAllResult VoicePool::RenderAll(
                         !candidate.cascade.signalImageReady || candidate.cascade.produced == 0 ||
                         candidate.voiceSendActiveCount != 0 ||
                         candidate.busIndex != slot.render.busIndex ||
+                        candidate.busGeneration != slot.render.busGeneration ||
                         candidate.cascade.offset != slot.render.cascade.offset ||
                         candidate.cascade.produced != slot.render.cascade.produced) {
                         eligible = false;
@@ -5565,7 +5705,8 @@ std::uint32_t VoicePool::RenderedState(VnVoiceHandle handle) const noexcept {
 }
 
 bool VoicePool::CapturePreparedRoutingV1(VnVoiceHandle handle,
-                                         PreparedRoutingV1* out) const noexcept {
+                                         PreparedRoutingV1* out,
+                                         std::span<const PlaybackPathRow>* path) const noexcept {
     const auto index = static_cast<std::uint32_t>(handle);
     const auto generation = static_cast<std::uint32_t>(handle >> 32);
     if (out == nullptr || handle == 0 || index >= m_slots.size()) return false;
@@ -5576,14 +5717,21 @@ bool VoicePool::CapturePreparedRoutingV1(VnVoiceHandle handle,
     PreparedRoutingV1 captured{};
     captured.busIndex = slot.render.busIndex;
     captured.busGeneration = slot.render.busGeneration;
+    captured.sendSet = slot.render.voiceSendSet;
+    if (captured.sendSet != nullptr) captured.sends = captured.sendSet->preparedRoutes;
+    const auto routes = captured.SendRoutes();
+    if (routes.size() != slot.render.voiceSends.size()) return false;
     std::uint32_t count = 0;
-    for (std::uint32_t i = 0; i < kMaxVoiceSendSlots; ++i) {
+    for (std::size_t i = 0; i < routes.size(); ++i) {
         const auto& send = slot.render.voiceSends[i];
-        captured.sends[i] = {send.active, send.targetBusIndex, send.targetBusGeneration};
-        count += send.active ? 1u : 0u;
+        const auto& route = routes[i];
+        if (send.active != route.active || (send.active &&
+            (send.targetBusIndex != route.busIndex || send.targetBusGeneration != route.busGeneration))) return false;
+        count += send.active;
     }
     if (count != slot.render.voiceSendActiveCount) return false;
     *out = captured;
+    if (path != nullptr) *path = slot.render.signalPath;
     return true;
 }
 
@@ -5595,10 +5743,15 @@ bool VoicePool::CanCommitPreparedRoutingMigrationV1(VnVoiceHandle handle,
     PreparedRoutingV1 current{};
     if (!CapturePreparedRoutingV1(handle, &current) || !(current == expected) ||
         next.busIndex == UINT32_MAX || next.busGeneration == 0) return false;
-    for (std::uint32_t i = 0; i < kMaxVoiceSendSlots; ++i) {
-        if (next.sends[i].active || !expected.sends[i].active) {
-            if (!(next.sends[i] == expected.sends[i])) return false;
-        } else if (next.sends[i].busIndex != 0 || next.sends[i].busGeneration != 0) return false;
+    const auto before = expected.SendRoutes();
+    const auto after = next.SendRoutes();
+    if (next.sendSet != expected.sendSet || before.size() != after.size()) return false;
+    for (std::size_t i = 0; i < before.size(); ++i) {
+        if (after[i].active || !before[i].active) {
+            if (!(after[i] == before[i])) return false;
+        } else if (after[i].busIndex != before[i].busIndex ||
+            after[i].busGeneration != before[i].busGeneration ||
+            after[i].slot != before[i].slot || after[i].incarnation != before[i].incarnation) return false;
     }
     return true;
 }
@@ -5610,13 +5763,17 @@ void VoicePool::CommitPreparedRoutingMigrationV1(VnVoiceHandle handle,
     auto& render = m_slots[static_cast<std::uint32_t>(handle)].render;
     render.busIndex = next.busIndex;
     render.busGeneration = next.busGeneration;
-    for (std::uint32_t i = 0; i < kMaxVoiceSendSlots; ++i) {
-        if (expected.sends[i].active && !next.sends[i].active) {
+    const auto before = expected.SendRoutes();
+    const auto after = next.SendRoutes();
+    for (std::size_t i = 0; i < before.size(); ++i) {
+        if (before[i].active && !after[i].active) {
             assert(render.voiceSendActiveCount != 0);
             render.voiceSends[i] = {};
             --render.voiceSendActiveCount;
         }
     }
+    if (render.voiceSendSet != nullptr) render.voiceSendSet->preparedRoutes = next.sends;
+
 }
 
 void VoicePool::AudioDiscardLimiterGainReduction(std::uint64_t epoch) {
@@ -5720,6 +5877,7 @@ void VoicePool::NoteMonitorVoiceRetired(VnVoiceHandle publicHandle) noexcept {
 
 void VoicePool::ReleaseSlot(Slot& slot, ReleaseThread thread) {
     ReleaseEffectChainTransition(slot, thread);
+    ReleaseVoiceSendSet(slot.render);
     ClearFirstOutput(slot);
     const bool nativeFinished = FinishNativeVariableStart(slot, false);
     assert(nativeFinished);

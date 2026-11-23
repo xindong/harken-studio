@@ -5,7 +5,10 @@ import shutil
 import struct
 from pathlib import Path
 
-MAX_BYTES = 16 * 1024 * 1024
+# The Unity reader stores each part and the complete envelope in a byte array.
+MAX_ARRAY_BYTES = 0x7FFFFFC7
+HEADER = struct.Struct("<4sIII")
+DIGEST_BYTES = hashlib.sha256().digest_size
 
 
 def compress(raw):
@@ -29,16 +32,43 @@ def compress(raw):
 BLOCK_BYTES = 8192
 
 
-def pack_blocks(raw):
-    result = bytearray()
-    for offset in range(0, len(raw), BLOCK_BYTES):
-        block = raw[offset:offset + BLOCK_BYTES]
-        compressed = compress(block)
-        # A small size gain on entropy-coded packets is more expensive to unpack.
-        stored = compressed if len(compressed) <= len(block) * 7 // 8 else block
-        result.extend(struct.pack("<I", len(stored)))
-        result.extend(stored)
-    return result
+def write_member(binary, metadata, destination):
+    raw_len, meta_len = binary.stat().st_size, metadata.stat().st_size
+    data_limit = MAX_ARRAY_BYTES - HEADER.size - DIGEST_BYTES
+    if not 0 < raw_len <= MAX_ARRAY_BYTES or not 0 < meta_len < data_limit:
+        raise ValueError(f"Resident member exceeds the Windows byte array range: {binary}")
+
+    with destination.open("x+b") as stream:
+        try:
+            stream.write(bytes(HEADER.size))
+            with metadata.open("rb") as src:
+                shutil.copyfileobj(src, stream)
+            if stream.tell() != HEADER.size + meta_len:
+                raise ValueError(f"Metadata changed during publication: {metadata}")
+            packed_len = raw_read = 0
+            with binary.open("rb") as src:
+                while block := src.read(BLOCK_BYTES):
+                    compressed = compress(block)
+                    stored = compressed if len(compressed) <= len(block) * 7 // 8 else block
+                    raw_read += len(block)
+                    packed_len += 4 + len(stored)
+                    if raw_read > raw_len or packed_len > data_limit - meta_len:
+                        raise ValueError(f"Resident envelope exceeds the Windows byte array range: {binary}")
+                    stream.write(struct.pack("<I", len(stored)))
+                    stream.write(stored)
+            if raw_read != raw_len:
+                raise ValueError(f"Pack changed during publication: {binary}")
+            stream.seek(0)
+            stream.write(HEADER.pack(b"HRP2", raw_len, meta_len, packed_len))
+            stream.seek(0)
+            digest = hashlib.sha256()
+            while chunk := stream.read(1024 * 1024):
+                digest.update(chunk)
+            stream.write(digest.digest())
+        except BaseException:
+            stream.close()
+            destination.unlink()
+            raise
 
 
 def write_release(canonical: Path, output: Path):
@@ -58,17 +88,9 @@ def write_release(canonical: Path, output: Path):
         with binary.open("rb") as stream:
             if stream.read(4) != b"VSPK":
                 continue
-        if max(binary.stat().st_size, metadata.stat().st_size) > MAX_BYTES:
-            raise ValueError(f"Resident Pack exceeds the bounded Windows publication size: {binary}")
-        raw, json_bytes = binary.read_bytes(), metadata.read_bytes()
-        packed = pack_blocks(raw)
-        header = struct.pack("<4sIII", b"HRP2", len(raw), len(json_bytes), len(packed))
-        content = header + json_bytes + packed
         dest = (output / binary.relative_to(canonical)).with_suffix(".hrp")
         dest.parent.mkdir(parents=True, exist_ok=True)
-        with dest.open("xb") as stream:
-            stream.write(content)
-            stream.write(hashlib.sha256(content).digest())
+        write_member(binary, metadata, dest)
         consumed.update((binary, metadata))
         count += 1
         total += dest.stat().st_size

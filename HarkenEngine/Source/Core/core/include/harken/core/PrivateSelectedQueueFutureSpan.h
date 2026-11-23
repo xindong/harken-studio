@@ -216,24 +216,25 @@ public:
         QueueInstanceTable::FrontierConditionalSlice slice_ = QueueInstanceTable::FrontierConditionalSlice::Activation;
     };
 
-    using BackingPreparation = StableSlotStorage<Row>::Preparation;
-    using BackingUse = StableSlotStorage<Row>::PreparedUse;
+    using BackingPreparation = StableStoragePreparation;
+    using BackingUse = StableStoragePreparedUse;
     bool PrepareBacking(std::uint32_t count, BackingPreparation* out) noexcept {
-        return rows_.PrepareBacking(count < capacity_ ? count : capacity_, 0,
-            [](const Row& row) noexcept { return row.phase == Phase::Free; },
-            [this](std::uint32_t slot) noexcept { return rows_.Emplace(slot); }, out);
+        const auto occupied = OccupiedRows();
+        const auto required = std::min(count, capacity_);
+        if (required > capacity_ - occupied || rows_.HeldRows() > capacity_ - occupied - required)
+            return false;
+        return rows_.PrepareBacking(required, occupied, out);
     }
     std::uint32_t Capacity() const noexcept { return capacity_; }
     std::uint32_t ConstructedRowCount() const noexcept { return rows_.ConstructedCount(); }
     std::size_t RowStorageBytes() const noexcept { return rows_.RequestedBytes(); }
     std::size_t RowCommittedBytes() const noexcept { return rows_.CommittedBytes(); }
-    std::size_t RowDirectoryBytes() const noexcept { return rows_.DirectoryBytes(); }
     void SetRowCommitPageLimitForTests(std::size_t pages) noexcept {
         rows_.SetCommitPageLimitForTests(pages);
     }
 
     explicit PrivateSelectedQueueFutureSpanPool(std::uint32_t capacity)
-        : capacity_(capacity != 0 && rows_.Reserve(capacity) ? capacity : 0) {}
+        : capacity_(capacity) {}
     PrivateSelectedQueueFutureSpanPool(const PrivateSelectedQueueFutureSpanPool&) = delete;
     PrivateSelectedQueueFutureSpanPool& operator=(const PrivateSelectedQueueFutureSpanPool&) = delete;
     PrivateSelectedQueueFutureSpanPool(PrivateSelectedQueueFutureSpanPool&&) = delete;
@@ -496,19 +497,8 @@ private:
                 !newMember.MatchesOriginalScope(newMember.cohortRoot_,
                     newMember.provisionalAnchorFrame_, expected, *newMember.armTable_)) return false;
         }
-        std::uint32_t slot = UINT32_MAX;
-        const auto available = [](const Row& row) noexcept { return row.phase == Phase::Free; };
-        const auto construct = [this](std::uint32_t index) noexcept { return rows_.Emplace(index); };
-        for (std::uint32_t i = 0; i < capacity_; ++i) {
-            if (!rows_.IsConstructed(i)) {
-                if (rows_.PreparedUseActive()) continue;
-                if (!construct(i)) return false;
-            }
-            if (!available(rows_[i])) continue;
-            if (!rows_.ProtectBackingForAcquire(i, available, construct)) return false;
-            slot = i;
-            break;
-        }
+        const auto slot = rows_.FindFreeSlot(capacity_, [](const Row& row) { return row.phase == Phase::Free; },
+            [this](std::uint32_t count) noexcept { return rows_.ConstructThrough(count); });
         if (slot == UINT32_MAX) return false;
         Row provisional;
         if (!oldFuture.Borrow(&provisional.oldFuture) || !oldClock.Borrow(&provisional.oldClock) ||
@@ -661,7 +651,7 @@ public:
     // Returning its actual binding and lease is not a Catalog selector or claim.
     bool ResolveNativeConditionalGroup(const NativeConditionalRead& read,
         SchedulePageGroupView* out) const noexcept {
-        if (out == nullptr || read.pool_ != this || read.slot_ >= capacity_ || read.marker_ == 0)
+        if (out == nullptr || read.pool_ != this || read.slot_ >= rows_.ConstructedCount() || read.marker_ == 0)
             return false;
         const auto& row = rows_[read.slot_];
         if (row.generation != read.generation_ || row.marker != read.marker_ ||
@@ -685,7 +675,7 @@ public:
         const NativeTimelineQuantumAdmissionProof& admission,
         NativeConditionalProof* out,
         QueueInstanceTable::FrontierConditionalSlice slice = QueueInstanceTable::FrontierConditionalSlice::Activation) noexcept {
-        if (read.pool_ != this || read.slot_ >= capacity_ || read.marker_ == 0 ||
+        if (read.pool_ != this || read.slot_ >= rows_.ConstructedCount() || read.marker_ == 0 ||
             out == nullptr || out->row_ != nullptr ||
             slice != QueueInstanceTable::FrontierConditionalSlice::Activation) return QueueConditionalProofStatus::Stale;
         // The producer's genuine read loan keeps these immutable fields alive.
@@ -1084,7 +1074,7 @@ private:
         return true;
     }
     template<class Cap> bool Matches(const Cap& cap) const noexcept {
-        if (cap.pool_ != this || !rows_.IsConstructed(cap.slot_) || cap.marker_ == 0) return false;
+        if (cap.pool_ != this || rows_.TryAt(cap.slot_) == nullptr || cap.marker_ == 0) return false;
         const auto& row = rows_[cap.slot_];
         return row.phase != Phase::Free && row.phase != Phase::Quarantined &&
             row.generation == cap.generation_ && row.marker == cap.marker_ && row.loans != 0;
@@ -1172,7 +1162,11 @@ private:
         if (row.generation == UINT32_MAX) row.phase = Phase::Quarantined;
         else { ++row.generation; row.phase = Phase::Free; }
     }
-    StableSlotStorage<Row> rows_;
+    std::uint32_t OccupiedRows() const noexcept {
+        return static_cast<std::uint32_t>(std::count_if(rows_.begin(), rows_.end(),
+            [](const Row& row) { return row.phase != Phase::Free; }));
+    }
+    GrowingRowStorage<Row> rows_;
     std::uint32_t capacity_ = 0;
     std::uint64_t nextMarker_ = 0;
 };

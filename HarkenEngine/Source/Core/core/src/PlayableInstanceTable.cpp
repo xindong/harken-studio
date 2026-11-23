@@ -334,8 +334,8 @@ bool PlayableInstanceTable::TryFinishOriginalLifetimeDisposition(OriginalLifetim
         AdvanceLifecycle(originalBaseline.handle_, PlayableLifecycle::Retired, &originalBaseline);
 }
 bool PlayableInstanceTable::IssueOriginalPreparedLifetimeBaselines(
-    const PreparedParentLinksProof& preparation, std::span<OriginalLifetimePin> stableBaselines) noexcept {
-    if (preparation.owner_ != this || !preparation.Valid() || stableBaselines.size() > Capacity()) return false;
+    const PreparedParentLinksProof& preparation, GrowingRowStorage<OriginalLifetimePin>& stableBaselines) noexcept {
+    if (preparation.owner_ != this || !preparation.Valid()) return false;
     const auto count = preparation.nodeCount_ + preparation.anchorCount_;
     const auto nodeAt = [&preparation](std::size_t index) -> const PreparedParentLinksProof::Node& {
         return index < preparation.nodeCount_ ? preparation.nodes_[index]
@@ -367,7 +367,7 @@ bool PlayableInstanceTable::PreparedCommitHeld(const PreparedPlayableInstance& o
 PlayableInstanceTable::PreparedParentLinksProof::PreparedParentLinksProof(std::size_t capacity) {
     if (capacity > UINT32_MAX || capacity > (std::numeric_limits<std::size_t>::max() - 1u) / 3u)
         throw std::length_error("parent link proof capacity overflow");
-    if (!PrepareStorage(capacity)) throw std::bad_alloc{};
+    if (!PrepareStorage(capacity)) throw harken::detail::LogicPreparationFailure{};
 }
 
 bool PlayableInstanceTable::PreparedParentLinksProof::PrepareStorage(std::size_t capacity) noexcept {
@@ -391,7 +391,7 @@ bool PlayableInstanceTable::PreparedParentLinksProof::PrepareStorage(std::size_t
         grow(groups_, capacity);
         anchorCapacity_ = capacity + 1u;
         return true;
-    } catch (...) { return false; }
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::PlayableTreeStorage); return false; }
 }
 
 PlayableInstanceTable::PreparedParentLinksProof::PreparedParentLinksProof(
@@ -572,7 +572,7 @@ bool PlayableInstanceTable::ProvePreparedParentLinks(std::span<const ParentLinkR
                 cursor = existing->nextSibling;
             }
             if (tail != nullptr && !hold(tail, MakeHandle(
-                    static_cast<std::uint32_t>(tail - m_entries.data()), tail->generation))) return fail();
+                    m_entries.IndexOf(tail), tail->generation))) return fail();
             if (group == out->groups_.size()) out->groups_.resize(group + 1u);
             out->groups_[group] = {parent, tail, static_cast<std::uint32_t>(index), static_cast<std::uint32_t>(index)};
             ++out->groupCount_;
@@ -779,12 +779,11 @@ bool DelayedPlayableCancellation::Valid() const noexcept {
     return owner_ != nullptr && owner_->OwnsDelayedCancellation(*this);
 }
 
-PlayableInstanceTable::PlayableInstanceTable(std::uint32_t capacity, std::uint32_t generationFloor)
+PlayableInstanceTable::PlayableInstanceTable(std::uint32_t, std::uint32_t generationFloor)
 {
     if (generationFloor >= kMaximumTaggedGeneration)
         throw std::invalid_argument("playable handle generation exhausted");
     m_initialGeneration = generationFloor + 1;
-    if (!m_entries.Reserve(capacity)) throw std::bad_alloc{};
 }
 
 std::uint32_t PlayableInstanceTable::GenerationHighWater() const noexcept {
@@ -929,7 +928,7 @@ PlayableInstanceHandle PlayableInstanceTable::Acquire(
     if (parent != 0 && (Find(parent) == nullptr || ParentLinksHeld(parent))) {
         return 0;
     }
-    if (!PrepareStorage()) return 0;
+    if (!PrepareStorageForAcquire(1)) return 0;
     for (std::uint32_t slot = 0; slot < m_entries.size(); ++slot) {
         Entry& entry = m_entries[slot];
         if (!Reusable(entry.lifecycle) || entry.quarantined ||
@@ -1021,13 +1020,19 @@ bool PlayableInstanceTable::AvailableForAcquire(const Entry& entry) noexcept {
 }
 
 bool PlayableInstanceTable::PrepareStorageForAcquire(std::uint32_t count) noexcept {
-    for (const auto& entry : m_entries) {
-        if (count == 0) return true;
-        if (AvailableForAcquire(entry)) --count;
-    }
-    const auto prepared = m_entries.ConstructedCount();
-    // Actual exhaustion is still reported by the original acquire operation.
-    return m_entries.ConstructThrough(prepared + std::min(count, Capacity() - prepared));
+    if (count == 0) return true;
+    const auto occupied = UnavailableRowCount();
+    if (count <= UINT32_MAX - occupied && m_entries.ConstructThrough(occupied + count,
+            [this](std::uint32_t rows) { return PrepareRowDependencies(rows); })) return true;
+    if (!memguard::IsAudioTagged() && !m_entries.PreparedUseActive())
+        detail::RecordLogicAllocFailure(detail::LogicAllocSite::EngineStorage);
+    return false;
+}
+
+bool PlayableInstanceTable::PrepareFutureAcquisitions(
+    std::uint32_t count, StableStoragePreparation* hold) noexcept {
+    return m_entries.PrepareBacking(count, UnavailableRowCount(), hold,
+        [this](std::uint32_t rows) { return PrepareRowDependencies(rows); });
 }
 
 bool PlayableInstanceTable::PrepareAcquireInternal(
@@ -1040,7 +1045,7 @@ bool PlayableInstanceTable::PrepareAcquireInternal(
         return false;
     }
     *out = {};
-    if (prepareStorage && !PrepareStorage()) return false;
+    if (prepareStorage && !PrepareStorageForAcquire(1)) return false;
     for (std::uint32_t slot = 0; slot < m_entries.size(); ++slot) {
         Entry& entry = m_entries[slot];
         if (!AvailableForAcquire(entry)) {
@@ -2047,11 +2052,9 @@ bool PlayableInstanceTable::AdvanceLifecycle(PlayableInstanceHandle handle,
 }
 
 std::uint32_t PlayableInstanceTable::FreeCount() const {
-    std::uint32_t free = Capacity() - m_entries.ConstructedCount();
+    std::uint32_t free = 0;
     for (const Entry& entry : m_entries) {
-        if (!entry.quarantined && !entry.prepared && entry.originalLifetimeCount == 0 &&
-            entry.completedOriginalCancellation.owner_ == nullptr &&
-            Reusable(entry.lifecycle)) {
+        if (AvailableForAcquire(entry)) {
             ++free;
         }
     }

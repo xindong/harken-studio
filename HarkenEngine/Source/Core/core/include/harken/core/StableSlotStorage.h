@@ -1,6 +1,7 @@
 #ifndef HARKEN_CORE_STABLE_SLOT_STORAGE_H
 #define HARKEN_CORE_STABLE_SLOT_STORAGE_H
 
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/core/StableRowStorage.h"
 
 #include <bit>
@@ -98,7 +99,7 @@ public:
         try {
             directory = std::make_unique<std::atomic<std::uint64_t>[]>(words);
             summary = std::make_unique<std::atomic<std::uint64_t>[]>(summaryWords);
-        } catch (...) { return false; }
+        } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return false; }
         for (std::uint32_t word = 0; word < summaryWords; ++word)
             summary[word].store(0, std::memory_order_relaxed);
         for (std::uint32_t word = 0; word < words; ++word)
@@ -119,7 +120,7 @@ public:
         if (memguard::IsAudioTagged() || preparedUsers_ != 0 ||
             !reservation_.CommitRange(static_cast<std::size_t>(slot) * sizeof(T), sizeof(T))) return false;
         try { std::construct_at(AddressOf(slot), std::forward<Args>(args)...); }
-        catch (...) { return false; }
+        catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return false; }
         constructed_.fetch_add(1, std::memory_order_relaxed);
         // Publish navigation before the existing object-publication bit. A reader
         // may see an empty hinted word and must still acquire its directory bits.
@@ -130,10 +131,10 @@ public:
 
     template<class Available, class Construct>
     bool PrepareBacking(std::uint32_t low, std::uint32_t high, Available&& available,
-        Construct&& construct, Preparation* out) noexcept {
+        Construct&& construct, Preparation* out, bool prepareReusable = false) noexcept {
         if (out == nullptr || out->Valid() || memguard::IsAudioTagged() || preparedUsers_ != 0 ||
             heldLow_ > UINT64_MAX - low || heldHigh_ > UINT64_MAX - high) return false;
-        if (!EnsureAvailable(heldLow_ + low, heldHigh_ + high, UINT32_MAX, available, construct)) return false;
+        if (!EnsureAvailable(heldLow_ + low, heldHigh_ + high, UINT32_MAX, available, construct, prepareReusable)) return false;
         heldLow_ += low;
         heldHigh_ += high;
         out->owner_ = this;
@@ -144,9 +145,9 @@ public:
 
     // Preserve outstanding physical allowances before the caller issues a real identity.
     template<class Available, class Construct>
-    bool ProtectBackingForAcquire(std::uint32_t slot, Available&& available, Construct&& construct) noexcept {
+    bool ProtectBackingForAcquire(std::uint32_t slot, Available&& available, Construct&& construct, bool prepareReusable = false) noexcept {
         if (!IsConstructed(slot)) return false;
-        return preparedUsers_ != 0 || EnsureAvailable(heldLow_, heldHigh_, slot, available, construct);
+        return preparedUsers_ != 0 || EnsureAvailable(heldLow_, heldHigh_, slot, available, construct, prepareReusable);
     }
 
     bool PreparedUseActive() const noexcept { return preparedUsers_ != 0; }
@@ -255,12 +256,12 @@ public:
 private:
     template<class Available, class Construct>
     bool EnsureAvailable(std::uint64_t low, std::uint64_t high, std::uint32_t excluded,
-        Available& available, Construct& construct) noexcept {
+        Available& available, Construct& construct, bool prepareReusable) noexcept {
         const auto ensure = [&](std::uint64_t count, bool reverse) noexcept {
             for (std::uint32_t offset = 0; offset < capacity_ && count != 0; ++offset) {
                 const auto slot = reverse ? capacity_ - 1u - offset : offset;
                 if (slot == excluded || (IsConstructed(slot) && !available((*this)[slot]))) continue;
-                if (!IsConstructed(slot) && !construct(slot)) return false;
+                if ((prepareReusable || !IsConstructed(slot)) && !construct(slot)) return false;
                 --count;
             }
             // Physical backing does not grant more logical capacity than the original allocator.

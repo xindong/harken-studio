@@ -24,7 +24,7 @@ class TraceRecorder;
 
 inline bool IsTransientPackTraceRefusal(VnResult result) noexcept {
     return result == VN_BACKPRESSURE || result == VN_PACK_RESIDENT_CAPACITY ||
-        result == VN_NO_PACK || result == VN_NO_BUS || result == VN_DEVICE_ERROR;
+        result == VN_NO_PACK || result == VN_NO_BUS || result == VN_DEVICE_ERROR || result == VN_OUT_OF_MEMORY;
 }
 
 struct TraceSessionOrigin {

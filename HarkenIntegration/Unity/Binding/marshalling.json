@@ -1748,6 +1748,58 @@
       {
         "wire": "out"
       }
+    ],
+    "Vn_CaptureBusStates": [
+      {
+        "wire": "u32"
+      },
+      {
+        "wire": "outrows",
+        "type": "VnBusState",
+        "capacityParam": "capacity",
+        "countParam": "outCount"
+      },
+      {
+        "wire": "u32"
+      },
+      {
+        "wire": "outu32"
+      },
+      {
+        "wire": "outu32"
+      }
+    ],
+    "Vn_GetRuntimeFaultInfo": [
+      {
+        "wire": "structref",
+        "type": "VnRuntimeFaultInfoV1"
+      }
+    ],
+    "VnPreview_CapturePlaybackPathsV2": [
+      {
+        "wire": "outrows",
+        "type": "VnPreviewPlaybackPathV2",
+        "capacityParam": "capacity",
+        "countParam": "requiredCount"
+      },
+      {
+        "wire": "u32"
+      },
+      {
+        "wire": "outu32"
+      },
+      {
+        "wire": "outrows",
+        "type": "VnPreviewPlaybackSendV1",
+        "capacityParam": "sendCapacity",
+        "countParam": "requiredSendCount"
+      },
+      {
+        "wire": "u64"
+      },
+      {
+        "wire": "out"
+      }
     ]
   },
   "bindingOverloads": [

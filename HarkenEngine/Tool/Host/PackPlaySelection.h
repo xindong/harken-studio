@@ -28,19 +28,16 @@ struct FiringSelectionCopy {
 // Copy while this firing's root service row is still bound. The trigger
 // window later retires that row and clears actionFiring, so the success
 // path must print this copy and must not scan again.
-inline bool CaptureFiringSelection(
-    const harken::EnginePlayableStartRow* starts, std::size_t startCount,
-    const harken::EnginePlayableServiceRow* services, std::size_t serviceCount,
+template<class Starts, class Services>
+inline bool CaptureFiringSelectionRows(
+    const Starts& starts, const Services& services,
     VnActionFiringHandle firing, FiringSelectionCopy* copy,
-    const harken::ActionFiringTable* firings = nullptr) {
+    const harken::ActionFiringTable* firings) {
     if (copy == nullptr || copy->captured || copy->rejected || firing == 0) {
         return copy != nullptr && copy->captured;
     }
-    if (starts == nullptr || services == nullptr) {
-        return false;
-    }
     const harken::EnginePlayableStartRow* start = nullptr;
-    for (std::size_t index = 0; index < startCount; ++index) {
+    for (std::size_t index = 0; index < starts.size(); ++index) {
         const harken::EnginePlayableStartRow& candidate = starts[index];
         if (!MatchesFiring(candidate.actionFiring, firing, firings)) {
             continue;
@@ -52,7 +49,7 @@ inline bool CaptureFiringSelection(
         start = &candidate;
     }
     if (start == nullptr || !start->rootService.Valid() ||
-        start->rootService.slot >= serviceCount) {
+        start->rootService.slot >= services.size()) {
         return false;
     }
     const harken::EnginePlayableServiceRow& row = services[start->rootService.slot];
@@ -72,13 +69,27 @@ inline bool CaptureFiringSelection(
     return true;
 }
 
+inline bool CaptureFiringSelection(
+    const harken::EnginePlayableStartRow* starts, std::size_t startCount,
+    const harken::EnginePlayableServiceRow* services, std::size_t serviceCount,
+    VnActionFiringHandle firing, FiringSelectionCopy* copy,
+    const harken::ActionFiringTable* firings = nullptr) {
+    if (copy == nullptr || copy->captured || copy->rejected || firing == 0)
+        return copy != nullptr && copy->captured;
+    if ((startCount != 0 && starts == nullptr) ||
+        (serviceCount != 0 && services == nullptr)) {
+        return false;
+    }
+    return CaptureFiringSelectionRows(std::span(starts, startCount), std::span(services, serviceCount),
+        firing, copy, firings);
+}
+
 inline bool CaptureFiringSelection(harken::Engine* engine, VnActionFiringHandle firing,
                                    FiringSelectionCopy* copy) {
     if (engine == nullptr) {
         return copy != nullptr && copy->captured && !copy->rejected && firing != 0;
     }
-    return CaptureFiringSelection(engine->playableStarts.data(), engine->playableStarts.size(),
-                                  engine->playableServices.data(), engine->playableServices.size(),
+    return CaptureFiringSelectionRows(engine->playableStarts, engine->playableServices,
                                   firing, copy, &engine->actionFirings);
 }
 
@@ -173,19 +184,15 @@ inline void NoteQueueSuccessorLeaf(const harken::EnginePlayableServiceRow& row,
     copy->firstFrame = row.startFrame;
 }
 
-inline bool ObserveFiringQueueWindow(
-    const harken::EnginePlayableStartRow* starts, std::size_t startCount,
-    const harken::EnginePlayableServiceRow* services, std::size_t serviceCount,
+template<class Starts, class Services>
+inline bool ObserveFiringQueueWindowRows(
+    const Starts& starts, const Services& services,
     VnActionFiringHandle firing, FiringQueueWindowCopy* copy,
-    const harken::ActionFiringTable* firings = nullptr) {
+    const harken::ActionFiringTable* firings) {
     if (copy == nullptr || firing == 0) {
         return false;
     }
-    if ((startCount != 0 && starts == nullptr) ||
-        (serviceCount != 0 && services == nullptr)) {
-        return false;
-    }
-    for (std::size_t index = 0; index < startCount; ++index) {
+    for (std::size_t index = 0; index < starts.size(); ++index) {
         const harken::EnginePlayableStartRow& start = starts[index];
         if (!MatchesFiring(start.actionFiring, firing, firings)) {
             continue;
@@ -211,8 +218,8 @@ inline bool ObserveFiringQueueWindow(
                 copy->startsTruncated = true;
             }
         }
-        if (services == nullptr || !start.rootService.Valid() ||
-            start.rootService.slot >= serviceCount) {
+        if (!start.rootService.Valid() ||
+            start.rootService.slot >= services.size()) {
             continue;
         }
         const harken::EnginePlayableServiceRow& row =
@@ -224,6 +231,19 @@ inline bool ObserveFiringQueueWindow(
     return true;
 }
 
+inline bool ObserveFiringQueueWindow(
+    const harken::EnginePlayableStartRow* starts, std::size_t startCount,
+    const harken::EnginePlayableServiceRow* services, std::size_t serviceCount,
+    VnActionFiringHandle firing, FiringQueueWindowCopy* copy,
+    const harken::ActionFiringTable* firings = nullptr) {
+    if ((startCount != 0 && starts == nullptr) ||
+        (serviceCount != 0 && services == nullptr)) {
+        return false;
+    }
+    return ObserveFiringQueueWindowRows(std::span(starts, startCount), std::span(services, serviceCount),
+        firing, copy, firings);
+}
+
 inline bool ObserveFiringQueueWindow(harken::Engine* engine,
                                      VnActionFiringHandle firing,
                                      FiringQueueWindowCopy* copy) {
@@ -233,9 +253,8 @@ inline bool ObserveFiringQueueWindow(harken::Engine* engine,
     if (engine == nullptr) {
         return false;
     }
-    return ObserveFiringQueueWindow(
-        engine->playableStarts.data(), engine->playableStarts.size(),
-        engine->playableServices.data(), engine->playableServices.size(),
+    return ObserveFiringQueueWindowRows(
+        engine->playableStarts, engine->playableServices,
         firing, copy, &engine->actionFirings);
 }
 
@@ -399,25 +418,21 @@ struct FiringQueueEndCopy {
     unsigned reason = 0;
 };
 
-inline bool CaptureFiringQueueEnd(
-    const harken::EnginePlayableStartRow* starts, std::size_t startCount,
-    const harken::EnginePlayableServiceRow* services, std::size_t serviceCount,
+template<class Starts, class Services>
+inline bool CaptureFiringQueueEndRows(
+    const Starts& starts, const Services& services,
     VnActionFiringHandle firing, FiringQueueEndCopy* out,
-    const harken::ActionFiringTable* firings = nullptr) {
+    const harken::ActionFiringTable* firings) {
     if (out == nullptr || firing == 0) {
-        return false;
-    }
-    if ((startCount != 0 && starts == nullptr) ||
-        (serviceCount != 0 && services == nullptr)) {
         return false;
     }
     FiringQueueEndCopy seen{};
     bool found = false;
-    for (std::size_t index = 0; index < startCount; ++index) {
+    for (std::size_t index = 0; index < starts.size(); ++index) {
         const harken::EnginePlayableStartRow& start = starts[index];
-        if (!MatchesFiring(start.actionFiring, firing, firings) || services == nullptr ||
+        if (!MatchesFiring(start.actionFiring, firing, firings) ||
             !start.rootService.Valid() ||
-            start.rootService.slot >= serviceCount) {
+            start.rootService.slot >= services.size()) {
             continue;
         }
         const harken::EnginePlayableServiceRow& row =
@@ -445,6 +460,19 @@ inline bool CaptureFiringQueueEnd(
     return true;
 }
 
+inline bool CaptureFiringQueueEnd(
+    const harken::EnginePlayableStartRow* starts, std::size_t startCount,
+    const harken::EnginePlayableServiceRow* services, std::size_t serviceCount,
+    VnActionFiringHandle firing, FiringQueueEndCopy* out,
+    const harken::ActionFiringTable* firings = nullptr) {
+    if ((startCount != 0 && starts == nullptr) ||
+        (serviceCount != 0 && services == nullptr)) {
+        return false;
+    }
+    return CaptureFiringQueueEndRows(std::span(starts, startCount), std::span(services, serviceCount),
+        firing, out, firings);
+}
+
 inline bool CaptureFiringQueueEnd(harken::Engine* engine,
                                   VnActionFiringHandle firing,
                                   FiringQueueEndCopy* out) {
@@ -454,9 +482,8 @@ inline bool CaptureFiringQueueEnd(harken::Engine* engine,
     if (engine == nullptr) {
         return true;
     }
-    return CaptureFiringQueueEnd(
-        engine->playableStarts.data(), engine->playableStarts.size(),
-        engine->playableServices.data(), engine->playableServices.size(),
+    return CaptureFiringQueueEndRows(
+        engine->playableStarts, engine->playableServices,
         firing, out, &engine->actionFirings);
 }
 

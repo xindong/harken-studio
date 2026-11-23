@@ -301,9 +301,9 @@ TEST(RemoteDispatch, OutputVolumeOpcodesPreserveMainSendAndLegacyVolumeSemantics
     setVolume(kOpVn_SetBusOutputVolume, harkentest::ObjectId(77), 2);
     setVolume(kOpVn_SetVoiceOutputVolume, handle, 2);
     harkentest::Capture ramp;
-    harkentest::PumpAndCapture(session.Engine(), 2, ramp);
+    harkentest::PumpAndCapture(session.Engine(), 4, ramp);
     for (std::size_t i = 0; i < ramp.left.size(); ++i) {
-        const float progress = std::min(1.0f, static_cast<float>(i + 1) / 96.0f);
+        const float progress = std::min(1.0f, static_cast<float>(i + 1) / 240.0f);
         const float gain = 1.0f - 0.5f * progress;
         const float expected = 0.25f + 0.25f * gain + 0.25f * gain * gain;
         ASSERT_NEAR(expected, ramp.left[i], 1e-5f);
@@ -311,6 +311,7 @@ TEST(RemoteDispatch, OutputVolumeOpcodesPreserveMainSendAndLegacyVolumeSemantics
     }
     setVolume(kOpVn_SetBusVolume, harkentest::ObjectId(77), 0);
     setVolume(kOpVn_SetVoiceVolume, handle, 0);
+    session.Engine()->nullBackend.Pump(4);
     harkentest::Capture legacy;
     harkentest::PumpAndCapture(session.Engine(), 1, legacy);
     ASSERT_NEAR(0.171875f, legacy.left.front(), 1e-5f);

@@ -1,6 +1,5 @@
 #include "harken/core/EngineConfig.h"
 #include "TimelineCapacityOverrideForTest.h"
-#include "harken/core/ActionCooldownTable.h"
 #if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
 #include "harken/core/ScheduledTransactionPool.h"
 #endif
@@ -45,9 +44,8 @@ namespace {
 // bounds, not tuning parameters.
 constexpr std::uint32_t kMaxSampleRate = 384000;
 constexpr std::uint32_t kMaxBlockFrames = 1 << 16;
-constexpr std::uint32_t kMaxVoicesCeiling = 1 << 14;
-constexpr std::uint32_t kMaxArenaBytes = 1 << 28;
-constexpr std::uint32_t kMaxBusesCeiling = 1 << 12;
+
+constexpr std::uint32_t kMaxArenaBytes = UINT32_MAX;
 constexpr std::uint32_t kMaxQueueDepthCeiling = 1 << 20;
 // The per-block control-command ceiling is counted in the same unit as the
 // queue that feeds it, so the largest queue this validator will admit is also
@@ -70,7 +68,6 @@ constexpr std::uint32_t kMaxStreamsCeiling = 1 << 12;
 // is already far past any sane figure, so anything above is a typo.
 constexpr std::uint32_t kMaxPrebufferMsCeiling = 60000;
 constexpr std::uint32_t kMaxStarvationCooldownCeiling = 1 << 20;
-constexpr std::uint32_t kMaxPacksCeiling = 1 << 12;
 constexpr std::uint32_t kMaxCatalogEntriesCeiling = 1048576;
 constexpr std::uint64_t kMaxCatalogBytesCeiling = 64ull * 1024ull * 1024ull;
 constexpr std::uint64_t kMaxResidentDefinitionBytesCeiling =
@@ -86,28 +83,20 @@ constexpr std::uint64_t kMaxPackReplacementPeakBytesCeiling =
 // plainly nonsensical capacities before construction attempts an allocation.
 // These bound logic-side pools; none of them approach the delay-line or ring
 // footprints that need a byte-level ceiling.
-constexpr std::uint32_t kMaxActionsCeiling = 1 << 16;
-constexpr std::uint32_t kMaxActionFiringsCeiling = 4096;
 constexpr std::uint32_t kMaxContainersCeiling = 1 << 16;
 constexpr std::uint32_t kMaxContainerChildrenCeiling = 1 << 20;
 constexpr std::uint32_t kMaxContainerCursorCeiling = 1 << 20;
 constexpr std::uint32_t kMaxPendingActionCeiling = 1 << 20;
-constexpr std::uint32_t kMaxEmittersCeiling = 1 << 16;
-constexpr std::uint32_t kMaxEmitterVariableSlotsCeiling = 1 << 12;
+constexpr std::uint32_t kMaxInitialEmitterVariableSlots = 1 << 12;
 constexpr std::uint32_t kMaxParkedVoicesCeiling = 1 << 14;
-constexpr std::uint32_t kMaxBusSendSlotsCeiling = 1 << 8;
 constexpr std::uint32_t kMaxTopologyPlanPoolCeiling = 1 << 12;
-constexpr std::uint32_t kMaxBusTopologyOwnersCeiling = 1 << 16;
 constexpr std::uint64_t kMaxTopologyPlanBytesCeiling =
     1ull * 1024ull * 1024ull * 1024ull;
 // The steal policy is a small enum; anything above steal-oldest is a header
 // vintage this engine does not know.
 constexpr std::uint32_t kMaxStealPolicy = 2;
 
-// Binding-pool sanity ceilings, same discipline as the playback-management
-// ceilings: logic-side pools, preallocated at Init, refused when plainly
-// nonsensical. The per-voice instance-slot field is bounded by its
-// POD-layout constant (kMaxVoiceBindingInstanceSlots) instead, below.
+// Initial binding-reservation sanity ceilings; runtime storage grows on demand.
 constexpr std::uint32_t kMaxBindingsCeiling = 1 << 16;
 constexpr std::uint32_t kMaxBindingAttachmentsCeiling = 1 << 16;
 
@@ -300,7 +289,11 @@ VnResult ResolveConfigForInitialDevice(const VnConfig* config,
     }
 
     EngineConfig resolved;
-    std::uint32_t renderVoiceCapacity = resolved.voiceCapacity.Render();
+    resolved.automaticRenderVoices = config->maxVoices == 0;
+    resolved.automaticStopTransport = resolved.automaticRenderVoices &&
+        (!hasTransportFields || config->commandQueueDepth == 0) &&
+        (!hasTopologySnapshotFields || config->maxControlCommandsPerQuantum == 0);
+    std::uint32_t renderVoiceCapacity = VoiceCapacityModel::kMaxRenderVoices;
     std::uint32_t virtualVoiceCapacity = resolved.voiceCapacity.Virtual();
     resolved.nullDevice = (config->deviceMode == VN_DEVICE_NULL);
     if (config->sampleRate != 0) {
@@ -321,9 +314,10 @@ VnResult ResolveConfigForInitialDevice(const VnConfig* config,
     if (config->maxVoices != 0)
         renderVoiceCapacity = config->maxVoices;
     if (config->fxSlotsPerVoice != 0) resolved.fxSlotsPerVoice = config->fxSlotsPerVoice;
-    if (config->arenaBytes != 0) resolved.arenaBytes = config->arenaBytes;
+    resolved.automaticArena = config->arenaBytes == 0;
+    if (!resolved.automaticArena) resolved.arenaBytes = config->arenaBytes;
     if (hasTransportFields) {
-        if (config->maxBuses != 0) resolved.maxBuses = config->maxBuses;
+        // maxBuses is a retained ABI field; definitions grow on demand.
         if (config->commandQueueDepth != 0)
             resolved.commandQueueDepth = config->commandQueueDepth;
         if (config->notificationQueueDepth != 0)
@@ -349,8 +343,6 @@ VnResult ResolveConfigForInitialDevice(const VnConfig* config,
         if (config->starvationCooldownBlocks != 0)
             resolved.starvationCooldownBlocks =
                 config->starvationCooldownBlocks;
-        if (config->maxPacks != 0)
-            resolved.maxPacks = config->maxPacks;
     }
     if (hasPlaybackFields) {
         if (config->maxActions != 0) resolved.maxActions = config->maxActions;
@@ -362,8 +354,6 @@ VnResult ResolveConfigForInitialDevice(const VnConfig* config,
             resolved.containerCursorCapacity = config->containerCursorCapacity;
         if (config->pendingActionCapacity != 0)
             resolved.pendingActionCapacity = config->pendingActionCapacity;
-        if (config->maxEmitters != 0)
-            resolved.maxEmitters = config->maxEmitters;
         if (config->emitterVariableSlots != 0)
             resolved.emitterVariableSlots = config->emitterVariableSlots;
         if (config->maxParkedVoices != 0)
@@ -462,9 +452,7 @@ VnResult ResolveConfigForInitialDevice(const VnConfig* config,
             resolved.dynamicVoiceTapCapacity = config->dynamicVoiceTapCapacity;
     }
     if (hasTopologySnapshotFields) {
-        if (config->maxBusTopologyOwners != 0) {
-            resolved.maxBusTopologyOwners = config->maxBusTopologyOwners;
-        }
+        // Owner identities grow independently of the retained ABI hint.
         if (config->maxTopologyPlanBytes != 0) {
             resolved.maxTopologyPlanBytes = config->maxTopologyPlanBytes;
         }
@@ -472,9 +460,6 @@ VnResult ResolveConfigForInitialDevice(const VnConfig* config,
             resolved.maxControlCommandsPerQuantum =
                 config->maxControlCommandsPerQuantum;
         }
-    }
-    if (hasActionFiringFields && config->maxActionFirings != 0) {
-        resolved.maxActionFirings = config->maxActionFirings;
     }
     if (hasPackBudgetFields) {
         if (config->maxCatalogEntries != 0) {
@@ -490,6 +475,8 @@ VnResult ResolveConfigForInitialDevice(const VnConfig* config,
         if (config->maxCompositeIndexBytes != 0) {
             resolved.maxCompositeIndexBytes = config->maxCompositeIndexBytes;
         }
+        if (config->maxPackDecodeStagingBytes > kMaxPackDecodeStagingBytesCeiling)
+            return VN_INVALID_CONFIG;
         if (config->maxPackDecodeStagingBytes != 0) {
             resolved.maxPackDecodeStagingBytes =
                 config->maxPackDecodeStagingBytes;
@@ -499,9 +486,6 @@ VnResult ResolveConfigForInitialDevice(const VnConfig* config,
             resolved.maxPackReplacementPeakBytes =
                 config->maxPackReplacementPeakBytes;
         }
-    }
-    if (hasActionCooldownFields && config->maxActionCooldownRows != 0) {
-        resolved.maxActionCooldownRows = config->maxActionCooldownRows;
     }
 
 #if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
@@ -567,10 +551,9 @@ VnResult ResolveConfigForInitialDevice(const VnConfig* config,
     // refused here on the same over-ceiling path as every other field.
     if (resolved.mixRate.SampleRate() > kMaxSampleRate ||
         resolved.blockFrames > kMaxBlockFrames ||
-        resolved.voiceCapacity.Render() > kMaxVoicesCeiling ||
+        resolved.voiceCapacity.Render() > VoiceCapacityModel::kMaxRenderVoices ||
         resolved.fxSlotsPerVoice > kMaxFxSlotsPerVoice ||
         resolved.arenaBytes > kMaxArenaBytes ||
-        resolved.maxBuses > kMaxBusesCeiling ||
         resolved.commandQueueDepth > kMaxQueueDepthCeiling ||
         resolved.maxControlCommandsPerQuantum >
             kMaxControlCommandsPerQuantumCeiling ||
@@ -585,58 +568,40 @@ VnResult ResolveConfigForInitialDevice(const VnConfig* config,
         resolved.maxStreams > kMaxStreamsCeiling ||
         resolved.prebufferMs > kMaxPrebufferMsCeiling ||
         resolved.starvationCooldownBlocks > kMaxStarvationCooldownCeiling ||
-        resolved.maxPacks > kMaxPacksCeiling ||
         resolved.maxCatalogEntries > kMaxCatalogEntriesCeiling ||
         resolved.maxCatalogBytes > kMaxCatalogBytesCeiling ||
         resolved.maxResidentDefinitionBytes >
             kMaxResidentDefinitionBytesCeiling ||
         resolved.maxCompositeIndexBytes > kMaxCompositeIndexBytesCeiling ||
-        resolved.maxPackDecodeStagingBytes >
-            kMaxPackDecodeStagingBytesCeiling ||
         resolved.maxPackReplacementPeakBytes >
             kMaxPackReplacementPeakBytesCeiling ||
-        resolved.maxActions > kMaxActionsCeiling ||
-        resolved.maxActionFirings > kMaxActionFiringsCeiling ||
-        resolved.maxActionCooldownRows > kMaxActionCooldownRowsHard ||
         resolved.maxContainers > kMaxContainersCeiling ||
         resolved.maxContainerChildren > kMaxContainerChildrenCeiling ||
         resolved.containerCursorCapacity > kMaxContainerCursorCeiling ||
         resolved.pendingActionCapacity > kMaxPendingActionCeiling ||
-        resolved.maxEmitters > kMaxEmittersCeiling ||
-        resolved.emitterVariableSlots > kMaxEmitterVariableSlotsCeiling ||
+        resolved.emitterVariableSlots > kMaxInitialEmitterVariableSlots ||
         resolved.voiceCapacity.Virtual() > kMaxParkedVoicesCeiling ||
         resolved.voiceStealPolicy > kMaxStealPolicy ||
         resolved.audibilityParkEnabled > 1u ||
         !std::isfinite(resolved.parkThresholdDb) ||
-        // voiceSendSlots is bounded by the POD-layout constant that sizes the
-        // per-voice send array (kMaxVoiceSendSlots), like fxSlotsPerVoice.
-        resolved.voiceSendSlots > kMaxVoiceSendSlots ||
-        resolved.busSendSlotsPerBus > kMaxBusSendSlotsCeiling ||
         // Bus effect chains share the compile-time slot maximum with voices.
         resolved.fxSlotsPerBus > kMaxFxSlotsPerVoice ||
         resolved.topologyPlanPoolCapacity > kMaxTopologyPlanPoolCeiling ||
-        resolved.maxBusTopologyOwners > kMaxBusTopologyOwnersCeiling ||
         resolved.maxTopologyPlanBytes > kMaxTopologyPlanBytesCeiling ||
         resolved.maxBindings > kMaxBindingsCeiling ||
         resolved.maxBindingAttachments > kMaxBindingAttachmentsCeiling ||
-        // voiceBindingInstanceSlots is bounded by the POD-layout constant
-        // that sizes the pinned-attachment arrays, like fxSlotsPerVoice.
-        resolved.voiceBindingInstanceSlots > kMaxVoiceBindingInstanceSlots ||
         resolved.meterRingBlocks > kMaxMeterRingBlocksCeiling) {
         return VN_INVALID_CONFIG;
     }
 
+    // These limits bound startup reservations, not live emitter Variable counts.
     std::uint64_t overrideBytesPerEmitter = 0;
     std::uint64_t bytesPerEmitter = 0;
-    std::uint64_t emitterVariableBankBytes = 0;
     if (!CheckedMul(resolved.emitterVariableSlots,
                     kEmitterOverrideBudgetBytes,
                     &overrideBytesPerEmitter) ||
         !CheckedAdd(kEmitterBankBudgetBytes, overrideBytesPerEmitter,
-                    &bytesPerEmitter) ||
-        !CheckedMul(resolved.maxEmitters, bytesPerEmitter,
-                    &emitterVariableBankBytes) ||
-        emitterVariableBankBytes > kMaxEmitterVariableBankBytes) {
+                    &bytesPerEmitter)) {
         return VN_INVALID_CONFIG;
     }
 
@@ -714,7 +679,6 @@ VnResult ResolveConfigForInitialDevice(const VnConfig* config,
     // exact aggregate before construction so no legal-looking count set can
     // overflow size_t arithmetic or bypass the caller's byte budget.
     std::uint64_t planBus = 0;
-    std::uint64_t planBusSend = 0;
     std::uint64_t planBusCoefficients = 0;
     std::uint64_t bytes = 0;
     const auto addBytes = [&bytes](std::uint64_t count,
@@ -730,15 +694,10 @@ VnResult ResolveConfigForInitialDevice(const VnConfig* config,
     };
     if (!CheckedMul(resolved.topologyPlanPoolCapacity, resolved.maxBuses,
                     &planBus) ||
-        !CheckedMul(planBus, resolved.busSendSlotsPerBus, &planBusSend) ||
         !CheckedMul(planBus, 64u, &planBusCoefficients) ||
         !addBytes(planBus, sizeof(std::uint32_t)) ||       // order
         !addBytes(resolved.topologyPlanPoolCapacity,
                   sizeof(std::uint32_t)) ||                // order count
-        !addBytes(planBusSend, sizeof(std::uint32_t)) ||   // send targets
-        !addBytes(planBusSend, sizeof(float)) ||           // send levels
-        !addBytes(planBusSend, sizeof(std::uint8_t)) ||    // level apply
-        !addBytes(planBusSend, sizeof(std::uint32_t)) ||   // level ramps
         !addBytes(planBus, sizeof(std::uint32_t)) ||       // layouts
         !addBytes(planBusCoefficients, sizeof(float)) ||   // fold matrices
         !addBytes(planBus, sizeof(std::uint32_t)) ||       // parents
@@ -873,8 +832,6 @@ VnResult ResolveConfigForInitialDevice(const VnConfig* config,
         return VN_INVALID_CONFIG;
     }
 
-    resolved.maxPlayableInstances = std::max(
-        resolved.maxPlayableInstances, resolved.voiceCapacity.Logical());
     *out = resolved;
     return VN_OK;
 }

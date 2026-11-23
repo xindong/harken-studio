@@ -54,7 +54,7 @@ struct ImmediateLaneTimelineFinalizer::Impl {
     StableRowStorage<ControlScratch> controls;
     StableRowStorage<FenceScratch> fences;
     ImmediateActionLane::EventStorageRegistration eventStorageRegistration;
-    std::unique_ptr<Receipt[]> receipts;
+    GrowingRowStorage<Receipt> receipts;
     std::unique_ptr<std::uint32_t[]> controlRenderGenerations;
     std::uint32_t renderCapacity = 0;
     static bool PrepareEventStorage(void* context, std::uint32_t demand) noexcept {
@@ -83,11 +83,14 @@ bool ImmediateLaneTimelineFinalizer::Attach(
         !state->controls.Reserve(state->eventCapacity) ||
         !state->fences.Reserve(state->eventCapacity) ||
         !Impl::PrepareEventStorage(state.get(), lane.EventStorageHighWater())) return false;
-    state->receipts = std::make_unique<Impl::Receipt[]>(lane.AttemptCapacity());
+    if (!state->receipts.ConstructThrough(lane.PreparedAttemptCount())) return false;
     state->renderCapacity = voices_.Capacity();
     state->controlRenderGenerations =
         std::make_unique<std::uint32_t[]>(state->renderCapacity);
-    lane.AttachEventStorage(state->eventStorageRegistration, state.get(), Impl::PrepareEventStorage);
+    lane.AttachEventStorage(state->eventStorageRegistration, state.get(), Impl::PrepareEventStorage,
+        [](void* context, std::uint32_t count) noexcept {
+            return static_cast<Impl*>(context)->receipts.ConstructThrough(count);
+        });
     impl_ = std::move(state);
     return true;
 }
@@ -132,8 +135,9 @@ bool ImmediateLaneTimelineFinalizer::Capture(std::uint64_t quantum) noexcept {
     state.capturedQuantum = quantum;
     if (!state.lane->HasOutstandingAttempts()) return false;
     const auto prefix = state.lane->ReservedAttemptPrefix();
-    for (std::uint32_t slot = 0; slot < prefix; ++slot) {
-        const auto* bucket = state.lane->CaptureDue(slot, quantum);
+    for (auto slot = state.lane->NextCaptureAttempt(0, prefix, quantum); slot < prefix;
+         slot = state.lane->NextCaptureAttempt(slot + 1u, prefix, quantum)) {
+        const auto* bucket = state.lane->CaptureIndexedDue(slot, quantum);
         if (bucket != nullptr)
             state.receipts[state.receiptCount++] = {slot, bucket, true, false, false};
     }
@@ -142,7 +146,7 @@ bool ImmediateLaneTimelineFinalizer::Capture(std::uint64_t quantum) noexcept {
         demand += state.receipts[i].bucket->eventCount;
     if (demand > state.lane->MaxEventsPerQuantum()) {
         // Keep all hard deadlines, then serve ready relative starts in their original order.
-        auto* first = state.receipts.get();
+        auto first = state.receipts.begin();
         std::sort(first, first + state.receiptCount, [&](const auto& left, const auto& right) {
             if (left.bucket->elasticSoundStart != right.bucket->elasticSoundStart)
                 return !left.bucket->elasticSoundStart;

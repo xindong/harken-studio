@@ -22,6 +22,7 @@
 // alignment. If that ever changes, this equivalence has to be re-established
 // before the goldens can be trusted.
 #include "harken/core/BlockArena.h"
+#include "harken/core/LogicAllocCheckpoint.h"
 
 #include <gtest/gtest.h>
 
@@ -32,6 +33,22 @@
 namespace {
 
 constexpr std::size_t kAlign = alignof(float);
+
+TEST(BlockArena, AutomaticReservationRetriesWithoutReportingARecoveredAllocationFailure) {
+    constexpr std::uint32_t requested = 1u << 20;
+    harken::detail::LogicAllocCallScope call;
+    harken::detail::StablePageReservation::FailNextReservationForTests();
+    harken::BlockArena arena(requested, harken::BlockArena::BackingMode::Automatic, 4096);
+    EXPECT_EQ(requested / 2, arena.CapacityBytes());
+    EXPECT_EQ(0u, arena.CommittedBytes());
+    ASSERT_TRUE(arena.PrepareBacking(4096, 4096));
+    ASSERT_NE(nullptr, arena.AllocFloats(1024));
+    ASSERT_NE(nullptr, arena.AllocFloatsHigh(1024));
+    EXPECT_EQ(harken::detail::LogicAllocSite::None, call.Failure().site);
+    harken::detail::StablePageReservation::FailNextReservationForTests();
+    EXPECT_THROW(harken::BlockArena(requested, harken::BlockArena::BackingMode::OnDemand), std::bad_alloc);
+    EXPECT_NE(harken::detail::LogicAllocSite::None, call.Failure().site);
+}
 
 // A single-cursor arena's verdict on the same request sequence: planes first
 // (as RenderBlock issues them), then the per-voice scratch.
@@ -306,6 +323,41 @@ TEST(BlockArena, TwoEndedGrantsExactlyWhatOneCursorWouldForTheEngineShape) {
         }
         ASSERT_EQ(expected, actual) << "capacity " << capacity;
     }
+}
+
+
+TEST(BlockArena, TwoEndedPreparationRetriesPartialSuffixWithoutTouchingLiveBytes) {
+    const auto page = harken::detail::StablePageReservation::SystemPageBytes();
+    harken::detail::StablePageReservation storage;
+    ASSERT_TRUE(storage.Reserve(page * 64, alignof(float)));
+    EXPECT_EQ(0u, storage.DirectoryBytes());
+    const auto end = storage.ReservedBytes();
+    auto* bytes = static_cast<unsigned char*>(storage.Address());
+    ASSERT_TRUE(storage.CommitThrough(page));
+    ASSERT_TRUE(storage.CommitSuffixFrom(end - page));
+    bytes[0] = 17;
+    bytes[end - page] = 23;
+    storage.SetCommitPageLimitForTests(1);
+    EXPECT_FALSE(storage.CommitSuffixFrom(end - 3 * page));
+    EXPECT_EQ(3 * page, storage.CommittedBytes());
+    bytes[end - 2 * page] = 31;
+    storage.SetCommitPageLimitForTests(SIZE_MAX);
+    ASSERT_TRUE(storage.CommitSuffixFrom(end - 3 * page));
+    EXPECT_EQ(4 * page, storage.CommittedBytes());
+    EXPECT_EQ(17, bytes[0]);
+    EXPECT_EQ(23, bytes[end - page]);
+    EXPECT_EQ(31, bytes[end - 2 * page]);
+    ASSERT_TRUE(storage.CommitThrough(end));
+    EXPECT_EQ(end, storage.CommittedBytes());
+    ASSERT_TRUE(storage.CommitSuffixFrom(0));
+    EXPECT_EQ(end, storage.CommittedBytes());
+    EXPECT_EQ(23, bytes[end - page]);
+    EXPECT_EQ(31, bytes[end - 2 * page]);
+    harken::detail::StablePageReservation moved;
+    moved.Swap(storage);
+    EXPECT_EQ(0u, storage.CommittedBytes());
+    ASSERT_TRUE(moved.CommitThrough(end));
+    EXPECT_EQ(end, moved.CommittedBytes());
 }
 
 } // namespace

@@ -1,3 +1,5 @@
+#include "HarkenApiInternal.h"
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "Engine.h"
 
 #include <algorithm>
@@ -175,6 +177,7 @@ void CaptureMembers(Engine& engine, VnActionFiringHandle firing,
 
 VnResult Vn_QueryActionPlaybackReadiness(VnActionFiringHandle firing,
     VnActionPlaybackReadinessV1* outInfo, VnPlaybackReadinessMemberV1* output, uint32_t capacity) {
+    return harken::detail::InvokeApi([&]() -> VnResult {
     if (outInfo == nullptr || outInfo->structSize != sizeof(*outInfo) ||
         (capacity != 0 && output == nullptr)) return VN_INVALID_ARG;
     *outInfo = {};
@@ -221,9 +224,10 @@ VnResult Vn_QueryActionPlaybackReadiness(VnActionFiringHandle firing,
         if (capacity < members.size()) return VN_INVALID_ARG;
         std::copy(members.begin(), members.end(), output);
         return VN_OK;
-    } catch (...) {
+    } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage);
         *outInfo = {};
         outInfo->structSize = sizeof(*outInfo);
         return VN_DEVICE_ERROR;
     }
+    });
 }

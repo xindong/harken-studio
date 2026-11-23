@@ -65,8 +65,9 @@ TEST(BusMuteSolo, MuteSilencesAndUnmuteRestoresComposedVolume) {
     ASSERT_NEAR(0.35f, out.left[kBlockFrames - 1], 1e-5f);
 
     // Mute: the bus's published gain is the silence floor (exact linear
-    // zero), snapped at the block boundary.
+    // zero), after the minimum transition completes.
     ASSERT_EQ(VN_OK, Vn_SetBusMute(kBusA, 1, 0));
+    session.Engine()->nullBackend.Pump(1); // Complete the 5 ms transition.
     out = PumpBlock(session.Engine());
     for (std::size_t i = 0; i < kBlockFrames; ++i) {
         ASSERT_EQ(0.0f, out.left[i]) << "muted sample " << i;
@@ -75,6 +76,7 @@ TEST(BusMuteSolo, MuteSilencesAndUnmuteRestoresComposedVolume) {
     // Unmute restores the composed volume exactly — the authored half gain
     // survived the mute untouched.
     ASSERT_EQ(VN_OK, Vn_SetBusMute(kBusA, 0, 0));
+    session.Engine()->nullBackend.Pump(1); // Complete the 5 ms transition.
     out = PumpBlock(session.Engine());
     ASSERT_NEAR(0.35f, out.left[kBlockFrames - 1], 1e-5f);
 }
@@ -95,6 +97,7 @@ TEST(BusMuteSolo, VolumeChangeWhileMutedStaysSilentAndAppliesOnUnmute) {
     // A direct volume change while muted retargets the composed base but the
     // wire value stays at the floor: still silent.
     ASSERT_EQ(VN_OK, Vn_SetBusVolume(kBusA, 0.0f, 0));
+    session.Engine()->nullBackend.Pump(1); // Complete the 5 ms transition.
     out = PumpBlock(session.Engine());
     for (std::size_t i = 0; i < kBlockFrames; ++i) {
         ASSERT_EQ(0.0f, out.left[i]) << "muted sample " << i;
@@ -103,6 +106,7 @@ TEST(BusMuteSolo, VolumeChangeWhileMutedStaysSilentAndAppliesOnUnmute) {
     // Unmute publishes the LATEST composed value (unity), not the pre-mute
     // half gain — mute never owned the volume state.
     ASSERT_EQ(VN_OK, Vn_SetBusMute(kBusA, 0, 0));
+    session.Engine()->nullBackend.Pump(1); // Complete the 5 ms transition.
     out = PumpBlock(session.Engine());
     ASSERT_NEAR(0.7f, out.left[kBlockFrames - 1], 1e-5f);
 }

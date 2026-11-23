@@ -339,7 +339,6 @@ TEST(MonitorHubFanout, ProducerRingDropUsesSourceStage) {
               producer.firstSourceSequence);
     EXPECT_EQ(producer.firstSourceSequence, producer.lastSourceSequence);
     EXPECT_EQ(harken::monitor::PackedTimeSeriesBytesForTests(), producer.byteCount);
-    harken::monitor::StartDrainForTests();
 
     VnMonitorSessionDesc desc = MakeTimeSeriesDesc(4096);
     VnMonitorSessionHandle handle = 0;
@@ -356,6 +355,8 @@ TEST(MonitorHubFanout, ProducerRingDropUsesSourceStage) {
               one.stage);
     EXPECT_GE(one.recordCount, 1u);
     EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(handle));
+    // Draining into this session while inspecting the producer can also overflow its own queue.
+    harken::monitor::StartDrainForTests();
 }
 
 TEST(MonitorHubFanout, CloseThenOpenSameSlotDoesNotReceiveStaleFanout) {

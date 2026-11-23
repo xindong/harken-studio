@@ -31,8 +31,41 @@ using harken::detail::TraceQuery;
 
 extern "C" {
 
+#if HARKEN_ENGINE_DEV
+VnResult Vn_CaptureBusStates(uint32_t firstBusIndex, VnBusState* states,
+                           uint32_t capacity, uint32_t* outCount,
+                           uint32_t* outNextBusIndex) {
+    return harken::detail::InvokeApi([&]() -> VnResult {
+    auto* engine = harken::detail::g_engine;
+    if (engine == nullptr || engine->callbackFatalSticky) return VN_NOT_INITIALIZED;
+    if (outCount == nullptr || outNextBusIndex == nullptr || (capacity != 0 && states == nullptr))
+        return VN_INVALID_ARG;
+    *outCount = 0;
+    *outNextBusIndex = UINT32_MAX;
+    harken::SnapshotPayload receipt{};
+    const bool captured = engine->mixer.Snapshots().Capture(receipt);
+    const auto* activity = captured ? engine->buses.ObservedActivity(receipt.busActivityPublication) : nullptr;
+    const auto end = engine->buses.BusCount();
+    auto index = std::min(firstBusIndex, end);
+    for (; index < end; ++index) {
+        if (!engine->buses.AliveAt(index)) continue;
+        if (*outCount == capacity) { *outNextBusIndex = index; break; }
+        auto& state = states[(*outCount)++];
+        state = {};
+        state.busId = engine->buses.IdAt(index);
+        state.busIndex = index;
+        state.busGeneration = engine->buses.GenerationAt(index);
+        if (captured) engine->buses.CaptureObservedBusState(
+            {index, state.busGeneration}, receipt, activity, state);
+    }
+    return VN_OK;
+    });
+}
+
+#endif
+
 VnResult Vn_CaptureSnapshot(VnSnapshot* outSnapshot) {
-    try {
+    return harken::detail::InvokeApi([&]() -> VnResult {
     harken::Engine* engine = harken::detail::g_engine;
     if (engine == nullptr) {
         return VN_NOT_INITIALIZED;
@@ -563,11 +596,7 @@ VnResult Vn_CaptureSnapshot(VnSnapshot* outSnapshot) {
                     sizeof(outSnapshot->busChannelPeaks));
     }
     return VN_OK;
-
-    } catch (const std::bad_alloc&) {
-        return VN_DEVICE_ERROR;
-    } catch (...) {
-        return VN_DEVICE_ERROR;
-    }}
+    });
+}
 
 } // extern "C"

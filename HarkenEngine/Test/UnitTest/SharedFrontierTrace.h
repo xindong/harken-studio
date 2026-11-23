@@ -371,7 +371,7 @@ struct FrontierTrace {
             // Retry only unresolved identities while the exact arm generation still exists.
             if (found == heard.end() || (found->leaf == 0 && !found->release.Valid())) {
                 harken::PlayableInstanceHandle leafHandle = 0;
-                for (std::size_t logical = 0; leafHandle == 0 && logical < engine.playableStorage.memberCount; ++logical) {
+                for (std::size_t logical = 0; leafHandle == 0 && logical < engine.PlayableMemberCount(); ++logical) {
                     std::size_t physical = 0;
                     if (engine.ResolvePlayableMemberSlot(logical, &physical) &&
                         matches(engine.ReadPlayableMember(physical).arm))

@@ -36,6 +36,7 @@
 #include <cstdint>
 #include "harken/core/detail/PackDecodeBudget.h"
 #include <span>
+#include <memory>
 #include <vector>
 
 namespace harken {
@@ -114,7 +115,10 @@ struct PackLogicImage {
         PackVoiceRecipeSpatial spatial{};
         PackVoiceRecipePlayback playback{};
         std::vector<PackVoiceRecipeInstall> installs;
-        std::vector<VnBindingId> bindings;
+        std::shared_ptr<const std::vector<VnBindingId>> bindingStorage;
+        std::span<const VnBindingId> Bindings() const noexcept {
+            return bindingStorage ? std::span<const VnBindingId>(*bindingStorage) : std::span<const VnBindingId>{};
+        }
     };
     std::vector<VoiceRecipe> voiceRecipes;
 

@@ -5,6 +5,7 @@
 #ifndef HARKEN_CORE_SOURCE_CURSOR_MIRROR_H
 #define HARKEN_CORE_SOURCE_CURSOR_MIRROR_H
 
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/core/SourcePhase.h"
 #include "harken/core/StableRowStorage.h"
 
@@ -70,7 +71,7 @@ public:
     explicit SourceCursorMirror(std::uint32_t slotCount)
         : m_slotCount(slotCount == 0 ? 1 : slotCount) {
         for (auto& slot : m_slots)
-            if (!slot.rows.Reserve(m_slotCount)) throw std::bad_alloc();
+            if (!slot.rows.Reserve(m_slotCount)) throw harken::detail::LogicPreparationFailure{};
     }
 
     std::uint32_t SlotCount() const noexcept { return m_slotCount; }

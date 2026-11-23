@@ -30,6 +30,8 @@
 #include "harken/core/SourceCursorMirror.h"
 #include "harken/core/SourceTerminalRecord.h"
 #include "harken/core/StableRowStorage.h"
+#include "harken/core/GrowingRowStorage.h"
+#include "harken/core/SparseRowStorage.h"
 #include "harken/render/EffectChainUpdate.h"
 #include "harken/core/StableSlotStorage.h"
 #include "harken/core/TimelineArmTable.h"
@@ -42,6 +44,7 @@
 #include "harken/render/RenderWorkerPool.h"
 #include "harken/render/StreamParkToken.h"
 #include "harken/render/Voice.h"
+#include "harken/render/VoiceSendSet.h"
 #include "harken/render/OriginalSourceInstallationLoan.h"
 #include "harken/render/OriginalSourceMutationActor.h"
 
@@ -79,7 +82,7 @@ struct VariableTimelineStartAuthority {
 };
 
 struct ScratchDecisionState {
-    std::uint32_t generation = 0;
+    DecisionToken decision{};
     bool currentSliceClaimed = false;
 };
 
@@ -665,13 +668,27 @@ public:
     // active slot's level with the multi-block bus-volume discipline. The
     // sendSlot index and target bus were validated on the logic side; a stale
     // handle or an out-of-range slot is a benign no-op.
+    // Logic prepares backing. An unpublished set can be cancelled; published
+    // sets return through Complete after the final audio/worker reader.
+    VnResult PrepareVoiceSendSet(VnVoiceHandle handle,
+        std::span<const VoiceSendDefinition> definitions, bool resetEdited,
+        std::uint32_t editedSlot, VoiceSendSet** out) noexcept;
+    bool InstallPreparedVoiceSendSet(VnVoiceHandle handle, VoiceSendSet& set) noexcept;
+    void ApplyVoiceSendSet(VoiceSendSet& set, const BusTree& buses) noexcept;
+    // Audio coordinator after joining every worker; never a logic-side query.
+    void MarkPhysicalBusUsers(BusTree& buses) const noexcept;
+    bool UsesRemovedSignalNodes(const SignalRenderPlan& previous, const SignalRenderPlan& next,
+        std::span<std::uint32_t> scratch) const noexcept;
+    void CancelVoiceSendSet(VoiceSendSet& set) noexcept;
+    void DrainVoiceSendSets() noexcept;
+    std::uint64_t RetainedVoiceSendCount() const noexcept { return m_retainedVoiceSends; }
     void ApplySetVoiceSend(VnVoiceHandle handle, std::uint32_t sendSlot,
                            std::uint32_t targetBusIndex,
                            float levelDb,
                            std::uint32_t targetBusGeneration = 0);
-    void ApplyClearVoiceSend(VnVoiceHandle handle, std::uint32_t sendSlot);
+    void ApplyClearVoiceSend(VnVoiceHandle handle, std::uint32_t sendSlot, std::uint64_t incarnation = 0);
     void ApplySetVoiceSendLevel(VnVoiceHandle handle, std::uint32_t sendSlot,
-                                float levelDb, std::uint32_t rampMs);
+                                float levelDb, std::uint32_t rampMs, std::uint64_t incarnation = 0);
 
     struct RenderAllResult {
         std::uint64_t overrunTicks = 0;
@@ -694,7 +711,7 @@ public:
     // jobDeadlineAt is the absolute cutoff; see RenderWorkerPool::RunUntil.
     // 0 renders without a bound, which only a caller that owns no deadline may
     // ask for. Audio thread.
-    RenderAllResult RenderAll(BlockArena& arena, float* const* busPlanes,
+    RenderAllResult RenderAll(BlockArena& arena, const BusRenderView& busPlanes,
                               std::uint32_t blockFrames,
                               NotificationQueue& notifications,
                               std::uint64_t blockIndex,
@@ -842,15 +859,14 @@ public:
     static void FinishSourceCommandInstallation(SourceCommandInstallProof& proof) noexcept;
 
     struct PreparedRoutingV1 {
-        struct Send {
-            bool active = false;
-            std::uint32_t busIndex = 0;
-            std::uint32_t busGeneration = 0;
-            bool operator==(const Send&) const noexcept = default;
-        };
+        using Send = VoiceSendRoute;
         std::uint32_t busIndex = 0;
         std::uint32_t busGeneration = 0;
-        std::array<Send, kMaxVoiceSendSlots> sends{};
+        const VoiceSendSet* sendSet = nullptr;
+        std::shared_ptr<const std::vector<Send>> sends;
+        std::span<const Send> SendRoutes() const noexcept {
+            return sends ? std::span<const Send>(*sends) : std::span<const Send>{};
+        }
         bool operator==(const PreparedRoutingV1&) const noexcept = default;
     };
     struct PreparedCommitInput {
@@ -928,7 +944,9 @@ public:
     bool CancelOriginalPreparedVoice(const OriginalVoiceOwner& owner) noexcept;
     bool MatchesOriginalPreparedVoice(const OriginalVoiceOwner& original,
         const PreparedCommitProof& proof) const noexcept;
-    bool CapturePreparedRoutingV1(VnVoiceHandle handle, PreparedRoutingV1* out) const noexcept;
+    // Optional path is borrowed only while the exact private preparation remains held.
+    bool CapturePreparedRoutingV1(VnVoiceHandle handle, PreparedRoutingV1* out,
+        std::span<const PlaybackPathRow>* path = nullptr) const noexcept;
     bool CanCommitPreparedRoutingMigrationV1(VnVoiceHandle handle,
         const PreparedRoutingV1& expected, const PreparedRoutingV1& next) const noexcept;
     void CommitPreparedRoutingMigrationV1(VnVoiceHandle handle,
@@ -1123,6 +1141,7 @@ private:
         mutable std::atomic<std::uint64_t> renderedState{0};
         std::atomic<EffectChainUpdate*> effectChainUpdate{nullptr};
         std::atomic<std::uint32_t> sourceChannels{0};
+        ResamplerHighRatioColumns highRatioColumns{};
         VoiceRenderContext render;
         // Only logic resizes this storage while the slot is private. Physical
         // release leaves capacity available for reuse; audio never frees it.
@@ -1155,9 +1174,9 @@ private:
     bool FinishNativeVariableStart(Slot& slot, bool activated) noexcept;
     static constexpr std::uint32_t kFirstOutputBuiltinEndpoints = 11;
     std::uint32_t m_firstOutputStride = 0;
-    StableRowStorage<DeferredFirstOutputEndpoint> m_firstOutputEndpoints;
-    StableRowStorage<DeferredFirstOutputWeight> m_firstOutputWeights;
-    StableRowStorage<std::array<VoiceTimelineEvent, kTimelineMaxEventsPerVoiceQuantum>>
+    GrowingRowStorage<DeferredFirstOutputEndpoint> m_firstOutputEndpoints;
+    GrowingRowStorage<DeferredFirstOutputWeight> m_firstOutputWeights;
+    GrowingRowStorage<std::array<VoiceTimelineEvent, kTimelineMaxEventsPerVoiceQuantum>>
         m_pendingTimelineVariableEvents;
     bool FirstOutputBackingReady(std::uint32_t count) const noexcept;
     bool PrepareFirstOutputBacking(std::uint32_t count) noexcept;
@@ -1315,6 +1334,7 @@ private:
     std::uint32_t m_sampleRate;
     std::uint32_t m_pitchRampFrames;
     std::uint32_t m_blockFrames;
+    std::uint32_t m_monitorStride;
     std::uint32_t m_fxSlotsPerVoice;
     std::uint32_t m_starvationCooldownBlocks;
     // Mix layout the fold-in pans/maps into (resolved config). Stereo at the
@@ -1342,30 +1362,33 @@ private:
     bool m_originalBodyShutdown = false;
     std::atomic<std::uint32_t> m_pendingEffectChains{0};
     StableRowStorage<Slot> m_slots;
+    std::vector<std::unique_ptr<VoiceSendSet>> m_voiceSendSets;
+    std::uint64_t m_retainedVoiceSends = 0;
+    static void ReleaseVoiceSendSet(VoiceRenderContext& render) noexcept;
+    static VoiceSendSlot* FindVoiceSend(VoiceRenderContext& render, std::uint32_t label, std::uint64_t incarnation = 0) noexcept;
     static void FillSourceCursor(const Slot& slot, SlotState state,
         SourceCursorMirror::Row& row, std::uint64_t serial, bool captureParking) noexcept;
     SlotStorageRegistration* m_slotStorageRegistrations = nullptr;
-    std::vector<OriginalCallbackStorageLease> m_originalCallbackStorage;
+    StableRowStorage<OriginalCallbackStorageLease> m_originalCallbackStorage;
     bool m_originalSourceCallbackOpen = false;
-    std::vector<StreamParkMailbox> m_streamParkMailboxes;
+    StableRowStorage<StreamParkMailbox> m_streamParkMailboxes;
     std::uint32_t m_pendingStreamParkMailboxes = 0;
     StableRowStorage<StreamParkTokenSlot> m_streamParkTokens;
     bool PrepareRenderSlotBacking(std::uint32_t count, std::uint32_t channelCount,
         bool firstOutput, std::uint32_t highRatioChannels = 0) noexcept;
     bool RenderSlotBackingReady(std::uint32_t count, std::uint32_t channelCount,
         std::uint32_t highRatioChannels) const noexcept;
-    std::array<StableRowStorage<std::array<float, kResampleFifoFrames>>, kMaxChannels> m_ringStorage;
-    std::array<StableRowStorage<ResamplerHighRatioChannelState>, kMaxChannels> m_highRatioStorage;
-    ResamplerHighRatioColumns m_highRatioColumns{};
+    std::array<GrowingRowStorage<std::array<float, kResampleFifoFrames>>, kMaxChannels> m_ringStorage;
+    std::array<GrowingRowStorage<ResamplerHighRatioChannelState>, kMaxChannels> m_highRatioStorage;
     void BindHighRatioBacking(std::uint32_t slot) noexcept;
 #if HARKEN_ENGINE_DEV
     void BindMonitorPreChainBacking(std::uint32_t slot) noexcept;
 #endif
-    StableSlotStorage<MultirateResamplerCandidate> m_professionalStorage;
+    SparseRowStorage<MultirateResamplerCandidate, StableSlotStorage<MultirateResamplerCandidate>> m_professionalStorage;
     using VariableWeightStorage = std::array<VoiceRenderContext::OwnedVariableWeight, kSelectionPathNodeCapacity>;
-    StableSlotStorage<VariableWeightStorage> m_variableWeightStorage;
+    SparseRowStorage<VariableWeightStorage, StableSlotStorage<VariableWeightStorage>> m_variableWeightStorage;
     using TimelineEnvelopeCurveStorage = std::array<CurveLUT, 2>;
-    StableSlotStorage<TimelineEnvelopeCurveStorage> m_timelineEnvelopeCurves;
+    SparseRowStorage<TimelineEnvelopeCurveStorage, StableSlotStorage<TimelineEnvelopeCurveStorage>> m_timelineEnvelopeCurves;
     bool PrepareTimelineEnvelopeCurveBacking(std::uint32_t slot) noexcept;
     void BindTimelineEnvelopeCurveBacking(std::uint32_t slot) noexcept;
     bool PrepareVariableWeightBacking(std::uint32_t slot) noexcept;
@@ -1388,20 +1411,17 @@ private:
     // order (§8.2 determinism).
     RenderWorkerPool m_workers;
     // Per-block cascade job list, filled in slot order by the parallel path's
-    // serial pre-pass: m_jobSlots[j] is the voice slot of job j. Sized once at
-    // construction (Render capacity) so dispatch allocates nothing on the audio
-    // path.
-    std::vector<SignalMemberImage> m_signalMemberImages;
-    std::vector<std::uint32_t> m_jobSlots;
-    std::vector<std::uint32_t> m_jobGenerations;
+    // serial pre-pass: m_jobSlots[j] is the voice slot of job j. Their stable
+    // backing is committed before a render slot becomes visible.
+    StableRowStorage<SignalMemberImage> m_signalMemberImages;
+    StableRowStorage<std::uint32_t> m_jobSlots;
+    StableRowStorage<std::uint32_t> m_jobGenerations;
     std::uint32_t m_deferredJobCount = 0;
     std::uint64_t m_jobQuantumIndex = 0;
     std::uint32_t m_jobBlockFrames = 0; // block width for the in-flight batch
     std::uint64_t m_jobSourceFrameBegin = 0;
 #if HARKEN_ENGINE_DEV
-    std::array<StableRowStorage<float>, kMaxChannels> m_monitorPreChainStorage;
-#endif
-#if HARKEN_ENGINE_DEV
+    std::array<GrowingRowStorage<float>, kMaxChannels> m_monitorPreChainStorage;
     std::atomic<bool> m_monitorPreChainPrepared{false};
 #endif
     std::uint64_t m_workerBusyPeakTicks = 0; // running peak, audio-thread-owned

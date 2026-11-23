@@ -1,6 +1,7 @@
 #ifndef HARKEN_API_ENGINE_QUEUE_SCHEDULE_STORAGE_H
 #define HARKEN_API_ENGINE_QUEUE_SCHEDULE_STORAGE_H
 
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/core/AllocGuard.h"
 #include "harken/core/SourceTerminalRecord.h"
 #include "harken/core/TimelinePlanner.h"
@@ -90,6 +91,11 @@ private:
 
 // Single logic producer. Borrowers keep their original addresses until a loan returns.
 class EngineQueueScheduleStorage {
+    struct Share {
+        QueueScheduleShape shape;
+        std::uint32_t count;
+        std::uint32_t borrowed = 0;
+    };
     struct Slot {
         EngineQueueScheduleColumns columns;
         EngineQueueScheduleColumns* borrower = nullptr;
@@ -110,32 +116,44 @@ public:
         ~PreparedUse() { Release(); }
         PreparedUse(const PreparedUse&) = delete;
         PreparedUse& operator=(const PreparedUse&) = delete;
-        PreparedUse(PreparedUse&& other) noexcept : owner_(std::exchange(other.owner_, nullptr)) {}
+        PreparedUse(PreparedUse&& other) noexcept { Take(other); }
         PreparedUse& operator=(PreparedUse&& other) noexcept {
-            if (this != &other) {
-                Release();
-                owner_ = std::exchange(other.owner_, nullptr);
-            }
+            if (this != &other) { Release(); Take(other); }
             return *this;
         }
         bool Valid() const noexcept { return owner_ != nullptr; }
         void Release() noexcept {
-            if (owner_ != nullptr) {
-                assert(owner_->preparedUsers_ != 0);
-                --owner_->preparedUsers_;
-                owner_ = nullptr;
-            }
+            if (!owner_) return;
+            if (newer_) newer_->older_ = older_;
+            else owner_->activeUse_ = older_;
+            if (older_) older_->newer_ = newer_;
+            owner_ = nullptr;
+            share_.reset();
         }
     private:
         friend class EngineQueueScheduleStorage;
         friend class Preparation;
-        explicit PreparedUse(EngineQueueScheduleStorage* owner) noexcept : owner_(owner) {
-            if (owner_ != nullptr) {
-                if (owner_->preparedUsers_ == UINT32_MAX) owner_ = nullptr;
-                else ++owner_->preparedUsers_;
-            }
+        PreparedUse(EngineQueueScheduleStorage* owner, const std::shared_ptr<Share>& share) noexcept
+            : owner_(owner), share_(share) {
+            if (!owner_) return;
+            older_ = owner_->activeUse_;
+            if (older_) older_->newer_ = this;
+            owner_->activeUse_ = this;
+        }
+        void Take(PreparedUse& other) noexcept {
+            owner_ = std::exchange(other.owner_, nullptr);
+            share_ = std::move(other.share_);
+            older_ = other.older_;
+            newer_ = other.newer_;
+            if (!owner_) return;
+            if (newer_) newer_->older_ = this;
+            else owner_->activeUse_ = this;
+            if (older_) older_->newer_ = this;
         }
         EngineQueueScheduleStorage* owner_ = nullptr;
+        std::shared_ptr<Share> share_;
+        PreparedUse* older_ = nullptr;
+        PreparedUse* newer_ = nullptr;
     };
 
     class Preparation {
@@ -150,15 +168,17 @@ public:
             return *this;
         }
         bool Valid() const noexcept { return owner_ != nullptr; }
-        PreparedUse Use() const noexcept { return PreparedUse(owner_); }
+        PreparedUse Use() const noexcept { return PreparedUse(owner_, share_); }
         void Release() noexcept {
             if (owner_ == nullptr) return;
             if (previous_ != nullptr) previous_->next_ = next_;
             else owner_->preparations_ = next_;
             if (next_ != nullptr) next_->previous_ = previous_;
+            owner_->reserved_ -= count_;
             owner_ = nullptr;
             previous_ = next_ = nullptr;
             shape_ = {};
+            share_.reset();
         }
     private:
         friend class EngineQueueScheduleStorage;
@@ -167,6 +187,8 @@ public:
             previous_ = std::exchange(other.previous_, nullptr);
             next_ = std::exchange(other.next_, nullptr);
             shape_ = std::exchange(other.shape_, {});
+            share_ = std::move(other.share_);
+            count_ = std::exchange(other.count_, 0u);
             if (owner_ == nullptr) return;
             if (previous_ != nullptr) previous_->next_ = this;
             else owner_->preparations_ = this;
@@ -175,7 +197,9 @@ public:
         EngineQueueScheduleStorage* owner_ = nullptr;
         Preparation* previous_ = nullptr;
         Preparation* next_ = nullptr;
+        std::shared_ptr<Share> share_;
         QueueScheduleShape shape_{};
+        std::uint32_t count_ = 0;
     };
 
     class Loan {
@@ -200,6 +224,10 @@ public:
             slot_->freeNext = owner_->free_;
             owner_->free_ = slot_;
             --owner_->loans_;
+            if (share_) {
+                --share_->borrowed;
+                share_.reset();
+            }
             owner_ = nullptr;
             slot_ = nullptr;
             borrower_ = nullptr;
@@ -209,43 +237,36 @@ public:
         void Take(Loan& other) noexcept {
             owner_ = std::exchange(other.owner_, nullptr);
             slot_ = std::exchange(other.slot_, nullptr);
+            share_ = std::move(other.share_);
             borrower_ = std::exchange(other.borrower_, nullptr);
         }
         EngineQueueScheduleStorage* owner_ = nullptr;
+        std::shared_ptr<Share> share_;
         Slot* slot_ = nullptr;
         EngineQueueScheduleColumns* borrower_ = nullptr;
     };
 
     EngineQueueScheduleStorage() noexcept = default;
     ~EngineQueueScheduleStorage() {
-        assert(preparations_ == nullptr && preparedUsers_ == 0 && loans_ == 0);
+        assert(preparations_ == nullptr && activeUse_ == nullptr && loans_ == 0);
         if (memguard::IsAudioTagged() && slots_ != nullptr) std::terminate();
         DestroySlots(slots_);
     }
     EngineQueueScheduleStorage(const EngineQueueScheduleStorage&) = delete;
     EngineQueueScheduleStorage& operator=(const EngineQueueScheduleStorage&) = delete;
 
-    bool Configure(std::uint32_t logicalCapacity) noexcept {
-        if (configured_ || memguard::IsAudioTagged()) return false;
-        logicalCapacity_ = logicalCapacity;
-        configured_ = true;
-        return true;
-    }
-
-    bool Prepare(QueueScheduleShape shape, Preparation* out) noexcept {
-        return Prepare(shape, out, []() noexcept { return true; });
+    bool Prepare(QueueScheduleShape shape, std::uint32_t count, Preparation* out) noexcept {
+        return Prepare(shape, count, out, []() noexcept { return true; });
     }
     template<class AllowAllocation>
-    bool Prepare(QueueScheduleShape shape, Preparation* out, AllowAllocation&& allow) noexcept {
-        if (!configured_ || out == nullptr || out->Valid() || preparedUsers_ != 0 ||
-            memguard::IsAudioTagged()) return false;
+    bool Prepare(QueueScheduleShape shape, std::uint32_t count, Preparation* out, AllowAllocation&& allow) noexcept {
+        if (out == nullptr || out->Valid() || activeUse_ != nullptr ||
+            count > UINT32_MAX - reserved_ || memguard::IsAudioTagged()) return false;
         RefreshEnvelope();
-        const bool alreadyPrepared = hasEnvelope_ && envelope_.Covers(shape);
         const auto target = QueueScheduleShape::Maximum(envelope_, shape);
+        const auto needed = reserved_ + count;
         std::unique_ptr<Slot> additions;
-        // Existing owners already guarantee the whole global supply for this shape.
-        const auto supplied = alreadyPrepared ? logicalCapacity_ : QualifiedGroups(target);
-        for (auto count = supplied; count < logicalCapacity_; ++count) {
+        for (auto supplied = QualifiedFree(target, needed); supplied < needed; ++supplied) {
             auto slot = AllocateSlot(target, allow);
             if (slot == nullptr) {
                 DestroySlots(additions);
@@ -254,6 +275,18 @@ public:
             slot->next = std::move(additions);
             additions = std::move(slot);
         }
+        std::shared_ptr<Share> share;
+        if (count) {
+            if (!allow()) { DestroySlots(additions); return false; }
+            try {
+                share = std::make_shared<Share>(Share{shape, count});
+            } catch (...) {
+                detail::RecordCurrentLogicAllocFailure(detail::LogicAllocSite::EngineStorage);
+                DestroySlots(additions);
+                return false;
+            }
+        }
+        out->share_ = std::move(share);
         // Only a complete global supply may publish a larger retained envelope.
         while (additions != nullptr) {
             auto next = std::move(additions->next);
@@ -262,12 +295,13 @@ public:
         }
         out->owner_ = this;
         out->shape_ = shape;
+        out->count_ = count;
+        reserved_ = needed;
         out->next_ = preparations_;
         if (preparations_ != nullptr) preparations_->previous_ = out;
         preparations_ = out;
         envelope_ = target;
-        hasEnvelope_ = true;
-        if (!alreadyPrepared) CollectUnused();
+        CollectUnused();
         return true;
     }
 
@@ -278,16 +312,24 @@ public:
     template<class AllowAllocation>
     bool Acquire(EngineQueueScheduleColumns& columns, QueueScheduleShape actualShape,
         Loan* out, AllowAllocation&& allow) noexcept {
-        if (!configured_ || out == nullptr || out->Valid() || loans_ >= logicalCapacity_ ||
+        if (out == nullptr || out->Valid() || loans_ == UINT32_MAX ||
             columns.borrowed_ || columns.StorageBytes() != 0 || memguard::IsAudioTagged()) return false;
-        if (preparedUsers_ == 0) RefreshEnvelope();
+        if (activeUse_) {
+            const auto& share = activeUse_->share_;
+            if (!share || share->borrowed >= share->count || !share->shape.Covers(actualShape)) return false;
+        } else {
+            RefreshEnvelope();
+        }
         const auto target = QueueScheduleShape::Maximum(envelope_, actualShape);
         Slot** available = &free_;
         while (*available != nullptr && !(*available)->columns.Shape().Covers(target))
             available = &(*available)->freeNext;
-        if (*available == nullptr) {
-            if (preparedUsers_ != 0) return false;
-            if (free_ != nullptr) {
+        // An ordinary acquisition may not use the last rows promised to pending callers.
+        const bool protect = activeUse_ == nullptr && reserved_ != 0 &&
+            QualifiedFree(envelope_, static_cast<std::uint64_t>(reserved_) + 1u) <= reserved_;
+        if (*available == nullptr || protect) {
+            if (activeUse_ != nullptr) return false;
+            if (!protect && free_ != nullptr) {
                 EngineQueueScheduleColumns replacement;
                 if (!AllocateColumns(replacement, target, allow)) return false;
                 free_->columns.Swap(replacement);
@@ -305,6 +347,10 @@ public:
         columns.borrowed_ = true;
         slot->borrower = &columns;
         ++loans_;
+        if (activeUse_) {
+            out->share_ = activeUse_->share_;
+            ++out->share_->borrowed;
+        }
         out->owner_ = this;
         out->slot_ = slot;
         out->borrower_ = &columns;
@@ -313,13 +359,9 @@ public:
 
     // Retired borrowers are retained; only free groups can be reclaimed here.
     bool CollectUnused() noexcept {
-        if (preparedUsers_ != 0 || memguard::IsAudioTagged()) return false;
+        if (activeUse_ != nullptr || memguard::IsAudioTagged()) return false;
         RefreshEnvelope();
-        std::uint32_t qualifiedLoans = 0;
-        for (auto* slot = slots_.get(); slot != nullptr; slot = slot->next.get())
-            if (slot->borrower != nullptr && slot->Columns().Shape().Covers(envelope_))
-                ++qualifiedLoans;
-        auto keep = hasEnvelope_ ? logicalCapacity_ - qualifiedLoans : 0u;
+        auto keep = reserved_;
         free_ = nullptr;
         auto* link = &slots_;
         while (*link != nullptr) {
@@ -336,7 +378,6 @@ public:
                 *link = std::move(removed->next);
             }
         }
-        assert(!hasEnvelope_ || keep == 0);
         return true;
     }
 
@@ -362,16 +403,15 @@ private:
         slots_ = std::move(slot);
     }
     void RefreshEnvelope() noexcept {
-        assert(preparedUsers_ == 0);
+        assert(activeUse_ == nullptr);
         envelope_ = {};
-        hasEnvelope_ = preparations_ != nullptr;
         for (auto* preparation = preparations_; preparation != nullptr; preparation = preparation->next_)
             envelope_ = QueueScheduleShape::Maximum(envelope_, preparation->shape_);
     }
-    std::uint32_t QualifiedGroups(QueueScheduleShape shape) const noexcept {
+    std::uint32_t QualifiedFree(QueueScheduleShape shape, std::uint64_t limit) const noexcept {
         std::uint32_t count = 0;
-        for (auto* slot = slots_.get(); slot != nullptr && count < logicalCapacity_; slot = slot->next.get())
-            if (slot->Columns().Shape().Covers(shape)) ++count;
+        for (auto* slot = free_; slot != nullptr && count < limit; slot = slot->freeNext)
+            if (slot->columns.Shape().Covers(shape)) ++count;
         return count;
     }
     template<class AllowAllocation>
@@ -387,7 +427,7 @@ private:
             return resize(columns.payloads, shape.events) && resize(columns.events, shape.events) &&
                 resize(columns.runtimes, shape.programs) && resize(columns.schedules, shape.programs) &&
                 resize(columns.releaseObservers, shape.programs) && resize(columns.members, shape.programs);
-        } catch (...) { return false; }
+        } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return false; }
     }
     template<class AllowAllocation>
     static std::unique_ptr<Slot> AllocateSlot(QueueScheduleShape shape, AllowAllocation& allow) noexcept {
@@ -396,18 +436,16 @@ private:
             auto slot = std::make_unique<Slot>();
             if (!AllocateColumns(slot->columns, shape, allow)) return nullptr;
             return slot;
-        } catch (...) { return nullptr; }
+        } catch (...) { harken::detail::RecordCurrentLogicAllocFailure(harken::detail::LogicAllocSite::EngineStorage); return nullptr; }
     }
 
     std::unique_ptr<Slot> slots_;
     Slot* free_ = nullptr;
     Preparation* preparations_ = nullptr;
     QueueScheduleShape envelope_{};
-    std::uint32_t logicalCapacity_ = 0;
+    std::uint32_t reserved_ = 0;
     std::uint32_t loans_ = 0;
-    std::uint32_t preparedUsers_ = 0;
-    bool configured_ = false;
-    bool hasEnvelope_ = false;
+    PreparedUse* activeUse_ = nullptr;
 };
 
 } // namespace harken

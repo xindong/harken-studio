@@ -207,4 +207,47 @@ TEST(DuckingReceiver, MutualFeedbackSettlesWithSignedBiasAndMemberCancellation) 
     }
 }
 
+
+TEST(DuckingReceiver, DormancyPreservesExactFixedPointAndRealBranch) {
+    using namespace harken;
+    DuckingReceiver receiver;
+    receiver.SetParameters(Parameters());
+    DuckingDormantState saved;
+    EXPECT_FALSE(receiver.CaptureDormantState(2, true, false, 0, false, saved));
+    DuckingDormantState fixed;
+    fixed.channels = 2; fixed.sampleRate = 48000;
+    fixed.gain = std::nextafter(1.0, 0.0);
+    ASSERT_TRUE(receiver.RestoreDormantState(fixed));
+    ASSERT_TRUE(receiver.CaptureDormantState(2, true, true, .5, true, saved));
+    EXPECT_EQ(std::bit_cast<std::uint64_t>(fixed.gain), std::bit_cast<std::uint64_t>(saved.gain));
+    EXPECT_FALSE(receiver.CaptureDormantState(1, true, false, 0, false, saved));
+    DuckingReceiver restored;
+    restored.SetParameters(Parameters());
+    ASSERT_TRUE(restored.RestoreDormantState(saved));
+    std::array<float, 64> main, side;
+    main.fill(.5f); side.fill(.07f);
+    const float* mains[]{main.data(), main.data()};
+    const float* sides[]{side.data(), side.data()};
+    std::array<double, 64> expected{}, actual{};
+    ASSERT_TRUE(receiver.Process(mains, sides, 2, 64, nullptr, nullptr, 0, expected.data()));
+    ASSERT_TRUE(restored.Process(mains, sides, 2, 64, nullptr, nullptr, 0, actual.data()));
+    EXPECT_EQ(expected, actual);
+    EXPECT_FALSE(receiver.CaptureDormantState(2, true, false, 0, false, saved));
+    fixed.gain = .5;
+    ASSERT_TRUE(receiver.RestoreDormantState(fixed));
+    EXPECT_FALSE(receiver.CaptureDormantState(2, false, false, 0, false, saved));
+    fixed.gain = std::numeric_limits<double>::quiet_NaN();
+    ASSERT_TRUE(receiver.RestoreDormantState(fixed));
+    EXPECT_FALSE(receiver.CaptureDormantState(2, false, false, 0, false, saved));
+    // A frozen-energy fixture isolates the connected/null detector distinction.
+    auto parameters = Parameters(); parameters.energyFall = 1;
+    receiver.SetParameters(parameters);
+    fixed.gain = 1; fixed.energy[0] = 1;
+    ASSERT_TRUE(receiver.RestoreDormantState(fixed));
+    EXPECT_TRUE(receiver.CaptureDormantState(2, false, false, 0, false, saved));
+    EXPECT_FALSE(receiver.CaptureDormantState(2, true, false, 0, false, saved));
+    restored.SetParameters(Parameters(44100));
+    EXPECT_FALSE(restored.RestoreDormantState(saved));
+}
+
 } // namespace

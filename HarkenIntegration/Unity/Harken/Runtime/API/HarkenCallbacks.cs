@@ -120,17 +120,22 @@ namespace Harken
         [AOT.MonoPInvokeCallback(typeof(VnNotificationCallback))]
         private static unsafe void NotifyThunk(IntPtr notification, IntPtr userData)
         {
+            ref VnNotification n = ref *(VnNotification*)notification.ToPointer();
+            if (n.type == (uint)VnNotificationType.VN_NOTIFY_RUNTIME_RECREATE_REQUIRED)
+                RuntimeFaultDiagnostics.ObserveResult(VnResult.VN_RUNTIME_RECREATE_REQUIRED);
+            // The diagnostic event may dispose this registration.
             if (!NotifySinks.TryGetValue((int)userData, out NotifySink sink) || sink.Handler == null)
             {
                 return;
             }
-            ref VnNotification n = ref *(VnNotification*)notification.ToPointer();
             sink.Handler(in n, sink.State);
         }
 
         [AOT.MonoPInvokeCallback(typeof(VnLogFn))]
         private static void LogThunk(IntPtr userData, uint level, uint code, IntPtr text)
         {
+            if (code == VnConstants.VN_LOG_RUNTIME_RECREATE_REQUIRED)
+                RuntimeFaultDiagnostics.ObserveResult(VnResult.VN_RUNTIME_RECREATE_REQUIRED);
             if (!LogSinks.TryGetValue((int)userData, out LogSink sink) || sink.Handler == null)
             {
                 return;

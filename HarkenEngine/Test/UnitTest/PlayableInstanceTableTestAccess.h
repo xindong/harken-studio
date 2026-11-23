@@ -54,7 +54,7 @@ struct PlayableInstanceTableTestAccess {
     static void SeedGeneration(PlayableInstanceTable& table,
                                std::uint32_t slot,
                                std::uint32_t generation) {
-        if (slot >= table.Capacity() || !table.PrepareStorage()) std::terminate();
+        if (slot == UINT32_MAX || !table.m_entries.ConstructThrough(slot + 1u)) std::terminate();
         auto& entry = table.m_entries[slot];
         entry.generation = generation;
         entry.quarantined = false;

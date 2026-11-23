@@ -1194,7 +1194,7 @@ TEST(TraceReplayE2E,
         desc.utf8Path = worldPath.c_str();
         VnCurrentWorldLoadReport report{};
         report.structSize = sizeof(report);
-        EXPECT_EQ(VN_CURRENT_WORLD_CAPACITY,
+        EXPECT_EQ(VN_OUT_OF_MEMORY,
                   Vn_LoadCurrentWorld(&desc, &report));
         EXPECT_EQ(VN_CURRENT_WORLD_LOAD_CAPACITY, report.status);
         harken::detail::DisarmLogicAllocFaultForTests();
@@ -1250,9 +1250,10 @@ TEST(TraceReplayE2E,
         desc.utf8Path = worldPath.c_str();
         VnCurrentWorldLoadReport report{};
         report.structSize = sizeof(report);
-        EXPECT_EQ(VN_CURRENT_WORLD_CAPACITY,
+        EXPECT_EQ(VN_OUT_OF_MEMORY,
                   Vn_LoadCurrentWorld(&desc, &report));
         EXPECT_EQ(VN_CURRENT_WORLD_LOAD_CAPACITY, report.status);
+        EXPECT_EQ(VN_OUT_OF_MEMORY, report.result);
         EXPECT_EQ(0u, report.resultGeneration);
         EXPECT_EQ(0u, session.Engine()->variables.CurrentWorldGeneration());
         harken::detail::DisarmLogicAllocFaultForTests();
@@ -2695,6 +2696,20 @@ bool RecordPairedCurrentWorldTrace(const std::string& tracePath,
     view.ownerId = 77;
     view.ownerRevision = 1;
     view.compiledWorld = world;
+    const std::array<VnBusId, 3> busIds{VN_BUS_MASTER, harkentest::ObjectId(900), harkentest::ObjectId(901)};
+    const std::array<std::uint32_t, 3> parents{0, 0, 0}, generations{1, 1, 1};
+    const std::array<std::uint8_t, 3> alive{1, 1, 1};
+    harken::BusSendTable sends;
+    harken::BusSendRecord send;
+    send.source = 1; send.target = 2; send.levelDb = -6;
+    send.preparedGain = std::pow(10.0f, -6.0f / 20.0f); send.applyLevel = true;
+    sends.Add(send);
+    harken::ProspectiveTopologyView topology;
+    topology.busCount = 3; topology.busIds = busIds.data();
+    topology.parents = parents.data(); topology.generations = generations.data(); topology.alive = alive.data();
+    topology.sends = &sends;
+    view.prospective = &topology;
+
     harken::PreparedProjectGenerationV1 prepared;
     if (harken::PrepareProjectGenerationV1(*engine, view, prepared).status !=
         harken::ProjectGenerationPrepareStatusV1::Ok) {
@@ -3776,12 +3791,45 @@ TEST(TraceReplayE2E, VersionOneTraceIsExplicitlyRejected) {
     EXPECT_FALSE(std::filesystem::exists(outPath));
 }
 
+TEST(TraceReplayE2E, VersionSevenDenseTopologyIsConvertedAndReplayed) {
+    const auto tracePath = TempPath("v7_dense_topology_source.vtrc");
+    std::string why;
+    ASSERT_TRUE(RecordPairedCurrentWorldTrace(tracePath, &why)) << why;
+    auto bytes = ReadFileBytes(tracePath);
+    RecordLocation plan{};
+    ASSERT_TRUE(FindRecord(bytes, harken::kTraceRecordPreparedTopologyPlan, 0, &plan));
+    const auto read = [&](std::size_t at) { std::uint32_t value; std::memcpy(&value, bytes.data() + at, 4); return value; };
+    const auto buses = read(plan.payloadAt + 4), count = read(plan.payloadAt + 8);
+    ASSERT_EQ(1u, count);
+    constexpr std::uint32_t slots = 4;
+    std::vector<std::uint8_t> dense(16 + buses * 32 + buses * slots * 12, 0);
+    const auto put = [&](std::size_t at, std::uint32_t value) { std::memcpy(dense.data() + at, &value, 4); };
+    put(0, 1); put(4, buses); put(8, slots);
+    std::copy_n(bytes.data() + plan.payloadAt + 16, buses * 32, dense.data() + 16);
+    for (std::uint32_t i = 0; i < buses * slots; ++i) put(16 + buses * 32 + i * 12, UINT32_MAX);
+    for (std::uint32_t i = 0; i < count; ++i) {
+        const auto at = plan.payloadAt + 16 + buses * 32 + i * 24;
+        const auto source = read(at), slot = read(at + 8);
+        ASSERT_LT(source, buses); ASSERT_LT(slot, slots);
+        const auto destination = 16 + buses * 32 + (source * slots + slot) * 12;
+        put(destination, read(at + 4)); put(destination + 4, read(at + 12)); put(destination + 8, read(at + 16));
+    }
+    bytes.erase(bytes.begin() + plan.payloadAt, bytes.begin() + plan.payloadAt + plan.payloadBytes);
+    bytes.insert(bytes.begin() + plan.payloadAt, dense.begin(), dense.end());
+    const auto size = static_cast<std::uint32_t>(dense.size());
+    const auto version = harken::kTraceFormatVersionV7;
+    std::memcpy(bytes.data() + plan.recordAt, &size, 4);
+    std::memcpy(bytes.data() + 4, &version, 4);
+    const auto replay = RunMutatedTrace(bytes, "v7_dense_topology.vtrc");
+    EXPECT_EQ(0, replay.exitCode) << replay.output;
+}
+
 TEST(TraceReplayE2E, RetiredTraceVersionsAreRejectedBeforeRecords) {
     const auto tracePath = TempPath("retired_versions_source.vtrc");
     ASSERT_TRUE(RecordFormatFixture(tracePath));
     const auto source = ReadFileBytes(tracePath);
     ASSERT_GE(source.size(), 8u);
-    for (std::uint32_t version = 1; version < harken::kTraceFormatVersion; ++version) {
+    for (std::uint32_t version = 1; version < harken::kTraceFormatVersionV7; ++version) {
         auto bytes = source;
         std::memcpy(bytes.data() + 4, &version, sizeof(version));
         const auto run = RunMutatedTrace(
@@ -4572,6 +4620,74 @@ TEST(TraceReplayE2E, AuthoredProximityAndToneRecipeReplayByteIdentically) {
     EXPECT_TRUE(original == replay)
         << "authored proximity + tone recipe replay diverged from the "
            "recorded render";
+}
+
+TEST(TraceReplayE2E, UnchangedVoiceAndBusTransitionsReplayTheirRecordedSamples) {
+    constexpr auto sound = harkentest::ObjectId(101);
+    constexpr auto action = harkentest::ObjectId(102);
+    constexpr auto variable = harkentest::ObjectId(103);
+    constexpr auto bus = harkentest::ObjectId(104);
+    for (const auto scenario : {4, 5, 9, 10}) {
+        SCOPED_TRACE(scenario);
+        const std::string name = "gain_transition_" + std::to_string(scenario);
+        const auto trace = TempPath(name + ".vtrc"), output = TempPath(name + ".f32");
+        std::vector<std::uint8_t> samples;
+        {
+            auto config = MakeNullConfig(4, kBlockFrames, 48000);
+            config.randomSeed = 345;
+            EngineSession session(config);
+            ASSERT_EQ(VN_OK, session.InitResult());
+            auto* engine = session.Engine();
+            auto dc = harkentest::MakeDC(48000, .5f);
+            const float* channels[]{dc.data()};
+            std::uint64_t revision{};
+            ASSERT_TRUE(harken::ComputeMediaPcmContentRevisionV1(48000, 1, dc.size(), channels, 1, &revision));
+            const CanonicalSoundActionSpec spec{sound, action, revision, scenario == 4 ? VN_BUS_MASTER : bus};
+            const auto def = harkentest::MakeVariableDefinition(variable, harken::VariableKindV1::Step, 0, 1, 0);
+            ASSERT_TRUE(InstallCanonicalSoundActions(engine, &spec, 1, &def, 1));
+            ASSERT_EQ(VN_OK, Vn_TraceStart(trace.c_str()));
+            const auto pcm = MonoDesc(dc, 48000);
+            ASSERT_EQ(VN_OK, Vn_RegisterPCM(sound, &pcm));
+            const auto pump = [&](unsigned blocks) {
+                for (unsigned i = 0; i < blocks; ++i) {
+                    engine->nullBackend.Pump(1);
+                    CaptureLastBlock(engine, &samples);
+                    ASSERT_EQ(VN_OK, Vn_Update());
+                }
+            };
+            if (scenario == 4) {
+                const auto binding = BindingDesc(variable, VN_TARGET_SCOPE_VOICE, 0, 0.f, -12.f,
+                    200);
+                ASSERT_EQ(VN_OK, Vn_RegisterBinding(harkentest::ObjectId(105), &binding));
+                const auto attach = AttachDesc(VN_TARGET_SCOPE_VOICE, sound);
+                ASSERT_EQ(VN_OK, Vn_AttachBinding(harkentest::ObjectId(105), &attach));
+                ASSERT_NE(0u, PostCanonicalAction(action));
+                ASSERT_NO_FATAL_FAILURE(pump(8));
+                ASSERT_EQ(VN_OK, Vn_SetValue(variable, 1.f));
+            } else {
+                ASSERT_EQ(VN_OK, Vn_CreateBus(bus, VN_BUS_MASTER));
+                if (scenario == 10) {
+                    ASSERT_EQ(VN_OK, Vn_SetBusVolume(bus, -3.f, 0));
+                    ASSERT_NO_FATAL_FAILURE(pump(220));
+                    ASSERT_EQ(nullptr, engine->buses.BusState(engine->buses.FindIndex(bus)));
+                    ASSERT_EQ(VN_OK, Vn_SetBusVolume(bus, -12.f, 0));
+                    ASSERT_NE(0u, PostCanonicalAction(action));
+                } else {
+                    ASSERT_EQ(VN_OK, Vn_SetBusVolume(bus, -3.f, 500));
+                    ASSERT_NE(0u, PostCanonicalAction(action));
+                    if (scenario == 9) ASSERT_NO_FATAL_FAILURE(pump(8));
+                    ASSERT_EQ(VN_OK, Vn_SetBusVolume(bus, -12.f, 200));
+                }
+            }
+            ASSERT_EQ(VN_OK, Vn_Update());
+            ASSERT_NO_FATAL_FAILURE(pump(110));
+            ASSERT_EQ(VN_OK, Vn_TraceStop());
+        }
+        ASSERT_GT(PeakOfRawF32(samples), .05f);
+        const auto replay = RunHost("trace-replay " + trace + " --capture " + output);
+        ASSERT_EQ(0, replay.exitCode) << replay.output;
+        EXPECT_TRUE(samples == ReadFileBytes(output));
+    }
 }
 
 TEST(TraceReplayE2E, BindingVerbsReplayByteIdenticalOnDoubleRun) {

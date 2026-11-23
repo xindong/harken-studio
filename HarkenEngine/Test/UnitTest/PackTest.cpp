@@ -796,14 +796,10 @@ TEST(Pack, HeaderDispatchRequiresSupportedSchemaAndKnownLayout) {
 
 // --- capacity ---
 
-TEST(Pack, CapacityExhaustionRefusedWithNoPack) {
+TEST(Pack, LoadsPastFormerDefaultAndReusesReleasedSlot) {
     EngineSession session(MakeNullConfig(0, kBlockFrames));
     ASSERT_EQ(VN_OK, session.InitResult());
-
-    // One tiny pack file per slot, each with a distinct entry id so the
-    // registrations never collide. Capacity is the default-resolved
-    // config value (maxPacks 0 in the public struct).
-    const std::uint32_t capacity = session.Engine()->config.maxPacks;
+    constexpr std::uint32_t capacity = 257;
     std::vector<VnPackHandle> handles(capacity, 0);
     for (std::uint32_t i = 0; i < capacity; ++i) {
         const std::string path = TempPath(
@@ -817,14 +813,11 @@ TEST(Pack, CapacityExhaustionRefusedWithNoPack) {
         TempPath("pack_cap_overflow.pack");
     WriteFileBytes(overflowPath, BuildPackBytes({MakeSineEntry(harkentest::ObjectId(2000), 64)}));
     VnPackHandle overflow = 0;
-    EXPECT_EQ(VN_NO_PACK, LoadPack(overflowPath, &overflow));
-    // The refusal has no side effects: nothing registered, nothing loaded.
-    EXPECT_FALSE(session.Engine()->registry.Lookup(harkentest::ObjectId(2000)).Valid());
-
-    // Freeing one slot makes the load succeed.
     ASSERT_EQ(VN_OK, Vn_UnloadPack(handles[0]));
     EXPECT_EQ(VN_OK, LoadPack(overflowPath, &overflow));
     EXPECT_TRUE(session.Engine()->registry.Lookup(harkentest::ObjectId(2000)).Valid());
+    EXPECT_NE(handles[0], overflow);
+    EXPECT_EQ(VN_STALE_HANDLE, Vn_UnloadPack(handles[0]));
 }
 
 // --- corruption and malformed containers ---

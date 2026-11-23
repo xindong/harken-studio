@@ -51,7 +51,7 @@ std::uint32_t PropertyPublisher::StagedCount() const {
 }
 
 bool PropertyPublisher::Publish(FreeSlotsFn freeSlots, PushFn push,
-                                void* ctx) {
+                                void* ctx, BatchFn batch) {
     if (m_stagedCount == 0) {
         // An empty set publishes trivially, no admission query. A pending
         // deferral rebuilt to empty is complete: nothing awaits admission,
@@ -71,7 +71,12 @@ bool PropertyPublisher::Publish(FreeSlotsFn freeSlots, PushFn push,
         ++m_deferredCount;
         return false;
     }
-    for (std::uint32_t i = 0; i < m_stagedCount; ++i) {
+    if (batch != nullptr && !batch(ctx, {m_batch.data(), m_stagedCount})) {
+        m_deferredPending = true;
+        ++m_deferredCount;
+        return false;
+    }
+    for (std::uint32_t i = 0; batch == nullptr && i < m_stagedCount; ++i) {
         const bool accepted = push(ctx, m_batch[i]);
         (void)accepted;
         assert(accepted && "push refused after whole-set admission");

@@ -190,7 +190,7 @@ namespace Harken
             {
                 structSize = (uint)sizeof(VnResidentPackVisitDescV1), memberCount = (uint)count,
                 utf8Directory = (IntPtr)path, utf8Names = (IntPtr)names,
-                maxInputBytes = inputBudget != 0 ? inputBudget : 64ul * 1024 * 1024,
+                maxInputBytes = inputBudget != 0 ? inputBudget : ulong.MaxValue,
                 init = new VnPackByteSpan { structSize = (uint)sizeof(VnPackByteSpan),
                     bytes = (IntPtr)init, byteCount = (ulong)initBytes.Length }
             };

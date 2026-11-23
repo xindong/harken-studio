@@ -6,7 +6,7 @@
 #include "harken/core/KnownCompletion.h"
 #include "harken/core/OccurrenceStatePool.h"
 
-#include "harken/core/StableRowStorage.h"
+#include "harken/core/GrowingRowStorage.h"
 
 #include <atomic>
 #include <array>
@@ -43,6 +43,7 @@ struct CompositeCompletionOwnerInfo {
 };
 
 class CompositeCompletionOwnerPool {
+    struct Row;
 public:
     // Issued by the same successful PrepareAcquire, never by token lookup.
     // Serialized logic-producer storage retention only: no leaf-progress,
@@ -165,11 +166,38 @@ public:
                  OccurrenceStatePool& occurrences,
                  std::uint64_t observedCompletionBlockSequence) noexcept;
 
-    std::uint32_t Capacity() const noexcept { return capacity_; }
+    std::uint32_t Capacity() const noexcept { return rows_.ConstructedCount(); }
     std::uint32_t ConstructedRowCount() const noexcept { return rows_.ConstructedCount(); }
     std::uint64_t StorageBytes() const noexcept;
-    using BackingPreparation = std::array<StableStoragePreparation, 4>;
-    bool PrepareBacking(std::uint32_t rows, BackingPreparation* out) noexcept;
+    // Each pending request holds its own free rows and their leaf storage.
+    class BackingPreparation {
+    public:
+        BackingPreparation() = default;
+        ~BackingPreparation();
+        BackingPreparation(const BackingPreparation&) = delete;
+        BackingPreparation& operator=(const BackingPreparation&) = delete;
+    private:
+        friend class CompositeCompletionOwnerPool;
+        CompositeCompletionOwnerPool* pool_ = nullptr;
+        std::vector<std::uint32_t> slots_;
+    };
+    class PreparedUse {
+    public:
+        PreparedUse(CompositeCompletionOwnerPool& pool, const BackingPreparation* backing) noexcept;
+        ~PreparedUse();
+        PreparedUse(const PreparedUse&) = delete;
+        PreparedUse& operator=(const PreparedUse&) = delete;
+    private:
+        CompositeCompletionOwnerPool& pool_;
+        const BackingPreparation* previous_;
+    };
+    bool PrepareBacking(const std::vector<std::uint32_t>& widths, BackingPreparation* out) noexcept;
+    bool PrepareAvailable(std::uint32_t count) noexcept;
+    using PrepareRows = bool (*)(void*, std::uint32_t) noexcept;
+    void SetRowPreparation(void* context, PrepareRows prepare) noexcept {
+        rowContext_ = context;
+        prepareRows_ = prepare;
+    }
     std::uint64_t CommittedBytes() const noexcept;
     std::uint64_t ReservedBytes() const noexcept;
     void SetRowCommitPageLimitForTests(std::size_t pages) noexcept {
@@ -195,6 +223,11 @@ private:
     };
 
     struct Row {
+        std::unique_ptr<KnownScheduleLeafV1[]> leaves;
+        std::unique_ptr<OccurrenceStatePool::OriginalCompositeCompletionOwnerPin[]> originals;
+        std::unique_ptr<OccurrenceStatePool::PreparedCompositeCompletionCommitProof[]> proofs;
+        std::uint32_t leafCapacity = 0;
+        bool held = false;
         std::atomic<State> state{State::Free};
         std::uint32_t generation = 1;
         OccurrenceToken composedOccurrence{};
@@ -217,6 +250,8 @@ private:
         OccurrenceStatePool& occurrences,
         PrivateReanchorProof* out) noexcept;
     bool PrepareSlotStorage(std::uint32_t slot) noexcept;
+    bool PrepareLeaves(Row& row, std::uint32_t count) noexcept;
+    std::uint32_t FindSlot(std::uint32_t width) noexcept;
     Row* ResolveForRelease(CompositeCompletionOwnerToken token) noexcept;
     void Quarantine(Row& row) noexcept;
     void RetireRow(Row& row, bool occupied) noexcept;
@@ -233,10 +268,12 @@ private:
 
     std::uint32_t capacity_ = 0;
     std::uint32_t maxLeaves_ = 0;
-    StableRowStorage<Row> rows_;
-    StableRowStorage<KnownScheduleLeafV1> leaves_;
-    StableRowStorage<OccurrenceStatePool::OriginalCompositeCompletionOwnerPin> leafOriginals_;
-    StableRowStorage<OccurrenceStatePool::PreparedCompositeCompletionCommitProof> leafCommitProofs_;
+    GrowingRowStorage<Row> rows_;
+    std::uint64_t leafBytes_ = 0;
+    std::uint32_t firstFree_ = 0;
+    void* rowContext_ = nullptr;
+    PrepareRows prepareRows_ = nullptr;
+    const BackingPreparation* active_ = nullptr;
     std::uint32_t occupied_ = 0;
     std::uint32_t highWater_ = 0;
     std::uint64_t refusalCount_ = 0;

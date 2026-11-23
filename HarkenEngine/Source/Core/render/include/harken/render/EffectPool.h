@@ -3,6 +3,7 @@
 #ifndef HARKEN_RENDER_EFFECT_POOL_H
 #define HARKEN_RENDER_EFFECT_POOL_H
 
+#include "harken/core/LogicAllocCheckpoint.h"
 #include <harken/Harken.h>
 
 #include "harken/core/EngineConfig.h"
@@ -65,10 +66,10 @@ struct CompressorRuntimePayload {
 class EffectRetireQueue {
 public:
     explicit EffectRetireQueue(std::uint32_t capacityHint) {
-        if (capacityHint > (UINT32_C(1) << 31)) throw std::bad_alloc{};
+        if (capacityHint > (UINT32_C(1) << 31)) throw harken::detail::LogicPreparationFailure{};
         const auto cap = std::max(8u, std::bit_ceil(std::max(1u, capacityHint)));
         if (static_cast<std::size_t>(cap) > static_cast<std::size_t>(PTRDIFF_MAX) / sizeof(EffectInstanceRef))
-            throw std::bad_alloc{};
+            throw harken::detail::LogicPreparationFailure{};
         // Monotonic head/tail allow using every slot without a sentinel.
         m_slots.resize(cap);
         m_mask = cap - 1;
@@ -152,7 +153,8 @@ public:
     // Takes a free instance of `type` and returns its reference, or a
     // kEffectTypeNone reference when that type's pool is exhausted. The
     // instance is NOT reset here; the caller resets and configures it before
-    // handing it to the audio thread.
+    // handing it to the audio thread. Delay rows are already reset on initial
+    // construction and logic-owned disposal, so a cold Bus may skip that reset.
     EffectInstanceRef Acquire(std::uint32_t type, EffectObjectIdentity identity = {});
     EffectInstanceRef AcquirePrepared(std::uint32_t type, EffectObjectIdentity identity = {});
     bool ProvePreparedCommit(const EffectInstanceRef& original,

@@ -18,11 +18,9 @@ TEST(RuntimeWorkIndex, SparseDuePreparationKeepsFailurePagesAndClockQuotasIndepe
     FrameIndex frames;
     SequenceIndex sequences;
     static_assert(!std::is_convertible_v<FrameIndex::Time, SequenceIndex::Time>);
-    ASSERT_TRUE(frames.Reserve(65537));
-    ASSERT_TRUE(sequences.Reserve(65537));
     EXPECT_EQ(0u, frames.RequestedBytes());
     EXPECT_EQ(0u, frames.CommittedBytes());
-    EXPECT_GT(frames.DirectoryBytes(), 0u);
+    EXPECT_EQ(0u, frames.DirectoryBytes());
     const Identity high{0x1234567800000001ull, 65536, 1};
     frames.SetCommitPageLimitForTests(1);
     EXPECT_FALSE(frames.PrepareOwner(high));
@@ -69,12 +67,48 @@ TEST(RuntimeWorkIndex, SparseDuePreparationKeepsFailurePagesAndClockQuotasIndepe
     EXPECT_EQ(fresh, out);
 }
 
+TEST(RuntimeWorkIndex, TraversesSparseActivityThroughTheLastUsableSlot) {
+    harken::RuntimeActivityIndex<TestFamily> activity;
+    const auto resolve = [](std::uint32_t slot) noexcept { return Identity{1, slot, 0}; };
+    const auto matches = [&](Identity id) noexcept { return id == resolve(id.slot); };
+    std::uint32_t cursor = 0;
+    constexpr auto set = harken::RuntimeActivitySet::Dirty;
+    EXPECT_FALSE(activity.Next(set, &cursor, resolve).Valid());
+    EXPECT_EQ(0u, activity.ReservedBytes());
+    for (auto slot : {UINT32_MAX - 1u, 0u, 1u << 24u}) {
+        ASSERT_TRUE(activity.Prepare(resolve(slot)));
+        ASSERT_TRUE(activity.MarkDirty(resolve(slot), matches));
+    }
+    cursor = 0;
+    for (auto slot : {0u, 1u << 24u, UINT32_MAX - 1u})
+        EXPECT_EQ(resolve(slot), activity.Next(set, &cursor, resolve));
+    EXPECT_EQ(UINT32_MAX, cursor);
+    EXPECT_FALSE(activity.Next(set, &cursor, resolve).Valid());
+}
+
+TEST(RuntimeWorkIndex, GrowthFailurePreservesAnAlreadyScheduledOwner) {
+    FrameIndex due;
+    const Identity first{1, 0, 1}, later{2, 65536, 1};
+    ASSERT_TRUE(due.PrepareOwner(first));
+    ASSERT_TRUE(due.Insert(first, {13}));
+    due.SetCommitPageLimitForTests(0);
+    EXPECT_FALSE(due.PrepareOwner(later));
+    EXPECT_EQ(1u, due.PreparedCount());
+    EXPECT_TRUE(due.Contains(first));
+    due.SetCommitPageLimitForTests(SIZE_MAX);
+    ASSERT_TRUE(due.PrepareOwner(later));
+    ASSERT_TRUE(due.Insert(later, {7}));
+    Identity next{};
+    ASSERT_TRUE(due.PopDue({13}, &next));
+    EXPECT_EQ(later, next);
+    ASSERT_TRUE(due.PopDue({13}, &next));
+    EXPECT_EQ(first, next);
+}
+
 TEST(RuntimeWorkIndex, DueMutationMatchesOrderedAuthorityAndActivityRejectsOldGenerations) {
     constexpr std::uint32_t count = 521;
     FrameIndex due;
     harken::RuntimeActivityIndex<TestFamily> activity;
-    ASSERT_TRUE(due.Reserve(count));
-    ASSERT_TRUE(activity.Reserve(count));
     std::vector<Identity> owners(count);
     std::vector<std::uint64_t> dates(count, UINT64_MAX);
     const auto exact = [&](Identity id) noexcept { return owners[id.slot] == id; };

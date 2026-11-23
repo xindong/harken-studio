@@ -1,3 +1,4 @@
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/core/VoiceLedger.h"
 
 #include <cassert>
@@ -22,7 +23,7 @@ struct VoiceLedger::MonitorSelectionStorage {
         return static_cast<std::uint32_t>(capacity);
     }
     explicit MonitorSelectionStorage(std::size_t capacity) {
-        if (!slots.Reserve(CheckedCapacity(capacity))) throw std::bad_alloc();
+        if (!slots.Reserve(CheckedCapacity(capacity))) throw harken::detail::LogicPreparationFailure{};
     }
     bool Prepare(std::uint32_t count, StableStoragePreparation* out) noexcept {
         const auto previous = slots.size();
@@ -221,10 +222,8 @@ VoiceLedger::VoiceLedger(std::uint32_t capacity,
                          std::size_t monitorSelectionCapacity,
                          DirectVoiceStoragePreparation prepareDirectVoiceStorage,
                          void* directVoiceStorageContext,
-                         std::uint32_t generationFloor)
-    : m_renderOwners(renderCapacity == 0
-                         ? (capacity == 0 ? 1 : capacity)
-                         : renderCapacity),
+                         std::uint32_t generationFloor, std::uint32_t initialRender)
+    :
 #if HARKEN_ENGINE_DEV
       m_monitorSelections(std::make_shared<MonitorSelectionStorage>(monitorSelectionCapacity == 0
           ? 2 * static_cast<std::size_t>(capacity == 0 ? 1 : capacity) : monitorSelectionCapacity)),
@@ -235,12 +234,13 @@ VoiceLedger::VoiceLedger(std::uint32_t capacity,
         throw std::invalid_argument("voice handle generation exhausted");
     m_initialGeneration = generationFloor + 1;
     const auto logicalCapacity = capacity == 0 ? 1 : capacity;
+    const auto renderRows = renderCapacity == 0 ? logicalCapacity : renderCapacity;
+    if (!m_renderOwners.Reserve(renderRows) || !PrepareRenderOwners(std::min(renderRows, initialRender)) ||
 #if HARKEN_ENGINE_DEV
-    if (!m_monitorControlReceipts.Reserve(logicalCapacity))
-        throw std::bad_alloc();
+        !m_monitorControlReceipts.Reserve(logicalCapacity) ||
 #endif
-    if (!m_entries.Reserve(logicalCapacity))
-        throw std::bad_alloc();
+        !m_entries.Reserve(logicalCapacity))
+        throw harken::detail::LogicPreparationFailure{};
 }
 
 
@@ -1234,19 +1234,12 @@ bool VoiceLedger::IsStolen(VnVoiceHandle renderHandle) const {
 
 void VoiceLedger::MarkTerminating(VnVoiceHandle renderHandle, const MonitorControlCause& cause,
                                   bool recordControlCause) {
-    if (renderHandle == 0) {
-        return;
-    }
-    for (std::uint32_t i = 0; i < m_entries.ConstructedCount(); ++i) {
-        Entry& entry = m_entries[i];
-        if (entry.state == EntryState::Live &&
-            entry.renderHandle == renderHandle) {
+    if (auto* entry = EntryForRender(renderHandle)) {
 #if HARKEN_ENGINE_DEV
-            if (recordControlCause && !entry.stolen && !entry.terminating && !entry.monitorCancellationAccepted) entry.controlCause = cause;
+        if (recordControlCause && !entry->stolen && !entry->terminating && !entry->monitorCancellationAccepted)
+            entry->controlCause = cause;
 #endif
-            entry.terminating = true;
-            return;
-        }
+        entry->terminating = true;
     }
 }
 

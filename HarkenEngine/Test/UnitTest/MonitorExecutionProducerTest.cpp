@@ -477,10 +477,10 @@ MonitorExecutionFact IdentityValue(std::uint64_t handle, std::uint64_t content =
 TEST(MonitorIdentityState, UnchangedBoundariesStaySilentAndReusePreservesOldValues) {
     using namespace harken::monitor;
     MonitorIdentityMirror mirror;
-    mirror.Reset(2);
+    mirror.Reset({2});
     std::array<MonitorExecutionFact, 2> native{};
     std::vector<MonitorIdentityDelta> changes;
-    const auto capture = [&](std::size_t slot, MonitorExecutionFact& out) {
+    const auto capture = [&](std::size_t, std::size_t slot, MonitorExecutionFact& out) {
         out = native[slot];
         return out.engine != 0;
     };
@@ -528,8 +528,8 @@ TEST(MonitorIdentityState, UnchangedBoundariesStaySilentAndReusePreservesOldValu
 TEST(MonitorIdentityState, CopyReportsFullCountsWhenStorageIsTooSmall) {
     using namespace harken::monitor;
     MonitorIdentityMirror mirror;
-    mirror.Reset(3);
-    ASSERT_TRUE(mirror.Refresh([](std::size_t slot, MonitorExecutionFact& out) {
+    mirror.Reset({3});
+    ASSERT_TRUE(mirror.Refresh([](std::size_t, std::size_t slot, MonitorExecutionFact& out) {
         out = IdentityValue((UINT64_C(1) << 32) | slot);
         return true;
     }, [](const auto&, auto) {}));

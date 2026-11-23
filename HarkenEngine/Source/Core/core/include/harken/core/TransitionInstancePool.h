@@ -2,6 +2,7 @@
 #define HARKEN_CORE_TRANSITION_INSTANCE_POOL_H
 
 #include "harken/core/MonitorLifecycleSink.h"
+#include "harken/core/GrowingRowStorage.h"
 #include "harken/core/FrontierActivation.h"
 
 #include <atomic>
@@ -10,7 +11,6 @@
 
 namespace harken {
 
-inline constexpr std::uint32_t kMaxTransitionInstancesHard = 16384;
 inline constexpr std::uint32_t kMaxTransitionInstanceGeneration =
     0x7fffffffu;
 
@@ -89,10 +89,14 @@ public:
         AudioSliceLease* lease_ = nullptr;
         bool locks_ = false;
     };
+    TransitionInstancePool() = default;
     explicit TransitionInstancePool(std::uint32_t capacity);
 
-    bool Valid() const noexcept { return capacity_ != 0; }
-    std::uint32_t Capacity() const noexcept { return capacity_; }
+    bool PrepareAvailable(std::uint32_t count) noexcept;
+    bool PrepareBacking(std::uint32_t count, StableStoragePreparation* out) noexcept;
+    void SetCommitPageLimitForTests(std::size_t pages) noexcept { rows_.SetCommitPageLimitForTests(pages); }
+    bool Valid() const noexcept { return limit_ != 0; }
+    std::uint32_t Capacity() const noexcept { return rows_.size(); }
     std::uint32_t LiveCount() const noexcept;
     std::uint32_t FreeCount() const noexcept;
     std::uint32_t QuarantinedCount() const noexcept;
@@ -158,8 +162,8 @@ private:
     bool RecyclePrepared(Row& row) noexcept;
     bool MayMutateFrontier(Row& row) const noexcept;
 
-    std::unique_ptr<Row[]> rows_;
-    std::uint32_t capacity_ = 0;
+    GrowingRowStorage<Row> rows_;
+    std::uint32_t limit_ = UINT32_MAX;
 };
 
 } // namespace harken

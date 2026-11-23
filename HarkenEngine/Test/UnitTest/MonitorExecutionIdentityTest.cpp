@@ -1291,9 +1291,13 @@ TEST(MonitorIdentitySnapshot, CopiesCommittedSlotsAndDefaultEmitterWithoutPublis
     ASSERT_TRUE(table.CommitPrepared(&child));
     ReadIdentityEvents(events);
     unsigned playableCount = 0, emitterCount = 0, defaultCount = 0;
-    for (std::size_t slot = 0; slot != IdentitySlotCapacity(engine); ++slot) {
+    const auto counts = IdentityDomainCounts(engine);
+    EXPECT_EQ(0u, counts[LogicalVoices]);
+    EXPECT_GT(engine.ledger.Capacity(), counts[LogicalVoices]);
+    for (std::size_t domain = 0; domain < counts.size(); ++domain)
+    for (std::size_t slot = 0; slot < counts[domain]; ++slot) {
         MonitorExecutionFact fact{};
-        if (!CaptureIdentitySlot(engine, slot, fact)) continue;
+        if (!CaptureIdentitySlot(engine, domain, slot, fact)) continue;
         EXPECT_EQ(VN_MONITOR_FACT_IDENTITY_UPSERT, fact.kind);
         EXPECT_EQ(0u, fact.sourceSequence);
         EXPECT_EQ(0u, fact.timestamp);
@@ -1324,7 +1328,7 @@ TEST(MonitorIdentitySnapshot, CopiesCommittedSlotsAndDefaultEmitterWithoutPublis
     EXPECT_EQ(1u, defaultCount);
     EXPECT_TRUE(ReadIdentityEvents(events).empty());
     MonitorExecutionFact absent{};
-    EXPECT_FALSE(CaptureIdentitySlot(engine, IdentitySlotCapacity(engine), absent));
+    EXPECT_FALSE(CaptureIdentitySlot(engine, PublicEmitters, engine.monitorEmitters.Capacity(), absent));
     ASSERT_TRUE(table.CancelPrepared(&hidden));
     ASSERT_TRUE(table.AdvanceLifecycle(child.Handle(), PlayableLifecycle::Retired));
     MonitorLifecycleFacts values{};
@@ -1334,7 +1338,7 @@ TEST(MonitorIdentitySnapshot, CopiesCommittedSlotsAndDefaultEmitterWithoutPublis
 
 TEST(MonitorIdentitySnapshot, ActionChildrenRemainIdentifiableUntilNativeRelease) {
     ActionFiringTable table;
-    ASSERT_TRUE(table.Reset(2));
+    ASSERT_TRUE(table.Reset());
     PreparedActionFiring root{}, child{};
     ASSERT_TRUE(table.PrepareRoot(harkentest::ObjectId(1), 7, 1, &root));
     ActionFiringSnapshot snapshot{};
@@ -1496,26 +1500,50 @@ TEST(MonitorIdentityHub, FrozenRowsPrecedePostCutDeltaAndKeepDestroyedGeneration
     ASSERT_EQ(VN_OK, Vn_CreateEmitter(&old));
     const auto first = OpenState();
     DrainOneIdentityForTests(); // Begin is sent, but rows still live in staging.
+    std::array<VnEmitterHandle, 16> added{};
+    for (auto& handle : added) ASSERT_EQ(VN_OK, Vn_CreateEmitter(&handle));
     ASSERT_EQ(VN_OK, Vn_DestroyEmitter(old));
     ASSERT_EQ(VN_OK, Vn_CreateEmitter(&replacement));
     const auto second = OpenState();
     DrainOnceForTests();
     const auto records = PollState(first);
-    ASSERT_EQ(6u, records.size());
+    ASSERT_EQ(6u + added.size(), records.size());
     EXPECT_EQ(VN_MONITOR_RECORD_IDENTITY_CUT_END, records[3].header.recordKind);
     EXPECT_EQ(old, records[1].header.instanceHandle);
-    EXPECT_EQ(0u, records[4].fact.stateCutId);
-    EXPECT_EQ(VN_MONITOR_FACT_IDENTITY_TOMBSTONE, records[4].fact.fact.factKind);
-    EXPECT_EQ(old, records[4].header.instanceHandle);
-    EXPECT_EQ(replacement, records[5].header.instanceHandle);
-    EXPECT_GT(records[5].fact.identityRevision, records[4].fact.identityRevision);
+    for (std::size_t i = 0; i < added.size(); ++i) {
+        EXPECT_EQ(added[i], records[4 + i].header.instanceHandle);
+        EXPECT_EQ(0u, records[4 + i].fact.stateCutId);
+    }
+    const auto removed = 4u + added.size();
+    EXPECT_EQ(0u, records[removed].fact.stateCutId);
+    EXPECT_EQ(VN_MONITOR_FACT_IDENTITY_TOMBSTONE, records[removed].fact.fact.factKind);
+    EXPECT_EQ(old, records[removed].header.instanceHandle);
+    EXPECT_EQ(replacement, records[removed + 1].header.instanceHandle);
+    EXPECT_GT(records[removed + 1].fact.identityRevision, records[removed].fact.identityRevision);
     const auto later = PollState(second);
-    ASSERT_EQ(4u, later.size());
+    ASSERT_EQ(4u + added.size(), later.size());
+    for (std::size_t i = 0; i < added.size(); ++i) EXPECT_EQ(added[i], later[2 + i].header.instanceHandle);
     EXPECT_NE(records[0].begin.stateCutId, later[0].begin.stateCutId);
     EXPECT_EQ(replacement, later[1].header.instanceHandle);
     EXPECT_EQ(VN_MONITOR_RECORD_IDENTITY_CUT_END, later.back().header.recordKind);
     EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(first));
     EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(second));
+}
+TEST(MonitorIdentityHub, MirrorGrowthRefusalKeepsPublicEmitterAndMarksObservationIncomplete) {
+    harkentest::EngineSession engine(harkentest::MakeNullConfig());
+    ASSERT_EQ(VN_OK, engine.InitResult());
+    const auto session = OpenState();
+    DrainOnceForTests();
+    PollState(session);
+    SetMonitorProcessBudgetForTests(1);
+    VnEmitterHandle emitter = 0;
+    const auto created = Vn_CreateEmitter(&emitter);
+    SetMonitorProcessBudgetForTests(VN_MONITOR_HARD_PROCESS_QUEUE_BYTES);
+    ASSERT_EQ(VN_OK, created);
+    EXPECT_TRUE(engine.Engine()->emitters.IsPublicLive(emitter));
+    EXPECT_EQ(VN_MONITOR_OBSERVATION_INCOMPLETE, StateStatus(session).baselineAvailability);
+    EXPECT_EQ(VN_OK, Vn_DestroyEmitter(emitter));
+    EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(session));
 }
 TEST(MonitorIdentityHub, MissingMiddleRowCannotCompleteEvenWhenBothControlsArrive) {
     harkentest::EngineSession engine(harkentest::MakeNullConfig());
@@ -1753,6 +1781,7 @@ TEST(MonitorIdentityHub, OldWorldPlayableAndTerminalActionStayInBaselineUntilAct
     PreparedActionFiring firing{};
     auto& actions = engine.Engine()->actionFirings;
     ASSERT_TRUE(actions.PrepareRoot(harkentest::ObjectId(8), 5, 0, &firing));
+    ASSERT_TRUE(engine.Engine()->PrepareActionFiringOwners(0));
     ASSERT_TRUE(actions.Commit(&firing, 19));
     ActionFiringSnapshot retained{};
     ASSERT_TRUE(actions.Capture(firing.Handle(), &retained));

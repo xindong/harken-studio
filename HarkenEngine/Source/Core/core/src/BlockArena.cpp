@@ -1,3 +1,4 @@
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/core/BlockArena.h"
 
 #include <algorithm>
@@ -6,10 +7,17 @@
 
 namespace harken {
 
-BlockArena::BlockArena(std::uint32_t capacityBytes, BackingMode mode)
+BlockArena::BlockArena(std::uint32_t capacityBytes, BackingMode mode, std::uint32_t minimumBytes)
     : m_storageCapacity(capacityBytes), m_capacity(capacityBytes) {
-    if (!m_buffer.Reserve(std::max<std::size_t>(capacityBytes, alignof(float)), alignof(float), true) ||
-        (mode == BackingMode::Full && !PrepareBacking(capacityBytes, 0))) throw std::bad_alloc{};
+    // Negotiate address space before any worker can retain a pointer.
+    while (mode == BackingMode::Automatic && m_capacity > minimumBytes) {
+        detail::LogicAllocCallScope attempt;
+        if (m_buffer.Reserve(m_capacity, alignof(float), false)) return;
+        if (attempt.Failure().site == detail::LogicAllocSite::None) throw detail::LogicPreparationFailure{};
+        m_capacity = m_storageCapacity = std::max(minimumBytes, m_capacity / 2u);
+    }
+    if (!m_buffer.Reserve(std::max<std::size_t>(m_capacity, alignof(float)), alignof(float), false) ||
+        (mode == BackingMode::Full && !PrepareBacking(m_capacity, 0))) throw detail::LogicPreparationFailure{};
 }
 
 bool BlockArena::PrepareBacking(std::uint64_t lowBytes, std::uint64_t highBytes) noexcept {
@@ -20,9 +28,9 @@ bool BlockArena::PrepareBacking(std::uint64_t lowBytes, std::uint64_t highBytes)
         static_cast<std::uint32_t>(std::min<std::uint64_t>(lowBytes, m_storageCapacity)));
     const auto nextHigh = std::max(high,
         static_cast<std::uint32_t>(std::min<std::uint64_t>(highBytes, m_storageCapacity)));
-    if (!m_buffer.CommitRange(low, nextLow - low)) return false;
+    if (!m_buffer.CommitThrough(nextLow)) return false;
     m_lowPrepared.store(nextLow, std::memory_order_release);
-    if (!m_buffer.CommitRange(m_storageCapacity - nextHigh, nextHigh - high)) return false;
+    if (nextHigh != 0 && !m_buffer.CommitSuffixFrom(m_storageCapacity - nextHigh)) return false;
     m_highPrepared.store(nextHigh, std::memory_order_release);
     return true;
 }
@@ -130,7 +138,7 @@ void BlockArena::QuarantineHighEnd() {
 void BlockArena::SetCapacityForTests(std::uint32_t capacityBytes) {
     const auto capacity = std::min(capacityBytes, m_storageCapacity);
     // Moving the high end can place it inside the previously uncommitted gap.
-    if (!PrepareBacking(capacity, 0)) throw std::bad_alloc{};
+    if (!PrepareBacking(capacity, 0)) throw harken::detail::LogicPreparationFailure{};
     m_capacity = capacity;
 }
 

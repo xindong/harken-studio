@@ -1,7 +1,8 @@
 #ifndef HARKEN_CORE_TIMELINE_ARM_TABLE_H
 #define HARKEN_CORE_TIMELINE_ARM_TABLE_H
 
-#include "harken/core/StableRowStorage.h"
+#include "harken/core/GrowingRowStorage.h"
+#include <vector>
 
 #include "harken/core/DecisionToken.h"
 #include "harken/core/TimelineProgram.h"
@@ -747,10 +748,10 @@ public:
         std::size_t count_ = 0;
     };
 
-    explicit TimelineArmTable(std::uint32_t capacity);
+    explicit TimelineArmTable(std::uint32_t capacity, bool grow = false);
     ~TimelineArmTable();
 
-    std::uint32_t Capacity() const { return capacity_; }
+    std::uint32_t Capacity() const { return std::max(initialCapacity_, rows_.ConstructedCount()); }
     std::uint32_t ConstructedRowCount() const noexcept { return rows_.ConstructedCount(); }
     std::size_t RowStorageBytes() const noexcept { return rows_.RequestedBytes(); }
     std::size_t RowCommittedBytes() const noexcept { return rows_.CommittedBytes(); }
@@ -760,6 +761,13 @@ public:
     std::size_t ScopeReservedBytes() const noexcept { return groupMemberScopes_.ReservedBytes(); }
     bool AttachRowStoragePreparation(void* context,
         bool (*prepare)(void*, std::uint32_t, bool) noexcept) noexcept;
+    using PrepareReader = bool (*)(void*, std::uint32_t) noexcept;
+    bool AttachReader(void* context, PrepareReader prepare) noexcept;
+    void DetachReader(void* context) noexcept;
+    bool CanAcquire() const noexcept {
+        return (!rows_.PreparedUseActive() && rows_.size() < capacity_) || FreeCount() != 0;
+    }
+    bool PrepareAvailable(std::uint32_t count) noexcept;
     bool PrepareBacking(std::uint32_t count, StableStoragePreparation* out) noexcept;
     bool SetFreeGenerationForTests(std::uint32_t slot, std::uint32_t generation) noexcept;
     void SetRowCommitPageLimitForTests(std::size_t pages) noexcept {
@@ -1239,17 +1247,20 @@ private:
     bool CompleteOriginalGroupMemberCoverage(TimelineArmToken arm,
         const OriginalGroupMember* const* originals, std::size_t count) const noexcept;
     friend struct detail::OriginalGroupMemberTestAccess;
-    mutable StableRowStorage<GroupMemberScope> groupMemberScopes_;
+    mutable GrowingRowStorage<GroupMemberScope> groupMemberScopes_;
     mutable GroupMemberReceiver* groupMemberReceivers_ = nullptr;
     mutable std::uint64_t nextGroupMemberSerial_ = 0;
 
-    mutable StableRowStorage<Row> rows_;
+    mutable GrowingRowStorage<Row> rows_;
     bool PrepareRowDependencies(std::uint32_t count, bool fullSourceCommandBacking) noexcept;
     bool ConstructRowsThrough(std::uint32_t count) noexcept;
     void* rowStorageContext_ = nullptr;
     bool (*prepareRowStorage_)(void*, std::uint32_t, bool) noexcept = nullptr;
     std::uint64_t acceptedSourceTail_ = 0;
-    std::uint32_t capacity_ = 0;
+    struct Reader { void* context; PrepareReader prepare; };
+    std::vector<Reader> readers_;
+    const std::uint32_t initialCapacity_;
+    const std::uint32_t capacity_;
     std::uint64_t incarnation_ = 0;
     std::atomic<std::uint32_t> liveSourceCommandProofs_{0};
     std::atomic<std::uint64_t> liveOriginalArmRowOwners_{0};
