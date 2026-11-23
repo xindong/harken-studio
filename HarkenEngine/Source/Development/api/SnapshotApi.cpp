@@ -599,8 +599,13 @@ VnResult Vn_CaptureSnapshot(VnSnapshot* outSnapshot) {
                     sizeof(outSnapshot->busChannelPeaks));
     }
     if (outSnapshot->structSize >= snapshotVintage19Size) {
+#if HARKEN_ENGINE_DEV
         outSnapshot->vorbisDecodeLastUs = payload.vorbisDecodeLastUs;
         outSnapshot->vorbisDecoderCount = engine->vorbis.states.ActiveCount();
+#else
+        outSnapshot->vorbisDecodeLastUs = 0;
+        outSnapshot->vorbisDecoderCount = 0;
+#endif
     }
     return VN_OK;
     });
