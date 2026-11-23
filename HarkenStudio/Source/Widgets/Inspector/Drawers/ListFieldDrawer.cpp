@@ -579,7 +579,7 @@ private:
         addMenu_->setAttribute(Qt::WA_DeleteOnClose);
         const uint64_t generation = ++selectionGeneration_;
         for (const auto& option : choice->options) {
-            auto* action = addMenu_->addAction(option.text);
+            auto* action = addMenu_->addAction(option.addActionText.isEmpty() ? option.text : option.addActionText);
             action->setData(option.value);
             QObject::connect(action, &QAction::triggered, this,
                 [this, generation, ownerAtOpen = boundObjectID_, field = choice->field, value = option.value] {

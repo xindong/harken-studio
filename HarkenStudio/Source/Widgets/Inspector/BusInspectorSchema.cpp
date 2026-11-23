@@ -54,9 +54,9 @@ PropertyDescriptor receivesDescriptor()
         .type=PropType::List, .label="Receives", .section=PropertySection::Receive,
         .flags={.readOnly=true, .serialize=false, .settableByName=false},
         .elementSchema={
-            *pickSchemaField(sendColumns, QLatin1String("mode")),
             { .field="source", .type=PropType::ObjectRef, .label="Source" },
             level,
+            *pickSchemaField(sendColumns, QLatin1String("mode")),
         },
         .listPresentation=ListPresentation::Display,
         .get=[](const IComponent* c) -> QVariant {

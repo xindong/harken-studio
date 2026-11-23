@@ -190,7 +190,7 @@ inline const PropertySchema& VMixNode::schema()
                 .min=HK_PACK_PROPERTY_SEND_LEVEL_MIN, .max=HK_PACK_PROPERTY_SEND_LEVEL_MAX, .def=0.0, .decimals=1,
                 .toolTip="Gain applied to the sent signal. In Ducking mode, this controls the detector input level, not the target bus attenuation." },
               { .field="mode", .type=PropType::Enum, .label="Mode", .def=0,
-                .options={{"Mix", 0}, {"Ducking", 1}, {"Sidechain", 2}},
+                .options={{"Mix", 0, "Mix with..."}, {"Ducking", 1, "Duck..."}, {"Sidechain", 2, "Sidechain to..."}},
                 .toolTip="Mix adds audio to the target bus. Ducking drives built-in ducking on the target bus. Sidechain supplies an auxiliary signal to sidechain receivers." },
           },
           .get=[](const harken::studio::IComponent* c){

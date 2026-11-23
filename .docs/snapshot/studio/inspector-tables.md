@@ -19,7 +19,7 @@
 | Sound、Container、Layer、Track、Segment、Bus | Effects | Basic > Effect | # / Effect / Active | 整链配置与平台覆盖；除 Bus 外沿对象归属层级继承 |
 | Sound、Container、Layer、Track、Segment、Bus | Sends | Route > Send | # / Target / Volume / Mode | Mix、Ducking、Sidechain 路由配置；除 Bus 外可继承 |
 | Bus | Inputs | Route > Input | Source / Volume | 输出路由的反向查询，只读 |
-| Bus | Receives | Route > Receive | # / Mode / Source / Volume | Send 路由的反向查询，只读 |
+| Bus | Receives | Route > Receive | # / Source / Volume / Mode | Send 路由的反向查询，只读 |
 
 表注：Volume 以 dB 显示。Container 的 Selections 位于独立 Selection Editor，Inspector 保留 Mode、Play Type 及对应行为字段；独立表格见[表格快照](tables.md)。
 
@@ -56,7 +56,7 @@
 | Effects / 内嵌编辑区 | 双击 Effect 对象在 Inspector 下半区显示 Effect Editor，标题暂用居中的 Details，上半区保留常规属性；初始上下比例 1:1，分隔边框可拖动；每个 Inspector 首次展开后，选择其他 Effect 直接更新内容并保留比例，切换到非 Effect、清空选择、删除当前资产或关闭工程时清空并隐藏，再选择 Effect 自动恢复；每次单击右上 detach 均为当前资产新建独立浮动 Effect Editor，已有同类型实例及内嵌编辑区保留；新窗沿当前屏幕已有浮窗向右下错开，遇屏幕边缘回绕，已有窗口及已记忆位置不重排；固定 Inspector 保持自身对象 |
 | Effects / Effect Editor | Limiter 使用两行标准表单：Ceiling 范围 −24～0 dB、默认 0 dB，Release 范围 1～1000 ms、默认 100 ms，提供标准滑条、数值输入与复位；Preset 与 Custom 参数支持编辑、撤销重做及保存，Preset 参数跨平台共享，Custom 参数编辑遵循当前平台作用域，继承 Custom 只读；独立编辑器支持多实例、固定和布局恢复，槽位编辑器随该槽位的替换、模式切换及当前平台有效配置更新 |
 | Effects / 删除资产 | 删除 Effect 移除共享配置、各平台覆盖及未生效本地历史中的对应 Preset 引用行，保留 Custom；撤销一并恢复引用行及其原顺序、Active |
-| Sends / 新增 | 加号先选择 Mix、Ducking 或 Sidechain，再选择目标 Bus；取消任一步不新增行 |
+| Sends / 新增 | 加号先选择 `Mix with...`、`Duck...` 或 `Sidechain to...`，再选择目标 Bus；取消任一步不新增行 |
 | Sends / Mode | 可编辑并参与保存、继承和撤销；旧数据缺失 Mode 时按 Mix 解释；同一目标按 Mode 区分，单个 Mode 内目标唯一；与 Output 冲突或重复的 Mode 选项禁用 |
 | Sends / Volume | 三种 Mode 均表示发送的源信号增益，范围 −96～+24 dB；Ducking 中用于调节送入避让检测端的信号强度，并非指定目标衰减量；同一行各 Mode 分别记忆 Volume，Target 共用；首次进入未配置 Mode 沿用当前值，切回恢复上次值，记忆随工程保存并参与撤销 |
 | Sends / Output | Mix、Ducking 与 Output 目标互斥；Sidechain 可指向 Output 的目标；沿用自连与成环限制 |

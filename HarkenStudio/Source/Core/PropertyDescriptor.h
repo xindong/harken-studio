@@ -28,7 +28,7 @@ enum class PropertySection : uint8_t {
     FilterLowPass, FilterHighPass, FilterLowShelf, FilterHighShelf, Conversion
 };
 
-struct EnumOption { QString text; QVariant value; };
+struct EnumOption { QString text; QVariant value; QString addActionText{}; };
 
 // One segment of a segmented row. A fixed segment writes `value` when clicked
 // and reads as selected while the field holds it. A numeric segment owns a
