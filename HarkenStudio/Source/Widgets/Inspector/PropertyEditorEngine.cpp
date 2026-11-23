@@ -383,6 +383,19 @@ std::optional<QJsonValue> editorWireValue(
 std::optional<QVariant> editorValue(
     const PlayablePropertyAuthoringV1::Field& field, const QJsonValue& value)
 {
+    if (field.id == static_cast<uint8_t>(PlayablePropertyIdV1::Sends)) {
+        if (!value.isArray()) return std::nullopt;
+        QVariantList rows;
+        for (const auto& entry : value.toArray()) {
+            auto row = entry.toObject();
+            SendType type;
+            bool duckTarget;
+            if (!entry.isObject() || !readSendRoute(row, type, duckTarget)) return std::nullopt;
+            writeSendRoute(row, type, duckTarget);
+            rows.append(row.toVariantMap());
+        }
+        return rows;
+    }
     if (!objectReferenceRole(field.referenceRole)) return value.toVariant();
     if (!value.isString()) return std::nullopt;
     harken::studio::types::ObjectId stableId{};
@@ -617,6 +630,7 @@ QJsonObject PropertyEditorEngine::synthConfig(const PropertyDescriptor& d)
 
 QWidget* PropertyEditorEngine::buildField(const PropertyDescriptor& d, QWidget* parent)
 {
+    const QString field = d.storageField.isEmpty() ? d.field : d.storageField;
     auto& reg = InspectorCustomizationRegistry::instance();
 
     QWidget* control = nullptr;
@@ -638,20 +652,22 @@ QWidget* PropertyEditorEngine::buildField(const PropertyDescriptor& d, QWidget* 
     else if (drawer)
     {
         auto descriptor = d;
-        if (fieldGroup(d.field)) {
-            const auto selectable = [self = QPointer<PropertyEditorEngine>(this), field = d.field](uint32_t, uint32_t candidate) {
+        if (fieldGroup(field)) {
+            const auto selectable = [self = QPointer<PropertyEditorEngine>(this), field](uint32_t, uint32_t candidate) {
                 return self && self->groupReferenceSelectable(field, candidate);
             };
             if (d.type == PropType::ObjectRef) descriptor.refSelectable = selectable;
             for (auto& element : descriptor.elementSchema) {
                 if (element.type != PropType::ObjectRef) continue;
-                if (d.field == QLatin1String("sends")) {
+                if (field == QLatin1String("sends")) {
                     element.refSelectable = {};
                     element.refSelectableForElement =
-                        [self = QPointer<PropertyEditorEngine>(this), field = d.field]
+                        [self = QPointer<PropertyEditorEngine>(this), field]
                         (uint32_t, const QVariantMap& row, uint32_t candidate) {
-                            return self && self->groupReferenceSelectable(field, candidate,
-                                static_cast<SendMode>(row.value(QStringLiteral("mode")).toInt()));
+                            SendType type;
+                            bool duckTarget;
+                            return self && readSendRoute(QJsonObject::fromVariantMap(row), type, duckTarget)
+                                && self->groupReferenceSelectable(field, candidate, type, duckTarget);
                         };
                 } else {
                     element.refSelectable = selectable;
@@ -839,7 +855,7 @@ QWidget* PropertyEditorEngine::buildField(const PropertyDescriptor& d, QWidget* 
     }
 
     FieldBinding b;
-    b.field = d.field;
+    b.field = field;
     b.fieldLabel = d.label.isEmpty() ? d.field : d.label;
     b.ownerComponent = d.ownerComponent;
     b.widgetType = type;
@@ -866,22 +882,21 @@ QWidget* PropertyEditorEngine::buildField(const PropertyDescriptor& d, QWidget* 
 
     if (drawer)
     {
-        const QString field = d.field;
-        drawer->connectChanged(control, [this, field](const QVariant& v) {
-            commitFieldChange(field, v);
+        drawer->connectChanged(control, [this, field, control](const QVariant& v) {
+            commitFieldChange(field, v, {}, control);
         });
         if (field == QLatin1String("sends") && itemType_ == ProjectItem::Type::Bus) {
             const auto self = QPointer<PropertyEditorEngine>(this);
             ListFieldDrawer::setWidgetPreviewCallbacks(control,
-                [self, field](const QVariant& value) {
+                [self, control](const QVariant& value) {
                     if (!self) return;
                     for (auto& entry : self->bindings_)
-                        if (entry.field == field) { self->previewBusSends(entry, value); return; }
+                        if (entry.widget == control) { self->previewBusSends(entry, value); return; }
                 },
-                [self, field] {
+                [self, control] {
                     if (!self) return;
                     for (auto& entry : self->bindings_)
-                        if (entry.field == field) {
+                        if (entry.widget == control) {
                             if (entry.editSession) entry.editSession->cancel();
                             entry.editSession.reset();
                             return;
@@ -926,7 +941,7 @@ void PropertyEditorEngine::tagFieldTopic(const FieldBinding& binding, ProjectIte
     if (!binding.topicHost) return;
 
     ContextInfo::tag(binding.topicHost,
-                     ContextTopic::forField(binding.ownerComponent, binding.field, binding.fieldLabel,
+                     ContextTopic::forField(binding.ownerComponent, binding.widget->property("inspectorField").toString(), binding.fieldLabel,
                                             owner ? owner->guid : QUuid(),
                                             owner ? owner->type : itemType_,
                                             owner ? owner->name : QString()));
@@ -1029,7 +1044,7 @@ QWidget* PropertyEditorEngine::buildPage(QWidget* parent)
         std::set<FieldGroupId> inheritedGroups;
         for (const auto& field : schema_) {
             if (field.section != info.section) continue;
-            const auto group = fieldGroup(field.field);
+            const auto group = fieldGroup(field.storageField.isEmpty() ? field.field : field.storageField);
             if (group) inheritedGroups.insert(*group);
         }
         for (const auto group : inheritedGroups)
@@ -1794,7 +1809,7 @@ bool PropertyEditorEngine::refreshField(const QString& field)
                 decorator->bind(currentItem_);
         updating_ = false;
         handled = true;
-        if (!addressFilter && !coarseBindings && !FilterAuthoring::isField(field)) break;
+        if (!addressFilter && !coarseBindings && !FilterAuthoring::isField(field) && field != QLatin1String("sends")) break;
     }
 
     for (const auto& s : sectionBindings_) {

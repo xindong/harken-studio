@@ -268,11 +268,13 @@ def play_action(abi: Abi, meter, action: dict, plan: dict) -> dict:
     info = abi.new("VnActionFiringInfo")
     bus_peaks = {}
     max_live = 0
-    for _ in range(action["blocks"]):
+    for block in range(action["blocks"]):
         abi.check("Vn_Update")
         if meter is not None:
-            for bus, peak in meter.block().items():
-                bus_peaks[bus] = max(bus_peaks.get(bus, 0.0), peak)
+            levels = meter.block()
+            if block >= action.get("warmup_blocks", 0):
+                for bus, peak in levels.items():
+                    bus_peaks[bus] = max(bus_peaks.get(bus, 0.0), peak)
         abi.check("Vn_QueryActionFiring", firing, ctypes.byref(info))
         max_live = max(max_live, info.livePlayableCount)
     abi.call("Vn_StopActionFiring", firing, 0)

@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <set>
+#include <tuple>
 #include <utility>
 
 namespace harken::studio {
@@ -267,20 +268,15 @@ std::vector<FieldGroupDiagnostic> ValidateFieldGroupPayload(
         }
         for (std::size_t i = 0; i < send->sends.size(); ++i) {
             const auto& row = send->sends[i];
-            if (!harken::studio::project_schema::IsValidSendMode(row.mode))
+            if (!harken::studio::project_schema::IsValidSendRoute(row.type, row.duckTarget))
                 AddDiagnostic(diagnostics, DiagnosticCode::InvalidValue,
-                              group, "mode", i);
+                              group, "type", i);
             if (harken::studio::types::IsNull(row.targetBusID))
                 AddDiagnostic(diagnostics, DiagnosticCode::EmptyRequiredReference,
                               group, "targetBusID", i);
             if (!InRange(row.sendLevel, -96.0f, 24.0f))
                 AddDiagnostic(diagnostics, DiagnosticCode::InvalidValue,
                               group, "sendLevel", i);
-            for (const auto& [mode, volume] : row.modeVolumesDb)
-                if (!harken::studio::project_schema::IsValidSendMode(mode) || mode == row.mode
-                    || !InRange(volume, -96.0f, 24.0f))
-                    AddDiagnostic(diagnostics, DiagnosticCode::InvalidValue,
-                                  group, "modeVolumes", i);
         }
         break;
     }
@@ -393,11 +389,11 @@ std::vector<FieldGroupDiagnostic> FieldGroupReferenceCatalog::Validate(
                           FieldGroupReferenceKind::Bus, "outputBusRef");
         break;
     case FieldGroupId::Send: {
-        std::set<std::pair<AuthoringGuid, harken::studio::project_schema::SendMode>> seen;
+        std::set<std::tuple<AuthoringGuid, harken::studio::project_schema::SendType, bool>> seen;
         const auto& sends = std::get<SendFieldGroup>(payload).sends;
         for (std::size_t i = 0; i < sends.size(); ++i) {
             const auto guid = sends[i].targetBusID;
-            if (!seen.emplace(guid, sends[i].mode).second)
+            if (!seen.emplace(guid, sends[i].type, sends[i].duckTarget).second)
                 AddDiagnostic(diagnostics, DiagnosticCode::DuplicateSendTarget,
                               group, "targetBusID", i, guid);
             validateReference(guid, FieldGroupReferenceKind::Bus, "targetBusID", i);

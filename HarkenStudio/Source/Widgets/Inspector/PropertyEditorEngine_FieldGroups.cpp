@@ -113,12 +113,11 @@ void PropertyEditorEngine::buildGroupHeader(FieldGroupId group, CollapsibleSecti
     header->layout()->addWidget(inherit);
     auto& binding = groupBindings_[group];
     binding.inheritControls.push_back(inherit);
-    binding.section = section;
     QWidget* menuHost = showRangeName ? static_cast<QWidget*>(inherit) : section;
     menuHost->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(menuHost, &QWidget::customContextMenuRequested, this,
         [this, group, menuHost](const QPoint& position) {
-            showGroupMenu(group, menuHost->mapToGlobal(position));
+            showGroupMenu(group, menuHost, menuHost->mapToGlobal(position));
         });
     connect(inherit, &QCheckBox::clicked, this, [this, group, inherit] {
         if (updating_) return;
@@ -220,10 +219,8 @@ void PropertyEditorEngine::previewGroupSends(FieldBinding& binding, const QVaria
         const auto id = row.value(QStringLiteral("targetBusID")).toUInt(&valid);
         const auto* target = valid ? manager.findItemByObjectID(id) : nullptr;
         if (!target || target->type != ProjectItem::Type::Bus) return;
-        SendFieldGroupRow send{toFieldGroupGuid(target->guid), row.value(QStringLiteral("sendLevel")).toFloat(),
-            static_cast<SendMode>(row.value(QStringLiteral("mode")).toInt())};
-        if (!readSendModeVolumes(QJsonObject::fromVariantMap(row).value(QStringLiteral("modeVolumes")),
-                                 send.mode, send.modeVolumesDb)) return;
+        SendFieldGroupRow send{toFieldGroupGuid(target->guid), row.value(QStringLiteral("sendLevel")).toFloat()};
+        if (!readSendRoute(QJsonObject::fromVariantMap(row), send.type, send.duckTarget)) return;
         sends.sends.push_back(std::move(send));
     }
     const auto prepared = prepareFieldGroupEdit(*manager.currentProject(), {
@@ -382,9 +379,7 @@ QVariant PropertyEditorEngine::groupFieldValue(
             for (const auto& row : view.expectedBefore.send.shared.localHistory->sends) {
                 QVariantMap entry{{QStringLiteral("targetBusID"), fromFieldGroupGuid(row.targetBusID)},
                     {QStringLiteral("sendLevel"), row.sendLevel},
-                    {QStringLiteral("mode"), static_cast<int>(row.mode)}};
-                if (!row.modeVolumesDb.empty())
-                    entry.insert(QStringLiteral("modeVolumes"), sendModeVolumesJson(row.modeVolumesDb).toVariantMap());
+                    {QStringLiteral("type"), sendTypeName(row.type)}, {QStringLiteral("duckTarget"), row.duckTarget}};
                 rows.append(entry);
             }
         value.value = rows;
@@ -403,7 +398,7 @@ QVariant PropertyEditorEngine::groupFieldValue(
     return rows;
 }
 
-bool PropertyEditorEngine::groupReferenceSelectable(const QString& field, uint32_t candidate, SendMode mode) const
+bool PropertyEditorEngine::groupReferenceSelectable(const QString& field, uint32_t candidate, SendType type, bool duckTarget) const
 {
     const auto group = fieldGroup(field);
     const auto* target = ProjectManager::instance().findItemByObjectID(candidate);
@@ -416,7 +411,7 @@ bool PropertyEditorEngine::groupReferenceSelectable(const QString& field, uint32
     const auto peer = groupBindings_.find(*group == FieldGroupId::Output
         ? FieldGroupId::Send : FieldGroupId::Output);
     if (peer == groupBindings_.end() || !peer->second.view.valid) return false;
-    if (*group == FieldGroupId::Send && mode != SendMode::Sidechain) {
+    if (*group == FieldGroupId::Send && (type == SendType::Send || duckTarget)) {
         const auto output = peer->second.view.field(QStringLiteral("outputBusRef"));
         for (const auto& scope : output.perScope)
             if (scope.second.toUuid() == target->guid) return false;
@@ -424,7 +419,8 @@ bool PropertyEditorEngine::groupReferenceSelectable(const QString& field, uint32
         const auto sends = peer->second.view.field(QStringLiteral("sends"));
         for (const auto& scope : sends.perScope)
             for (const auto& row : scope.second.toList())
-                if (row.toMap().value(QStringLiteral("mode")).toInt() != static_cast<int>(SendMode::Sidechain)
+                if ((row.toMap().value(QStringLiteral("type")) == sendTypeName(SendType::Send)
+                     || row.toMap().value(QStringLiteral("duckTarget")).toBool())
                     && row.toMap().value(QStringLiteral("targetBusID")).toUuid() == target->guid)
                     return false;
     }
@@ -463,15 +459,15 @@ bool PropertyEditorEngine::applyGroupFieldView(FieldBinding& binding)
         if (*group == FieldGroupId::Send) {
             const auto self = QPointer<PropertyEditorEngine>(this);
             ListFieldDrawer::setWidgetPreviewCallbacks(binding.widget,
-                [self, field = binding.field](const QVariant& preview) {
+                [self, widget = binding.widget](const QVariant& preview) {
                     if (!self) return;
                     for (auto& entry : self->bindings_)
-                        if (entry.field == field) { self->previewGroupSends(entry, preview); return; }
+                        if (entry.widget == widget) { self->previewGroupSends(entry, preview); return; }
                 },
-                [self, field = binding.field] {
+                [self, widget = binding.widget] {
                     if (!self) return;
                     for (auto& entry : self->bindings_)
-                        if (entry.field == field) { self->finishGroupPreview(entry); return; }
+                        if (entry.widget == widget) { self->finishGroupPreview(entry); return; }
                 });
         }
         binding.drawer->bind(binding.widget, mixed ? QVariant(QVariantList{}) : value, currentItem_);
@@ -525,11 +521,11 @@ bool PropertyEditorEngine::canEditField(const FieldBinding& binding) const
 }
 
 void PropertyEditorEngine::commitFieldChange(
-    const QString& field, const QVariant& value, const std::optional<QJsonObject>& groupArgs)
+    const QString& field, const QVariant& value, const std::optional<QJsonObject>& groupArgs, QWidget* source)
 {
     if (updating_ || !currentItem_) return;
     const auto found = std::find_if(bindings_.begin(), bindings_.end(),
-        [&field](const FieldBinding& binding) { return binding.field == field; });
+        [&](const FieldBinding& binding) { return binding.field == field && (!source || binding.widget == source); });
     if (found == bindings_.end() || !canEditField(*found)) return;
     const auto group = fieldGroup(field);
     if (!group) {
@@ -561,11 +557,8 @@ void PropertyEditorEngine::commitFieldChange(
             const auto row = entry.toMap();
             const auto ref = referenceActionValue(row.value(QStringLiteral("targetBusID")));
             if (!ref) return;
-            QJsonObject send{{QStringLiteral("targetBusID"), *ref},
-                {QStringLiteral("sendLevel"), QJsonValue::fromVariant(row.value(QStringLiteral("sendLevel")))},
-                {QStringLiteral("mode"), row.value(QStringLiteral("mode")).toInt()}};
-            if (row.contains(QStringLiteral("modeVolumes")))
-                send.insert(QStringLiteral("modeVolumes"), QJsonValue::fromVariant(row.value(QStringLiteral("modeVolumes"))));
+            auto send = QJsonObject::fromVariantMap(row);
+            send[QStringLiteral("targetBusID")] = *ref;
             rows.append(send);
         }
         action = QStringLiteral("replace_field_group_sends");
@@ -629,13 +622,13 @@ void PropertyEditorEngine::executeGroupAction(FieldGroupId group, const QString&
     if (result.success) emit fieldGroupChanged();
 }
 
-void PropertyEditorEngine::showGroupMenu(FieldGroupId group, const QPoint& globalPosition)
+void PropertyEditorEngine::showGroupMenu(FieldGroupId group, QWidget* parent, const QPoint& globalPosition)
 {
     if (group == FieldGroupId::Conversion && conversionViews_.size() > 1) return;
     refreshFieldGroups();
     auto& binding = groupBindings_.at(group);
-    if (!binding.view.valid || !binding.section) return;
-    auto* menu = new QMenu(binding.section);
+    if (!binding.view.valid) return;
+    auto* menu = new QMenu(parent);
     menu->setObjectName(QStringLiteral("fieldGroupMenu_") + groupName(group));
     menu->setAttribute(Qt::WA_DeleteOnClose);
     const auto add = [&](const QString& title, const QString& mode, bool rebuild = false) {

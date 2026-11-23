@@ -262,9 +262,9 @@ FieldGroupEffectiveSnapshot buildFieldGroupEffectiveSnapshot(
             std::get<EffectFieldGroup>(effects.value->payload), effects.value->source,
             std::get<ConversionFieldGroup>(conversion.value->payload), conversion.value->source};
         for (const auto& row : groups.send.sends) {
-            if (row.mode != harken::studio::project_schema::SendMode::Sidechain
+            if ((row.type == harken::studio::project_schema::SendType::Send || row.duckTarget)
                 && row.targetBusID == groups.output.outputBusRef)
-                fail(QStringLiteral("Only a Sidechain Send can target the effective Output"),
+                fail(QStringLiteral("Only a Sidechain with Target Ducking off can target the effective Output"),
                      definition.guid, QStringLiteral("targetBusID"));
         }
         result.definitions.emplace(definition.guid, std::move(groups));

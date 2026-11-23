@@ -184,7 +184,7 @@ CurrentWorldCompileResult compileCurrentWorldRequest(
         request.containers, {}, request.transitions, request.actions,
         &request.busResult->idSet,
         harkencurrentworldcompiler::CompileCapacityModeV1::AuthoredContent,
-        request.propertyAuthoredOrders, request.reservedPropertyAuthoredOrders, request.duckingSends, request.includePreviewDucking);
+        request.propertyAuthoredOrders, request.reservedPropertyAuthoredOrders, request.duckingSends, request.emitEmptySignalTables);
     if (!compiled.ok() || !compiled.world) {
         result.status = bridge::CurrentWorldSyncStatus::CompileFailed;
         result.relatedStableId = compiled.relatedStableId;

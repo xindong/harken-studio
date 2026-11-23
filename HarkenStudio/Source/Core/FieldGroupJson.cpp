@@ -138,38 +138,22 @@ bool ReadFieldValue(const JsonValue& value, std::vector<SendFieldGroupRow>& rows
     for (std::size_t index = 0; index < value.items.size(); ++index) {
         const auto& entry = value.items[index];
         const auto rowPath = path + "[" + std::to_string(index) + "]";
-        if (!CheckMembers(entry, rowPath, {"targetBusID", "sendLevel", "mode", "modeVolumes"},
+        if (!CheckMembers(entry, rowPath, {"targetBusID", "sendLevel", "type", "duckTarget"},
                           {"targetBusID", "sendLevel"}, error)) return false;
         SendFieldGroupRow row;
         if (!ReadGuid(*entry.Find("targetBusID"), row.targetBusID, rowPath + ".targetBusID", error)
             || !ReadFloat(*entry.Find("sendLevel"), row.sendLevel, rowPath + ".sendLevel", error))
             return false;
-        if (const auto* mode = entry.Find("mode")) {
-            unsigned parsed = 0;
-            const char* end = mode->text.data() + mode->text.size();
-            const auto converted = std::from_chars(mode->text.data(), end, parsed);
-            if (mode->kind != JsonValue::Kind::Number || converted.ec != std::errc{}
-                || converted.ptr != end
-                || (parsed != static_cast<unsigned>(harken::studio::project_schema::SendMode::Mix)
-                    && parsed != static_cast<unsigned>(harken::studio::project_schema::SendMode::Ducking)
-                    && parsed != static_cast<unsigned>(harken::studio::project_schema::SendMode::Sidechain)))
-                return Fail(error, rowPath + ".mode", "expected a send mode");
-            row.mode = static_cast<harken::studio::project_schema::SendMode>(parsed);
+        using harken::studio::project_schema::SendType;
+        if (const auto* type = entry.Find("type")) {
+            if (type->kind != JsonValue::Kind::String || (type->text != "Send" && type->text != "Sidechain"))
+                return Fail(error, rowPath + ".type", "expected Send or Sidechain");
+            row.type = type->text == "Sidechain" ? SendType::Sidechain : SendType::Send;
         }
-        if (const auto* volumes = entry.Find("modeVolumes")) {
-            if (!CheckMembers(*volumes, rowPath + ".modeVolumes", {"0", "1", "2"}, {}, error))
-                return false;
-            for (const auto& [key, value] : volumes->members) {
-                const auto mode = static_cast<harken::studio::project_schema::SendMode>(key.front() - '0');
-                float volume = 0.0f;
-                if (mode == row.mode)
-                    return Fail(error, rowPath + ".modeVolumes." + key, "active mode uses sendLevel");
-                if (!ReadFloat(value, volume, rowPath + ".modeVolumes." + key, error)) return false;
-                if (volume < -96.0f || volume > 24.0f)
-                    return Fail(error, rowPath + ".modeVolumes." + key, "volume is outside [-96, 24]");
-                row.modeVolumesDb.emplace(mode, volume);
-            }
-        }
+        if (const auto* duckTarget = entry.Find("duckTarget"))
+            if (!ReadFieldValue(*duckTarget, row.duckTarget, rowPath + ".duckTarget", error)) return false;
+        if (!harken::studio::project_schema::IsValidSendRoute(row.type, row.duckTarget))
+            return Fail(error, rowPath + ".duckTarget", "only Sidechain can duck its target");
         rows.push_back(row);
     }
     return true;
@@ -262,17 +246,10 @@ void WriteFieldValue(JsonWriter& writer, const std::vector<SendFieldGroupRow>& r
         writer.ValueString(WriteGuid(row.targetBusID));
         writer.Key("sendLevel");
         WriteFloat(writer, row.sendLevel);
-        writer.Key("mode");
-        writer.ValueRawNumber(std::to_string(static_cast<unsigned>(row.mode)));
-        if (!row.modeVolumesDb.empty()) {
-            writer.Key("modeVolumes");
-            writer.BeginObject();
-            for (const auto& [mode, volume] : row.modeVolumesDb) {
-                writer.Key(std::to_string(static_cast<unsigned>(mode)).c_str());
-                WriteFloat(writer, volume);
-            }
-            writer.EndObject();
-        }
+        writer.Key("type");
+        writer.ValueString(row.type == harken::studio::project_schema::SendType::Sidechain ? "Sidechain" : "Send");
+        writer.Key("duckTarget");
+        writer.ValueBool(row.duckTarget);
         writer.EndObject();
     }
     writer.EndArray();

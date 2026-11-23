@@ -56,7 +56,8 @@ PropertyDescriptor receivesDescriptor()
         .elementSchema={
             { .field="source", .type=PropType::ObjectRef, .label="Source" },
             level,
-            *pickSchemaField(sendColumns, QLatin1String("mode")),
+            *pickSchemaField(sendColumns, QLatin1String("type")),
+            { .field="duckTarget", .type=PropType::Bool, .label="Ducking" },
         },
         .listPresentation=ListPresentation::Display,
         .get=[](const IComponent* c) -> QVariant {
@@ -65,7 +66,8 @@ PropertyDescriptor receivesDescriptor()
             QVariantList out;
             for (const auto& in : ProjectManager::instance().collectIncomingSends(host->objectID))
                 out.push_back(QVariantMap{
-                    { QStringLiteral("mode"), static_cast<int>(in.mode) },
+                    { QStringLiteral("type"), sendTypeName(in.type) },
+                    { QStringLiteral("duckTarget"), in.type == SendType::Sidechain ? QVariant(in.duckTarget) : QVariant{} },
                     { QStringLiteral("source"), in.fromBusID },
                     { QStringLiteral("level"),  VMixNode::linearToDb(in.level) } });
             return QVariant(out);
@@ -101,6 +103,7 @@ const PropertySchema& busInspectorSchema()
         out.push_back(effectsInspectorDescriptor());
         out.push_back(inputsDescriptor());
         out.push_back(sendsInspectorDescriptor());
+        out.push_back(sendsInspectorDescriptor(SendType::Sidechain));
         out.push_back(receivesDescriptor());
         out.push_back(notesInspectorDescriptor());
         return out;

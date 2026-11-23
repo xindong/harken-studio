@@ -73,8 +73,12 @@
       }
     },
     "mixnode.sends": {
-      "title": "Sends",
-      "body": "点击加号先选择 Mix with...、Duck... 或 Sidechain to...，再选择 Target 总线。Mix 合并音频，Ducking 定义通往避让检测端的路由，Sidechain 定义通往侧链接收端的辅助信号路由。三种模式的 Volume（-96～+24 dB）均控制发送的源信号增益；Ducking 中调节的是检测输入增益，并非目标衰减量。同一行的各 Mode 分别记忆 Volume，Target 共用；首次进入未配置的 Mode 沿用当前 Volume，切回时恢复上次值。同一目标在每个 Mode 中只能出现一次，冲突的 Mode 选项会禁用。Mix、Ducking 不能与 Output 指向同一目标，Sidechain 可以。本阶段试听与导出仅包含 Mix，Ducking、Sidechain 保留为编辑配置。"
+      "title": "Send",
+      "body": "选择 Target 总线，把这一路信号混入目标。Volume 控制发送增益，范围为 −96 至 +24 dB。Send 和 Sidechain 共用继承与平台覆盖。"
+    },
+    "mixnode.sidechains": {
+      "title": "Sidechain",
+      "body": "选择 Sidechain to... 或 Sidechain to... (Ducking Enabled)，再选择目标总线。勾选 Target Ducking 后，这路信号会在试听和正式包中触发目标总线避让。Volume 控制检测输入增益，切换勾选时保留当前值。未勾选的侧链配置随工程保存，供插件辅助输入使用。指向自身 Output 的侧链只能保持未勾选。"
     },
     "audio.loopCount": {
       "title": "Loop",
@@ -113,7 +117,7 @@
     },
     "bus.receives": {
       "title": "Receives",
-      "body": "进入此总线的发送路由及其电平，只读。修改来源对象的 Sends 即可调整。"
+      "body": "列出来到此总线的 Send 和 Sidechain。Volume 是来源端的发送增益。Sidechain 行的 Ducking 显示该来源是否配置为压低此总线。可在来源对象上编辑对应路由。"
     },
     "variable.kind": {
       "title": "Kind",

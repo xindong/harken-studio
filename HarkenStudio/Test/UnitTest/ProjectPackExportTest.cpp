@@ -2744,6 +2744,51 @@ TEST(ProjectPackExport, PartialPublicationRefreshesEmbeddedClosureAndKeepsOtherP
     registry.clear();
 }
 
+TEST(ProjectPackExport, PartialPublicationUpdatesSharedSoundRoutesIndependently)
+{
+    using namespace harken::studio;
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    auto& registry = AssetRegistry::instance();
+    registry.clear();
+    const auto clearAssets = qScopeGuard([&] { registry.clear(); });
+    registry.setProjectRoot(directory.path());
+    const auto tone = registerToneAsset(directory.path(), "tone.wav", 0.2f);
+    auto project = HarkenTest::projectWithPlatforms({"Windows"});
+    ASSERT_NO_FATAL_FAILURE(buildProject(project, directory.path(), tone, tone,
+        {{"One", 21, kSharedSoundObjectId}, {"Two", 22, kSharedSoundObjectId}}));
+    const auto bus = makeItem("Music", ProjectItem::Type::Bus, 202);
+    addChild(project.busses.front().rootItem, bus);
+    auto& sends = project.layers.front().rootItem->fieldGroups.send.shared;
+    sends = {FieldGroupMode::Local,
+             SendFieldGroup{{{toFieldGroupGuid(bus->guid), -12.0f, project_schema::SendType::Sidechain, true}}}};
+
+    ProjectPackExporter exporter;
+    ProjectPackExporter::ExportOptions options;
+    options.platform = HarkenTest::platformIdString("Windows");
+    const QDir live(directory.filePath("exports"));
+    const auto exportPacks = [&] { return exporter.ExportAllPacks(project, live.path(), options); };
+    const auto first = exportPacks();
+    ASSERT_TRUE(first.success) << first.error.toStdString();
+    QMap<QString, QByteArray> previous;
+    for (const QString& name : {QStringLiteral("One.bytes"), QStringLiteral("Two.bytes"), QStringLiteral("Init.bytes")})
+        previous.insert(name, readFileBytes(live.filePath(name)));
+    sends.localHistory->sends.front().sendLevel = -6.0f;
+    options.updateSelectedOnly = true;
+    options.onlyPackPaths = {QStringLiteral("One")};
+    const auto updatedOne = exportPacks();
+    ASSERT_TRUE(updatedOne.success) << updatedOne.error.toStdString();
+    const auto one = readFileBytes(live.filePath("One.bytes"));
+    EXPECT_NE(one, previous.value("One.bytes"));
+    EXPECT_EQ(readFileBytes(live.filePath("Two.bytes")), previous.value("Two.bytes"));
+    EXPECT_EQ(readFileBytes(live.filePath("Init.bytes")), previous.value("Init.bytes"));
+    options.onlyPackPaths = {QStringLiteral("Two")};
+    const auto updatedTwo = exportPacks();
+    ASSERT_TRUE(updatedTwo.success) << updatedTwo.error.toStdString();
+    EXPECT_NE(readFileBytes(live.filePath("Two.bytes")), previous.value("Two.bytes"));
+    EXPECT_EQ(readFileBytes(live.filePath("One.bytes")), one);
+}
+
 
 namespace {
 struct PackWriteAccessProject

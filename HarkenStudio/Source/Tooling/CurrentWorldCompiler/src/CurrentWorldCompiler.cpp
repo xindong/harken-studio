@@ -292,7 +292,7 @@ CompileResultV1 CompileCurrentWorldV1(
     CompileCapacityModeV1 capacityMode,
     const std::map<harken::studio::types::ObjectId, std::uint32_t>& propertyAuthoredOrders,
     const std::set<std::uint32_t>& reservedPropertyAuthoredOrders,
-    const std::vector<DuckingSendAuthoringV1>& duckingSends, bool includePreviewDucking) {
+    const std::vector<DuckingSendAuthoringV1>& duckingSends, bool emitEmptySignalTables) {
     CompileResultV1 result{};
     std::set<std::uint32_t> occupiedPropertyOrders;
     for (const auto& [id, order] : propertyAuthoredOrders) {
@@ -1710,14 +1710,13 @@ CompileResultV1 CompileCurrentWorldV1(
     }
 
     world->Refresh();
-    if (includePreviewDucking)
+    if (emitEmptySignalTables || !duckingSends.empty())
         world->view_.sourceBodyVintage = harken::studio::build::kCurrentWorldBodyVintageV20;
     if (!duckingSends.empty()) {
         if (duckingSends.size() > UINT32_MAX || busIds == nullptr) {
             result.status = CompileStatusV1::InvalidProject;
             return result;
         }
-        world->view_.sourceBodyVintage = harken::studio::build::kCurrentWorldBodyVintageV20;
         std::map<harken::studio::types::ObjectId, harken::studio::build::SignalReceiverV1> receivers;
         for (const auto& send : duckingSends) {
             harken::studio::build::SignalRelationV1 row;
@@ -1771,9 +1770,7 @@ CompileResultV1 CompileCurrentWorldV1(
     world->view_.identity.capabilityMask =
         harken::studio::build::detail::ComputeCurrentWorldLocalCapabilityMaskV1(world->view_);
     world->view_.identity.runtimeSemanticFingerprint =
-        world->view_.sourceBodyVintage == harken::studio::build::kCurrentWorldBodyVintageV20
-            ? harken::studio::build::ComputeCurrentWorldFingerprintV7(world->view_)
-            : harken::studio::build::ComputeCurrentWorldFingerprintV5(world->view_);
+        harken::studio::build::ComputeCurrentWorldBodyFingerprint(world->view_);
     const harken::studio::build::WorldInstallStatus validation =
         harken::studio::build::ValidateCurrentWorldV1(world->view_);
     if (validation == harken::studio::build::WorldInstallStatus::Capacity) {

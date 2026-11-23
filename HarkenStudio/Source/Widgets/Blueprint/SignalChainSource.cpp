@@ -7,7 +7,6 @@
 #include "Core/Components/VBus.h"
 #include "Core/Components/VMixNode.h"
 #include "Core/ItemTypeCatalog.h"
-#include "Core/NumericFormat.h"
 #include "Core/PlayablePropertyAuthoringV1.h"
 #include "Core/ProjectManager.h"
 #include "Core/ProjectTypes.h"
@@ -272,13 +271,6 @@ bool busInChain(const SignalChainView& view, uint32_t busID)
         if (b.busID == busID) return true;
     }
     return false;
-}
-
-QString incomingLevelText(float linearLevel)
-{
-    const float db = VMixNode::linearToDb(linearLevel);
-    const QString level = db <= -96.0f ? kNegativeInfinityText : formatDecimal(db, 1);
-    return level + QStringLiteral(" dB");
 }
 
 std::vector<BlueprintNodeDesc>
@@ -626,12 +618,9 @@ SignalChainSource::edgesFromView(const SignalChainView& view,
                 e.toKind     = BlueprintNodeKind::Bus;
                 e.toId       = send.targetBusID;
                 e.edgeKind   = static_cast<uint8_t>(BlueprintEdgeKind::Send);
-                e.sendMode   = send.mode;
-                e.label      = (send.sendLevel != 0.0f)
-                                   ? QStringLiteral("%1 (%2 dB)")
-                                         .arg(QString::fromLatin1(sendModeLabel(send.mode)))
-                                         .arg(send.sendLevel, 0, 'f', 1)
-                                   : QString::fromLatin1(sendModeLabel(send.mode));
+                e.sendType   = send.type;
+                e.duckTarget = send.duckTarget;
+                e.label      = sendTypeName(send.type);
                 e.styleRole  = BlueprintNodeRole::ReceiveBus;
                 out.push_back(e);
             }
@@ -647,9 +636,9 @@ SignalChainSource::edgesFromView(const SignalChainView& view,
                 e.toKind    = BlueprintNodeKind::Bus;
                 e.toId      = headID;
                 e.edgeKind  = static_cast<uint8_t>(BlueprintEdgeKind::Send);
-                e.sendMode  = in.mode;
-                e.label     = QStringLiteral("%1 (%2)")
-                                  .arg(QString::fromLatin1(sendModeLabel(in.mode)), incomingLevelText(in.level));
+                e.sendType  = in.type;
+                e.duckTarget = in.duckTarget;
+                e.label     = sendTypeName(in.type);
                 e.styleRole = BlueprintNodeRole::ReceiveBus;
                 out.push_back(e);
             }
@@ -662,9 +651,9 @@ SignalChainSource::edgesFromView(const SignalChainView& view,
 bool SignalChainSource::onConnect(uint32_t fromId, uint32_t toId,
                                   const QString& edgeType,
                                   const QString& fromKind,
-                                  const QString& toKind)
+                                  const QString& toKind, SendType sendType, bool duckTarget)
 {
-    lastResult_ = doConnect(fromId, toId, edgeType, fromKind, toKind);
+    lastResult_ = doConnect(fromId, toId, edgeType, fromKind, toKind, sendType, duckTarget);
     if (lastResult_.success) {
         rebuildViewForCurrentTarget();
         emit sourceChanged();
@@ -675,9 +664,9 @@ bool SignalChainSource::onConnect(uint32_t fromId, uint32_t toId,
 bool SignalChainSource::onDisconnect(uint32_t fromId, uint32_t toId,
                                      const QString& edgeType,
                                      const QString& fromKind,
-                                     const QString& toKind)
+                                     const QString& toKind, SendType sendType, bool duckTarget)
 {
-    const bool ok = doDisconnect(fromId, toId, edgeType, fromKind, toKind);
+    const bool ok = doDisconnect(fromId, toId, edgeType, fromKind, toKind, sendType, duckTarget);
     lastResult_ = {};
     lastResult_.success = ok;
     if (ok) {
@@ -697,7 +686,7 @@ BlueprintConnectResult
 SignalChainSource::doConnect(uint32_t fromId, uint32_t toId,
                              const QString& edgeType,
                              const QString& fromKind,
-                             const QString& toKind)
+                             const QString& toKind, SendType sendType, bool duckTarget)
 {
     BlueprintConnectResult r;
     auto& pm = ProjectManager::instance();
@@ -741,6 +730,11 @@ SignalChainSource::doConnect(uint32_t fromId, uint32_t toId,
 
     auto& undoMgr = UndoRedoManager::instance();
 
+    if (!project_schema::IsValidSendRoute(sendType, duckTarget)
+        || (sendType == SendType::Sidechain && eff != QStringLiteral("send"))) {
+        r.error = QStringLiteral("invalid_send_route");
+        return r;
+    }
     if (fromIsBus) {
         if (eff == QStringLiteral("send")) {
             if (!toBus) { r.error = QStringLiteral("send_target_not_bus"); return r; }
@@ -751,18 +745,20 @@ SignalChainSource::doConnect(uint32_t fromId, uint32_t toId,
             const auto* fromMix = fromBus->comp<VMixNode>();
             const bool dupSend = fromMix && std::any_of(
                 fromMix->sends.begin(), fromMix->sends.end(),
-                [&](const harken::studio::Send& s) { return s.targetBusID == toId && s.mode == SendMode::Mix; });
+                [&](const auto& send) {
+                    return send.targetBusID == toId && send.type == sendType && send.duckTarget == duckTarget;
+                });
             if (dupSend) {
                 r.error = QStringLiteral("duplicate");
                 r.effectiveType = QStringLiteral("send");
                 return r;
             }
-            if (!pm.sendTargetSelectable(fromId, toId)) {
+            if (!pm.sendTargetSelectable(fromId, toId, sendType, duckTarget)) {
                 r.error = QStringLiteral("send_rejected");
                 return r;
             }
             undoMgr.beginMacro(QStringLiteral("Blueprint Connect (Send)"));
-            undoMgr.push(new BlueprintSendConnectCommand(fromId, toId));
+            undoMgr.push(new BlueprintSendConnectCommand(fromId, toId, sendType, duckTarget));
             undoMgr.endMacro();
             r.success = true;
             r.effectiveType = QStringLiteral("send");
@@ -916,7 +912,7 @@ SignalChainSource::doConnect(uint32_t fromId, uint32_t toId,
 bool SignalChainSource::doDisconnect(uint32_t fromId, uint32_t toId,
                                      const QString& edgeType,
                                      const QString& fromKind,
-                                     const QString& toKind)
+                                     const QString& toKind, SendType sendType, bool duckTarget)
 {
     auto& pm = ProjectManager::instance();
     auto* project = pm.currentProject();
@@ -944,18 +940,18 @@ bool SignalChainSource::doDisconnect(uint32_t fromId, uint32_t toId,
     QString kind = edgeType.toLower();
     auto& undoMgr = UndoRedoManager::instance();
 
+    if (!project_schema::IsValidSendRoute(sendType, duckTarget)) return false;
     if (fromBus != nullptr && fromItem == nullptr) {
-        if (kind.isEmpty() || kind == QStringLiteral("send") || kind == QStringLiteral("mix")
-            || kind == QStringLiteral("ducking") || kind == QStringLiteral("sidechain")) {
-            const auto mode = kind == QStringLiteral("ducking") ? SendMode::Ducking
-                : kind == QStringLiteral("sidechain") ? SendMode::Sidechain : SendMode::Mix;
+        if (kind.isEmpty() || kind == QStringLiteral("send")) {
             const auto* fromMix = fromBus->comp<VMixNode>();
             const bool hasSend = fromMix && std::any_of(
                 fromMix->sends.begin(), fromMix->sends.end(),
-                [&](const harken::studio::Send& s) { return s.targetBusID == toId && s.mode == mode; });
+                [&](const auto& send) {
+                    return send.targetBusID == toId && send.type == sendType && send.duckTarget == duckTarget;
+                });
             if (hasSend) {
                 undoMgr.beginMacro(QStringLiteral("Blueprint Disconnect (Send)"));
-                undoMgr.push(new BlueprintSendDisconnectCommand(fromId, toId, nullptr, mode));
+                undoMgr.push(new BlueprintSendDisconnectCommand(fromId, toId, sendType, duckTarget));
                 undoMgr.endMacro();
                 return true;
             }
@@ -963,6 +959,7 @@ bool SignalChainSource::doDisconnect(uint32_t fromId, uint32_t toId,
         return false;
     }
 
+    if (sendType == SendType::Sidechain) return false;
     if (PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(fromItem->type)) {
         if (kind.isEmpty()) {
             if (toBus) kind = QStringLiteral("bus_route");

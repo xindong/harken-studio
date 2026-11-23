@@ -95,10 +95,9 @@ TEST_F(OutputSendExclusionTest, RouteCommandsRestoreCompleteAuthoredProperty)
     ASSERT_NE(target, nullptr);
     const QJsonArray rows{
         QJsonObject{{"targetBusID", static_cast<qint64>(target->objectID)},
-                    {"sendLevel", -9.0}, {"mode", static_cast<int>(SendMode::Mix)},
-                    {"modeVolumes", QJsonObject{{"1", 6.0}, {"2", -18.0}}}},
+                    {"sendLevel", -9.0}, {"type", "Send"}, {"duckTarget", false}},
         QJsonObject{{"targetBusID", static_cast<qint64>(target->objectID)},
-                    {"sendLevel", -3.0}, {"mode", static_cast<int>(SendMode::Sidechain)}}};
+                    {"sendLevel", -3.0}, {"type", "Sidechain"}, {"duckTarget", false}}};
     ASSERT_TRUE(restoreBusSendState(*source, {source->guid, {}, {true, rows}}));
     const auto before = captureBusSendState(*source);
     ASSERT_TRUE(before);
@@ -156,11 +155,11 @@ TEST_F(OutputSendExclusionTest, StructuralEditsPreserveIndependentRoutingScopes)
     const auto windows = manager.currentProject()->platforms[0].id;
     const auto android = manager.currentProject()->platforms[1].id;
     QJsonArray rows;
-    for (const auto mode : {SendMode::Mix, SendMode::Ducking, SendMode::Sidechain}) {
-        const int other = (static_cast<int>(mode) + 1) % 3;
+    for (const auto& [type, duckTarget] : {std::pair{SendType::Send, false},
+                                          std::pair{SendType::Sidechain, true},
+                                          std::pair{SendType::Sidechain, false}}) {
         rows.append(QJsonObject{{"targetBusID", static_cast<qint64>(targetId)},
-            {"mode", static_cast<int>(mode)}, {"sendLevel", -6.0},
-            {"modeVolumes", QJsonObject{{QString::number(other), 3.0}}}});
+            {"type", sendTypeName(type)}, {"duckTarget", duckTarget}, {"sendLevel", -6.0}});
     }
     ASSERT_TRUE(restoreBusSendState(*source, {source->guid, {}, {true, rows}}));
     rows.removeAt(0);
@@ -178,7 +177,7 @@ TEST_F(OutputSendExclusionTest, StructuralEditsPreserveIndependentRoutingScopes)
     context.setSelected({windows}, windows);
     const auto platformReceives = manager.collectIncomingSends(targetId);
     ASSERT_EQ(platformReceives.size(), 4u);
-    for (const auto& receive : platformReceives) EXPECT_NE(receive.mode, SendMode::Mix);
+    for (const auto& receive : platformReceives) EXPECT_EQ(receive.type, SendType::Sidechain);
     context.setSelected({android}, android);
     const auto sharedReceives = manager.collectIncomingSends(targetId);
     ASSERT_EQ(sharedReceives.size(), 3u);
@@ -208,8 +207,8 @@ TEST_F(OutputSendExclusionTest, StructuralEditsPreserveIndependentRoutingScopes)
         const auto sends = effectiveBusSends(*source, scope);
         ASSERT_TRUE(sends);
         ASSERT_EQ(sends->size(), 1u);
-        EXPECT_EQ(sends->front().mode, SendMode::Sidechain);
-        EXPECT_FALSE(sends->front().modeVolumesDb.empty());
+        EXPECT_EQ(sends->front().type, SendType::Sidechain);
+        EXPECT_FALSE(sends->front().duckTarget);
     }
     EXPECT_FALSE(captureBusSendState(*source, android)->value.present);
     const auto moved = snapshot();
@@ -287,17 +286,15 @@ TEST_F(OutputSendExclusionTest, RoutingEditsRejectCyclesAtomicallyAcrossLandingS
     const auto android = manager.currentProject()->platforms[1].id;
     const QJsonArray shared{
         QJsonObject{{"targetBusID", static_cast<qint64>(other->objectID)},
-            {"mode", static_cast<int>(SendMode::Mix)}, {"sendLevel", -6.0},
-            {"modeVolumes", QJsonObject{{"1", 3.0}}}}};
+            {"type", "Send"}, {"duckTarget", false}, {"sendLevel", -6.0}}};
     const QJsonArray overlay{
         QJsonObject{{"targetBusID", static_cast<qint64>(other->objectID)},
-            {"mode", static_cast<int>(SendMode::Sidechain)}, {"sendLevel", -12.0},
-            {"modeVolumes", QJsonObject{{"0", -18.0}}}}};
+            {"type", "Sidechain"}, {"duckTarget", false}, {"sendLevel", -12.0}}};
     ASSERT_TRUE(restoreBusSendState(*source, {source->guid, {}, {true, shared}}));
     ASSERT_TRUE(restoreBusSendState(*source, {source->guid, android, {true, overlay}}));
     ASSERT_TRUE(restoreBusSendState(*target, {target->guid, windows, {true, QJsonArray{
         QJsonObject{{"targetBusID", static_cast<qint64>(source->objectID)},
-            {"mode", static_cast<int>(SendMode::Mix)}, {"sendLevel", -9.0}}}}}));
+            {"type", "Send"}, {"duckTarget", false}, {"sendLevel", -9.0}}}}}));
     ASSERT_TRUE(validateBusRouting(*manager.currentProject()).isEmpty());
     const auto snapshot = [&] {
         std::vector<BusSendState> states;
@@ -315,8 +312,7 @@ TEST_F(OutputSendExclusionTest, RoutingEditsRejectCyclesAtomicallyAcrossLandingS
     PlatformContextService::instance().setSelected({android}, android);
     const QJsonArray rows{
         QJsonObject{{"targetBusID", static_cast<qint64>(target->objectID)},
-            {"mode", static_cast<int>(SendMode::Mix)}, {"sendLevel", -3.0},
-            {"modeVolumes", QJsonObject{{"2", -24.0}}}}};
+            {"type", "Send"}, {"duckTarget", false}, {"sendLevel", -3.0}}};
     QJsonObject request{{"authoring_handle", static_cast<qint64>(source->objectID)},
         {"property", "sends"}, {"value", rows}};
     for (const bool sharedEdit : {false, true}) {
@@ -365,9 +361,8 @@ TEST_F(OutputSendExclusionTest, GraphRouteEditsPreserveUnselectedScopesAndRestor
     const auto windows = manager.currentProject()->platforms[0].id;
     const auto android = manager.currentProject()->platforms[1].id;
     const QJsonArray rows{
-        QJsonObject{{"targetBusID", static_cast<qint64>(target->objectID)}, {"mode", 0}, {"sendLevel", -3.0}},
-        QJsonObject{{"targetBusID", static_cast<qint64>(target->objectID)}, {"mode", 2}, {"sendLevel", -12.0},
-                    {"modeVolumes", QJsonObject{{"0", 3.0}, {"1", -9.0}}}}};
+        QJsonObject{{"targetBusID", static_cast<qint64>(target->objectID)}, {"type", "Send"}, {"duckTarget", false}, {"sendLevel", -3.0}},
+        QJsonObject{{"targetBusID", static_cast<qint64>(target->objectID)}, {"type", "Sidechain"}, {"duckTarget", false}, {"sendLevel", -12.0}}};
     ASSERT_TRUE(restoreBusSendState(*source, {source->guid, {}, {true, rows}}));
     ASSERT_TRUE(restoreBusSendState(*source, {source->guid, android, {true, QJsonArray{rows[1]}}}));
     PlatformContextService::instance().setSelected({windows}, windows, false);
@@ -382,7 +377,7 @@ TEST_F(OutputSendExclusionTest, GraphRouteEditsPreserveUnselectedScopesAndRestor
         {source->objectID, target->objectID, other->objectID});
     ASSERT_TRUE(graph.ok());
     const auto edge = std::find_if(graph.edges.begin(), graph.edges.end(), [&](const auto& entry) {
-        return entry.kind == SignalPathEdgeKind::Send && entry.mode == SendMode::Sidechain
+        return entry.kind == SignalPathEdgeKind::Send && entry.type == SendType::Sidechain
             && graph.nodes[entry.from.occurrenceIndex].objectID == source->objectID;
     });
     ASSERT_NE(edge, graph.edges.end());
@@ -424,7 +419,7 @@ TEST_F(OutputSendExclusionTest, GraphRouteEditsPreserveUnselectedScopesAndRestor
     ASSERT_TRUE(stale.ok()) << stale.error.toStdString();
     auto changedShared = rows;
     changedShared.append(QJsonObject{{"targetBusID", static_cast<qint64>(other->objectID)},
-        {"mode", 2}, {"sendLevel", -6.0}});
+        {"type", "Sidechain"}, {"duckTarget", false}, {"sendLevel", -6.0}});
     ASSERT_TRUE(restoreBusSendState(*source, {source->guid, {}, {true, changedShared}}));
     const auto changed = snapshot();
     EXPECT_FALSE(applySignalPathConnect(std::move(stale)));
@@ -445,9 +440,8 @@ TEST_F(OutputSendExclusionTest, CombinedGraphRouteAndParentEditsReplayCompleteSc
     ASSERT_NE(other, nullptr);
     const auto windows = manager.currentProject()->platforms[0].id;
     const QJsonArray rows{
-        QJsonObject{{"targetBusID", static_cast<qint64>(master->objectID)}, {"mode", 0}, {"sendLevel", -6.0},
-                    {"modeVolumes", QJsonObject{{"2", -12.0}}}},
-        QJsonObject{{"targetBusID", static_cast<qint64>(other->objectID)}, {"mode", 0}, {"sendLevel", -9.0}}};
+        QJsonObject{{"targetBusID", static_cast<qint64>(master->objectID)}, {"type", "Send"}, {"duckTarget", false}, {"sendLevel", -6.0}},
+        QJsonObject{{"targetBusID", static_cast<qint64>(other->objectID)}, {"type", "Send"}, {"duckTarget", false}, {"sendLevel", -9.0}}};
     ASSERT_TRUE(restoreBusSendState(*source, {source->guid, {}, {true, rows}}));
     PlatformContextService::instance().setSelected({windows}, windows, false);
     const auto snapshot = [&] {

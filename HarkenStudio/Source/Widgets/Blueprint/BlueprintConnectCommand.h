@@ -99,6 +99,7 @@ class BlueprintSendConnectCommand : public harken::studio::UndoCommand
 public:
     BlueprintSendConnectCommand(uint32_t fromBusId,
                                 uint32_t targetBusId,
+                                SendType type = SendType::Send, bool duckTarget = false,
                                 harken::studio::UndoCommand* parent = nullptr);
 
     void undo() override;
@@ -109,6 +110,8 @@ private:
     std::optional<FieldGroupEditResult> groupEdit_;
     uint32_t fromBusId_   = 0;
     uint32_t targetBusId_ = 0;
+    SendType type_ = SendType::Send;
+    bool duckTarget_ = false;
     std::optional<BusSendState> before_;
     std::optional<BusSendState> after_;
 
@@ -120,8 +123,8 @@ class BlueprintSendDisconnectCommand : public harken::studio::UndoCommand
 public:
     BlueprintSendDisconnectCommand(uint32_t fromBusId,
                                    uint32_t targetBusId,
-                                   harken::studio::UndoCommand* parent = nullptr,
-                                   SendMode mode = SendMode::Mix);
+                                   SendType type = SendType::Send, bool duckTarget = false,
+                                   harken::studio::UndoCommand* parent = nullptr);
 
     void undo() override;
     void redo() override;
@@ -132,7 +135,8 @@ private:
     uint32_t fromBusId_   = 0;
     uint32_t targetBusId_ = 0;
 
-    SendMode mode_ = SendMode::Mix;
+    SendType type_ = SendType::Send;
+    bool duckTarget_ = false;
     std::optional<BusSendState> before_;
     std::optional<BusSendState> after_;
 

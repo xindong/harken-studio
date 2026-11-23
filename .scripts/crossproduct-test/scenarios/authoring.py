@@ -42,10 +42,10 @@ def option(fields: dict, field: str, text: str):
     raise LookupError(f"Studio no longer offers {field}={text!r}; offered: {fields[field].get('options')}")
 
 
-def export_all(studio, project: Path, output: Path) -> Path:
+def export_all(studio, project: Path, output: Path, force: bool = True) -> Path:
     platform = studio.call(project, "list_project_platforms")["platforms"][0]["id"]
     result = studio.call(project, "export_pack", {"output_path": str(output), "platform_id": platform,
-                                                  "all": True, "force": True})
+                                                  "all": True, "force": force})
     if not result.get("success"):
         raise AssertionError(f"export failed: {json.dumps(result)[:2000]}")
     directories = {path.parent for path in output.rglob("Init.bytes")}

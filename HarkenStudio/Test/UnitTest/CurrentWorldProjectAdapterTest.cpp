@@ -154,7 +154,7 @@ struct ArtifactFileFactoryReset
 
 }
 
-TEST(CurrentWorldProjectAdapter, PreviewBusDuckingUsesSelectedPlatformAndFullWidthHandles)
+TEST(CurrentWorldProjectAdapter, BusDuckingUsesSelectedPlatformAndFullWidthHandles)
 {
     std::shared_ptr<ProjectItem> container, sound;
     auto project = makeRandomProject(&container, &sound);
@@ -170,13 +170,13 @@ TEST(CurrentWorldProjectAdapter, PreviewBusDuckingUsesSelectedPlatformAndFullWid
     const auto sendsId = static_cast<std::uint8_t>(harkenplayableproperties::PlayablePropertyIdV1::Sends);
     const auto rows = [&](double gain) {
         return QJsonArray{QJsonObject{{QStringLiteral("targetBusID"), static_cast<double>(target->objectID)},
-                                     {QStringLiteral("sendLevel"), gain}, {QStringLiteral("mode"), 1}}};
+                                     {QStringLiteral("sendLevel"), gain}, {QStringLiteral("type"), QStringLiteral("Sidechain")},
+                                     {QStringLiteral("duckTarget"), true}}};
     };
     ASSERT_TRUE(PlayablePropertyAuthoringV1::setOverride(*source, *locator, sendsId, rows(-6), std::nullopt));
     const auto windows = HarkenTest::PlatformIds::Windows;
     ASSERT_TRUE(PlayablePropertyAuthoringV1::setOverride(*source, *locator, sendsId, rows(-12), windows));
     CurrentWorldBuildOptions options;
-    options.includePreviewDucking = true;
     QString error;
     const auto shared = buildCurrentWorldSyncRequest(project, std::nullopt, &error, nullptr, &options, 1);
     ASSERT_NE(nullptr, shared) << error.toStdString();

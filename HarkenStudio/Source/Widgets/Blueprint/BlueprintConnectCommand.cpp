@@ -74,7 +74,7 @@ FieldGroupEditResult prepareRouteEdit(ProjectItem& item, uint32_t targetBusId)
 }
 
 FieldGroupEditResult prepareSendEdit(ProjectItem& item, uint32_t targetBusId, bool connect,
-                                    SendMode mode = SendMode::Mix)
+                                     SendType type, bool duckTarget)
 {
     const auto* bus = ProjectManager::instance().findBusItem(targetBusId);
     if (!bus) {
@@ -86,9 +86,9 @@ FieldGroupEditResult prepareSendEdit(ProjectItem& item, uint32_t targetBusId, bo
     auto sends = item.fieldGroups.send.shared.localHistory.value_or(SendFieldGroup{});
     const auto target = authoringGuid(bus->guid);
     const auto existing = std::find_if(sends.sends.begin(), sends.sends.end(),
-        [&](const auto& row) { return row.targetBusID == target && row.mode == mode; });
+        [&](const auto& row) { return row.targetBusID == target && row.type == type && row.duckTarget == duckTarget; });
     if (connect && existing == sends.sends.end())
-        sends.sends.push_back({target, 0.0f, mode});
+        sends.sends.push_back({target, 0.0f, type, duckTarget});
     else if (!connect && existing != sends.sends.end())
         sends.sends.erase(existing);
     FieldGroupEditRequest request;
@@ -355,15 +355,18 @@ void BlueprintOverrideToggleCommand::undo()
 
 BlueprintSendConnectCommand::BlueprintSendConnectCommand(uint32_t fromBusId,
                                                          uint32_t targetBusId,
+                                                         SendType type, bool duckTarget,
                                                          harken::studio::UndoCommand* parent)
     : harken::studio::UndoCommand(QObject::tr("Blueprint Send Connect"), parent)
     , fromBusId_(fromBusId)
     , targetBusId_(targetBusId)
+    , type_(type)
+    , duckTarget_(duckTarget)
 {
     auto* item = findItem(fromBusId_);
     if (item && PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(item->type)) {
         groupDefinition_ = item->guid;
-        groupEdit_ = prepareSendEdit(*item, targetBusId_, true);
+        groupEdit_ = prepareSendEdit(*item, targetBusId_, true, type_, duckTarget_);
         if (!groupEdit_->ok() || !groupEdit_->changed) setObsolete(true);
         return;
     }
@@ -384,7 +387,7 @@ void BlueprintSendConnectCommand::redo()
     }
     firstRedo_ = false;
     if (!before_ || !ProjectManager::instance().upsertSendInternal(
-            fromBusId_, targetBusId_, 1.0f)) {
+            fromBusId_, targetBusId_, 1.0f, type_, duckTarget_)) {
         setObsolete(true);
         return;
     }
@@ -403,17 +406,18 @@ void BlueprintSendConnectCommand::undo()
 
 BlueprintSendDisconnectCommand::BlueprintSendDisconnectCommand(uint32_t fromBusId,
                                                                uint32_t targetBusId,
-                                                               harken::studio::UndoCommand* parent,
-                                                               SendMode mode)
+                                                               SendType type, bool duckTarget,
+                                                               harken::studio::UndoCommand* parent)
     : harken::studio::UndoCommand(QObject::tr("Blueprint Send Disconnect"), parent)
     , fromBusId_(fromBusId)
     , targetBusId_(targetBusId)
-    , mode_(mode)
+    , type_(type)
+    , duckTarget_(duckTarget)
 {
     auto* item = findItem(fromBusId_);
     if (item && PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(item->type)) {
         groupDefinition_ = item->guid;
-        groupEdit_ = prepareSendEdit(*item, targetBusId_, false, mode_);
+        groupEdit_ = prepareSendEdit(*item, targetBusId_, false, type_, duckTarget_);
         if (!groupEdit_->ok() || !groupEdit_->changed) setObsolete(true);
         return;
     }
@@ -434,7 +438,7 @@ void BlueprintSendDisconnectCommand::redo()
     }
     firstRedo_ = false;
     if (!before_ || !ProjectManager::instance().removeSendInternal(
-            fromBusId_, targetBusId_, mode_)) {
+            fromBusId_, targetBusId_, type_, duckTarget_)) {
         setObsolete(true);
         return;
     }

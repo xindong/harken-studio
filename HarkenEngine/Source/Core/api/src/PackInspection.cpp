@@ -20,7 +20,7 @@ VnResult Decode(const VnPackByteSpan& span, PackCanonicalImage& image,
     if (parsed != VN_OK) return parsed;
     if (!image.hasPartition || image.requirement.storageModelVersion != 2) return VN_PACK_INCOMPATIBLE;
     const auto decoded = body.DecodeWithResult(image.partitionBody.data(), image.partitionBody.size(),
-        kCanonicalDefinitionPartitionBodyVintage, CurrentWorldDecodeMode::StrictArtifact);
+        image.partitionHeader.bodyVintage, CurrentWorldDecodeMode::StrictArtifact);
     if (decoded == CurrentWorldBodyDecodeResult::Capacity) return VN_PACK_RESIDENT_CAPACITY;
     return decoded == CurrentWorldBodyDecodeResult::Ok && body.ProductionView() != nullptr
         ? VN_OK : VN_BAD_PACK;

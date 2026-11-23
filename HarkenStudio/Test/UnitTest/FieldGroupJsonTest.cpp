@@ -113,10 +113,8 @@ TEST(FieldGroupJson, FiniteFloatBitsAndTableRowOrderRoundTripDeterministically)
     DefinitionFieldGroups groups;
     groups.output.shared = {FieldGroupMode::Local, OutputFieldGroup{kBus, -0.0f}};
     groups.send.shared = {FieldGroupMode::Local,
-                         SendFieldGroup{{{kSendBus, 0.1f, SendMode::Sidechain,
-                                          {{SendMode::Mix, -12.0f}, {SendMode::Ducking, 3.0f}}},
-                                         {kBus, -0.0f, SendMode::Ducking,
-                                          {{SendMode::Sidechain, -96.0f}}}}}};
+                         SendFieldGroup{{{kSendBus, 0.1f, SendType::Sidechain, false},
+                                         {kBus, -0.0f, SendType::Sidechain, true}}}};
     SpatialRatingFieldGroup rating;
     rating.spatialPanning = std::numeric_limits<float>::denorm_min();
     rating.spatialAttenuationDistanceScaling = 3.333333f;
@@ -160,12 +158,13 @@ TEST(FieldGroupJson, RejectsInvalidFloatTypesOverflowAndOutOfRangeDormantHistory
         ExpectRejected(Block(State("Inherit", Replace(kOutput, "\"outputBusVolume\":0",
             "\"outputBusVolume\":" + std::string(value)))));
         ExpectRejected(Block(kInherit, State("Inherit", Replace(kSend, "\"sendLevel\":-6",
-            "\"sendLevel\":-6,\"modeVolumes\":{\"1\":" + std::string(value) + "}"))));
+            "\"sendLevel\":" + std::string(value)))));
     }
-    for (const auto* volumes : {R"({"0":-12})", R"({"01":-12})", R"({"3":-12})",
-                                R"({"1":-97})", R"({"1":25})", "[]"})
+    for (const auto* route : {R"("type":"Unknown")", R"("duckTarget":1)",
+                              R"("type":"Send","duckTarget":true)"}) {
         ExpectRejected(Block(kInherit, State("Inherit", Replace(kSend, "\"sendLevel\":-6",
-            "\"sendLevel\":-6,\"modeVolumes\":" + std::string(volumes)))));
+            "\"sendLevel\":-6," + std::string(route)))));
+    }
 }
 
 TEST(FieldGroupJson, RejectsDuplicateMembersAndMalformedJson)

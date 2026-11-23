@@ -1730,58 +1730,54 @@ buildCurrentWorldSyncRequestForContext(ProjectData& project, PlatformScope scope
                               request.get(), error, options, status)) {
         return {};
     }
-    if (options && options->includePreviewDucking) {
-        request->includePreviewDucking = true;
-        const auto appendDucking = [&](const ProjectItem& source, harken::studio::build::SignalEndpointKindV1 kind,
-                                       harken::studio::types::ObjectId target, float level) {
-            const auto targetBytes = harken::studio::types::ObjectIdBytes(target);
-            QByteArray name("harken-preview-ducking-v1:");
-            name.append(reinterpret_cast<const char*>(targetBytes.data()), static_cast<qsizetype>(targetBytes.size()));
-            const auto relation = runtimeObjectId(QUuid::createUuidV5(source.guid, name));
-            request->duckingSends.push_back({relation, kind, source.runtimeId(), target, level});
-        };
-        // Send inheritance is resolved at the Sound, just as for ordinary Mix.
-        // Emitting another ancestor source would count inherited audio twice.
-        for (const auto* item : index.definitions) {
-            if (item->type != ProjectItem::Type::Sound ||
-                std::none_of(request->materializations.begin(), request->materializations.end(),
-                    [&](const auto& value) { return value.stableId == item->runtimeId(); })) continue;
-            const auto effective = groups.definitions.find(toFieldGroupGuid(item->guid));
-            if (effective == groups.definitions.end()) continue;
-            for (const auto& send : effective->second.send.sends) {
-                if (send.mode != harken::studio::project_schema::SendMode::Ducking) continue;
-                const auto* target = request->identityIndex->find(send.targetBusID);
-                if (!target || target->kind != harken::studio::project_schema::RuntimeIdentityKindV1::Bus) {
-                    setError(error, QStringLiteral("Ducking target Bus identity is missing"));
-                    return {};
-                }
-                appendDucking(*item, harken::studio::build::SignalEndpointKindV1::Sound,
-                              target->stableId, send.sendLevel);
-            }
-        }
-        for (const auto* bus : index.buses) {
-            const auto locator = PlayablePropertyAuthoringV1::definitionLocator(*bus);
-            const auto state = locator ? PlayablePropertyAuthoringV1::readProperty(
-                const_cast<ProjectItem&>(*bus), *locator,
-                static_cast<std::uint8_t>(harkenplayableproperties::PlayablePropertyIdV1::Sends), scope) : std::nullopt;
-            if (!state || !state->value.isArray()) {
-                setError(error, QStringLiteral("Bus Ducking sends are invalid"));
+    request->emitEmptySignalTables = options && options->emitEmptySignalTables;
+    const auto appendDucking = [&](const ProjectItem& source, harken::studio::build::SignalEndpointKindV1 kind,
+                                   harken::studio::types::ObjectId target, float level) {
+        const auto targetBytes = harken::studio::types::ObjectIdBytes(target);
+        QByteArray name("harken-preview-ducking-v1:");
+        name.append(reinterpret_cast<const char*>(targetBytes.data()), static_cast<qsizetype>(targetBytes.size()));
+        const auto relation = runtimeObjectId(QUuid::createUuidV5(source.guid, name));
+        request->duckingSends.push_back({relation, kind, source.runtimeId(), target, level});
+    };
+    // Send inheritance is resolved at the Sound, just as for ordinary Mix.
+    // Emitting another ancestor source would count inherited audio twice.
+    for (const auto& sound : request->soundSources) {
+        const auto* item = index.byGuid.at(sound.stableId);
+        const auto effective = groups.definitions.find(sound.stableId);
+        if (effective == groups.definitions.end()) continue;
+        for (const auto& send : effective->second.send.sends) {
+            if (!send.duckTarget) continue;
+            const auto* target = request->identityIndex->find(send.targetBusID);
+            if (!target || target->kind != harken::studio::project_schema::RuntimeIdentityKindV1::Bus) {
+                setError(error, QStringLiteral("Ducking target Bus identity is missing"));
                 return {};
             }
-            for (const auto& value : state->value.toArray()) {
-                const auto row = value.toObject();
-                if (row.value(QStringLiteral("mode")).toInt() != static_cast<int>(harken::studio::project_schema::SendMode::Ducking)) continue;
-                const auto handle = static_cast<std::uint32_t>(row.value(QStringLiteral("targetBusID")).toDouble());
-                const auto* target = request->identityIndex->findBySourceHandle(
-                    harken::studio::project_schema::RuntimeIdentityKindV1::Bus,
-                    handle == kMasterBusID ? project.busses.front().rootItem->objectID : static_cast<std::uint32_t>(handle));
-                if (!target) {
-                    setError(error, QStringLiteral("Bus Ducking target identity is missing"));
-                    return {};
-                }
-                appendDucking(*bus, harken::studio::build::SignalEndpointKindV1::Bus,
-                              target->stableId, static_cast<float>(row.value(QStringLiteral("sendLevel")).toDouble()));
+            appendDucking(*item, harken::studio::build::SignalEndpointKindV1::Sound,
+                          target->stableId, send.sendLevel);
+        }
+    }
+    for (const auto* bus : index.buses) {
+        const auto locator = PlayablePropertyAuthoringV1::definitionLocator(*bus);
+        const auto state = locator ? PlayablePropertyAuthoringV1::readProperty(
+            const_cast<ProjectItem&>(*bus), *locator,
+            static_cast<std::uint8_t>(harkenplayableproperties::PlayablePropertyIdV1::Sends), scope) : std::nullopt;
+        if (!state || !state->value.isArray()) {
+            setError(error, QStringLiteral("Bus Ducking sends are invalid"));
+            return {};
+        }
+        for (const auto& value : state->value.toArray()) {
+            const auto row = value.toObject();
+            if (!row.value(QStringLiteral("duckTarget")).toBool()) continue;
+            const auto handle = static_cast<std::uint32_t>(row.value(QStringLiteral("targetBusID")).toDouble());
+            const auto* target = request->identityIndex->findBySourceHandle(
+                harken::studio::project_schema::RuntimeIdentityKindV1::Bus,
+                handle == kMasterBusID ? project.busses.front().rootItem->objectID : static_cast<std::uint32_t>(handle));
+            if (!target) {
+                setError(error, QStringLiteral("Bus Ducking target identity is missing"));
+                return {};
             }
+            appendDucking(*bus, harken::studio::build::SignalEndpointKindV1::Bus,
+                          target->stableId, static_cast<float>(row.value(QStringLiteral("sendLevel")).toDouble()));
         }
     }
     setStatus(status, CurrentWorldBuildStatus::Ready);
@@ -1842,6 +1838,10 @@ void retainCurrentWorldSyncRequestInputs(
             request.project.roots.push_back(node.guid);
     std::erase_if(request.materializations, [&](const auto& row) {
         return retainedIds.count(row.stableId) == 0;
+    });
+    std::erase_if(request.duckingSends, [&](const auto& send) {
+        return send.sourceKind != harken::studio::build::SignalEndpointKindV1::Bus
+            && retainedIds.count(send.sourceId) == 0;
     });
     std::erase_if(request.soundSources, [&](const auto& row) {
         return retainedIds.count(row.stableId) == 0;

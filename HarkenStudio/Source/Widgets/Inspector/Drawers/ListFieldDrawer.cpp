@@ -34,6 +34,7 @@
 #include <QSpinBox>
 #include <QStandardItemModel>
 #include <QStyle>
+#include <QStyleOptionButton>
 #include <QToolButton>
 #include "Core/ToolTip.h"
 #include <QVBoxLayout>
@@ -60,6 +61,22 @@ int floatEditorWidth()
 
 constexpr int kLeadColWeight = 220;
 constexpr int kTailColWeight = 200;
+
+class ListCheckBox final : public QCheckBox
+{
+public:
+    explicit ListCheckBox(QWidget* parent) : QCheckBox(parent)
+    {
+        setAttribute(Qt::WA_LayoutUsesWidgetRect);
+    }
+
+    QSize sizeHint() const override
+    {
+        QStyleOptionButton option;
+        initStyleOption(&option);
+        return style()->subElementRect(QStyle::SE_CheckBoxIndicator, &option, this).size();
+    }
+};
 
 class ListElementValidator : public QValidator
 {
@@ -132,7 +149,7 @@ public:
         if (hasRowOrder_ && !d.flags.readOnly)
             box_->setRowMoveHandler([this](int from, int to) {
                 finishPreview();
-                if (anchored() && anchorCol_ == 0 && hasRowOrder_) {
+                if (!desc_.listRowFilter.isEmpty() || (anchored() && anchorCol_ == 0 && hasRowOrder_)) {
                     QList<int> positions;
                     QVariantList entries;
                     for (int i = 0; i < value_.size(); ++i)
@@ -146,7 +163,8 @@ public:
                     entries.move(source, target);
                     for (int i = 0; i < positions.size(); ++i) {
                         auto entry = entries[i].toMap();
-                        entry[anchorField()] = value_[positions[i]].toMap().value(anchorField());
+                        if (anchored())
+                            entry[anchorField()] = value_[positions[i]].toMap().value(anchorField());
                         value_[positions[i]] = entry;
                     }
                 } else {
@@ -384,7 +402,7 @@ private:
                 weight = ((ed.flags.readOnly || desc_.flags.readOnly)
                               ? floatReadOnlyWidth() : floatEditorWidth())
                     + 2 * ThemeManager::instance().metrics().table.cellPaddingX;
-            else if (ed.type == PropType::Enum || ed.type == PropType::ObjectRef)
+            else if (ed.type == PropType::Enum || ed.type == PropType::ObjectRef || ed.type == PropType::String)
                 weight = kTailColWeight;
             defaultShares_[ci] = weight;
             sum += weight;
@@ -527,6 +545,8 @@ private:
 
     bool inWindow(const QVariantMap& elem) const
     {
+        for (auto it = desc_.listRowFilter.cbegin(); it != desc_.listRowFilter.cend(); ++it)
+            if (elem.value(it.key()) != it.value()) return false;
         if (!anchored())
             return true;
         const double anchor = elem.value(anchorField()).toDouble();
@@ -553,7 +573,7 @@ private:
 
     QVariantMap defaultElement() const
     {
-        QVariantMap elem;
+        QVariantMap elem = desc_.listRowFilter;
         for (const auto& ed : desc_.elementSchema)
             if (!ed.flags.state) elem[ed.field] = ed.def;
         if (const std::optional<int> anchor = freeAnchor())
@@ -572,7 +592,7 @@ private:
         }
         const auto choice = std::find_if(desc_.elementSchema.begin(), desc_.elementSchema.end(),
             [this](const auto& field) { return field.field == desc_.listAddChoiceField; });
-        if (choice == desc_.elementSchema.end() || choice->type != PropType::Enum) return;
+        if (choice == desc_.elementSchema.end() || choice->options.empty()) return;
         if (addMenu_) addMenu_->close();
         addMenu_ = new QMenu(this);
         addMenu_->setObjectName(QStringLiteral("listAddMenu_") + desc_.field);
@@ -761,6 +781,8 @@ private:
                 const auto& ed = desc_.elementSchema[ci];
                 const QVariant v = elem.value(ed.field, ed.def);
                 QWidget* editor = rowEditors_[i][ci];
+                if (ed.type == PropType::Bool && desc_.flags.readOnly
+                    && v.isValid() != (qobject_cast<QCheckBox*>(editor) != nullptr)) return false;
                 const QSignalBlocker blocker(editor);
                 IFieldDrawer* drawer = ed.type != PropType::Float && ed.type != PropType::List
                     ? InspectorCustomizationRegistry::instance().fieldDrawer(ed.type) : nullptr;
@@ -773,8 +795,10 @@ private:
                     doubleSpin->setValue(v.toDouble());
                 else if (auto* intSpin = qobject_cast<QSpinBox*>(editor))
                     intSpin->setValue(v.toInt());
-                else if (auto* check = qobject_cast<QCheckBox*>(editor))
+                else if (auto* check = qobject_cast<QCheckBox*>(editor)) {
                     check->setChecked(v.toBool());
+                    refreshBoolean(check, ed, visibleRows[i]);
+                }
                 else if (auto* combo = qobject_cast<QComboBox*>(editor)) {
                     combo->setCurrentIndex(combo->findData(v));
                     refreshEnumOptions(combo, visibleRows[i], ed.field);
@@ -864,7 +888,7 @@ private:
             {
                 if (hasRowOrder_ && ci == 0) {
                     auto* number = box_->createRowNumber(row, i, anchorCol_ == 0
-                        ? std::optional<int>(elem.value(anchorField()).toInt()) : std::nullopt);
+                        ? elem.value(anchorField()).toInt() : static_cast<int>(rowWidgets_.size()) + 1);
                     number->setEnabled(canEdit() || desc_.flags.readOnly);
                     if (desc_.flags.readOnly) {
                         number->setProperty("dragHandleRow", QVariant());
@@ -888,9 +912,12 @@ private:
                 // A width-capped editor in the stretch column pins to the right
                 // edge; expanding editors fill the cell instead.
                 DebugTint::tintContainer(cell, columnTintRole(ed, stretch));
-                const bool alignRight = stretch && editor->maximumWidth() < QWIDGETSIZE_MAX;
-                cell->addWidget(editor, alignRight ? 0 : 1,
-                                alignRight ? Qt::AlignRight : Qt::Alignment{});
+                if (ed.type == PropType::Bool)
+                    cell->addWidget(editor, 0, Qt::AlignCenter);
+                else if (stretch && editor->maximumWidth() < QWIDGETSIZE_MAX)
+                    cell->addWidget(editor, 0, Qt::AlignRight);
+                else
+                    cell->addWidget(editor, 1);
                 if (auto* slider = qobject_cast<ParameterSlider*>(editor)) {
                     auto* valueEditor = new ParameterValueEditor(
                         slider->binding(), &ThemeManager::instance(), cell);
@@ -918,6 +945,14 @@ private:
 
         if (!rowWidgets_.empty())
             rowWidgets_.back()->setProperty("lastRow", true);
+    }
+
+    void refreshBoolean(QCheckBox* check, const PropertyDescriptor& field, int row)
+    {
+        if (!desc_.validateElement || field.flags.readOnly || isReadOnly()) return;
+        const auto error = elementError(row, field.field, !check->isChecked());
+        check->setEnabled(error.isEmpty());
+        check->setToolTip(error.isEmpty() ? field.toolTip : error);
     }
 
     QWidget* buildElementEditor(const PropertyDescriptor& edIn, int row, const QVariant& v,
@@ -983,8 +1018,10 @@ private:
             }
             case PropType::Bool:
             {
-                auto* check = new QCheckBox(parent);
+                if (desc_.flags.readOnly && !v.isValid()) return new QLabel(parent);
+                auto* check = new ListCheckBox(parent);
                 check->setChecked(v.toBool());
+                refreshBoolean(check, ed, row);
                 QObject::connect(check, &QCheckBox::toggled, this,
                     [this, generation, row, field = ed.field](bool nv) {
                         applyElementChange(generation, row, field, nv);
@@ -1011,6 +1048,7 @@ private:
             }
             case PropType::String:
             {
+                if (desc_.flags.readOnly) return new QLabel(v.toString(), parent);
                 auto* edit = new QLineEdit(v.toString(), parent);
                 if (desc_.validateElement) {
                     edit->setValidator(new ListElementValidator(

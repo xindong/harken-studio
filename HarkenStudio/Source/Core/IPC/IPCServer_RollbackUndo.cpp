@@ -157,12 +157,19 @@ bool IPCServer::prepareRollbackStepForAction(const QString& cmd,
             return false;
         }
 
+        SendType type;
+        bool duckTarget;
+        if (!readSendRoute(args, type, duckTarget)) {
+            if (error) *error = QStringLiteral("Invalid send type or duckTarget");
+            return false;
+        }
+        writeSendRoute(*previewEntry, type, duckTarget);
         bool sendExists = false;
         Send oldSend;
         const auto& srcSends = srcMix->sends;
         for (const auto& send : srcSends)
         {
-            if (send.targetBusID == targetBusID && send.mode == SendMode::Mix)
+            if (send.targetBusID == targetBusID && send.type == type && send.duckTarget == duckTarget)
             {
                 sendExists = true;
                 oldSend = send;

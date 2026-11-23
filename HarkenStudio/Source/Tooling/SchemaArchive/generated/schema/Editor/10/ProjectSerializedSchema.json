@@ -911,17 +911,19 @@
     },
     "fieldGroupSendRow": {
       "additionalProperties": false,
-      "properties": {
-        "mode": {
-          "enum": [
-            0,
-            1,
-            2
-          ],
-          "type": "integer"
+      "if": {
+        "properties": {
+          "duckTarget": {
+            "const": true
+          }
         },
-        "modeVolumes": {
-          "$ref": "#/$defs/sendModeVolumes"
+        "required": [
+          "duckTarget"
+        ]
+      },
+      "properties": {
+        "duckTarget": {
+          "type": "boolean"
         },
         "sendLevel": {
           "maximum": 24,
@@ -930,12 +932,29 @@
         },
         "targetBusID": {
           "$ref": "#/$defs/uuid"
+        },
+        "type": {
+          "enum": [
+            "Send",
+            "Sidechain"
+          ],
+          "type": "string"
         }
       },
       "required": [
         "targetBusID",
         "sendLevel"
       ],
+      "then": {
+        "properties": {
+          "type": {
+            "const": "Sidechain"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
       "type": "object"
     },
     "fieldGroupSharedConversion": {
@@ -2416,49 +2435,47 @@
     },
     "send": {
       "additionalProperties": false,
-      "properties": {
-        "mode": {
-          "enum": [
-            0,
-            1,
-            2
-          ],
-          "type": "integer"
+      "if": {
+        "properties": {
+          "duckTarget": {
+            "const": true
+          }
         },
-        "modeVolumes": {
-          "$ref": "#/$defs/sendModeVolumes"
+        "required": [
+          "duckTarget"
+        ]
+      },
+      "properties": {
+        "duckTarget": {
+          "type": "boolean"
         },
         "sendLevel": {
           "type": "number"
         },
         "targetBusRef": {
           "$ref": "#/$defs/objectReference"
+        },
+        "type": {
+          "enum": [
+            "Send",
+            "Sidechain"
+          ],
+          "type": "string"
         }
       },
       "required": [
         "sendLevel",
         "targetBusRef"
       ],
-      "type": "object"
-    },
-    "sendModeVolumes": {
-      "additionalProperties": false,
-      "properties": {
-        "0": {
-          "maximum": 24,
-          "minimum": -96,
-          "type": "number"
+      "then": {
+        "properties": {
+          "type": {
+            "const": "Sidechain"
+          }
         },
-        "1": {
-          "maximum": 24,
-          "minimum": -96,
-          "type": "number"
-        },
-        "2": {
-          "maximum": 24,
-          "minimum": -96,
-          "type": "number"
-        }
+        "required": [
+          "type"
+        ]
       },
       "type": "object"
     },

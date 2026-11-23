@@ -1115,10 +1115,22 @@ bool EncodeCurrentWorldShippingBody(const ContainerWorldInstallViewV1 &world,
 
 bool EncodeCurrentWorldPreviewBody(const ContainerWorldInstallViewV1& world,
                                    std::vector<std::uint8_t>& out) noexcept {
+    if (world.sourceBodyVintage == kCurrentWorldBodyVintageV20 &&
+        ValidateCurrentWorldV1(world) != WorldInstallStatus::Ok) {
+        out.clear();
+        return false;
+    }
+    return EncodeCurrentWorldPartitionBody(world, out);
+}
+
+bool EncodeCurrentWorldPartitionBody(const ContainerWorldInstallViewV1& world,
+                                     std::vector<std::uint8_t>& out) noexcept {
     if (world.sourceBodyVintage == kCurrentWorldShippingBodyVintage)
         return EncodeCurrentWorldShippingBody(world, out);
     if (world.sourceBodyVintage != kCurrentWorldBodyVintageV20 ||
-        ValidateCurrentWorldV1(world) != WorldInstallStatus::Ok || !EncodeCurrentWorldBodyImpl(world, out)) {
+        !CountPointer(world.signalRelationCount, world.signalRelations, UINT32_MAX) ||
+        !CountPointer(world.signalReceiverCount, world.signalReceivers, UINT32_MAX) ||
+        !ValidateCurrentWorldSectionGroupsV1(world) || !EncodeCurrentWorldBodyImpl(world, out)) {
         out.clear();
         return false;
     }
@@ -1126,9 +1138,14 @@ bool EncodeCurrentWorldPreviewBody(const ContainerWorldInstallViewV1& world,
         const auto offset = out.size();
         const auto relations = std::uint64_t{world.signalRelationCount};
         const auto receivers = std::uint64_t{world.signalReceiverCount};
-        out.resize(offset + kPackBytes<HkPackBodyWorldSignalCounts> +
-                   relations * kPackBytes<HkPackBodyWorldSignalRelation> +
-                   receivers * kPackBytes<HkPackBodyWorldSignalReceiver>);
+        const auto tableBytes = kPackBytes<HkPackBodyWorldSignalCounts> +
+            relations * kPackBytes<HkPackBodyWorldSignalRelation> +
+            receivers * kPackBytes<HkPackBodyWorldSignalReceiver>;
+        if (tableBytes > out.max_size() - offset) {
+            out.clear();
+            return false;
+        }
+        out.resize(offset + static_cast<std::size_t>(tableBytes));
         auto* cursor = out.data() + offset;
         SerializePackRow<HkPackBodyWorldSignalCounts>(world, cursor);
         cursor += kPackBytes<HkPackBodyWorldSignalCounts>;
@@ -1146,7 +1163,7 @@ CurrentWorldBodyImage::~CurrentWorldBodyImage() = default;
 
 CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
     const std::uint8_t *bytes, std::size_t byteCount, std::uint32_t worldTraceVintage) noexcept {
-    if (worldTraceVintage != kCurrentWorldShippingBodyVintage && worldTraceVintage != kCurrentWorldBodyVintageV20)
+    if (!IsReadableCurrentWorldBodyVintage(worldTraceVintage))
         return CurrentWorldBodyDecodeResult::Invalid;
     if (bytes == nullptr && byteCount != 0) {
         return CurrentWorldBodyDecodeResult::Invalid;

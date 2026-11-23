@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <map>
 #include <set>
+#include <tuple>
 
 namespace harken::studio {
 namespace {
@@ -149,9 +150,8 @@ bool stageBusOutput(SignalPathConnectPlan& plan, const ProjectData& project,
             })) continue;
         if (!stageBusSends(plan, bus, scope, [&](QJsonArray& rows) {
                 for (qsizetype index = rows.size(); index > 0; --index) {
-                    const auto row = rows[index - 1].toObject();
-                    if (row.value(QStringLiteral("targetBusID")).toInteger() == output
-                        && static_cast<SendMode>(row.value(QStringLiteral("mode")).toInt()) != SendMode::Sidechain)
+                    const auto send = Send::fromJson(rows[index - 1].toObject());
+                    if (send && send->targetBusID == output && (send->type == SendType::Send || send->duckTarget))
                         rows.removeAt(index - 1);
                 }
             })) return false;
@@ -580,14 +580,10 @@ SignalPathConnectPlan prepareObjectConnections(const SignalPathGraph& graph,
                 if (!stageBusSends(plan, *from, platform, [&](QJsonArray& rows) {
                         for (const auto& value : rows) {
                             const auto row = value.toObject();
-                            if (row.value(QStringLiteral("targetBusID")).toInteger() == to->objectID
-                                && static_cast<SendMode>(row.value(QStringLiteral("mode")).toInt()) == SendMode::Mix)
+                            if (matchesSignalPathSendRow(row, to->objectID, SendType::Send, false))
                                 duplicate = true;
                         }
-                        if (!duplicate) rows.append(QJsonObject{
-                            {QStringLiteral("targetBusID"), static_cast<qint64>(to->objectID)},
-                            {QStringLiteral("sendLevel"), 0.0},
-                            {QStringLiteral("mode"), static_cast<int>(SendMode::Mix)}});
+                        if (!duplicate) rows.append(Send{to->objectID, 0.0f}.toJson());
                     })) return fail(QObject::tr("The Bus routing is unavailable"));
                 if (duplicate) return fail(QObject::tr("Send already exists on this object"));
             }
@@ -624,7 +620,7 @@ SignalPathConnectPlan prepareObjectConnections(const SignalPathGraph& graph,
                 if (!resolved.ok()) return fail(QObject::tr("The inherited Send configuration cannot be resolved"));
                 auto sends = std::get<SendFieldGroup>(resolved.value->payload);
                 if (std::any_of(sends.sends.begin(), sends.sends.end(),
-                        [&](const auto& send) { return send.targetBusID == bus && send.mode == SendMode::Mix; }))
+                        [&](const auto& send) { return send.targetBusID == bus && send.type == SendType::Send; }))
                     return fail(QObject::tr("Send already exists on this object"));
                 sends.sends.push_back({bus, 0.0f});
                 writeLocal(groups.send, scope, sends);
@@ -716,7 +712,7 @@ SignalPathConnectPlan prepareSignalPathDisconnect(const SignalPathGraph& graph,
     const FieldGroupResolver resolver(view.definitions, toFieldGroupGuid(master->guid));
     const auto scopes = editScopes(*project);
     using ProviderScope = std::pair<QUuid, FieldGroupScope>;
-    std::map<ProviderScope, std::set<std::pair<QUuid, SendMode>>> removedSends;
+    std::map<ProviderScope, std::set<std::tuple<QUuid, SendType, bool>>> removedSends;
     std::map<ProviderScope, OutputFieldGroup> resetOutputs;
     std::set<QUuid> playbackOwners;
     std::set<QUuid> detachments;
@@ -769,7 +765,10 @@ SignalPathConnectPlan prepareSignalPathDisconnect(const SignalPathGraph& graph,
                 const auto sends = effectiveBusSends(*from, plan.occurrenceScope);
                 if (!sends) return fail(QObject::tr("The Bus routing is unavailable"));
                 const auto send = std::find_if(sends->begin(), sends->end(),
-                    [&](const auto& entry) { return entry.targetBusID == to->objectID && entry.mode == edge.mode; });
+                    [&](const auto& entry) {
+                        return entry.targetBusID == to->objectID && entry.type == edge.type
+                            && entry.duckTarget == edge.duckTarget;
+                    });
                 if (send == sends->end() || !qFuzzyCompare(send->sendLevel, edge.sendLevel))
                     return fail(QObject::tr("The Send connection has changed"));
                 for (const auto& scope : scopes) {
@@ -777,8 +776,7 @@ SignalPathConnectPlan prepareSignalPathDisconnect(const SignalPathGraph& graph,
                     if (!stageBusSends(plan, *from, platform, [&](QJsonArray& rows) {
                             for (qsizetype rowIndex = rows.size(); rowIndex > 0; --rowIndex) {
                                 const auto row = rows[rowIndex - 1].toObject();
-                                if (row.value(QStringLiteral("targetBusID")).toInteger() == to->objectID
-                                    && static_cast<SendMode>(row.value(QStringLiteral("mode")).toInt()) == edge.mode)
+                                if (matchesSignalPathSendRow(row, to->objectID, edge.type, edge.duckTarget))
                                     rows.removeAt(rowIndex - 1);
                             }
                         })) return fail(QObject::tr("The Bus routing is unavailable"));
@@ -813,9 +811,10 @@ SignalPathConnectPlan prepareSignalPathDisconnect(const SignalPathGraph& graph,
                     const auto& sends = std::get<SendFieldGroup>(resolved.value->payload).sends;
                     if (std::any_of(sends.begin(), sends.end(),
                             [&](const auto& send) {
-                                return send.targetBusID == toFieldGroupGuid(toGuid) && send.mode == edge.mode;
+                                return send.targetBusID == toFieldGroupGuid(toGuid) && send.type == edge.type
+                                    && send.duckTarget == edge.duckTarget;
                             }))
-                        removedSends[{provider, scope}].emplace(toGuid, edge.mode);
+                        removedSends[{provider, scope}].emplace(toGuid, edge.type, edge.duckTarget);
                 }
             }
         }
@@ -848,7 +847,7 @@ SignalPathConnectPlan prepareSignalPathDisconnect(const SignalPathGraph& graph,
         if (!resolved.ok()) return fail(QObject::tr("The Send configuration cannot be resolved"));
         auto sends = std::get<SendFieldGroup>(resolved.value->payload);
         std::erase_if(sends.sends, [&](const auto& send) {
-            return targets.contains({fromFieldGroupGuid(send.targetBusID), send.mode});
+            return targets.contains({fromFieldGroupGuid(send.targetBusID), send.type, send.duckTarget});
         });
         auto& groups = candidates.try_emplace(guid, provider->fieldGroups).first->second;
         writeLocal(groups.send, scope, sends);

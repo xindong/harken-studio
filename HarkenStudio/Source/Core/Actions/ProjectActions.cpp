@@ -57,6 +57,8 @@
 #include <cmath>
 #include <limits>
 #include <optional>
+#include <set>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -309,20 +311,15 @@ bool validatePlayableSends(ProjectManager& manager,
                            const QJsonValue& value)
 {
     if (!value.isArray()) return false;
-    QSet<QPair<uint32_t, int>> targets;
+    std::set<std::tuple<uint32_t, SendType, bool>> targets;
     for (const QJsonValue& rowValue : value.toArray()) {
         if (!rowValue.isObject()) return false;
         const QJsonObject row = rowValue.toObject();
         const QJsonValue targetValue = row.value(QStringLiteral("targetBusID"));
         const QJsonValue levelValue = row.value(QStringLiteral("sendLevel"));
-        const QJsonValue modeValue = row.value(QStringLiteral("mode"));
-        const int mode = modeValue.toInt(-1);
-        if (!modeValue.isUndefined() && (!modeValue.isDouble()
-            || modeValue.toDouble() != mode
-            || (mode != static_cast<int>(SendMode::Mix)
-                && mode != static_cast<int>(SendMode::Ducking)
-                && mode != static_cast<int>(SendMode::Sidechain)))) return false;
-        const auto sendMode = static_cast<SendMode>(modeValue.toInt());
+        SendType type;
+        bool duckTarget;
+        if (!readSendRoute(row, type, duckTarget)) return false;
         if (!targetValue.isDouble() || !levelValue.isDouble()) return false;
         const double targetNumber = targetValue.toDouble(-1.0);
         const double level = levelValue.toDouble();
@@ -332,13 +329,11 @@ bool validatePlayableSends(ProjectManager& manager,
             || !std::isfinite(level) || level < -96.0 || level > 24.0)
             return false;
         const uint32_t target = static_cast<uint32_t>(targetNumber);
-        const auto key = qMakePair(target, static_cast<int>(sendMode));
+        const auto key = std::tuple(target, type, duckTarget);
         const auto* targetBus = manager.findBusItem(target);
-        std::map<SendMode, float> modeVolumes;
         if (targets.contains(key)
             || !targetBus || targetBus->type != ProjectItem::Type::Bus || targetBus == &owner
-            || (sendMode != SendMode::Sidechain && targetBus == owner.parent)
-            || !readSendModeVolumes(row.value(QStringLiteral("modeVolumes")), sendMode, modeVolumes))
+            || ((type == SendType::Send || duckTarget) && targetBus == owner.parent))
             return false;
         targets.insert(key);
     }

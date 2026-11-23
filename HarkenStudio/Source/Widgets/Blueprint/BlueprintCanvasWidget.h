@@ -100,14 +100,16 @@ public:
     ConnectResult connectNodes(uint32_t fromId, uint32_t toId,
                                QString edgeType = QString(),
                                QString fromKind = QString(),
-                               QString toKind = QString());
+                               QString toKind = QString(),
+                               SendType sendType = SendType::Send, bool duckTarget = false);
     ConnectResult connectSignalPathNodes(SignalPathEndpoint from, SignalPathEndpoint to,
                                          bool addSend = false);
     ConnectResult disconnectSignalPathEdges(const std::vector<size_t>& edgeIndices);
     bool disconnectNodes(uint32_t fromId, uint32_t toId,
                          QString edgeType = QString(),
                          QString fromKind = QString(),
-                         QString toKind = QString());
+                         QString toKind = QString(),
+                         SendType sendType = SendType::Send, bool duckTarget = false);
     bool setNodeOverride(uint32_t itemId, bool override);
 
     void                setFlowDirection(CanvasFlowDirection dir);
@@ -209,7 +211,8 @@ private:
         QUuid to;
         SignalPathEdgeKind kind;
         std::optional<QUuid> routingSource;
-        SendMode mode = SendMode::Mix;
+        SendType type = SendType::Send;
+        bool duckTarget = false;
         bool operator==(const PathEdgeKey&) const = default;
     };
 

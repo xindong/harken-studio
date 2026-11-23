@@ -4,12 +4,12 @@
 
 | 类别 | 去重用途数 | 页面 / 对象类型位置数 |
 |---|---:|---:|
-| 配置表 | 11 | 21 |
+| 配置表 | 12 | 27 |
 | 展示表 | 15 | 15 |
-| 普通表格合计 | 26 | 36 |
+| 普通表格合计 | 27 | 42 |
 | 导航配置（不计入普通表格） | 2 | 2 |
 
-注：Sends、Effects 各自在六类对象中使用，各按用途计一项、按对象类型计六处。对象实例、Binding 字段及同一对话框的不同打开位置不重复计数；Match、Blend 等专用编辑面另列。
+注：Send、Sidechain、Effects 各自在六类对象中使用，各按用途计一项、按对象类型计六处。对象实例、Binding 字段及同一对话框的不同打开位置不重复计数；Match、Blend 等专用编辑面另列。
 
 ## 普通表格清单
 
@@ -21,13 +21,14 @@
 | C04 | 配置 | Action Inspector / Steps | Action 执行步骤 |
 | C05 | 配置 | Attenuation Inspector / Dimensions | 衰减维度与曲线 |
 | C06 | 配置 | Variable Inspector / Labels | 序号为真实索引；移动后名称与身份进入原索引位置，范围外条目不参与 |
-| C07 | 配置 | Sound、Container、Layer、Track、Segment、Bus / Sends | 六类对象的发送配置 |
+| C07 | 配置 | Sound、Container、Layer、Track、Segment、Bus / Send | 混入目标 Bus 的发送增益 |
 | C08 | 配置 | External Editor / Binding | 仅编辑本地贡献 |
 | C09 | 配置 | Container Selection Editor / Transition | # / Source / Exit / Fade Out / Target / Entry / Fade In；按匹配具体程度排序，默认规则最后 |
 | C12 | 配置 | Conversion Editor / Configuration | # / Size range / Sample rate / Format / Quality。表上方的文件大小分段条与行号从 1 开始对应，规则按原始文件大小从 `0 B` 到 `Inf` 排列 |
 | C13 | 配置 | Sound、Container、Layer、Track、Segment、Bus / Effects | Basic > Effect；# / Effect / Active；本地效果器链配置 |
+| C14 | 配置 | Sound、Container、Layer、Track、Segment、Bus / Sidechain | 辅助信号路由与目标 Ducking 开关 |
 | D01 | 展示 | Bus Inspector / Inputs | 路由反向查询，无序号列 |
-| D02 | 展示 | Bus Inspector / Receives | 路由反向查询，# 仅展示行号，不提供行移动 |
+| D02 | 展示 | Bus Inspector / Receives | 按来源显示 Type 与 Ducking，# 仅展示行号，不提供行移动 |
 | D03 | 展示 | Control / Variables | 变量试听值及作用域 |
 | D04 | 展示 | Control / Variable Bindings | 变量绑定与试听曲线 |
 | D05 | 展示 | Publisher / Pack | Init、General 与语言分区；以勾选确定导出范围 |

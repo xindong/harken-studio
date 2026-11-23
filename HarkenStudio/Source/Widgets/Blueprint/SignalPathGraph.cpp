@@ -6,9 +6,17 @@
 #include <algorithm>
 #include <map>
 #include <set>
+#include <tuple>
 #include <utility>
 
 namespace harken::studio {
+
+bool matchesSignalPathSendRow(const QJsonObject& row, uint32_t target, SendType type, bool duckTarget)
+{
+    const auto send = Send::fromJson(row);
+    return send && send->targetBusID == target && send->type == type && send->duckTarget == duckTarget;
+}
+
 namespace {
 
 namespace Slots = ReferenceSlotResolution;
@@ -134,18 +142,18 @@ private:
 
     void edge(SignalPathEndpoint from, SignalPathEndpoint to,
               SignalPathEdgeKind kind, std::optional<size_t> pathIndex, float sendLevel = 0.0f,
-              std::optional<SignalPathRoutingSource> routingSource = {}, SendMode mode = SendMode::Mix)
+              std::optional<SignalPathRoutingSource> routingSource = {}, SendType type = SendType::Send, bool duckTarget = false)
     {
         size_t index = 0;
         for (; index < graph_.edges.size(); ++index) {
             const auto& candidate = graph_.edges[index];
             if (candidate.from == from && candidate.to == to
                 && candidate.kind == kind && candidate.sendLevel == sendLevel
-                && candidate.routingSource == routingSource && candidate.mode == mode)
+                && candidate.routingSource == routingSource && candidate.type == type && candidate.duckTarget == duckTarget)
                 break;
         }
         if (index == graph_.edges.size())
-            graph_.edges.push_back({from, to, kind, sendLevel, {}, std::move(routingSource), mode});
+            graph_.edges.push_back({from, to, kind, sendLevel, {}, std::move(routingSource), type, duckTarget});
         if (pathIndex) {
             appendUnique(graph_.edges[index].pathIndices, *pathIndex);
             appendUnique(graph_.paths[*pathIndex].edgeIndices, index);
@@ -208,7 +216,7 @@ private:
         for (const auto& send : sends.sends) {
             edge(from, busEndpoint(send.targetBusID, pathIndex),
                  SignalPathEdgeKind::Send, pathIndex, send.sendLevel,
-                 SignalPathRoutingSource{bus->guid, sends.authoringScope}, send.mode);
+                 SignalPathRoutingSource{bus->guid, sends.authoringScope}, send.type, send.duckTarget);
             appendBus(send.targetBusID, pathIndex, visited);
         }
     }
@@ -231,9 +239,9 @@ private:
         SignalPathRouting routing;
         routing.outputBusID = Slots::resolveEffectiveOutputBusId(scope);
         for (const auto& send : sends.sends)
-            routing.sends.push_back({send.targetBusID, send.sendLevel, send.mode});
+            routing.sends.push_back({send.targetBusID, send.sendLevel, send.type, send.duckTarget});
         std::sort(routing.sends.begin(), routing.sends.end(), [](const auto& a, const auto& b) {
-            return a.targetBusID != b.targetBusID ? a.targetBusID < b.targetBusID : a.mode < b.mode;
+            return std::tie(a.targetBusID, a.type, a.duckTarget) < std::tie(b.targetBusID, b.type, b.duckTarget);
         });
         std::set<uint32_t> active;
         if (!validateBus(routing.outputBusID, identity, active)) return;
@@ -264,7 +272,7 @@ private:
         appendBus(routing.outputBusID, pathIndex, visited);
         for (const auto& send : routing.sends) {
             edge(terminal, busEndpoint(send.targetBusID, pathIndex),
-                 SignalPathEdgeKind::Send, pathIndex, send.sendLevel, sendSource, send.mode);
+                 SignalPathEdgeKind::Send, pathIndex, send.sendLevel, sendSource, send.type, send.duckTarget);
             appendBus(send.targetBusID, pathIndex, visited);
         }
     }

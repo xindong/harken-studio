@@ -372,7 +372,7 @@ static void syncGeneralAudioProperties(ProjectItem* item, harken::studio::types:
     if (item->type == ProjectItem::Type::Sound) {
         std::vector<std::pair<harken::studio::types::ObjectId, float>> sends;
         for (const auto& send : groups.send.sends) {
-            if (send.mode != SendMode::Mix) continue;
+            if (send.type != SendType::Send) continue;
             sends.emplace_back(manager.busRuntimeHandleForId(
                 snapshot.objects.at(send.targetBusID)->objectID), send.sendLevel);
         }

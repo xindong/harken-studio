@@ -765,6 +765,7 @@ struct ContainerWorldInstallViewV1 {
 };
 
 std::uint64_t ComputeCurrentWorldFingerprintV7(const ContainerWorldInstallViewV1& world) noexcept;
+std::uint64_t ComputeCurrentWorldBodyFingerprint(const ContainerWorldInstallViewV1& world) noexcept;
 
 bool GrowAuthoredWorldCapacityV1(
     const ContainerWorldInstallViewV1& world,

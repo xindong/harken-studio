@@ -217,7 +217,7 @@ void AudioEngine::applyLivePropertyPreview()
                     entry.bypass, effect->parameters[0], effect->parameters[1]});
             }
             for (const auto& send : groups.send.sends) {
-                if (send.mode != SendMode::Mix) continue;
+                if (send.type != SendType::Send) continue;
                 const auto target = snapshot.objects.find(send.targetBusID);
                 if (target != snapshot.objects.end())
                     definition.fields[{static_cast<uint8_t>(LiveProperty::Sends), target->second->runtimeId()}]

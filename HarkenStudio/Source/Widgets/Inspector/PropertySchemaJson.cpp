@@ -49,6 +49,7 @@ const std::vector<InspectorSectionInfo>& inspectorSections()
         {PropertySection::Output, PropertyCategory::Route, "output", "Output"},
         {PropertySection::Input, PropertyCategory::Route, "inputs", "Input"},
         {PropertySection::Send, PropertyCategory::Route, "send", "Send"},
+        {PropertySection::Sidechain, PropertyCategory::Route, "sidechain", "Sidechain"},
         {PropertySection::Receive, PropertyCategory::Route, "receive", "Receive"},
         {PropertySection::Rating, PropertyCategory::Spatial, "rating", "Rating"},
         {PropertySection::PlaybackPriority, PropertyCategory::Limitation, "playback_priority", "Playback Priority"},

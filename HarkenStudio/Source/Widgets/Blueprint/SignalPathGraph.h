@@ -23,7 +23,8 @@ struct SignalPathSend
 {
     uint32_t targetBusID = 0;
     float sendLevel = 0.0f;
-    SendMode mode = SendMode::Mix;
+    SendType type = SendType::Send;
+    bool duckTarget = false;
 
     bool operator==(const SignalPathSend&) const = default;
 };
@@ -89,7 +90,8 @@ struct SignalPathEdge
     float sendLevel = 0.0f;
     std::vector<size_t> pathIndices;
     std::optional<SignalPathRoutingSource> routingSource;
-    SendMode mode = SendMode::Mix;
+    SendType type = SendType::Send;
+    bool duckTarget = false;
 };
 
 struct SignalPath
@@ -116,6 +118,8 @@ struct SignalPathGraph
 
     bool ok() const { return diagnostics.empty(); }
 };
+
+bool matchesSignalPathSendRow(const QJsonObject& row, uint32_t target, SendType type, bool duckTarget);
 
 SignalPathGraph buildSignalPathGraph(
     const ProjectData& project, const std::vector<SignalPathIdentity>& sources,

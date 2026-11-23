@@ -452,6 +452,10 @@ void registerMixerActions(ActionManager& mgr,
                         "Use field group commands to edit Send"};
 
             const uint32_t targetBusId = static_cast<uint32_t>(args.value("target_bus_id").toInteger());
+            SendType type;
+            bool duckTarget;
+            if (!readSendRoute(args, type, duckTarget))
+                return {false, {}, "INVALID_ARGS", "Invalid send type or duckTarget"};
             auto* targetBus = ProjectManager::instance().findVBus(targetBusId);
             if (!targetBus)
                 return {false, {}, "BUS_NOT_FOUND", QString("Send target bus %1 not found").arg(targetBusId)};
@@ -466,7 +470,7 @@ void registerMixerActions(ActionManager& mgr,
             if (!before)
                 return {false, {}, "INVALID_SEND_STATE", "Unable to read Send configuration"};
 
-            if (!ProjectManager::instance().upsertSendInternal(srcBusId, targetBusId, *level))
+            if (!ProjectManager::instance().upsertSendInternal(srcBusId, targetBusId, *level, type, duckTarget))
                 return {false, {}, "SEND_REJECTED",
                         QString("Send %1 -> %2 rejected: invalid volume, target, output conflict, or routing cycle")
                             .arg(srcBusName).arg(targetBusId)};
@@ -476,6 +480,7 @@ void registerMixerActions(ActionManager& mgr,
             r.data = QJsonObject{
                 {"src_bus", srcBusName},
                 {"src_bus_guid", srcBusItem->guid.toString(QUuid::WithoutBraces)},
+                {"type", sendTypeName(type)}, {"duckTarget", duckTarget},
                 {"src_bus_id", static_cast<qint64>(srcBusId)},
                 {"target_bus_id", static_cast<qint64>(targetBusId)},
                 {"level", *level}
@@ -512,10 +517,14 @@ void registerMixerActions(ActionManager& mgr,
                         "Use field group commands to edit Send"};
 
             const uint32_t targetBusId = static_cast<uint32_t>(args.value("target_bus_id").toInteger());
+            SendType type;
+            bool duckTarget;
+            if (!readSendRoute(args, type, duckTarget))
+                return {false, {}, "INVALID_ARGS", "Invalid send type or duckTarget"};
 
             bool foundSend = false;
             for (const auto& send : srcMix->sends) {
-                if (send.targetBusID == targetBusId && send.mode == SendMode::Mix) {
+                if (send.targetBusID == targetBusId && send.type == type && send.duckTarget == duckTarget) {
                     foundSend = true;
                     break;
                 }
@@ -528,7 +537,7 @@ void registerMixerActions(ActionManager& mgr,
             const auto before = captureBusSendState(*srcBusItem);
             if (!before)
                 return {false, {}, "INVALID_SEND_STATE", "Unable to read Send configuration"};
-            if (!ProjectManager::instance().removeSendInternal(srcBusId, targetBusId))
+            if (!ProjectManager::instance().removeSendInternal(srcBusId, targetBusId, type, duckTarget))
                 return {false, {}, "SEND_REJECTED", "Unable to remove Send"};
 
             ActionResult r;
@@ -536,6 +545,7 @@ void registerMixerActions(ActionManager& mgr,
             r.data = QJsonObject{
                 {"src_bus", srcBusName},
                 {"src_bus_guid", srcBusItem->guid.toString(QUuid::WithoutBraces)},
+                {"type", sendTypeName(type)}, {"duckTarget", duckTarget},
                 {"src_bus_id", static_cast<qint64>(srcBusId)},
                 {"target_bus_id", static_cast<qint64>(targetBusId)},
                 {"removed", true}
@@ -572,6 +582,10 @@ void registerMixerActions(ActionManager& mgr,
                         "Use field group commands to edit Send"};
 
             const uint32_t targetBusId = static_cast<uint32_t>(args.value("target_bus_id").toInteger());
+            SendType type;
+            bool duckTarget;
+            if (!readSendRoute(args, type, duckTarget))
+                return {false, {}, "INVALID_ARGS", "Invalid send type or duckTarget"};
             const auto level = readSendLevel(args);
             if (!level)
                 return {false, {}, "INVALID_ARGS", "level must be a finite, non-negative linear gain"};
@@ -579,7 +593,7 @@ void registerMixerActions(ActionManager& mgr,
             float oldLevel = 1.0f;
             bool foundSend = false;
             for (const auto& send : srcMix->sends) {
-                if (send.targetBusID == targetBusId && send.mode == SendMode::Mix) {
+                if (send.targetBusID == targetBusId && send.type == type && send.duckTarget == duckTarget) {
                     foundSend = true;
                     oldLevel = send.sendLevel;
                     break;
@@ -590,16 +604,16 @@ void registerMixerActions(ActionManager& mgr,
                         QString("Send %1 -> %2 not found").arg(srcBusName).arg(targetBusId)};
 
             const uint32_t srcBusId = srcBusItem->objectID;
-            if (!ProjectManager::instance().upsertSendInternal(srcBusId, targetBusId, *level))
+            if (!ProjectManager::instance().upsertSendInternal(srcBusId, targetBusId, *level, type, duckTarget))
                 return {false, {}, "SEND_REJECTED", "Unable to update Send"};
 
             UndoRedoManager::instance().push(
                 new BusPropertyChangeCommand(srcBusId,
-                    QString("sendLevel_%1").arg(targetBusId),
+                    QString("sendLevel_%1_%2_%3").arg(targetBusId).arg(sendTypeName(type)).arg(duckTarget),
                     static_cast<double>(oldLevel), static_cast<double>(*level),
-                    [targetBusId](uint32_t bID, const QVariant& val) {
+                    [targetBusId, type, duckTarget](uint32_t bID, const QVariant& val) {
                         float lvl = val.toFloat();
-                        ProjectManager::instance().upsertSendInternal(bID, targetBusId, lvl);
+                        ProjectManager::instance().upsertSendInternal(bID, targetBusId, lvl, type, duckTarget);
                     },
                     QObject::tr("Set Send Level")));
 
@@ -608,6 +622,7 @@ void registerMixerActions(ActionManager& mgr,
             r.data = QJsonObject{
                 {"src_bus", srcBusName},
                 {"src_bus_guid", srcBusItem->guid.toString(QUuid::WithoutBraces)},
+                {"type", sendTypeName(type)}, {"duckTarget", duckTarget},
                 {"src_bus_id", static_cast<qint64>(srcBusId)},
                 {"target_bus_id", static_cast<qint64>(targetBusId)},
                 {"level", *level}

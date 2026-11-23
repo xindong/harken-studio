@@ -59,6 +59,8 @@ inline PropertySchema contentObjectInspectorRows(ProjectItem::Type type)
             });
         }
         out.insert(position, std::move(descriptor));
+        if (field.wire == harkenplayableproperties::PlayablePropertyWireV1::RowSpan)
+            out.push_back(sendsInspectorDescriptor(SendType::Sidechain));
     }
     if (const auto* filter = pickSchemaField(VMixNode::schema(), QLatin1String("filter"))) {
         auto afterPitch = std::find_if(out.begin(), out.end(), [](const PropertyDescriptor& d) {

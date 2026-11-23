@@ -142,7 +142,7 @@ Studio、CLI、IPC 与 AI 使用同一组命令、参数校验和创作入口：
 | 范围 | 命令及完成语义 |
 |---|---|
 | 当前选择 | `select_item`、`select_project_item`、`select_bus`、`get_selected_bus`、`select_folder`；总线选择同步完成，查询返回实际选中状态 |
-| 画布 | `get_blueprint`、`set_blueprint_layer`、`get_blueprint_layers`、`connect_nodes`、`disconnect_nodes`；画布数据和手势归桌面，内容关系使用共享业务入口 |
+| 画布 | `get_blueprint`、`set_blueprint_layer`、`get_blueprint_layers`、`connect_nodes`、`disconnect_nodes`。画布数据和手势归桌面，内容关系使用共享业务入口。连接和断开 Bus 的 Send 边时，`edge_type` 填 `send`，`send_type` 默认为 `Send`，`duck_target` 默认为 `false`。侧链填 `Sidechain`，开启目标 Ducking 时填 `duck_target: true`。查询结果使用相同的两个 Send 字段。 |
 | 布局 | `switch_layout`、`get_current_layout`、`reset_layout`；统一使用 `layout` 参数；命名布局使用 `list_named_layouts` 等命令 |
 | 面板几何 | `get_panel_rect` 读取真实可见面板；名称由 `list_panels` 提供，可用 name/typeId/title；多义名称返回 `AMBIGUOUS_PANEL`，隐藏面板返回 `PANEL_NOT_VISIBLE` |
 | 控件发现 | `list_ui_windows` 枚举实际顶层窗口，包括独立窗口与对话框；`find_widget` 支持名称、文字、类型、作用域及数量上限，返回总量与截断标志 |

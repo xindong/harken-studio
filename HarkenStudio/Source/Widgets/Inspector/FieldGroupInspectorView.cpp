@@ -29,9 +29,7 @@ QVariant payloadField(const FieldGroupPayload& payload, Property field)
             QVariantMap entry{
                 {QStringLiteral("targetBusID"), fromFieldGroupGuid(row.targetBusID)},
                 {QStringLiteral("sendLevel"), row.sendLevel},
-                {QStringLiteral("mode"), static_cast<int>(row.mode)}};
-            if (!row.modeVolumesDb.empty())
-                entry.insert(QStringLiteral("modeVolumes"), sendModeVolumesJson(row.modeVolumesDb).toVariantMap());
+                {QStringLiteral("type"), sendTypeName(row.type)}, {QStringLiteral("duckTarget"), row.duckTarget}};
             rows.append(entry);
         }
         return rows;
