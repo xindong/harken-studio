@@ -19,7 +19,6 @@ namespace harken::studio {
 class PaneSection;
 class PaneSectionStack;
 class MixingEditorWidget;
-class TransitionTableWidget;
 class DiscreteGridWidget;
 class SelectionListWidget;
 struct ProjectItem;
@@ -47,7 +46,6 @@ public:
     SelectionListWidget* selectionList() const { return selectionList_; }
     QString statusText() const;
 
-    void setPlacementContext(const std::optional<PlacementContext>& placement);
     void drillInto(const QUuid& target);
     void drillBackTo(int depth);
 
@@ -70,13 +68,11 @@ private:
     void showEmptyState(const QString& message);
     void rebuildCrumbs(const std::vector<ProjectItem*>& chain);
     void refreshChrome();
-    void refreshTransitionSection();
 
     bool pinned_ = false;
     ProjectItem* boundItem_ = nullptr;
     ProjectItem* displayItem_ = nullptr;
     std::vector<QUuid> drillPath_;
-    std::optional<PlacementContext> placement_;
 
     QWidget* crumbBar_ = nullptr;
     QWidget* crumbsHost_ = nullptr;
@@ -89,8 +85,6 @@ private:
     MixingEditorWidget* mixingEditor_ = nullptr;
     SelectionListWidget* selectionList_ = nullptr;
     PaneSection* contentSection_ = nullptr;
-    PaneSection* transitionSection_ = nullptr;
-    TransitionTableWidget* transitionTable_ = nullptr;
 };
 
 }

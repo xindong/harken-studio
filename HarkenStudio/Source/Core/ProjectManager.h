@@ -17,7 +17,6 @@
 #include "AssetPipeline/AssetTypes.h"
 #include "IntegrityScanner.h"
 #include "ProjectIndex.h"
-#include "TransitionRehearsal.h"
 #include "VariableRehearsal.h"
 #include "ItemTypeCatalog.h"
 #include "ProjectTypes.h"
@@ -171,8 +170,6 @@ public:
     VariableRehearsal& variableRehearsal() { return m_variableRehearsal; }
     const VariableRehearsal& variableRehearsal() const { return m_variableRehearsal; }
 
-    TransitionRehearsal& transitionRehearsal() { return m_transitionRehearsal; }
-    const TransitionRehearsal& transitionRehearsal() const { return m_transitionRehearsal; }
 
     bool createProject(const ProjectConfig& config);
     bool loadProject(const QString& filePath, bool allowUpgrade = false,
@@ -654,7 +651,6 @@ private:
     FileWatcher m_fileWatcher;
     AuditionOverlay m_auditionOverlay;
     VariableRehearsal m_variableRehearsal;
-    TransitionRehearsal m_transitionRehearsal;
     bool m_closing = false;
     bool m_runtimePrepared = false;
 

@@ -297,12 +297,11 @@ RuntimeCapabilityEntry compileCurrentWorldCapability(const ProjectItem& item,
             definition.contentRevision = 1;
     const auto compiled = harkencurrentworldcompiler::CompileCurrentWorldV1(
         *frontEnd.project, request->variables, materializations,
-        request->containers, {}, request->transitions, request->actions,
+        request->containers, {}, {}, request->actions,
         &request->busResult->idSet,
         harkencurrentworldcompiler::CompileCapacityModeV1::AuthoredContent);
     if (!compiled.ok())
         return refuse(compiled.status == harkencurrentworldcompiler::CompileStatusV1::Capacity
-                          || compiled.status == harkencurrentworldcompiler::CompileStatusV1::TransitionCapabilityUnavailable
                           ? S::UnavailableEngineContract : S::InvalidAuthoring,
                       QStringLiteral("Current World authoring compilation failed (%1, stable id %2)")
                           .arg(static_cast<uint32_t>(compiled.status))
@@ -627,7 +626,7 @@ RuntimeCapabilityEntry evaluateForContext(const ProjectItem& item,
         || feature == F::SoundPlayback || feature == F::FlatContainer
         || feature == F::TrackProgram || feature == F::SegmentProgram
         || feature == F::VariableDeclaration || feature == F::TypedEffect
-        || feature == F::Transition || feature == F::ContinuousGrid
+        || feature == F::ContinuousGrid
         || feature == F::MultiAxisGrid || feature == F::QueueMemory
         || feature == F::ShuffleMemory || feature == F::ResumeMemory
         || feature == F::GridMapping || feature == F::EntryPosition
@@ -644,7 +643,7 @@ RuntimeCapabilityEntry evaluateForContext(const ProjectItem& item,
         || (feature == F::SegmentProgram && item.type != T::Segment))
         return refuse(S::InvalidAuthoring,
                       QStringLiteral("Schedule capability requires its matching Track or Segment type"));
-    if ((feature == F::FlatContainer || feature == F::Transition
+    if ((feature == F::FlatContainer
          || feature == F::ContinuousGrid || feature == F::MultiAxisGrid
          || feature == F::QueueMemory || feature == F::ShuffleMemory
          || feature == F::ResumeMemory || feature == F::GridMapping)
@@ -701,9 +700,6 @@ RuntimeCapabilityAssessment assessForContext(const ProjectItem& item,
     switch (item.type) {
     case T::Action: add(F::ContentClosure); break;
     case T::Container:
-        if (const auto* selection = item.comp<VSelection>(); selection
-            && selection->transitions != canonicalTransitionTable())
-            add(F::Transition);
         if (assessment.state == S::Ready) add(F::FlatContainer);
         break;
     case T::Track: add(F::TrackProgram); break;
@@ -760,7 +756,6 @@ QString featureName(RuntimeCapabilityFeature feature)
     case F::ActionTarget: return QStringLiteral("actionTarget");
     case F::Quantize: return QStringLiteral("quantize");
     case F::IfSilent: return QStringLiteral("ifSilent");
-    case F::Transition: return QStringLiteral("transition");
     case F::ContinuousGrid: return QStringLiteral("continuousGrid");
     case F::MultiAxisGrid: return QStringLiteral("multiAxisGrid");
     case F::QueueMemory: return QStringLiteral("queueMemory");
@@ -837,7 +832,7 @@ const std::vector<RuntimeCapabilityEntry>& entries()
                 if (type == T::Sound || type == T::Layer) add(type, operation, F::SoundPlayback);
                 if (type == T::Variable) add(type, operation, F::VariableDeclaration);
                 if (type == T::Container)
-                    for (const F feature : {F::FlatContainer, F::Transition, F::ContinuousGrid,
+                    for (const F feature : {F::FlatContainer, F::ContinuousGrid,
                                             F::MultiAxisGrid, F::QueueMemory, F::ShuffleMemory,
                                             F::ResumeMemory, F::GridMapping})
                         add(type, operation, feature, S::Ready,

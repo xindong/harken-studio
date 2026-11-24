@@ -181,12 +181,6 @@ void SelectionRouter::routeSelection(ProjectItem* item, bool reveal,
                 ip->setConversionSelection(items);
             }
 
-            for (GridEditorPanel* panel : host_->allGridEditorPanels()) {
-                if (panel && !panel->isPinned() && panel->boundItem() == item)
-                    panel->setPlacementContext(placement ? std::optional<PlacementContext>(*placement)
-                                                           : std::nullopt);
-            }
-
             bringUpInspector();
         } else {
             switch (item->type)

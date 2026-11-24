@@ -51,7 +51,6 @@ enum class RuntimeCapabilityFeature : uint8_t
     ActionTarget,
     Quantize,
     IfSilent,
-    Transition,
     ContinuousGrid,
     MultiAxisGrid,
     QueueMemory,

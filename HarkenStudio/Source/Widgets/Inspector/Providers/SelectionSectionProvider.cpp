@@ -88,17 +88,6 @@ public:
             playType_, {}, occupiedSlots).row;
         layout->addWidget(playTypeRow_);
 
-        spliceByMarker_ = new QCheckBox(this);
-        spliceByMarker_->setObjectName(QStringLiteral("selectionSpliceByMarker"));
-        spliceByMarker_->setProperty("inspectorField", QStringLiteral("spliceByMarker"));
-        QtControlSkin::setSemanticProperty(spliceByMarker_, "fieldRole",
-                                           QStringLiteral("inspector"));
-        spliceByMarker_->setToolTip(tr("Align the next item's Entry Marker with the current item's Exit Marker."));
-        spliceByMarkerRow_ = makeInspectorFormRow(
-            this, QStringLiteral("spliceByMarker"), tr("Splice by Marker"),
-            spliceByMarker_, Qt::AlignLeft, occupiedSlots).row;
-        layout->addWidget(spliceByMarkerRow_);
-
         behavior_ = new QWidget(this);
         behavior_->setObjectName(QStringLiteral("selectionBehaviorPage"));
         behavior_->setProperty("inspectorField", QStringLiteral("behavior"));
@@ -163,16 +152,6 @@ public:
         connect(memoryScope_, qOverload<int>(&QComboBox::currentIndexChanged),
                 this, [this] { commitBehavior(); });
         connect(resumeFromLast_, &QCheckBox::toggled, this, [this] { commitBehavior(); });
-        connect(spliceByMarker_, &QCheckBox::toggled, this, [this](bool checked) {
-            if (!boundItem_) return;
-            const ActionResult result = ActionManager::instance().execute(
-                QStringLiteral("set_item_property"),
-                {{QStringLiteral("authoring_handle"), static_cast<qint64>(boundItem_->objectID)},
-                 {QStringLiteral("property"), QStringLiteral("spliceByMarker")},
-                 {QStringLiteral("value"), checked}},
-                ActionSource::GUI, spliceByMarker_);
-            if (!result.success) refresh();
-        });
         connect(&PlatformContextService::instance(), &PlatformContextService::contextChanged,
                 this, [this](const PlatformContext&) { refreshBehavior(); });
 
@@ -194,7 +173,6 @@ public:
                     || property == QStringLiteral("variableResponse")
                     || property == QStringLiteral("behavior")
                     || property == QStringLiteral("selections")
-                    || property == QStringLiteral("spliceByMarker")
                     || property == QStringLiteral("childOrder"))) {
                 if (property == QStringLiteral("behavior") || property == QStringLiteral("selections"))
                     refreshBehavior();
@@ -390,11 +368,6 @@ private:
                 static_cast<int>(selection->playType)));
         }
         behavior_->setVisible(behavior);
-        spliceByMarkerRow_->setVisible(selection && selection->isQueue());
-        {
-            QSignalBlocker blocker(spliceByMarker_);
-            spliceByMarker_->setChecked(selection && selection->spliceByMarker);
-        }
         placeholder_->setVisible(!selection);
         if (behavior) refreshBehavior();
     }
@@ -404,8 +377,6 @@ private:
     QComboBox* mode_ = nullptr;
     QWidget* playTypeRow_ = nullptr;
     QComboBox* playType_ = nullptr;
-    QWidget* spliceByMarkerRow_ = nullptr;
-    QCheckBox* spliceByMarker_ = nullptr;
     QWidget* variableResponseRow_ = nullptr;
     QComboBox* variableResponse_ = nullptr;
     QWidget* behavior_ = nullptr;

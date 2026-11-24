@@ -38,8 +38,6 @@ public:
     std::map<harken::studio::types::ObjectId, std::uint32_t> propertyAuthoredOrders;
     std::set<std::uint32_t> reservedPropertyAuthoredOrders;
     std::vector<harkencurrentworldcompiler::ContainerAuthoringV1> containers;
-    std::vector<harkencurrentworldcompiler::TransitionProgramAuthoringV1>
-        transitions;
     std::vector<harkencurrentworldcompiler::ActionProgramAuthoringV1> actions;
     std::vector<harkencurrentworldcompiler::DuckingSendAuthoringV1> duckingSends;
     bool emitEmptySignalTables = false;

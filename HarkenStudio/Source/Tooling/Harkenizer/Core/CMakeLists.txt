@@ -77,7 +77,6 @@ add_library(harkenizer_core STATIC
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/Timeline/TimelineCoordinates.cpp
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/Timeline/TimelineSemantics.cpp
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/Timeline/TimelineTypes.cpp
-    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/TransitionSemantics.cpp
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/VariableConsumerSemantics.cpp
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/VariableSemantics.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/AssetAnalysis.cpp
@@ -173,7 +172,6 @@ add_library(harkenizer_core STATIC
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/Timeline/TimelineCoordinates.h
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/Timeline/TimelineSemantics.h
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/Timeline/TimelineTypes.h
-    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/TransitionSemantics.h
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/VariableConsumerSemantics.h
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/VariableSemantics.h
     ${CMAKE_CURRENT_SOURCE_DIR}/CanonicalPackSetExport.h

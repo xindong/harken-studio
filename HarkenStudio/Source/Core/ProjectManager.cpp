@@ -29,7 +29,6 @@
 #include "GridSemantics.h"
 #include "ContainerBehaviorSemantics.h"
 #include "IntegrityScanner.h"
-#include "TransitionSemantics.h"
 #include "MigrationManager.h"
 #include "ProjectContract.h"
 #include "ProjectDataPolicy.h"
@@ -2485,7 +2484,6 @@ bool ProjectManager::closeProject()
 
         m_auditionOverlay.clearAll();
         m_variableRehearsal.clearAll();
-        m_transitionRehearsal.clearAll();
         clearClipboard();
 
         PackExportSelectionStore::instance().closeProject();
@@ -2831,8 +2829,6 @@ ProjectItem* ProjectManager::createItemImpl(ProjectItem* parent, const QString& 
         conversion->config = ConversionDefaults::newPreset();
     if (auto* variable = newItem->comp<VVariable>())
         VariableSemantics::initializeNewVariable(*variable, variableKind);
-    if (auto* selection = newItem->comp<VSelection>())
-        selection->transitions = AuthoringPolicy::defaultTransitionTable();
     if (auto* segment = newItem->comp<VSegment>()) {
         segment->segmentTime = SegmentTimeSpec::musical();
         const auto end = TimelineCoordinates::fromSeconds(
@@ -4258,14 +4254,6 @@ std::shared_ptr<ProjectItem> ProjectManager::cloneSubtreeDetached(
                 for (auto& entry : table->entries)
                     for (auto& curve : entry.curves) curve.rowGuid = rowGuids.value(curve.rowGuid);
             }
-            for (TransitionRuleDef& rule : selection->transitions.rules) {
-                for (auto* reference : {&rule.source, &rule.target}) {
-                    if (!*reference) continue;
-                    const auto mapped = guidMap.constFind(**reference);
-                    if (mapped != guidMap.cend())
-                        *reference = mapped.value();
-                }
-            }
         }
         if (auto* sound = node->comp<VSound>())
             SoundSourceSemantics::remintEntries(*sound);
@@ -5073,14 +5061,6 @@ DeletedSubtreeRefLog ProjectManager::cleanupIllegalPlaybackReferences(ProjectDat
     auto gridTargetIllegal = [](const ProjectItem& owner, const QUuid& target) {
         return !GridSemantics::isGridTargetCandidate(owner, target);
     };
-    auto transitionEndpointIllegal = [&](const ProjectItem& owner,
-                                         const std::optional<QUuid>& endpoint) {
-        if (!endpoint) return false;
-        const ProjectItem* candidate = resolve(*endpoint);
-        return !candidate
-            || !TransitionSemantics::isEndpointCandidate(owner, *candidate);
-    };
-
     std::function<void(ProjectItem*)> scrubPlaybackRefs = [&](ProjectItem* owner) {
         if (!owner) return;
         if (auto* timeline = owner->comp<VTrack>()) {
@@ -5112,18 +5092,6 @@ DeletedSubtreeRefLog ProjectManager::cleanupIllegalPlaybackReferences(ProjectDat
                 owner->markDirty();
                 emit self.itemPropertyChanged(owner, QStringLiteral("selections"));
             }
-
-            TransitionTableDef table = selection->transitions;
-            std::erase_if(table.rules, [&](const TransitionRuleDef& rule) {
-                return transitionEndpointIllegal(*owner, rule.source)
-                    || transitionEndpointIllegal(*owner, rule.target);
-            });
-            if (table.rules.size() != selection->transitions.rules.size()) {
-                log.transitions.push_back({owner->objectID, selection->transitions});
-                selection->transitions = std::move(table);
-                owner->markDirty();
-                emit self.itemPropertyChanged(owner, QStringLiteral("transitions"));
-            }
         }
         for (auto& child : owner->children) scrubPlaybackRefs(child.get());
     };
@@ -5149,8 +5117,7 @@ QJsonObject folderComponentReferences(const ProjectItem& item)
     }
     if (const auto* selection = item.comp<VSelection>())
         components.insert(QStringLiteral("selection"), QJsonObject{
-            {QStringLiteral("selections"), selection->selections.toJson()},
-            {QStringLiteral("transitions"), selection->transitions.toJson()}});
+            {QStringLiteral("selections"), selection->selections.toJson()}});
     return {{QStringLiteral("components"), components}};
 }
 
@@ -5187,13 +5154,6 @@ void applyFolderComponentReferences(ProjectItem& item, const QJsonObject& state)
             if (const auto parsed = SelectionData::fromJson(selections)) {
                 selection->selections = *parsed;
                 changedProperties.append(QStringLiteral("selections"));
-            }
-        }
-        if (const auto transitions = value.value(QStringLiteral("transitions")).toObject();
-            selection->transitions.toJson() != transitions) {
-            if (const auto parsed = TransitionTableDef::fromJson(transitions)) {
-                selection->transitions = *parsed;
-                changedProperties.append(QStringLiteral("transitions"));
             }
         }
     }
@@ -5391,7 +5351,6 @@ DeletedSubtreeRefLog ProjectManager::cleanupReferencesToDeletedSubtree(ProjectIt
     DeletedSubtreeRefLog playback = cleanupIllegalPlaybackReferences(project);
     log.clips = std::move(playback.clips);
     log.selections.insert(log.selections.end(), playback.selections.begin(), playback.selections.end());
-    log.transitions = std::move(playback.transitions);
 
     return log;
 }
@@ -5521,16 +5480,6 @@ void ProjectManager::restoreReferencesFromLog(const DeletedSubtreeRefLog& log,
             owner->markDirty();
             emit self.itemPropertyChanged(owner, QStringLiteral("clips"));
         }
-    }
-
-
-    for (const auto& ref : log.transitions) {
-        ProjectItem* owner = findById(ref.ownerObjectID);
-        auto* selection = owner ? owner->comp<VSelection>() : nullptr;
-        if (!selection) continue;
-        selection->transitions = ref.table;
-        owner->markDirty();
-        emit self.itemPropertyChanged(owner, QStringLiteral("transitions"));
     }
 }
 

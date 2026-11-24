@@ -33,7 +33,6 @@
 #include "VariableSemantics.h"
 #include "ProjectFormatVersion.h"
 #include "Timeline/TimelineTypes.h"
-#include "TransitionSemantics.h"
 #include "harken_playable_properties/PlayableProperties.h"
 #include "PlayablePropertyAuthoringV1.h"
 #include "FieldGroups.h"
@@ -191,10 +190,6 @@ struct DeletedSubtreeRefLog {
         uint32_t ownerObjectID = 0;
         SelectionData selections;
     };
-    struct TransitionRef {
-        uint32_t ownerObjectID = 0;
-        TransitionTableDef table;
-    };
     std::vector<SendRef>    sends;
     std::vector<OutputBusRef>  outputBusRefs;
     std::vector<ClipRef> clips;
@@ -204,7 +199,6 @@ struct DeletedSubtreeRefLog {
     QJsonObject folderProjectReferencesBefore;
     QJsonObject folderProjectReferencesAfter;
     std::vector<SelectionRef> selections;
-    std::vector<TransitionRef> transitions;
     std::vector<SelectionEntry> containerChildOccurrences;
     bool empty() const
     {
@@ -212,7 +206,7 @@ struct DeletedSubtreeRefLog {
             && actionTargetRefs.empty() && actionTimingRefs.empty() && folderComponentRefs.empty()
             && folderProjectReferencesBefore.isEmpty()
             && clips.empty() && selections.empty()
-            && transitions.empty() && containerChildOccurrences.empty();
+            && containerChildOccurrences.empty();
     }
 };
 

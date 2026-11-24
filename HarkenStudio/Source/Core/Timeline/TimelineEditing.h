@@ -81,11 +81,6 @@ ActionResult replaceSegmentTime(ProjectManager* projectManager,
                               const SegmentTimeSpec& segmentTime,
                               const QObject* originator = nullptr,
                               const QString& undoText = {});
-ActionResult setSpliceByMarker(ProjectManager* projectManager,
-                            ProjectItem* container,
-                            bool spliceByMarker,
-                            const QObject* originator = nullptr,
-                            const QString& undoText = {});
 
 }
 }

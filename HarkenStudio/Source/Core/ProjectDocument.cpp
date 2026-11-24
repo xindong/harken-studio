@@ -6,6 +6,7 @@
 #include "FieldGroupJson.h"
 #include "harken_buildinfo.h"
 
+#include <QDebug>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QUuid>
@@ -223,6 +224,47 @@ bool ProjectDocument::validateFieldGroupAuthoring(const QJsonObject& content,
     return validateAuthoringNode(content, error);
 }
 
+namespace {
+
+void warnDiscarded(const QJsonObject& content, const char* field)
+{
+    qWarning() << "[ProjectDocument] Discarded retired" << field << "from"
+               << content.value(QStringLiteral("name")).toString()
+               << content.value(QStringLiteral("guid")).toString();
+}
+
+bool isDefaultTransitionFade(const QJsonObject& fade)
+{
+    return fade.value(QStringLiteral("durationSeconds")).toDouble() == 0.5
+        && fade.value(QStringLiteral("curve")).toArray().size() == 2;
+}
+
+bool isDefaultTransitionTable(const QJsonObject& table)
+{
+    const auto rules = table.value(QStringLiteral("rules")).toArray();
+    if (rules.size() != 1) return false;
+    const auto rule = rules.first().toObject();
+    const auto timing = rule.value(QStringLiteral("exitTiming")).toString();
+    return rule.value(QStringLiteral("source")).toString().isEmpty()
+        && rule.value(QStringLiteral("target")).toString().isEmpty()
+        && rule.value(QStringLiteral("bridge")).toString().isEmpty()
+        && (timing == QStringLiteral("Immediate") || timing == QStringLiteral("NextBar"))
+        && rule.value(QStringLiteral("entryMode")).toString() == QStringLiteral("EntryMarker")
+        && isDefaultTransitionFade(rule.value(QStringLiteral("sourceFadeOut")).toObject())
+        && isDefaultTransitionFade(rule.value(QStringLiteral("targetFadeIn")).toObject());
+}
+
+void discardRetiredSelectionFields(QJsonObject* selection, const QJsonObject& content)
+{
+    if (selection->contains(QStringLiteral("transitions"))
+        && !isDefaultTransitionTable(selection->take(QStringLiteral("transitions")).toObject()))
+        warnDiscarded(content, "transitions");
+    if (selection->take(QStringLiteral("spliceByMarker")).toBool())
+        warnDiscarded(content, "spliceByMarker");
+}
+
+}
+
 void ProjectDocument::discardRetiredMakeUpGain(QJsonObject* properties)
 {
     properties->remove(QStringLiteral("makeUpGain"));
@@ -313,20 +355,8 @@ bool ProjectDocument::normalizeContent(QJsonObject* content, QString* error)
         }
         if (components.value(QStringLiteral("selection")).isObject()) {
             auto selection = components.value(QStringLiteral("selection")).toObject();
-            auto transitions = selection.value(QStringLiteral("transitions")).toObject();
-            if (transitions.value(QStringLiteral("rules")).isArray()) {
-                auto rules = transitions.value(QStringLiteral("rules")).toArray();
-                for (qsizetype index = 0; index < rules.size(); ++index) {
-                    if (!rules[index].isObject()) continue;
-                    auto rule = rules[index].toObject();
-                    for (const auto* key : {"bridge", "bridgeFadeIn", "bridgeFadeOut"})
-                        rule.remove(QLatin1String(key));
-                    rules[index] = rule;
-                }
-                transitions.insert(QStringLiteral("rules"), rules);
-                selection.insert(QStringLiteral("transitions"), transitions);
-                components.insert(QStringLiteral("selection"), selection);
-            }
+            discardRetiredSelectionFields(&selection, *content);
+            components.insert(QStringLiteral("selection"), selection);
         }
         if (!moveField(components, QStringLiteral("piecetimeline"),
                         QStringLiteral("segmenttimeline"))) return false;

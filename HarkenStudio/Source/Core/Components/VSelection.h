@@ -6,7 +6,6 @@
 #include "../GridSemantics.h"
 #include "../PropertyDescriptor.h"
 #include "../SelectionData.h"
-#include "../TransitionSemantics.h"
 
 #include <QHash>
 #include <QJsonObject>
@@ -52,9 +51,6 @@ public:
     VariableResponse blendResponse = VariableResponse::Live;
     SelectionData selections;
     SelectionBehaviorDef behavior;
-    bool spliceByMarker = false;
-
-    TransitionTableDef transitions = canonicalTransitionTable();
 
     VariableResponse variableResponse() const
     {
@@ -83,7 +79,6 @@ public:
 
     void toJsonExtra(QJsonObject& j) const override;
 
-    void fromJsonExtra(const QJsonObject& j) override;
 };
 
 #if defined(__clang__)

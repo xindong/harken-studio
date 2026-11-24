@@ -13,10 +13,6 @@ add_library(harken_editor_grid_editor STATIC
     SelectionListWidget.h
     ActiveSourcePreview.cpp
     ActiveSourcePreview.h
-    TransitionFadeButton.cpp
-    TransitionFadeButton.h
-    TransitionTableWidget.cpp
-    TransitionTableWidget.h
     GridHeaderRef.h
     GridValueFormatting.h
 )

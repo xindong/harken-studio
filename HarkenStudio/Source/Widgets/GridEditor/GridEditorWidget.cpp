@@ -4,14 +4,11 @@
 #include "MixingEditorWidget.h"
 #include "DiscreteGridWidget.h"
 #include "SelectionListWidget.h"
-#include "TransitionTableWidget.h"
 #include "Core/Components/VSelection.h"
-#include "Core/PlatformContextService.h"
 #include "Core/ProjectManager.h"
 #include "Core/ProjectTypes.h"
 #include "Core/QtControlSkin.h"
 #include "Core/ThemeManager.h"
-#include "Core/TransitionSemantics.h"
 #include "Widgets/Common/PaneSection.h"
 #include "Widgets/Common/PaneSectionStack.h"
 
@@ -108,10 +105,6 @@ GridEditorWidget::GridEditorWidget(QWidget* parent)
     editorStack_ = new QStackedWidget(contentSection_->content());
     editorStack_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
     contentSection_->setContentWidget(editorStack_);
-    transitionSection_ = gridPage_->addSection(tr("Transition"), QStringLiteral("transition"), 200);
-    transitionSection_->setObjectName(QStringLiteral("selectionTransitionSection"));
-    transitionTable_ = new TransitionTableWidget(transitionSection_->content());
-    transitionSection_->setContentWidget(transitionTable_);
 
     discreteGrid_ = new DiscreteGridWidget(editorStack_);
     editorStack_->addWidget(discreteGrid_);
@@ -167,14 +160,8 @@ GridEditorWidget::GridEditorWidget(QWidget* parent)
             refreshFromModel();
             return;
         }
-        if (item == displayItem_ && (prop == QStringLiteral("playType")
-                                     || prop == QStringLiteral("variableResponse"))) {
-            refreshTransitionSection();
-            return;
-        }
         if (item == displayItem_ && prop == QStringLiteral("selections")) {
             discreteGrid_->reload();
-            refreshTransitionSection();
             return;
         }
         static const QSet<QString> kDeclarationProps = {
@@ -206,8 +193,6 @@ GridEditorWidget::GridEditorWidget(QWidget* parent)
             refreshFromModel();
     });
     connect(&pm, &ProjectManager::projectClosed, this, [this]() { clearEditor(); });
-    connect(&PlatformContextService::instance(), &PlatformContextService::contextChanged,
-            this, [this](const PlatformContext&) { refreshTransitionSection(); });
 
     clearEditor();
 }
@@ -258,16 +243,9 @@ void GridEditorWidget::bindItem(ProjectItem* item)
 {
     if (item != boundItem_) {
         drillPath_.clear();
-        placement_.reset();
     }
     boundItem_ = item;
     refreshFromModel();
-}
-
-void GridEditorWidget::setPlacementContext(const std::optional<PlacementContext>& placement)
-{
-    placement_ = placement;
-    transitionTable_->setPlacementContext(displayItem_ == boundItem_ ? placement_ : std::nullopt);
 }
 
 void GridEditorWidget::clearEditor()
@@ -303,7 +281,6 @@ void GridEditorWidget::refreshFromModel()
         discreteGrid_->setBoundItem(nullptr);
         mixingEditor_->setBoundItem(nullptr);
         selectionList_->setBoundItem(nullptr);
-        transitionTable_->setBoundItem(nullptr);
         rebuildCrumbs({});
         showEmptyState({});
         return;
@@ -331,19 +308,8 @@ void GridEditorWidget::refreshFromModel()
     editorStack_->setCurrentWidget(match ? static_cast<QWidget*>(discreteGrid_)
                                  : blend ? static_cast<QWidget*>(mixingEditor_)
                                          : static_cast<QWidget*>(selectionList_));
-    transitionTable_->setBoundItem(displayItem_);
-    transitionTable_->setPlacementContext(displayItem_ == boundItem_ ? placement_ : std::nullopt);
-    refreshTransitionSection();
     stack_->setCurrentWidget(gridPage_);
     refreshChrome();
-}
-
-void GridEditorWidget::refreshTransitionSection()
-{
-    gridPage_->setSectionVisible(transitionSection_, displayItem_
-        && TransitionSemantics::transitionMountState(*displayItem_,
-               currentWorldPlatformScope(PlatformContextService::instance().context()))
-            == TransitionMountState::Editable);
 }
 
 void GridEditorWidget::rebuildCrumbs(const std::vector<ProjectItem*>& chain)

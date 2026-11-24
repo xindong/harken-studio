@@ -314,12 +314,6 @@ QSet<QString> referencedDocumentPaths(const QJsonObject& document, int schemaVer
     const QJsonObject selectionPlatforms = selections.value(QStringLiteral("platforms")).toObject();
     for (auto table = selectionPlatforms.constBegin(); table != selectionPlatforms.constEnd(); ++table)
         addSelectionReferences(table.value().toObject());
-    for (const auto& rule : selection.value(QStringLiteral("transitions")).toObject()
-             .value(QStringLiteral("rules")).toArray()) {
-        const QJsonObject transition = rule.toObject();
-        for (const auto* field : {"source", "target"})
-            addReference(transition.value(QLatin1String(field)));
-    }
     for (const auto& binding : components.value(QStringLiteral("mixnode")).toObject()
              .value(QStringLiteral("bindings")).toArray())
         addReference(binding.toObject().value(QStringLiteral("variable")));

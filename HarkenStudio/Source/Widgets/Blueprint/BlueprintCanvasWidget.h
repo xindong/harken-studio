@@ -22,7 +22,6 @@
 #include "BlueprintCanvasView.h"
 #include "BlueprintEditTypes.h"
 #include "Core/ContextInfo.h"
-#include "Core/TransitionSemantics.h"
 #include "IBlueprintSource.h"
 #include "SignalChainSource.h"
 #include "SignalPathSource.h"
@@ -92,8 +91,6 @@ public:
     NodeItem* signalPathGainNode(size_t edgeIndex) const;
     ConnectionPath* signalPathGainOutputEdge(size_t edgeIndex) const;
 
-    void setTransitionWatch(const TransitionSemantics::TransitionWatchView& view);
-    const TransitionSemantics::TransitionWatchView& transitionWatch() const { return transitionWatch_; }
 
     using ConnectResult = BlueprintConnectResult;
 
@@ -312,7 +309,6 @@ private:
                              const DefinitionFieldGroups* previewGroups = nullptr);
     void finishNodeEdits_(bool committed);
 
-    void refreshTransitionWatch_();
     void materializeFromSource_();
 
     void populateNodeContextMenu_(QMenu& menu, NodeItem* node);
@@ -323,14 +319,12 @@ private:
     void populateCreationMenu_(QMenu& menu, const QPointF& position);
     void showCreatedItem_(ProjectItem* item, std::optional<QPointF> position);
 
-    void paintTransitionWatch_(QPainter* painter);
     void paintLocationPing_(QPainter* painter);
 
     QVariantAnimation* locationPing_ = nullptr;
     uint32_t locationPingObjectID_ = 0;
     QMargins navigationViewportMargins_;
 
-    TransitionSemantics::TransitionWatchView transitionWatch_;
 
     NodeItem* hoverDropTarget_ = nullptr;
     bool externalDragActive_ = false;

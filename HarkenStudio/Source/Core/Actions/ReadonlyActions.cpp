@@ -66,8 +66,6 @@ static QString inferCategory(const QString& cmd)
     if (cmd.contains(QLatin1String("container")) ||
         cmd.contains(QLatin1String("playlist_entries")) ||
         cmd.contains(QLatin1String("segment_info")) ||
-        cmd.contains(QLatin1String("transition_rules")) ||
-        cmd.contains(QLatin1String("active_transitions")) ||
         cmd.contains(QLatin1String("music_context")))
         return QStringLiteral("container");
 

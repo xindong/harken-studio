@@ -3,7 +3,6 @@
 #include "ActionStepUtils.h"
 #include "Components/VAction.h"
 #include "Components/VSegment.h"
-#include "Components/VSelection.h"
 #include "Components/VTrack.h"
 #include "ProjectTypes.h"
 #include "Timeline/TimelineCoordinates.h"
@@ -46,16 +45,6 @@ TimelineValidation validateDependencies(const ProjectItem& item,
             if (resolve)
                 for (const Clip& clip : track->clips.items)
                     pending.push_back(resolve(clip.targetGuid));
-        }
-        if (const auto* selection = current->comp<VSelection>()) {
-            if (newAuthoring) {
-                const auto validity = validateTransitions(selection->transitions);
-                if (!validity) return validity;
-            }
-            if (resolve)
-                for (const TransitionRuleDef& rule : selection->transitions.rules)
-                    for (const auto* reference : {&rule.source, &rule.target})
-                        if (*reference) pending.push_back(resolve(**reference));
         }
         if (const auto* action = current->comp<VAction>()) {
             const auto reference = [&](uint32_t objectID, const QString& name,
@@ -105,36 +94,6 @@ bool supportsMusicalTime()
     return true;
 }
 
-const std::vector<TransitionExitTiming>& allowedTransitionExitTimings()
-{
-    static const std::vector<TransitionExitTiming> timings{
-        TransitionExitTiming::Immediate,
-        TransitionExitTiming::NaturalEnd,
-        TransitionExitTiming::NextBeat,
-        TransitionExitTiming::NextBar,
-        TransitionExitTiming::NextMarker,
-        TransitionExitTiming::ExitMarker};
-    return timings;
-}
-
-bool allowsTransitionExitTiming(TransitionExitTiming timing)
-{
-    const auto& timings = allowedTransitionExitTimings();
-    return std::find(timings.begin(), timings.end(), timing) != timings.end();
-}
-
-TransitionRuleDef defaultTransitionRule()
-{
-    auto rule = canonicalTransitionRule();
-    rule.exitTiming = TransitionExitTiming::Immediate;
-    return rule;
-}
-
-TransitionTableDef defaultTransitionTable()
-{
-    return {{defaultTransitionRule()}};
-}
-
 TimelineValidation validateSegmentTime(const SegmentTimeSpec& time)
 {
     return TimelineCoordinates::validate(time);
@@ -164,13 +123,6 @@ TimelineValidation validateTemplate(const QJsonObject& templateData)
             const auto time = validateSegmentTime(segment.value(QStringLiteral("segmentTime")).toObject());
             if (!time) return time;
         }
-        const auto selection = components.value(QStringLiteral("selection")).toObject();
-        if (selection.contains(QStringLiteral("transitions"))) {
-            QString error;
-            if (!TransitionTableDef::fromJson(
-                    selection.value(QStringLiteral("transitions")).toObject(), &error))
-                return TimelineValidation::failure(TimelineError::InvalidJson, error);
-        }
         for (const auto& child : item.value(QStringLiteral("children")).toArray())
             pending.push_back(child.toObject());
     }
@@ -196,40 +148,6 @@ TimelineValidation validateNewSubtree(const ProjectItem& item,
         if (!context) return context;
     }
     return validateDependencies(item, destinationParent, resolve, resolveObject, true);
-}
-
-TimelineValidation validateTransitions(const TransitionTableDef& replacement,
-                                       const TransitionTableDef*)
-{
-    const auto validity = replacement.validate();
-    if (!validity)
-        return TimelineValidation::failure(
-            TimelineError::InvalidJson, validity.message, validity.index);
-    for (size_t index = 0; index < replacement.rules.size(); ++index) {
-        const auto& rule = replacement.rules[index];
-        if (allowsTransitionExitTiming(rule.exitTiming)) continue;
-        return TimelineValidation::failure(
-            TimelineError::InvalidJson,
-            QStringLiteral("Unknown transition exit timing."),
-            static_cast<int>(index));
-    }
-    return TimelineValidation::success();
-}
-
-TimelineValidation validateTransitionActivation(const ProjectItem& container,
-                                                const VSelection& replacement,
-                                                PlatformScope scope)
-{
-    const auto* previous = container.comp<VSelection>();
-    if (!previous || TransitionSemantics::transitionMountState(container, scope)
-            == TransitionMountState::Editable)
-        return TimelineValidation::success();
-    ProjectItem candidate(container.name, container.type);
-    auto* selection = candidate.compOrCreate<VSelection>();
-    *selection = replacement;
-    if (TransitionSemantics::transitionMountState(candidate, scope) != TransitionMountState::Editable)
-        return TimelineValidation::success();
-    return validateTransitions(previous->transitions);
 }
 
 }

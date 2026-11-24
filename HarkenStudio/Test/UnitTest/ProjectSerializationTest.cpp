@@ -9,7 +9,6 @@
 #include "ProjectTypes.h"
 #include "PlayablePropertyAuthoringV1.h"
 #include "Components/VSelection.h"
-#include "TransitionSemantics.h"
 #include "Support/ProjectDocumentTestUtils.h"
 #include "Support/ProjectPlatformTestUtils.h"
 
@@ -223,35 +222,6 @@ TEST(ProjectSerialization, AssetSavedStateIgnoresCacheRepresentationAndTracksCon
     loadedAsset = registry.getAsset(asset.sourceID);
     ASSERT_NE(loadedAsset, nullptr);
     EXPECT_EQ(loadedAsset->metadata.sampleRate, 44100u);
-}
-
-TEST(ProjectSerialization, DuplicateTransitionEndpointsRejectItemLoad)
-{
-    ProjectItem container(QStringLiteral("Container"),
-                          ProjectItem::Type::Container);
-    container.guid = QUuid::createUuid();
-    container.attachDefaultComponents();
-    harken::studio::TransitionRuleDef override = harken::studio::canonicalTransitionRule();
-    override.source = QUuid::createUuid();
-    override.target = QUuid::createUuid();
-    ASSERT_TRUE(container.comp<harken::studio::VSelection>()->transitions.addRule(override));
-
-    harken::studio::ProjectSerializer serializer;
-    QJsonObject saved = serializer.projectItemToJson(container);
-    ProjectItem original;
-    ASSERT_TRUE(serializer.projectItemFromJson(saved, original));
-    QJsonObject components = saved[QStringLiteral("components")].toObject();
-    QJsonObject selection = components[QStringLiteral("selection")].toObject();
-    QJsonObject transitions = selection[QStringLiteral("transitions")].toObject();
-    QJsonArray rules = transitions[QStringLiteral("rules")].toArray();
-    rules.append(rules.last());
-    transitions[QStringLiteral("rules")] = rules;
-    selection[QStringLiteral("transitions")] = transitions;
-    components[QStringLiteral("selection")] = selection;
-    saved[QStringLiteral("components")] = components;
-
-    ProjectItem rejected;
-    EXPECT_FALSE(serializer.projectItemFromJson(saved, rejected));
 }
 
 TEST(ProjectSerialization, NestedTreeDeserializationRestoresParentLinks)

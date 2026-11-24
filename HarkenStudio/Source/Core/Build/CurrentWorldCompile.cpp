@@ -181,7 +181,7 @@ CurrentWorldCompileResult compileCurrentWorldRequest(
 
     auto compiled = harkencurrentworldcompiler::CompileCurrentWorldV1(
         *frontEnd.project, request.variables, request.materializations,
-        request.containers, {}, request.transitions, request.actions,
+        request.containers, {}, {}, request.actions,
         &request.busResult->idSet,
         harkencurrentworldcompiler::CompileCapacityModeV1::AuthoredContent,
         request.propertyAuthoredOrders, request.reservedPropertyAuthoredOrders, request.duckingSends, request.emitEmptySignalTables);

@@ -612,8 +612,6 @@ void buildExportedPack(harken::studio::ProjectData& project, const QString& proj
                                         kQueueSoundContainerObjectId);
     ASSERT_NO_FATAL_FAILURE(prepareContainer(queueSoundContainer,
                                              harken::studio::SelectionMode::Sequence, harken::studio::SelectionPlayType::Queue));
-    queueSoundContainer->comp<harken::studio::VSelection>()->transitions.rules.front().exitTiming =
-        harken::studio::TransitionExitTiming::Immediate;
     addChild(layer, queueSoundContainer);
     ASSERT_NO_FATAL_FAILURE(attachPlayableSound(queueSoundContainer, queueSoundChild,
                                                 kQueueSoundSourceId));
@@ -630,8 +628,6 @@ void buildExportedPack(harken::studio::ProjectData& project, const QString& proj
                                         kQueueTrackContainerObjectId);
     ASSERT_NO_FATAL_FAILURE(prepareContainer(queueTrackContainer,
                                              harken::studio::SelectionMode::Sequence, harken::studio::SelectionPlayType::Queue));
-    queueTrackContainer->comp<harken::studio::VSelection>()->transitions.rules.front().exitTiming =
-        harken::studio::TransitionExitTiming::Immediate;
     addChild(layer, queueTrackContainer);
     std::shared_ptr<harken::studio::ProjectItem> queueTrack;
     ASSERT_NO_FATAL_FAILURE(makeTrackWithSound(
@@ -655,8 +651,6 @@ void buildExportedPack(harken::studio::ProjectData& project, const QString& proj
                                         kQueueSegmentContainerObjectId);
     ASSERT_NO_FATAL_FAILURE(prepareContainer(queueSegmentContainer,
                                              harken::studio::SelectionMode::Sequence, harken::studio::SelectionPlayType::Queue));
-    queueSegmentContainer->comp<harken::studio::VSelection>()->transitions.rules.front().exitTiming =
-        harken::studio::TransitionExitTiming::Immediate;
     addChild(layer, queueSegmentContainer);
     std::shared_ptr<harken::studio::ProjectItem> queueSegment;
     ASSERT_NO_FATAL_FAILURE(makeSegmentWithSound(
@@ -800,10 +794,6 @@ void buildExportedPack(harken::studio::ProjectData& project, const QString& proj
         initiallySilentContainer, stepVariable, initiallySilent, initiallyAudible, 1, 2));
     initiallySilentContainer->comp<harken::studio::VSelection>()->matchResponse =
         harken::studio::VariableResponse::Live;
-    auto& liveMatchTransition = initiallySilentContainer->comp<harken::studio::VSelection>()->transitions.rules.front();
-    liveMatchTransition.exitTiming = harken::studio::TransitionExitTiming::Immediate;
-    liveMatchTransition.sourceFadeOut.durationSeconds = 0.0f;
-    liveMatchTransition.targetFadeIn.durationSeconds = 0.0f;
 
     auto variablesRoot = makeItem(QStringLiteral("Variables"),
                                   harken::studio::ProjectItem::Type::None,

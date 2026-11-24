@@ -91,10 +91,6 @@ add_library(harken_studio_core STATIC
     VariableRangeEditing.h
     BindingEditing.cpp
     BindingEditing.h
-    TransitionFieldGating.cpp
-    TransitionFieldGating.h
-    TransitionRehearsal.cpp
-    TransitionRehearsal.h
     Timeline/TimelineEditing.cpp
     Timeline/TimelineEditing.h
     AuditionManager.cpp

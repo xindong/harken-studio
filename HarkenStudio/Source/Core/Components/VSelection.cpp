@@ -575,7 +575,7 @@ bool VSelection::fromJson(const QJsonObject& json)
 {
     const QSet<QString> fields{QStringLiteral("mode"), QStringLiteral("playType"),
         QStringLiteral("matchResponse"), QStringLiteral("blendResponse"), QStringLiteral("selections"),
-        QStringLiteral("behavior"), QStringLiteral("spliceByMarker"), QStringLiteral("transitions")};
+        QStringLiteral("behavior")};
     for (auto it = json.begin(); it != json.end(); ++it)
         if (!fields.contains(it.key())) return false;
     VSelection parsed;
@@ -589,7 +589,6 @@ bool VSelection::fromJson(const QJsonObject& json)
         auto& response = field == QLatin1String("matchResponse") ? parsed.matchResponse : parsed.blendResponse;
         response = static_cast<VariableResponse>(json.value(field).toInt());
     }
-    parsed.spliceByMarker = json.value(QStringLiteral("spliceByMarker")).toBool(false);
     if (json.contains(QStringLiteral("behavior"))) {
         if (!json.value(QStringLiteral("behavior")).isObject()) return false;
         const auto behavior = ContainerBehaviorSemantics::fromJson(
@@ -603,20 +602,12 @@ bool VSelection::fromJson(const QJsonObject& json)
         if (!selections) return false;
         parsed.selections = std::move(*selections);
     }
-    if (json.contains(QStringLiteral("transitions"))) {
-        if (!json.value(QStringLiteral("transitions")).isObject()) return false;
-        const auto table = TransitionTableDef::fromJson(json.value(QStringLiteral("transitions")).toObject());
-        if (!table) return false;
-        parsed.transitions = *table;
-    }
     mode = parsed.mode;
     playType = parsed.playType;
     matchResponse = parsed.matchResponse;
     blendResponse = parsed.blendResponse;
     selections = std::move(parsed.selections);
     behavior = parsed.behavior;
-    spliceByMarker = parsed.spliceByMarker;
-    transitions = std::move(parsed.transitions);
     return true;
 }
 
@@ -627,13 +618,6 @@ void VSelection::toJsonExtra(QJsonObject& json) const
     json[QStringLiteral("blendResponse")] = static_cast<int>(blendResponse);
     const auto behaviorJson = ContainerBehaviorSemantics::toJson(behavior);
     if (!behaviorJson.isEmpty()) json[QStringLiteral("behavior")] = behaviorJson;
-    if (spliceByMarker) json[QStringLiteral("spliceByMarker")] = true;
-    if (transitions != canonicalTransitionTable()) json[QStringLiteral("transitions")] = transitions.toJson();
-}
-
-void VSelection::fromJsonExtra(const QJsonObject& json)
-{
-    spliceByMarker = json.value(QStringLiteral("spliceByMarker")).toBool(false);
 }
 
 std::vector<SelectionEntry> VSelection::activeRows(PlatformScope scope) const

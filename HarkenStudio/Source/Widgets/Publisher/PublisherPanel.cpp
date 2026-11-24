@@ -359,7 +359,6 @@ PublisherPanel::PublisherPanel(QWidget* parent)
             [this](ProjectItem* item, const QString& property) {
         static const QSet<QString> closureProperties = {
             QStringLiteral("distinguishLanguage"), QStringLiteral("selections"),
-            QStringLiteral("transitions"),
             QStringLiteral("clips"), QStringLiteral("mode"), QStringLiteral("playType"),
             QStringLiteral("behavior")};
         if (item && (item->type == ProjectItem::Type::Action

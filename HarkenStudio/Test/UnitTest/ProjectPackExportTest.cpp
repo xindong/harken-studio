@@ -1842,7 +1842,6 @@ TEST(ProjectPackExport, ExportsContainerAndVariableProjectDeterministically)
         selection->mode = modes[i];
         selection->playType = (i == 2 || i == 4)
             ? harken::studio::SelectionPlayType::Queue : harken::studio::SelectionPlayType::Single;
-        selection->transitions.rules.front().exitTiming = harken::studio::TransitionExitTiming::Immediate;
         selection->behavior.memoryScope = (i == 2 || i >= 4)
             ? harken::studio::SelectionMemoryScope::PerEmitter : harken::studio::SelectionMemoryScope::Global;
         if (i == 1) selection->behavior.discipline = harken::studio::RandomDiscipline::Shuffle;

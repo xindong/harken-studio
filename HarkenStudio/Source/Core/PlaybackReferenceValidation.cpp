@@ -106,22 +106,6 @@ bool validatePlaybackRoots(const std::vector<const ProjectItem*>& roots, QString
                                         shapeError);
             return false;
         }
-        if (const auto* selection = owner->comp<VSelection>()) {
-            const auto shape = selection->transitions.validate();
-            if (!shape) {
-                if (error) *error = QStringLiteral("Owner '%1' (%2), Transition: %3")
-                                       .arg(owner->name, owner->guid.toString(QUuid::WithoutBraces),
-                                            shape.message);
-                return false;
-            }
-            for (size_t i = 0; i < selection->transitions.rules.size(); ++i) {
-                const auto& rule = selection->transitions.rules[i];
-                if (rule.source && !check(*rule.source, QStringLiteral("Transition rule %1 source").arg(i)))
-                    return false;
-                if (rule.target && !check(*rule.target, QStringLiteral("Transition rule %1 target").arg(i)))
-                    return false;
-            }
-        }
         if (const auto* timeline = owner->comp<VTrack>()) {
             for (const auto& clip : timeline->clips.items)
                 if (!check(clip.targetGuid, QStringLiteral("Clip %1")

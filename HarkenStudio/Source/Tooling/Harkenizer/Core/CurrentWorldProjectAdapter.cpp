@@ -508,304 +508,6 @@ bool buildDefinitionNode(ProjectItem& item, const ProjectIndex& index,
     return true;
 }
 
-std::optional<harken::studio::build::PlayableKindV1> transitionPlayableKind(
-    ProjectItem::Type type)
-{
-    switch (type) {
-        case ProjectItem::Type::Sound: return harken::studio::build::PlayableKindV1::Sound;
-        case ProjectItem::Type::Container:
-            return harken::studio::build::PlayableKindV1::Container;
-        case ProjectItem::Type::Track: return harken::studio::build::PlayableKindV1::Track;
-        case ProjectItem::Type::Segment: return harken::studio::build::PlayableKindV1::Segment;
-        default: return std::nullopt;
-    }
-}
-
-bool accumulateBoundedTransitionSoundLeaves(
-    const ProjectItem& item, const ProjectIndex& index,
-    std::unordered_set<const ProjectItem*>* active,
-    std::uint32_t* leafCount)
-{
-    const std::uint32_t leafCapacity =
-        harken::studio::build::WorldCapacitySummaryV1{}.maxKnownScheduleLeaves;
-    if (active == nullptr || leafCount == nullptr
-        || leafCapacity == 0 || *leafCount > leafCapacity)
-        return false;
-    if (item.type == ProjectItem::Type::Sound) {
-        if (*leafCount == leafCapacity)
-            return false;
-        ++*leafCount;
-        return true;
-    }
-    if (item.type == ProjectItem::Type::Container
-        || !active->insert(&item).second)
-        return false;
-
-    bool valid = true;
-    if (item.type == ProjectItem::Type::Track) {
-        const auto* timeline = item.comp<VTrack>();
-        if (timeline == nullptr) {
-            valid = false;
-        } else {
-            for (const Clip& clip : timeline->clips.items) {
-                const auto target = index.byGuid.find(
-                    authoringGuid(clip.targetGuid));
-                if (target == index.byGuid.end() || target->second == nullptr
-                    || !accumulateBoundedTransitionSoundLeaves(
-                        *target->second, index, active, leafCount)) {
-                    valid = false;
-                    break;
-                }
-            }
-        }
-    } else if (item.type == ProjectItem::Type::Segment) {
-        const auto children = index.children.find(
-            const_cast<ProjectItem*>(&item));
-        if (children == index.children.end()) {
-            valid = false;
-        } else {
-            for (const ProjectItem* child : children->second) {
-                if (child == nullptr
-                    || !accumulateBoundedTransitionSoundLeaves(
-                        *child, index, active, leafCount)) {
-                    valid = false;
-                    break;
-                }
-            }
-        }
-    } else {
-        valid = false;
-    }
-    active->erase(&item);
-    return valid;
-}
-
-bool transitionEndpointHasBoundedSounds(const ProjectItem& item,
-                                        const ProjectIndex& index)
-{
-    std::unordered_set<const ProjectItem*> active;
-    std::uint32_t leafCount = 0;
-    const std::uint32_t leafCapacity =
-        harken::studio::build::WorldCapacitySummaryV1{}.maxKnownScheduleLeaves;
-    return accumulateBoundedTransitionSoundLeaves(
-               item, index, &active, &leafCount)
-        && leafCount != 0
-        && leafCount <= leafCapacity;
-}
-
-bool appendTransitionFade(
-    const TransitionFadeDef& source, std::uint32_t sampleRate,
-    std::uint32_t* nextCurveId,
-    std::vector<harken::studio::build::CurveV1>* curves, harken::studio::build::TransitionFadeV1* output)
-{
-    if (nextCurveId == nullptr || curves == nullptr || output == nullptr ||
-        sampleRate == 0 ||
-        *nextCurveId == 0 || *nextCurveId == UINT32_MAX ||
-        !std::isfinite(source.durationSeconds) ||
-        source.durationSeconds < 0.0f || source.curve.size() < 2 ||
-        source.curve.size() > kCurveMaxPoints ||
-        source.handles.size() + 1 != source.curve.size()) {
-        return false;
-    }
-    const double frameCount = std::ceil(
-        static_cast<double>(source.durationSeconds) *
-        static_cast<double>(sampleRate));
-    if (frameCount > static_cast<double>(UINT32_MAX)) return false;
-
-    std::array<harken::studio::build::CurvePoint, harken::studio::build::kMaxCurvePoints> points{};
-    std::array<harken::studio::build::CurveHandlePair, harken::studio::build::kMaxCurvePoints - 1> handles{};
-    for (qsizetype i = 0; i < source.curve.size(); ++i) {
-        points[static_cast<std::size_t>(i)] = {
-            source.curve[i].x, source.curve[i].value};
-    }
-    for (qsizetype i = 0; i < source.handles.size(); ++i) {
-        handles[static_cast<std::size_t>(i)] = {
-            source.handles[i].h1x, source.handles[i].h1y,
-            source.handles[i].h2x, source.handles[i].h2y};
-    }
-    harken::studio::build::CurveV1 curve;
-    curve.curveLocalId = *nextCurveId;
-    if (!curve.curve.SetPoints(
-            points.data(), handles.data(),
-            static_cast<std::uint32_t>(source.curve.size()))) {
-        return false;
-    }
-    output->active = 1;
-    output->durationFrames = static_cast<std::uint32_t>(frameCount);
-    output->curveLocalId = curve.curveLocalId;
-    curves->push_back(curve);
-    ++*nextCurveId;
-    return true;
-}
-
-QString transitionExitTimingName(TransitionExitTiming timing)
-{
-    switch (timing) {
-        case TransitionExitTiming::Immediate:
-            return QStringLiteral("Immediate");
-        case TransitionExitTiming::NaturalEnd:
-            return QStringLiteral("NaturalEnd");
-        case TransitionExitTiming::NextBeat:
-            return QStringLiteral("NextBeat");
-        case TransitionExitTiming::NextBar:
-            return QStringLiteral("NextBar");
-        case TransitionExitTiming::NextMarker:
-            return QStringLiteral("NextMarker");
-        case TransitionExitTiming::ExitMarker:
-            return QStringLiteral("ExitMarker");
-    }
-    return {};
-}
-
-bool appendBasicTransitionProgram(
-    ProjectItem& item, const ProjectIndex& index,
-    const std::unordered_set<ProjectItem*>& included,
-    const VSelection& selection, PlatformScope scope, std::uint32_t sampleRate,
-    std::uint32_t* nextCurveId,
-    harkencurrentworldcompiler::ContainerAuthoringV1* container,
-    BridgeRequest* request, QString* error,
-    CurrentWorldBuildStatus* status)
-{
-    if (!selection.isQueue()
-        && (selection.mode != SelectionMode::Match
-            || selection.variableResponse() != VariableResponse::Live))
-        return true;
-    auto absoluteDefault = canonicalTransitionTable();
-    absoluteDefault.rules.front().exitTiming = TransitionExitTiming::Immediate;
-    if (selection.transitions == absoluteDefault) return true;
-    const TransitionValidation validation = selection.transitions.validate();
-    if (!validation) {
-        setError(error, validation.message);
-        return false;
-    }
-    if (TransitionSemantics::transitionMountState(item, scope) !=
-        TransitionMountState::Editable) {
-        setError(error,
-                 QStringLiteral("Transition is unavailable for this Container mode"));
-        return false;
-    }
-    if (selection.transitions.rules.size() > UINT32_MAX ||
-        request == nullptr || container == nullptr || nextCurveId == nullptr ||
-        request->transitions.size() >= UINT32_MAX) {
-        setError(error, QStringLiteral("Transition authoring exceeds capacity"));
-        return false;
-    }
-
-    for (const auto& member : selection.activeRows(scope)) {
-        const auto found = index.byQtGuid.find(member.childGuid);
-        const ProjectItem* child = found != index.byQtGuid.end() ? found->second : nullptr;
-        if (child == nullptr
-            || included.find(const_cast<ProjectItem*>(child)) ==
-                included.end()) {
-            continue;
-        }
-        if (selection.isQueue()
-            && !transitionEndpointHasBoundedSounds(*child, index)) {
-            setStatus(status,
-                      CurrentWorldBuildStatus::CapabilityUnavailable);
-            setError(error, QStringLiteral(
-                "Transition V1 requires each Queue child to resolve to bounded Sound voices"));
-            return false;
-        }
-        if (selection.mode == SelectionMode::Match
-            && !transitionEndpointHasBoundedSounds(*child, index)) {
-            setStatus(status,
-                      CurrentWorldBuildStatus::CapabilityUnavailable);
-            setError(error, QStringLiteral(
-                "Match transitions require bounded Sound, Track or Segment children"));
-            return false;
-        }
-    }
-
-    const auto endpoint = [&](const QUuid& guid,
-                              harken::studio::build::PlayableRefV1* output) {
-        const auto children = index.children.find(&item);
-        if (children == index.children.end() || output == nullptr) return false;
-        const auto found = std::find_if(
-            children->second.begin(), children->second.end(),
-            [&](const ProjectItem* child) {
-                return child != nullptr && child->guid == guid;
-            });
-        if (found == children->second.end() || *found == nullptr ||
-            harken::studio::types::IsNull((*found)->runtimeId())) {
-            return false;
-        }
-        const auto kind = transitionPlayableKind((*found)->type);
-        if (!kind) return false;
-        output->kind = *kind;
-        output->stableId = (*found)->runtimeId();
-        return true;
-    };
-
-    harkencurrentworldcompiler::TransitionProgramAuthoringV1 program;
-    program.ownerContainerStableId = item.runtimeId();
-    bool haveDefault = false;
-    for (std::size_t i = 0; i < selection.transitions.rules.size(); ++i) {
-        const TransitionRuleDef& source = selection.transitions.rules[i];
-        const auto excludedEndpoint = [&](const std::optional<QUuid>& guid) {
-            if (!guid)
-                return false;
-            const auto target = index.byGuid.find(authoringGuid(*guid));
-            return target != index.byGuid.end()
-                && included.find(target->second) == included.end();
-        };
-        if (excludedEndpoint(source.source) || excludedEndpoint(source.target))
-            continue;
-        if (source.exitTiming != TransitionExitTiming::Immediate &&
-            source.exitTiming != TransitionExitTiming::NaturalEnd) {
-            setStatus(status,
-                      CurrentWorldBuildStatus::CapabilityUnavailable);
-            setError(error, QStringLiteral(
-                "Current World Transition supports Immediate and Natural End exits; %1 is unavailable")
-                .arg(transitionExitTimingName(source.exitTiming)));
-            return false;
-        }
-        if (source.entryMode != TransitionEntryMode::EntryMarker) {
-            setStatus(status,
-                      CurrentWorldBuildStatus::CapabilityUnavailable);
-            setError(error,
-                     QStringLiteral(
-                         "Current World Transition does not support SamePosition target entry"));
-            return false;
-        }
-
-        harken::studio::build::TransitionRuleViewV1 rule;
-        rule.stableRuleOrdinal = static_cast<std::uint32_t>(i);
-        rule.authoredStableOrder = static_cast<std::uint32_t>(i);
-        rule.sourceAny = source.source ? 0u : 1u;
-        rule.targetAny = source.target ? 0u : 1u;
-        if ((source.source && !endpoint(*source.source, &rule.source)) ||
-            (source.target && !endpoint(*source.target, &rule.target))) {
-            setError(error,
-                     QStringLiteral("Transition endpoint is not a direct runtime child"));
-            return false;
-        }
-        rule.sourceExit = static_cast<harken::studio::build::TransitionSourceExitV1>(
-            static_cast<std::uint32_t>(source.exitTiming));
-        rule.targetEntry = harken::studio::build::TransitionTargetEntryV1::FromEntryMarker;
-        if (!appendTransitionFade(source.sourceFadeOut, sampleRate, nextCurveId,
-                                  &container->curves, &rule.sourceFade) ||
-            !appendTransitionFade(source.targetFadeIn, sampleRate, nextCurveId,
-                                  &container->curves, &rule.targetFade)) {
-            setError(error, QStringLiteral("Transition fade is invalid"));
-            return false;
-        }
-        if (source.isDefault()) {
-            program.defaultRuleIndex = static_cast<std::uint32_t>(program.rules.size());
-            haveDefault = true;
-        }
-        program.rules.push_back(rule);
-    }
-    if (!haveDefault) {
-        setError(error, QStringLiteral("Transition table has no default rule"));
-        return false;
-    }
-    container->transitionProgramIndex =
-        static_cast<std::uint32_t>(request->transitions.size());
-    request->transitions.push_back(std::move(program));
-    return true;
-}
-
 harkencurrentworldcompiler::ContainerAuthoringV1 structuralContainerAuthoring(
     harken::studio::types::ObjectId stableId, std::uint32_t authoredOrder,
     const harken::studio::project_schema::InputNode& node)
@@ -906,9 +608,6 @@ bool buildContainerAuthoring(ProjectItem& item, const ProjectIndex& index,
             row.queueCycle = harken::studio::build::QueueCycleV1::Loop;
             row.queueCycleCount = loopCount;
         }
-        row.queueSplice = selection->spliceByMarker
-            ? harken::studio::build::QueueSpliceV1::MarkerAligned
-            : harken::studio::build::QueueSpliceV1::Butt;
         row.resumePosition = selection->behavior.resumeFromLast;
     }
     uint32_t order = 0;
@@ -1131,11 +830,6 @@ bool buildContainerAuthoring(ProjectItem& item, const ProjectIndex& index,
             row.maxActiveRows = static_cast<uint32_t>(mixedChildren.size());
             row.maxLiveRows = std::max(32u, row.maxActiveRows);
         }
-    }
-    if (!appendBasicTransitionProgram(item, index, included, *selection, scope, sampleRate,
-                                      &nextCurveId, &row, request, error,
-                                      status)) {
-        return false;
     }
     request->containers.push_back(std::move(row));
     return true;
@@ -1866,18 +1560,9 @@ void retainCurrentWorldSyncRequestInputs(
             return nodes.at(a.containerStableId)->editorOrder
                 < nodes.at(b.containerStableId)->editorOrder;
         });
-    std::erase_if(request.transitions, [&](const auto& row) {
-        return definitionIds.count(row.ownerContainerStableId) == 0;
-    });
-    std::map<harken::studio::types::ObjectId, std::uint32_t> transitionIndices;
-    for (std::uint32_t i = 0; i < request.transitions.size(); ++i)
-        transitionIndices.emplace(request.transitions[i].ownerContainerStableId, i);
     std::uint32_t containerOrder = 0;
     for (auto& container : request.containers) {
         container.authoredStableOrder = containerOrder++;
-        const auto transition = transitionIndices.find(container.containerStableId);
-        container.transitionProgramIndex = transition == transitionIndices.end()
-            ? UINT32_MAX : transition->second;
     }
 }
 
@@ -1954,8 +1639,7 @@ bool affectsCurrentWorld(ProjectItemType itemType,
                 || name == QStringLiteral("childOrder")
                 || name == QStringLiteral("selections")
                 || name == QStringLiteral("matches")
-                || name == QStringLiteral("blends")
-                || name == QStringLiteral("transitions");
+                || name == QStringLiteral("blends");
         case ProjectItemType::Track:
             return name == QStringLiteral("clips");
         case ProjectItemType::Segment:

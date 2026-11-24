@@ -338,13 +338,6 @@ QJsonObject PhysicalFolderReferenceEdits::removeReferences(QJsonObject content,
                         editObject(platforms, key, [&](auto& table) { cleanSelectionTable(table, guids); });
                 });
             });
-            editObject(selection, QStringLiteral("transitions"), [&](QJsonObject& transitions) {
-                transitions.insert(QStringLiteral("rules"), filtered(transitions.value(QStringLiteral("rules")).toArray(), [&](const auto& row) {
-                    const auto rule = row.toObject();
-                    return deleted(rule.value(QStringLiteral("source")), guids)
-                        || deleted(rule.value(QStringLiteral("target")), guids);
-                }));
-            });
         });
     });
     editArray(content, QStringLiteral("children"), [&](auto& child) { child = removeReferences(child, guids); });

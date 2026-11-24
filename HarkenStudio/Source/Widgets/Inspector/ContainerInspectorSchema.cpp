@@ -22,19 +22,6 @@ const PropertySchema& containerInspectorSchema()
         rows.push_back(*pickSchemaField(VSelection::schema(), QLatin1String("variableResponse")));
         rows.push_back(*pickSchemaField(VSelection::schema(), QLatin1String("playType")));
 
-        PropertyDescriptor splice;
-        splice.field = QStringLiteral("spliceByMarker");
-        splice.ownerComponent = ComponentType::Selection;
-        splice.type = PropType::Bool;
-        splice.label = QStringLiteral("Splice by Marker");
-        splice.section = PropertySection::Selection;
-        splice.flags.serialize = false;
-        splice.getItem = [](const ProjectItem* item) -> QVariant {
-            const auto* selection = item ? item->comp<VSelection>() : nullptr;
-            return selection ? QVariant(selection->spliceByMarker) : QVariant();
-        };
-        rows.push_back(std::move(splice));
-
         PropertyDescriptor behavior;
         behavior.field = QStringLiteral("behavior");
         behavior.ownerComponent = ComponentType::Selection;

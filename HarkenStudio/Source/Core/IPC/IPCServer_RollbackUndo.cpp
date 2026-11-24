@@ -672,7 +672,7 @@ bool IPCServer::executeRollbackStep(const QJsonObject& step, QString* error)
             }
             if (auto* selection = oldParent->comp<VSelection>()) {
                 if (!selection->fromJson(step.value("old_selection").toObject())) return false;
-                for (const auto* property : {"selections", "behavior", "transitions"})
+                for (const auto* property : {"selections", "behavior"})
                     emit ProjectManager::instance().itemPropertyChanged(oldParent, QLatin1String(property));
             }
             if (auto* timeline = oldParent->comp<VTrack>()) {

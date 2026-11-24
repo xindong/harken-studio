@@ -32,7 +32,6 @@
 #include "Widgets/Common/ToastPresenter.h"
 #include "Widgets/LogPanel/LogPanel.h"
 #include "Core/ThemeManager.h"
-#include "Core/TransitionRehearsal.h"
 #include "Core/VariableRehearsal.h"
 #include "NodeItem.h"
 #include "Widgets/Shared/LocationPingAnimation.h"
@@ -544,16 +543,6 @@ BlueprintCanvasWidget::BlueprintCanvasWidget(QWidget* parent)
             this, &BlueprintCanvasWidget::refreshNodeWaveforms_);
     connect(&pm, &ProjectManager::projectPlatformEdited,
             this, &BlueprintCanvasWidget::schedulePathRefresh_);
-    connect(&pm.variableRehearsal(), &VariableRehearsal::rehearsalChanged,
-            this, [this](const QUuid&) { refreshTransitionWatch_(); });
-    connect(&pm.transitionRehearsal(), &TransitionRehearsal::rehearsalChanged,
-            this, [this](const QUuid& containerId) {
-        auto* source = activeSignalChainSource();
-        if (source && source->currentItem()
-            && source->currentItem()->guid == containerId) {
-            refreshTransitionWatch_();
-        }
-    });
 
     if (ProjectManager::instance().currentProject() != nullptr) {
         onProjectOpened(ProjectManager::instance().currentProject());
@@ -570,7 +559,6 @@ void BlueprintCanvasWidget::rebuildFromProject()
 {
     projectView_ = true;
     activeSource_ = pathSource_.get();
-    setTransitionWatch({});
     refreshProjectPaths_();
 }
 
@@ -1168,7 +1156,6 @@ void BlueprintCanvasWidget::onItemPropertyChanged(ProjectItem* item,
         QStringLiteral("mode"),
         QStringLiteral("playType"),
         QStringLiteral("selections"),
-        QStringLiteral("transitions"),
     };
     if (!structuralProps.contains(propertyName)) return;
     scheduleChainRefresh_();
@@ -2932,7 +2919,6 @@ void BlueprintCanvasWidget::drawForeground(QPainter* painter, const QRectF& rect
     BlueprintCanvasView::drawForeground(painter, rect);
     if (painter == nullptr) return;
 
-    paintTransitionWatch_(painter);
     paintLocationPing_(painter);
 }
 
@@ -3047,169 +3033,6 @@ void BlueprintCanvasWidget::paintLocationPing_(QPainter* painter)
     painter->restore();
 }
 
-void BlueprintCanvasWidget::paintTransitionWatch_(QPainter* painter)
-{
-    if (transitionWatch_.containerGuid.isNull()) return;
-
-    auto* source = activeSignalChainSource();
-    if (!source || !source->currentItem()) return;
-    if (source->currentItem()->guid != transitionWatch_.containerGuid) return;
-
-    const auto theme = ThemeManager::instance().snapshot();
-    QColor accentColor;
-    switch (transitionWatch_.direction) {
-    case TransitionSemantics::TransitionWatchDirection::UpPlacement:
-        accentColor = theme->domains.blueprint.placementChain;
-        break;
-    case TransitionSemantics::TransitionWatchDirection::UpOrganization:
-        accentColor = theme->domains.blueprint.organizationChain;
-        break;
-    case TransitionSemantics::TransitionWatchDirection::Down:
-    case TransitionSemantics::TransitionWatchDirection::None:
-    default:
-        accentColor = theme->domains.pinDomain.audio;
-        break;
-    }
-
-    if (transitionWatch_.found()) {
-        auto& pm = ProjectManager::instance();
-        auto resolveNode = [&](const QUuid& guid) -> NodeItem* {
-            ProjectItem* item = pm.findItemByGuid(guid);
-            if (!item) return nullptr;
-            auto it = nodeMap_.find(NodeKey{NodeKind::ProjectItem, item->objectID});
-            return it != nodeMap_.end() ? it->second : nullptr;
-        };
-
-        std::vector<NodeItem*> pathNodes;
-        pathNodes.reserve(transitionWatch_.path.size());
-        for (const QUuid& guid : transitionWatch_.path) {
-            pathNodes.push_back(resolveNode(guid));
-        }
-
-        painter->save();
-        painter->setRenderHint(QPainter::Antialiasing, true);
-        painter->setBrush(Qt::NoBrush);
-        const bool overview = detailLevel_ == BlueprintDetailLevel::Overview;
-        const auto sceneTheme = ThemeManager::instance().unscaledSnapshot();
-        const auto& geometry = sceneTheme->ui.metrics;
-        QPen nodePen(accentColor, overview ? geometry.accentBorderWidth * 0.75 * theme->uiScale : geometry.accentBorderWidth, Qt::SolidLine, Qt::SquareCap, Qt::MiterJoin);
-        nodePen.setCosmetic(overview);
-        QPen edgePen(accentColor, overview ? geometry.accentBorderWidth * 0.75 * theme->uiScale : geometry.accentBorderWidth + geometry.borderWidth);
-        edgePen.setCosmetic(overview);
-
-        for (NodeItem* node : pathNodes) {
-            if (!node || !node->isVisible()) continue;
-            const QRectF r = node->mapRectToScene(node->shape().boundingRect());
-            painter->setPen(nodePen);
-            const int inset = geometry.spacingCompact;
-            painter->drawRect(r.adjusted(-inset, -inset, inset, inset));
-        }
-
-        for (ConnectionPath* edge : edges_) {
-            if (!edge->isVisible() || !edge->startPin() || !edge->endPin()) continue;
-            auto* from = static_cast<NodeItem*>(edge->startPin()->parentItem());
-            auto* to   = static_cast<NodeItem*>(edge->endPin()->parentItem());
-            bool adjacent = false;
-            for (size_t i = 0; i + 1 < pathNodes.size(); ++i) {
-                if ((pathNodes[i] == from && pathNodes[i + 1] == to) ||
-                    (pathNodes[i] == to && pathNodes[i + 1] == from)) {
-                    adjacent = true;
-                    break;
-                }
-            }
-            if (!adjacent) continue;
-            painter->setPen(edgePen);
-            painter->drawPath(edge->path());
-        }
-
-        if (transitionWatch_.referenceSegment && !overview) {
-            if (NodeItem* refNode = resolveNode(*transitionWatch_.referenceSegment);
-                refNode && refNode->isVisible()) {
-                const QRectF r = refNode->sceneBoundingRect();
-                const QFont chipFont = FontManager::instance().getFont(
-                    sceneTheme, FontRole::Caption, FontEmphasis::Strong);
-                const QFontMetrics chipMetrics(chipFont);
-                const QString chipLabel = tr("Timing reference");
-                const QRectF chipRect(
-                    r.right() - chipMetrics.horizontalAdvance(chipLabel) - geometry.spacingSmall * 2 - geometry.spacingXSmall,
-                    r.bottom() - chipMetrics.height() - geometry.spacingXSmall * 2 - geometry.spacingCompact,
-                    chipMetrics.horizontalAdvance(chipLabel) + geometry.spacingSmall * 2,
-                    chipMetrics.height() + geometry.spacingXSmall * 2);
-                painter->setPen(QPen(theme->domains.blueprint.canvasBackground, geometry.accentBorderWidth));
-                painter->setBrush(theme->domains.pinDomain.targetOk);
-                painter->drawRoundedRect(chipRect, geometry.radiusMedium, geometry.radiusMedium);
-                painter->setPen(theme->ui.colors.accentText);
-                painter->setFont(chipFont);
-                painter->drawText(chipRect, Qt::AlignCenter, chipLabel);
-            }
-        }
-
-        painter->restore();
-    }
-
-    if (transitionWatch_.caption.isEmpty()) return;
-
-    painter->save();
-    painter->resetTransform();
-    painter->setRenderHint(QPainter::Antialiasing, true);
-
-    const QRect vp = viewport()->rect().marginsRemoved(navigationViewportMargins_);
-    const auto& geometry = theme->ui.metrics;
-    const int padding = geometry.spacingMedium;
-    const int captionHeight = std::max(geometry.controlHeight, fontMetrics().height() + geometry.spacingXSmall * 2);
-    if (vp.width() <= padding * 4 || vp.height() < captionHeight + padding) {
-        painter->restore();
-        return;
-    }
-    QFont capFont = FontManager::instance().getFont(FontRole::Body);
-    painter->setFont(capFont);
-    QFontMetrics fm(capFont);
-    const int maxTextW = vp.width() - padding * 4;
-    const QString elided = fm.elidedText(transitionWatch_.caption, Qt::ElideRight, maxTextW);
-    const int textW = qMin(vp.width() - padding * 2, fm.horizontalAdvance(elided) + padding * 2);
-    const QRect textRect(vp.center().x() - textW / 2, vp.bottom() - captionHeight - padding, textW, captionHeight);
-
-    QColor bg = theme->domains.blueprint.canvasBackground;
-    bg.setAlphaF(bg.alphaF() * 220 / 255.0);
-    painter->setPen(Qt::NoPen);
-    painter->setBrush(bg);
-    painter->drawRoundedRect(textRect, geometry.radiusMedium, geometry.radiusMedium);
-
-    painter->setPen(accentColor);
-    painter->drawText(textRect, Qt::AlignCenter, elided);
-    painter->restore();
-}
-
-void BlueprintCanvasWidget::refreshTransitionWatch_()
-{
-    auto* source = activeSignalChainSource();
-    if (!source || !source->currentItem()
-        || source->currentItem()->type != ProjectItem::Type::Container) {
-        setTransitionWatch(TransitionSemantics::TransitionWatchView{});
-        return;
-    }
-
-    const ProjectItem& container = *source->currentItem();
-    if (TransitionSemantics::transitionMountState(container,
-            currentWorldPlatformScope(PlatformContextService::instance().context()))
-        == TransitionMountState::None) {
-        setTransitionWatch(TransitionSemantics::TransitionWatchView{});
-        return;
-    }
-
-    auto& pm = ProjectManager::instance();
-    const TimelineItemResolver resolve = [&pm](const QUuid& guid) {
-        return pm.findItemByGuid(guid);
-    };
-    const auto winner = TransitionRehearsal::winnerForContainer(
-        container, pm.variableRehearsal(), resolve,
-        currentWorldPlatformScope(PlatformContextService::instance().context()));
-    const TransitionSemantics::TransitionWatchView view =
-        TransitionSemantics::buildTransitionWatchView(
-            container, winner, source->placementContext(), resolve);
-    setTransitionWatch(view);
-}
-
 void BlueprintCanvasWidget::useSignalChain(ProjectItem* item)
 {
     projectView_ = false;
@@ -3220,11 +3043,9 @@ void BlueprintCanvasWidget::useSignalChain(ProjectItem* item)
     activeSource_ = chainSource_.get();
     if (item == nullptr) {
         chainSource_->clear();
-        refreshTransitionWatch_();
         return;
     }
     chainSource_->loadItem(item);
-    refreshTransitionWatch_();
 }
 
 void BlueprintCanvasWidget::useSignalChain(
@@ -3238,11 +3059,9 @@ void BlueprintCanvasWidget::useSignalChain(
     activeSource_ = chainSource_.get();
     if (item == nullptr) {
         chainSource_->clear();
-        refreshTransitionWatch_();
         return;
     }
     chainSource_->loadItem(item, placement);
-    refreshTransitionWatch_();
 }
 
 IBlueprintSource::Scope BlueprintCanvasWidget::currentScope() const
@@ -3260,11 +3079,9 @@ void BlueprintCanvasWidget::useSignalChainForBus(uint32_t busID)
     activeSource_ = chainSource_.get();
     if (busID == 0) {
         chainSource_->clear();
-        refreshTransitionWatch_();
         return;
     }
     chainSource_->loadBus(busID);
-    refreshTransitionWatch_();
 }
 
 void BlueprintCanvasWidget::clear()
@@ -3280,7 +3097,6 @@ void BlueprintCanvasWidget::clear()
     selectedObjectGuids_.reset();
     if (chainSource_) chainSource_->clear();
     if (pathSource_) pathSource_->clear();
-    setTransitionWatch(TransitionSemantics::TransitionWatchView{});
 }
 
 SignalChainSource* BlueprintCanvasWidget::activeSignalChainSource() const
@@ -3298,7 +3114,6 @@ void BlueprintCanvasWidget::useSignalPaths(const ProjectData& project, SignalPat
     selectedObjectGuids_.reset();
     pathProjectId_ = project.projectId;
     activeSource_ = pathSource_.get();
-    setTransitionWatch({});
     pathSource_->loadGraph(project, std::move(graph));
 }
 
@@ -3341,7 +3156,6 @@ void BlueprintCanvasWidget::scheduleChainRefresh_()
         if (activeSource_ != chainSource_.get() || !chainRefreshPending_ || nodeFieldEditing_()) return;
         chainRefreshPending_ = false;
         materializeFromSource_();
-        refreshTransitionWatch_();
     }, Qt::QueuedConnection);
 }
 
@@ -3747,13 +3561,6 @@ std::optional<QPointF> BlueprintCanvasWidget::nodePosition(uint32_t objectId) co
     for (const auto& [key, node] : nodeMap_)
         if (key.id == objectId && node && node->isVisible()) return node->pos();
     return std::nullopt;
-}
-
-void BlueprintCanvasWidget::setTransitionWatch(const TransitionSemantics::TransitionWatchView& view)
-{
-    if (transitionWatch_ == view) return;
-    transitionWatch_ = view;
-    viewport()->update();
 }
 
 }

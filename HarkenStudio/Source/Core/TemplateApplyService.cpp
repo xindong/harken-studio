@@ -157,10 +157,6 @@ void remapTree(ProjectItem* item, const TemplateIdentityMap& identities)
                 for (auto& curve : entry.curves) curve.rowGuid = rowGuids.value(curve.rowGuid);
             }
         }
-        for (auto& rule : selection->transitions.rules)
-            for (auto* reference : {&rule.source, &rule.target})
-                if (*reference)
-                    *reference = identities.guids.value(**reference, **reference);
     }
     if (auto* sound = item->comp<VSound>()) SoundSourceSemantics::remintEntries(*sound);
     if (auto* timeline = item->comp<VTrack>())

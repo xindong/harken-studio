@@ -1409,9 +1409,7 @@ bool claimsSelectionItemProperty(ProjectItem* item, const QString& propertyName)
     return (propertyName == QStringLiteral("mode") || propertyName == QStringLiteral("behavior")
             || propertyName == QStringLiteral("playType")
             || propertyName == QStringLiteral("variableResponse")
-            || propertyName == QStringLiteral("selections")
-            || propertyName == QStringLiteral("spliceByMarker")
-            || propertyName == QStringLiteral("transitions"))
+            || propertyName == QStringLiteral("selections"))
         && item->comp<VSelection>() != nullptr;
 }
 
@@ -1537,117 +1535,6 @@ bool validGridTableJson(ProjectManager* projectManager, ProjectItem* owner,
     }
     return true;
 }
-
-TimelineValidation validateSelectionActivation(const ProjectItem& item, const VSelection& candidate)
-{
-    auto result = AuthoringPolicy::validateTransitionActivation(item, candidate);
-    if (!result) return result;
-    QSet<QString> platforms;
-    for (const auto& key : candidate.selections.platforms.keys()) platforms.insert(key);
-    if (const auto* previous = item.comp<VSelection>())
-        for (const auto& key : previous->selections.platforms.keys()) platforms.insert(key);
-    for (const auto& key : platforms) {
-        result = AuthoringPolicy::validateTransitionActivation(item, candidate, QUuid(key));
-        if (!result) return result;
-    }
-    return TimelineValidation::success();
-}
-
-void applySelectionTransitions(uint32_t objectID,
-                               const TransitionTableDef& transitions)
-{
-    auto& pm = ProjectManager::instance();
-    ProjectItem* item = pm.findItemByObjectID(objectID);
-    auto* selection = item ? item->comp<VSelection>() : nullptr;
-    if (!selection) return;
-    selection->transitions = transitions;
-    item->markDirty();
-    emit pm.itemPropertyChanged(item, QStringLiteral("transitions"));
-}
-
-ActionResult handleSelectionTransitionsProperty(
-    ProjectManager* projectManager, ProjectItem* item,
-    const QJsonObject& args, const QObject* originator)
-{
-    const QJsonValue value = args.value(QStringLiteral("value"));
-    if (!value.isObject())
-        return {false, {}, "INVALID_ARGS",
-                "Property 'transitions' value must be a JSON object"};
-
-    QString parseError;
-    auto parsed = TransitionTableDef::fromJson(value.toObject(), &parseError);
-    if (!parsed)
-        return {false, {}, "INVALID_ARGS", parseError};
-
-    auto* selection = item->comp<VSelection>();
-    const TransitionTableDef oldTransitions = selection->transitions;
-    const auto authoring = AuthoringPolicy::validateTransitions(*parsed, &oldTransitions);
-    if (!authoring)
-        return {false, {}, "AUTHORING_RESTRICTED", authoring.message};
-
-    for (size_t index = 0; index < parsed->rules.size(); ++index) {
-        const TransitionRuleDef& rule = parsed->rules[index];
-        const auto previous = std::find_if(oldTransitions.rules.begin(), oldTransitions.rules.end(),
-            [&](const auto& old) { return old.source == rule.source && old.target == rule.target; });
-        const bool retained = previous != oldTransitions.rules.end() && *previous == rule;
-        if (!retained)
-            for (const auto* reference : {&rule.source, &rule.target}) {
-                if (!*reference) continue;
-                const auto validity = validateAuthoredReference(
-                    projectManager, projectManager->findItemByGuid(**reference));
-                if (!validity)
-                    return {false, {}, "AUTHORING_RESTRICTED", validity.message};
-            }
-        for (const auto* endpoint : {&rule.source, &rule.target}) {
-            if (!*endpoint) continue;
-            const ProjectItem* candidate = projectManager->findItemByGuid(**endpoint);
-            if (!candidate
-                || !TransitionSemantics::isEndpointCandidate(*item, *candidate)) {
-                return {false, {}, "INVALID_TARGET",
-                        QStringLiteral("Owner '%1' (%2), Transition rule %3 endpoint %4: %5")
-                            .arg(item->name, item->guid.toString(QUuid::WithoutBraces))
-                            .arg(index).arg((**endpoint).toString(QUuid::WithoutBraces),
-                                candidate ? QStringLiteral("target is not a legal direct child")
-                                          : QStringLiteral("target does not exist"))};
-            }
-        }
-    }
-
-    const QJsonObject oldJson = oldTransitions.toJson();
-    const QJsonObject newJson = parsed->toJson();
-
-    ActionResult result;
-    result.success = true;
-    result.data = QJsonObject{
-        {"name", item->name},
-        {"object_id", static_cast<qint64>(itemShortID(item))},
-        {"authoring_handle", static_cast<qint64>(item->objectID)},
-        {"property", QStringLiteral("transitions")},
-        {"value", newJson}
-    };
-    if (newJson == oldJson)
-        return result;
-
-    selection->transitions = *parsed;
-    item->markDirty();
-    emit projectManager->itemPropertyChanged(
-        item, QStringLiteral("transitions"), originator);
-
-    const uint32_t objectID = item->objectID;
-    const TransitionTableDef newTransitions = std::move(*parsed);
-    result.undoFn = [objectID, oldTransitions]() {
-        applySelectionTransitions(objectID, oldTransitions);
-    };
-    result.redoFn = [objectID, newTransitions]() {
-        applySelectionTransitions(objectID, newTransitions);
-    };
-    const QString undoText = args.value(QStringLiteral("undo_text")).toString();
-    result.undoText = undoText.isEmpty()
-        ? QStringLiteral("Set transitions") : undoText;
-    result.authoringWriteSet = QSet<QUuid>{item->guid};
-    return result;
-}
-
 
 }
 
@@ -1778,8 +1665,6 @@ ActionResult handleSelectionsProperty(ProjectManager* manager, ProjectItem* item
     candidate.selections = *parsed;
     if (!ContainerBehaviorSemantics::validateSelections(candidate, &error))
         return {false, {}, "INVALID_SELECTIONS", error};
-    const auto activation = validateSelectionActivation(*item, candidate);
-    if (!activation) return {false, {}, "AUTHORING_RESTRICTED", activation.message};
     const auto before = selection->selections;
     const auto after = *parsed;
     ActionResult result;
@@ -1824,23 +1709,6 @@ ActionResult handleSelectionItemProperty(ProjectManager* projectManager, Project
         return handleSelectionsProperty(projectManager, item, args, originator);
     if (propertyName == QStringLiteral("behavior"))
         return handleSelectionBehaviorProperty(projectManager, item, args, originator);
-    if (propertyName == QStringLiteral("spliceByMarker")) {
-        const QJsonValue value = args.value(QStringLiteral("value"));
-        const auto* selection = item->comp<VSelection>();
-        if (item->type != ProjectItem::Type::Container
-            || !selection->isQueue())
-            return {false, {}, "INVALID_TIMELINE_OWNER",
-                    "spliceByMarker requires a Queue Container"};
-        if (!value.isBool())
-            return {false, {}, "INVALID_ARGS",
-                    "Property 'spliceByMarker' value must be a boolean"};
-        return TimelineEditing::setSpliceByMarker(
-            projectManager, item, value.toBool(), originator,
-            args.value(QStringLiteral("undo_text")).toString());
-    }
-    if (propertyName == QStringLiteral("transitions"))
-        return handleSelectionTransitionsProperty(projectManager, item, args, originator);
-
     auto* sel = item->comp<VSelection>();
     if (propertyName == QStringLiteral("variableResponse")
         && sel->mode != SelectionMode::Match && sel->mode != SelectionMode::Blend)
@@ -1855,9 +1723,6 @@ ActionResult handleSelectionItemProperty(ProjectManager* projectManager, Project
         failed.errorMessage = QString("Failed to set '%1' on '%2'").arg(propertyName, item->name);
         return failed;
     }
-    const auto activation = validateSelectionActivation(*item, candidate);
-    if (!activation)
-        return {false, {}, "AUTHORING_RESTRICTED", activation.message};
     QString selectionError;
     if (!ContainerBehaviorSemantics::validateSelections(candidate, &selectionError))
         return {false, {}, "INVALID_SELECTIONS", selectionError};

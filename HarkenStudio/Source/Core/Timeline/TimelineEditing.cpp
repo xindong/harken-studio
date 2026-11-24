@@ -3,7 +3,6 @@
 #include "TimelineCoordinates.h"
 #include "../AuthoringPolicy.h"
 #include "../Components/VSegment.h"
-#include "../Components/VSelection.h"
 #include "../Components/VMixNode.h"
 #include "../Components/VTrack.h"
 #include "../ProjectManager.h"
@@ -881,46 +880,6 @@ ActionResult replaceSegmentTime(ProjectManager* projectManager,
     if (coordinatesChanged)
         for (auto it = newSnapshot.tracks.cbegin(); it != newSnapshot.tracks.cend(); ++it)
             result.authoringWriteSet->insert(it.key());
-    return result;
-}
-
-ActionResult setSpliceByMarker(ProjectManager* projectManager,
-                            ProjectItem* container,
-                            bool spliceByMarker,
-                            const QObject* originator,
-                            const QString& undoText)
-{
-    auto* selection = container ? container->comp<VSelection>() : nullptr;
-    if (!projectManager || !selection || container->type != ProjectItem::Type::Container)
-        return failure(QStringLiteral("INVALID_TIMELINE_OWNER"),
-                       QStringLiteral("spliceByMarker requires a Container selection"));
-    if (!selection->isQueue())
-        return failure(QStringLiteral("INVALID_TIMELINE_OWNER"),
-                       QStringLiteral("spliceByMarker requires a Queue Container"));
-    const bool oldValue = selection->spliceByMarker;
-    ActionResult result;
-    result.success = true;
-    result.data = propertyResult(container, QStringLiteral("spliceByMarker"), spliceByMarker);
-    if (oldValue == spliceByMarker) return result;
-
-    const QUuid containerGuid = container->guid;
-    auto apply = [](const QUuid& guid, bool value, const QObject* source = nullptr) {
-        auto& manager = ProjectManager::instance();
-        ProjectItem* item = manager.findItemByGuid(guid);
-        auto* component = item ? item->comp<VSelection>() : nullptr;
-        if (!component) return;
-        component->spliceByMarker = value;
-        item->markDirty();
-        emit manager.itemPropertyChanged(item, QStringLiteral("spliceByMarker"), source);
-    };
-    apply(containerGuid, spliceByMarker, originator);
-    result.undoFn = [apply, containerGuid, oldValue] { apply(containerGuid, oldValue); };
-    result.redoFn = [apply, containerGuid, spliceByMarker] {
-        apply(containerGuid, spliceByMarker);
-    };
-    result.undoText = undoText.isEmpty()
-        ? QStringLiteral("Set splice by marker") : undoText;
-    result.authoringWriteSet = QSet<QUuid>{containerGuid};
     return result;
 }
 

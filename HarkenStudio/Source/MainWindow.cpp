@@ -3311,11 +3311,7 @@ void MainWindow::openEditorForSlot(const QString& slot, ProjectItem* item,
             statusBar()->showMessage(tr("The editor for this section is coming soon."), 4000);
         return;
     }
-    const std::optional<PlacementContext> context = placement
-        ? std::optional<PlacementContext>(*placement) : std::nullopt;
-    QWidget* editor = openStandaloneEditor(type, item);
-    if (auto* grid = qobject_cast<GridEditorPanel*>(editor))
-        grid->setPlacementContext(context);
+    openStandaloneEditor(type, item);
 }
 
 void MainWindow::showInspectorForItem(InspectorPanel* panel, ProjectItem* item)
