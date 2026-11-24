@@ -23,7 +23,9 @@
 | Variable 统一写入 | 可选 Emitter 决定 Global / Emitter，结果由 Engine 决定 | `Values.SetValue` 支持 Variable 名称、GUID、typed 引用及数值、Label 名称、Label GUID；全局写入清除该 Variable 的全部局部覆盖 | 一致 |
 | Variable 消费范围 | 局部值归 Emitter，Bus 只读全局 | 同一 Emitter 的不同 Action、Play、Layer 共享局部值；路由不改变范围；无公开旧 setter、batch、SetLabel、Clear / ResetVariables 入口 | 一致 |
 | 调用顺序与生命周期 | 不缓存局部值或重排跨 scope 写入 | 同步提交，显式无效 Emitter 拒绝，组件销毁结束 Emitter 及其局部状态 | 一致 |
-| 示例交付 | 示例使用当前公开 API | 展示六类 Action、启动准备与 `Demo_Choice` Variable | 已实现 |
+| 旧接口延续 | 已发布且可用的公开接口改名后，旧名继续可用 | 旧名标 `[Obsolete]` 转发到新接口，不承诺移除版本；固定返回失败的旧清单入口与 `HarkenVariableId` 系列已移除；以非友元程序集编译旧用法防止回退 | 已实现 |
+| 远程通信可用范围 | 公开方法在两个原生库版本下都可编译 | 正式版返回 `VN_CAPABILITY_UNAVAILABLE`，开发版可用 | 已实现 |
+| 示例交付 | 随包不附示例 | 示例与离线文档已移出集成包 | 已实现 |
 | 集成安装校验 | 安装位置、身份和所有权可检查 | Hub 以集成包清单识别来源，支持 Packages 与允许的 Assets 子目录 | 已实现 |
 | 宿主生命周期 | 暂停、恢复、关闭结果可观察，失败可显式重试 | `Suspend/Resume`、`SetSuspended` 与 `RuntimeEnded` 区分阶段结果；缺 Content 时保留可恢复会话，provider 异常返回 `VN_PACK_PROVIDER_FAILED` | 已实现 |
 
