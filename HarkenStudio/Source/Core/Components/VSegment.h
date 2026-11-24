@@ -1,7 +1,6 @@
 #pragma once
 
 #include "../Component.h"
-#include "../Timeline/TimelineTypes.h"
 
 namespace harken::studio {
 
@@ -14,9 +13,6 @@ public:
     ComponentType getType() const override { return kType; }
     QJsonObject toJson() const override;
     bool fromJson(const QJsonObject& json) override;
-
-    SegmentTimeSpec segmentTime;
-    MarkerLedger markers;
 };
 
 }

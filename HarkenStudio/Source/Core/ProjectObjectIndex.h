@@ -12,7 +12,7 @@ struct ProjectItem;
 
 struct ProjectObjectLocation
 {
-    enum class Kind { Item, Clip, Marker, Binding, Effect };
+    enum class Kind { Item, Clip, Binding, Effect };
     enum class BusinessKind { None, Action, Playable, Variable };
 
     Kind kind = Kind::Item;

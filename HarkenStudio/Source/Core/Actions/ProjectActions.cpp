@@ -40,7 +40,6 @@
 #include "../VariableConsumerSemantics.h"
 #include "../VariableRangeEditing.h"
 #include "../Components/VTrack.h"
-#include "../Components/VSegment.h"
 #include "../Timeline/TimelineEditing.h"
 #include "../AudioEngine.h"
 #include "ActionSelectors.h"
@@ -1391,11 +1390,8 @@ bool claimsSelectionItemProperty(ProjectItem* item, const QString& propertyName)
 
 bool claimsTimelineItemProperty(ProjectItem* item, const QString& propertyName)
 {
-    return (propertyName == QStringLiteral("clips")
-            && item->comp<VTrack>() != nullptr)
-        || ((propertyName == QStringLiteral("segmentTime")
-             || propertyName == QStringLiteral("markers"))
-            && item->comp<VSegment>() != nullptr);
+    return propertyName == QStringLiteral("clips")
+        && item->comp<VTrack>() != nullptr;
 }
 
 bool claimsEffectsItemProperty(ProjectItem* item, const QString& propertyName)
@@ -1740,42 +1736,20 @@ ActionResult handleSelectionItemProperty(ProjectManager* projectManager, Project
 }
 
 ActionResult handleTimelineItemProperty(ProjectManager* projectManager, ProjectItem* item,
-                                        const QString& propertyName, const QJsonObject& args,
+                                        const QString&, const QJsonObject& args,
                                         const QObject* originator)
 {
     const QJsonValue value = args.value(QStringLiteral("value"));
     const QString undoText = args.value(QStringLiteral("undo_text")).toString();
-    if (propertyName == QStringLiteral("clips")) {
-        if (!value.isObject())
-            return {false, {}, "INVALID_ARGS",
-                    "Property 'clips' value must be an exact ClipLedger object"};
-        QString error;
-        auto clips = ClipLedger::fromJson(value.toObject(), &error);
-        if (!clips)
-            return {false, {}, "INVALID_ARGS", error};
-        return TimelineEditing::replaceClips(
-            projectManager, item, *clips, originator, undoText);
-    }
-    if (propertyName == QStringLiteral("markers")) {
-        if (!value.isArray())
-            return {false, {}, "INVALID_ARGS",
-                    "Property 'markers' value must be a JSON array"};
-        QString error;
-        auto markers = MarkerLedger::fromJson(value.toArray(), &error);
-        if (!markers)
-            return {false, {}, "INVALID_ARGS", error};
-        return TimelineEditing::replaceMarkers(
-            projectManager, item, *markers, originator, undoText);
-    }
     if (!value.isObject())
         return {false, {}, "INVALID_ARGS",
-                "Property 'segmentTime' value must be a JSON object"};
+                "Property 'clips' value must be an exact ClipLedger object"};
     QString error;
-    auto segmentTime = SegmentTimeSpec::fromJson(value.toObject(), &error);
-    if (!segmentTime)
+    auto clips = ClipLedger::fromJson(value.toObject(), &error);
+    if (!clips)
         return {false, {}, "INVALID_ARGS", error};
-    return TimelineEditing::replaceSegmentTime(
-        projectManager, item, *segmentTime, originator, undoText);
+    return TimelineEditing::replaceClips(
+        projectManager, item, *clips, originator, undoText);
 }
 
 ActionResult handleEffectsItemProperty(ProjectManager* projectManager, ProjectItem* item,

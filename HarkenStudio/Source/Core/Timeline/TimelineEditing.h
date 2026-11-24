@@ -3,7 +3,6 @@
 #include "TimelineTypes.h"
 #include "../ActionManager.h"
 
-#include <optional>
 #include <memory>
 #include <vector>
 
@@ -14,11 +13,6 @@ class TransactionalUndoCommand;
 
 namespace TimelineEditing {
 
-SegmentTimeSpec timeSpecForTrackParent(const ProjectItem* parent);
-std::optional<ClipLedger> convertClipLedger(const ClipLedger& source,
-                                            const SegmentTimeSpec& sourceTime,
-                                            const SegmentTimeSpec& destinationTime,
-                                            QString* error = nullptr);
 TimelineValidation validateClipPlacement(ProjectManager* projectManager,
                                          ProjectItem* track,
                                          const ClipLedger& clips);
@@ -58,29 +52,6 @@ std::unique_ptr<TransactionalUndoCommand> makeClipMoveCommand(
     ProjectManager* projectManager,
     const std::vector<ClipMove>& moves,
     QString* error = nullptr);
-
-ActionResult replaceMarkers(ProjectManager* projectManager,
-                         ProjectItem* segment,
-                         const MarkerLedger& markers,
-                         const QObject* originator = nullptr,
-                         const QString& undoText = {});
-ActionResult addMarker(ProjectManager* projectManager,
-                    ProjectItem* segment,
-                    Marker marker,
-                    const QObject* originator = nullptr);
-ActionResult updateMarker(ProjectManager* projectManager,
-                       ProjectItem* segment,
-                       const Marker& marker,
-                       const QObject* originator = nullptr);
-ActionResult removeMarker(ProjectManager* projectManager,
-                       ProjectItem* segment,
-                       const QUuid& markerGuid,
-                       const QObject* originator = nullptr);
-ActionResult replaceSegmentTime(ProjectManager* projectManager,
-                              ProjectItem* segment,
-                              const SegmentTimeSpec& segmentTime,
-                              const QObject* originator = nullptr,
-                              const QString& undoText = {});
 
 }
 }

@@ -1,6 +1,5 @@
 #include "ProjectTemplateLoader.h"
 #include "SoundSourceSemantics.h"
-#include "AuthoringPolicy.h"
 #include "ItemTypeCatalog.h"
 #include "NameValidator.h"
 #include "ProjectTypes.h"
@@ -300,9 +299,6 @@ ValidationResult ProjectTemplateLoader::validate(const QJsonDocument& doc,
         return result;
     }
     const auto root = doc.object();
-    const auto authoring = AuthoringPolicy::validateTemplate(root);
-    if (!authoring)
-        result.errors.push_back({QStringLiteral("content"), authoring.message});
 
     const auto validatePlatformReferences = [&](auto&& self, const QJsonValue& value,
                                                 const QString& path) -> void {

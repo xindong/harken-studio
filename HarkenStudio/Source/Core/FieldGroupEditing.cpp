@@ -3,7 +3,6 @@
 
 #include "Tooling/Harkenizer/Core/CanonicalRuntimeProjectAdapterPrivate.h"
 #include "Components/VTrack.h"
-#include "Components/VSegment.h"
 #include "Components/VMixNode.h"
 #include "PlayablePropertyAuthoringV1.h"
 #include "ProjectTypes.h"
@@ -232,8 +231,6 @@ Diagnostics validateView(const EditingContext& context,
             for (const auto& binding : mix->bindings.entries()) claimObject(binding.guid);
         if (const auto* track = item->comp<VTrack>())
             for (const auto& clip : track->clips.items) claimObject(clip.clipGuid);
-        if (const auto* segment = item->comp<VSegment>())
-            for (const auto& marker : segment->markers.items) claimObject(marker.markerGuid);
     }
     const auto claimEffects = [&](const EffectChainLedger& effects, Guid owner, FieldGroupScope scope) {
         for (const auto& row : effects.entries()) {

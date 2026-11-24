@@ -1,6 +1,5 @@
 
 #include "Core/ActionManager.h"
-#include "Core/AuthoringPolicy.h"
 #include "Core/ProjectManager.h"
 #include "Core/ProjectTypes.h"
 
@@ -42,9 +41,6 @@ void registerTemplateActions(ActionManager& mgr, ProjectManager* projectManager)
             return {false, {}, "INVALID_ARGS",
                     "Missing 'template_data' object in args"};
         const QJsonObject td = args.value("template_data").toObject();
-        const auto authoring = AuthoringPolicy::validateTemplate(td);
-        if (!authoring)
-            return {false, {}, "AUTHORING_RESTRICTED", authoring.message};
 
         QJsonArray createdAttenuations;
         QJsonArray createdBusIds;

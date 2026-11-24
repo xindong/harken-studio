@@ -3,7 +3,6 @@
 #include "ProjectTypes.h"
 #include "ItemTypeCatalog.h"
 #include "Components/VMixNode.h"
-#include "Components/VSegment.h"
 #include "Components/VTrack.h"
 
 #include <QSet>
@@ -96,11 +95,6 @@ ProjectObjectIndex ProjectObjectIndex::fromProject(const ProjectData* project,
                     item->name + QStringLiteral(" / ") +
                     (target ? target->name : clip.targetGuid.toString(QUuid::WithoutBraces)));
             }
-        }
-        if (const auto* timeline = item->comp<VSegment>()) {
-            for (const auto& marker : timeline->markers.items)
-                add(marker.runtimeId(), *item, ProjectObjectLocation::Kind::Marker,
-                    item->name + QStringLiteral(" / ") + marker.name);
         }
     }
     for (auto it = index.objects_.begin(); it != index.objects_.end();) {

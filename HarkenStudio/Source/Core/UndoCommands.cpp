@@ -11,7 +11,6 @@
 #include "Components/VMixNode.h"
 #include "Components/VSelection.h"
 #include "Components/VTrack.h"
-#include "Timeline/TimelineEditing.h"
 #include "Components/VBus.h"
 
 #include <algorithm>
@@ -871,7 +870,6 @@ MoveItemCommand::MoveItemCommand(
 
     oldParentGuid_ = parentSlotGuid(oldParent_);
     newParentGuid_ = parentSlotGuid(newParent_);
-    prepareTrackTimeline(newParent_);
 
     if (item->type == ProjectItem::Type::Bus && newParent
         && newParent->type == ProjectItem::Type::Bus) {
@@ -921,7 +919,6 @@ MoveItemCommand::MoveItemCommand(
     }
 
     oldParentGuid_ = parentSlotGuid(oldParent_);
-    prepareTrackTimeline(nullptr);
     if (PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(item->type)) {
         oldFieldGroups_ = item->fieldGroups;
         rootFieldGroups_ = ProjectManager::instance().captureRootFieldGroups(
@@ -1001,30 +998,6 @@ bool MoveItemCommand::doMove(
         restoreEmptySourceOccurrences, outLog, createDefaultClip);
 }
 
-void MoveItemCommand::prepareTrackTimeline(ProjectItem* targetParent)
-{
-    const auto* timeline = item_ ? item_->comp<VTrack>() : nullptr;
-    if (!timeline) return;
-    const SegmentTimeSpec sourceTime = TimelineEditing::timeSpecForTrackParent(oldParent_);
-    const SegmentTimeSpec destinationTime =
-        TimelineEditing::timeSpecForTrackParent(targetParent);
-    if (sourceTime == destinationTime) return;
-    oldTrackClips_ = timeline->clips;
-    auto converted = TimelineEditing::convertClipLedger(
-        timeline->clips, sourceTime, destinationTime, &timelineConversionError_);
-    if (converted) newTrackClips_ = std::move(*converted);
-}
-
-void MoveItemCommand::applyTrackTimeline(const std::optional<ClipLedger>& clips)
-{
-    if (!clips || !item_) return;
-    auto* timeline = item_->comp<VTrack>();
-    if (!timeline) return;
-    timeline->clips = *clips;
-    item_->markDirty();
-    emit ProjectManager::instance().itemPropertyChanged(item_, QStringLiteral("clips"));
-}
-
 void MoveItemCommand::captureSelections()
 {
     if (const auto* selection = oldParent_ ? oldParent_->comp<VSelection>() : nullptr)
@@ -1074,7 +1047,6 @@ bool MoveItemCommand::undoHierarchy()
                     ProjectManager::detachRootBinding(project, item_, &discard);
                 }
             }
-            applyTrackTimeline(oldTrackClips_);
             if (ProjectData* project = ProjectManager::instance().currentProject())
                 ProjectManager::restoreReferencesFromLog(playbackRefLog_, project);
             applySelections(oldParent_, oldParentSelections_);
@@ -1129,7 +1101,6 @@ bool MoveItemCommand::undoHierarchy()
         if (currentParent) currentParent->markDirty();
         redoPlaybackRefLog_ = ProjectManager::cleanupIllegalPlaybackReferences(project);
         applySelections(newParent_, newParentSelections_);
-        applyTrackTimeline(oldTrackClips_);
 
         return true;
     }
@@ -1156,7 +1127,6 @@ bool MoveItemCommand::undoHierarchy()
         applySelections(newParent_, newParentSelections_);
         if (ProjectData* project = ProjectManager::instance().currentProject())
             ProjectManager::restoreReferencesFromLog(playbackRefLog_, project);
-        applyTrackTimeline(oldTrackClips_);
         item_->markDirty();
 
         return true;
@@ -1167,10 +1137,6 @@ bool MoveItemCommand::undoHierarchy()
 bool MoveItemCommand::redoHierarchy()
 {
     if (!item_) return false;
-    if (!timelineConversionError_.isEmpty()) {
-        emit ProjectManager::instance().errorOccurred(timelineConversionError_);
-        return false;
-    }
     if (!fieldGroupConversionError_.isEmpty()) {
         emit ProjectManager::instance().errorOccurred(fieldGroupConversionError_);
         return false;
@@ -1243,7 +1209,6 @@ bool MoveItemCommand::redoHierarchy()
         capturedOldOccurrences_ = true;
         currentParent->markDirty();
         item_->markDirty();
-        applyTrackTimeline(newTrackClips_);
         playbackRefLog_ = ProjectManager::cleanupIllegalPlaybackReferences(project);
         finishSelectionMove();
 
@@ -1281,7 +1246,6 @@ bool MoveItemCommand::redoHierarchy()
             newOccurrence_ = newParent_->comp<VSelection>()->selections.shared.occurrenceRows().back();
         ProjectManager::restoreReferencesFromLog(redoPlaybackRefLog_, project);
         finishSelectionMove();
-        applyTrackTimeline(newTrackClips_);
 
         return true;
     }
@@ -1304,7 +1268,6 @@ bool MoveItemCommand::redoHierarchy()
         playbackRefLog_ = std::move(playbackLog);
         ProjectManager::restoreReferencesFromLog(redoPlaybackRefLog_, project);
         finishSelectionMove();
-        applyTrackTimeline(newTrackClips_);
         item_->markDirty();
 
         return true;

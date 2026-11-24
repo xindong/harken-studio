@@ -17,8 +17,7 @@ inline QJsonObject setItemPropertySchema()
         QStringLiteral("behavior"), QStringLiteral("selections"),
         QStringLiteral("loopCount"), QStringLiteral("sources"),
         QStringLiteral("scheduleOffsetSec"), QStringLiteral("distinguishLanguage"),
-        QStringLiteral("clips"), QStringLiteral("segmentTime"),
-        QStringLiteral("markers"),
+        QStringLiteral("clips"),
         QStringLiteral("dimensions"), QStringLiteral("maxDistance"),
         QStringLiteral("kind"), QStringLiteral("range"), QStringLiteral("rangeMin"),
         QStringLiteral("rangeMax"), QStringLiteral("defaultValue"), QStringLiteral("labels"),
@@ -117,18 +116,9 @@ inline QJsonObject setItemPropertySchema()
                 {QStringLiteral("type"), QStringLiteral("number")}, {QStringLiteral("minimum"), 0}}},
             {QStringLiteral("clips"), QJsonObject{
                 {QStringLiteral("type"), QStringLiteral("object")},
-                {QStringLiteral("description"), QStringLiteral("Track ClipLedger with rows and occurrenceOrdinalHighWater. Start and duration use the parent Segment's time domain: nanoseconds for Absolute, ticks at 960 PPQ for Musical. Positive duration is the authored playback boundary.")},
+                {QStringLiteral("description"), QStringLiteral("Track ClipLedger with rows and occurrenceOrdinalHighWater. Start and duration are in nanoseconds. Positive duration is the authored playback boundary.")},
                 {QStringLiteral("required"), QJsonArray{
                     QStringLiteral("rows"), QStringLiteral("occurrenceOrdinalHighWater")}}}},
-            {QStringLiteral("segmentTime"), QJsonObject{
-                {QStringLiteral("type"), QStringLiteral("object")},
-                {QStringLiteral("description"), QStringLiteral("Segment time domain. Musical requires one tempoMap point and one meterMap point at tick zero. Tempo uses microsecondsPerQuarter; meter uses numerator and denominator. Changing domain converts clip boundaries and markers while preserving their time in seconds.")},
-                {QStringLiteral("properties"), QJsonObject{
-                    {QStringLiteral("domain"), QJsonObject{
-                        {QStringLiteral("enum"), QJsonArray{QStringLiteral("Absolute"), QStringLiteral("Musical")}}}}}}}},
-            {QStringLiteral("markers"), QJsonObject{
-                {QStringLiteral("type"), QStringLiteral("array")},
-                {QStringLiteral("description"), QStringLiteral("Segment Entry and Exit markers with markerGuid, kind, name and position in the Segment's time domain. Entry and Exit are unique, and Entry must not follow Exit. Custom marker authoring is hidden.")}}},
             {QStringLiteral("volume"), QJsonObject{{QStringLiteral("type"), QStringLiteral("number")}}},
             {QStringLiteral("loopCount"), QJsonObject{{QStringLiteral("type"), QStringLiteral("integer")}, {QStringLiteral("minimum"), 0}}},
             {QStringLiteral("scheduleOffsetSec"), QJsonObject{{QStringLiteral("type"), QStringLiteral("number")}, {QStringLiteral("minimum"), 0}}},

@@ -1,8 +1,6 @@
 #include "TimelineEditing.h"
 
-#include "TimelineCoordinates.h"
 #include "../AuthoringPolicy.h"
-#include "../Components/VSegment.h"
 #include "../Components/VMixNode.h"
 #include "../Components/VTrack.h"
 #include "../ProjectManager.h"
@@ -53,8 +51,7 @@ std::vector<ProjectItem*> projectRoots(ProjectData* project)
 
 TimelineValidation validateEntityIdentities(ProjectData* project,
                                             const ProjectItem* replacedOwner,
-                                            const ClipLedger* replacementClips,
-                                            const MarkerLedger* replacementMarkers)
+                                            const ClipLedger* replacementClips)
 {
     QSet<QUuid> identities;
     std::vector<ProjectItem*> stack = projectRoots(project);
@@ -109,13 +106,6 @@ TimelineValidation validateEntityIdentities(ProjectData* project,
                 if (const TimelineValidation validity = insert(clip.clipGuid); !validity)
                     return validity;
         }
-        if (const auto* timeline = item->comp<VSegment>()) {
-            const MarkerLedger& ledger = item == replacedOwner && replacementMarkers
-                ? *replacementMarkers : timeline->markers;
-            for (const Marker& marker : ledger.items)
-                if (const TimelineValidation validity = insert(marker.markerGuid); !validity)
-                    return validity;
-        }
         for (auto& child : item->children) stack.push_back(child.get());
     }
     return TimelineValidation::success();
@@ -134,42 +124,10 @@ void applyClips(const QUuid& trackGuid,
     emit manager.itemPropertyChanged(track, QStringLiteral("clips"), originator);
 }
 
-void applyMarkers(const QUuid& segmentGuid,
-               const MarkerLedger& markers,
-               const QObject* originator = nullptr)
-{
-    auto& manager = ProjectManager::instance();
-    ProjectItem* segment = manager.findItemByGuid(segmentGuid);
-    auto* timeline = segment ? segment->comp<VSegment>() : nullptr;
-    if (!timeline) return;
-    timeline->markers = markers;
-    segment->markDirty();
-    emit manager.itemPropertyChanged(segment, QStringLiteral("markers"), originator);
-}
-
 int clipMergeId(const QUuid& clipGuid)
 {
     const uint value = qHash(clipGuid) & 0x3fffffffU;
     return static_cast<int>(value == 0 ? 1 : value);
-}
-
-struct SegmentTimeSnapshot
-{
-    SegmentTimeSpec segmentTime;
-    MarkerLedger markers;
-    QHash<QUuid, ClipLedger> tracks;
-};
-
-SegmentTimeSnapshot captureSegmentTime(ProjectItem* segment)
-{
-    SegmentTimeSnapshot snapshot;
-    const auto* timeline = segment->comp<VSegment>();
-    snapshot.segmentTime = timeline->segmentTime;
-    snapshot.markers = timeline->markers;
-    for (const auto& child : segment->children)
-        if (const auto* track = child->comp<VTrack>())
-            snapshot.tracks.insert(child->guid, track->clips);
-    return snapshot;
 }
 
 bool segmentReaches(ProjectManager* projectManager,
@@ -208,76 +166,6 @@ bool segmentReaches(ProjectManager* projectManager,
     return false;
 }
 
-void applySegmentTime(const QUuid& segmentGuid,
-                    const SegmentTimeSnapshot& snapshot,
-                    bool coordinatesChanged,
-                    const QObject* originator = nullptr)
-{
-    auto& manager = ProjectManager::instance();
-    ProjectItem* segment = manager.findItemByGuid(segmentGuid);
-    auto* timeline = segment ? segment->comp<VSegment>() : nullptr;
-    if (!timeline) return;
-    timeline->segmentTime = snapshot.segmentTime;
-    timeline->markers = snapshot.markers;
-    segment->markDirty();
-    emit manager.itemPropertyChanged(segment, QStringLiteral("segmentTime"), originator);
-    if (coordinatesChanged)
-        emit manager.itemPropertyChanged(segment, QStringLiteral("markers"), originator);
-    if (coordinatesChanged)
-        for (auto it = snapshot.tracks.cbegin(); it != snapshot.tracks.cend(); ++it)
-            applyClips(it.key(), it.value(), originator);
-}
-
-}
-
-SegmentTimeSpec timeSpecForTrackParent(const ProjectItem* parent)
-{
-    if (parent && parent->type == ProjectItem::Type::Segment)
-        if (const auto* timeline = parent->comp<VSegment>())
-            return timeline->segmentTime;
-    return {};
-}
-
-std::optional<ClipLedger> convertClipLedger(const ClipLedger& source,
-                                            const SegmentTimeSpec& sourceTime,
-                                            const SegmentTimeSpec& destinationTime,
-                                            QString* error)
-{
-    const TimelineValidation sourceValidity = source.validateStructure();
-    if (!sourceValidity) {
-        if (error) *error = sourceValidity.message;
-        return std::nullopt;
-    }
-    if (sourceTime == destinationTime) return source;
-    ClipLedger converted = source;
-    for (Clip& clip : converted.items) {
-        if (clip.start > std::numeric_limits<int64_t>::max() - clip.duration) {
-            if (error) *error = QStringLiteral("Clip end overflows the timeline coordinate");
-            return std::nullopt;
-        }
-        const CoordinateResult start = TimelineCoordinates::convert(
-            clip.start, sourceTime, destinationTime);
-        const CoordinateResult end = TimelineCoordinates::convert(
-            clip.start + clip.duration, sourceTime, destinationTime);
-        if (!start || !end) {
-            if (error) *error = !start ? start.validation.message : end.validation.message;
-            return std::nullopt;
-        }
-        if (end.value <= start.value
-            || static_cast<uint64_t>(end.value) - static_cast<uint64_t>(start.value)
-                > static_cast<uint64_t>(std::numeric_limits<int64_t>::max())) {
-            if (error) *error = QStringLiteral("Converted clip duration must be positive");
-            return std::nullopt;
-        }
-        clip.start = start.value;
-        clip.duration = end.value - start.value;
-    }
-    const TimelineValidation validity = converted.validateStructure();
-    if (!validity) {
-        if (error) *error = validity.message;
-        return std::nullopt;
-    }
-    return converted;
 }
 
 TimelineValidation validateClipPlacement(ProjectManager* projectManager,
@@ -354,7 +242,7 @@ ActionResult replaceClips(ProjectManager* projectManager,
     if (!placement)
         return failure(QStringLiteral("INVALID_ARGS"), placement.message);
     const TimelineValidation identities = validateEntityIdentities(
-        project, track, &clips, nullptr);
+        project, track, &clips);
     if (!identities)
         return failure(QStringLiteral("INVALID_ARGS"), identities.message);
 
@@ -540,7 +428,7 @@ private:
                     }
                 }
                 if (error.isEmpty()) {
-                    const auto identities = validateEntityIdentities(project_, nullptr, nullptr, nullptr);
+                    const auto identities = validateEntityIdentities(project_, nullptr, nullptr);
                     if (!identities) error = identities.message;
                 }
             }
@@ -714,173 +602,6 @@ std::unique_ptr<TransactionalUndoCommand> makeClipMoveCommand(
         return fail(QStringLiteral("The destination object folders are unavailable."));
     return std::make_unique<ClipMoveCommand>(project, std::move(tracks), std::move(targets),
         std::move(hierarchy));
-}
-
-ActionResult replaceMarkers(ProjectManager* projectManager,
-                         ProjectItem* segment,
-                         const MarkerLedger& markers,
-                         const QObject* originator,
-                         const QString& undoText)
-{
-    auto* timeline = segment ? segment->comp<VSegment>() : nullptr;
-    if (!projectManager || !timeline)
-        return failure(QStringLiteral("INVALID_TIMELINE_OWNER"),
-                       QStringLiteral("markers requires a Segment timeline"));
-    ProjectData* project = projectManager ? projectManager->currentProject() : nullptr;
-    if (!project)
-        return failure(QStringLiteral("NO_PROJECT_OPEN"),
-                       QStringLiteral("No project is currently open"));
-    const auto authoring = AuthoringPolicy::validateTimeline(*segment,
-        [projectManager](const QUuid& guid) { return projectManager->findItemByGuid(guid); });
-    if (!authoring)
-        return failure(QStringLiteral("AUTHORING_RESTRICTED"), authoring.message);
-    const TimelineValidation validity = markers.validate();
-    if (!validity)
-        return failure(QStringLiteral("INVALID_ARGS"), validity.message);
-    const TimelineValidation identities = validateEntityIdentities(
-        project, segment, nullptr, &markers);
-    if (!identities)
-        return failure(QStringLiteral("INVALID_ARGS"), identities.message);
-
-    MarkerLedger normalized = markers;
-    const MarkerLedger oldMarkers = timeline->markers;
-    ActionResult result;
-    result.success = true;
-    result.data = propertyResult(segment, QStringLiteral("markers"), normalized.toJson());
-    if (oldMarkers == normalized) return result;
-    const QUuid segmentGuid = segment->guid;
-    applyMarkers(segmentGuid, normalized, originator);
-    result.undoFn = [segmentGuid, oldMarkers] { applyMarkers(segmentGuid, oldMarkers); };
-    result.redoFn = [segmentGuid, normalized] { applyMarkers(segmentGuid, normalized); };
-    result.undoText = undoText.isEmpty() ? QStringLiteral("Set markers") : undoText;
-    result.authoringWriteSet = QSet<QUuid>{segmentGuid};
-    return result;
-}
-
-ActionResult addMarker(ProjectManager* projectManager,
-                    ProjectItem* segment,
-                    Marker marker,
-                    const QObject* originator)
-{
-    auto* timeline = segment ? segment->comp<VSegment>() : nullptr;
-    if (!timeline)
-        return failure(QStringLiteral("INVALID_TIMELINE_OWNER"),
-                       QStringLiteral("Marker creation requires a Segment timeline"));
-    if (marker.markerGuid.isNull()) marker.markerGuid = QUuid::createUuid();
-    MarkerLedger markers = timeline->markers;
-    markers.items.push_back(std::move(marker));
-    return replaceMarkers(projectManager, segment, markers, originator,
-                       QStringLiteral("Add marker"));
-}
-
-ActionResult updateMarker(ProjectManager* projectManager,
-                       ProjectItem* segment,
-                       const Marker& marker,
-                       const QObject* originator)
-{
-    auto* timeline = segment ? segment->comp<VSegment>() : nullptr;
-    if (!timeline)
-        return failure(QStringLiteral("INVALID_TIMELINE_OWNER"),
-                       QStringLiteral("Marker update requires a Segment timeline"));
-    MarkerLedger markers = timeline->markers;
-    const auto it = std::find_if(markers.items.begin(), markers.items.end(),
-                                 [&marker](const Marker& current) {
-                                     return current.markerGuid == marker.markerGuid;
-                                 });
-    if (it == markers.items.end())
-        return failure(QStringLiteral("MARKER_NOT_FOUND"),
-                       QStringLiteral("Marker does not exist"));
-    *it = marker;
-    return replaceMarkers(projectManager, segment, markers, originator,
-                       QStringLiteral("Edit marker"));
-}
-
-ActionResult removeMarker(ProjectManager* projectManager,
-                       ProjectItem* segment,
-                       const QUuid& markerGuid,
-                       const QObject* originator)
-{
-    auto* timeline = segment ? segment->comp<VSegment>() : nullptr;
-    if (!timeline)
-        return failure(QStringLiteral("INVALID_TIMELINE_OWNER"),
-                       QStringLiteral("Marker deletion requires a Segment timeline"));
-    MarkerLedger markers = timeline->markers;
-    const auto it = std::find_if(markers.items.begin(), markers.items.end(),
-                                 [&markerGuid](const Marker& marker) {
-                                     return marker.markerGuid == markerGuid;
-                                 });
-    if (it == markers.items.end())
-        return failure(QStringLiteral("MARKER_NOT_FOUND"),
-                       QStringLiteral("Marker does not exist"));
-    markers.items.erase(it);
-    return replaceMarkers(projectManager, segment, markers, originator,
-                       QStringLiteral("Delete marker"));
-}
-
-ActionResult replaceSegmentTime(ProjectManager* projectManager,
-                              ProjectItem* segment,
-                              const SegmentTimeSpec& segmentTime,
-                              const QObject* originator,
-                              const QString& undoText)
-{
-    auto* timeline = segment ? segment->comp<VSegment>() : nullptr;
-    if (!projectManager || !timeline)
-        return failure(QStringLiteral("INVALID_TIMELINE_OWNER"),
-                       QStringLiteral("segmentTime requires a Segment timeline"));
-    const SegmentTimeSpec* previousTime = &timeline->segmentTime;
-    for (const SegmentTimeSpec* time : {previousTime, &segmentTime}) {
-        const auto authoring = AuthoringPolicy::validateSegmentTime(*time);
-        if (!authoring)
-            return failure(QStringLiteral("AUTHORING_RESTRICTED"), authoring.message);
-    }
-    const TimelineValidation validity = TimelineCoordinates::validate(segmentTime);
-    if (!validity)
-        return failure(QStringLiteral("INVALID_ARGS"), validity.message);
-
-    const SegmentTimeSnapshot oldSnapshot = captureSegmentTime(segment);
-    SegmentTimeSnapshot newSnapshot = oldSnapshot;
-    newSnapshot.segmentTime = segmentTime;
-    const bool coordinatesChanged = oldSnapshot.segmentTime.domain != segmentTime.domain;
-    if (coordinatesChanged) {
-        for (Marker& marker : newSnapshot.markers.items) {
-            const CoordinateResult converted = TimelineCoordinates::convert(
-                marker.position, oldSnapshot.segmentTime, segmentTime);
-            if (!converted)
-                return failure(QStringLiteral("INVALID_ARGS"), converted.validation.message);
-            marker.position = converted.value;
-        }
-        for (auto it = newSnapshot.tracks.begin(); it != newSnapshot.tracks.end(); ++it) {
-            QString error;
-            auto converted = convertClipLedger(
-                it.value(), oldSnapshot.segmentTime, segmentTime, &error);
-            if (!converted)
-                return failure(QStringLiteral("INVALID_ARGS"), error);
-            it.value() = std::move(*converted);
-        }
-        const TimelineValidation markerValidity = newSnapshot.markers.validate();
-        if (!markerValidity)
-            return failure(QStringLiteral("INVALID_ARGS"), markerValidity.message);
-    }
-
-    ActionResult result;
-    result.success = true;
-    result.data = propertyResult(segment, QStringLiteral("segmentTime"), segmentTime.toJson());
-    if (oldSnapshot.segmentTime == segmentTime) return result;
-    const QUuid segmentGuid = segment->guid;
-    applySegmentTime(segmentGuid, newSnapshot, coordinatesChanged, originator);
-    result.undoFn = [segmentGuid, oldSnapshot, coordinatesChanged] {
-        applySegmentTime(segmentGuid, oldSnapshot, coordinatesChanged);
-    };
-    result.redoFn = [segmentGuid, newSnapshot, coordinatesChanged] {
-        applySegmentTime(segmentGuid, newSnapshot, coordinatesChanged);
-    };
-    result.undoText = undoText.isEmpty()
-        ? QStringLiteral("Set segment time") : undoText;
-    result.authoringWriteSet = QSet<QUuid>{segmentGuid};
-    if (coordinatesChanged)
-        for (auto it = newSnapshot.tracks.cbegin(); it != newSnapshot.tracks.cend(); ++it)
-            result.authoringWriteSet->insert(it.key());
-    return result;
 }
 
 }

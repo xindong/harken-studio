@@ -4,8 +4,6 @@
 #include "TimelineHeaderColumn.h"
 #include "Widgets/Common/TableWidget.h"
 #include "TimelineRuler.h"
-#include "TimelineClipCanvas.h"
-#include "TimelineTicks.h"
 
 #include "Core/ActionManager.h"
 #include "Core/AuthoringPolicy.h"
@@ -50,7 +48,6 @@
 #include <QLayout>
 #include <QLabel>
 #include <QMenu>
-#include <QMetaEnum>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QResizeEvent>
@@ -73,9 +70,6 @@
 #include <QWheelEvent>
 
 #include <algorithm>
-#include <QComboBox>
-#include <QDoubleSpinBox>
-#include <QSpinBox>
 #include <cmath>
 #include <functional>
 #include <limits>
@@ -118,11 +112,6 @@ void clearLayout(QLayout* layout)
     }
 }
 
-int64_t coordinateUnit(const SegmentTimeSpec& spec)
-{
-    return timelineCoordinateUnit(spec);
-}
-
 std::optional<int64_t> sourceSpan(const ProjectItem* item, QSet<QUuid>& visiting)
 {
     if (!item || visiting.contains(item->guid))
@@ -151,7 +140,7 @@ std::optional<int64_t> sourceSpan(const ProjectItem* item, QSet<QUuid>& visiting
             SoundSourceEditing::previewLanguage(
                 *item, LanguageContextService::instance().language()));
         if (!seconds) return std::nullopt;
-        const CoordinateResult duration = TimelineCoordinates::fromSeconds(*seconds, {});
+        const CoordinateResult duration = TimelineCoordinates::fromSeconds(*seconds);
         return duration && duration.value > 0
             ? std::optional<int64_t>(duration.value) : std::nullopt;
     }
@@ -162,16 +151,13 @@ std::optional<int64_t> sourceSpan(const ProjectItem* item, QSet<QUuid>& visiting
         for (const Clip& clip : track->clips.items) {
             const auto duration = sourceSpan(
                 ProjectManager::instance().findItemByGuid(clip.targetGuid), visiting);
-            const auto start = TimelineCoordinates::toNanoseconds(clip.start,
-                TimelineEditing::timeSpecForTrackParent(item->parent));
-            if (!duration || !start || start.value > std::numeric_limits<int64_t>::max() - *duration) {
+            if (!duration || clip.start > std::numeric_limits<int64_t>::max() - *duration) {
                 known = false;
                 break;
             }
-            end = std::max(end, start.value + *duration);
+            end = std::max(end, clip.start + *duration);
         }
-    } else if (const auto* segment = item->comp<VSegment>();
-               segment && AuthoringPolicy::validateSegmentTime(segment->segmentTime)) {
+    } else if (item->comp<VSegment>()) {
         for (const auto& track : item->children) {
             const auto duration = sourceSpan(track.get(), visiting);
             if (!duration) {
@@ -199,16 +185,6 @@ TimelineEditorPanel::TimelineEditorPanel(QWidget* parent,
     cursorEdgeScroll_ = new QTimer(this);
     cursorEdgeScroll_->setInterval(16);
     connect(cursorEdgeScroll_, &QTimer::timeout, this, &TimelineEditorPanel::scrollCursorDrag);
-    markerEdgeScroll_ = new QTimer(this);
-    markerEdgeScroll_->setInterval(16);
-    connect(markerEdgeScroll_, &QTimer::timeout, this, &TimelineEditorPanel::scrollMarkerDrag);
-    markerValue_ = new QLabel(this, Qt::ToolTip | Qt::WindowTransparentForInput);
-    markerValue_->setObjectName(QStringLiteral("timelineMarkerValue"));
-    markerValue_->setAttribute(Qt::WA_ShowWithoutActivating);
-    markerValue_->setAutoFillBackground(true);
-    markerValue_->setFrameStyle(QFrame::Box | QFrame::Plain);
-    ThemeLayout::margins(markerValue_, ThemeLayout::Space::Panel, ThemeLayout::Space::Control, ThemeLayout::Space::Panel, ThemeLayout::Space::Control, *themeManager_);
-    markerValue_->hide();
 
     auto* root = new QVBoxLayout(this);
     const auto& metrics = themeManager_->metrics();
@@ -240,53 +216,6 @@ TimelineEditorPanel::TimelineEditorPanel(QWidget* parent,
     auto* timelineLayout = new QVBoxLayout(timelinePage_);
     timelineLayout->setContentsMargins(0, 0, 0, 0);
     timelineLayout->setSpacing(0);
-    timeControls_ = new QWidget(this);
-    timeControls_->setObjectName(QStringLiteral("timelineSegmentControls"));
-    auto* timeLayout = new QHBoxLayout(timeControls_);
-    ThemeLayout::margins(timeLayout, ThemeLayout::Space::None, ThemeLayout::Space::None, ThemeLayout::Space::None, ThemeLayout::Space::Panel, *themeManager_);
-    ThemeLayout::spacing(timeLayout, ThemeLayout::Space::Section, *themeManager_);
-    auto* tempoLabel = new QLabel(tr("Tempo"), timeControls_);
-    timeLayout->addWidget(tempoLabel);
-    tempoSpin_ = new DecimalSpinBox(timeControls_);
-    tempoSpin_->setObjectName(QStringLiteral("timelineTempo"));
-    tempoSpin_->setRange(1.0, 999.0);
-    tempoSpin_->setDecimals(3);
-    tempoSpin_->setKeyboardTracking(false);
-    tempoSpin_->setAccessibleName(tr("Tempo"));
-    tempoLabel->setBuddy(tempoSpin_);
-    timeLayout->addWidget(tempoSpin_);
-    ThemeLayout::addSpacing(timeLayout, ThemeLayout::Space::Section, *themeManager_);
-    auto* timeSignatureLabel = new QLabel(tr("Time Signature"), timeControls_);
-    timeLayout->addWidget(timeSignatureLabel);
-    meterNumeratorSpin_ = new QSpinBox(timeControls_);
-    meterNumeratorSpin_->setObjectName(QStringLiteral("timelineTimeSignatureNumerator"));
-    meterNumeratorSpin_->setRange(1, 32);
-    meterNumeratorSpin_->setKeyboardTracking(false);
-    meterNumeratorSpin_->setAccessibleName(tr("Time Signature Numerator"));
-    timeSignatureLabel->setBuddy(meterNumeratorSpin_);
-    timeLayout->addWidget(meterNumeratorSpin_);
-    auto* meterSlash = new QLabel(QStringLiteral("/"), timeControls_);
-    timeLayout->addWidget(meterSlash);
-    meterDenominatorCombo_ = new QComboBox(timeControls_);
-    meterDenominatorCombo_->setObjectName(QStringLiteral("timelineTimeSignatureDenominator"));
-    meterDenominatorCombo_->setAccessibleName(tr("Time Signature Denominator"));
-    for (int denominator : {1, 2, 4, 8, 16, 32})
-        meterDenominatorCombo_->addItem(QString::number(denominator), denominator);
-    timeLayout->addWidget(meterDenominatorCombo_);
-    timeLayout->addStretch(1);
-    root->insertWidget(root->indexOf(stack_), timeControls_);
-    connect(tempoSpin_, &QDoubleSpinBox::valueChanged, this, [this](double bpm) {
-        setTempoMicrosecondsPerQuarter(int64_t(std::llround(60000000.0 / bpm)));
-        refreshTimeControls();
-    });
-    connect(meterNumeratorSpin_, &QSpinBox::valueChanged, this, [this](int numerator) {
-        setMeter(numerator, meterDenominatorCombo_->currentData().toInt());
-        refreshTimeControls();
-    });
-    connect(meterDenominatorCombo_, &QComboBox::activated, this, [this](int index) {
-        setMeter(meterNumeratorSpin_->value(), meterDenominatorCombo_->itemData(index).toInt());
-        refreshTimeControls();
-    });
     ruler_ = new TimelineRuler(this, timelinePage_);
     ruler_->installEventFilter(this);
     timelineLayout->addWidget(ruler_);
@@ -491,7 +420,6 @@ TimelineEditorPanel::TimelineEditorPanel(QWidget* parent,
 
 TimelineEditorPanel::~TimelineEditorPanel()
 {
-    cancelMarkerInteraction();
     cursorHovered_ = false;
     ToolTip::hideText();
     finishLaneResize(false);
@@ -802,10 +730,7 @@ int64_t TimelineEditorPanel::clipDuration(int laneIndex, int clipIndex) const
 std::optional<int64_t> TimelineEditorPanel::clipSourceDuration(int laneIndex, int clipIndex) const
 {
     QSet<QUuid> visiting;
-    const auto source = sourceSpan(clipTarget(laneIndex, clipIndex), visiting);
-    if (!source) return std::nullopt;
-    const auto duration = TimelineCoordinates::fromNanoseconds(*source, effectiveTimeSpec(laneIndex));
-    return duration && duration.value > 0 ? std::optional<int64_t>(duration.value) : std::nullopt;
+    return sourceSpan(clipTarget(laneIndex, clipIndex), visiting);
 }
 
 QSet<QUuid> TimelineEditorPanel::selectedClipGuids() const
@@ -849,7 +774,7 @@ int TimelineEditorPanel::minimumZoomPercent()
 double TimelineEditorPanel::maximumZoomPercent() const
 {
     return NanosecondPosition{viewOriginCoordinate()}.distanceTo(contentEndCoordinate())
-        / (timelineDomain() == TimelineDomain::Musical ? 1.0 : kMinimumViewNanoseconds) * 100.0;
+        / kMinimumViewNanoseconds * 100.0;
 }
 
 double TimelineEditorPanel::horizontalScrollMaximum() const
@@ -860,7 +785,7 @@ double TimelineEditorPanel::horizontalScrollMaximum() const
 double TimelineEditorPanel::viewSpan() const
 {
     if (zoomPercent_ >= maximumZoomPercent())
-        return timelineDomain() == TimelineDomain::Musical ? 1.0 : kMinimumViewNanoseconds;
+        return kMinimumViewNanoseconds;
     return NanosecondPosition{viewOriginCoordinate()}.distanceTo(contentEndCoordinate())
         / (zoomPercent_ / 100.0);
 }
@@ -924,7 +849,7 @@ int TimelineEditorPanel::timelineViewportWidth() const
 
 double TimelineEditorPanel::pixelsPerUnit() const
 {
-    return std::max(1, canvas_->width() - 1) * double(coordinateUnit(effectiveTimeSpec(0))) / viewSpan();
+    return std::max(1, canvas_->width() - 1) * double(TimelineCoordinates::kNanosecondsPerSecond) / viewSpan();
 }
 
 double TimelineEditorPanel::horizontalScroll() const
@@ -936,125 +861,25 @@ double TimelineEditorPanel::horizontalScroll() const
 TimeAxisTicks TimelineEditorPanel::timeTicks() const
 {
     refreshTickCache();
-    return hasMeasureBeatsPrimaryAxis() ? timeTickCache_->clock : timeTickCache_->seconds;
-}
-
-TimelineEditorPanel::AxisMode TimelineEditorPanel::axisMode() const
-{
-    return timelineDomain() == TimelineDomain::Musical ? axisMode_ : AxisMode::Seconds;
-}
-
-void TimelineEditorPanel::setAxisMode(AxisMode mode)
-{
-    if (axisMode_ == mode || (mode != AxisMode::Seconds && timelineDomain() != TimelineDomain::Musical))
-        return;
-    axisMode_ = mode;
-    refreshTimelinePaint();
-    refreshStatusBar();
-}
-
-bool TimelineEditorPanel::hasMeasureBeatsPrimaryAxis() const
-{
-    const auto mode = axisMode();
-    return mode == AxisMode::MeasureBeats || mode == AxisMode::MeasureBeatsWithSeconds;
-}
-
-bool TimelineEditorPanel::hasSecondaryAxis() const
-{
-    const auto mode = axisMode();
-    return mode == AxisMode::SecondsWithMeasureBeats || mode == AxisMode::MeasureBeatsWithSeconds;
+    return timeTickCache_->ticks;
 }
 
 void TimelineEditorPanel::refreshTickCache() const
 {
     const double span = viewSpan();
     const int width = canvas_->width();
-    const bool timePrimary = !hasMeasureBeatsPrimaryAxis();
-    const QFontMetrics secondsMetrics(FontManager::instance().getFont(
-        timePrimary ? FontRole::Body : FontRole::Caption), canvas_);
-    const QFontMetrics clockMetrics(FontManager::instance().getFont(
-        timePrimary ? FontRole::Caption : FontRole::Body), canvas_);
-    const auto spec = effectiveTimeSpec(0);
-    const auto& spacing = timelineMetrics();
-    if (!timeTickCache_ || timeTickCache_->start.nanoseconds != viewStart_.nanoseconds
-        || timeTickCache_->start.fraction != viewStart_.fraction
-        || timeTickCache_->span != span || timeTickCache_->width != width
-        || timeTickCache_->secondsFontMetrics != secondsMetrics
-        || timeTickCache_->clockFontMetrics != clockMetrics || timeTickCache_->time != spec
-        || timeTickCache_->labelSpacing != spacing.minLabelSpacing
-        || timeTickCache_->tickSpacing != spacing.minTickSpacing) {
-        TimeTickCache cache{viewStart_, span, width, secondsMetrics, clockMetrics, spec,
-            spacing.minLabelSpacing, spacing.minTickSpacing, {}, {}};
-        if (spec.domain == TimelineDomain::Musical) {
-            const double nanosecondsPerTick = double(spec.tempoMap.front().microsecondsPerQuarter)
-                * 1000.0 / TimelineCoordinates::kPpq;
-            const auto start = TimelineCoordinates::toNanoseconds(viewStart_.nanoseconds, spec);
-            if (start) {
-                cache.seconds = buildNanosecondTimeAxisTicks(
-                    NanosecondPosition{start.value}.shifted(viewStart_.fraction * nanosecondsPerTick),
-                    span * nanosecondsPerTick, width, secondsMetrics,
-                    std::max<int64_t>(1, int64_t(std::ceil(nanosecondsPerTick))),
-                    TimeAxisLabelFormat::MinutesSecondsMilliseconds);
-                const auto grid = TimelineCoordinates::fromSeconds(cache.seconds.minorStep, {});
-                if (grid) cache.secondsGrid = std::max<int64_t>(1, grid.value);
-                const double secondsPerQuarter = double(spec.tempoMap.front().microsecondsPerQuarter) / 1e6;
-                cache.seconds.majorStep /= secondsPerQuarter;
-                cache.seconds.minorStep /= secondsPerQuarter;
-                QVector<TimeAxisTick> converted;
-                converted.reserve(cache.seconds.ticks.size());
-                std::optional<int64_t> previous;
-                const int64_t bar = timelineCoordinateUnit(spec) * spec.meterMap.front().numerator;
-                for (auto tick : cache.seconds.ticks) {
-                    const auto coordinate = TimelineCoordinates::fromNanoseconds(tick.coordinate, spec);
-                    if (!coordinate || (previous && coordinate.value <= *previous)) continue;
-                    if (!tick.label.isEmpty() && coordinate.value % bar == 0) {
-                        const auto time = TimelineCoordinates::toNanoseconds(coordinate.value, spec);
-                        if (time && time.value == tick.coordinate)
-                            tick.secondaryLabel = formatTimelineBar(coordinate.value, spec);
-                    }
-                    tick.coordinate = coordinate.value;
-                    tick.value = double(coordinate.value) / TimelineCoordinates::kPpq;
-                    tick.pixel = viewportPixelAtCoordinate(0, coordinate.value);
-                    converted.append(std::move(tick));
-                    previous = coordinate.value;
-                }
-                cache.seconds.ticks = std::move(converted);
-            }
-            const int extraWidth = int(std::ceil(viewStart_.fraction * pixelsPerUnit()
-                / coordinateUnit(spec)));
-            auto clockSpacing = spacing;
-            clockSpacing.minTickSpacing *= 2;
-            auto musical = buildTimelineTicks(spec, viewStart_.nanoseconds,
-                0, pixelsPerUnit(), width + extraWidth, clockSpacing, 0);
-            for (const auto& tick : musical.ticks)
-                clockSpacing.minLabelSpacing = std::max(clockSpacing.minLabelSpacing,
-                    clockMetrics.horizontalAdvance(tick.label) + 12);
-            if (clockSpacing.minLabelSpacing != spacing.minLabelSpacing)
-                musical = buildTimelineTicks(spec, viewStart_.nanoseconds,
-                    0, pixelsPerUnit(), width + extraWidth, clockSpacing, 0);
-            cache.clock.majorStep = double(musical.majorStep) / TimelineCoordinates::kPpq;
-            cache.clock.minorStep = double(musical.minorStep) / TimelineCoordinates::kPpq;
-            cache.clockGrid = std::max<int64_t>(1, musical.minorStep);
-            for (const auto& tick : musical.ticks) {
-                const int pixel = viewportPixelAtCoordinate(0, tick.coordinate);
-                if (pixel < 0 || pixel >= width) continue;
-                QString secondaryLabel;
-                if (!tick.label.isEmpty()) {
-                    const auto nanoseconds = TimelineCoordinates::toNanoseconds(tick.coordinate, spec);
-                    if (nanoseconds)
-                        secondaryLabel = formatTimeMinutesSecondsMilliseconds(nanoseconds.value, 0);
-                }
-                cache.clock.ticks.append({double(tick.coordinate) / TimelineCoordinates::kPpq,
-                    pixel, tick.major, tick.label, tick.beat, secondaryLabel, tick.coordinate});
-            }
-        } else {
-            cache.seconds = buildNanosecondTimeAxisTicks(viewStart_, span, width, secondsMetrics,
-                1, TimeAxisLabelFormat::MinutesSecondsMilliseconds);
-            const auto grid = TimelineCoordinates::fromSeconds(cache.seconds.minorStep, {});
-            if (grid) cache.secondsGrid = std::max<int64_t>(1, grid.value);
-        }
-        timeTickCache_ = std::move(cache);
-    }
+    const QFontMetrics fontMetrics(FontManager::instance().getFont(FontRole::Body), canvas_);
+    if (timeTickCache_ && timeTickCache_->start.nanoseconds == viewStart_.nanoseconds
+        && timeTickCache_->start.fraction == viewStart_.fraction
+        && timeTickCache_->span == span && timeTickCache_->width == width
+        && timeTickCache_->fontMetrics == fontMetrics)
+        return;
+    TimeTickCache cache{viewStart_, span, width, fontMetrics,
+        buildNanosecondTimeAxisTicks(viewStart_, span, width, fontMetrics,
+            1, TimeAxisLabelFormat::MinutesSecondsMilliseconds)};
+    if (const auto grid = TimelineCoordinates::fromSeconds(cache.ticks.minorStep))
+        cache.grid = std::max<int64_t>(1, grid.value);
+    timeTickCache_ = std::move(cache);
 }
 
 void TimelineEditorPanel::resetView()
@@ -1062,8 +887,6 @@ void TimelineEditorPanel::resetView()
     cursorHovered_ = false;
     ToolTip::hideText();
     finishLaneResize(true);
-    ruler_->markerLane()->cancelInteraction();
-    presentedTime_.reset();
     laneHeights_.clear();
     if (cursorValueEditor_) cursorValueEditor_->reject();
     endCursorDrag();
@@ -1082,9 +905,6 @@ QVariantMap TimelineEditorPanel::snapshotState() const
     QVariantMap state{
         {QStringLiteral("itemGuid"), boundGuid_.toString(QUuid::WithoutBraces)},
         {QStringLiteral("zoom"), zoomPercent()},
-        {QStringLiteral("axisMode"), QString::fromLatin1(
-            QMetaEnum::fromType<AxisMode>().valueToKey(static_cast<int>(axisMode_)))},
-        {QStringLiteral("timelineTime"), effectiveTimeSpec(0).toJson().toVariantMap()},
         {QStringLiteral("cursor"), QString::number(editCursor_)},
         {QStringLiteral("laneHeaderWidth"), laneHeaderWidth_},
         {QStringLiteral("selectedLaneGuid"), selectedLaneGuid_.toString(QUuid::WithoutBraces)},
@@ -1128,7 +948,6 @@ void TimelineEditorPanel::bindItem(ProjectItem* item)
     pendingRestoreState_.clear();
     if (boundItem_ != item || boundGuid_ != item->guid) {
         drillPath_.clear();
-        selectedMarkerGuid_ = QUuid();
         canvas_->restoreSelectedClips({}, {});
         boundItem_ = item;
         boundGuid_ = item->guid;
@@ -1156,7 +975,6 @@ void TimelineEditorPanel::clearEditor()
     finishLaneResize(true);
     laneHeights_.clear();
     drillPath_.clear();
-    selectedMarkerGuid_ = QUuid();
     if (canvas_)
         canvas_->restoreSelectedClips({}, QUuid());
     boundGuid_ = QUuid();
@@ -1328,19 +1146,12 @@ void TimelineEditorPanel::setCursorHovered(bool hovered)
     if (!hovered)
         ToolTip::hideText();
     ruler_->update();
-    ruler_->markerLane()->update();
     canvas_->update();
 }
 
 QString TimelineEditorPanel::cursorTooltip() const
 {
-    const auto spec = effectiveTimeSpec(0);
-    const auto time = TimelineCoordinates::toNanoseconds(editCursor_, spec);
-    QString text = tr("Cursor\nTime: %1").arg(time
-        ? formatTimeMinutesSecondsMilliseconds(time.value) : tr("Unknown"));
-    if (spec.domain == TimelineDomain::Musical)
-        text += tr("\nClock: %1").arg(TimelineSemantics::formatReadableCoordinate(editCursor_, spec));
-    return text;
+    return tr("Cursor\nTime: %1").arg(formatTimeMinutesSecondsMilliseconds(editCursor_));
 }
 
 void TimelineEditorPanel::beginCursorDrag(int canvasX, bool disableSnap, bool locate)
@@ -1442,12 +1253,11 @@ void TimelineEditorPanel::editCursorValue()
     spin->setKeyboardTracking(false);
     spin->setButtonSymbols(QAbstractSpinBox::NoButtons);
     spin->setDecimals(9);
-    const bool musical = timelineDomain() == TimelineDomain::Musical;
-    const double divisor = musical ? TimelineCoordinates::kPpq : TimelineCoordinates::kNanosecondsPerSecond;
+    constexpr double divisor = TimelineCoordinates::kNanosecondsPerSecond;
     spin->setRange(0.0,
         double(std::max(initial, contentEndCoordinate())) / divisor);
-    spin->setSingleStep(musical ? 1.0 / TimelineCoordinates::kPpq : 0.001);
-    spin->setSuffix(musical ? tr(" beats") : QStringLiteral(" s"));
+    spin->setSingleStep(0.001);
+    spin->setSuffix(QStringLiteral(" s"));
     spin->setValue(double(initial) / divisor);
     const double initialValue = spin->value();
     ThemeManager::instance().bindMetrics(spin, [spin](const ThemeMetrics& metrics) {
@@ -1461,12 +1271,11 @@ void TimelineEditorPanel::editCursorValue()
             dialog->accept();
         });
     }
-    connect(dialog, &QDialog::accepted, this, [this, owner, initial, initialValue, spin, musical] {
+    connect(dialog, &QDialog::accepted, this, [this, owner, initial, initialValue, spin] {
         if (!hasTimeline() || boundGuid_ != owner
             || editCursor_ != initial || spin->value() == initialValue)
             return;
-        const auto coordinate = musical ? TimelineCoordinates::beatsToTicks(spin->value())
-            : TimelineCoordinates::fromSeconds(spin->value(), {});
+        const auto coordinate = TimelineCoordinates::fromSeconds(spin->value());
         if (coordinate)
             setEditCursor(std::clamp(coordinate.value, viewOriginCoordinate(), contentEndCoordinate()), true);
     });
@@ -1511,10 +1320,6 @@ void TimelineEditorPanel::showCursorContextMenu(const QPoint& position)
 void TimelineEditorPanel::restoreViewport(const QVariantMap& state)
 {
     finishLaneResize(true);
-    bool validAxisMode = false;
-    const int axisMode = QMetaEnum::fromType<AxisMode>().keyToValue(
-        state.value(QStringLiteral("axisMode")).toString().toLatin1().constData(), &validAxisMode);
-    axisMode_ = validAxisMode ? static_cast<AxisMode>(axisMode) : AxisMode::MeasureBeats;
     laneHeights_.clear();
     const auto heights = state.value(QStringLiteral("laneHeights")).toMap();
     for (auto it = heights.cbegin(); it != heights.cend(); ++it) {
@@ -1547,23 +1352,14 @@ void TimelineEditorPanel::restoreViewport(const QVariantMap& state)
         viewStart_ = {viewOriginCoordinate()};
     } else {
         const double scale = std::clamp(state.value(QStringLiteral("zoom"), 100).toDouble(), 4.0, 800.0);
-        const double unit = double(coordinateUnit(effectiveTimeSpec(0)));
+        constexpr double unit = TimelineCoordinates::kNanosecondsPerSecond;
         const double span = std::max(1, timelineViewportWidth() - 1) / scale * unit;
         zoomPercent_ = std::max(100.0,
             NanosecondPosition{viewOriginCoordinate()}.distanceTo(contentEndCoordinate()) / span * 100.0);
         viewStart_ = NanosecondPosition{viewOriginCoordinate()}.shifted(
             (state.value(QStringLiteral("horizontalScroll")).toDouble() - 8) / scale * unit);
     }
-    int64_t cursor = state.value(QStringLiteral("cursor")).toLongLong();
-    const auto storedTime = SegmentTimeSpec::fromJson(
-        QJsonObject::fromVariantMap(state.value(QStringLiteral("timelineTime")).toMap()));
-    const auto spec = effectiveTimeSpec(0);
-    if (storedTime && storedTime->domain != spec.domain) {
-        const auto start = TimelineCoordinates::convert(viewStart_.rounded(), *storedTime, spec);
-        const auto convertedCursor = TimelineCoordinates::convert(cursor, *storedTime, spec);
-        viewStart_ = {start ? start.value : viewOriginCoordinate()};
-        cursor = convertedCursor ? convertedCursor.value : 0;
-    }
+    const int64_t cursor = state.value(QStringLiteral("cursor")).toLongLong();
     refreshHorizontalRange();
     setEditCursor(cursor, true);
     QSet<QUuid> clips;
@@ -1621,18 +1417,10 @@ void TimelineEditorPanel::restoreState(const QVariantMap& state)
     refreshBreadcrumbs();
 }
 
-SegmentTimeSpec TimelineEditorPanel::effectiveTimeSpec(int laneIndex) const
+QString TimelineEditorPanel::formatCoordinate(int, int64_t coordinate) const
 {
-    ProjectItem* track = laneItem(laneIndex);
-    return TimelineEditing::timeSpecForTrackParent(track ? track->parent : boundItem_);
-}
-
-QString TimelineEditorPanel::formatCoordinate(int laneIndex, int64_t coordinate) const
-{
-    if (viewKind_ == ViewKind::Unsupported || !AuthoringPolicy::validateSegmentTime(effectiveTimeSpec(laneIndex)))
+    if (viewKind_ == ViewKind::Unsupported)
         return tr("Unsupported arrangement");
-    if (effectiveTimeSpec(laneIndex).domain == TimelineDomain::Musical)
-        return TimelineSemantics::formatReadableCoordinate(coordinate, effectiveTimeSpec(laneIndex));
     return QStringLiteral("%1 s").arg(formatTimeNanoseconds(coordinate, 0,
         axisReadoutDecimalsForStep(timeTicks().majorStep)));
 }
@@ -1673,402 +1461,12 @@ std::optional<int64_t> TimelineEditorPanel::emergenceCoordinate(
     ProjectItem* target = clipTarget(laneIndex, clipIndex);
     const auto* sound = target ? target->comp<VSound>() : nullptr;
     if (!sound || sound->scheduleOffsetSec <= 0.0) return std::nullopt;
-    const SegmentTimeSpec spec = effectiveTimeSpec(laneIndex);
-    const CoordinateResult offset = TimelineCoordinates::fromSeconds(
-        sound->scheduleOffsetSec, spec);
+    const CoordinateResult offset = TimelineCoordinates::fromSeconds(sound->scheduleOffsetSec);
     if (!offset) return std::nullopt;
     const int64_t start = clipStart(laneIndex, clipIndex);
     if (offset.value > 0 && start > std::numeric_limits<int64_t>::max() - offset.value)
         return std::numeric_limits<int64_t>::max();
     return start + offset.value;
-}
-
-TimelineDomain TimelineEditorPanel::timelineDomain() const
-{
-    return effectiveTimeSpec(0).domain;
-}
-
-int64_t TimelineEditorPanel::tempoMicrosecondsPerQuarter() const
-{
-    const auto* timeline = boundItem_ ? boundItem_->comp<VSegment>() : nullptr;
-    return timeline && !timeline->segmentTime.tempoMap.empty()
-        ? timeline->segmentTime.tempoMap.front().microsecondsPerQuarter : 0;
-}
-
-int TimelineEditorPanel::meterNumerator() const
-{
-    const auto* timeline = boundItem_ ? boundItem_->comp<VSegment>() : nullptr;
-    return timeline && !timeline->segmentTime.meterMap.empty()
-        ? timeline->segmentTime.meterMap.front().numerator : 0;
-}
-
-int TimelineEditorPanel::meterDenominator() const
-{
-    const auto* timeline = boundItem_ ? boundItem_->comp<VSegment>() : nullptr;
-    return timeline && !timeline->segmentTime.meterMap.empty()
-        ? timeline->segmentTime.meterMap.front().denominator : 0;
-}
-
-int TimelineEditorPanel::markerCount() const
-{
-    const auto* timeline = boundItem_ ? boundItem_->comp<VSegment>() : nullptr;
-    return timeline ? static_cast<int>(timeline->markers.items.size()) : 0;
-}
-
-QUuid TimelineEditorPanel::markerGuid(int index) const
-{
-    const auto* timeline = boundItem_ ? boundItem_->comp<VSegment>() : nullptr;
-    return timeline && index >= 0 && index < static_cast<int>(timeline->markers.items.size())
-        ? timeline->markers.items[index].markerGuid : QUuid{};
-}
-
-MarkerKind TimelineEditorPanel::markerKind(int index) const
-{
-    const auto* timeline = boundItem_ ? boundItem_->comp<VSegment>() : nullptr;
-    return timeline && index >= 0 && index < static_cast<int>(timeline->markers.items.size())
-        ? timeline->markers.items[index].kind : MarkerKind::Custom;
-}
-
-QString TimelineEditorPanel::markerName(int index) const
-{
-    const auto* timeline = boundItem_ ? boundItem_->comp<VSegment>() : nullptr;
-    return timeline && index >= 0 && index < static_cast<int>(timeline->markers.items.size())
-        ? timeline->markers.items[index].name : QString{};
-}
-
-int64_t TimelineEditorPanel::markerPosition(int index) const
-{
-    const auto* timeline = boundItem_ ? boundItem_->comp<VSegment>() : nullptr;
-    return timeline && index >= 0 && index < static_cast<int>(timeline->markers.items.size())
-        ? timeline->markers.items[index].position : 0;
-}
-
-int64_t TimelineEditorPanel::markerDisplayPosition(int index) const
-{
-    if (markerDrag_ && markerDrag_->guid == markerGuid(index))
-        return markerDrag_->previewPosition;
-    return markerPosition(index);
-}
-
-QUuid TimelineEditorPanel::hoveredMarkerGuid() const
-{
-    return hoveredMarkerGuid_;
-}
-
-int TimelineEditorPanel::markerIndex(const QUuid& guid) const
-{
-    for (int index = 0; index < markerCount(); ++index)
-        if (markerGuid(index) == guid)
-            return index;
-    return -1;
-}
-
-QUuid TimelineEditorPanel::markerAtViewportPixel(int x) const
-{
-    QUuid nearest;
-    int nearestDistance = 6;
-    for (int index = markerCount() - 1; index >= 0; --index) {
-        if (markerKind(index) == MarkerKind::Custom)
-            continue;
-        const int markerX = viewportPixelAtCoordinate(0, markerDisplayPosition(index));
-        if (markerX < 0 || markerX >= timelineViewportWidth())
-            continue;
-        const int distance = std::abs(x - markerX);
-        if (distance < nearestDistance) {
-            nearestDistance = distance;
-            nearest = markerGuid(index);
-        }
-    }
-    return nearest;
-}
-
-void TimelineEditorPanel::setHoveredMarker(const QUuid& guid)
-{
-    if (hoveredMarkerGuid_ == guid)
-        return;
-    hoveredMarkerGuid_ = guid;
-    ruler_->update();
-    ruler_->markerLane()->update();
-    canvas_->update();
-}
-
-QUuid TimelineEditorPanel::draggingMarkerGuid() const
-{
-    return markerDrag_ ? markerDrag_->guid : QUuid();
-}
-
-int64_t TimelineEditorPanel::markerDragPreviewPosition() const
-{
-    return markerDrag_ ? markerDrag_->previewPosition : 0;
-}
-
-QString TimelineEditorPanel::markerCaption(const QUuid& guid) const
-{
-    const int index = markerIndex(guid);
-    return markerKind(index) == MarkerKind::Entry ? tr("Entry Marker") : tr("Exit Marker");
-}
-
-QString TimelineEditorPanel::markerTooltip(const QUuid& guid) const
-{
-    const int index = markerIndex(guid);
-    if (index < 0 || markerKind(index) == MarkerKind::Custom)
-        return {};
-    const auto spec = effectiveTimeSpec(0);
-    const int64_t position = markerDisplayPosition(index);
-    const auto time = TimelineCoordinates::toNanoseconds(position, spec);
-    QString text = tr("%1\nTime: %2").arg(markerCaption(guid),
-        formatTimeMinutesSecondsMilliseconds(time.value));
-    if (spec.domain == TimelineDomain::Musical)
-        text += tr("\nClock: %1").arg(TimelineSemantics::formatReadableCoordinate(position, spec));
-    return text;
-}
-
-int64_t TimelineEditorPanel::clampMarkerPosition(const QUuid& guid, int64_t position) const
-{
-    const MarkerKind kind = markerKind(markerIndex(guid));
-    int64_t minimum = 0;
-    int64_t maximum = std::numeric_limits<int64_t>::max();
-    for (int index = 0; index < markerCount(); ++index) {
-        if (kind == MarkerKind::Entry && markerKind(index) == MarkerKind::Exit)
-            maximum = std::max<int64_t>(0, markerPosition(index));
-        if (kind == MarkerKind::Exit && markerKind(index) == MarkerKind::Entry)
-            minimum = std::max<int64_t>(0, markerPosition(index));
-    }
-    return std::clamp(position, minimum, maximum);
-}
-
-void TimelineEditorPanel::beginMarkerDrag(const QUuid& guid, int viewportX, bool disableSnap)
-{
-    const int index = markerIndex(guid);
-    if (index < 0 || markerKind(index) == MarkerKind::Custom)
-        return;
-    cancelMarkerInteraction();
-    endCursorDrag(true);
-    setCursorHovered(false);
-    canvas_->setSelectedClip(-1, {});
-    setSelectedMarker(guid);
-    setHoveredMarker(guid);
-    const int64_t position = markerPosition(index);
-    markerDrag_ = MarkerDrag{guid, viewportX, viewportX,
-        viewportX - viewportPixelAtCoordinate(0, position), disableSnap, false, position, position};
-    ToolTip::hideText();
-    showMarkerValue();
-    refreshTimelinePaint();
-}
-
-void TimelineEditorPanel::updateMarkerDrag(int viewportX, bool disableSnap)
-{
-    if (!markerDrag_)
-        return;
-    markerDrag_->pointerX = viewportX;
-    markerDrag_->disableSnap = disableSnap;
-    markerDrag_->moved = markerDrag_->moved || std::abs(viewportX - markerDrag_->pressX) >= 3;
-    if (markerDrag_->moved)
-        applyMarkerDrag();
-}
-
-void TimelineEditorPanel::applyMarkerDrag()
-{
-    const int width = std::max(1, timelineViewportWidth());
-    const int intendedX = markerDrag_->pointerX - markerDrag_->grabOffset;
-    const int x = std::clamp(intendedX, 0, width - 1);
-    markerDrag_->previewPosition = clampMarkerPosition(markerDrag_->guid,
-        snapCoordinate(0, coordinateAtViewportPixel(0, x), markerDrag_->disableSnap));
-    const bool scrollLeft = intendedX < 0 && viewStart_.distanceTo(viewOriginCoordinate()) < 0.0;
-    const bool scrollRight = intendedX >= width && viewStart_.distanceTo(contentEndCoordinate()) > viewSpan();
-    if (scrollLeft || scrollRight) {
-        if (!markerEdgeScroll_->isActive())
-            markerEdgeScroll_->start();
-    } else {
-        markerEdgeScroll_->stop();
-    }
-    showMarkerValue();
-    refreshTimelinePaint();
-}
-
-void TimelineEditorPanel::scrollMarkerDrag()
-{
-    const int width = std::max(1, timelineViewportWidth());
-    const int x = markerDrag_->pointerX - markerDrag_->grabOffset;
-    const int outside = x < 0 ? x : x >= width ? x - width + 1 : 0;
-    const int maximumStep = std::max(1, width * 8 / 100);
-    panHorizontally(std::clamp(outside, -maximumStep, maximumStep));
-    applyMarkerDrag();
-}
-
-void TimelineEditorPanel::endMarkerDrag(bool cancel)
-{
-    if (!markerDrag_)
-        return;
-    const MarkerDrag drag = *markerDrag_;
-    markerEdgeScroll_->stop();
-    markerDrag_.reset();
-    hoveredMarkerGuid_ = QUuid();
-    markerValue_->hide();
-    emit markerDragFinished();
-    const int index = markerIndex(drag.guid);
-    if (!cancel && drag.moved && drag.previewPosition != drag.originalPosition
-        && index >= 0 && markerPosition(index) == drag.originalPosition)
-        moveMarker(drag.guid, drag.previewPosition, true);
-    refreshTimelinePaint();
-}
-
-void TimelineEditorPanel::cancelMarkerInteraction()
-{
-    endMarkerDrag(true);
-    if (markerValueEditor_)
-        markerValueEditor_->reject();
-    for (auto* menu : findChildren<QMenu*>(QStringLiteral("timelineMarkerContextMenu")))
-        menu->close();
-    setHoveredMarker({});
-    ToolTip::hideText();
-}
-
-void TimelineEditorPanel::showMarkerValue()
-{
-    if (!markerDrag_)
-        return;
-    markerValue_->setText(markerTooltip(markerDrag_->guid));
-    markerValue_->adjustSize();
-    const QRect axis = ruler_->timeAxisRect();
-    const int x = axis.left() + viewportPixelAtCoordinate(0, markerDrag_->previewPosition);
-    const QPoint anchor = ruler_->mapToGlobal(QPoint(std::clamp(x, axis.left(), axis.right()), axis.top()));
-    QPoint position(anchor.x() - markerValue_->width() / 2, anchor.y() - markerValue_->height() - 6);
-    if (const auto* screen = QGuiApplication::screenAt(anchor)) {
-        const QRect available = screen->availableGeometry();
-        position.setX(std::clamp(position.x(), available.left(),
-            std::max(available.left(), available.right() - markerValue_->width() + 1)));
-        position.setY(std::max(available.top(), position.y()));
-    }
-    markerValue_->move(position);
-    markerValue_->show();
-}
-
-void TimelineEditorPanel::editMarkerValue(const QUuid& guid)
-{
-    const int index = markerIndex(guid);
-    if (index < 0 || markerKind(index) == MarkerKind::Custom)
-        return;
-    cancelMarkerInteraction();
-    endCursorDrag(true);
-    canvas_->setSelectedClip(-1, {});
-    setSelectedMarker(guid);
-    const int64_t initial = markerPosition(index);
-    const QUuid owner = boundGuid_;
-    auto* dialog = new QDialog(this, Qt::Popup);
-    markerValueEditor_ = dialog;
-    dialog->setObjectName(QStringLiteral("timelineMarkerEditor"));
-    dialog->setProperty("markerGuid", guid);
-    dialog->setProperty("markerPosition", QVariant::fromValue(initial));
-    dialog->setAttribute(Qt::WA_DeleteOnClose);
-    auto* layout = new QHBoxLayout(dialog);
-    ThemeLayout::margins(layout, ThemeLayout::Space::Panel, *themeManager_);
-    ThemeLayout::spacing(layout, ThemeLayout::Space::Section, *themeManager_);
-    auto* label = new QLabel(markerCaption(guid), dialog);
-    label->setProperty("textRole", QStringLiteral("formLabel"));
-    layout->addWidget(label);
-    auto* spin = new DecimalSpinBox(dialog);
-    spin->setObjectName(QStringLiteral("timelineMarkerPositionSpin"));
-    spin->setKeyboardTracking(false);
-    spin->setButtonSymbols(QAbstractSpinBox::NoButtons);
-    spin->setDecimals(9);
-    const bool musical = timelineDomain() == TimelineDomain::Musical;
-    const double divisor = musical ? TimelineCoordinates::kPpq : TimelineCoordinates::kNanosecondsPerSecond;
-    const double limit = std::nextafter(double(std::numeric_limits<int64_t>::max()) / divisor, 0.0);
-    spin->setRange(double(clampMarkerPosition(guid, 0)) / divisor,
-        std::min(limit, double(clampMarkerPosition(guid, std::numeric_limits<int64_t>::max())) / divisor));
-    spin->setSingleStep(musical ? 1.0 / TimelineCoordinates::kPpq : 0.001);
-    spin->setSuffix(musical ? tr(" beats") : QStringLiteral(" s"));
-    spin->setValue(double(initial) / divisor);
-    const double initialValue = spin->value();
-    ThemeManager::instance().bindMetrics(spin, [spin](const ThemeMetrics& metrics) {
-        spin->setMinimumWidth(metrics.popup.minimumWidth);
-    });
-    layout->addWidget(spin);
-    for (int key : {Qt::Key_Return, Qt::Key_Enter}) {
-        auto* shortcut = new QShortcut(QKeySequence(key), dialog);
-        connect(shortcut, &QShortcut::activated, dialog, [dialog, spin] {
-            spin->interpretText();
-            dialog->accept();
-        });
-    }
-    connect(dialog, &QDialog::accepted, this, [this, guid, owner, initial, initialValue, spin, musical] {
-        const int current = markerIndex(guid);
-        if (boundGuid_ != owner || current < 0
-            || markerPosition(current) != initial || spin->value() == initialValue)
-            return;
-        const auto coordinate = musical ? TimelineCoordinates::beatsToTicks(spin->value())
-            : TimelineCoordinates::fromSeconds(spin->value(), {});
-        if (coordinate && moveMarker(guid, clampMarkerPosition(guid, coordinate.value), true))
-            revealMarker(guid);
-    });
-    connect(dialog, &QDialog::finished, this, [this, dialog] {
-        if (markerValueEditor_ == dialog)
-            markerValueEditor_.clear();
-    });
-    dialog->adjustSize();
-    const QRect axis = ruler_->timeAxisRect();
-    const int x = axis.left() + std::clamp(viewportPixelAtCoordinate(0, initial), 0, axis.width() - 1);
-    const QPoint anchor = ruler_->mapToGlobal(QPoint(x, axis.top()));
-    QPoint position(anchor.x() - dialog->width() / 2, anchor.y() - dialog->height() - 6);
-    if (const auto* screen = QGuiApplication::screenAt(anchor)) {
-        const QRect available = screen->availableGeometry();
-        position.setX(std::clamp(position.x(), available.left(),
-            std::max(available.left(), available.right() - dialog->width() + 1)));
-        position.setY(std::max(available.top(), position.y()));
-    }
-    dialog->move(position);
-    dialog->show();
-    spin->setFocus();
-    spin->selectAll();
-}
-
-QMenu* TimelineEditorPanel::createMarkerContextMenu(const QUuid& guid, QWidget* parent)
-{
-    auto* menu = new QMenu(parent ? parent : this);
-    menu->setObjectName(QStringLiteral("timelineMarkerContextMenu"));
-    const int index = markerIndex(guid);
-    if (index < 0 || markerKind(index) == MarkerKind::Custom)
-        return menu;
-    canvas_->setSelectedClip(-1, {});
-    setSelectedMarker(guid);
-    const QUuid owner = boundGuid_;
-    auto* enter = menu->addAction(tr("Enter Value..."), this, [this, guid, owner] {
-        if (boundGuid_ == owner)
-            editMarkerValue(guid);
-    });
-    enter->setObjectName(QStringLiteral("timelineMarkerEnterValue"));
-    menu->addSeparator();
-    menu->addAction(tr("Delete Marker"), this, [this, guid, owner] {
-        if (boundGuid_ == owner && deleteMarker(guid))
-            setSelectedMarker({});
-    });
-    return menu;
-}
-
-void TimelineEditorPanel::showMarkerContextMenu(const QUuid& guid, const QPoint& globalPos)
-{
-    cancelMarkerInteraction();
-    auto* menu = createMarkerContextMenu(guid);
-    menu->setAttribute(Qt::WA_DeleteOnClose);
-    menu->popup(globalPos);
-}
-
-void TimelineEditorPanel::setSelectedMarker(const QUuid& guid)
-{
-    if (selectedMarkerGuid_ == guid)
-        return;
-    selectedMarkerGuid_ = guid;
-    refreshTimelinePaint();
-}
-
-bool TimelineEditorPanel::hasMarkerKind(MarkerKind kind) const
-{
-    const auto* timeline = boundItem_ ? boundItem_->comp<VSegment>() : nullptr;
-    if (!timeline)
-        return false;
-    return std::any_of(timeline->markers.items.begin(), timeline->markers.items.end(),
-                       [kind](const Marker& marker) { return marker.kind == kind; });
 }
 
 TimelineSemanticsResult TimelineEditorPanel::timelineSemantics() const
@@ -2095,10 +1493,7 @@ TimelineSemanticsResult TimelineEditorPanel::timelineSemantics() const
     if (bound->type == ProjectItem::Type::Segment) {
         ProjectItem display(bound->name, ProjectItem::Type::Segment);
         display.guid = bound->guid;
-        auto* timeline = display.compOrCreate<VSegment>();
-        const auto* original = bound->comp<VSegment>();
-        timeline->segmentTime = original->segmentTime;
-        timeline->markers = original->markers;
+        display.compOrCreate<VSegment>();
         for (const auto& child : bound->children) {
             if (!child || child->type != ProjectItem::Type::Track)
                 continue;
@@ -2108,12 +1503,8 @@ TimelineSemanticsResult TimelineEditorPanel::timelineSemantics() const
         }
         return TimelineSemantics::segmentNominalSpan(display, resolver);
     }
-    if (bound->type == ProjectItem::Type::Track) {
-        SegmentTimeSpec time;
-        if (const auto* segment = bound->parent ? bound->parent->comp<VSegment>() : nullptr)
-            time = segment->segmentTime;
-        return TimelineSemantics::trackNominalSpan(*displayTrack(*bound), resolver, time);
-    }
+    if (bound->type == ProjectItem::Type::Track)
+        return TimelineSemantics::trackNominalSpan(*displayTrack(*bound), resolver);
     return TimelineSemanticsResult::unknown(
         TimelineError::InvalidTargetType,
         QStringLiteral("Nominal span is defined only for Track and Segment"));
@@ -2136,11 +1527,10 @@ std::vector<TimelineSpan> TimelineEditorPanel::overlapRegions(int laneIndex) con
     return TimelineSemantics::overlapRegions(clips);
 }
 
-int64_t TimelineEditorPanel::snapCoordinate(int laneIndex, int64_t coordinate,
+int64_t TimelineEditorPanel::snapCoordinate(int, int64_t coordinate,
     bool disableSnap, bool* ok, const QSet<QUuid>& excludedClips) const
 {
-    if (viewKind_ == ViewKind::Unsupported
-        || !AuthoringPolicy::validateSegmentTime(effectiveTimeSpec(laneIndex))) {
+    if (viewKind_ == ViewKind::Unsupported) {
         if (ok) *ok = false;
         return coordinate;
     }
@@ -2149,16 +1539,7 @@ int64_t TimelineEditorPanel::snapCoordinate(int laneIndex, int64_t coordinate,
         return coordinate;
     }
     refreshTickCache();
-    CoordinateResult snapped;
-    if (hasMeasureBeatsPrimaryAxis()) {
-        snapped = TimelineCoordinates::snap(coordinate, timeTickCache_->clockGrid);
-    } else {
-        const auto spec = effectiveTimeSpec(laneIndex);
-        const auto nanoseconds = TimelineCoordinates::toNanoseconds(coordinate, spec);
-        const auto time = nanoseconds
-            ? TimelineCoordinates::snap(nanoseconds.value, timeTickCache_->secondsGrid) : nanoseconds;
-        snapped = time ? TimelineCoordinates::fromNanoseconds(time.value, spec) : time;
-    }
+    const CoordinateResult snapped = TimelineCoordinates::snap(coordinate, timeTickCache_->grid);
     if (ok) *ok = snapped.ok();
     if (!snapped) return coordinate;
     int64_t best = snapped.value;
@@ -2187,23 +1568,13 @@ int64_t TimelineEditorPanel::snapCoordinate(int laneIndex, int64_t coordinate,
             if (start <= std::numeric_limits<int64_t>::max() - duration) consider(start + duration);
         }
     }
-    for (int marker = 0; marker < markerCount(); ++marker) {
-        if (excludedClips.contains(markerGuid(marker))) continue;
-        if (markerDrag_ && markerDrag_->guid == markerGuid(marker)) continue;
-        consider(markerDisplayPosition(marker));
-    }
     return best;
 }
 
-int64_t TimelineEditorPanel::authoredDuration(ProjectItem* target, int laneIndex) const
+int64_t TimelineEditorPanel::authoredDuration(ProjectItem* target) const
 {
     QSet<QUuid> visiting;
-    const auto source = sourceSpan(target, visiting);
-    if (source) {
-        const auto duration = TimelineCoordinates::fromNanoseconds(*source, effectiveTimeSpec(laneIndex));
-        if (duration && duration.value > 0) return duration.value;
-    }
-    return coordinateUnit(effectiveTimeSpec(laneIndex));
+    return sourceSpan(target, visiting).value_or(TimelineCoordinates::kNanosecondsPerSecond);
 }
 
 int64_t TimelineEditorPanel::viewOriginCoordinate() const
@@ -2354,7 +1725,7 @@ bool TimelineEditorPanel::placeItem(ProjectItem* target, int laneIndex, int64_t 
         rejectInteraction(tr("The Clip position cannot be represented in this timeline."));
         return false;
     }
-    Clip clip{QUuid::createUuid(), target->guid, std::max<int64_t>(0, start), authoredDuration(target, laneIndex)};
+    Clip clip{QUuid::createUuid(), target->guid, std::max<int64_t>(0, start), authoredDuration(target)};
     return commitTimelineAction(TimelineEditing::addClip(
         &ProjectManager::instance(), track, clip, this));
 }
@@ -2408,49 +1779,6 @@ bool TimelineEditorPanel::deleteClip(int laneIndex, const QUuid& guid)
         &ProjectManager::instance(), track, guid, this));
 }
 
-bool TimelineEditorPanel::setTimelineDomain(TimelineDomain domain)
-{
-    auto* timeline = boundItem_ ? boundItem_->comp<VSegment>() : nullptr;
-    if (!timeline) {
-        rejectInteraction(tr("Clock editing requires a Segment."));
-        return false;
-    }
-    SegmentTimeSpec spec = domain == TimelineDomain::Musical
-        ? (timeline->segmentTime.domain == TimelineDomain::Musical
-               ? timeline->segmentTime : SegmentTimeSpec::musical())
-        : SegmentTimeSpec{};
-    const bool changed = commitTimelineAction(TimelineEditing::replaceSegmentTime(
-        &ProjectManager::instance(), boundItem_, spec, this, tr("Change Segment clock")));
-    if (changed) refreshLaneChrome();
-    return changed;
-}
-
-bool TimelineEditorPanel::setTempoMicrosecondsPerQuarter(int64_t microsecondsPerQuarter)
-{
-    auto* timeline = boundItem_ ? boundItem_->comp<VSegment>() : nullptr;
-    if (!timeline || timeline->segmentTime.domain != TimelineDomain::Musical) {
-        rejectInteraction(tr("Tempo and meter editing require a musical Segment."));
-        return false;
-    }
-    SegmentTimeSpec spec = timeline->segmentTime;
-    spec.tempoMap = {{0, microsecondsPerQuarter}};
-    return commitTimelineAction(TimelineEditing::replaceSegmentTime(
-        &ProjectManager::instance(), boundItem_, spec, this, tr("Change Segment tempo")));
-}
-
-bool TimelineEditorPanel::setMeter(int numerator, int denominator)
-{
-    auto* timeline = boundItem_ ? boundItem_->comp<VSegment>() : nullptr;
-    if (!timeline || timeline->segmentTime.domain != TimelineDomain::Musical) {
-        rejectInteraction(tr("Tempo and meter editing require a musical Segment."));
-        return false;
-    }
-    SegmentTimeSpec spec = timeline->segmentTime;
-    spec.meterMap = {{0, numerator, denominator}};
-    return commitTimelineAction(TimelineEditing::replaceSegmentTime(
-        &ProjectManager::instance(), boundItem_, spec, this, tr("Change Segment meter")));
-}
-
 void TimelineEditorPanel::addTrack()
 {
     if (viewKind_ != ViewKind::Segment) return;
@@ -2462,78 +1790,6 @@ void TimelineEditorPanel::addTrack()
         if (selectedLaneGuid_ != guid) return;
         headerColumn_->renameLane(guid);
     });
-}
-
-bool TimelineEditorPanel::addMarker(MarkerKind kind, int64_t position, const QString& name)
-{
-    if (!boundItem_ || boundItem_->type != ProjectItem::Type::Segment) {
-        rejectInteraction(tr("Marker creation requires a Segment."));
-        return false;
-    }
-    Marker marker{QUuid::createUuid(), kind, kind == MarkerKind::Custom ? name : QString{}, position};
-    const QUuid guid = marker.markerGuid;
-    if (!commitTimelineAction(TimelineEditing::addMarker(
-            &ProjectManager::instance(), boundItem_, std::move(marker), this)))
-        return false;
-    setSelectedMarker(guid);
-    return true;
-}
-
-bool TimelineEditorPanel::moveMarker(const QUuid& guid, int64_t position, bool disableSnap)
-{
-    auto* timeline = boundItem_ ? boundItem_->comp<VSegment>() : nullptr;
-    if (!timeline || guid.isNull()) {
-        rejectInteraction(tr("The Marker is unavailable."));
-        return false;
-    }
-    const auto it = std::find_if(timeline->markers.items.begin(), timeline->markers.items.end(),
-                                 [&guid](const Marker& marker) { return marker.markerGuid == guid; });
-    if (it == timeline->markers.items.end()) {
-        rejectInteraction(tr("The Marker is unavailable."));
-        return false;
-    }
-    bool snapped = false;
-    position = snapCoordinate(-1, position, disableSnap, &snapped, {guid});
-    if (!snapped) {
-        rejectInteraction(tr("The Marker position cannot be represented in this Segment."));
-        return false;
-    }
-    Marker marker = *it;
-    marker.position = position;
-    return commitTimelineAction(TimelineEditing::updateMarker(
-        &ProjectManager::instance(), boundItem_, marker, this));
-}
-
-bool TimelineEditorPanel::renameMarker(const QUuid& guid, const QString& name)
-{
-    auto* timeline = boundItem_ ? boundItem_->comp<VSegment>() : nullptr;
-    if (!timeline || guid.isNull()) {
-        rejectInteraction(tr("The Marker is unavailable."));
-        return false;
-    }
-    const auto it = std::find_if(timeline->markers.items.begin(), timeline->markers.items.end(),
-                                 [&guid](const Marker& marker) { return marker.markerGuid == guid; });
-    if (it == timeline->markers.items.end() || it->kind != MarkerKind::Custom) {
-        rejectInteraction(tr("Only Custom Marker names can be edited."));
-        return false;
-    }
-    Marker marker = *it;
-    marker.name = name;
-    return commitTimelineAction(TimelineEditing::updateMarker(
-        &ProjectManager::instance(), boundItem_, marker, this));
-}
-
-bool TimelineEditorPanel::deleteMarker(const QUuid& guid)
-{
-    if (!boundItem_ || boundItem_->type != ProjectItem::Type::Segment || guid.isNull()) {
-        rejectInteraction(tr("The Marker is unavailable."));
-        return false;
-    }
-    if (draggingMarkerGuid() == guid || hoveredMarkerGuid_ == guid
-        || (markerValueEditor_ && markerValueEditor_->property("markerGuid").toUuid() == guid))
-        cancelMarkerInteraction();
-    return commitTimelineAction(TimelineEditing::removeMarker(
-        &ProjectManager::instance(), boundItem_, guid, this));
 }
 
 bool TimelineEditorPanel::drillIntoClip(int laneIndex, const QUuid& guid)
@@ -2714,7 +1970,6 @@ bool TimelineEditorPanel::revealClip(const QUuid& guid)
     const int lane = findLaneOfClip(guid);
     const int clip = findClipIndex(lane, guid);
     if (lane < 0 || clip < 0 || !canvas_) return false;
-    setSelectedMarker({});
     canvas_->setSelectedClip(lane, guid);
     panHorizontally(viewportPositionAtCoordinate(lane, clipStart(lane, clip))
                     - timelineViewportWidth() * 0.25);
@@ -2725,20 +1980,6 @@ bool TimelineEditorPanel::revealClip(const QUuid& guid)
     inspectClip(lane, guid);
     canvas_->setFocus(Qt::OtherFocusReason);
     return true;
-}
-
-bool TimelineEditorPanel::revealMarker(const QUuid& guid)
-{
-    for (int index = 0; index < markerCount(); ++index) {
-        if (markerGuid(index) != guid) continue;
-        if (canvas_) canvas_->setSelectedClip(-1, {});
-        setSelectedMarker(guid);
-        panHorizontally(viewportPositionAtCoordinate(0, markerDisplayPosition(index))
-                        - timelineViewportWidth() * 0.25);
-        if (canvas_) canvas_->setFocus(Qt::OtherFocusReason);
-        return true;
-    }
-    return false;
 }
 
 bool TimelineEditorPanel::inspectItem(ProjectItem* item, const PlacementContext& context)
@@ -3203,7 +2444,6 @@ void TimelineEditorPanel::resizeEvent(QResizeEvent* event)
 
 void TimelineEditorPanel::rebuild()
 {
-    cancelMarkerInteraction();
     finishLaneResize(true);
     if (!boundItem_) {
         lanes_.clear();
@@ -3251,50 +2491,11 @@ void TimelineEditorPanel::rebuild()
                   .arg(boundItem_->name));
 }
 
-void TimelineEditorPanel::refreshTimeControls()
-{
-    const bool segment = viewKind_ == ViewKind::Segment;
-    const auto spec = effectiveTimeSpec(0);
-    timeControls_->setVisible(segment && spec.domain == TimelineDomain::Musical);
-    if (!segment) return;
-    if (presentedTime_ && presentedTime_->domain != spec.domain) {
-        endCursorDrag(true);
-        ruler_->markerLane()->cancelInteraction();
-        if (cursorValueEditor_) cursorValueEditor_->reject();
-        const auto start = TimelineCoordinates::convert(viewStart_.rounded(), *presentedTime_, spec);
-        const auto cursor = TimelineCoordinates::convert(editCursor_, *presentedTime_, spec);
-        viewStart_ = {start ? start.value : viewOriginCoordinate()};
-        editCursor_ = cursor ? cursor.value : 0;
-        if (playhead_) {
-            const auto playhead = TimelineCoordinates::convert(*playhead_, *presentedTime_, spec);
-            playhead_ = playhead ? std::optional<int64_t>(playhead.value) : std::nullopt;
-        }
-    }
-    presentedTime_ = spec;
-    if (spec.domain != TimelineDomain::Musical) return;
-    const QSignalBlocker tempoBlocker(tempoSpin_);
-    const QSignalBlocker numeratorBlocker(meterNumeratorSpin_);
-    const QSignalBlocker denominatorBlocker(meterDenominatorCombo_);
-    const double bpm = 60000000.0 / double(spec.tempoMap.front().microsecondsPerQuarter);
-    tempoSpin_->setRange(std::min(1.0, bpm), std::max(999.0, bpm));
-    tempoSpin_->setValue(bpm);
-    const auto meter = spec.meterMap.front();
-    meterNumeratorSpin_->setMaximum(std::max(32, meter.numerator));
-    meterNumeratorSpin_->setValue(meter.numerator);
-    int denominator = meterDenominatorCombo_->findData(meter.denominator);
-    if (denominator < 0) {
-        meterDenominatorCombo_->addItem(QString::number(meter.denominator), meter.denominator);
-        denominator = meterDenominatorCombo_->count() - 1;
-    }
-    meterDenominatorCombo_->setCurrentIndex(denominator);
-}
-
 void TimelineEditorPanel::rebuildTimelinePage()
 {
     invalidateModelCache();
     if (!hasTimeline()) return;
     applyPresentation();
-    refreshTimeControls();
     refreshBreadcrumbs();
     const auto selectedClips = canvas_->selectedClipGuids();
     const auto selectedAnchor = canvas_->selectedClipAnchor();
@@ -3336,16 +2537,6 @@ void TimelineEditorPanel::refreshLaneChrome()
     invalidateModelCache();
     if (ProjectManager::instance().isClosing())
         return;
-    if (markerDrag_) {
-        const int index = markerIndex(markerDrag_->guid);
-        if (index < 0 || markerPosition(index) != markerDrag_->originalPosition)
-            cancelMarkerInteraction();
-    }
-    if (markerValueEditor_) {
-        const int index = markerIndex(markerValueEditor_->property("markerGuid").toUuid());
-        if (index < 0 || markerPosition(index) != markerValueEditor_->property("markerPosition").toLongLong())
-            markerValueEditor_->reject();
-    }
     if (boundItem_) {
         const bool supported = bool(AuthoringPolicy::validateTimeline(
             *boundItem_, [](const QUuid& guid) {
@@ -3364,7 +2555,6 @@ void TimelineEditorPanel::refreshLaneChrome()
     }
     if (hasTimeline()) {
         refreshBreadcrumbs();
-        refreshTimeControls();
     }
     if (canvas_ && !canvas_->selectedClipGuids().isEmpty()) {
         canvas_->restoreSelectedClips(canvas_->selectedClipGuids(),
@@ -3444,9 +2634,8 @@ const TimelineSpan& TimelineEditorPanel::contentBounds() const
 {
     if (contentBounds_)
         return *contentBounds_;
-    const auto initialEnd = TimelineCoordinates::fromSeconds(
-        VSegment::kDefaultDurationSeconds, effectiveTimeSpec(0));
-    TimelineSpan bounds{0, initialEnd.value};
+    TimelineSpan bounds{0,
+        VSegment::kDefaultDurationSeconds * TimelineCoordinates::kNanosecondsPerSecond};
     for (const auto& lane : lanes_) {
         const auto* track = lane.item ? lane.item->comp<VTrack>() : nullptr;
         if (!track)
@@ -3456,9 +2645,6 @@ const TimelineSpan& TimelineEditorPanel::contentBounds() const
                 ? std::numeric_limits<int64_t>::max() : clip.start + clip.duration;
             bounds.end = std::max(bounds.end, end);
         }
-    }
-    for (int marker = 0; marker < markerCount(); ++marker) {
-        bounds.end = std::max(bounds.end, markerPosition(marker));
     }
     contentBounds_ = bounds;
     return *contentBounds_;
@@ -3490,7 +2676,6 @@ void TimelineEditorPanel::refreshHorizontalRange()
 
 void TimelineEditorPanel::showState(ViewKind kind, const QString& text)
 {
-    cancelMarkerInteraction();
     cursorHovered_ = false;
     ToolTip::hideText();
     invalidateModelCache();
@@ -3502,7 +2687,6 @@ void TimelineEditorPanel::showState(ViewKind kind, const QString& text)
         clearLayout(laneLayout_);
     viewKind_ = kind;
     applyPresentation();
-    refreshTimeControls();
     refreshBreadcrumbs();
     if (titleLabel_ && kind == ViewKind::Unsupported)
         titleLabel_->setText(tr("Timeline unavailable"));

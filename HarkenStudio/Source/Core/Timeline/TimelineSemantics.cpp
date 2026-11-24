@@ -1,18 +1,14 @@
 #include "TimelineSemantics.h"
 
 #include "TimelineCoordinates.h"
-#include "../Components/VAudio.h"
 #include "../Components/VSegment.h"
-#include "../Components/VSelection.h"
 #include "../Components/VTrack.h"
 #include "../ItemTypeCatalog.h"
-#include "../NumericFormat.h"
 #include "../ProjectTypes.h"
 
 #include <QHash>
 #include <QObject>
 #include <QSet>
-#include <QStringList>
 
 #include <algorithm>
 #include <limits>
@@ -28,27 +24,6 @@ bool checkedDistance(int64_t high, int64_t low, int64_t* out)
         return false;
     *out = high - low;
     return true;
-}
-
-bool checkedAdd(int64_t left, int64_t right, int64_t* out)
-{
-    if (!out) return false;
-    if (right > 0 && left > std::numeric_limits<int64_t>::max() - right)
-        return false;
-    if (right < 0 && left < std::numeric_limits<int64_t>::min() - right)
-        return false;
-    *out = left + right;
-    return true;
-}
-
-bool checkedSubtract(int64_t left, int64_t right, int64_t* out)
-{
-    if (right == std::numeric_limits<int64_t>::min()) {
-        if (left >= 0) return false;
-        *out = left - right;
-        return true;
-    }
-    return checkedAdd(left, -right, out);
 }
 
 TimelineValidation validateSpan(const TimelineSpan& span,
@@ -109,11 +84,6 @@ TimelineValidation inspectSegment(const ProjectItem& segment,
         return TimelineValidation::failure(
             TimelineError::MissingTimeline,
             QStringLiteral("Segment has no timeline component"));
-    const TimelineValidation timeValidity = TimelineCoordinates::validate(
-        timeline->segmentTime);
-    if (!timeValidity) return timeValidity;
-    const TimelineValidation markerValidity = timeline->markers.validate();
-    if (!markerValidity) return markerValidity;
     for (const auto& child : segment.children) {
         if (!child)
             return TimelineValidation::failure(
@@ -181,8 +151,7 @@ TimelineValidation validateSegmentGraph(
 }
 
 TimelineSemanticsResult resolveTrack(const ProjectItem& track,
-                                     const TimelineItemResolver& resolve,
-                                     const SegmentTimeSpec& time)
+                                     const TimelineItemResolver& resolve)
 {
     std::vector<const ProjectItem*> segmentTargets;
     const TimelineValidation validity = inspectTrack(
@@ -196,7 +165,7 @@ TimelineSemanticsResult resolveTrack(const ProjectItem& track,
                                                 graphValidity.message);
     const VTrack* timeline = track.comp<VTrack>();
     TimelineSemanticsResult result = TimelineSemantics::contentBounds(
-        timeline->clips, time);
+        timeline->clips);
     if (!result) return result;
     result.nominal = {0, std::max<int64_t>(0, result.content.end)};
     return result;
@@ -209,13 +178,12 @@ TimelineSemanticsResult resolveSegment(const ProjectItem& segment,
     if (!graphValidity)
         return TimelineSemanticsResult::unknown(graphValidity.error,
                                                 graphValidity.message);
-    const VSegment* timeline = segment.comp<VSegment>();
     TimelineSpan content;
     bool hasContent = false;
     for (const auto& child : segment.children) {
         const VTrack* trackTimeline = child->comp<VTrack>();
         const TimelineSemanticsResult track = TimelineSemantics::contentBounds(
-            trackTimeline->clips, timeline->segmentTime);
+            trackTimeline->clips);
         if (!track) return track;
         if (trackTimeline->clips.empty()) continue;
         if (!hasContent) {
@@ -234,32 +202,10 @@ TimelineSemanticsResult resolveSegment(const ProjectItem& segment,
         return TimelineSemanticsResult::unknown(contentValidity.error,
                                                 contentValidity.message);
 
-    const Marker* entry = timeline->markers.find(MarkerKind::Entry);
-    const Marker* exit = timeline->markers.find(MarkerKind::Exit);
     TimelineSemanticsResult result;
-    result.time = timeline->segmentTime;
-    result.content = content;
-    result.nominal = {
-        entry ? entry->position : content.start,
-        exit ? exit->position : content.end
-    };
-    const TimelineValidation nominalValidity = validateSpan(
-        result.nominal, TimelineError::MarkerOrder,
-        QStringLiteral("Nominal start must not exceed nominal end"));
-    if (!nominalValidity)
-        return TimelineSemanticsResult::unknown(nominalValidity.error,
-                                                nominalValidity.message);
     result.validation = TimelineValidation::success();
-    if (content.start < result.nominal.start
-        && !checkedDistance(result.nominal.start, content.start, &result.pickup))
-        return TimelineSemanticsResult::unknown(
-            TimelineError::CoordinateOverflow,
-            QStringLiteral("Pickup duration overflows"));
-    if (content.end > result.nominal.end
-        && !checkedDistance(content.end, result.nominal.end, &result.tail))
-        return TimelineSemanticsResult::unknown(
-            TimelineError::CoordinateOverflow,
-            QStringLiteral("Tail duration overflows"));
+    result.content = content;
+    result.nominal = content;
     return result;
 }
 
@@ -275,20 +221,14 @@ TimelineSemanticsResult TimelineSemanticsResult::unknown(TimelineError error,
 
 namespace TimelineSemantics {
 
-TimelineSemanticsResult contentBounds(const ClipLedger& clips,
-                                      const SegmentTimeSpec& time)
+TimelineSemanticsResult contentBounds(const ClipLedger& clips)
 {
-    const TimelineValidation timeValidity = TimelineCoordinates::validate(time);
-    if (!timeValidity)
-        return TimelineSemanticsResult::unknown(timeValidity.error,
-                                                timeValidity.message);
     const TimelineValidation validity = clips.validateStructure();
     if (!validity)
         return TimelineSemanticsResult::unknown(validity.error, validity.message);
 
     TimelineSemanticsResult result;
     result.validation = TimelineValidation::success();
-    result.time = time;
     if (clips.empty()) return result;
     result.content.start = clips.items.front().start;
     result.content.end = clips.items.front().start + clips.items.front().duration;
@@ -349,207 +289,15 @@ std::vector<TimelineSpan> overlapRegions(const ClipLedger& clips)
 }
 
 TimelineSemanticsResult trackNominalSpan(const ProjectItem& track,
-                                        const TimelineItemResolver& resolve,
-                                        const SegmentTimeSpec& time)
+                                        const TimelineItemResolver& resolve)
 {
-    return resolveTrack(track, resolve, time);
+    return resolveTrack(track, resolve);
 }
 
 TimelineSemanticsResult segmentNominalSpan(const ProjectItem& segment,
                                         const TimelineItemResolver& resolve)
 {
     return resolveSegment(segment, resolve);
-}
-
-TimelineSemanticsResult nominalSpanOf(const ProjectItem& item,
-                                     const TimelineItemResolver& resolve,
-                                     const TimelineNaturalDurationResolver& naturalDuration)
-{
-    if (item.type == ProjectItem::Type::Track)
-        return resolveTrack(item, resolve, {});
-    if (item.type == ProjectItem::Type::Segment)
-        return resolveSegment(item, resolve);
-    if (item.type == ProjectItem::Type::Sound && naturalDuration) {
-        const std::optional<int64_t> duration = naturalDuration(item);
-        if (!duration)
-            return TimelineSemanticsResult::unknown(
-                TimelineError::MissingTimeline,
-                QStringLiteral("Sound natural duration is unavailable"));
-        if (*duration > 0) {
-            TimelineSemanticsResult result;
-            result.validation = TimelineValidation::success();
-            result.content = {0, *duration};
-            result.nominal = result.content;
-            return result;
-        }
-        return TimelineSemanticsResult::unknown(
-            TimelineError::NonPositiveDuration,
-            QStringLiteral("Sound natural duration must be positive"));
-    }
-    return TimelineSemanticsResult::unknown(
-        TimelineError::InvalidTargetType,
-        QStringLiteral("Nominal span is unavailable for this object"));
-}
-
-QueuePreviewResult queuePreview(const ProjectItem& queue,
-                                const TimelineItemResolver& resolve,
-                                bool spliceByMarker,
-                                const TimelineNaturalDurationResolver& naturalDuration)
-{
-    QueuePreviewResult result;
-    result.spliceByMarker = spliceByMarker;
-    const VSelection* selection = queue.comp<VSelection>();
-    if (queue.type != ProjectItem::Type::Container || !selection
-        || !selection->isQueue()) {
-        result.validation = TimelineValidation::failure(
-            TimelineError::InvalidTargetType,
-            QStringLiteral("Queue preview requires a Queue Container"));
-        return result;
-    }
-
-    result.validation = TimelineValidation::success();
-    int64_t cursor = 0;
-    QString blockingReason;
-    result.items.reserve(queue.children.size());
-    for (const auto& child : queue.children) {
-        QueuePreviewItem item;
-        if (!child) {
-            item.validation = TimelineValidation::failure(
-                TimelineError::MissingTarget,
-                QStringLiteral("Queue item does not exist"));
-            blockingReason = item.validation.message;
-            result.items.push_back(std::move(item));
-            continue;
-        }
-        item.itemGuid = child->guid;
-        if (const auto* audio = child->comp<VAudio>()) {
-            item.loopCount = audio->loopCount;
-            item.loopKind = audio->loopCount == 0 ? LoopPreviewKind::Infinite
-                : audio->loopCount == 1 ? LoopPreviewKind::Off
-                                        : LoopPreviewKind::Finite;
-            item.stopCompletesInfiniteBody = audio->loopCount == 0;
-        }
-        if (!blockingReason.isEmpty()) {
-            item.validation = TimelineValidation::failure(
-                TimelineError::MissingTarget,
-                QStringLiteral("Cannot position after unknown Queue item: %1")
-                    .arg(blockingReason));
-            result.items.push_back(std::move(item));
-            continue;
-        }
-        TimelineSemanticsResult semantics = nominalSpanOf(
-            *child, resolve, naturalDuration);
-        if (!semantics) {
-            item.validation = semantics.validation;
-            blockingReason = item.validation.message;
-            result.items.push_back(std::move(item));
-            continue;
-        }
-
-        const CoordinateResult contentStart = TimelineCoordinates::toNanoseconds(
-            semantics.content.start, semantics.time);
-        const CoordinateResult contentEnd = TimelineCoordinates::toNanoseconds(
-            semantics.content.end, semantics.time);
-        const CoordinateResult nominalStart = TimelineCoordinates::toNanoseconds(
-            semantics.nominal.start, semantics.time);
-        const CoordinateResult nominalEnd = TimelineCoordinates::toNanoseconds(
-            semantics.nominal.end, semantics.time);
-        const CoordinateResult* coordinates[] = {
-            &contentStart, &contentEnd, &nominalStart, &nominalEnd
-        };
-        for (const CoordinateResult* coordinate : coordinates) {
-            if (!*coordinate) {
-                item.validation = coordinate->validation;
-                break;
-            }
-        }
-        if (!item.validation.ok()) {
-            blockingReason = item.validation.message;
-            result.items.push_back(std::move(item));
-            continue;
-        }
-
-        int64_t nominalDuration = 0;
-        int64_t contentDuration = 0;
-        int64_t projectedNominalEnd = 0;
-        int64_t contentStartOffset = 0;
-        int64_t contentEndOffset = 0;
-        int64_t projectedContentStart = 0;
-        int64_t projectedContentEnd = 0;
-        if (!checkedDistance(nominalEnd.value, nominalStart.value, &nominalDuration)
-            || !checkedDistance(contentEnd.value, contentStart.value, &contentDuration)
-            || !checkedSubtract(contentStart.value, nominalStart.value,
-                                &contentStartOffset)
-            || !checkedSubtract(contentEnd.value, nominalStart.value,
-                                &contentEndOffset)) {
-            item.validation = TimelineValidation::failure(
-                TimelineError::CoordinateOverflow,
-                QStringLiteral("Queue preview projection overflows"));
-            blockingReason = item.validation.message;
-            result.items.push_back(std::move(item));
-            continue;
-        }
-
-        if (spliceByMarker) {
-            if (!checkedAdd(cursor, nominalDuration, &projectedNominalEnd)
-                || !checkedAdd(cursor, contentStartOffset, &projectedContentStart)
-                || !checkedAdd(cursor, contentEndOffset, &projectedContentEnd)) {
-                item.validation = TimelineValidation::failure(
-                    TimelineError::CoordinateOverflow,
-                    QStringLiteral("Queue marker-splice projection overflows"));
-            }
-            item.anchorNanoseconds = cursor;
-        } else {
-            int64_t nominalStartOffset = 0;
-            int64_t nominalEndOffset = 0;
-            if (!checkedSubtract(nominalStart.value, contentStart.value,
-                                &nominalStartOffset)
-                || !checkedSubtract(nominalEnd.value, contentStart.value,
-                                    &nominalEndOffset)
-                || !checkedAdd(cursor, nominalStartOffset,
-                               &item.anchorNanoseconds)
-                || !checkedAdd(cursor, nominalEndOffset, &projectedNominalEnd)
-                || !checkedAdd(cursor, contentDuration, &projectedContentEnd)) {
-                item.validation = TimelineValidation::failure(
-                    TimelineError::CoordinateOverflow,
-                    QStringLiteral("Queue butt projection overflows"));
-            }
-            projectedContentStart = cursor;
-        }
-        if (!item.validation.ok()) {
-            blockingReason = item.validation.message;
-            result.items.push_back(std::move(item));
-            continue;
-        }
-
-        item.validation = TimelineValidation::success();
-        item.nominalNanoseconds = {item.anchorNanoseconds, projectedNominalEnd};
-        item.contentNanoseconds = {projectedContentStart, projectedContentEnd};
-        if (projectedContentStart < item.nominalNanoseconds.start)
-            if (!checkedDistance(item.nominalNanoseconds.start, projectedContentStart,
-                                 &item.pickupNanoseconds))
-                item.validation = TimelineValidation::failure(
-                    TimelineError::CoordinateOverflow,
-                    QStringLiteral("Queue pickup duration overflows"));
-        if (projectedContentEnd > item.nominalNanoseconds.end)
-            if (!checkedDistance(projectedContentEnd, item.nominalNanoseconds.end,
-                                 &item.tailNanoseconds))
-                item.validation = TimelineValidation::failure(
-                    TimelineError::CoordinateOverflow,
-                    QStringLiteral("Queue tail duration overflows"));
-        if (!item.validation) {
-            blockingReason = item.validation.message;
-            result.items.push_back(std::move(item));
-            continue;
-        }
-        const VSegment* segmentTimeline = child->comp<VSegment>();
-        item.entryAnchor = segmentTimeline
-            && segmentTimeline->markers.find(MarkerKind::Entry) != nullptr;
-        cursor = spliceByMarker ? projectedNominalEnd : projectedContentEnd;
-        result.items.push_back(std::move(item));
-    }
-    result.endNanoseconds = cursor;
-    return result;
 }
 
 QString formatConciseNumber(double value)
@@ -562,108 +310,18 @@ QString formatConciseNumber(double value)
     return text;
 }
 
-QString formatReadableCoordinate(int64_t coordinate, const SegmentTimeSpec& time)
+QString formatReadableCoordinate(int64_t coordinate)
 {
-    if (time.domain == TimelineDomain::Musical) {
-        const auto beats = TimelineCoordinates::ticksToBeats(coordinate);
-        return beats ? QObject::tr("%1 beats").arg(formatConciseNumber(*beats))
-                     : QObject::tr("Unknown");
-    }
-    const auto seconds = TimelineCoordinates::toSeconds(coordinate, time);
-    return seconds ? QObject::tr("%1 s").arg(formatConciseNumber(*seconds))
-                   : QObject::tr("Unknown");
+    return QObject::tr("%1 s").arg(formatConciseNumber(TimelineCoordinates::toSeconds(coordinate)));
 }
 
 QString formatNominalSummary(const TimelineSemanticsResult& semantics)
 {
     if (!semantics)
         return QObject::tr("Nominal unknown · %1").arg(semantics.validation.message);
-    return QObject::tr("Nominal %1 — %2 · Pickup %3 · Tail %4")
-        .arg(formatReadableCoordinate(semantics.nominal.start, semantics.time),
-             formatReadableCoordinate(semantics.nominal.end, semantics.time),
-             formatReadableCoordinate(semantics.pickup, semantics.time),
-             formatReadableCoordinate(semantics.tail, semantics.time));
-}
-
-QString formatQueueLoopBadge(const QueuePreviewItem& item)
-{
-    if (item.loopKind == LoopPreviewKind::Finite)
-        return QObject::tr("×%1").arg(item.loopCount);
-    if (item.loopKind == LoopPreviewKind::Infinite)
-        return kPositiveInfinityText;
-    return {};
-}
-
-QString formatQueueItemTooltip(const QString& name, const QueuePreviewItem& item)
-{
-    QStringList lines;
-    lines << name;
-    if (!item) {
-        lines << QObject::tr("unknown — %1").arg(item.validation.message);
-        lines << QObject::tr("excluded from time calculation");
-        const QString badge = formatQueueLoopBadge(item);
-        if (!badge.isEmpty())
-            lines << badge;
-        if (item.loopKind == LoopPreviewKind::Infinite)
-            lines << QObject::tr("Stop completes the loop body and advances the parent Queue");
-        return lines.join(QLatin1Char('\n'));
-    }
-    const SegmentTimeSpec absolute;
-    lines << QObject::tr("%1 anchor %2 s")
-                 .arg(item.entryAnchor ? QObject::tr("entry")
-                                       : QObject::tr("nominal-start fallback"),
-                      formatConciseNumber(
-                          static_cast<double>(item.anchorNanoseconds)
-                          / static_cast<double>(TimelineCoordinates::kNanosecondsPerSecond)));
-    lines << QObject::tr("nominal [%1, %2] s")
-                 .arg(formatReadableCoordinate(item.nominalNanoseconds.start, absolute),
-                      formatReadableCoordinate(item.nominalNanoseconds.end, absolute));
-    lines << QObject::tr("content [%1, %2] s")
-                 .arg(formatReadableCoordinate(item.contentNanoseconds.start, absolute),
-                      formatReadableCoordinate(item.contentNanoseconds.end, absolute));
-    lines << QObject::tr("pickup %1 · tail %2")
-                 .arg(formatReadableCoordinate(item.pickupNanoseconds, absolute),
-                      formatReadableCoordinate(item.tailNanoseconds, absolute));
-    const QString badge = formatQueueLoopBadge(item);
-    if (!badge.isEmpty())
-        lines << badge;
-    if (item.loopKind == LoopPreviewKind::Infinite)
-        lines << QObject::tr("Stop completes the loop body and advances the parent Queue");
-    return lines.join(QLatin1Char('\n'));
-}
-
-bool hasMusicalClock(const ProjectItem& item)
-{
-    const VSegment* timeline = item.comp<VSegment>();
-    return timeline && timeline->segmentTime.domain == TimelineDomain::Musical;
-}
-
-bool hasAnyMarker(const ProjectItem& item)
-{
-    const VSegment* timeline = item.comp<VSegment>();
-    return timeline && !timeline->markers.empty();
-}
-
-int64_t coordinateUnitFor(const SegmentTimeSpec& spec)
-{
-    if (spec.domain != TimelineDomain::Musical)
-        return TimelineCoordinates::kNanosecondsPerSecond;
-    const int32_t denominator = spec.meterMap.empty()
-        ? 4 : spec.meterMap.front().denominator;
-    return (TimelineCoordinates::kPpq * 4) / denominator;
-}
-
-int64_t snapGridFor(const SegmentTimeSpec& spec)
-{
-    if (spec.domain == TimelineDomain::Musical)
-        return std::max<int64_t>(1, coordinateUnitFor(spec));
-    return TimelineCoordinates::kNanosecondsPerSecond;
-}
-
-bool hasMarkerKind(const ProjectItem& item, MarkerKind kind)
-{
-    const VSegment* timeline = item.comp<VSegment>();
-    return timeline && timeline->markers.find(kind) != nullptr;
+    return QObject::tr("Nominal %1 — %2")
+        .arg(formatReadableCoordinate(semantics.nominal.start),
+             formatReadableCoordinate(semantics.nominal.end));
 }
 
 TimelineValidation validateProjectTimelineIdentities(
@@ -695,17 +353,6 @@ TimelineValidation validateProjectTimelineIdentities(
                         TimelineError::DuplicateGuid,
                         QStringLiteral("Timeline entity GUIDs must be project-wide unique"));
                 identities.insert(clip.clipGuid);
-            }
-        }
-        if (const VSegment* segment = item->comp<VSegment>()) {
-            const TimelineValidation validity = segment->markers.validate();
-            if (!validity) return validity;
-            for (const Marker& marker : segment->markers.items) {
-                if (identities.contains(marker.markerGuid))
-                    return TimelineValidation::failure(
-                        TimelineError::DuplicateGuid,
-                        QStringLiteral("Timeline entity GUIDs must be project-wide unique"));
-                identities.insert(marker.markerGuid);
             }
         }
         for (const auto& child : item->children) stack.push_back(child.get());

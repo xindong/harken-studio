@@ -1524,34 +1524,6 @@
       ],
       "type": "object"
     },
-    "marker": {
-      "additionalProperties": false,
-      "properties": {
-        "kind": {
-          "enum": [
-            "Entry",
-            "Exit",
-            "Custom"
-          ]
-        },
-        "markerGuid": {
-          "$ref": "#/$defs/uuid"
-        },
-        "name": {
-          "type": "string"
-        },
-        "position": {
-          "type": "integer"
-        }
-      },
-      "required": [
-        "markerGuid",
-        "kind",
-        "name",
-        "position"
-      ],
-      "type": "object"
-    },
     "mixNodeComponent": {
       "additionalProperties": false,
       "properties": {
@@ -1874,76 +1846,9 @@
       ],
       "type": "object"
     },
-    "segmentTime": {
-      "additionalProperties": false,
-      "properties": {
-        "domain": {
-          "enum": [
-            "Absolute",
-            "Musical"
-          ]
-        },
-        "meterMap": {
-          "items": {
-            "additionalProperties": false,
-            "properties": {
-              "denominator": {
-                "type": "integer"
-              },
-              "numerator": {
-                "type": "integer"
-              },
-              "tick": {
-                "type": "integer"
-              }
-            },
-            "required": [
-              "tick",
-              "numerator",
-              "denominator"
-            ],
-            "type": "object"
-          },
-          "type": "array"
-        },
-        "tempoMap": {
-          "items": {
-            "additionalProperties": false,
-            "properties": {
-              "microsecondsPerQuarter": {
-                "type": "integer"
-              },
-              "tick": {
-                "type": "integer"
-              }
-            },
-            "required": [
-              "tick",
-              "microsecondsPerQuarter"
-            ],
-            "type": "object"
-          },
-          "type": "array"
-        }
-      },
-      "required": [
-        "domain"
-      ],
-      "type": "object"
-    },
     "segmentTimelineComponent": {
       "additionalProperties": false,
-      "properties": {
-        "markers": {
-          "items": {
-            "$ref": "#/$defs/marker"
-          },
-          "type": "array"
-        },
-        "segmentTime": {
-          "$ref": "#/$defs/segmentTime"
-        }
-      },
+      "properties": {},
       "type": "object"
     },
     "selectionBehavior": {

@@ -1,8 +1,6 @@
 add_library(harken_editor_timeline STATIC
     TimelineCanvas.cpp
     TimelineCanvas.h
-    TimelineClipCanvas.cpp
-    TimelineClipCanvas.h
     TimelineEditorPanel.cpp
     TimelineEditorPanel.h
     TimelineHeaderColumn.cpp
@@ -11,8 +9,6 @@ add_library(harken_editor_timeline STATIC
     TimelineRenderer.h
     TimelineRuler.cpp
     TimelineRuler.h
-    TimelineTicks.cpp
-    TimelineTicks.h
 )
 
 set_target_properties(harken_editor_timeline PROPERTIES

@@ -5,6 +5,7 @@
 #include "TemplateApplyService.h"
 #include "ActionStepUtils.h"
 #include "AuthoringPolicy.h"
+#include "ProjectDocument.h"
 #include "AttenuationStore.h"
 #include "BusPlacementRules.h"
 #include "ConversionDefaults.h"
@@ -20,7 +21,6 @@
 #include "Components/VSound.h"
 #include "Components/VSpatial.h"
 #include "Components/VTrack.h"
-#include "Components/VSegment.h"
 #include "Components/VVariable.h"
 
 #include <QJsonArray>
@@ -164,10 +164,6 @@ void remapTree(ProjectItem* item, const TemplateIdentityMap& identities)
             remapAttenuationReference(clip.playableProperties, identities);
             remapAttenuationReferences(clip.platformOverrides, identities);
         }
-    if (auto* timeline = item->comp<VSegment>())
-        for (auto& marker : timeline->markers.items) {
-            marker.markerGuid = QUuid::createUuid();
-        }
     for (auto& child : item->children) remapTree(child.get(), identities);
 }
 
@@ -198,9 +194,6 @@ void remintSubentityStableIds(ProjectData& project, ProjectItem* item)
     if (auto* timeline = item->comp<VTrack>())
         for (auto& clip : timeline->clips.items)
             clip.clipGuid = QUuid::createUuid();
-    if (auto* timeline = item->comp<VSegment>())
-        for (auto& marker : timeline->markers.items)
-            marker.markerGuid = QUuid::createUuid();
     for (auto& child : item->children)
         remintSubentityStableIds(project, child.get());
 }
@@ -384,8 +377,10 @@ bool TemplateApplyService::seedTemplateInto(
                           const QString& folder) -> bool {
         for (const auto& value : source) {
             if (!value.isObject()) return setErr(QStringLiteral("template item must be an object"));
+            auto content = value.toObject();
+            if (!ProjectDocument::normalizeContent(&content, error)) return false;
             auto item = std::make_shared<ProjectItem>();
-            if (!serializer.projectItemFromJson(value.toObject(), *item))
+            if (!serializer.projectItemFromJson(content, *item))
                 return setErr(serializer.lastError().isEmpty()
                     ? QStringLiteral("template item data is invalid")
                     : serializer.lastError());
@@ -397,8 +392,10 @@ bool TemplateApplyService::seedTemplateInto(
     };
     for (const auto& value : templateData.content) {
         if (!value.isObject()) return setErr(QStringLiteral("template content must be an object"));
+        auto content = value.toObject();
+        if (!ProjectDocument::normalizeContent(&content, error)) return false;
         auto item = std::make_shared<ProjectItem>();
-        if (!serializer.projectItemFromJson(value.toObject(), *item))
+        if (!serializer.projectItemFromJson(content, *item))
             return setErr(serializer.lastError().isEmpty()
                 ? QStringLiteral("template content data is invalid")
                 : serializer.lastError());

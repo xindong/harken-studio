@@ -116,19 +116,15 @@ TEST_F(ActionIdentityTest, NestedObjectIndexRejectsAmbiguousOwners)
     Clip clip{QUuid::createUuid(), sound->guid, 0, 1000000000};
     ASSERT_TRUE(track->comp<VTrack>()->clips.mintOccurrenceOrdinal(&clip));
     track->comp<VTrack>()->clips.items.push_back(clip);
-    Marker marker{QUuid::createUuid(), MarkerKind::Custom, QStringLiteral("Accent"), 0};
-    segment->comp<VSegment>()->markers.items.push_back(marker);
     const auto index = ProjectObjectIndex::fromProject(manager.currentProject());
     for (const auto id : {sound->runtimeId(), effect.runtimeId(), binding.runtimeId(),
-                           clip.runtimeId(), marker.runtimeId()})
+                           clip.runtimeId()})
         ASSERT_NE(index.find(id), nullptr);
     EXPECT_EQ(index.find(effect.runtimeId())->kind, ProjectObjectLocation::Kind::Effect);
     EXPECT_EQ(index.find(binding.runtimeId())->kind, ProjectObjectLocation::Kind::Binding);
     EXPECT_EQ(index.find(clip.runtimeId())->kind, ProjectObjectLocation::Kind::Clip);
-    EXPECT_EQ(index.find(marker.runtimeId())->kind, ProjectObjectLocation::Kind::Marker);
     EXPECT_EQ(index.find(effect.runtimeId())->ownerGuid, sound->guid);
     EXPECT_EQ(index.find(clip.runtimeId())->ownerGuid, track->guid);
-    EXPECT_EQ(index.find(marker.runtimeId())->ownerGuid, segment->guid);
     const auto excluded = ProjectObjectIndex::fromProject(manager.currentProject(), sound);
     EXPECT_EQ(excluded.find(sound->runtimeId()), nullptr);
     EXPECT_EQ(excluded.find(effect.runtimeId()), nullptr);

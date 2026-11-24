@@ -215,9 +215,7 @@ void InspectorPanelPrivate::refreshBoundPages(ProjectItem* item, const QString& 
         if (!related && item->type == ProjectItem::Type::Variable)
             related = true;
         if (!related && current->type == ProjectItem::Type::Segment
-            && (prop == QLatin1String("clips")
-                || prop == QLatin1String("markers")
-                || prop == QLatin1String("segmentTime")))
+            && prop == QLatin1String("clips"))
             related = true;
         if (!related) return;
         if (engine->refreshField(prop))

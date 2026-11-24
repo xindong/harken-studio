@@ -287,8 +287,6 @@ private:
         bool restoreEmptySourceOccurrences = false,
         DeletedSubtreeRefLog* outLog = nullptr,
         bool createDefaultClip = true);
-    void prepareTrackTimeline(ProjectItem* targetParent);
-    void applyTrackTimeline(const std::optional<ClipLedger>& clips);
     void captureSelections();
     void applySelections(ProjectItem* parent, const std::optional<SelectionData>& value);
     void finishSelectionMove();
@@ -313,8 +311,6 @@ private:
     ParentRef savedParentRef_;
     bool createdBinding_ = false;
 
-    std::optional<ClipLedger> oldTrackClips_;
-    std::optional<ClipLedger> newTrackClips_;
     std::optional<DefinitionFieldGroups> oldFieldGroups_;
     std::optional<DefinitionFieldGroups> rootFieldGroups_;
     QString fieldGroupConversionError_;
@@ -324,7 +320,6 @@ private:
     std::optional<SelectionData> movedOldParentSelections_;
     std::optional<SelectionData> movedNewParentSelections_;
     bool capturedMovedSelections_ = false;
-    QString timelineConversionError_;
 
     std::optional<SelectionEntry> oldOccurrence_;
     std::optional<SelectionEntry> newOccurrence_;

@@ -241,8 +241,7 @@ harken> save_project
 
 | 编辑内容 | CLI 写入与读回 |
 |---|---|
-| 容器 | `set_item_property` 的 `mode` 可设为 0 Random、2 Sequence、4 Match、5 Blend。Match 和 Blend 分别保存自己的 `variableResponse`，0 为 Fixed，1 为 Live。在 `get_item_info.components.selection` 读取 `matchResponse`、`blendResponse`、`selections` 和转换规则。用 `selections` 编辑 Shared 或平台的子项、权重、Match 条件及 Blend 曲线；Match 条件行位于各表的 `matchRows`，按数组顺序排列，`target` 可为 null，无目标的行保留在工程中但不参与播放，用 `transitions` 编辑规则表。Queue 容器还可设置 `spliceByMarker`。 |
-| Segment | `segmentTime` 设置时钟，`markers` 写入 Entry、Exit 标记。每种标记最多一个，Entry 的位置须早于或等于 Exit。两者在 `components.segmenttimeline` 读回。Absolute 的时间单位为纳秒，Musical 的时间单位为 tick，每四分音符 960 tick。 |
+| 容器 | `set_item_property` 的 `mode` 可设为 0 Random、2 Sequence、4 Match、5 Blend。Match 和 Blend 分别保存自己的 `variableResponse`，0 为 Fixed，1 为 Live。在 `get_item_info.components.selection` 读取 `matchResponse`、`blendResponse`、`selections`。用 `selections` 编辑 Shared 或平台的子项、权重、Match 条件及 Blend 曲线；Match 条件行位于各表的 `matchRows`，按数组顺序排列，`target` 可为 null，无目标的行保留在工程中但不参与播放。 |
 | Track | `components.tracktimeline.clips` 列出片段的 `clipGuid`、`targetGuid`、起点、时长及出现序号。`set_item_property(property=clips)` 接受 `{rows,occurrenceOrdinalHighWater}`，可增删片段或调整时长。保留既有行的身份，新行使用新 GUID 和新的出现序号。 |
 
 用 `move_track_clips` 整体移动一个或多个片段。每行指定源 Track、目标 Track、片段 GUID 和目标起点，跨轨移动要求两个 Track 属于同一 Segment。移动后片段保留原 GUID。若源 Track 还有其他片段使用同一目标对象，Studio 会在目标 Track 创建副本，否则将该对象一同移入目标 Track。一条命令对应一次撤销。以下命令在已打开工程的 shell 中执行，片段 GUID 来自第一条查询。

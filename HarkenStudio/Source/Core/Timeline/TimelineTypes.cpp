@@ -1,6 +1,5 @@
 #include "TimelineTypes.h"
 
-#include "TimelineCoordinates.h"
 #include "../Components/VSegment.h"
 #include "../Components/VTrack.h"
 #include "../PlaybackReferenceValidation.h"
@@ -41,17 +40,6 @@ bool readInt64(const QJsonValue& value, int64_t* out)
     return true;
 }
 
-bool readInt32(const QJsonValue& value, int32_t* out)
-{
-    int64_t number = 0;
-    if (!readInt64(value, &number)
-        || number < std::numeric_limits<int32_t>::min()
-        || number > std::numeric_limits<int32_t>::max())
-        return false;
-    *out = static_cast<int32_t>(number);
-    return true;
-}
-
 std::optional<QUuid> readGuid(const QJsonValue& value)
 {
     if (!value.isString()) return std::nullopt;
@@ -65,124 +53,6 @@ void setError(QString* error, const QString& message)
     if (error) *error = message;
 }
 
-}
-
-QString timelineDomainName(TimelineDomain domain)
-{
-    if (domain == TimelineDomain::Absolute) return QStringLiteral("Absolute");
-    if (domain == TimelineDomain::Musical) return QStringLiteral("Musical");
-    return QString();
-}
-
-QString markerKindName(MarkerKind kind)
-{
-    switch (kind) {
-    case MarkerKind::Entry: return QStringLiteral("Entry");
-    case MarkerKind::Exit: return QStringLiteral("Exit");
-    case MarkerKind::Custom: return QStringLiteral("Custom");
-    }
-    return QString();
-}
-
-SegmentTimeSpec SegmentTimeSpec::musical(int64_t microsecondsPerQuarter,
-                                     int32_t numerator,
-                                     int32_t denominator)
-{
-    SegmentTimeSpec spec;
-    spec.domain = TimelineDomain::Musical;
-    spec.tempoMap.push_back({0, microsecondsPerQuarter});
-    spec.meterMap.push_back({0, numerator, denominator});
-    return spec;
-}
-
-bool SegmentTimeSpec::isDefault() const
-{
-    return domain == TimelineDomain::Absolute && tempoMap.empty() && meterMap.empty();
-}
-
-QJsonObject SegmentTimeSpec::toJson() const
-{
-    QJsonObject json;
-    json[QStringLiteral("domain")] = timelineDomainName(domain);
-    if (domain == TimelineDomain::Musical) {
-        QJsonArray tempos;
-        for (const TempoPoint& point : tempoMap) {
-            QJsonObject value;
-            value[QStringLiteral("tick")] = static_cast<qint64>(point.tick);
-            value[QStringLiteral("microsecondsPerQuarter")] =
-                static_cast<qint64>(point.microsecondsPerQuarter);
-            tempos.append(value);
-        }
-        QJsonArray meters;
-        for (const MeterPoint& point : meterMap) {
-            QJsonObject value;
-            value[QStringLiteral("tick")] = static_cast<qint64>(point.tick);
-            value[QStringLiteral("numerator")] = point.numerator;
-            value[QStringLiteral("denominator")] = point.denominator;
-            meters.append(value);
-        }
-        json[QStringLiteral("tempoMap")] = tempos;
-        json[QStringLiteral("meterMap")] = meters;
-    }
-    return json;
-}
-
-std::optional<SegmentTimeSpec> SegmentTimeSpec::fromJson(const QJsonObject& json,
-                                                      QString* error)
-{
-    SegmentTimeSpec spec;
-    const QString domain = json.value(QStringLiteral("domain")).toString();
-    if (domain == QStringLiteral("Absolute")) {
-        if (json.contains(QStringLiteral("tempoMap"))
-            || json.contains(QStringLiteral("meterMap"))) {
-            setError(error, QStringLiteral("Absolute time must not carry maps"));
-            return std::nullopt;
-        }
-        spec.domain = TimelineDomain::Absolute;
-    } else if (domain == QStringLiteral("Musical")) {
-        spec.domain = TimelineDomain::Musical;
-        const QJsonArray tempos = json.value(QStringLiteral("tempoMap")).toArray();
-        const QJsonArray meters = json.value(QStringLiteral("meterMap")).toArray();
-        for (const QJsonValue& raw : tempos) {
-            if (!raw.isObject()) {
-                setError(error, QStringLiteral("tempoMap entries must be objects"));
-                return std::nullopt;
-            }
-            TempoPoint point;
-            const QJsonObject value = raw.toObject();
-            if (!readInt64(value.value(QStringLiteral("tick")), &point.tick)
-                || !readInt64(value.value(QStringLiteral("microsecondsPerQuarter")),
-                              &point.microsecondsPerQuarter)) {
-                setError(error, QStringLiteral("tempoMap entries require integer fields"));
-                return std::nullopt;
-            }
-            spec.tempoMap.push_back(point);
-        }
-        for (const QJsonValue& raw : meters) {
-            if (!raw.isObject()) {
-                setError(error, QStringLiteral("meterMap entries must be objects"));
-                return std::nullopt;
-            }
-            MeterPoint point;
-            const QJsonObject value = raw.toObject();
-            if (!readInt64(value.value(QStringLiteral("tick")), &point.tick)
-                || !readInt32(value.value(QStringLiteral("numerator")), &point.numerator)
-                || !readInt32(value.value(QStringLiteral("denominator")), &point.denominator)) {
-                setError(error, QStringLiteral("meterMap entries require integer fields"));
-                return std::nullopt;
-            }
-            spec.meterMap.push_back(point);
-        }
-    } else {
-        setError(error, QStringLiteral("Unknown timeline domain"));
-        return std::nullopt;
-    }
-    const TimelineValidation validation = TimelineCoordinates::validate(spec);
-    if (!validation) {
-        setError(error, validation.message);
-        return std::nullopt;
-    }
-    return spec;
 }
 
 QJsonObject Clip::toJson() const
@@ -233,38 +103,6 @@ std::optional<Clip> Clip::fromJson(const QJsonObject& json, QString* error)
     clip.targetGuid = *targetGuid;
     clip.stableOccurrenceOrdinal = static_cast<uint32_t>(ordinal);
     return clip;
-}
-
-QJsonObject Marker::toJson() const
-{
-    QJsonObject json;
-    json[QStringLiteral("markerGuid")] = markerGuid.toString(QUuid::WithoutBraces);
-    json[QStringLiteral("kind")] = markerKindName(kind);
-    json[QStringLiteral("name")] = name;
-    json[QStringLiteral("position")] = static_cast<qint64>(position);
-    return json;
-}
-
-std::optional<Marker> Marker::fromJson(const QJsonObject& json, QString* error)
-{
-    Marker marker;
-    const auto guid = readGuid(json.value(QStringLiteral("markerGuid")));
-    if (!guid || !json.value(QStringLiteral("name")).isString()
-        || !readInt64(json.value(QStringLiteral("position")), &marker.position)) {
-        setError(error, QStringLiteral("Marker requires a valid GUID and integer position"));
-        return std::nullopt;
-    }
-    marker.markerGuid = *guid;
-    marker.name = json.value(QStringLiteral("name")).toString();
-    const QString kind = json.value(QStringLiteral("kind")).toString();
-    if (kind == QStringLiteral("Entry")) marker.kind = MarkerKind::Entry;
-    else if (kind == QStringLiteral("Exit")) marker.kind = MarkerKind::Exit;
-    else if (kind == QStringLiteral("Custom")) marker.kind = MarkerKind::Custom;
-    else {
-        setError(error, QStringLiteral("Unknown marker kind"));
-        return std::nullopt;
-    }
-    return marker;
 }
 
 TimelineValidation TimelineValidation::success()
@@ -424,89 +262,6 @@ std::optional<ClipLedger> ClipLedger::fromJson(const QJsonObject& json,
     return ledger;
 }
 
-QJsonArray MarkerLedger::toJson() const
-{
-    QJsonArray json;
-    for (const Marker& marker : items) json.append(marker.toJson());
-    return json;
-}
-
-TimelineValidation MarkerLedger::validate() const
-{
-    QSet<QUuid> guids;
-    const Marker* entry = nullptr;
-    const Marker* exit = nullptr;
-    for (size_t i = 0; i < items.size(); ++i) {
-        const Marker& marker = items[i];
-        if (marker.markerGuid.isNull())
-            return TimelineValidation::failure(
-                TimelineError::EmptyGuid, QStringLiteral("Marker GUID must not be empty"),
-                static_cast<int>(i));
-        if (guids.contains(marker.markerGuid))
-            return TimelineValidation::failure(
-                TimelineError::DuplicateGuid, QStringLiteral("Duplicate marker GUID"),
-                static_cast<int>(i));
-        guids.insert(marker.markerGuid);
-        if (marker.kind != MarkerKind::Entry && marker.kind != MarkerKind::Exit
-            && marker.kind != MarkerKind::Custom)
-            return TimelineValidation::failure(
-                TimelineError::InvalidJson, QStringLiteral("Unknown marker kind"),
-                static_cast<int>(i));
-        if (marker.kind == MarkerKind::Entry) {
-            if (entry)
-                return TimelineValidation::failure(
-                    TimelineError::DuplicateMarkerKind,
-                    QStringLiteral("A Segment may contain only one Entry marker"),
-                    static_cast<int>(i));
-            entry = &marker;
-        } else if (marker.kind == MarkerKind::Exit) {
-            if (exit)
-                return TimelineValidation::failure(
-                    TimelineError::DuplicateMarkerKind,
-                    QStringLiteral("A Segment may contain only one Exit marker"),
-                    static_cast<int>(i));
-            exit = &marker;
-        }
-    }
-    if (entry && exit && entry->position > exit->position)
-        return TimelineValidation::failure(
-            TimelineError::MarkerOrder,
-            QStringLiteral("Entry marker must not follow Exit marker"));
-    return TimelineValidation::success();
-}
-
-const Marker* MarkerLedger::find(MarkerKind kind) const
-{
-    for (const Marker& marker : items)
-        if (marker.kind == kind) return &marker;
-    return nullptr;
-}
-
-std::optional<MarkerLedger> MarkerLedger::fromJson(const QJsonArray& json, QString* error)
-{
-    MarkerLedger ledger;
-    ledger.items.reserve(static_cast<size_t>(json.size()));
-    for (qsizetype i = 0; i < json.size(); ++i) {
-        if (!json[i].isObject()) {
-            setError(error, QStringLiteral("Marker ledger entries must be objects"));
-            return std::nullopt;
-        }
-        QString itemError;
-        auto marker = Marker::fromJson(json[i].toObject(), &itemError);
-        if (!marker) {
-            setError(error, QStringLiteral("Marker %1: %2").arg(i).arg(itemError));
-            return std::nullopt;
-        }
-        ledger.items.push_back(*marker);
-    }
-    const TimelineValidation validation = ledger.validate();
-    if (!validation) {
-        setError(error, validation.message);
-        return std::nullopt;
-    }
-    return ledger;
-}
-
 QJsonObject VTrack::toJson() const
 {
     QJsonObject json;
@@ -546,36 +301,12 @@ bool VTrack::fromJson(const QJsonObject& json)
 
 QJsonObject VSegment::toJson() const
 {
-    QJsonObject json;
-    if (!segmentTime.isDefault())
-        json[QStringLiteral("segmentTime")] = segmentTime.toJson();
-    if (!markers.empty()) json[QStringLiteral("markers")] = markers.toJson();
-    return json;
+    return {};
 }
 
 bool VSegment::fromJson(const QJsonObject& json)
 {
-    for (auto it = json.begin(); it != json.end(); ++it)
-        if (it.key() != QStringLiteral("segmentTime")
-            && it.key() != QStringLiteral("markers")) return false;
-    SegmentTimeSpec parsedTime;
-    MarkerLedger parsedMarkers;
-    if (json.contains(QStringLiteral("segmentTime"))) {
-        if (!json.value(QStringLiteral("segmentTime")).isObject()) return false;
-        auto value = SegmentTimeSpec::fromJson(
-            json.value(QStringLiteral("segmentTime")).toObject());
-        if (!value) return false;
-        parsedTime = std::move(*value);
-    }
-    if (json.contains(QStringLiteral("markers"))) {
-        if (!json.value(QStringLiteral("markers")).isArray()) return false;
-        auto value = MarkerLedger::fromJson(json.value(QStringLiteral("markers")).toArray());
-        if (!value) return false;
-        parsedMarkers = std::move(*value);
-    }
-    segmentTime = std::move(parsedTime);
-    markers = std::move(parsedMarkers);
-    return true;
+    return json.isEmpty();
 }
 
 }

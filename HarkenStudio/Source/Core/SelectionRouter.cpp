@@ -129,14 +129,11 @@ bool SelectionRouter::revealProjectObject(harken::studio::types::ObjectId id)
         selectCurve(selection);
         return host_->openCurveEditor(selection) != nullptr;
     }
-    case ProjectObjectLocation::Kind::Clip:
-    case ProjectObjectLocation::Kind::Marker: {
+    case ProjectObjectLocation::Kind::Clip: {
         auto* timeline = qobject_cast<TimelineEditorPanel*>(
             host_->openStandaloneEditor(QStringLiteral("TimelineEditor"), owner));
         if (!timeline) return false;
-        return location->kind == ProjectObjectLocation::Kind::Clip
-            ? timeline->revealClip(authoringUuid(id))
-            : timeline->revealMarker(authoringUuid(id));
+        return timeline->revealClip(authoringUuid(id));
     }
     }
     return false;

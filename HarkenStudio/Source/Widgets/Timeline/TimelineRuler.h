@@ -4,14 +4,11 @@
 
 #include <QWidget>
 
-class QAction;
 class QLabel;
-class QToolButton;
 
 namespace harken::studio {
 
 class TimelineEditorPanel;
-class TimelineMarkerRuler;
 
 class TimelineRuler final : public QWidget
 {
@@ -25,7 +22,6 @@ public:
     QRect timeAxisRect() const;
     static QSize cursorHandleSize();
     QRect cursorHandleRect() const;
-    TimelineMarkerRuler* markerLane() const { return markerLane_; }
 
 protected:
     void paintEvent(QPaintEvent* event) override;
@@ -47,18 +43,11 @@ private:
     bool hitsCursor(const QPoint& position) const;
     void updateHover(const QPoint& position);
     void showCursorValue();
-    void syncGeometry();
 
     TimelineEditorPanel* panel_ = nullptr;
     DragMode dragMode_ = DragMode::None;
     QPoint hoverPos_ = QPoint(-1, -1);
     QLabel* cursorValue_ = nullptr;
-    TimelineMarkerRuler* markerLane_ = nullptr;
-    QToolButton* axisModeButton_ = nullptr;
-    QAction* secondsAction_ = nullptr;
-    QAction* measureBeatsAction_ = nullptr;
-    QAction* secondsWithMeasureBeatsAction_ = nullptr;
-    QAction* measureBeatsWithSecondsAction_ = nullptr;
 };
 
 }

@@ -186,7 +186,7 @@ TimeAxisTicks buildNanosecondTimeAxisTicks(NanosecondPosition start, double span
                 labelIndices.append(result.ticks.size());
             }
         }
-        result.ticks.append({double(value) / 1e9, x, major, {}, false, {}, value});
+        result.ticks.append({double(value) / 1e9, x, major, {}, value});
         if (value > std::numeric_limits<int64_t>::max() - minorStep)
             break;
         value += minorStep;
@@ -201,16 +201,13 @@ TimeAxisTicks buildNanosecondTimeAxisTicks(NanosecondPosition start, double span
 void drawTimeAxisRuler(QPainter& painter, const ThemeColors& colors,
     const ThemeMetrics::TimeAxis& geometry,
     const QRect& bounds, const TimeAxisTicks& ticks, FontRole role,
-    TimeAxisLabelAlignment alignment, bool pairedLabels)
+    TimeAxisLabelAlignment alignment)
 {
     painter.save();
     painter.setClipRect(bounds, Qt::IntersectClip);
     painter.setRenderHint(QPainter::Antialiasing, false);
     const QFont primaryFont = FontManager::instance().getFont(role);
-    const QFont secondaryFont = FontManager::instance().getFont(FontRole::Caption);
     const QFontMetrics metrics(primaryFont, painter.device());
-    const QFontMetrics secondaryMetrics(secondaryFont, painter.device());
-    const int secondaryHeight = pairedLabels ? secondaryMetrics.height() : 0;
     int lastLabelRight = bounds.left();
     for (const auto& tick : ticks.ticks) {
         const int x = bounds.left() + tick.pixel;
@@ -219,26 +216,16 @@ void drawTimeAxisRuler(QPainter& painter, const ThemeColors& colors,
         painter.drawLine(x, bounds.bottom() + 1 - tickHeight, x, bounds.bottom());
         if (tick.label.isEmpty())
             continue;
-        const int textWidth = std::max(metrics.horizontalAdvance(tick.label),
-            pairedLabels ? secondaryMetrics.horizontalAdvance(tick.secondaryLabel) : 0);
+        const int textWidth = metrics.horizontalAdvance(tick.label);
         const int padding = geometry.labelPadding;
         const int left = alignment == TimeAxisLabelAlignment::AfterTick ? x + padding
             : std::clamp(x - textWidth / 2, bounds.left() + padding,
                 std::max(bounds.left() + padding, bounds.right() - padding - textWidth));
         if (left >= lastLabelRight + padding && left + textWidth <= bounds.right() - padding) {
-            if (pairedLabels && !tick.secondaryLabel.isEmpty()) {
-                painter.setFont(secondaryFont);
-                painter.setPen(colors.textSecondary);
-                painter.drawText(QRect(left, bounds.top(), textWidth, secondaryHeight),
-                    Qt::AlignLeft | Qt::AlignVCenter, tick.secondaryLabel);
-                painter.setPen(colors.borderTick);
-                painter.drawLine(left, bounds.top() + secondaryHeight - 1,
-                    left + textWidth - 1, bounds.top() + secondaryHeight - 1);
-            }
             painter.setFont(primaryFont);
             painter.setPen(colors.textSecondary);
-            painter.drawText(QRect(left, bounds.top() + secondaryHeight, textWidth,
-                    bounds.height() - secondaryHeight - geometry.majorTickLength),
+            painter.drawText(QRect(left, bounds.top(), textWidth,
+                    bounds.height() - geometry.majorTickLength),
                 Qt::AlignLeft | Qt::AlignVCenter, tick.label);
             lastLabelRight = left + textWidth;
         }
@@ -255,15 +242,13 @@ QColor timeAxisTickColor(const QColor& tick, bool major)
 }
 
 void drawTimeAxisGrid(QPainter& painter, const QColor& majorColor,
-    const QRect& bounds, const TimeAxisTicks& ticks, const QColor& minorColor,
-    const QColor& beatColor)
+    const QRect& bounds, const TimeAxisTicks& ticks, const QColor& minorColor)
 {
     painter.save();
     painter.setClipRect(bounds, Qt::IntersectClip);
     painter.setRenderHint(QPainter::Antialiasing, false);
     for (const auto& tick : ticks.ticks) {
-        const QColor color = tick.major ? majorColor
-            : tick.beat && beatColor.isValid() ? beatColor : minorColor;
+        const QColor color = tick.major ? majorColor : minorColor;
         if (!color.isValid())
             continue;
         painter.setPen(color);

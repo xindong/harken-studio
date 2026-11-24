@@ -1461,9 +1461,7 @@ TEST(ThemeMetricsMigration, TimeHandlePaintAndHitGeometryShareThemeDimensions)
         ASSERT_TRUE(manager->selectTheme(theme).ok());
         const auto& geometry = manager->metrics().timeAxis;
         for (bool start : {false, true}) {
-            const auto shape = start ? harken::studio::TimelineMarkerShape::EntryHandle : harken::studio::TimelineMarkerShape::ExitHandle;
-            const QRect hit = harken::studio::TimelineRenderer::markerHandleRect(50, 100, shape, geometry);
-            EXPECT_EQ(hit, harken::studio::timeAxisHandleRect(50, 0, start, geometry));
+            const QRect hit = harken::studio::timeAxisHandleRect(50, 0, start, geometry);
             QImage image(100, 100, QImage::Format_ARGB32_Premultiplied);
             image.fill(Qt::transparent);
             QPainter painter(&image);

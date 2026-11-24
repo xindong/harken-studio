@@ -17,46 +17,6 @@ namespace harken::studio {
 
 struct ProjectItem;
 
-enum class TimelineDomain : uint8_t
-{
-    Absolute = 0,
-    Musical = 1
-};
-
-struct TempoPoint
-{
-    int64_t tick = 0;
-    int64_t microsecondsPerQuarter = 500000;
-
-    bool operator==(const TempoPoint&) const = default;
-};
-
-struct MeterPoint
-{
-    int64_t tick = 0;
-    int32_t numerator = 4;
-    int32_t denominator = 4;
-
-    bool operator==(const MeterPoint&) const = default;
-};
-
-struct SegmentTimeSpec
-{
-    TimelineDomain domain = TimelineDomain::Absolute;
-    std::vector<TempoPoint> tempoMap;
-    std::vector<MeterPoint> meterMap;
-
-    static SegmentTimeSpec musical(int64_t microsecondsPerQuarter = 500000,
-                                 int32_t numerator = 4,
-                                 int32_t denominator = 4);
-    bool isDefault() const;
-    QJsonObject toJson() const;
-    static std::optional<SegmentTimeSpec> fromJson(const QJsonObject& json,
-                                                  QString* error = nullptr);
-
-    bool operator==(const SegmentTimeSpec&) const = default;
-};
-
 struct Clip
 {
     QUuid clipGuid;
@@ -75,28 +35,6 @@ struct Clip
     bool operator==(const Clip&) const = default;
 };
 
-enum class MarkerKind : uint8_t
-{
-    Entry = 0,
-    Exit = 1,
-    Custom = 2
-};
-
-struct Marker
-{
-    QUuid markerGuid;
-    MarkerKind kind = MarkerKind::Custom;
-    QString name;
-    int64_t position = 0;
-    harken::studio::types::ObjectId runtimeId() const { return runtimeObjectId(markerGuid); }
-
-    QJsonObject toJson() const;
-    static std::optional<Marker> fromJson(const QJsonObject& json,
-                                       QString* error = nullptr);
-
-    bool operator==(const Marker&) const = default;
-};
-
 enum class TimelineError : uint8_t
 {
     None = 0,
@@ -108,8 +46,6 @@ enum class TimelineError : uint8_t
     MissingTarget,
     InvalidTargetType,
     InvalidTimeSpec,
-    DuplicateMarkerKind,
-    MarkerOrder,
     MissingTimeline,
     Cycle,
     AuthoringRestricted,
@@ -154,22 +90,5 @@ struct ClipLedger
 
     bool operator==(const ClipLedger&) const = default;
 };
-
-struct MarkerLedger
-{
-    std::vector<Marker> items;
-
-    bool empty() const { return items.empty(); }
-    QJsonArray toJson() const;
-    TimelineValidation validate() const;
-    const Marker* find(MarkerKind kind) const;
-    static std::optional<MarkerLedger> fromJson(const QJsonArray& json,
-                                             QString* error = nullptr);
-
-    bool operator==(const MarkerLedger&) const = default;
-};
-
-QString timelineDomainName(TimelineDomain domain);
-QString markerKindName(MarkerKind kind);
 
 }

@@ -183,7 +183,7 @@ Blueprint 内嵌 Meter 的宽度边界及通用表格的列宽边界在悬停时
 
 Timeline clip 当前无描边，与轨道上下边缘各留 1px；标题使用独立背景的 title tab。主体和普通标题优先使用对象颜色，否则使用 `timeline.clip`；选中或拖动标题无对象颜色时使用 `timeline.clipSelected`，该职责同时保留名义范围背景的用途。标题先填充画布基础表面，再按状态叠加颜色，保留源 RGBA 的 Alpha；波形位于标题下方。普通 clip 按开始时间由早到晚绘制，同起点保留存储顺序；鼠标按相反顺序命中，拖动预览保持置顶。重叠标题仅在左端连续可见区域内对名称做右侧省略，左端被遮挡时不绘制名称，不向右侧空白段避让；Blend 保留原有名称避让。画布轨道分界与左侧标题区对齐，使用 `border.primary`，不借用时间刻度的 `border.tick`。
 
-Timeline 的 Entry 使用 `timeline.entry` 黄色、Exit 使用 `timeline.exit` 红色，播放与编辑 Cursor 使用 `music.cursor` 绿色；三者均由主题职责控制，画布不再局部覆盖 Cursor 颜色。Marker 位于刻度轴底部的 12px 区域，复用 Source 波形视图 trim 的双握槽手柄，Entry 向右、Exit 向左；悬停与选中按同一职责色加亮。
+Timeline 的播放与编辑 Cursor 使用 `music.cursor` 绿色，由主题职责控制，画布不再局部覆盖 Cursor 颜色。
 
 Timeline 不再显示遗留的 `EXT` 引用标记。clip 跨轨移动同步更新目标对象的树归属，多选保持相对轨道偏移；部分共用对象的 clip 换轨时，为迁移部分建立独立对象并共享原音频资源，其余 clip 留在原轨，整组换轨则迁移原对象。树归属、clip 数据和物理文件夹位置作为同一次撤销事务处理。
 

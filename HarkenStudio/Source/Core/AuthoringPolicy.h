@@ -7,10 +7,6 @@ namespace harken::studio::AuthoringPolicy {
 using ObjectResolver = std::function<const ProjectItem*(uint32_t)>;
 
 bool supportsObjectColorEditing();
-bool supportsMusicalTime();
-TimelineValidation validateSegmentTime(const SegmentTimeSpec& time);
-TimelineValidation validateSegmentTime(const QJsonObject& time);
-TimelineValidation validateTemplate(const QJsonObject& templateData);
 TimelineValidation validateTimeline(const ProjectItem& item,
                                     const TimelineItemResolver& resolve,
                                     const ObjectResolver& resolveObject = {});

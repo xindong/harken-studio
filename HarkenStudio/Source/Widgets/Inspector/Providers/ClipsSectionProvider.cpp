@@ -4,7 +4,6 @@
 
 #include "Core/ActionManager.h"
 #include "Core/AuthoringPolicy.h"
-#include "Core/Components/VSegment.h"
 #include "Core/Components/VTrack.h"
 #include "Core/ItemTypeCatalog.h"
 #include "Core/ProjectManager.h"
@@ -33,13 +32,9 @@
 namespace harken::studio {
 namespace {
 
-CoordinateResult initialClipDuration(const ProjectItem& track)
+CoordinateResult initialClipDuration()
 {
-    const auto* segment = track.parent ? track.parent->comp<VSegment>() : nullptr;
-    auto duration = TimelineCoordinates::fromSeconds(
-        1.0, segment ? segment->segmentTime : SegmentTimeSpec{});
-    if (duration) duration.value = std::max<int64_t>(1, duration.value);
-    return duration;
+    return TimelineCoordinates::fromSeconds(1.0);
 }
 
 class ClipsListWidget final : public QWidget
@@ -167,7 +162,7 @@ private:
             || !AuthoringPolicy::validateNewSubtree(*target, nullptr, resolve)) return false;
         auto clips = track->comp<VTrack>()->clips;
         if (replacing.isNull()) {
-            const auto duration = initialClipDuration(*track);
+            const auto duration = initialClipDuration();
             if (!duration) return false;
             Clip clip{QUuid::createUuid(), target->guid, 0, duration.value};
             if (!clips.mintOccurrenceOrdinal(&clip)) return false;
@@ -207,7 +202,7 @@ private:
             if (!self || self->boundGuid_ != owner || !self->canSelect(objectID)) return;
             auto* target = ProjectManager::instance().findItemByObjectID(objectID);
             auto* track = self->boundItem();
-            const auto duration = initialClipDuration(*track);
+            const auto duration = initialClipDuration();
             if (!duration) return;
             auto clips = track->comp<VTrack>()->clips;
             Clip clip{QUuid::createUuid(), target->guid, 0, duration.value};

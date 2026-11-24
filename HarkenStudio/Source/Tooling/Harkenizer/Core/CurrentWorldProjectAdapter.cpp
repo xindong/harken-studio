@@ -13,7 +13,6 @@
 #include "Components/VAudio.h"
 #include "Components/VAction.h"
 #include "Components/VMixNode.h"
-#include "Components/VSegment.h"
 #include "Components/VSelection.h"
 #include "Components/VSpatial.h"
 #include "Components/VTrack.h"
@@ -430,43 +429,8 @@ bool buildDefinitionNode(ProjectItem& item, const ProjectIndex& index,
     }
 
     if (*kind == ContentKind::Segment) {
-        const auto* timeline = item.comp<VSegment>();
-        if (timeline == nullptr) {
-            setError(error, QStringLiteral("Segment timeline is unavailable"));
-            return false;
-        }
-        harken::studio::project_schema::InputSegmentTimeSpec time;
-        time.kind = timeline->segmentTime.domain == TimelineDomain::Musical
-            ? harken::studio::project_schema::SegmentTimeKind::Musical
-            : harken::studio::project_schema::SegmentTimeKind::Absolute;
-        for (const TempoPoint& source : timeline->segmentTime.tempoMap)
-            time.tempoMap.push_back({source.tick,
-                                     source.microsecondsPerQuarter});
-        for (const MeterPoint& source : timeline->segmentTime.meterMap) {
-            if (source.numerator < 0 || source.numerator > UINT16_MAX
-                || source.denominator < 0 || source.denominator > UINT16_MAX) {
-                setError(error, QStringLiteral("Segment meter is invalid"));
-                return false;
-            }
-            time.meterMap.push_back(
-                {source.tick, static_cast<uint16_t>(source.numerator),
-                 static_cast<uint16_t>(source.denominator)});
-        }
-        node.timeSpec = std::move(time);
+        node.timeSpec = harken::studio::project_schema::InputSegmentTimeSpec{};
         node.startPoint = harken::studio::project_schema::InputStartPoint{};
-        uint32_t markerId = 1;
-        for (const Marker& source : timeline->markers.items) {
-            if (source.kind == MarkerKind::Entry)
-                continue;
-            harken::studio::project_schema::InputMarker marker;
-            marker.guid = authoringGuid(source.markerGuid);
-            marker.markerId = markerId++;
-            marker.kind = source.kind == MarkerKind::Exit
-                ? harken::studio::project_schema::MarkerKind::Exit
-                : harken::studio::project_schema::MarkerKind::Custom;
-            marker.position = source.position;
-            node.markers.push_back(std::move(marker));
-        }
     }
 
     request->project.nodes.push_back(std::move(node));
@@ -1487,9 +1451,6 @@ bool affectsCurrentWorld(ProjectItemType itemType,
                 || name == QStringLiteral("blends");
         case ProjectItemType::Track:
             return name == QStringLiteral("clips");
-        case ProjectItemType::Segment:
-            return name == QStringLiteral("segmentTime")
-                || name == QStringLiteral("markers");
         case ProjectItemType::Variable:
             return name == QStringLiteral("kind")
                 || name == QStringLiteral("rangeMin")

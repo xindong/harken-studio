@@ -8,15 +8,7 @@ using namespace harken::studio;
 
 TEST(TimelineCoordinates, ConversionRejectsOverflowWithoutWrapping)
 {
-    const SegmentTimeSpec musical = SegmentTimeSpec::musical();
-    const CoordinateResult high = TimelineCoordinates::ticksToNanoseconds(
-        std::numeric_limits<int64_t>::max(), musical);
-    const CoordinateResult low = TimelineCoordinates::ticksToNanoseconds(
-        std::numeric_limits<int64_t>::min(), musical);
-    EXPECT_FALSE(high);
-    EXPECT_FALSE(low);
-
     const CoordinateResult seconds = TimelineCoordinates::fromSeconds(
-        std::numeric_limits<double>::infinity(), {});
+        std::numeric_limits<double>::infinity());
     EXPECT_FALSE(seconds);
 }

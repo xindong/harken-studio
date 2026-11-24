@@ -8,7 +8,6 @@
 #include "Components/VMixNode.h"
 #include "Components/VBus.h"
 #include "Components/VEffect.h"
-#include "Components/VSegment.h"
 #include "Components/VSpatial.h"
 #include "Components/VSelection.h"
 #include "Components/VTrack.h"
@@ -376,16 +375,6 @@ buildRuntimeIdentityIndex(const ProjectData& project,
                                    RuntimeIdentityKindV1::TimelineClip, toAuthoringGuid(clip.clipGuid),
                                    {owner, RuntimeIdentityKindV1::TimelineClip, 0,
                                     clip.runtimeId()}}});
-            }
-        }
-        if (const auto* timeline = item->comp<VSegment>()) {
-            for (const auto& marker : timeline->markers.items) {
-                const auto owner = toAuthoringGuid(item->guid);
-                claims.push_back({0,
-                                  {marker.runtimeId(),
-                                   RuntimeIdentityKindV1::TimelineMarker, toAuthoringGuid(marker.markerGuid),
-                                   {owner, RuntimeIdentityKindV1::TimelineMarker, 0,
-                                    marker.runtimeId()}}});
             }
         }
         for (const auto& child : item->children) visit(child.get());
@@ -1245,49 +1234,8 @@ ProjectInputCompileResult compileStudioProjectInputForContext(
                 node.clips.push_back(std::move(clip));
             }
         } else if (item->type == ProjectItem::Type::Segment) {
-            const auto* timeline = item->comp<VSegment>();
-            if (!timeline) {
-                appendDiagnostic(result, ProjectInputDiagnosticCode::UnsupportedField,
-                                 QStringLiteral("Segment timeline is missing"), item, {},
-                                 QStringLiteral("segmentTime"));
-                continue;
-            }
-            InputSegmentTimeSpec time;
-            time.kind = timeline->segmentTime.domain == TimelineDomain::Musical
-                ? SegmentTimeKind::Musical : SegmentTimeKind::Absolute;
-            for (const auto& source : timeline->segmentTime.tempoMap)
-                time.tempoMap.push_back({source.tick, source.microsecondsPerQuarter});
-            for (const auto& source : timeline->segmentTime.meterMap)
-                time.meterMap.push_back({source.tick,
-                    static_cast<uint16_t>(source.numerator),
-                    static_cast<uint16_t>(source.denominator)});
-            node.timeSpec = std::move(time);
+            node.timeSpec = InputSegmentTimeSpec{};
             node.startPoint = InputStartPoint{};
-            uint32_t nextMarkerId = 1;
-            for (const harken::studio::Marker& source : timeline->markers.items) {
-                if (source.kind == harken::studio::MarkerKind::Entry) {
-                    if (source.position != 0) {
-                        appendDiagnostic(result, ProjectInputDiagnosticCode::UnsupportedField,
-                                         QStringLiteral("ProjectSchema entry start point cannot carry an authored position"),
-                                         item, source.markerGuid, QStringLiteral("markers.entry.position"));
-                    }
-                    continue;
-                }
-                if (harken::studio::types::IsNull(source.runtimeId())) {
-                    appendDiagnostic(result, ProjectInputDiagnosticCode::MissingIdentity,
-                                     QStringLiteral("Marker has no runtime stable identity"),
-                                     item, source.markerGuid, QStringLiteral("markers.runtimeId()"));
-                    continue;
-                }
-                const uint32_t id = nextMarkerId++;
-                InputMarker marker;
-                marker.guid = toAuthoringGuid(source.markerGuid);
-                marker.markerId = id;
-                marker.kind = source.kind == harken::studio::MarkerKind::Exit ? harken::studio::project_schema::MarkerKind::Exit
-                                                        : harken::studio::project_schema::MarkerKind::Custom;
-                marker.position = source.position;
-                node.markers.push_back(marker);
-            }
         }
         input.nodes.push_back(std::move(node));
         if (owned.count(item->guid) == 0)

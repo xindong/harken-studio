@@ -1,6 +1,7 @@
 #pragma once
 
-#include "TimelineTicks.h"
+#include "Core/ThemeSnapshot.h"
+#include "Core/Timeline/TimelineTypes.h"
 
 #include "Core/AssetPipeline/WaveformCache.h"
 #include "Core/AssetPipeline/SourceWaveformView.h"
@@ -110,27 +111,6 @@ struct TimelineCrossfadeRegion
     QRect rect;
 };
 
-enum class TimelineMarkerShape : uint8_t
-{
-    Line = 0,
-    EntryHandle,
-    ExitHandle,
-    Diamond
-};
-
-struct TimelineMarker
-{
-    int x = 0;
-    int height = 0;
-    QString label;
-    MarkerKind kind = MarkerKind::Custom;
-    TimelineMarkerShape shape = TimelineMarkerShape::Line;
-    QColor color;
-    int labelMaxWidth = 0;
-    bool selected = false;
-    bool hovered = false;
-};
-
 struct TimelineNominalBar
 {
     bool visible = false;
@@ -173,7 +153,6 @@ struct TimelineRenderData
     QRect viewport;
     double viewOffset = 0;
     qreal pxPerUnit = 0.0;
-    TimelineDomain domain = TimelineDomain::Absolute;
     QVector<TimelineLaneRect> laneRects;
     QVector<TimelineGridLine> gridLines;
     QVector<AmplitudeAxisTick> amplitudeTicks;
@@ -183,7 +162,6 @@ struct TimelineRenderData
     QVector<TimelineSemanticBand> semanticBands;
     QVector<TimelineClipItem> clipItems;
     QVector<TimelineCrossfadeRegion> crossfadeRegions;
-    QVector<TimelineMarker> markers;
     TimelineNominalBar nominalBar;
     TimelineCursor editCursor;
     TimelinePlayhead playhead;
@@ -197,8 +175,6 @@ class TimelineRenderer
 {
 public:
     static int clipTitleHeight(const ThemeMetrics& metrics);
-    static QRect markerHandleRect(int x, int height, TimelineMarkerShape shape,
-                                  const ThemeMetrics::TimeAxis& geometry);
     static void render(QPainter& painter,
                        const TimelineStyleView& style,
                        const TimelineRenderData& data);
@@ -206,21 +182,10 @@ public:
     static void drawCursorLine(QPainter& painter, const QColor& color, int x, const QRect& bounds);
     static void drawCursorHandle(QPainter& painter, const QColor& color, const QColor& outline,
                                  const QRect& bounds);
-    static void drawTickSet(QPainter& painter,
-                            const TimelineStyleView& style,
-                            const TimelineTickSet& ticks,
-                            int originX,
-                            int height,
-                            int leftBound,
-                            int rightBound,
-                            int labelTop,
-                            int labelHeight);
     static QVector<AmplitudeAxisTick> amplitudeTicks(
         const QRect& viewport, double zoom, int scroll, const ThemeSnapshot& theme,
         double amplitudeExponent = 1.0);
 
-    static void drawMarker(QPainter& painter, int x, int height,
-                        const QString& label, const QColor& color);
     static void drawClip(QPainter& painter, const QRect& area,
                          const decltype(DomainColors::timeline)& style,
                          bool selected, const QString& label);

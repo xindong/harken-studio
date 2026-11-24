@@ -3,7 +3,6 @@
 
 #include "TimelineEditorPanel.h"
 #include "Core/FontManager.h"
-#include "TimelineTicks.h"
 #include "Core/AssetPipeline/AssetRegistry.h"
 #include "Core/AssetPipeline/AudioImportGate.h"
 #include "Core/Components/VSegment.h"
@@ -89,24 +88,7 @@ TimelineCanvas::TimelineCanvas(TimelineEditorPanel* panel, QWidget* parent)
             unsetCursor();
         }
     });
-    connect(panel_, &TimelineEditorPanel::markerDragFinished, this, [this] {
-        if (dragMode_ == DragMode::Marker) {
-            dragMode_ = DragMode::None;
-            unsetCursor();
-        }
-    });
     ShortcutManager::instance().bindWidgetAction(Shortcuts::Delete, this, [this]() {
-        const QUuid marker = panel_->selectedMarkerGuid();
-        if (!marker.isNull()) {
-            for (int index = 0; index < panel_->markerCount(); ++index) {
-                if (panel_->markerGuid(index) != marker)
-                    continue;
-                if (panel_->markerKind(index) != MarkerKind::Custom && panel_->deleteMarker(marker))
-                    panel_->setSelectedMarker({});
-                break;
-            }
-            return;
-        }
         panel_->deleteSelectedClips();
     });
     connect(&WaveformCache::instance(), &WaveformCache::cacheReady, this,
@@ -129,7 +111,6 @@ bool TimelineCanvas::isGestureActive() const
 void TimelineCanvas::clearHover()
 {
     panel_->setCursorHovered(false);
-    panel_->setHoveredMarker({});
     hoveredLane_ = -1;
     hoveredClip_ = -1;
     hoverTipTarget_.clear();
@@ -356,16 +337,6 @@ TimelineRenderData TimelineCanvas::buildRenderData(const QRect& exposed) const
     data.viewOffset = panel_->horizontalScroll();
     data.pxPerUnit = panel_->pixelsPerUnit();
     data.timeAxis = panel_->timeTicks();
-    data.domain = panel_->timelineDomain();
-    for (int index = 0; index < panel_->markerCount(); ++index) {
-        TimelineMarker marker;
-        marker.x = panel_->viewportPixelAtCoordinate(0, panel_->markerDisplayPosition(index));
-        marker.height = height();
-        marker.kind = panel_->markerKind(index);
-        marker.selected = panel_->markerGuid(index) == panel_->selectedMarkerGuid();
-        marker.hovered = panel_->markerGuid(index) == panel_->hoveredMarkerGuid();
-        data.markers.append(marker);
-    }
     const auto theme = ThemeManager::instance().snapshot();
     const int titleHeight = TimelineRenderer::clipTitleHeight(theme->ui.metrics);
     const QRect trackViewport = data.frameless ? panel_->trackWaveformRect() : QRect();
@@ -454,8 +425,7 @@ TimelineRenderData TimelineCanvas::buildRenderData(const QRect& exposed) const
             }
         }
         if (waveformVisible && content.emergenceOffsetSec > 0.0) {
-            const auto offset = TimelineCoordinates::fromSeconds(content.emergenceOffsetSec,
-                panel_->effectiveTimeSpec(laneIndex));
+            const auto offset = TimelineCoordinates::fromSeconds(content.emergenceOffsetSec);
             if (offset) {
                 const int64_t emergence = saturatingAdd(panel_->clipStart(laneIndex, clipIndex), offset.value);
                 const int realX = panel_->viewportPixelAtCoordinate(laneIndex, emergence);
@@ -630,16 +600,6 @@ void TimelineCanvas::mousePressEvent(QMouseEvent* event)
         event->accept();
         return;
     }
-    const QUuid marker = panel_->markerAtViewportPixel(int(event->position().x()));
-    if (!marker.isNull()) {
-        dragMode_ = DragMode::Marker;
-        panel_->beginMarkerDrag(marker, int(event->position().x()),
-            event->modifiers().testFlag(Qt::AltModifier));
-        setCursor(Qt::SizeHorCursor);
-        event->accept();
-        return;
-    }
-    panel_->setSelectedMarker({});
     const Hit hit = hitAt(event->position().toPoint());
     if (hit.clipIndex < 0) {
         lassoActive_ = true;
@@ -676,12 +636,6 @@ void TimelineCanvas::mousePressEvent(QMouseEvent* event)
 
 void TimelineCanvas::mouseMoveEvent(QMouseEvent* event)
 {
-    if (dragMode_ == DragMode::Marker) {
-        panel_->updateMarkerDrag(int(event->position().x()),
-            event->modifiers().testFlag(Qt::AltModifier));
-        event->accept();
-        return;
-    }
     if (dragMode_ == DragMode::Cursor) {
         panel_->updateCursorDrag(int(event->position().x()),
             event->modifiers().testFlag(Qt::AltModifier));
@@ -694,8 +648,7 @@ void TimelineCanvas::mouseMoveEvent(QMouseEvent* event)
         return;
     }
     if (dragMode_ == DragMode::None || !(event->buttons() & Qt::LeftButton)) {
-        const bool overHandle = hitsEditCursor(event->position().toPoint())
-            || !panel_->markerAtViewportPixel(int(event->position().x())).isNull();
+        const bool overHandle = hitsEditCursor(event->position().toPoint());
         const Hit hit = overHandle ? Hit{} : hitAt(event->position().toPoint());
         if (hoveredLane_ != hit.laneIndex || hoveredClip_ != hit.clipIndex) {
             hoveredLane_ = hit.laneIndex;
@@ -731,15 +684,6 @@ void TimelineCanvas::mouseReleaseEvent(QMouseEvent* event)
 {
     if (event->button() != Qt::LeftButton) {
         QWidget::mouseReleaseEvent(event);
-        return;
-    }
-    if (dragMode_ == DragMode::Marker) {
-        panel_->updateMarkerDrag(int(event->position().x()),
-            event->modifiers().testFlag(Qt::AltModifier));
-        panel_->endMarkerDrag();
-        dragMode_ = DragMode::None;
-        updateHoverCursor(event->position().toPoint());
-        event->accept();
         return;
     }
     if (dragMode_ == DragMode::Cursor) {
@@ -783,13 +727,6 @@ void TimelineCanvas::mouseDoubleClickEvent(QMouseEvent* event)
         event->accept();
         return;
     }
-    const QUuid marker = panel_->markerAtViewportPixel(int(event->position().x()));
-    if (event->button() == Qt::LeftButton && !marker.isNull()) {
-        cancelGesture();
-        panel_->editMarkerValue(marker);
-        event->accept();
-        return;
-    }
     const Hit hit = hitAt(event->position().toPoint());
     if (hit.clipIndex >= 0) {
         const QUuid guid = panel_->clipGuid(hit.laneIndex, hit.clipIndex);
@@ -815,13 +752,6 @@ void TimelineCanvas::contextMenuEvent(QContextMenuEvent* event)
     if (hitsEditCursor(event->pos())) {
         cancelGesture();
         panel_->showCursorContextMenu(event->globalPos());
-        event->accept();
-        return;
-    }
-    const QUuid marker = panel_->markerAtViewportPixel(event->pos().x());
-    if (!marker.isNull()) {
-        cancelGesture();
-        panel_->showMarkerContextMenu(marker, event->globalPos());
         event->accept();
         return;
     }
@@ -881,8 +811,6 @@ void TimelineCanvas::keyPressEvent(QKeyEvent* event)
                 end = std::max(end, saturatingAdd(panel_->clipStart(lane, clip),
                     panel_->clipDuration(lane, clip)));
         }
-        for (int marker = 0; marker < panel_->markerCount(); ++marker)
-            end = std::max(end, panel_->markerPosition(marker));
         panel_->setEditCursor(end, true);
         event->accept();
         return;
@@ -894,8 +822,6 @@ void TimelineCanvas::hideEvent(QHideEvent* event)
 {
     if (dragMode_ == DragMode::Cursor)
         panel_->endCursorDrag();
-    if (dragMode_ == DragMode::Marker)
-        panel_->endMarkerDrag(true);
     clearHover();
     QWidget::hideEvent(event);
 }
@@ -1174,8 +1100,6 @@ void TimelineCanvas::cancelGesture()
 {
     if (dragMode_ == DragMode::Cursor)
         panel_->endCursorDrag(true);
-    if (dragMode_ == DragMode::Marker)
-        panel_->endMarkerDrag(true);
     clearHover();
     if (valueEditor_)
         valueEditor_->reject();
@@ -1204,15 +1128,13 @@ int64_t TimelineCanvas::magnetSnap(int laneIndex, int64_t coordinate,
 void TimelineCanvas::updateHoverCursor(const QPoint& pos)
 {
     const bool cursor = hitsEditCursor(pos);
-    const QUuid marker = !cursor && rect().contains(pos) ? panel_->markerAtViewportPixel(pos.x()) : QUuid{};
     panel_->setCursorHovered(cursor);
-    panel_->setHoveredMarker(marker);
-    const QString target = cursor ? QStringLiteral("cursor") : marker.toString(QUuid::WithoutBraces);
-    if (cursor || !marker.isNull()) {
+    if (cursor) {
+        const QString target = QStringLiteral("cursor");
         setCursor(Qt::SizeHorCursor);
         if (hoverTipTarget_ != target) {
             hoverTipTarget_ = target;
-            ToolTip::showText(mapToGlobal(pos), cursor ? panel_->cursorTooltip() : panel_->markerTooltip(marker), this);
+            ToolTip::showText(mapToGlobal(pos), panel_->cursorTooltip(), this);
         }
         return;
     }
@@ -1421,12 +1343,11 @@ void TimelineCanvas::editClipStart(int laneIndex, const QUuid& guid)
     spin->setKeyboardTracking(false);
     spin->setButtonSymbols(QAbstractSpinBox::NoButtons);
     spin->setDecimals(9);
-    const bool musical = panel_->timelineDomain() == TimelineDomain::Musical;
-    const double divisor = musical ? TimelineCoordinates::kPpq : TimelineCoordinates::kNanosecondsPerSecond;
+    constexpr double divisor = TimelineCoordinates::kNanosecondsPerSecond;
     const double limit = std::nextafter(double(std::numeric_limits<int64_t>::max()) / divisor, 0.0);
     spin->setRange(0.0, limit);
-    spin->setSingleStep(musical ? 1.0 / TimelineCoordinates::kPpq : 0.001);
-    spin->setSuffix(musical ? tr(" beats") : QStringLiteral(" s"));
+    spin->setSingleStep(0.001);
+    spin->setSuffix(QStringLiteral(" s"));
     spin->setValue(double(initial) / divisor);
     const double initialValue = spin->value();
     ThemeManager::instance().bindMetrics(spin, [spin](const ThemeMetrics& metrics) {
@@ -1441,7 +1362,7 @@ void TimelineCanvas::editClipStart(int laneIndex, const QUuid& guid)
         });
     }
     connect(dialog, &QDialog::accepted, this,
-        [this, laneIndex, guid, owner, lane, target, initial, initialValue, spin, divisor] {
+        [this, laneIndex, guid, owner, lane, target, initial, initialValue, spin] {
         valueEditor_.clear();
         const int current = panel_->findClipIndex(laneIndex, guid);
         if (!panel_->hasTimeline()

@@ -2,24 +2,19 @@
 #include "Core/ThemeLayout.h"
 
 #include "TimelineEditorPanel.h"
-#include "TimelineClipCanvas.h"
 #include "TimelineRenderer.h"
 #include "Core/FontManager.h"
-#include "Core/QtControlSkin.h"
 #include "Core/ThemeManager.h"
 
-#include <QActionGroup>
 #include <QGuiApplication>
 #include <QContextMenuEvent>
 #include <QLabel>
 #include <QMouseEvent>
-#include <QMenu>
 #include <QResizeEvent>
 #include <QHideEvent>
 #include <QKeyEvent>
 #include <QPainter>
 #include <QScreen>
-#include <QToolButton>
 #include "Core/ToolTip.h"
 
 #include <algorithm>
@@ -33,42 +28,6 @@ TimelineRuler::TimelineRuler(TimelineEditorPanel* panel, QWidget* parent)
     setObjectName(QStringLiteral("timelineRuler"));
     setMouseTracking(true);
     setFocusPolicy(Qt::ClickFocus);
-    axisModeButton_ = new QToolButton(this);
-    axisModeButton_->setObjectName(QStringLiteral("timelineAxisMode"));
-    axisModeButton_->setAutoRaise(true);
-    axisModeButton_->setArrowType(Qt::DownArrow);
-    axisModeButton_->setCursor(Qt::PointingHandCursor);
-    axisModeButton_->setAccessibleName(tr("Timeline axis"));
-    QtControlSkin::setSemanticProperty(axisModeButton_, "flatIconButton", true);
-    QtControlSkin::setSemanticProperty(axisModeButton_, "navigationRole", QStringLiteral("chevron"));
-    auto* menu = new QMenu(axisModeButton_);
-    menu->setObjectName(QStringLiteral("timelineAxisModeMenu"));
-    auto* group = new QActionGroup(menu);
-    group->setExclusive(true);
-    secondsAction_ = menu->addAction(tr("Seconds"));
-    secondsAction_->setObjectName(QStringLiteral("timelineAxisSeconds"));
-    secondsAction_->setData(static_cast<int>(TimelineEditorPanel::AxisMode::Seconds));
-    measureBeatsAction_ = menu->addAction(tr("Measure-Beats"));
-    measureBeatsAction_->setObjectName(QStringLiteral("timelineAxisMeasureBeats"));
-    measureBeatsAction_->setData(static_cast<int>(TimelineEditorPanel::AxisMode::MeasureBeats));
-    secondsWithMeasureBeatsAction_ = menu->addAction(tr("Seconds with Measure-Beats"));
-    secondsWithMeasureBeatsAction_->setObjectName(QStringLiteral("timelineAxisSecondsWithMeasureBeats"));
-    secondsWithMeasureBeatsAction_->setData(static_cast<int>(TimelineEditorPanel::AxisMode::SecondsWithMeasureBeats));
-    measureBeatsWithSecondsAction_ = menu->addAction(tr("Measure-Beats with Seconds"));
-    measureBeatsWithSecondsAction_->setObjectName(QStringLiteral("timelineAxisMeasureBeatsWithSeconds"));
-    measureBeatsWithSecondsAction_->setData(static_cast<int>(TimelineEditorPanel::AxisMode::MeasureBeatsWithSeconds));
-    for (auto* action : {secondsAction_, measureBeatsAction_,
-                         secondsWithMeasureBeatsAction_, measureBeatsWithSecondsAction_}) {
-        action->setCheckable(true);
-        group->addAction(action);
-    }
-    connect(axisModeButton_, &QToolButton::clicked, this, [this, menu] {
-        menu->popup(axisModeButton_->mapToGlobal(QPoint(0, axisModeButton_->height())));
-    });
-    connect(group, &QActionGroup::triggered, this, [this](QAction* action) {
-        panel_->setAxisMode(static_cast<TimelineEditorPanel::AxisMode>(action->data().toInt()));
-    });
-    markerLane_ = new TimelineMarkerRuler(panel_, this);
     connect(panel_, &TimelineEditorPanel::cursorDragFinished, this, [this] {
         if (dragMode_ == DragMode::Cursor)
             dragMode_ = DragMode::None;
@@ -86,17 +45,7 @@ TimelineRuler::TimelineRuler(TimelineEditorPanel* panel, QWidget* parent)
 void TimelineRuler::refresh()
 {
     const bool active = panel_->hasTimeline();
-    syncGeometry();
-    axisModeButton_->setVisible(active);
-    axisModeButton_->setEnabled(active);
-    const bool musical = panel_->timelineDomain() == TimelineDomain::Musical;
-    for (auto* action : {secondsAction_, measureBeatsAction_,
-                         secondsWithMeasureBeatsAction_, measureBeatsWithSecondsAction_}) {
-        const auto mode = static_cast<TimelineEditorPanel::AxisMode>(action->data().toInt());
-        action->setChecked(mode == panel_->axisMode());
-        action->setEnabled(active && (mode == TimelineEditorPanel::AxisMode::Seconds || musical));
-    }
-    markerLane_->update();
+    setFixedHeight(timeRulerHeight());
     if (!active) {
         dragMode_ = DragMode::None;
         cursorValue_->hide();
@@ -114,27 +63,10 @@ void TimelineRuler::refresh()
     update();
 }
 
-void TimelineRuler::syncGeometry()
-{
-    const bool segment = panel_->viewKind() == TimelineEditorPanel::ViewKind::Segment;
-    const int markerHeight = segment ? ThemeManager::instance().metrics().timeAxis.handleBandHeight : 0;
-    setFixedHeight(timeRulerHeight());
-    markerLane_->setGeometry(panel_->laneHeaderWidth(), height() - markerHeight,
-        panel_->timelineViewportWidth(), markerHeight);
-    markerLane_->setVisible(segment);
-    const auto& metrics = ThemeManager::instance().metrics();
-    const int extent = metrics.iconExtent;
-    const int x = segment
-        ? panel_->laneHeaderWidth() - panel_->laneHeaderGap() - metrics.layout.controlGap - extent
-        : (panel_->laneHeaderWidth() - extent) / 2;
-    axisModeButton_->setGeometry(x, (timeRulerHeight() - extent) / 2, extent, extent);
-    axisModeButton_->setIconSize(QSize(extent, extent));
-}
-
 void TimelineRuler::resizeEvent(QResizeEvent* event)
 {
     QWidget::resizeEvent(event);
-    syncGeometry();
+    setFixedHeight(timeRulerHeight());
 }
 
 int TimelineRuler::timeRulerHeight() const
@@ -142,13 +74,8 @@ int TimelineRuler::timeRulerHeight() const
     if (!panel_->hasTimeline())
         return panel_->timelineMetrics().rulerHeight;
     const QFontMetrics metrics(FontManager::instance().getFont(FontRole::Body), this);
-    const int primaryHeight = std::max(metrics.height() + ThemeManager::instance().metrics().timeAxis.majorTickLength,
+    return std::max(metrics.height() + ThemeManager::instance().metrics().timeAxis.majorTickLength,
         ThemeManager::instance().metrics().iconExtent);
-    const int secondaryHeight = panel_->hasSecondaryAxis()
-        ? QFontMetrics(FontManager::instance().getFont(FontRole::Caption), this).height() : 0;
-    const int markerHeight = panel_->viewKind() == TimelineEditorPanel::ViewKind::Segment
-        ? ThemeManager::instance().metrics().timeAxis.handleBandHeight : 0;
-    return primaryHeight + secondaryHeight + markerHeight;
 }
 
 QRect TimelineRuler::timeAxisRect() const
@@ -188,13 +115,11 @@ void TimelineRuler::paintEvent(QPaintEvent*)
 
     const int canvasWidth = std::max(1, panel_->timelineViewportWidth());
     const auto theme = ThemeManager::instance().snapshot();
-    const bool dualAxis = panel_->hasSecondaryAxis();
-    const int labelHeight = markerLane_->isVisible() ? markerLane_->y() : rulerHeight;
     auto primaryColors = theme->ui.colors;
     primaryColors.textSecondary = primaryColors.textPrimary;
     drawTimeAxisRuler(painter, primaryColors, theme->ui.metrics.timeAxis,
-        QRect(headerWidth, 0, canvasWidth, labelHeight),
-        panel_->timeTicks(), FontRole::Body, TimeAxisLabelAlignment::AfterTick, dualAxis);
+        QRect(headerWidth, 0, canvasWidth, rulerHeight),
+        panel_->timeTicks(), FontRole::Body, TimeAxisLabelAlignment::AfterTick);
     painter.setPen(style.canvasBorder);
     painter.drawLine(0, rulerHeight - 1, width(), rulerHeight - 1);
     if (const int gap = panel_->laneHeaderGap(); gap > 0) {
@@ -374,15 +299,6 @@ void TimelineRuler::contextMenuEvent(QContextMenuEvent* event)
     if (hitsCursor(event->pos())) {
         dragMode_ = DragMode::None;
         panel_->showCursorContextMenu(event->globalPos());
-        event->accept();
-        return;
-    }
-    if (markerLane_->isVisible() && timeAxisRect().contains(event->pos())) {
-        QMenu* menu = markerLane_->createContextMenu(
-            QPoint(event->pos().x() - panel_->laneHeaderWidth(), 0));
-        if (!menu->isEmpty())
-            menu->exec(event->globalPos());
-        menu->deleteLater();
         event->accept();
         return;
     }

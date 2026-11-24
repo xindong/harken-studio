@@ -23,7 +23,6 @@
 | C06 | 配置 | Variable Inspector / Labels | 序号为真实索引；移动后名称与身份进入原索引位置，范围外条目不参与 |
 | C07 | 配置 | Sound、Container、Layer、Track、Segment、Bus / Send | 混入目标 Bus 的发送增益 |
 | C08 | 配置 | External Editor / Binding | 仅编辑本地贡献 |
-| C09 | 配置 | Container Selection Editor / Transition | # / Source / Exit / Fade Out / Target / Entry / Fade In；按匹配具体程度排序，默认规则最后 |
 | C12 | 配置 | Conversion Editor / Configuration | # / Original size range / Target sample rate / Target format / Target quality。表上方的文件大小分段条与行号从 1 开始对应，规则按原始文件大小从 `0 B` 到 `Inf` 排列 |
 | C13 | 配置 | Sound、Container、Layer、Track、Segment、Bus / Effects | Basic > Effect；# / Effect / Active；本地效果器链配置 |
 | C14 | 配置 | Sound、Container、Layer、Track、Segment、Bus / Sidechain | 辅助信号路由与目标 Ducking 开关 |

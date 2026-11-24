@@ -30,8 +30,6 @@ struct TimeAxisTick
     int pixel = 0;
     bool major = false;
     QString label;
-    bool beat = false;
-    QString secondaryLabel{};
     int64_t coordinate = 0;
 };
 
@@ -57,10 +55,9 @@ QColor timeAxisTickColor(const QColor& tick, bool major);
 void drawTimeAxisRuler(QPainter& painter, const ThemeColors& colors,
     const ThemeMetrics::TimeAxis& geometry,
     const QRect& bounds, const TimeAxisTicks& ticks, FontRole role = FontRole::Caption,
-    TimeAxisLabelAlignment alignment = TimeAxisLabelAlignment::Center, bool pairedLabels = false);
+    TimeAxisLabelAlignment alignment = TimeAxisLabelAlignment::Center);
 void drawTimeAxisGrid(QPainter& painter, const QColor& majorColor,
-    const QRect& bounds, const TimeAxisTicks& ticks, const QColor& minorColor = {},
-    const QColor& beatColor = {});
+    const QRect& bounds, const TimeAxisTicks& ticks, const QColor& minorColor = {});
 void drawTimeAxisHandle(QPainter& painter, const QColor& color,
     const QColor& grooveColor, const QRect& bounds);
 QRect timeAxisHandleRect(int x, int top, bool start, const ThemeMetrics::TimeAxis& geometry);

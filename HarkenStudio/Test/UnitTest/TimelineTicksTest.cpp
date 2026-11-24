@@ -1,5 +1,4 @@
 #include "Widgets/Common/TimeAxis.h"
-#include "Widgets/Timeline/TimelineTicks.h"
 #include "Core/Timeline/TimelineCoordinates.h"
 
 #include <gtest/gtest.h>
@@ -98,93 +97,4 @@ TEST(TimelineTicks, TimeLabelsPreserveResolutionAcrossZoomLevels)
     EXPECT_EQ(harken::studio::formatTimeMinutesSecondsMilliseconds(1707317500LL, 0), QStringLiteral("00:01.707"));
     EXPECT_EQ(harken::studio::formatTimeMinutesSecondsMilliseconds(1500000000LL, 0), QStringLiteral("00:01.5"));
     EXPECT_EQ(harken::studio::formatTimeMinutesSecondsMilliseconds(0), QStringLiteral("00:00.000"));
-}
-
-TEST(TimelineTicks, MusicalRulersKeepDistinctAlignedTicksAtIntegerLimits)
-{
-    constexpr int64_t minimum = std::numeric_limits<int64_t>::min();
-    constexpr int64_t maximum = std::numeric_limits<int64_t>::max();
-    harken::studio::ThemeMetrics::Timeline metrics;
-    metrics.minLabelSpacing = 64;
-    metrics.minTickSpacing = 8;
-    for (const auto spec : {harken::studio::SegmentTimeSpec::musical(),
-        harken::studio::SegmentTimeSpec::musical(500000, 7, 8),
-        harken::studio::SegmentTimeSpec::musical(500000, 3, 32),
-        harken::studio::SegmentTimeSpec::musical(500000, 1, 3840)}) {
-        const int64_t unit = harken::studio::timelineCoordinateUnit(spec);
-        for (const int64_t origin : {minimum, maximum - 1000}) {
-            const auto ticks = harken::studio::buildTimelineTicks(spec, origin, 0,
-                double(unit) * 1600.0 / 1000.0, 1601, metrics, 0);
-            ASSERT_GT(ticks.ticks.size(), 1);
-            std::optional<int64_t> previous;
-            QSet<QString> labels;
-            for (const auto& tick : ticks.ticks) {
-                if (previous) EXPECT_GT(tick.coordinate, *previous);
-                EXPECT_EQ(tick.coordinate % ticks.minorStep, 0);
-                EXPECT_LE(harken::studio::NanosecondPosition{origin}.distanceTo(tick.coordinate), 1001.0);
-                EXPECT_GE(harken::studio::NanosecondPosition{origin}.distanceTo(tick.coordinate),
-                    -double(ticks.minorStep));
-                if (tick.labeled) {
-                    EXPECT_FALSE(labels.contains(tick.label));
-                    labels.insert(tick.label);
-                }
-                previous = tick.coordinate;
-            }
-        }
-        const auto full = harken::studio::buildTimelineTicks(spec, minimum, 0,
-            double(unit) * 1600.0 / harken::studio::NanosecondPosition{minimum}.distanceTo(maximum),
-            1601, metrics, 0);
-        EXPECT_FALSE(full.ticks.isEmpty());
-        EXPECT_LE(full.ticks.size(), 1601);
-    }
-    EXPECT_EQ(harken::studio::formatTimelineBar(maximum, harken::studio::SegmentTimeSpec::musical(500000, 1, 3840)),
-        QString::number(qulonglong(maximum) + 1));
-}
-
-TEST(TimelineTicks, MusicalGridPreservesMeterHierarchyAcrossZoomLevels)
-{
-    harken::studio::ThemeMetrics::Timeline metrics;
-    metrics.minLabelSpacing = 64;
-    metrics.minTickSpacing = 8;
-    for (const auto spec : {harken::studio::SegmentTimeSpec::musical(),
-        harken::studio::SegmentTimeSpec::musical(500000, 3, 4),
-        harken::studio::SegmentTimeSpec::musical(487805, 5, 8),
-        harken::studio::SegmentTimeSpec::musical(487805, 7, 8),
-        harken::studio::SegmentTimeSpec::musical(750000, 9, 16),
-        harken::studio::SegmentTimeSpec::musical(500000, 1, 32),
-        harken::studio::SegmentTimeSpec::musical(500000, 3, 32),
-        harken::studio::SegmentTimeSpec::musical(500000, 7, 32),
-        harken::studio::SegmentTimeSpec::musical(500000, 1, 3840)}) {
-        const int64_t beat = harken::studio::timelineCoordinateUnit(spec);
-        const int64_t bar = beat * spec.meterMap.front().numerator;
-        for (int exponent = -10; exponent <= 10; ++exponent) {
-            SCOPED_TRACE(::testing::Message() << spec.meterMap.front().numerator
-                << '/' << spec.meterMap.front().denominator << " zoom exponent " << exponent);
-            for (const int64_t origin : {-3 * bar - beat / 2, int64_t(0), 5 * bar + beat / 2}) {
-                const auto ticks = harken::studio::buildTimelineTicks(spec, origin, 0,
-                    std::ldexp(1.0, exponent), 1024, metrics, 0);
-                ASSERT_FALSE(ticks.ticks.isEmpty());
-                ASSERT_GE(ticks.minorStep, harken::studio::TimelineCoordinates::kPpq / 4);
-                int64_t ratio;
-                if (ticks.minorStep <= beat) {
-                    EXPECT_EQ(beat % ticks.minorStep, 0);
-                    ratio = beat / ticks.minorStep;
-                } else {
-                    EXPECT_EQ(ticks.minorStep % bar, 0);
-                    ratio = ticks.minorStep / bar;
-                }
-                EXPECT_GT(ratio, 0);
-                EXPECT_EQ(ratio & (ratio - 1), 0);
-                std::optional<int64_t> previous;
-                for (const auto& tick : ticks.ticks) {
-                    if (previous) EXPECT_EQ(tick.coordinate - *previous, ticks.minorStep);
-                    EXPECT_EQ(tick.beat, tick.coordinate % beat == 0);
-                    EXPECT_EQ(tick.major, tick.coordinate % bar == 0);
-                    EXPECT_FALSE(tick.major && !tick.beat);
-                    if (tick.labeled) EXPECT_EQ(tick.coordinate % ticks.majorStep, 0);
-                    previous = tick.coordinate;
-                }
-            }
-        }
-    }
 }

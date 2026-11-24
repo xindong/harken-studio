@@ -277,6 +277,20 @@ void discardRetiredActionTiming(QJsonObject* owner, const QString& key, const QJ
     owner->insert(key, steps);
 }
 
+bool discardRetiredSegmentFields(QJsonObject* timeline, const QJsonObject& content, QString* error)
+{
+    const auto time = timeline->take(QStringLiteral("segmentTime")).toObject();
+    if (time.value(QStringLiteral("domain")).toString() == QStringLiteral("Musical")) {
+        if (error)
+            *error = QStringLiteral("Segment '%1' uses musical time, which this version does not support")
+                .arg(content.value(QStringLiteral("name")).toString());
+        return false;
+    }
+    if (!timeline->take(QStringLiteral("markers")).toArray().isEmpty())
+        warnDiscarded(content, "markers");
+    return true;
+}
+
 }
 
 void ProjectDocument::discardRetiredMakeUpGain(QJsonObject* properties)
@@ -384,6 +398,7 @@ bool ProjectDocument::normalizeContent(QJsonObject* content, QString* error)
             auto timeline = components.value(QStringLiteral("segmenttimeline")).toObject();
             if (!moveField(timeline, QStringLiteral("pieceTime"),
                             QStringLiteral("segmentTime"))) return false;
+            if (!discardRetiredSegmentFields(&timeline, *content, error)) return false;
             components.insert(QStringLiteral("segmenttimeline"), timeline);
         }
         content->insert(QStringLiteral("components"), components);

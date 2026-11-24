@@ -7,7 +7,7 @@
 | 可配置命令 | 13 | File 2、Edit 8、Audition 2、Tools 1 |
 | 有默认键的命令 | 11 | Reset Container、Audio Settings 默认无键 |
 | 已接入操作的命令 | 12 / 13 | Audio Settings 暂无操作入口 |
-| 固定操作键 | 3 | Transition Delete、Timeline Home／End；不随偏好设置重绑 |
+| 固定操作键 | 2 | Timeline Home／End；不随偏好设置重绑 |
 
 表注：不统计文本控件内建编辑、焦点导航、菜单助记键、操作系统及第三方控件快捷键，也不统计鼠标修饰键。编辑确认与取消键单列。
 
@@ -53,7 +53,7 @@
 |---|---|
 | 对象树 | 焦点所在 Explorer／Hierarchy 的本地选区；不合并其他树选区，未绑定可配置 Select All |
 | 曲线 | 曲线点；删除与剪切仍受可编辑点限制，粘贴受数据与点数限制 |
-| 曲线预设 | Attenuation、Binding、Mixing、Transition 与 Source Fade 共用七种 SVG 图标与名称预设，上升段顺序为 S-Curve、Cubic Ease-Out、Quadratic Ease-Out、Linear、Quadratic Ease-In、Cubic Ease-In、Inverse S-Curve，由公共 QMenu 样式统一勾选列、图标列、文字、边距和状态着色；仅修改所选点与右侧下一点之间的曲线，最右点没有右邻段时不可应用；下降段沿时间方向镜像图标与曲线，Ease-In / Ease-Out 名称随实际进度函数对调 |
+| 曲线预设 | Attenuation、Binding、Mixing 与 Source Fade 共用七种 SVG 图标与名称预设，上升段顺序为 S-Curve、Cubic Ease-Out、Quadratic Ease-Out、Linear、Quadratic Ease-In、Cubic Ease-In、Inverse S-Curve，由公共 QMenu 样式统一勾选列、图标列、文字、边距和状态着色；仅修改所选点与右侧下一点之间的曲线，最右点没有右邻段时不可应用；下降段沿时间方向镜像图标与曲线，Ease-In / Ease-Out 名称随实际进度函数对调 |
 | Timeline | 按焦点删除所选标记或本地多选片段；普通单击片段不切换全局对象或试听目标 |
 | Play/Stop：焦点在 File Viewer | 切换源文件试听，始终播放原音频；处理失败也不转向对象试听 |
 | Play/Stop：其他焦点 | 存在非原始文件试听时停止；否则播放当前试听目标 |
@@ -72,7 +72,6 @@
 
 | 界面／场景 | 按键 | 当前行为 |
 |---|---|---|
-| Selection Editor / Transition | Delete | 删除所选规则；默认规则等限制仍生效 |
 | Timeline，编辑游标可见 | Home | 游标移至视图起点 |
 | Timeline，编辑游标可见 | End | 游标移至最末片段结束处，不早于视图起点 |
 

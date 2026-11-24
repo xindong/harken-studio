@@ -65,7 +65,6 @@
 #include "SoundSourceEditing.h"
 #include "SoundSourceSemantics.h"
 #include "Components/VTrack.h"
-#include "Components/VSegment.h"
 #include "Timeline/TimelineCoordinates.h"
 #include "Timeline/TimelineEditing.h"
 #include "ActionStepUtils.h"
@@ -2829,15 +2828,6 @@ ProjectItem* ProjectManager::createItemImpl(ProjectItem* parent, const QString& 
         conversion->config = ConversionDefaults::newPreset();
     if (auto* variable = newItem->comp<VVariable>())
         VariableSemantics::initializeNewVariable(*variable, variableKind);
-    if (auto* segment = newItem->comp<VSegment>()) {
-        segment->segmentTime = SegmentTimeSpec::musical();
-        const auto end = TimelineCoordinates::fromSeconds(
-            VSegment::kDefaultDurationSeconds, segment->segmentTime);
-        segment->markers.items = {
-            {QUuid::createUuid(), MarkerKind::Entry, {}, 0},
-            {QUuid::createUuid(), MarkerKind::Exit, {}, end.value}
-        };
-    }
     if (initialClip) {
         auto* timeline = newItem->comp<VTrack>();
         if (!timeline) return nullptr;
@@ -3893,8 +3883,7 @@ bool ProjectManager::ensureTrackChildClip(ProjectItem* track, ProjectItem* child
     if (!timeline || std::any_of(timeline->clips.items.begin(), timeline->clips.items.end(),
             [child](const Clip& clip) { return clip.targetGuid == child->guid; }))
         return true;
-    const auto duration = TimelineCoordinates::fromSeconds(
-        1.0, TimelineEditing::timeSpecForTrackParent(track->parent));
+    const auto duration = TimelineCoordinates::fromSeconds(1.0);
     if (!duration) {
         emit errorOccurred(duration.validation.message);
         return false;
@@ -4261,10 +4250,6 @@ std::shared_ptr<ProjectItem> ProjectManager::cloneSubtreeDetached(
                 if (target != guidMap.cend()) clip.targetGuid = target.value();
             }
         }
-        if (auto* timeline = node->comp<VSegment>())
-            for (Marker& marker : timeline->markers.items) {
-                marker.markerGuid = QUuid::createUuid();
-            }
         for (auto& child : node->children)
             remintInternalEntities(child.get());
     };

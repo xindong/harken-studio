@@ -103,8 +103,7 @@ void drawGrid(QPainter& painter,
         const QColor& uniform = style.uniformTimeAxisGrid;
         drawTimeAxisGrid(painter, uniform.isValid() ? uniform : style.curve.colors.grid,
             data.viewport, data.timeAxis,
-            uniform.isValid() ? uniform : withOpacity(style.curve.colors.grid, 0.5),
-            uniform.isValid() ? uniform : withOpacity(style.curve.colors.grid, 0.75));
+            uniform.isValid() ? uniform : withOpacity(style.curve.colors.grid, 0.5));
         painter.save();
         painter.setRenderHint(QPainter::Antialiasing, false);
         painter.setPen(style.curve.colors.grid);
@@ -307,98 +306,6 @@ void drawCrossfades(QPainter& painter,
     }
 }
 
-QColor markerColor(const TimelineStyleView& style, const TimelineMarker& marker)
-{
-    if (marker.color.isValid())
-        return marker.color;
-    switch (marker.kind) {
-    case MarkerKind::Entry:
-        return style.timeline.entry;
-    case MarkerKind::Exit:
-        return style.timeline.exit;
-    case MarkerKind::Custom:
-        return style.timeline.transition;
-    }
-    return style.timeline.transition;
-}
-
-void drawMarkerHandle(QPainter& painter, const TimelineMarker& marker, const QColor& color,
-                      const QColor& grooveColor, const ThemeMetrics& metrics)
-{
-    const int x = marker.x;
-    const int h = std::min(marker.height, metrics.timeAxis.handleBandHeight);
-    QPolygon flag;
-    switch (marker.shape) {
-    case TimelineMarkerShape::EntryHandle:
-    case TimelineMarkerShape::ExitHandle:
-        drawTimeAxisHandle(painter, color, grooveColor,
-            TimelineRenderer::markerHandleRect(x, marker.height, marker.shape, metrics.timeAxis));
-        return;
-    case TimelineMarkerShape::Diamond:
-        flag << QPoint(x, 1) << QPoint(x + metrics.timeAxis.handleWidth / 2, h / 2)
-             << QPoint(x, h - 1) << QPoint(x - metrics.timeAxis.handleWidth / 2, h / 2);
-        break;
-    case TimelineMarkerShape::Line:
-        break;
-    }
-    if (flag.isEmpty())
-        return;
-    if (marker.selected) {
-        painter.setPen(QPen(withOpacity(color, 80 / 255.0), 6));
-        painter.setBrush(Qt::NoBrush);
-        painter.drawPolygon(flag);
-        painter.setPen(QPen(color, 2));
-        painter.setBrush(color);
-    } else {
-        painter.setPen(Qt::NoPen);
-        painter.setBrush(withOpacity(color, 220 / 255.0));
-    }
-    painter.drawPolygon(flag);
-}
-
-void drawMarker(QPainter& painter, const TimelineMarker& marker, const QColor& color,
-                const QColor& grooveColor, const QColor& stateOverlay, const ThemeMetrics& metrics)
-{
-    painter.save();
-    const QColor handleColor = marker.selected || marker.hovered
-        ? themeStateColor(color, stateOverlay, ThemeStateLayer::Highlight) : color;
-    painter.setRenderHint(QPainter::Antialiasing, false);
-    if (marker.kind == MarkerKind::Entry || marker.kind == MarkerKind::Exit) {
-        painter.setPen(QPen(handleColor, marker.selected || marker.hovered ? 2 : 1));
-        painter.drawLine(marker.x, 0, marker.x, marker.height - 1);
-    } else {
-        const int lineAlpha = marker.shape == TimelineMarkerShape::Line
-            ? (marker.selected ? 160 : 90)
-            : (marker.selected ? 255 : 180);
-        painter.setPen(QPen(withOpacity(color, lineAlpha / 255.0), 2));
-        painter.drawLine(marker.x, 1, marker.x, marker.height - 2);
-    }
-    painter.setRenderHint(QPainter::Antialiasing, marker.shape == TimelineMarkerShape::Diamond);
-    drawMarkerHandle(painter, marker, handleColor, grooveColor, metrics);
-    const int labelWidth = marker.labelMaxWidth;
-    if (!marker.label.isEmpty() && labelWidth >= metrics.timeAxis.handleWidth * 2) {
-        painter.setFont(FontManager::instance().getFont(FontRole::Caption));
-        painter.setPen(color);
-        const QFontMetrics fontMetrics(painter.font());
-        const QString elided = fontMetrics.elidedText(marker.label, Qt::ElideRight, labelWidth);
-        const bool leftLabel = marker.shape == TimelineMarkerShape::ExitHandle;
-        const int inset = metrics.timeAxis.handleWidth + metrics.timeAxis.labelPadding;
-        const int labelX = leftLabel ? marker.x - labelWidth - inset : marker.x + inset;
-        painter.drawText(QRect(labelX, 0, labelWidth, marker.height),
-                         Qt::AlignVCenter | (leftLabel ? Qt::AlignRight : Qt::AlignLeft), elided);
-    }
-    painter.restore();
-}
-
-void drawMarkers(QPainter& painter,
-              const TimelineStyleView& style,
-              const TimelineRenderData& data)
-{
-    for (const TimelineMarker& marker : data.markers)
-        drawMarker(painter, marker, markerColor(style, marker), style.canvasBackground, style.textPrimary,
-                   style.metrics);
-}
-
 void drawPlaceholder(QPainter& painter,
                      const TimelineStyleView& style,
                      const TimelineRenderData& data)
@@ -463,16 +370,6 @@ int TimelineRenderer::clipTitleHeight(const ThemeMetrics& metrics)
         + metrics.table.cellPaddingY * 2;
 }
 
-QRect TimelineRenderer::markerHandleRect(int x, int height, TimelineMarkerShape shape,
-                                          const ThemeMetrics::TimeAxis& geometry)
-{
-    if (shape != TimelineMarkerShape::EntryHandle && shape != TimelineMarkerShape::ExitHandle)
-        return {};
-    QRect bounds = timeAxisHandleRect(x, 0, shape == TimelineMarkerShape::EntryHandle, geometry);
-    bounds.setHeight(std::min(height, bounds.height()));
-    return bounds;
-}
-
 void TimelineRenderer::render(QPainter& painter,
                               const TimelineStyleView& style,
                               const TimelineRenderData& data)
@@ -500,7 +397,6 @@ void TimelineRenderer::render(QPainter& painter,
     if (data.bottomBorder && !data.viewport.isEmpty())
         painter.fillRect(QRect(data.viewport.left(), data.viewport.bottom(), data.viewport.width(), 1),
             style.canvasBorder);
-    drawMarkers(painter, style, data);
     if (data.nominalBar.visible)
         painter.fillRect(data.nominalBar.rect, style.timeline.entry);
     if (data.editCursor.visible)
@@ -543,49 +439,6 @@ QVector<AmplitudeAxisTick> TimelineRenderer::amplitudeTicks(
             tick.label.clear();
     }
     return ticks;
-}
-
-void TimelineRenderer::drawTickSet(QPainter& painter,
-                                   const TimelineStyleView& style,
-                                   const TimelineTickSet& ticks,
-                                   int originX,
-                                   int height,
-                                   int leftBound,
-                                   int rightBound,
-                                   int labelTop,
-                                   int labelHeight)
-{
-    painter.save();
-    painter.setFont(FontManager::instance().getFont(FontRole::Caption));
-    for (const TimelineTick& tick : ticks.ticks) {
-        const int x = originX + tick.pixel;
-        if (x < leftBound || x >= rightBound)
-            continue;
-        painter.setPen(timeAxisTickColor(style.axisTick, tick.major));
-        const int length = tick.major ? style.metrics.timeAxis.majorTickLength
-                                       : style.metrics.timeAxis.minorTickLength;
-        painter.drawLine(x, height - length, x, height);
-        if (!tick.labeled)
-            continue;
-        painter.setPen(style.axisText);
-        painter.drawText(QRect(x + style.metrics.timeAxis.labelPadding, labelTop,
-                              painter.fontMetrics().horizontalAdvance(tick.label), labelHeight),
-                         Qt::AlignVCenter | Qt::AlignLeft, tick.label);
-    }
-    painter.restore();
-}
-
-void TimelineRenderer::drawMarker(QPainter& painter, int x, int height,
-                               const QString& label, const QColor& color)
-{
-    TimelineRenderData data;
-    TimelineMarker marker;
-    marker.x = x;
-    marker.height = height;
-    marker.label = label;
-    marker.color = color;
-    data.markers.append(marker);
-    render(painter, TimelineStyleView{}, data);
 }
 
 void TimelineRenderer::drawClip(QPainter& painter, const QRect& area,

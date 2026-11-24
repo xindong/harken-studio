@@ -1,7 +1,6 @@
 #include "Widgets/Timeline/TimelineEditorPanel.h"
 #include "Widgets/Timeline/TimelineCanvas.h"
 #include "Widgets/Timeline/TimelineRuler.h"
-#include "Widgets/Timeline/TimelineClipCanvas.h"
 
 #include "ActionManager.h"
 #include "Components/VTrack.h"
@@ -80,8 +79,6 @@ protected:
 
         auto* owner = manager.createItem(nullptr, QStringLiteral("TrackSegment"), harken::studio::ProjectItem::Type::Segment);
         ASSERT_NE(owner, nullptr);
-        owner->comp<harken::studio::VSegment>()->segmentTime = {};
-        owner->comp<harken::studio::VSegment>()->markers = {};
         track_ = manager.createItem(owner, QStringLiteral("Track"),
                                     harken::studio::ProjectItem::Type::Track);
         segment_ = manager.createItem(nullptr, QStringLiteral("Segment"),
@@ -91,8 +88,6 @@ protected:
         ASSERT_NE(track_, nullptr);
         ASSERT_NE(segment_, nullptr);
         ASSERT_NE(sound_, nullptr);
-        segment_->comp<harken::studio::VSegment>()->segmentTime = {};
-        segment_->comp<harken::studio::VSegment>()->markers = {};
         track_->comp<harken::studio::VTrack>()->clips = {};
         harken::studio::UndoRedoManager::instance().clear();
     }
@@ -433,418 +428,66 @@ TEST_F(TimelineEditorPanelTest, BatchCommitFailureRollsBackWithoutUndoStep)
     EXPECT_EQ(harken::studio::UndoRedoManager::instance().undoStack()->count(), undoCount);
 }
 
-TEST_F(TimelineEditorPanelTest, ClockChangesPreserveCoordinateMeaningAndViewportHistory)
-{
-    auto& undo = harken::studio::UndoRedoManager::instance();
-    track_->parent->comp<harken::studio::VSegment>()->markers.items.push_back(
-        {QUuid::createUuid(), harken::studio::MarkerKind::Custom, QStringLiteral("Point"), 2000000000LL});
-    harken::studio::TimelineEditorPanel panel;
-    panel.resize(900, 360);
-    panel.bindItem(track_);
-    panel.show();
-    ASSERT_TRUE(panel.placeItem(sound_, 0, 1000000000LL, true));
-    panel.setEditCursor(3000000000LL, true);
-    drainEvents();
-    const auto absolute = panel.effectiveTimeSpec(0);
-    const auto absoluteState = panel.snapshotState();
-    const int64_t start = panel.clipStart(0, 0);
-    const int64_t duration = panel.clipDuration(0, 0);
-    const int64_t marker = panel.markerPosition(0);
-    const int64_t cursor = panel.editCursor();
-    undo.clear();
-
-    ASSERT_TRUE(panel.setTimelineDomain(harken::studio::TimelineDomain::Musical));
-    drainEvents();
-    const auto musical = panel.effectiveTimeSpec(0);
-    const auto toAbsolute = [&](int64_t coordinate) {
-        const auto converted = harken::studio::TimelineCoordinates::convert(coordinate, musical, absolute);
-        EXPECT_TRUE(converted.ok());
-        return converted.value;
-    };
-    EXPECT_EQ(toAbsolute(panel.clipStart(0, 0)), start);
-    EXPECT_EQ(toAbsolute(panel.clipDuration(0, 0)), duration);
-    EXPECT_EQ(toAbsolute(panel.markerPosition(0)), marker);
-    EXPECT_EQ(toAbsolute(panel.editCursor()), cursor);
-    ASSERT_FALSE(panel.timeTicks().ticks.isEmpty());
-    const int64_t cursorTick = panel.editCursor();
-    EXPECT_EQ(panel.coordinateAtViewportPixel(0,
-        panel.viewportPositionAtCoordinate(0, cursorTick)), cursorTick);
-    panel.setZoomPercent(400.0);
-    panel.panHorizontally(100.0);
-    const auto musicalState = panel.snapshotState();
-    const auto left = panel.coordinateAtViewportPixel(0, 0);
-    panel.fitClips();
-    panel.restoreState(musicalState);
-    EXPECT_EQ(panel.coordinateAtViewportPixel(0, 0), left);
-    EXPECT_EQ(panel.editCursor(), cursorTick);
-    panel.restoreState(absoluteState);
-    EXPECT_EQ(panel.editCursor(), cursorTick);
-
-    ASSERT_TRUE(undo.undo());
-    drainEvents();
-    EXPECT_EQ(panel.timelineDomain(), harken::studio::TimelineDomain::Absolute);
-    EXPECT_EQ(panel.clipStart(0, 0), start);
-    EXPECT_EQ(panel.markerPosition(0), marker);
-    EXPECT_EQ(panel.editCursor(), cursor);
-    ASSERT_TRUE(undo.redo());
-    drainEvents();
-    EXPECT_EQ(panel.timelineDomain(), harken::studio::TimelineDomain::Musical);
-    EXPECT_EQ(panel.editCursor(), cursorTick);
-}
-
-TEST_F(TimelineEditorPanelTest, AxisPresentationPreservesAuthoredCoordinatesAndViewportState)
-{
-    auto& undo = harken::studio::UndoRedoManager::instance();
-    harken::studio::TimelineEditorPanel panel;
-    panel.resize(900, 360);
-    panel.bindItem(track_);
-    panel.show();
-    ASSERT_TRUE(panel.setTimelineDomain(harken::studio::TimelineDomain::Musical));
-    ASSERT_TRUE(panel.setTempoMicrosecondsPerQuarter(487805));
-    ASSERT_TRUE(panel.setMeter(7, 8));
-    const auto spec = panel.effectiveTimeSpec(0);
-    const auto start = harken::studio::TimelineCoordinates::fromSeconds(1.23, spec);
-    const auto end = harken::studio::TimelineCoordinates::fromSeconds(10.0, spec);
-    ASSERT_TRUE(start.ok());
-    ASSERT_TRUE(end.ok());
-    ASSERT_TRUE(panel.placeItem(sound_, 0, start.value, true));
-    ASSERT_TRUE(panel.addMarker(harken::studio::MarkerKind::Entry, 0));
-    ASSERT_TRUE(panel.addMarker(harken::studio::MarkerKind::Exit, end.value));
-    panel.setEditCursor(start.value + 137, true);
-    drainEvents();
-    panel.setZoomPercent(250.0);
-    panel.panHorizontally(137.25);
-    panel.setLaneHeight(0, 168);
-    panel.zoomVertically(0, 1.25);
-    drainEvents();
-    const auto authoredTrack = track_->comp<harken::studio::VTrack>()->toJson();
-    const auto authoredSegment = track_->parent->comp<harken::studio::VSegment>()->toJson();
-    const auto cursor = panel.editCursor();
-    const auto zoom = panel.zoomPercent();
-    const auto verticalZoom = panel.verticalZoom();
-    const auto laneHeight = panel.laneHeight(0);
-    const auto scroll = panel.horizontalScroll();
-    const auto left = panel.coordinateAtViewportPixel(0, 0.0);
-    const auto center = panel.coordinateAtViewportPixel(0, panel.timelineViewportWidth() / 2.0);
-    const auto clipPixel = panel.viewportPositionAtCoordinate(0, start.value);
-    undo.clear();
-
-    for (const auto mode : {harken::studio::TimelineEditorPanel::AxisMode::Seconds,
-                           harken::studio::TimelineEditorPanel::AxisMode::MeasureBeats,
-                           harken::studio::TimelineEditorPanel::AxisMode::SecondsWithMeasureBeats,
-                           harken::studio::TimelineEditorPanel::AxisMode::MeasureBeatsWithSeconds}) {
-        panel.setAxisMode(mode);
-        ASSERT_FALSE(panel.timeTicks().ticks.isEmpty());
-        const auto state = panel.snapshotState();
-        panel.setAxisMode(mode == harken::studio::TimelineEditorPanel::AxisMode::Seconds
-            ? harken::studio::TimelineEditorPanel::AxisMode::MeasureBeats : harken::studio::TimelineEditorPanel::AxisMode::Seconds);
-        panel.fitClips();
-        panel.zoomVertically(0, 0.5);
-        panel.setLaneHeight(0, 112);
-        panel.setEditCursor(0, true);
-        panel.restoreState(state);
-        drainEvents();
-        EXPECT_EQ(panel.axisMode(), mode);
-        EXPECT_EQ(track_->comp<harken::studio::VTrack>()->toJson(), authoredTrack);
-        EXPECT_EQ(track_->parent->comp<harken::studio::VSegment>()->toJson(), authoredSegment);
-        EXPECT_EQ(panel.editCursor(), cursor);
-        EXPECT_DOUBLE_EQ(panel.zoomPercent(), zoom);
-        EXPECT_DOUBLE_EQ(panel.verticalZoom(), verticalZoom);
-        EXPECT_EQ(panel.laneHeight(0), laneHeight);
-        EXPECT_DOUBLE_EQ(panel.horizontalScroll(), scroll);
-        EXPECT_EQ(panel.coordinateAtViewportPixel(0, 0.0), left);
-        EXPECT_EQ(panel.coordinateAtViewportPixel(0, panel.timelineViewportWidth() / 2.0), center);
-        EXPECT_DOUBLE_EQ(panel.viewportPositionAtCoordinate(0, start.value), clipPixel);
-        EXPECT_EQ(undo.undoStack()->count(), 0);
-    }
-}
-
-class TimelineDomainTest : public TimelineEditorPanelTest,
-                           public ::testing::WithParamInterface<harken::studio::TimelineDomain>
-{
-};
-
-INSTANTIATE_TEST_SUITE_P(Clocks, TimelineDomainTest,
-    ::testing::Values(harken::studio::TimelineDomain::Absolute, harken::studio::TimelineDomain::Musical),
-    [](const ::testing::TestParamInfo<harken::studio::TimelineDomain>& info) {
-        return info.param == harken::studio::TimelineDomain::Absolute ? "Absolute" : "Musical";
-    });
-
-TEST_P(TimelineDomainTest, CursorAndViewportStayWithinEditableRange)
+TEST_F(TimelineEditorPanelTest, CursorAndViewportStayWithinEditableRange)
 {
     harken::studio::TimelineEditorPanel panel;
     panel.resize(900, 360);
     panel.bindItem(track_);
     panel.show();
-    ASSERT_TRUE(panel.setTimelineDomain(GetParam()));
-    const int64_t unit = harken::studio::TimelineSemantics::coordinateUnitFor(panel.effectiveTimeSpec(0));
+    constexpr int64_t unit = harken::studio::TimelineCoordinates::kNanosecondsPerSecond;
     drainEvents();
     harken::studio::UndoRedoManager::instance().clear();
 
-    for (const auto mode : {harken::studio::TimelineEditorPanel::AxisMode::Seconds,
-                           harken::studio::TimelineEditorPanel::AxisMode::MeasureBeats,
-                           harken::studio::TimelineEditorPanel::AxisMode::SecondsWithMeasureBeats,
-                           harken::studio::TimelineEditorPanel::AxisMode::MeasureBeatsWithSeconds}) {
-        panel.setAxisMode(mode);
-        EXPECT_EQ(panel.axisMode(), GetParam() == harken::studio::TimelineDomain::Musical
-            ? mode : harken::studio::TimelineEditorPanel::AxisMode::Seconds);
-        for (const bool disableSnap : {false, true}) {
-            panel.setEditCursor(-unit, disableSnap);
-            EXPECT_EQ(panel.editCursor(), 0);
-            panel.setEditCursor(unit * 2, true);
-            panel.beginCursorDrag(panel.viewportPixelAtCoordinate(0, unit * 2), disableSnap, false);
-            panel.updateCursorDrag(-100, disableSnap);
-            EXPECT_EQ(panel.editCursor(), 0);
-            panel.endCursorDrag(true);
-            EXPECT_EQ(panel.editCursor(), unit * 2);
-        }
-        panel.setZoomPercent(200.0);
-        panel.panHorizontally(100.0);
-        panel.panHorizontally(-1000000.0);
-        EXPECT_EQ(panel.coordinateAtViewportPixel(0, 0), 0);
-        auto state = panel.snapshotState();
-        state.insert(QStringLiteral("cursor"), QString::number(-unit));
-        auto viewport = state.value(QStringLiteral("timelineViewport")).toMap();
-        viewport.insert(QStringLiteral("startCoordinate"), QString::number(-unit));
-        state.insert(QStringLiteral("timelineViewport"), viewport);
-        panel.restoreState(state);
-        drainEvents();
+    for (const bool disableSnap : {false, true}) {
+        panel.setEditCursor(-unit, disableSnap);
         EXPECT_EQ(panel.editCursor(), 0);
-        EXPECT_EQ(panel.coordinateAtViewportPixel(0, 0), 0);
-        EXPECT_EQ(harken::studio::UndoRedoManager::instance().undoStack()->count(), 0);
+        panel.setEditCursor(unit * 2, true);
+        panel.beginCursorDrag(panel.viewportPixelAtCoordinate(0, unit * 2), disableSnap, false);
+        panel.updateCursorDrag(-100, disableSnap);
+        EXPECT_EQ(panel.editCursor(), 0);
+        panel.endCursorDrag(true);
+        EXPECT_EQ(panel.editCursor(), unit * 2);
     }
-}
-
-TEST_P(TimelineDomainTest, MarkerValueEditsExtendContentAndPreserveUndo)
-{
-    auto& manager = harken::studio::ProjectManager::instance();
-    auto& undo = harken::studio::UndoRedoManager::instance();
-    auto* segment = manager.createItem(nullptr, QStringLiteral("EmptySegment"),
-        harken::studio::ProjectItem::Type::Segment);
-    ASSERT_NE(segment, nullptr);
-    harken::studio::TimelineEditorPanel panel;
-    panel.resize(900, 480);
-    panel.bindItem(segment);
-    panel.show();
-    ASSERT_TRUE(panel.setTimelineDomain(GetParam()));
+    panel.setZoomPercent(200.0);
+    panel.panHorizontally(100.0);
+    panel.panHorizontally(-1000000.0);
+    EXPECT_EQ(panel.coordinateAtViewportPixel(0, 0), 0);
+    auto state = panel.snapshotState();
+    state.insert(QStringLiteral("cursor"), QString::number(-unit));
+    auto viewport = state.value(QStringLiteral("timelineViewport")).toMap();
+    viewport.insert(QStringLiteral("startCoordinate"), QString::number(-unit));
+    state.insert(QStringLiteral("timelineViewport"), viewport);
+    panel.restoreState(state);
     drainEvents();
-    auto* timeline = segment->comp<harken::studio::VSegment>();
-    const auto before = timeline->markers;
-    const auto* entry = before.find(harken::studio::MarkerKind::Entry);
-    const auto* exit = before.find(harken::studio::MarkerKind::Exit);
-    ASSERT_NE(entry, nullptr);
-    ASSERT_NE(exit, nullptr);
-    const auto target = harken::studio::TimelineCoordinates::fromSeconds(20.0, timeline->segmentTime);
-    ASSERT_TRUE(target);
-    ASSERT_GT(target.value, exit->position);
-    const bool musical = GetParam() == harken::studio::TimelineDomain::Musical;
-    const double divisor = musical ? harken::studio::TimelineCoordinates::kPpq
-        : harken::studio::TimelineCoordinates::kNanosecondsPerSecond;
-
-    for (const double zoom : {100.0, 200.0}) {
-        SCOPED_TRACE(zoom);
-        panel.setZoomPercent(zoom);
-        panel.setHorizontalScroll(0.0);
-        undo.clear();
-        panel.editMarkerValue(exit->markerGuid);
-        auto* editor = panel.findChild<QDialog*>("timelineMarkerEditor");
-        ASSERT_NE(editor, nullptr);
-        auto* spin = editor->findChild<QDoubleSpinBox*>("timelineMarkerPositionSpin");
-        ASSERT_NE(spin, nullptr);
-        const auto maximum = musical ? harken::studio::TimelineCoordinates::beatsToTicks(spin->maximum())
-            : harken::studio::TimelineCoordinates::fromSeconds(spin->maximum(), {});
-        EXPECT_TRUE(maximum);
-        spin->setValue(double(target.value) / divisor);
-        editor->accept();
-        drainEvents();
-        EXPECT_EQ(timeline->markers.find(harken::studio::MarkerKind::Exit)->position, target.value);
-        EXPECT_EQ(*timeline->markers.find(harken::studio::MarkerKind::Entry), *entry);
-        EXPECT_TRUE(segment->children.empty());
-        EXPECT_DOUBLE_EQ(panel.zoomPercent(), zoom);
-        const int pixel = panel.viewportPixelAtCoordinate(0, target.value);
-        EXPECT_GE(pixel, 0);
-        EXPECT_LT(pixel, panel.timelineViewportWidth());
-        EXPECT_EQ(undo.undoStack()->count(), 1);
-        const auto extended = timeline->markers;
-        ASSERT_TRUE(undo.undo());
-        drainEvents();
-        EXPECT_EQ(timeline->markers, before);
-        panel.setZoomPercent(100.0);
-        EXPECT_EQ(panel.coordinateAtViewportPixel(0, panel.timelineViewportWidth() - 1), exit->position);
-        ASSERT_TRUE(undo.redo());
-        drainEvents();
-        EXPECT_EQ(timeline->markers, extended);
-        EXPECT_EQ(panel.coordinateAtViewportPixel(0, panel.timelineViewportWidth() - 1), target.value);
-        ASSERT_TRUE(undo.undo());
-        drainEvents();
-    }
-    undo.clear();
-    panel.editMarkerValue(entry->markerGuid);
-    auto* editor = panel.findChild<QDialog*>("timelineMarkerEditor");
-    ASSERT_NE(editor, nullptr);
-    auto* spin = editor->findChild<QDoubleSpinBox*>("timelineMarkerPositionSpin");
-    ASSERT_NE(spin, nullptr);
-    spin->setValue(double(target.value) / divisor);
-    EXPECT_DOUBLE_EQ(spin->value(), double(exit->position) / divisor);
-    editor->reject();
-    drainEvents();
-    EXPECT_EQ(timeline->markers, before);
-    EXPECT_EQ(undo.undoStack()->count(), 0);
-}
-
-TEST_P(TimelineDomainTest, MarkerDragPreviewCommitsOnceAndSharesViewportCoordinates)
-{
-    auto& undo = harken::studio::UndoRedoManager::instance();
-    harken::studio::TimelineEditorPanel panel;
-    panel.resize(900, 480);
-    panel.bindItem(track_);
-    panel.show();
-    ASSERT_TRUE(panel.setTimelineDomain(GetParam()));
-    if (GetParam() == harken::studio::TimelineDomain::Musical)
-        ASSERT_TRUE(panel.setMeter(7, 8));
-    const auto spec = panel.effectiveTimeSpec(0);
-    const int64_t unit = harken::studio::TimelineSemantics::coordinateUnitFor(spec);
-    ASSERT_TRUE(panel.addMarker(harken::studio::MarkerKind::Entry, unit * 2));
-    ASSERT_TRUE(panel.placeItem(sound_, 0, 0, true));
-    ASSERT_TRUE(panel.resizeClip(0, panel.clipGuid(0, 0), 0, unit * 6, true));
-    panel.setEditCursor(unit * 8, true);
-    drainEvents();
-    undo.clear();
-    auto* ruler = panel.findChild<harken::studio::TimelineMarkerRuler*>("timelineMarkerRuler");
-    auto* canvas = panel.findChild<harken::studio::TimelineCanvas*>("timelineLaneViewport");
-    ASSERT_NE(ruler, nullptr);
-    ASSERT_NE(canvas, nullptr);
-    ASSERT_TRUE(ruler->isVisible());
-    for (const auto& tick : panel.timeTicks().ticks) {
-        const auto coordinate = GetParam() == harken::studio::TimelineDomain::Musical
-            ? harken::studio::TimelineCoordinates::beatsToTicks(tick.value)
-            : harken::studio::TimelineCoordinates::fromSeconds(tick.value, {});
-        ASSERT_TRUE(coordinate.ok());
-        EXPECT_EQ(panel.snapCoordinate(0, coordinate.value, false), coordinate.value);
-    }
-    const auto before = track_->parent->comp<harken::studio::VSegment>()->markers;
-    const auto clips = track_->comp<harken::studio::VTrack>()->clips;
-    const QUuid marker = panel.markerGuid(0);
-    const int clipY = panel.laneRect(0).center().y();
-    const int blankY = canvas->height() - 16;
-    ASSERT_GT(blankY, panel.laneRect(0).bottom());
-    for (int surface = 0; surface < 3; ++surface) {
-        SCOPED_TRACE(surface);
-        undo.clear();
-        QWidget* widget = surface == 0 ? static_cast<QWidget*>(ruler) : canvas;
-        const int y = surface == 0 ? ruler->height() / 2 : surface == 1 ? clipY : blankY;
-        const QPoint from(panel.viewportPixelAtCoordinate(0, unit * 2), y);
-        const QPoint to(panel.viewportPixelAtCoordinate(0, unit * 4), y);
-        sendMouse(widget, QEvent::MouseMove, from, Qt::NoButton, Qt::NoButton);
-        EXPECT_TRUE(harken::studio::ToolTip::text().contains(QStringLiteral("Entry")));
-        EXPECT_EQ(widget->cursor().shape(), Qt::SizeHorCursor);
-        sendMouse(widget, QEvent::MouseButtonPress, from, Qt::LeftButton, Qt::LeftButton);
-        ASSERT_TRUE(panel.isMarkerDragActive());
-        ASSERT_FALSE(panel.isCursorDragActive());
-        auto* value = panel.findChild<QLabel*>("timelineMarkerValue");
-        ASSERT_NE(value, nullptr);
-        EXPECT_TRUE(value->isVisible());
-        sendMouse(widget, QEvent::MouseMove, to, Qt::NoButton, Qt::LeftButton, Qt::AltModifier);
-        ASSERT_TRUE(panel.isMarkerDragging());
-        const auto preview = panel.markerDragPreviewPosition();
-        EXPECT_EQ(preview, panel.coordinateAtViewportPixel(0, to.x()));
-        EXPECT_EQ(panel.markerDisplayPosition(0), preview);
-        EXPECT_EQ(track_->parent->comp<harken::studio::VSegment>()->markers, before);
-        EXPECT_EQ(track_->comp<harken::studio::VTrack>()->clips, clips);
-        EXPECT_EQ(undo.undoStack()->count(), 0);
-        EXPECT_TRUE(value->text().contains(QStringLiteral("Entry")));
-        sendMouse(widget, QEvent::MouseButtonRelease, to, Qt::LeftButton, Qt::NoButton, Qt::AltModifier);
-        EXPECT_FALSE(panel.isMarkerDragActive());
-        EXPECT_FALSE(value->isVisible());
-        EXPECT_EQ(panel.markerPosition(0), preview);
-        EXPECT_EQ(undo.undoStack()->count(), 1);
-        ASSERT_TRUE(undo.undo());
-        EXPECT_EQ(track_->parent->comp<harken::studio::VSegment>()->markers, before);
-        ASSERT_TRUE(undo.redo());
-        EXPECT_EQ(panel.markerPosition(0), preview);
-        ASSERT_TRUE(undo.undo());
-        undo.clear();
-
-        sendMouse(widget, QEvent::MouseButtonPress, from, Qt::LeftButton, Qt::LeftButton);
-        sendMouse(widget, QEvent::MouseMove, to, Qt::NoButton, Qt::LeftButton, Qt::AltModifier);
-        QKeyEvent cancel(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
-        QApplication::sendEvent(widget, &cancel);
-        EXPECT_FALSE(panel.isMarkerDragActive());
-        EXPECT_FALSE(value->isVisible());
-        EXPECT_EQ(panel.markerDisplayPosition(0), unit * 2);
-        EXPECT_EQ(track_->parent->comp<harken::studio::VSegment>()->markers, before);
-        EXPECT_EQ(track_->comp<harken::studio::VTrack>()->clips, clips);
-        EXPECT_EQ(undo.undoStack()->count(), 0);
-
-        sendMouse(widget, QEvent::MouseButtonDblClick, from, Qt::LeftButton, Qt::LeftButton);
-        auto* editor = panel.findChild<QDialog*>("timelineMarkerEditor");
-        ASSERT_NE(editor, nullptr);
-        auto* spin = editor->findChild<QDoubleSpinBox*>("timelineMarkerPositionSpin");
-        ASSERT_NE(spin, nullptr);
-        const double divisor = GetParam() == harken::studio::TimelineDomain::Musical
-            ? harken::studio::TimelineCoordinates::kPpq : harken::studio::TimelineCoordinates::kNanosecondsPerSecond;
-        spin->setValue(double(unit * 3) / divisor);
-        editor->accept();
-        drainEvents();
-        EXPECT_EQ(panel.markerPosition(0), unit * 3);
-        EXPECT_EQ(undo.undoStack()->count(), 1);
-        ASSERT_TRUE(undo.undo());
-        EXPECT_EQ(track_->parent->comp<harken::studio::VSegment>()->markers, before);
-    }
-    undo.clear();
-    ASSERT_TRUE(panel.moveMarker(marker, 0, true));
-    undo.clear();
-    panel.setEditCursor(0, true);
-    const QPoint overlap(panel.viewportPixelAtCoordinate(0, 0), clipY);
-    sendMouse(canvas, QEvent::MouseButtonPress, overlap, Qt::LeftButton, Qt::LeftButton);
-    EXPECT_TRUE(panel.isCursorDragActive());
-    EXPECT_FALSE(panel.isMarkerDragActive());
-    QKeyEvent cancelCursor(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
-    QApplication::sendEvent(canvas, &cancelCursor);
-    const QPoint entryGrip(panel.viewportPixelAtCoordinate(0, 0) + 9, 4);
-    sendMouse(ruler, QEvent::MouseButtonPress, entryGrip, Qt::LeftButton, Qt::LeftButton);
-    EXPECT_TRUE(panel.isMarkerDragActive());
-    EXPECT_FALSE(panel.isCursorDragActive());
-    QKeyEvent cancelMarker(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
-    QApplication::sendEvent(ruler, &cancelMarker);
-    EXPECT_FALSE(panel.isMarkerDragActive());
     EXPECT_EQ(panel.editCursor(), 0);
-    EXPECT_EQ(panel.markerPosition(0), 0);
-    EXPECT_EQ(track_->comp<harken::studio::VTrack>()->clips, clips);
-    EXPECT_EQ(undo.undoStack()->count(), 0);
-    harken::studio::ToolTip::hideText();
+    EXPECT_EQ(panel.coordinateAtViewportPixel(0, 0), 0);
+    EXPECT_EQ(harken::studio::UndoRedoManager::instance().undoStack()->count(), 0);
 }
 
-TEST_P(TimelineDomainTest, CursorLineInteractionsShareStateAcrossSurfaces)
+TEST_F(TimelineEditorPanelTest, CursorLineInteractionsShareStateAcrossSurfaces)
 {
     auto& undo = harken::studio::UndoRedoManager::instance();
     harken::studio::TimelineEditorPanel panel;
     panel.resize(900, 480);
     panel.bindItem(track_);
     panel.show();
-    ASSERT_TRUE(panel.setTimelineDomain(GetParam()));
-    const int64_t unit = harken::studio::TimelineSemantics::coordinateUnitFor(panel.effectiveTimeSpec(0));
+    constexpr int64_t unit = harken::studio::TimelineCoordinates::kNanosecondsPerSecond;
     ASSERT_TRUE(panel.placeItem(sound_, 0, 0, true));
     ASSERT_TRUE(panel.resizeClip(0, panel.clipGuid(0, 0), 0, unit * 6, true));
-    ASSERT_TRUE(panel.addMarker(harken::studio::MarkerKind::Entry, unit * 2));
     drainEvents();
     undo.clear();
     const auto authored = track_->comp<harken::studio::VTrack>()->clips;
-    const auto markers = track_->parent->comp<harken::studio::VSegment>()->markers;
     auto* ruler = panel.findChild<harken::studio::TimelineRuler*>("timelineRuler");
-    auto* band = panel.findChild<harken::studio::TimelineMarkerRuler*>("timelineMarkerRuler");
     auto* canvas = panel.findChild<harken::studio::TimelineCanvas*>("timelineLaneViewport");
     ASSERT_NE(ruler, nullptr);
-    ASSERT_NE(band, nullptr);
     ASSERT_NE(canvas, nullptr);
-    for (int surface = 0; surface < 4; ++surface) {
+    for (int surface = 0; surface < 3; ++surface) {
         SCOPED_TRACE(surface);
         panel.setEditCursor(unit * 4, true);
-        QWidget* widget = surface == 0 ? static_cast<QWidget*>(ruler)
-            : surface == 1 ? static_cast<QWidget*>(band) : canvas;
+        QWidget* widget = surface == 0 ? static_cast<QWidget*>(ruler) : canvas;
         const int offset = surface == 0 ? panel.laneHeaderWidth() : 0;
-        const int y = surface == 0 ? band->y() - 3 : surface == 1 ? band->height() / 2
-            : surface == 2 ? panel.laneRect(0).center().y() : canvas->height() - 16;
+        const int y = surface == 0 ? ruler->height() / 2
+            : surface == 1 ? panel.laneRect(0).center().y() : canvas->height() - 16;
         const QPoint from(offset + panel.viewportPixelAtCoordinate(0, unit * 4), y);
         const QPoint to(offset + panel.viewportPixelAtCoordinate(0, unit * 5), y);
         sendMouse(widget, QEvent::MouseMove, from, Qt::NoButton, Qt::NoButton);
@@ -853,7 +496,6 @@ TEST_P(TimelineDomainTest, CursorLineInteractionsShareStateAcrossSurfaces)
         EXPECT_EQ(widget->cursor().shape(), Qt::SizeHorCursor);
         sendMouse(widget, QEvent::MouseButtonPress, from, Qt::LeftButton, Qt::LeftButton);
         ASSERT_TRUE(panel.isCursorDragActive());
-        EXPECT_FALSE(panel.isMarkerDragActive());
         auto* value = panel.findChild<QLabel*>("timelineCursorValue");
         ASSERT_NE(value, nullptr);
         EXPECT_TRUE(value->isVisible());
@@ -866,7 +508,6 @@ TEST_P(TimelineDomainTest, CursorLineInteractionsShareStateAcrossSurfaces)
         EXPECT_FALSE(value->isVisible());
         EXPECT_EQ(panel.editCursor(), unit * 4);
         EXPECT_EQ(track_->comp<harken::studio::VTrack>()->clips, authored);
-        EXPECT_EQ(track_->parent->comp<harken::studio::VSegment>()->markers, markers);
         EXPECT_EQ(undo.undoStack()->count(), 0);
 
         sendMouse(widget, QEvent::MouseButtonDblClick, from, Qt::LeftButton, Qt::LeftButton);
@@ -874,9 +515,7 @@ TEST_P(TimelineDomainTest, CursorLineInteractionsShareStateAcrossSurfaces)
         ASSERT_NE(editor, nullptr);
         auto* spin = editor->findChild<QDoubleSpinBox*>("timelineCursorValueInput");
         ASSERT_NE(spin, nullptr);
-        const double divisor = GetParam() == harken::studio::TimelineDomain::Musical
-            ? harken::studio::TimelineCoordinates::kPpq : harken::studio::TimelineCoordinates::kNanosecondsPerSecond;
-        spin->setValue(double(unit * 5) / divisor);
+        spin->setValue(5.0);
         editor->accept();
         drainEvents();
         EXPECT_EQ(panel.editCursor(), unit * 5);
