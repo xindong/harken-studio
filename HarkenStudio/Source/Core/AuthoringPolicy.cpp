@@ -66,14 +66,6 @@ TimelineValidation validateDependencies(const ProjectItem& item,
                 const auto target = reference(step.targetObjectID, step.targetName,
                                               step.type, QStringLiteral("target"));
                 if (!target) return target;
-                const auto* catalogEntry =
-                    EditorUtils::actionStepCatalogEntry(step.type);
-                if (catalogEntry && catalogEntry->supportsQuantize) {
-                    const auto timing = reference(step.quantize.referenceObjectID,
-                        step.quantize.referenceName, VActionStep::Type::Play,
-                        QStringLiteral("timing reference"));
-                    if (!timing) return timing;
-                }
             }
         }
         for (const auto& child : current->children)

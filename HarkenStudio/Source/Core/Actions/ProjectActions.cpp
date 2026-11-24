@@ -485,30 +485,6 @@ ActionResult handleStepsItemProperty(ProjectManager* projectManager, ProjectItem
                 }
             }
 
-            const auto* catalogEntry =
-                harken::studio::EditorUtils::actionStepCatalogEntry(step.type);
-            const bool supportsQuantize =
-                catalogEntry && catalogEntry->supportsQuantize;
-            const harken::studio::EditorUtils::ActionTargetRecord* resolvedReference = nullptr;
-            if (supportsQuantize && step.quantize.referenceObjectID != 0) {
-                const harken::studio::EditorUtils::ActionTargetRecord* reference =
-                    lookup.findByObjectID(step.quantize.referenceObjectID);
-                if (reference && !ItemTypeCatalog::isContentObject(reference->type)) {
-                    return {false, {}, "INVALID_TARGET",
-                            QStringLiteral("Action step %1 quantize reference '%2' is not a content object")
-                                .arg(index).arg(reference->name)};
-                }
-                resolvedReference = reference;
-            } else if (supportsQuantize && !step.quantize.referenceName.isEmpty()) {
-                const auto reference = harken::studio::EditorUtils::resolveActionStepTarget(
-                    VActionStep::Type::Play, 0, step.quantize.referenceName, lookup);
-                if (reference.state == harken::studio::EditorUtils::ActionTargetState::Resolved)
-                    resolvedReference = lookup.findByObjectID(reference.objectID);
-            }
-            if (resolvedReference) {
-                step.quantize.referenceObjectID = resolvedReference->objectID;
-                step.quantize.referenceName = resolvedReference->name;
-            }
             authoredSteps->steps.push_back(step);
         }
         const QString cycle = harken::studio::EditorUtils::postActionCycleError(

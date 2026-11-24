@@ -105,13 +105,7 @@ inline QJsonObject setItemPropertySchema()
                         {QStringLiteral("fadeTime"), QJsonObject{{"type", "number"}, {"description", "Stop fade time in milliseconds."}}},
                         {QStringLiteral("value"), QJsonObject{{"type", "number"}, {"description", "SetVariable value."}}},
                         {QStringLiteral("scope"), QJsonObject{{"enum", QJsonArray{"Emitter", "Global"}}, {"description", "SetVariable scope."}}},
-                        {QStringLiteral("resetScope"), QJsonObject{{"enum", QJsonArray{"Emitter", "Global"}}, {"description", "Reset scope."}}},
-                        {QStringLiteral("quantize"), QJsonObject{{"type", "object"}, {"description",
-                            "Play, Stop or Post Action timing with referenceObjectID or referenceName, timing and ifSilent."},
-                            {"properties", QJsonObject{{"referenceObjectID", QJsonObject{{"type", "integer"}, {"minimum", 0}}},
-                                {"referenceName", QJsonObject{{"type", "string"}}},
-                                {"timing", QJsonObject{{"enum", QJsonArray{"Immediate", "NextBeat", "NextBar", "NextMarker", "NaturalEnd", "CurrentLoopEnd", "EntryMarker", "ExitMarker"}}}},
-                                {"ifSilent", QJsonObject{{"enum", QJsonArray{"Immediate", "Drop"}}}}}}}}
+                        {QStringLiteral("resetScope"), QJsonObject{{"enum", QJsonArray{"Emitter", "Global"}}, {"description", "Reset scope."}}}
                     }}
                 }}
             }},

@@ -189,16 +189,6 @@ AuditionVariableDependencies dependenciesForAudition(
                     actionLookup, item->objectID);
                 if (target.state == EditorUtils::ActionTargetState::Resolved)
                     self(byObject.value(target.objectID), self);
-                if ((step.type == VActionStep::Type::Play
-                     || step.type == VActionStep::Type::Stop
-                     || step.type == VActionStep::Type::PostAction)
-                    && step.quantize.timing != QuantizeTiming::Immediate) {
-                    const auto reference = EditorUtils::resolveActionStepTarget(
-                        VActionStep::Type::Play, step.quantize.referenceObjectID,
-                        step.quantize.referenceName, actionLookup);
-                    if (reference.state == EditorUtils::ActionTargetState::Resolved)
-                        self(byObject.value(reference.objectID), self);
-                }
             }
             return;
         }

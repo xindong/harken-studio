@@ -277,41 +277,6 @@ std::optional<harken::studio::build::ActionTargetKindV1> actionTargetKind(Projec
     }
 }
 
-std::optional<harken::studio::build::ActionQuantizeTimingV1> actionQuantizeTiming(
-    QuantizeTiming timing)
-{
-    switch (timing) {
-        case QuantizeTiming::Immediate:
-            return harken::studio::build::ActionQuantizeTimingV1::Immediate;
-        case QuantizeTiming::NextBeat:
-            return harken::studio::build::ActionQuantizeTimingV1::NextBeat;
-        case QuantizeTiming::NextBar:
-            return harken::studio::build::ActionQuantizeTimingV1::NextBar;
-        case QuantizeTiming::NextMarker:
-            return harken::studio::build::ActionQuantizeTimingV1::NextMarker;
-        case QuantizeTiming::NaturalEnd:
-            return harken::studio::build::ActionQuantizeTimingV1::NaturalEnd;
-        case QuantizeTiming::CurrentLoopEnd:
-            return harken::studio::build::ActionQuantizeTimingV1::CurrentLoopEnd;
-        case QuantizeTiming::EntryMarker:
-            return std::nullopt;
-        case QuantizeTiming::ExitMarker:
-            return harken::studio::build::ActionQuantizeTimingV1::ExitMarker;
-    }
-    return std::nullopt;
-}
-
-std::optional<harken::studio::build::ActionIfSilentV1> actionIfSilent(QuantizeIfSilent value)
-{
-    switch (value) {
-        case QuantizeIfSilent::Immediate:
-            return harken::studio::build::ActionIfSilentV1::Immediate;
-        case QuantizeIfSilent::Drop:
-            return harken::studio::build::ActionIfSilentV1::Drop;
-    }
-    return std::nullopt;
-}
-
 std::optional<harken::studio::build::ActionScopeV1> actionResetScope(ResetScope scope)
 {
     switch (scope) {
@@ -884,60 +849,6 @@ ActionTargetResolution resolveActionTarget(
     return ActionTargetResolution::Resolved;
 }
 
-ProjectItem* findActionQuantizeReference(
-    const VActionStep& source, const ProjectIndex& index,
-    const EditorUtils::ActionTargetLookup& lookup)
-{
-    ProjectItem* item = nullptr;
-    if (source.quantize.referenceObjectID != 0) {
-        const auto exact = index.byObjectId.find(
-            source.quantize.referenceObjectID);
-        if (exact != index.byObjectId.end())
-            item = exact->second;
-    } else if (!source.quantize.referenceName.isEmpty()) {
-        const auto resolved = EditorUtils::resolveActionStepTarget(
-            VActionStep::Type::Play, 0, source.quantize.referenceName,
-            lookup);
-        if (resolved.state == EditorUtils::ActionTargetState::Resolved) {
-            const auto rebound = index.byObjectId.find(resolved.objectID);
-            if (rebound != index.byObjectId.end())
-                item = rebound->second;
-        }
-    }
-    return item;
-}
-
-ActionTargetResolution resolveActionQuantizeReference(
-    const VActionStep& source, const ProjectIndex& index,
-    const std::unordered_set<ProjectItem*>& included,
-    const std::unordered_set<ProjectItem*>& languageUnavailable,
-    const EditorUtils::ActionTargetLookup& lookup,
-    harkencurrentworldcompiler::ActionObjectRefAuthoringV1* reference,
-    QString* error)
-{
-    if (source.quantize.timing == QuantizeTiming::Immediate
-        || (source.type == VActionStep::Type::Stop
-            && source.quantize.referenceObjectID == 0
-            && source.quantize.referenceName.isEmpty())) {
-        return ActionTargetResolution::Resolved;
-    }
-
-    ProjectItem* item = findActionQuantizeReference(source, index, lookup);
-    if (item && included.find(item) == included.end()
-        && languageUnavailable.find(item) != languageUnavailable.end())
-        return ActionTargetResolution::Skipped;
-    if (item == nullptr || !isPlayableActionReference(item->type)
-        || harken::studio::types::IsNull(item->runtimeId())
-        || included.find(item) == included.end()) {
-        setError(error,
-                 QStringLiteral("Action quantize reference is unresolved"));
-        return ActionTargetResolution::Invalid;
-    }
-    reference->kind = *actionTargetKind(item->type);
-    reference->stableId = item->runtimeId();
-    return ActionTargetResolution::Resolved;
-}
-
 struct ActionBuildClosure
 {
     std::set<harken::studio::types::ObjectId> actions;
@@ -973,11 +884,6 @@ ActionBuildClosure actionBuildClosure(
                         if (target.state == EditorUtils::ActionTargetState::Resolved
                             && found != index.byObjectId.end())
                             self(found->second, true, self);
-                        if ((step.type == VActionStep::Type::Play
-                             || step.type == VActionStep::Type::Stop
-                             || step.type == VActionStep::Type::PostAction)
-                            && step.quantize.timing != QuantizeTiming::Immediate)
-                            self(findActionQuantizeReference(step, index, lookup), true, self);
                     }
                 }
             } else if (item->type == ProjectItem::Type::Variable) {
@@ -1076,67 +982,6 @@ bool appendActionPrograms(
                     return false;
                 }
 
-                const bool hasQuantize = sourceStep.type == VActionStep::Type::Play
-                    || sourceStep.type == VActionStep::Type::Stop
-                    || sourceStep.type == VActionStep::Type::PostAction;
-                if (hasQuantize && sourceStep.quantize.timing != QuantizeTiming::Immediate) {
-                    const QString target = !sourceStep.targetName.isEmpty()
-                        ? sourceStep.targetName
-                        : QString::number(sourceStep.targetObjectID);
-                    if (sourceStep.quantize.timing == QuantizeTiming::EntryMarker
-                        || (sourceStep.type == VActionStep::Type::Play
-                            && sourceStep.quantize.timing == QuantizeTiming::ExitMarker)) {
-                        setStatus(status, CurrentWorldBuildStatus::CapabilityUnavailable);
-                        setError(error, QStringLiteral(
-                            "Action '%1' step %2 (%3 target '%4'): %5 requires an updated Engine marker scheduling contract")
-                            .arg(item->name).arg(stepIndex)
-                            .arg(sourceStep.typeString(), target)
-                            .arg(sourceStep.quantize.timing == QuantizeTiming::EntryMarker
-                                     ? QStringLiteral("Entry Marker") : QStringLiteral("Exit Marker")));
-                        return false;
-                    }
-                    const auto timing = actionQuantizeTiming(
-                        sourceStep.quantize.timing);
-                    const auto ifSilent = actionIfSilent(
-                        sourceStep.quantize.ifSilent);
-                    if (!timing || !ifSilent) {
-                        setError(error, QStringLiteral("Action timing is invalid"));
-                        return false;
-                    }
-                    if (!harken::studio::build::ActionQuantizeTimingSupportedV1(
-                            *opcode, *timing)) {
-                        setStatus(status, CurrentWorldBuildStatus::CapabilityUnavailable);
-                        setError(error, QStringLiteral(
-                            "Action '%1' step %2 (%3 target '%4', timing %5): timing is not supported for this opcode")
-                            .arg(item->name).arg(stepIndex)
-                            .arg(sourceStep.typeString(), target)
-                            .arg(static_cast<std::uint32_t>(*timing)));
-                        return false;
-                    }
-                    step.quantizeTiming = *timing;
-                    step.ifSilent = *ifSilent;
-                    const auto referenceResolution = resolveActionQuantizeReference(
-                        sourceStep, index, included, languageUnavailable, lookup,
-                        &step.quantizeReference, error);
-                    if (referenceResolution == ActionTargetResolution::Skipped)
-                        continue;
-                    if (referenceResolution == ActionTargetResolution::Invalid) {
-                        const QString reason = error && !error->isEmpty()
-                            ? *error : QStringLiteral("quantize reference is invalid");
-                        const QString reference = !sourceStep.quantize.referenceName.isEmpty()
-                            ? sourceStep.quantize.referenceName
-                            : QString::number(sourceStep.quantize.referenceObjectID);
-                        setError(error, QStringLiteral(
-                            "Action '%1' step %2 (%3 quantize reference '%4'): %5")
-                            .arg(item->name).arg(stepIndex)
-                            .arg(sourceStep.typeString(), reference, reason));
-                        if (options && options->isolateUnavailable) {
-                            unavailableActions.insert(action.actionStableId);
-                            break;
-                        }
-                        return false;
-                    }
-                }
                 if (sourceStep.type == VActionStep::Type::SetVariable) {
                     const auto scope = variableWriteScope(sourceStep.scope);
                     if (!scope) {

@@ -27,16 +27,16 @@ const std::vector<ActionStepCatalogEntry>& actionStepCatalog()
     static const std::vector<ActionStepCatalogEntry> catalog = {
         {ET::Play, QStringLiteral("Play"),
          {PT::Sound, PT::Container, PT::Track, PT::Segment},
-         true, false, false, false},
+         false, false, false},
         {ET::Stop, QStringLiteral("Stop"),
          {PT::Sound, PT::Container, PT::Track, PT::Segment},
-         true, true, false, false},
+         true, false, false},
         {ET::SetVariable, QStringLiteral("Set Variable"),
-         {PT::Variable}, false, false, true, false},
+         {PT::Variable}, false, true, false},
         {ET::PostAction, QStringLiteral("Post Action"),
-         {PT::Action}, true, false, false, false},
+         {PT::Action}, false, false, false},
         {ET::Reset, QStringLiteral("Reset"),
-         {PT::Container}, false, false, false, true},
+         {PT::Container}, false, false, true},
     };
     return catalog;
 }
@@ -104,14 +104,6 @@ bool defaultActionStepTypeForTarget(ProjectItem::Type targetType,
         default:
             return false;
     }
-}
-
-bool isCanonicalActionQuantize(const ActionQuantizeDef& quantize)
-{
-    return quantize.referenceObjectID == 0
-        && quantize.referenceName.isEmpty()
-        && quantize.timing == QuantizeTiming::Immediate
-        && quantize.ifSilent == QuantizeIfSilent::Immediate;
 }
 
 ActionRuntimeReadiness actionStepRuntimeReadiness(const VActionStep& step)
@@ -303,15 +295,7 @@ void applyActionStepTypeChange(VActionStep& step,
         step.type, step.targetObjectID, step.targetName, lookup,
         currentActionObjectID);
 
-    const ActionStepCatalogEntry* oldEntry = actionStepCatalogEntry(step.type);
-    const ActionStepCatalogEntry* newEntry = actionStepCatalogEntry(newType);
-    const bool oldQuantized = oldEntry && oldEntry->supportsQuantize;
-    const bool newQuantized = newEntry && newEntry->supportsQuantize;
-
     step.type = newType;
-
-    if (!newQuantized || !oldQuantized)
-        step.quantize = {};
 
     if (newType != VActionStep::Type::Stop)
         step.fadeTime = 0.0f;

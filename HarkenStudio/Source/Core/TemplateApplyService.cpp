@@ -94,8 +94,6 @@ void remapTree(ProjectItem* item, const TemplateIdentityMap& identities)
         for (auto& step : action->steps) {
             step.targetObjectID = identities.objects.value(
                 step.targetObjectID, step.targetObjectID);
-            step.quantize.referenceObjectID = identities.objects.value(
-                step.quantize.referenceObjectID, step.quantize.referenceObjectID);
         }
     }
     if (auto* mix = item->comp<VMixNode>()) {

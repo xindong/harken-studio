@@ -15,7 +15,6 @@ struct ActionStepCatalogEntry
     harken::studio::VActionStep::Type type = harken::studio::VActionStep::Type::Play;
     QString name;
     std::vector<harken::studio::ProjectItem::Type> targetTypes;
-    bool supportsQuantize = false;
     bool hasFade = false;
     bool hasValue = false;
     bool hasResetScope = false;
@@ -39,12 +38,9 @@ bool canActionStepReferenceObject(harken::studio::VActionStep::Type type,
 bool defaultActionStepTypeForTarget(harken::studio::ProjectItem::Type targetType,
                                     harken::studio::VActionStep::Type& outType);
 
-bool isCanonicalActionQuantize(const harken::studio::ActionQuantizeDef& quantize);
-
 enum class ActionRuntimeReadinessState {
     Ready,
     SetVariableUnavailable,
-    UnsupportedQuantize,
     UnknownType
 };
 

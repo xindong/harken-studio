@@ -633,7 +633,7 @@ RuntimeCapabilityEntry evaluateForContext(const ProjectItem& item,
         || feature == F::NestedPlaceholder || feature == F::ActionTarget
         || feature == F::ActionPlay || feature == F::ActionStop
         || feature == F::ActionPost || feature == F::ActionSetVariable
-        || feature == F::ActionReset || feature == F::Quantize || feature == F::IfSilent;
+        || feature == F::ActionReset;
     if (!currentWorldFeature) {
         if (const auto entry = query(item.type, operation, feature)) return *entry;
         return refuse(S::UnavailableEngineContract,
@@ -754,8 +754,6 @@ QString featureName(RuntimeCapabilityFeature feature)
     case F::ActionSetVariable: return QStringLiteral("actionSetVariable");
     case F::ActionReset: return QStringLiteral("actionReset");
     case F::ActionTarget: return QStringLiteral("actionTarget");
-    case F::Quantize: return QStringLiteral("quantize");
-    case F::IfSilent: return QStringLiteral("ifSilent");
     case F::ContinuousGrid: return QStringLiteral("continuousGrid");
     case F::MultiAxisGrid: return QStringLiteral("multiAxisGrid");
     case F::QueueMemory: return QStringLiteral("queueMemory");
@@ -839,10 +837,9 @@ const std::vector<RuntimeCapabilityEntry>& entries()
                             QStringLiteral("Current World validates the Container mode, targets and dependencies"));
                 if (type == T::Action)
                     for (const F feature : {F::ActionPlay, F::ActionStop, F::ActionPost,
-                                            F::ActionSetVariable, F::ActionReset, F::ActionTarget,
-                                            F::Quantize, F::IfSilent})
+                                            F::ActionSetVariable, F::ActionReset, F::ActionTarget})
                         add(type, operation, feature, S::Ready,
-                            QStringLiteral("Current World validates the Action target, Marker timing and reference"));
+                            QStringLiteral("Current World validates the Action target and reference"));
                 if (type == T::Sound || type == T::Layer || type == T::Container
                     || type == T::Track || type == T::Segment || type == T::Bus) {
                     add(type, operation, F::TypedEffect, S::Ready,

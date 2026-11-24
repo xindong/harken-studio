@@ -12,33 +12,6 @@
       },
       "type": "object"
     },
-    "actionQuantize": {
-      "additionalProperties": false,
-      "properties": {
-        "ifSilent": {
-          "enum": [
-            "Immediate",
-            "Drop"
-          ]
-        },
-        "referenceRef": {
-          "$ref": "#/$defs/objectReference"
-        },
-        "timing": {
-          "enum": [
-            "Immediate",
-            "NextBeat",
-            "NextBar",
-            "NextMarker",
-            "NaturalEnd",
-            "CurrentLoopEnd",
-            "EntryMarker",
-            "ExitMarker"
-          ]
-        }
-      },
-      "type": "object"
-    },
     "actionStep": {
       "additionalProperties": false,
       "properties": {
@@ -47,9 +20,6 @@
         },
         "fadeTime": {
           "type": "number"
-        },
-        "quantize": {
-          "$ref": "#/$defs/actionQuantize"
         },
         "resetScope": {
           "enum": [
@@ -3531,21 +3501,6 @@
               "Segment"
             ]
           }
-        },
-        {
-          "kind": "object",
-          "path": [
-            "actions",
-            "*",
-            "quantize",
-            "referenceRef"
-          ],
-          "targetTypes": [
-            "Sound",
-            "Container",
-            "Track",
-            "Segment"
-          ]
         },
         {
           "allowNull": true,

@@ -3110,15 +3110,6 @@ void ProjectManager::applyRenameSideEffects(ProjectItem* item,
                 if (auto* ec = pi->comp<VAction>()) {
                     bool changed = false;
                     for (auto& action : ec->steps) {
-                        const auto* stepCatalog =
-                            harken::studio::EditorUtils::actionStepCatalogEntry(action.type);
-                        if (stepCatalog && stepCatalog->supportsQuantize
-                            && ItemTypeCatalog::isContentObject(item->type)
-                            && action.quantize.referenceObjectID == item->objectID
-                            && leafOf(action.quantize.referenceName) == fromName) {
-                            action.quantize.referenceName = toName;
-                            changed = true;
-                        }
                         if (!harken::studio::EditorUtils::canActionStepReferenceObject(
                                 action.type, item->type, item->objectID,
                                 pi->objectID))
@@ -5261,13 +5252,6 @@ DeletedSubtreeRefLog ProjectManager::cleanupReferencesToDeletedSubtree(ProjectIt
             bool changed = false;
             for (size_t index = 0; index < action->steps.size(); ++index) {
                 auto& step = action->steps[index];
-                if (deletedObjects.contains(step.quantize.referenceObjectID)) {
-                    log.actionTimingRefs.push_back(
-                        {pi->objectID, index, step.quantize.referenceObjectID, step.quantize.referenceName});
-                    step.quantize.referenceObjectID = 0;
-                    step.quantize.referenceName.clear();
-                    changed = true;
-                }
                 const ProjectItem* target = deletedObjects.value(step.targetObjectID, nullptr);
                 if (!target || !EditorUtils::canActionStepReferenceObject(
                         step.type, target->type, target->objectID, pi->objectID))
@@ -5438,16 +5422,6 @@ void ProjectManager::restoreReferencesFromLog(const DeletedSubtreeRefLog& log,
     }
 
     QSet<uint32_t> changedActionIDs;
-    for (const auto& ref : log.actionTimingRefs) {
-        ProjectItem* owner = findById(ref.ownerObjectID);
-        auto* action = owner ? owner->comp<VAction>() : nullptr;
-        if (!action || ref.stepIndex >= action->steps.size()) continue;
-        auto& quantize = action->steps[ref.stepIndex].quantize;
-        if (quantize.referenceObjectID != 0 || !quantize.referenceName.isEmpty()) continue;
-        quantize.referenceObjectID = ref.targetObjectID;
-        quantize.referenceName = ref.targetName;
-        changedActionIDs.insert(ref.ownerObjectID);
-    }
     for (const auto& ref : log.actionTargetRefs) {
         ProjectItem* owner = findById(ref.ownerObjectID);
         auto* action = owner ? owner->comp<VAction>() : nullptr;

@@ -263,6 +263,20 @@ void discardRetiredSelectionFields(QJsonObject* selection, const QJsonObject& co
         warnDiscarded(content, "spliceByMarker");
 }
 
+void discardRetiredActionTiming(QJsonObject* owner, const QString& key, const QJsonObject& content)
+{
+    if (!owner->value(key).isArray()) return;
+    auto steps = owner->value(key).toArray();
+    for (qsizetype index = 0; index < steps.size(); ++index) {
+        auto step = steps[index].toObject();
+        if (!step.contains(QStringLiteral("quantize"))) continue;
+        step.remove(QStringLiteral("quantize"));
+        steps[index] = step;
+        warnDiscarded(content, "Action quantize");
+    }
+    owner->insert(key, steps);
+}
+
 }
 
 void ProjectDocument::discardRetiredMakeUpGain(QJsonObject* properties)
@@ -329,6 +343,7 @@ bool ProjectDocument::normalizeContent(QJsonObject* content, QString* error)
         discardRetiredMakeUpGain(&properties);
         content->insert(QStringLiteral("playableProperties"), properties);
     }
+    discardRetiredActionTiming(content, QStringLiteral("actions"), *content);
     if (content->value(QStringLiteral("components")).isObject()) {
         auto components = content->value(QStringLiteral("components")).toObject();
         if (components.value(QStringLiteral("mixnode")).isObject()) {
@@ -352,6 +367,11 @@ bool ProjectDocument::normalizeContent(QJsonObject* content, QString* error)
                 timeline.insert(QStringLiteral("clips"), clips);
             }
             components.insert(QStringLiteral("tracktimeline"), timeline);
+        }
+        if (components.value(QStringLiteral("action")).isObject()) {
+            auto action = components.value(QStringLiteral("action")).toObject();
+            discardRetiredActionTiming(&action, QStringLiteral("steps"), *content);
+            components.insert(QStringLiteral("action"), action);
         }
         if (components.value(QStringLiteral("selection")).isObject()) {
             auto selection = components.value(QStringLiteral("selection")).toObject();

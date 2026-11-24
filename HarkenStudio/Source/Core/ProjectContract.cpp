@@ -320,7 +320,6 @@ QSet<QString> referencedDocumentPaths(const QJsonObject& document, int schemaVer
     for (const auto& step : components.value(QStringLiteral("action")).toObject()
              .value(QStringLiteral("steps")).toArray()) {
         addReference(step.toObject().value(QStringLiteral("targetRef")));
-        addReference(valueAt(step, {QStringLiteral("quantize"), QStringLiteral("referenceRef")}));
     }
     return result;
 }

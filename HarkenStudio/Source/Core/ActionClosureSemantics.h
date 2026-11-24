@@ -28,7 +28,6 @@ enum class ActionClosureEdgeReason : uint8_t
     EffectiveAttenuation,
     BindingDependency,
     EffectDependency,
-    QuantizeReference,
     EffectiveSend
 };
 

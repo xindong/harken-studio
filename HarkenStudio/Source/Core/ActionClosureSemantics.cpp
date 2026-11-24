@@ -525,40 +525,6 @@ struct Builder
         }
         for (size_t i = 0; i < component->steps.size(); ++i) {
             const auto& step = component->steps[i];
-            const bool quantized = (step.type == VActionStep::Type::Play
-                                    || step.type == VActionStep::Type::Stop
-                                    || step.type == VActionStep::Type::PostAction)
-                && step.quantize.timing != QuantizeTiming::Immediate;
-            if (quantized && (step.quantize.referenceObjectID != 0
-                              || !step.quantize.referenceName.isEmpty())) {
-                const QString field = QStringLiteral("steps[%1].quantize.referenceObjectID").arg(i);
-                const auto resolved = EditorUtils::resolveActionStepTarget(
-                    VActionStep::Type::Play, step.quantize.referenceObjectID,
-                    step.quantize.referenceName, targetLookup);
-                const ProjectItem* reference = byObject(
-                    resolved.state == EditorUtils::ActionTargetState::Resolved
-                        ? resolved.objectID : step.quantize.referenceObjectID,
-                    action.runtimeId(), static_cast<int>(i), field, path);
-                if (reference) {
-                    std::vector<harken::studio::types::ObjectId> referencePath = path;
-                    referencePath.push_back(reference->runtimeId());
-                    edge(action.runtimeId(), reference->runtimeId(),
-                         ActionClosureEdgeReason::QuantizeReference,
-                         field, referencePath);
-                    visitContent(*reference, referencePath,
-                        playbackReferencesOnly || step.type == VActionStep::Type::Stop);
-                }
-            }
-            if (quantized)
-                capability(RuntimeCapabilityFeature::Quantize,
-                           RuntimeCapabilityState::UnavailableEngineContract,
-                           action.runtimeId(),
-                           QStringLiteral("steps[%1].quantize.timing").arg(i));
-            if (quantized && step.quantize.ifSilent != QuantizeIfSilent::Immediate)
-                capability(RuntimeCapabilityFeature::IfSilent,
-                           RuntimeCapabilityState::UnavailableEngineContract,
-                           action.runtimeId(),
-                           QStringLiteral("steps[%1].quantize.ifSilent").arg(i));
             if (step.type == VActionStep::Type::SetVariable) {
                 capability(RuntimeCapabilityFeature::ActionSetVariable,
                            RuntimeCapabilityState::Ready, action.runtimeId(),
@@ -844,7 +810,6 @@ QString edgeReasonName(ActionClosureEdgeReason reason)
     case ActionClosureEdgeReason::EffectiveSend: return QStringLiteral("EffectiveSend");
     case ActionClosureEdgeReason::BindingDependency: return QStringLiteral("BindingDependency");
     case ActionClosureEdgeReason::EffectDependency: return QStringLiteral("EffectDependency");
-    case ActionClosureEdgeReason::QuantizeReference: return QStringLiteral("QuantizeReference");
     }
     return {};
 }

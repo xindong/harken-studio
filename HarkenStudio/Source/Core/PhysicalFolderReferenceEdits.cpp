@@ -50,10 +50,6 @@ void cleanActions(QJsonObject& object, const QString& key, const QSet<QUuid>& gu
     editArray(object, key, [&](QJsonObject& step) {
         if (deleted(step.value(QStringLiteral("targetRef")), guids))
             step.remove(QStringLiteral("targetRef"));
-        editObject(step, QStringLiteral("quantize"), [&](QJsonObject& quantize) {
-            if (deleted(quantize.value(QStringLiteral("referenceRef")), guids))
-                quantize.remove(QStringLiteral("referenceRef"));
-        });
     });
 }
 

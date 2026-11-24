@@ -194,7 +194,6 @@ struct DeletedSubtreeRefLog {
     std::vector<OutputBusRef>  outputBusRefs;
     std::vector<ClipRef> clips;
     std::vector<ActionTargetRef> actionTargetRefs;
-    std::vector<ActionTargetRef> actionTimingRefs;
     std::vector<FolderComponentRef> folderComponentRefs;
     QJsonObject folderProjectReferencesBefore;
     QJsonObject folderProjectReferencesAfter;
@@ -203,7 +202,7 @@ struct DeletedSubtreeRefLog {
     bool empty() const
     {
         return fieldGroups.empty() && sends.empty() && outputBusRefs.empty()
-            && actionTargetRefs.empty() && actionTimingRefs.empty() && folderComponentRefs.empty()
+            && actionTargetRefs.empty() && folderComponentRefs.empty()
             && folderProjectReferencesBefore.isEmpty()
             && clips.empty() && selections.empty()
             && containerChildOccurrences.empty();
@@ -403,27 +402,7 @@ struct AudioSourceData
     QString  conversionPreset;
 };
 
-enum class QuantizeTiming : uint8_t {
-    Immediate,
-    NextBeat,
-    NextBar,
-    NextMarker,
-    NaturalEnd,
-    CurrentLoopEnd,
-    EntryMarker,
-    ExitMarker
-};
-
-enum class QuantizeIfSilent : uint8_t { Immediate, Drop };
 enum class ResetScope : uint8_t { Emitter, Global };
-
-struct ActionQuantizeDef
-{
-    uint32_t referenceObjectID = 0;
-    QString referenceName;
-    QuantizeTiming timing = QuantizeTiming::Immediate;
-    QuantizeIfSilent ifSilent = QuantizeIfSilent::Immediate;
-};
 
 struct VActionStep
 {
@@ -440,7 +419,6 @@ struct VActionStep
     QString targetName;
     float delay = 0.0f;
     float fadeTime = 0.0f;
-    ActionQuantizeDef quantize;
     float value = 0.0f;
     VariableScope scope = VariableScope::Emitter;
     ResetScope resetScope = ResetScope::Emitter;

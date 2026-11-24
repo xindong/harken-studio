@@ -1110,29 +1110,6 @@ bool ProjectSerializer::encodeActionReferences(QJsonArray* actions) const
             if (reference.isEmpty()) return false;
             action[QStringLiteral("targetRef")] = reference;
         }
-        if (action.value(QStringLiteral("quantize")).isObject()) {
-            QJsonObject quantize = action.value(QStringLiteral("quantize")).toObject();
-            const uint32_t referenceId = static_cast<uint32_t>(
-                quantize.value(QStringLiteral("referenceObjectID")).toInteger(0));
-            quantize.remove(QStringLiteral("referenceObjectID"));
-            quantize.remove(QStringLiteral("referenceName"));
-            if (referenceId != 0) {
-                const auto target = referencesByObjectId_.constFind(referenceId);
-                const bool validType = target != referencesByObjectId_.cend()
-                    && (target->type == ProjectItem::Type::Sound
-                        || target->type == ProjectItem::Type::Container
-                        || target->type == ProjectItem::Type::Track
-                        || target->type == ProjectItem::Type::Segment);
-                if (!validType) {
-                    lastError_ = QStringLiteral("Action contains an invalid timing reference");
-                    return false;
-                }
-                const QJsonObject reference = persistentReference(referenceId);
-                if (reference.isEmpty()) return false;
-                quantize[QStringLiteral("referenceRef")] = reference;
-            }
-            action[QStringLiteral("quantize")] = quantize;
-        }
         encoded.append(action);
     }
     *actions = encoded;
@@ -1165,31 +1142,6 @@ bool ProjectSerializer::decodeActionReferences(QJsonArray* actions) const
         action.remove(QStringLiteral("targetRef"));
         action[QStringLiteral("targetObjectID")] = static_cast<qint64>(targetId);
         action[QStringLiteral("targetName")] = targetName;
-        if (action.value(QStringLiteral("quantize")).isObject()) {
-            QJsonObject quantize = action.value(QStringLiteral("quantize")).toObject();
-            uint32_t referenceId = 0;
-            QString referenceName;
-            if (quantize.contains(QStringLiteral("referenceRef"))) {
-                if (!transientReference(quantize.value(QStringLiteral("referenceRef")),
-                                        std::nullopt, &referenceId, &referenceName))
-                    return false;
-                const auto target = referencesByObjectId_.constFind(referenceId);
-                const bool validType = target != referencesByObjectId_.cend()
-                    && (target->type == ProjectItem::Type::Sound
-                        || target->type == ProjectItem::Type::Container
-                        || target->type == ProjectItem::Type::Track
-                        || target->type == ProjectItem::Type::Segment);
-                if (!validType) {
-                    lastError_ = QStringLiteral("Action contains a timing target of the wrong type");
-                    return false;
-                }
-            }
-            quantize.remove(QStringLiteral("referenceRef"));
-            quantize[QStringLiteral("referenceObjectID")] =
-                static_cast<qint64>(referenceId);
-            quantize[QStringLiteral("referenceName")] = referenceName;
-            action[QStringLiteral("quantize")] = quantize;
-        }
         decoded.append(action);
     }
     *actions = decoded;

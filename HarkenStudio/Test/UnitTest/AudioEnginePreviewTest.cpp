@@ -885,13 +885,10 @@ TEST_F(AuditionLifecycleTest, FirstConversionChangeAfterCreatingASoundStopsItsPr
     EXPECT_EQ(audition.getAudition(playing).playingId, 0u);
 }
 
-TEST_F(AuditionLifecycleTest, PlaybackMediaClosureExcludesControlAndQuantizationOnlyReferences)
+TEST_F(AuditionLifecycleTest, PlaybackMediaClosureExcludesControlOnlyReferences)
 {
     const auto platform = projects.currentProject()->platforms.front().id;
     auto& steps = action->comp<harken::studio::VAction>()->steps;
-    steps.front().quantize.timing = harken::studio::QuantizeTiming::NextBeat;
-    steps.front().quantize.referenceObjectID = sounds[1]->objectID;
-    steps.front().quantize.referenceName = sounds[1]->name;
     harken::studio::VActionStep stop;
     stop.type = harken::studio::VActionStep::Type::Stop;
     stop.targetObjectID = sounds[1]->objectID;

@@ -4327,10 +4327,10 @@ TEST(ProjectPackExport, CancelAfterMediaPreparationKeepsPreviousSet)
 
 TEST(ProjectPackExport, FailedPackDoesNotPreventIndependentPacks)
 {
-    enum class Failure { Output, ActionTiming, ContainerBehavior, InheritedContainerBehavior,
+    enum class Failure { Output, ActionTarget, ContainerBehavior, InheritedContainerBehavior,
                          InheritedTrackClips, Binding, TrackReference, ContainerReference,
                          UnusedBinding, UnusedPlayback };
-    for (const auto failure : {Failure::Output, Failure::ActionTiming,
+    for (const auto failure : {Failure::Output, Failure::ActionTarget,
                                Failure::ContainerBehavior, Failure::InheritedContainerBehavior,
                                Failure::InheritedTrackClips, Failure::Binding,
                                Failure::TrackReference, Failure::ContainerReference,
@@ -4348,8 +4348,8 @@ TEST(ProjectPackExport, FailedPackDoesNotPreventIndependentPacks)
         auto& invalid = actions->children.front()->comp<harken::studio::VAction>()->steps.front();
         if (failure == Failure::Output) {
             ASSERT_TRUE(QDir().mkpath(context.live.filePath(QStringLiteral("One.bytes"))));
-        } else if (failure == Failure::ActionTiming) {
-            invalid.quantize.timing = harken::studio::QuantizeTiming::EntryMarker;
+        } else if (failure == Failure::ActionTarget) {
+            invalid.targetObjectID = 9999;
         } else if (failure == Failure::Binding || failure == Failure::UnusedBinding) {
             auto layer = context.project.layers.front().rootItem;
             auto host = layer->children.front();
@@ -4399,7 +4399,10 @@ TEST(ProjectPackExport, FailedPackDoesNotPreventIndependentPacks)
                 timeline->clips.items.push_back(clip);
             }
             invalid.targetObjectID = 40;
-            invalid.quantize.timing = harken::studio::QuantizeTiming::EntryMarker;
+            harken::studio::VActionStep dangling;
+            dangling.type = harken::studio::VActionStep::Type::Play;
+            dangling.targetObjectID = 9999;
+            actions->children.front()->comp<harken::studio::VAction>()->steps.push_back(dangling);
             independent->comp<harken::studio::VAction>()->steps.front().targetObjectID = kSharedSoundObjectId;
         } else {
             auto layer = context.project.layers.front().rootItem;
