@@ -110,7 +110,7 @@ PlatformBar::PlatformBar(PlatformContextService& service, QWidget* parent)
     languageCombo_->setToolTip(tr("Edit and Audition Language"));
     leadingLayout->addWidget(languageCombo_);
 
-    previewModeCombo_ = new QComboBox(leading);
+    previewModeCombo_ = new ToolBarComboBox(leading);
     previewModeCombo_->setObjectName(QStringLiteral("platformBarPreviewMode"));
     previewModeCombo_->setAccessibleName(tr("Preview Media"));
     previewModeCombo_->setToolTip(tr("Preview Media"));
