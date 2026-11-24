@@ -34,6 +34,7 @@ public:
     void bindSelection(const ExternalEditorSelection& selection);
     void bindSelection(const CurveSelection& selection);
     void clearEditor();
+    QStringList sourceTitlePath() const;
     void showBindingAddMenu();
     QVariantMap snapshotState() const;
     void restoreState(const QVariantMap& state);
@@ -41,6 +42,7 @@ public:
 signals:
     void panelFocused(int panelId);
     void pinToggled(bool pinned);
+    void titleChanged();
     void navigateRequested(const QUuid& guid);
     void externalEditorRequested(const ExternalEditorSelection& selection);
 

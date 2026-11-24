@@ -423,7 +423,7 @@ void DiscreteGridWidget::rebuildTable()
     QList<TableColumn> columns{
         {QStringLiteral("index"), QStringLiteral("#"), 0},
         {QStringLiteral("target"), tr("Child"), 250},
-        {QStringLiteral("activeSource"), tr("Active Source"), 250}};
+        {QStringLiteral("waveform"), tr("Waveform"), 250}};
     for (const auto& axis : grid_.axes)
         columns.append({axis.toString(QUuid::WithoutBraces), {}, 500});
     if (grid_.axes.empty()) columns.append({QStringLiteral("empty"), {}, 500});

@@ -17,10 +17,8 @@
 #include "Widgets/Common/ParameterBinding.h"
 #include "Widgets/Common/ParameterControlHost.h"
 #include "Widgets/Common/ProportionalTreeWidget.h"
-#include "Widgets/Common/SourceRangeThumb.h"
 #include "Widgets/Common/TableItemDelegate.h"
 #include "Widgets/Common/TableWidget.h"
-#include "Widgets/Selector/ObjectRefNavigation.h"
 #include "Widgets/Selector/ObjectRefWidget.h"
 
 #include <QChildEvent>
@@ -210,14 +208,6 @@ ConversionEditorPanel::ConversionEditorPanel(QWidget* parent) : QWidget(parent)
     cancelShortcut_ = new QShortcut(QKeySequence(Qt::Key_Escape), this);
     cancelShortcut_->setContext(Qt::WidgetWithChildrenShortcut);
     connect(cancelShortcut_, &QShortcut::activated, this, &ConversionEditorPanel::cancelConversion);
-    auto* navigation = new ObjectRefNavigation(this);
-    const auto navigate = [this](RefDomain domain, uint32_t id) {
-        if (domain != RefDomain::ProjectObject) return;
-        if (const auto* item = ProjectManager::instance().findItemByObjectID(id))
-            emit navigateRequested(item->guid);
-    };
-    connect(navigation, &ObjectRefNavigation::navigateRequested, this, navigate);
-    connect(navigation, &ObjectRefNavigation::locateRequested, this, navigate);
     auto& projects = ProjectManager::instance();
     connect(&projects, &ProjectManager::projectClosed, this, &ConversionEditorPanel::clearEditor);
     connect(&projects, &ProjectManager::itemPropertyChanged, this,
@@ -225,6 +215,7 @@ ConversionEditorPanel::ConversionEditorPanel(QWidget* parent) : QWidget(parent)
             if (item && item->guid == itemGuid_)
                 QMetaObject::invokeMethod(this, &ConversionEditorPanel::refreshPreset, Qt::QueuedConnection);
             if (property == QStringLiteral("fieldGroups") || property == QStringLiteral("sources")
+                || property == QStringLiteral("sourceName")
                 || property == QStringLiteral("distinguishLanguage") || (item && item->type == ProjectItem::Type::Conversion))
                 resultsRefresh_.start();
         });
@@ -555,7 +546,7 @@ void ConversionEditorPanel::refreshResults()
     const auto rows = ConversionResults::query(*project, itemGuid_, platform, &error);
     if (!error.isEmpty()) { qWarning().noquote() << error; return; }
     for (const auto& row : rows) {
-        auto* item = new QTreeWidgetItem(results_, {QString(), QString(), row.language,
+        auto* item = new QTreeWidgetItem(results_, {QString(), row.source.name, row.language,
             row.original.format, tr("%1 Hz").arg(row.original.sampleRate),
             sizeText(row.original.bytes), row.converted ? row.converted->format : QString(),
             row.converted ? tr("%1 Hz").arg(row.converted->sampleRate) : QString(),
@@ -571,11 +562,7 @@ void ConversionEditorPanel::refreshResults()
         if (const auto* sound = ProjectManager::instance().findItemByGuid(row.soundGuid))
             reference->setCurrentObjectID(sound->objectID);
         results_->setItemWidget(item, 0, reference);
-        auto* preview = new SourceRangeThumb(results_, SourceRangeThumb::Mode::ReadOnly);
-        preview->setSource(row.source, AssetRegistry::instance().getAsset(row.source.sourceId));
-        preview->setAccessibleName(row.sourcePath);
-        item->setToolTip(1, row.sourcePath);
-        results_->setItemWidget(item, 1, preview);
+        item->setToolTip(1, row.source.name + QLatin1Char('\n') + row.sourcePath);
     }
 }
 

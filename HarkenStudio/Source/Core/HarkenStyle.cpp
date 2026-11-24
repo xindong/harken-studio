@@ -302,6 +302,13 @@ void refreshPalette(QWidget* widget, ThemeManager& manager, QStyle::State state)
     if (palette != widget->palette()) widget->setPalette(palette);
 }
 
+void showTextStart(QLineEdit* edit)
+{
+    if (!edit->hasFocus() && !edit->hasSelectedText()
+        && !qobject_cast<QAbstractSpinBox*>(edit->parentWidget()))
+        edit->setCursorPosition(0);
+}
+
 class InputValidation : public QObject
 {
 public:
@@ -429,6 +436,12 @@ void HarkenStyle::polish(QWidget* widget)
             connect(combo, &QComboBox::currentIndexChanged, this, [this, widget] {
                 refreshWidgetAppearance(widget, theme());
             });
+        if (auto* edit = qobject_cast<QLineEdit*>(widget)) {
+            connect(edit, &QLineEdit::textChanged, this, [edit] {
+                if (!edit->isModified()) showTextStart(edit);
+            });
+            showTextStart(edit);
+        }
         if (auto* tree = qobject_cast<QTreeView*>(widget))
             connect(tree, &QTreeView::collapsed, this, [tree] {
                 QAccessibleTableModelChangeEvent event(tree, QAccessibleTableModelChangeEvent::ModelReset);
@@ -506,6 +519,11 @@ bool HarkenStyle::eventFilter(QObject* watched, QEvent* event)
             refresh = true;
             break;
         case QEvent::FocusOut:
+            if (auto* edit = qobject_cast<QLineEdit*>(widget)) {
+                const auto reason = static_cast<QFocusEvent*>(event)->reason();
+                if (reason != Qt::ActiveWindowFocusReason && reason != Qt::PopupFocusReason)
+                    QTimer::singleShot(0, edit, [edit] { showTextStart(edit); });
+            }
             state &= ~State_HasFocus;
             refresh = true;
             break;

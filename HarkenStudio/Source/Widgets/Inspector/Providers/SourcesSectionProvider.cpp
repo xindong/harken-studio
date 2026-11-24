@@ -14,6 +14,7 @@
 #include "Widgets/LogPanel/LogPanel.h"
 #include "Core/Components/VSound.h"
 #include "Core/LanguageContextService.h"
+#include "Core/NameValidator.h"
 #include "Core/PlatformContextService.h"
 #include "Core/ProjectLanguageSemantics.h"
 #include "Core/ProjectManager.h"
@@ -43,6 +44,7 @@
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QLineEdit>
 #include <QMenu>
 #include <QMimeData>
 #include <QPointer>
@@ -62,8 +64,9 @@ namespace {
 
 
 constexpr int kActiveShare = 120;
-constexpr int kSourceShare = 360;
-constexpr int kOriginalShare = 1000 - kActiveShare - kSourceShare;
+constexpr int kNameShare = 250;
+constexpr int kWaveformShare = 300;
+constexpr int kOriginalShare = 1000 - kActiveShare - kNameShare - kWaveformShare;
 
 struct SourceRow
 {
@@ -118,6 +121,8 @@ public:
                                  && (property == QStringLiteral("sources")
                                      || property == QStringLiteral("distinguishLanguage")))
                                  reloadFromItem();
+                             else if (item == boundItem_ && property == QStringLiteral("sourceName"))
+                                 refreshNames();
                          }, Qt::QueuedConnection);
         QObject::connect(&AssetRegistry::instance(), &AssetRegistry::assetModified, this,
                          [this](uint32_t) { reloadFromItem(); });
@@ -177,10 +182,9 @@ public:
         auto* sound = boundItem_->comp<VSound>();
         if (!sound)
             return false;
-        SoundSourceDef source;
-        source.entryId = QUuid::createUuid();
-        source.sourceId = sourceId;
-        if (const AssetInfo* asset = AssetRegistry::instance().getAsset(sourceId)) {
+        const AssetInfo* asset = AssetRegistry::instance().getAsset(sourceId);
+        auto source = SoundSourceSemantics::createEntry(sourceId, asset ? asset->relativePath : QString());
+        if (asset) {
             source.rangeContentHash = asset->contentHash;
             if (const auto seed = SoundSourceSemantics::fileLoopRegion(asset)) {
                 source.loopRegion = seed;
@@ -322,7 +326,8 @@ private:
     {
         box_->setColumns(QStringLiteral("Sources"), {
             {QStringLiteral("Number"), {}, 0},
-            {QStringLiteral("Source"), {}, kSourceShare},
+            {QStringLiteral("Name"), {}, kNameShare},
+            {QStringLiteral("Waveform"), {}, kWaveformShare},
             {QStringLiteral("Original"), {}, kOriginalShare},
             {QStringLiteral("Active"), {}, kActiveShare}
         });
@@ -707,7 +712,7 @@ private:
             if (resolved.source) {
                 distinct.insert(resolved.source->entryId);
                 lines.append(QStringLiteral("%1: %2")
-                                 .arg(definition->name, rowDisplayName(*resolved.source)));
+                                 .arg(definition->name, resolved.source->name));
             } else {
                 distinct.insert(QUuid());
                 lines.append(QStringLiteral("%1: %2")
@@ -744,13 +749,46 @@ private:
         return shared;
     }
 
-    QString rowDisplayName(const SoundSourceDef& source) const
+    void renameSource(const QUuid& entryId, QLineEdit* edit)
     {
-        if (const AssetInfo* asset = AssetRegistry::instance().getAsset(source.sourceId)) {
-            if (!asset->relativePath.isEmpty())
-                return asset->relativePath;
+        if (!edit->isModified())
+            return;
+        edit->setModified(false);
+        const auto* sound = boundItem_ ? boundItem_->comp<VSound>() : nullptr;
+        if (!sound)
+            return;
+        auto sources = sound->sources;
+        auto* entry = SoundSourceSemantics::findEntry(sources, entryId);
+        if (!entry)
+            return;
+        const QString name = edit->text().trimmed();
+        if (name == entry->name || !NameValidator::validateDisplayName(name)) {
+            edit->setText(entry->name);
+            return;
         }
-        return QString::number(source.sourceId);
+        entry->name = name;
+        for (auto& row : sources_)
+            if (row.entry.entryId == entryId)
+                row.entry.name = name;
+        edit->setText(name);
+        commit(sources);
+    }
+
+    void refreshNames()
+    {
+        const auto* sound = boundItem_ ? boundItem_->comp<VSound>() : nullptr;
+        if (!sound)
+            return;
+        for (auto& row : sources_)
+            if (const auto* entry = SoundSourceSemantics::findEntry(*sound, row.entry.entryId))
+                row.entry.name = entry->name;
+        for (QWidget* row : rowWidgets_) {
+            auto* edit = row->findChild<QLineEdit*>(QStringLiteral("sourceName"));
+            const QString& name = sources_[row->property("rowIndex").toInt()].entry.name;
+            if (!edit->isModified() && edit->text() != name)
+                edit->setText(name);
+        }
+        refreshActiveColumn();
     }
 
     void openSourceEditor(int index)
@@ -939,6 +977,24 @@ private:
         number->setEnabled(canEdit);
         h->addWidget(number);
 
+        auto* nameCell = box_->createCell(row);
+        DebugTint::tintContainer(nameCell, DebugTint::Role::Flex);
+        nameCell->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+        nameCell->setEnabled(canEdit);
+        auto* name = new QLineEdit(source.name, nameCell);
+        name->setObjectName(QStringLiteral("sourceName"));
+        name->setAcceptDrops(false);
+        QObject::connect(name, &QLineEdit::textChanged, name, [name] {
+            NameValidator::Result result;
+            const bool valid = NameValidator::validateDisplayName(name->text().trimmed(), &result);
+            name->setToolTip(valid ? QString() : NameValidator::resultMessage(result));
+            QtControlSkin::setSemanticProperty(name, "inputInvalid", !valid);
+        });
+        QObject::connect(name, &QLineEdit::editingFinished, this,
+                         [this, name, entryId = source.entryId] { renameSource(entryId, name); });
+        nameCell->addWidget(name);
+        h->addWidget(nameCell);
+
         auto* sourceCell = box_->createCell(row);
         DebugTint::tintContainer(sourceCell, DebugTint::Role::ColDelay);
         sourceCell->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
@@ -981,7 +1037,7 @@ private:
         activeCell->addWidget(active, 0, Qt::AlignCenter);
         h->addWidget(activeCell);
 
-        box_->registerRow(row, {number, sourceCell, originalCell, activeCell}, nullptr, sources_[index].language);
+        box_->registerRow(row, {number, nameCell, sourceCell, originalCell, activeCell}, nullptr, sources_[index].language);
         rowWidgets_.push_back(row);
         return row;
     }

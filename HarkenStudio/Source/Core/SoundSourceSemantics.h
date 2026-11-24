@@ -88,6 +88,9 @@ std::optional<SoundSources> fromJson(const QJsonObject& json, QString* error = n
 QJsonArray entriesToJson(const std::vector<SoundSourceDef>& entries);
 std::optional<std::vector<SoundSourceDef>> entriesFromJson(
     const QJsonArray& json, QString* error = nullptr);
+QString defaultName(const QString& filePath);
+SoundSourceDef createEntry(uint32_t sourceId, const QString& filePath);
+bool sameExceptNames(SoundSources a, SoundSources b);
 std::vector<SoundSourceSet*> sourceSets(SoundSources& sources);
 std::vector<const SoundSourceSet*> sourceSets(const SoundSources& sources);
 const SoundSourceSet* sourceSet(const VSound& sound, const QString& language);

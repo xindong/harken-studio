@@ -93,7 +93,7 @@ void ActiveSourcePreview::refresh()
     sourceId_ = source->sourceId;
     const auto* asset = AssetRegistry::instance().getAsset(sourceId_);
     setSource(*source, asset);
-    if (isEnabled()) setToolTip(tr("Edit Active Source"));
+    if (isEnabled()) setToolTip(tr("Edit Waveform"));
 }
 
 }

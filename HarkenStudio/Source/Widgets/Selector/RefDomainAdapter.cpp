@@ -51,7 +51,9 @@ public:
             const auto appendSources = [&](const SoundSourceSet& sources, const QString& language) {
                 for (const auto& source : sources.entries) {
                     const auto* asset = AssetRegistry::instance().getAsset(source.sourceId);
-                    const QString path = asset ? assetDisplayPath(*asset) : QObject::tr("Missing");
+                    QString path = asset ? assetDisplayPath(*asset) : QObject::tr("Missing");
+                    if (!source.name.isEmpty())
+                        path = source.name + QStringLiteral(" \u2014 ") + path;
                     tip += QLatin1Char('\n') + (language.isEmpty()
                         ? QObject::tr("Source: %1").arg(path)
                         : QObject::tr("Source (%1): %2").arg(language, path));
@@ -127,6 +129,7 @@ public:
                         || property == QStringLiteral("playType")
                         || property == QStringLiteral("kind")
                         || property == QStringLiteral("sources")
+                        || property == QStringLiteral("sourceName")
                         || property == QStringLiteral("distinguishLanguage")))
                     cb();
             });

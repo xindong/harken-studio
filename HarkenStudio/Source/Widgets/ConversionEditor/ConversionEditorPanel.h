@@ -40,7 +40,6 @@ public:
 signals:
     void panelFocused(int panelId);
     void pinToggled(bool pinned);
-    void navigateRequested(const QUuid& itemGuid);
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;

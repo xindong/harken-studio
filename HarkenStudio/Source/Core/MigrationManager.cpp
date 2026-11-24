@@ -191,17 +191,6 @@ MigrationManager::MigrationManager()
         };
         registry_.registerStep(std::move(step));
     }
-    ProjectMigrationStep conversion;
-    conversion.id = QStringLiteral("project-schema-9-to-10");
-    conversion.fromSchema = 9;
-    conversion.toSchema = 10;
-    conversion.writeSet = {QStringLiteral("<all-documents>")};
-    conversion.transform = [](ProjectMigrationWorkspace&, QStringList*, QString* error) {
-        if (error) *error = QStringLiteral("Conversion migration requires a project plan");
-        return false;
-    };
-    registry_.registerStep(std::move(conversion));
-
 }
 
 MigrationManager::MigrationManager(ProjectMigrationRegistry registry)
@@ -254,7 +243,7 @@ ProjectMigrationPlan MigrationManager::planProject(
     for (ProjectMigrationStep& step : plan.steps)
         expandWriteSetPlaceholders(&step.writeSet, projectDirectory, projectFile);
     for (ProjectMigrationStep& step : plan.steps) {
-        if (step.id != QStringLiteral("project-schema-9-to-10")) continue;
+        if (step.toSchema != CURRENT_PROJECT_SCHEMA_VERSION) continue;
         QMap<QString, QJsonObject> documents;
         for (const auto& relative : step.writeSet) {
             QFile file(QDir(projectDirectory).filePath(relative));

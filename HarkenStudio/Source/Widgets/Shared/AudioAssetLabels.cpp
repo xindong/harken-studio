@@ -5,17 +5,13 @@
 #include "Core/AssetPipeline/PathUtils.h"
 
 #include <QCoreApplication>
-#include <QFileInfo>
 
 namespace harken::studio {
 
 QString assetDisplayName(const AssetInfo& asset)
 {
-    const QFileInfo file(PathUtils::normalizeToUnix(
-        asset.relativePath.isEmpty() ? asset.absolutePath : asset.relativePath));
-    const QString stem = file.completeBaseName();
-    return !stem.isEmpty() && AudioFormatCatalog::containsExtension(file.suffix())
-        ? stem : file.fileName();
+    return AudioFormatCatalog::displayName(
+        asset.relativePath.isEmpty() ? asset.absolutePath : asset.relativePath);
 }
 
 QString assetDisplayPath(const AssetInfo& asset)
