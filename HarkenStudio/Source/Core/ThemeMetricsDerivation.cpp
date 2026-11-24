@@ -84,9 +84,8 @@ void deriveUiMetrics(ThemeMetrics& m, const ThemeMetrics& base, const Scale& s)
     form.valueColumnShare = 7;
 
     auto& chrome = m.chrome;
-    chrome.mainWindowMenuBarHeight = s.px(qMax(base.controlHeight, base.control.largeHeight - base.spacingCompact));
+    chrome.titleBarHeight = s.px(qMax(base.controlHeight, base.control.largeHeight - base.spacingCompact));
     chrome.mainWindowToolBarHeight = s.px(base.control.largeHeight + base.spacingXSmall);
-    chrome.titleBarHeight = largeHeight + xSmall;
     chrome.windowButtonWidth = largeHeight + large;
     chrome.windowMinimumWidth = 800;
     chrome.windowMinimumHeight = 600;

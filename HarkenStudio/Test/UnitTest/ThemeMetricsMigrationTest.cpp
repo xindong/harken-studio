@@ -1407,6 +1407,7 @@ TEST(ThemeMetricsMigration, WindowChromePreservesControlBoundsAndSurfaceAcrossPr
         events.exec();
         for (auto* bar : bars) {
             SCOPED_TRACE(bar->metaObject()->className());
+            EXPECT_EQ(bar->height(), mainBar->height());
             EXPECT_GE(bar->height(), bar->fontMetrics().height());
             const auto buttons = bar->findChildren<QAbstractButton*>(QString(), Qt::FindDirectChildrenOnly);
             ASSERT_FALSE(buttons.isEmpty());
