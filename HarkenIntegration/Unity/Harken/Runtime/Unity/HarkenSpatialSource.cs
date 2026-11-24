@@ -52,14 +52,36 @@ namespace Harken.Unity
         /// <summary>Changes the followed identity's range; an ended source cannot be changed.</summary>
         public VnResult SetDistanceScale(float scale)
         {
+            VnResult result = GetWritableEmitter(out Emitter handle);
+            return LastResult = result == VnResult.VN_OK ? handle.SetDistanceScale(scale) : result;
+        }
+
+        /// <summary>Sets a named Variable on this source for playback posted with this source.</summary>
+        public VnResult SetValue(string variableName, float value)
+        {
+            VnResult result = GetWritableEmitter(out Emitter handle);
+            return LastResult = result == VnResult.VN_OK ? Values.SetValue(variableName, value, handle) : result;
+        }
+
+        /// <summary>Selects an authored Variable label on this source.</summary>
+        public VnResult SetValue(string variableName, string labelName)
+        {
+            VnResult result = GetWritableEmitter(out Emitter handle);
+            return LastResult = result == VnResult.VN_OK ? Values.SetValue(variableName, labelName, handle) : result;
+        }
+
+        private VnResult GetWritableEmitter(out Emitter handle)
+        {
+            handle = default;
+            VnResult thread = session.RequireOwnerThread();
+            if (thread != VnResult.VN_OK) return thread;
             if (owner is HarkenAudioSystem runtime)
             {
                 if (runtime == null || !ReferenceEquals(runtime.Session, session))
-                    return LastResult = VnResult.VN_STALE_HANDLE;
-                if (runtime.IsPublishingSpatial) return LastResult = VnResult.VN_IN_USE;
+                    return VnResult.VN_STALE_HANDLE;
+                if (runtime.IsPublishingSpatial) return VnResult.VN_IN_USE;
             }
-            VnResult result = Validate(owner, session, out Emitter handle);
-            return LastResult = result == VnResult.VN_OK ? handle.SetDistanceScale(scale) : result;
+            return Validate(owner, session, out handle);
         }
 
         internal VnResult Validate(object expectedOwner, PackBootstrapSession expectedSession, out Emitter handle)
