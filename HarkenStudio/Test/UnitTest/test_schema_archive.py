@@ -24,7 +24,6 @@ GENERATED_NAMES = {
     "SchemaBuildGenerated.h",
 }
 EDITOR_VERSION = MODULE["load_tree"]("Editor")["currentVersion"]
-EDITOR_PUBLISHED_VERSION = max(MODULE["load_tree"]("Editor")["manifest"]["published"])
 PACK_VERSION = MODULE["load_tree"]("Pack")["currentVersion"]
 
 
@@ -126,9 +125,6 @@ class SchemaArchiveTest(unittest.TestCase):
             {"published": [2, 1]}, {"published": [1, 1, 2]}, {"published": [True, 2]},
             {"supportedHistorical": [2]}, {"supportedHistorical": [EDITOR_VERSION]},
             {"currentVersion": 2}, {"rootHash": "0" * 64},
-            {"developmentVersion": None}, {"developmentVersion": True},
-            {"developmentVersion": EDITOR_PUBLISHED_VERSION},
-            {"developmentVersion": EDITOR_PUBLISHED_VERSION + 2},
         )
         for change in invalid_fields:
             with self.subTest(change=change):
@@ -144,7 +140,7 @@ class SchemaArchiveTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = copy_schema(directory)
             current = MODULE["load_tree"]("Editor", root)["currentSource"]
-            path = root / "Project" / str(EDITOR_PUBLISHED_VERSION) / "ProjectSerializedSchema.json"
+            path = root / "Project" / str(EDITOR_VERSION) / "ProjectSerializedSchema.json"
             write_json(path, MODULE["materialize_source"]("Editor", current, EDITOR_VERSION + 1))
             with self.assertRaises(ValueError):
                 MODULE["build_bundle"](root)
@@ -153,7 +149,7 @@ class SchemaArchiveTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = copy_schema(directory)
             before = MODULE["build_bundle"](root)
-            published = root / "Project" / str(EDITOR_PUBLISHED_VERSION) / "ProjectSerializedSchema.json"
+            published = root / "Project" / str(EDITOR_VERSION) / "ProjectSerializedSchema.json"
             published_bytes = published.read_bytes()
             current_path = root / "Project" / "current" / "ProjectSerializedSchema.json"
             current = read_json(current_path)
@@ -166,20 +162,18 @@ class SchemaArchiveTest(unittest.TestCase):
             self.assertNotEqual(after["generated"]["ProjectSchemaValidator.generated.cpp"], before["generated"]["ProjectSchemaValidator.generated.cpp"])
             self.assertEqual(published.read_bytes(), published_bytes)
             self.assertNotEqual(after["installed"][f"Editor/{EDITOR_VERSION}/ProjectSerializedSchema.json"], MODULE["canonical_bytes"](read_json(published)))
-            if EDITOR_VERSION == EDITOR_PUBLISHED_VERSION:
-                write_json(published, after["trees"]["Editor"]["current"])
-                synchronized = MODULE["build_bundle"](root)
-                self.assertEqual(after["manifest"], synchronized["manifest"])
-                self.assertEqual(after["generated"], synchronized["generated"])
+            write_json(published, after["trees"]["Editor"]["current"])
+            synchronized = MODULE["build_bundle"](root)
+            self.assertEqual(after["manifest"], synchronized["manifest"])
+            self.assertEqual(after["generated"], synchronized["generated"])
 
     def test_historical_validation_is_explicit_and_reference_files_do_not_imply_support(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = copy_schema(directory)
             path = root / "Project" / "manifest.json"
             manifest = read_json(path)
-            historical_version = EDITOR_PUBLISHED_VERSION
+            historical_version = EDITOR_VERSION
             current_version = historical_version + 1
-            manifest.pop("developmentVersion", None)
             manifest["published"].append(current_version)
             manifest["supportedHistorical"] = []
             current = read_json(root / "Project/current/ProjectSerializedSchema.json")
@@ -211,7 +205,6 @@ class SchemaArchiveTest(unittest.TestCase):
                 loaded = MODULE["load_tree"](changed_tree, root)
                 current = max(loaded["manifest"]["published"])
                 manifest = loaded["manifest"]
-                manifest.pop("developmentVersion", None)
                 manifest["published"].append(current + 1)
                 manifest["supportedHistorical"] = sorted(set(manifest["supportedHistorical"]) | {current})
                 write_json(root / MODULE["TREE_DIRECTORIES"][changed_tree] / "manifest.json", manifest)
@@ -244,7 +237,7 @@ class SchemaArchiveTest(unittest.TestCase):
         self.assertEqual({entry["path"] for entry in manifest["files"]}, set(bundle["installed"]) - {"build.json"})
         self.assertEqual({entry["path"] for entry in manifest["generated"]}, GENERATED_NAMES - {"SchemaBuildGenerated.h"})
         input_paths = {entry["path"] for entry in manifest["inputs"]}
-        expected_inputs = {"Editor/migration-inputs/development-9/ProjectSerializedSchema.json"}
+        expected_inputs = set()
         for tree in ("Editor", "Pack"):
             loaded = MODULE["load_tree"](tree)
             name = MODULE["TREE_SCHEMA_NAMES"][tree]
@@ -357,7 +350,6 @@ class SchemaArchiveTest(unittest.TestCase):
             root = copy_schema(directory)
             loaded = MODULE["load_tree"]("Editor", root)
             candidate_version = max(loaded["manifest"]["published"]) + 1
-            loaded["manifest"].pop("developmentVersion", None)
             loaded["manifest"]["published"].append(candidate_version)
             loaded["manifest"]["supportedHistorical"] = sorted(
                 set(loaded["manifest"]["supportedHistorical"]) | {candidate_version - 1})

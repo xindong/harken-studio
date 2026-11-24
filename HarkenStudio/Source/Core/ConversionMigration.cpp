@@ -190,7 +190,7 @@ bool prepareConversionMigration(const QString& sourceDirectory,
         });
         names.insert(name.toCaseFolded());
         const QUuid guid = QUuid::createUuidV5(QUuid(projectId),
-            QByteArrayLiteral("conversion-migration-9-to-10/") + key);
+            QByteArrayLiteral("conversion-migration/") + key);
         const QString id = guid.toString(QUuid::WithoutBraces);
         const QString path = QStringLiteral("Conversions/") + NameValidator::objectFileName(name, guid);
         const QJsonObject content{{QStringLiteral("type"), QStringLiteral("Conversion")},
@@ -430,11 +430,10 @@ bool prepareConversionMigration(const QString& sourceDirectory,
         documents.insert(registryPath, registry);
     }
     if (!differences.isEmpty()) {
-        const QString reportName = NameValidator::makeUniqueName(QStringLiteral("conversion-migration-9-to-10"),
+        const QString reportName = NameValidator::makeUniqueName(QStringLiteral("conversion-migration"),
             [&](const QString& name) { return !QFileInfo::exists(QDir(sourceDirectory).filePath(name + QStringLiteral(".json"))); });
         const QString reportPath = reportName + QStringLiteral(".json");
-        documents.insert(reportPath, QJsonObject{{QStringLiteral("fromSchema"), 9},
-            {QStringLiteral("toSchema"), 10}, {QStringLiteral("differences"), differences}});
+        documents.insert(reportPath, QJsonObject{{QStringLiteral("differences"), differences}});
         if (warnings) warnings->append(QStringLiteral("Audio conversion settings changed during project upgrade. Review %1 (%2 differences).")
             .arg(QDir(sourceDirectory).filePath(reportPath)).arg(differences.size()));
     }

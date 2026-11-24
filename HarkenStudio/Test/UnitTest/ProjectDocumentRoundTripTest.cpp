@@ -409,7 +409,7 @@ class ProjectDocumentVersionRoundTripTest : public ProjectDocumentRoundTripTest,
 protected:
     void SetUp() override
     {
-        includeEffectDocuments_ = GetParam() == -9 || GetParam() >= ProjectSchema::kProjectSchemaVersion;
+        includeEffectDocuments_ = GetParam() >= ProjectSchema::kProjectSchemaVersion;
         ProjectDocumentRoundTripTest::SetUp();
         if (GetParam() >= ProjectSchema::kProjectSchemaVersion) return;
         for (const auto& id : documentsById_.keys()) {
@@ -426,8 +426,8 @@ protected:
 TEST_P(ProjectDocumentVersionRoundTripTest, SupportedDocumentVersionsPreserveContentThroughOpenSave)
 {
     auto& manager = ProjectManager::instance();
-    const bool developmentV9 = GetParam() == -9;
-    const int version = developmentV9 ? 9 : GetParam();
+    const int version = GetParam();
+    const bool migratesConversions = version == ProjectSchema::kProjectSchemaVersion - 1;
     SCOPED_TRACE(version);
     QMap<QString, QByteArray> beforeOpen;
     QMap<QString, QJsonObject> expectedProperties;
@@ -442,7 +442,7 @@ TEST_P(ProjectDocumentVersionRoundTripTest, SupportedDocumentVersionsPreserveCon
     QMap<QString, QMap<quint32, int>> previousRates;
     QMap<quint32, QPair<int, qint64>> sourceMetadata;
     QString registryPath;
-    if (version == 9) {
+    if (migratesConversions) {
         QJsonObject templateDocument;
         QString rootId;
         for (auto document = documentsById_.cbegin(); document != documentsById_.cend(); ++document) {
@@ -542,7 +542,7 @@ TEST_P(ProjectDocumentVersionRoundTripTest, SupportedDocumentVersionsPreserveCon
         auto document = it.value();
         auto header = HarkenTest::projectHeader(document);
         header.insert(QStringLiteral("schemaVersion"), version);
-        if (version < ProjectSchema::kProjectSchemaVersion && !developmentV9) {
+        if (version < ProjectSchema::kProjectSchemaVersion) {
             header.insert(QStringLiteral("savedStudioVersion"), QStringLiteral("1.0.0"));
             header.insert(QStringLiteral("propertyModel"), QStringLiteral("fieldGroupsV1"));
             header.remove(QStringLiteral("studioVersion"));
@@ -561,14 +561,14 @@ TEST_P(ProjectDocumentVersionRoundTripTest, SupportedDocumentVersionsPreserveCon
                     const QJsonArray tiers{
                         QJsonObject{{QStringLiteral("maxBytes"), 300}, {QStringLiteral("config"), legacyConversionParameters(32000)}},
                         QJsonObject{{QStringLiteral("maxBytes"), QJsonValue::Null}, {QStringLiteral("config"), legacyConversionParameters(22050)}}};
-                    platform.insert(QStringLiteral("profile"), legacyProfile(version == 9 && index == 0, tiers));
+                    platform.insert(QStringLiteral("profile"), legacyProfile(migratesConversions && index == 0, tiers));
                     legacyPlatforms[index] = platform;
                 }
                 content.insert(QStringLiteral("deployPlatforms"), legacyPlatforms);
             }
         }
         auto authoredComponents = content.value(QStringLiteral("components")).toObject();
-        if (!developmentV9 && content.value(QStringLiteral("playableProperties")).isObject()) {
+        if (content.value(QStringLiteral("playableProperties")).isObject()) {
             auto properties = content.value(QStringLiteral("playableProperties")).toObject();
             ASSERT_TRUE(properties.value(QStringLiteral("platformOverrides")).toArray().isEmpty());
             QJsonObject overlay{{QStringLiteral("platformId"), platformId},
@@ -592,7 +592,7 @@ TEST_P(ProjectDocumentVersionRoundTripTest, SupportedDocumentVersionsPreserveCon
             authoredComponents.insert(QStringLiteral("mixnode"), mix);
             content.insert(QStringLiteral("components"), authoredComponents);
         }
-        if (version < ProjectSchema::kProjectSchemaVersion && !developmentV9) {
+        if (version < ProjectSchema::kProjectSchemaVersion) {
             if (authoredComponents.contains(QStringLiteral("mixnode"))) {
                 auto mix = authoredComponents.value(QStringLiteral("mixnode")).toObject();
                 mix.remove(QStringLiteral("filter"));
@@ -705,7 +705,7 @@ TEST_P(ProjectDocumentVersionRoundTripTest, SupportedDocumentVersionsPreserveCon
             content.insert(QStringLiteral("packExportCurrentPlatformId"), platform);
             content.insert(QStringLiteral("packExportSelectedPlatformIds"), QJsonArray{platform});
         }
-        if (!developmentV9 && content.value(QStringLiteral("type")) == QStringLiteral("Segment")) {
+        if (content.value(QStringLiteral("type")) == QStringLiteral("Segment")) {
             content.insert(QStringLiteral("type"), QStringLiteral("Piece"));
             auto components = content.value(QStringLiteral("components")).toObject();
             auto timeline = components.take(QStringLiteral("segmenttimeline")).toObject();
@@ -730,7 +730,7 @@ TEST_P(ProjectDocumentVersionRoundTripTest, SupportedDocumentVersionsPreserveCon
     EXPECT_EQ(analysis.upgradeRequired, version < ProjectSchema::kProjectSchemaVersion);
     for (auto it = beforeOpen.cbegin(); it != beforeOpen.cend(); ++it)
         EXPECT_EQ(readFile(it.key()), it.value());
-    if (version == 9) {
+    if (migratesConversions) {
         const auto registryBefore = readFile(registryPath);
         auto trial = upgrades.execute(analysis);
         ASSERT_TRUE(trial.ok) << trial.error.toStdString();
@@ -760,7 +760,7 @@ TEST_P(ProjectDocumentVersionRoundTripTest, SupportedDocumentVersionsPreserveCon
     }
     UndoRedoManager::instance().clearHistory();
     expectModelMetadata(*manager.currentProject());
-    if (version == 9) {
+    if (migratesConversions) {
         const auto snapshot = buildFieldGroupEffectiveSnapshot(*manager.currentProject(),
             toFieldGroupGuid(QUuid(platformId.toString())));
         ASSERT_TRUE(snapshot.ok());
@@ -790,7 +790,7 @@ TEST_P(ProjectDocumentVersionRoundTripTest, SupportedDocumentVersionsPreserveCon
             }
         }
         QSet<QString> reportedDifferences;
-        const auto report = readObject(QDir(projectDirectory_).filePath(QStringLiteral("conversion-migration-9-to-10.json")));
+        const auto report = readObject(QDir(projectDirectory_).filePath(QStringLiteral("conversion-migration.json")));
         const auto differences = report.value(QStringLiteral("differences")).toArray();
         EXPECT_EQ(differences.size(), expectedDifferences.size());
         for (const auto& value : differences) {
@@ -840,7 +840,7 @@ TEST_P(ProjectDocumentVersionRoundTripTest, SupportedDocumentVersionsPreserveCon
                 savedPaths.remove(id);
     }
     EXPECT_EQ(savedPaths.keys(), documentsById_.keys());
-    if (version != 9)
+    if (!migratesConversions)
         EXPECT_EQ(allSavedPaths.size(), documentsById_.size());
     else
         EXPECT_GT(allSavedPaths.size(), documentsById_.size());
@@ -900,10 +900,7 @@ INSTANTIATE_TEST_SUITE_P(Current, ProjectDocumentVersionRoundTripTest,
                          ::testing::Values(ProjectSchema::kProjectSchemaVersion));
 
 INSTANTIATE_TEST_SUITE_P(Historical, ProjectDocumentVersionRoundTripTest,
-                         ::testing::Values(7, 8, 9));
-
-INSTANTIATE_TEST_SUITE_P(Development, ProjectDocumentVersionRoundTripTest,
-                         ::testing::Values(-9));
+                         ::testing::Values(7, 8));
 
 TEST_F(ProjectDocumentRoundTripTest, RenamingAnAncestorDoesNotRewriteDescendantDocuments)
 {

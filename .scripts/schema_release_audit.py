@@ -360,7 +360,7 @@ def verify_current_release(head_revision: str = "WORKTREE") -> dict[str, Any]:
         schema_archive.build_bundle(root)
         for tree in TREE_NAMES:
             data = schema_archive.load_tree(tree, root)
-            if data["published"].get(data["currentVersion"]) != data["current"]:
+            if data["published"][data["currentVersion"]] != data["current"]:
                 errors.append(f"{tree} current has not been synchronized to its release generation")
         errors.extend(release_schema_errors(root))
     with schema_root_at(head_revision, PACK_BINARY_ROOT_PATH) as root:

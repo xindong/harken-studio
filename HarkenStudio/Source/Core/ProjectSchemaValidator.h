@@ -1,7 +1,5 @@
 #pragma once
 
-#include "ProjectDocument.h"
-
 #include <QJsonValue>
 #include <QString>
 #include <QStringList>
@@ -17,8 +15,7 @@ public:
     static QStringList validateProjectDocument(int version,
                                                const QString& documentType,
                                                const QJsonValue& document,
-                                               const QString& relativePath,
-                                               ProjectDocumentContract contract = ProjectDocumentContract::VersionedSchema);
+                                               const QString& relativePath);
     static QStringList validatePackMetadata(int version,
                                             const QJsonValue& document,
                                             const QString& relativePath);

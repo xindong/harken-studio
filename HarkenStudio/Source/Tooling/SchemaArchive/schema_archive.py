@@ -24,7 +24,6 @@ GENERATED_PROJECT_HEADER = "ProjectSchemaGenerated.h"
 GENERATED_VALIDATOR_HEADER = "ProjectSchemaValidator.generated.h"
 GENERATED_VALIDATOR_SOURCE = "ProjectSchemaValidator.generated.cpp"
 GENERATED_BUILD_HEADER = "SchemaBuildGenerated.h"
-DEVELOPMENT_V9_INPUT = Path(__file__).resolve().parent / "migration_inputs" / "development-9" / PROJECT_SCHEMA_NAME
 RULE_METHODS = {
     "uniqueAcrossProject": "uniqueAcrossProject",
     "documentIdMirrorsRoot": "documentIdMirrorsRoot",
@@ -434,9 +433,9 @@ def validate_pack_source(source: dict[str, Any]) -> None:
 def validate_tree_manifest(tree: str, manifest: Any) -> None:
     if tree not in TREE_SCHEMA_NAMES:
         raise ValueError(f"unknown schema tree: {tree}")
-    required = {"manifestVersion", "tip", "published", "supportedHistorical"}
-    allowed = required | ({"developmentVersion"} if tree == "Editor" else set())
-    if not isinstance(manifest, dict) or not required <= set(manifest) <= allowed:
+    if not isinstance(manifest, dict) or set(manifest) != {
+        "manifestVersion", "tip", "published", "supportedHistorical"
+    }:
         raise ValueError(f"{tree} manifest needs manifestVersion, tip, published and supportedHistorical")
     if type(manifest["manifestVersion"]) is not int or manifest["manifestVersion"] != 1:
         raise ValueError(f"{tree} manifestVersion must be 1")
@@ -452,11 +451,7 @@ def validate_tree_manifest(tree: str, manifest: Any) -> None:
             raise ValueError(f"{tree} {field} must be a sorted list of unique positive integers")
     if not manifest["published"]:
         raise ValueError(f"{tree} published must not be empty")
-    development = manifest.get("developmentVersion")
-    if "developmentVersion" in manifest and (type(development) is not int
-                                    or development != manifest["published"][-1] + 1):
-        raise ValueError(f"{tree} developmentVersion must be the next unpublished generation")
-    historical = set(manifest["published"] if development else manifest["published"][:-1])
+    historical = set(manifest["published"][:-1])
     if not set(manifest["supportedHistorical"]).issubset(historical):
         raise ValueError(f"{tree} supportedHistorical must select published historical generations")
 
@@ -547,7 +542,7 @@ def load_tree(tree: str, schema_root: Path | None = None) -> dict[str, Any]:
         if source_version(tree, source) != version:
             raise ValueError(f"{tree}/{version} schema version does not match its directory")
         published[version] = source
-    version = manifest.get("developmentVersion", manifest["published"][-1])
+    version = manifest["published"][-1]
     current = materialize_source(tree, sources["current"], version)
     return {
         "manifest": manifest,
@@ -842,7 +837,6 @@ def generated_rule_call(rule: dict[str, Any]) -> str:
 def generated_validator_registry(
     releases: list[dict[str, Any]],
     pack: list[dict[str, Any]],
-    development_v9: dict[str, Any],
 ) -> tuple[bytes, bytes]:
     header = """#pragma once
 
@@ -868,11 +862,6 @@ bool validatePackMetadata(int version,
 bool validateProjectRules(int version,
                           harken::studio::ProjectSchemaRuleExecutor& executor,
                           QStringList& errors);
-bool validateDevelopmentProjectV9Document(QStringView documentType,
-                                          const QJsonValue& document,
-                                          const QString& relativePath,
-                                          QStringList& errors);
-void validateDevelopmentProjectV9Rules(harken::studio::ProjectSchemaRuleExecutor& executor);
 
 }
 """.encode("ascii")
@@ -889,20 +878,6 @@ void validateDevelopmentProjectV9Rules(harken::studio::ProjectSchemaRuleExecutor
         )
         for document_type, function in functions.items():
             project_functions[(release["projectSchemaVersion"], document_type)] = function
-    development_functions = emitter.add_context(
-        "DevelopmentProjectV9", development_v9["$defs"],
-        {item["type"]: item["schema"] for item in development_v9["x-harken-documentTypes"]},
-    )
-    development_checks = "\n".join(
-        f"    if (documentType == QLatin1String({json.dumps(document_type)})) {{\n"
-        f"        {function}(document, context, QStringLiteral(\"$\"));\n"
-        "        return true;\n"
-        "    }"
-        for document_type, function in sorted(development_functions.items())
-    )
-    development_rules = "\n".join(
-        f"    {generated_rule_call(rule)}" for rule in development_v9["x-harken-projectRules"]
-    )
     pack_functions: dict[int, str] = {}
     for contract in pack:
         version = contract["x-harken-format"]["formatVersion"]
@@ -1226,22 +1201,6 @@ bool validateProjectRules(int version,
     }}
 }}
 
-bool validateDevelopmentProjectV9Document(QStringView documentType,
-                                          const QJsonValue& document,
-                                          const QString& relativePath,
-                                          QStringList& errors)
-{{
-    ValidationContext context(relativePath, errors);
-{development_checks}
-    errors.append(QStringLiteral("%1 $: expected a development Project Schema 9 document, got unknown document type %2").arg(relativePath, documentType));
-    return false;
-}}
-
-void validateDevelopmentProjectV9Rules(harken::studio::ProjectSchemaRuleExecutor& executor)
-{{
-{development_rules}
-}}
-
 }}
 '''.encode("ascii")
     return header, source
@@ -1275,12 +1234,7 @@ def build_bundle(schema_root: Path | None = None) -> dict[str, Any]:
         }
     editor = trees["Editor"]
     pack = trees["Pack"]
-    development_v9_source = json.loads(DEVELOPMENT_V9_INPUT.read_text(encoding="utf-8"))
-    development_v9 = materialize_source("Editor", development_v9_source, 9)
-    inputs[f"Editor/migration-inputs/development-9/{PROJECT_SCHEMA_NAME}"] = canonical_bytes(development_v9_source)
-    validator_header, validator_source = generated_validator_registry(
-        editor["supported"], pack["supported"], development_v9
-    )
+    validator_header, validator_source = generated_validator_registry(editor["supported"], pack["supported"])
     generated = {
         GENERATED_PROJECT_HEADER: generated_project_header(
             editor["current"], tree_versions["Editor"]["supportedVersions"]

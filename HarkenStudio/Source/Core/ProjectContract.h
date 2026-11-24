@@ -43,7 +43,6 @@ private:
         QString documentType;
         QJsonObject object;
         QStringList errors;
-        ProjectDocumentContract contract = ProjectDocumentContract::VersionedSchema;
     };
     struct DecodedDocument
     {
@@ -52,7 +51,6 @@ private:
         ProjectDocumentData data;
         QString error;
         bool ok = false;
-        ProjectDocumentContract contract = ProjectDocumentContract::VersionedSchema;
     };
     QHash<QString, ParsedDocument> parsed_;
     QHash<QString, ValidatedDocument> validated_;
@@ -73,7 +71,6 @@ private:
     bool valid_ = false;
     bool requireCurrentSchema_ = false;
     int schemaVersion_ = 0;
-    ProjectDocumentContract contract_ = ProjectDocumentContract::VersionedSchema;
     QString rootRelativePath_;
     QJsonObject rootDocument_;
     QHash<QString, QJsonObject> documents_;
@@ -128,12 +125,10 @@ private:
     static QStringList validateDocument(int schemaVersion, const QString& documentType,
                                         const QJsonObject& document,
                                         const QString& relativePath,
-                                        ProjectContractReadContext* context,
-                                        ProjectDocumentContract contract);
+                                        ProjectContractReadContext* context);
     static bool decodeDocument(const QJsonObject& document, const QString& documentType,
                                 const QString& relativePath, ProjectDocumentData* data,
-                                QString* error, ProjectContractReadContext* context,
-                                ProjectDocumentContract contract);
+                                QString* error, ProjectContractReadContext* context);
     QStringList validateTreeImpl(const QString& projectDirectory,
                                  const QJsonObject& projectRoot,
                                  bool requireCurrentSchema,
