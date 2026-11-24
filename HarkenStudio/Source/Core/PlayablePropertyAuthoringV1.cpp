@@ -1345,7 +1345,7 @@ PlayablePropertyAuthoringV1::removeContainerChildOccurrences(
     for (const auto& row : selection->selections.shared.occurrenceRows())
         if (row.childGuid == childGuid) removed.push_back(row);
     for (auto* table : selection->selections.tables())
-        std::erase_if(table->entries, [&](const auto& member) { return member.childGuid == childGuid; });
+        table->removeMembers([&](const auto& member) { return member.childGuid == childGuid; });
     return removed;
 }
 

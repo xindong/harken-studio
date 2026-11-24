@@ -155,6 +155,7 @@ inline QJsonObject setItemPropertySchema()
                     QStringLiteral("resumeFromLast")}}}},
             {QStringLiteral("selections"), QJsonObject{
                 {QStringLiteral("type"), QStringLiteral("object")},
+                {QStringLiteral("description"), QStringLiteral("Complete selection tables for shared and each platform override. Every table has entries, matchAxes, matchRows, blendAxes, occurrenceOrdinalHighWater and ruleOrdinalHighWater. matchRows are ordered Match rules {stableRuleOrdinal, target, cells}: stableRuleOrdinal is unique and below ruleOrdinalHighWater; target is the childGuid of an entry, or null for a rule without a child; cells has one value per matchAxes Variable, where null matches any value, an integer is a Variable value and {labelId} is a Variable label. Rules without a target are kept in the project and skipped at playback.")},
                 {QStringLiteral("required"), QJsonArray{QStringLiteral("shared"), QStringLiteral("platforms")}}}},
             {QStringLiteral("sources"), QJsonObject{
                 {QStringLiteral("type"), QStringLiteral("object")},

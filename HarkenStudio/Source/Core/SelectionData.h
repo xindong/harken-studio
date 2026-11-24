@@ -10,6 +10,7 @@
 #include <QUuid>
 
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <vector>
 
@@ -33,13 +34,13 @@ struct SelectionOccurrence
     bool operator==(const SelectionOccurrence&) const = default;
 };
 
-struct SelectionCondition
+struct SelectionMatchRow
 {
     uint32_t stableRuleOrdinal = 0;
-    uint32_t priority = 0;
+    QUuid target;
     std::vector<std::optional<DiscreteGridCell>> cells;
 
-    bool operator==(const SelectionCondition&) const = default;
+    bool operator==(const SelectionMatchRow&) const = default;
 };
 
 struct SelectionCurve
@@ -63,7 +64,6 @@ struct SelectionMember
     QUuid childGuid;
     uint32_t stableMemberOrdinal = 0;
     std::vector<SelectionOccurrence> occurrences;
-    std::vector<SelectionCondition> conditions;
     std::vector<SelectionCurve> curves;
 };
 
@@ -73,6 +73,7 @@ struct SelectionTable
     uint64_t ruleOrdinalHighWater = 0;
     std::vector<SelectionMember> entries;
     std::vector<QUuid> matchAxes;
+    std::vector<SelectionMatchRow> matchRows;
     std::vector<SelectionMixingRow> mixingRows;
 
     const SelectionOccurrence* find(uint32_t ordinal) const;
@@ -84,6 +85,7 @@ struct SelectionTable
     std::vector<SelectionEntry> occurrenceRows() const;
     std::vector<SelectionEntry> memberRows() const;
     bool setOccurrenceRows(const std::vector<SelectionEntry>& rows);
+    void removeMembers(const std::function<bool(const SelectionMember&)>& predicate);
     DiscreteGridDef matchGrid() const;
     bool setMatchGrid(const DiscreteGridDef& grid);
     MixingDef mixing() const;

@@ -150,6 +150,8 @@ void remapTree(ProjectItem* item, const TemplateIdentityMap& identities)
                 row.guid = rowGuids.value(row.guid);
                 row.variable = identities.guids.value(row.variable, row.variable);
             }
+            for (auto& row : table->matchRows)
+                row.target = identities.guids.value(row.target, row.target);
             for (auto& entry : table->entries) {
                 entry.childGuid = identities.guids.value(entry.childGuid, entry.childGuid);
                 for (auto& curve : entry.curves) curve.rowGuid = rowGuids.value(curve.rowGuid);
@@ -487,25 +489,23 @@ bool TemplateApplyService::seedTemplateInto(
                 auto* variableItem = authoredByGuid.value(table->matchAxes[axis], nullptr);
                 auto* variable = variableItem ? variableItem->comp<VVariable>() : nullptr;
                 if (!variable) return setErr(QStringLiteral("Template Grid axis has no Variable"));
-                for (auto& entry : table->entries) {
-                    for (auto& condition : entry.conditions) {
-                        auto& cell = condition.cells[axis];
-                        if (!cell) continue;
-                        if (!cell->labelId.isNull()) {
-                            if (!VariableSemantics::labelById(variable->labels, cell->labelId))
-                                return setErr(QStringLiteral("Template Grid Label identity is missing"));
-                            continue;
-                        }
-                        const int index = cell->legacyValue;
-                        if (index < 0 || index > VariableSemantics::kStepExactIntBound)
-                            return setErr(QStringLiteral("Template Grid Label index is invalid"));
-                        const auto* label = VariableSemantics::labelAtIndex(variable->labels, index);
-                        if (!label) {
-                            variable->labels.push_back({index, {}});
-                            label = &variable->labels.back();
-                        }
-                        cell = DiscreteGridCell(label->id);
+                for (auto& row : table->matchRows) {
+                    auto& cell = row.cells[axis];
+                    if (!cell) continue;
+                    if (!cell->labelId.isNull()) {
+                        if (!VariableSemantics::labelById(variable->labels, cell->labelId))
+                            return setErr(QStringLiteral("Template Grid Label identity is missing"));
+                        continue;
                     }
+                    const int index = cell->legacyValue;
+                    if (index < 0 || index > VariableSemantics::kStepExactIntBound)
+                        return setErr(QStringLiteral("Template Grid Label index is invalid"));
+                    const auto* label = VariableSemantics::labelAtIndex(variable->labels, index);
+                    if (!label) {
+                        variable->labels.push_back({index, {}});
+                        label = &variable->labels.back();
+                    }
+                    cell = DiscreteGridCell(label->id);
                 }
             }
         }

@@ -2207,7 +2207,7 @@
         "weight"
       ]
     },
-    "selectionCondition": {
+    "selectionMatchRow": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
@@ -2216,10 +2216,15 @@
           "minimum": 0,
           "maximum": 4294967295
         },
-        "priority": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 4294967295
+        "target": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "cells": {
           "type": "array",
@@ -2249,7 +2254,7 @@
       },
       "required": [
         "stableRuleOrdinal",
-        "priority",
+        "target",
         "cells"
       ]
     },
@@ -2517,12 +2522,6 @@
             "$ref": "#/$defs/selectionOccurrence"
           }
         },
-        "conditions": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/selectionCondition"
-          }
-        },
         "curves": {
           "type": "array",
           "items": {
@@ -2534,7 +2533,6 @@
         "childGuid",
         "stableMemberOrdinal",
         "occurrences",
-        "conditions",
         "curves"
       ]
     },
@@ -2562,6 +2560,12 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/uuid"
+          }
+        },
+        "matchRows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/selectionMatchRow"
           }
         },
         "blendAxes": {
@@ -2606,6 +2610,7 @@
         "ruleOrdinalHighWater",
         "entries",
         "matchAxes",
+        "matchRows",
         "blendAxes"
       ]
     },
