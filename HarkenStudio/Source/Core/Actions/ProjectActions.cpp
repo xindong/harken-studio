@@ -1592,10 +1592,10 @@ bool validGridTableJson(ProjectManager* projectManager, ProjectItem* owner,
     for (const QJsonValue& rowValue : rowsValue.toArray()) {
         if (!rowValue.isObject()) return false;
         const QJsonObject row = rowValue.toObject();
-        if (!row.value(QStringLiteral("target")).isString()) return false;
-        const QUuid target = QUuid::fromString(
-            row.value(QStringLiteral("target")).toString());
-        if (!GridSemantics::isGridTargetCandidate(*owner, target)) return false;
+        const QJsonValue targetValue = row.value(QStringLiteral("target"));
+        if (!targetValue.isNull()
+            && (!targetValue.isString() || !GridSemantics::isGridTargetCandidate(
+                *owner, QUuid::fromString(targetValue.toString())))) return false;
         const QJsonValue cellsValue = row.value(QStringLiteral("cells"));
         if (!cellsValue.isArray()) return false;
         const QJsonArray cells = cellsValue.toArray();
@@ -1812,25 +1812,23 @@ ActionResult handleSelectionsProperty(ProjectManager* manager, ProjectItem* item
             auto* variable = variableItem ? variableItem->comp<VVariable>() : nullptr;
             if (!variable) return {false, {}, "INVALID_TARGET", "Selection axis has no Variable"};
             auto labels = newLabels.value(variableGuid, variable->labels);
-            for (auto& entry : table->entries) {
-                for (auto& condition : entry.conditions) {
-                    auto& cell = condition.cells[axis];
-                    if (!cell) continue;
-                    if (!cell->labelId.isNull()) {
-                        if (!VariableSemantics::labelById(labels, cell->labelId))
-                            return {false, {}, "INVALID_VARIABLE_LABEL", "Selection Label does not belong to its Variable"};
-                        continue;
-                    }
-                    const int value = cell->legacyValue;
-                    if (value < variable->rangeMin || value > variable->rangeMax)
-                        return {false, {}, "INVALID_VARIABLE_LABEL", "Selection value is outside its Variable range"};
-                    const auto* label = VariableSemantics::labelAtIndex(labels, value);
-                    if (!label) {
-                        labels.push_back({value, {}});
-                        label = &labels.back();
-                    }
-                    cell = DiscreteGridCell(label->id);
+            for (auto& row : table->matchRows) {
+                auto& cell = row.cells[axis];
+                if (!cell) continue;
+                if (!cell->labelId.isNull()) {
+                    if (!VariableSemantics::labelById(labels, cell->labelId))
+                        return {false, {}, "INVALID_VARIABLE_LABEL", "Selection Label does not belong to its Variable"};
+                    continue;
                 }
+                const int value = cell->legacyValue;
+                if (value < variable->rangeMin || value > variable->rangeMax)
+                    return {false, {}, "INVALID_VARIABLE_LABEL", "Selection value is outside its Variable range"};
+                const auto* label = VariableSemantics::labelAtIndex(labels, value);
+                if (!label) {
+                    labels.push_back({value, {}});
+                    label = &labels.back();
+                }
+                cell = DiscreteGridCell(label->id);
             }
             if (!variableLabelsEqual(labels, variable->labels)) {
                 std::sort(labels.begin(), labels.end(), [](const auto& a, const auto& b) { return a.anchor < b.anchor; });

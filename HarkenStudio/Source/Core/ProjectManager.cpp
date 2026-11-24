@@ -4238,10 +4238,12 @@ std::shared_ptr<ProjectItem> ProjectManager::cloneSubtreeDetached(
             }
         }
         if (node->type == ProjectItem::Type::Container) {
-            for (auto* table : node->comp<VSelection>()->selections.tables())
-            for (auto& row : table->entries) {
-                const auto mapped = guidMap.constFind(row.childGuid);
-                if (mapped != guidMap.cend()) row.childGuid = mapped.value();
+            for (auto* table : node->comp<VSelection>()->selections.tables()) {
+                for (auto& row : table->entries) {
+                    const auto mapped = guidMap.constFind(row.childGuid);
+                    if (mapped != guidMap.cend()) row.childGuid = mapped.value();
+                }
+                for (auto& row : table->matchRows) row.target = guidMap.value(row.target, row.target);
             }
         }
         if (auto* selection = node->comp<VSelection>()) {
@@ -5101,7 +5103,7 @@ DeletedSubtreeRefLog ProjectManager::cleanupIllegalPlaybackReferences(ProjectDat
         if (auto* selection = owner->comp<VSelection>()) {
             SelectionData next = selection->selections;
             for (auto* table : next.tables())
-                std::erase_if(table->entries, [&](const auto& entry) {
+                table->removeMembers([&](const auto& entry) {
                     return gridTargetIllegal(*owner, entry.childGuid);
                 });
             if (next != selection->selections) {

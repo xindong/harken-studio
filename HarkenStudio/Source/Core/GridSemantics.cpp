@@ -48,7 +48,8 @@ QJsonObject DiscreteGridDef::toJson() const
     QJsonArray rowsArr;
     for (const Row& r : rows) {
         QJsonObject ro;
-        ro["target"] = r.target.toString(QUuid::WithoutBraces);
+        ro["target"] = r.target.isNull() ? QJsonValue(QJsonValue::Null)
+            : QJsonValue(r.target.toString(QUuid::WithoutBraces));
         if (r.stableRuleOrdinal)
             ro["stableRuleOrdinal"] = static_cast<qint64>(*r.stableRuleOrdinal);
         QJsonArray cells;
@@ -129,6 +130,7 @@ DiscreteGridResult evalDiscreteGrid(const DiscreteGridDef& grid,
     DiscreteGridResult result;
     const int axisCount = static_cast<int>(grid.axes.size());
     for (int r = 0; r < static_cast<int>(grid.rows.size()); ++r) {
+        if (grid.rows[r].target.isNull()) continue;
         bool hit = true;
         for (int a = 0; a < axisCount; ++a) {
             const auto cell = grid.cellAt(r, a);
@@ -163,8 +165,13 @@ std::vector<GridLintFinding> lintDiscreteGrid(const DiscreteGridDef& grid)
 {
     std::vector<GridLintFinding> findings;
     const int axisCount = static_cast<int>(grid.axes.size());
-    for (int r = 1; r < static_cast<int>(grid.rows.size()); ++r) {
+    for (int r = 0; r < static_cast<int>(grid.rows.size()); ++r) {
+        if (grid.rows[r].target.isNull()) {
+            findings.push_back({r, -1, GridLintKind::UnassignedRow});
+            continue;
+        }
         for (int earlier = 0; earlier < r; ++earlier) {
+            if (grid.rows[earlier].target.isNull()) continue;
             bool identical = true;
             for (int a = 0; a < axisCount; ++a) {
                 if (grid.cellAt(earlier, a) != grid.cellAt(r, a)) {
@@ -219,7 +226,7 @@ bool validateGridRowTargets(const ProjectItem& owner, const Grid& grid,
 {
     for (size_t i = 0; i < grid.rows.size(); ++i) {
         const QUuid& target = grid.rows[i].target;
-        if (isGridTargetCandidate(owner, target)) continue;
+        if (target.isNull() || isGridTargetCandidate(owner, target)) continue;
         if (error) {
             *error = QStringLiteral(
                 "Container '%1' %2 grid row %3 target %4 is not a direct child")

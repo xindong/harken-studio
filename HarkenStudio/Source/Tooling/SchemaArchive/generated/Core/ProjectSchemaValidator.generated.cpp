@@ -2007,15 +2007,15 @@ void validateNode1788(const QJsonValue&, ValidationContext&, const QString&);
 void validateProjectV9Node1789(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1790(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1791(const QJsonValue&, ValidationContext&, const QString&);
-void validateNode1792(const QJsonValue&, ValidationContext&, const QString&);
+void validateProjectV9Node1792(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1793(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1794(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1795(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1796(const QJsonValue&, ValidationContext&, const QString&);
-void validateProjectV9Node1797(const QJsonValue&, ValidationContext&, const QString&);
+void validateNode1797(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1798(const QJsonValue&, ValidationContext&, const QString&);
-void validateNode1799(const QJsonValue&, ValidationContext&, const QString&);
-void validateProjectV9Node1800(const QJsonValue&, ValidationContext&, const QString&);
+void validateProjectV9Node1799(const QJsonValue&, ValidationContext&, const QString&);
+void validateNode1800(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1801(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1802(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1803(const QJsonValue&, ValidationContext&, const QString&);
@@ -2044,27 +2044,27 @@ void validateNode1825(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1826(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1827(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1828(const QJsonValue&, ValidationContext&, const QString&);
-void validateProjectV9Node1829(const QJsonValue&, ValidationContext&, const QString&);
+void validateNode1829(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1830(const QJsonValue&, ValidationContext&, const QString&);
-void validateNode1831(const QJsonValue&, ValidationContext&, const QString&);
+void validateProjectV9Node1831(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1832(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1833(const QJsonValue&, ValidationContext&, const QString&);
-void validateProjectV9Node1834(const QJsonValue&, ValidationContext&, const QString&);
+void validateNode1834(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1835(const QJsonValue&, ValidationContext&, const QString&);
-void validateNode1836(const QJsonValue&, ValidationContext&, const QString&);
+void validateProjectV9Node1836(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1837(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1838(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1839(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1840(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1841(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1842(const QJsonValue&, ValidationContext&, const QString&);
-void validateProjectV9Node1843(const QJsonValue&, ValidationContext&, const QString&);
+void validateNode1843(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1844(const QJsonValue&, ValidationContext&, const QString&);
-void validateNode1845(const QJsonValue&, ValidationContext&, const QString&);
+void validateProjectV9Node1845(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1846(const QJsonValue&, ValidationContext&, const QString&);
-void validateProjectV9Node1847(const QJsonValue&, ValidationContext&, const QString&);
+void validateNode1847(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1848(const QJsonValue&, ValidationContext&, const QString&);
-void validateNode1849(const QJsonValue&, ValidationContext&, const QString&);
+void validateProjectV9Node1849(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1850(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1851(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1852(const QJsonValue&, ValidationContext&, const QString&);
@@ -2075,53 +2075,53 @@ void validateNode1856(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1857(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1858(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1859(const QJsonValue&, ValidationContext&, const QString&);
-void validateProjectV9Node1860(const QJsonValue&, ValidationContext&, const QString&);
+void validateNode1860(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1861(const QJsonValue&, ValidationContext&, const QString&);
-void validateNode1862(const QJsonValue&, ValidationContext&, const QString&);
+void validateProjectV9Node1862(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1863(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1864(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1865(const QJsonValue&, ValidationContext&, const QString&);
-void validateProjectV9Node1866(const QJsonValue&, ValidationContext&, const QString&);
+void validateNode1866(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1867(const QJsonValue&, ValidationContext&, const QString&);
-void validateNode1868(const QJsonValue&, ValidationContext&, const QString&);
+void validateProjectV9Node1868(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1869(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1870(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1871(const QJsonValue&, ValidationContext&, const QString&);
-void validateProjectV9Node1872(const QJsonValue&, ValidationContext&, const QString&);
+void validateNode1872(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1873(const QJsonValue&, ValidationContext&, const QString&);
-void validateNode1874(const QJsonValue&, ValidationContext&, const QString&);
+void validateProjectV9Node1874(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1875(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1876(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1877(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1878(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1879(const QJsonValue&, ValidationContext&, const QString&);
-void validateProjectV9Node1880(const QJsonValue&, ValidationContext&, const QString&);
+void validateNode1880(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1881(const QJsonValue&, ValidationContext&, const QString&);
-void validateNode1882(const QJsonValue&, ValidationContext&, const QString&);
+void validateProjectV9Node1882(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1883(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1884(const QJsonValue&, ValidationContext&, const QString&);
-void validateProjectV9Node1885(const QJsonValue&, ValidationContext&, const QString&);
+void validateNode1885(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1886(const QJsonValue&, ValidationContext&, const QString&);
-void validateNode1887(const QJsonValue&, ValidationContext&, const QString&);
+void validateProjectV9Node1887(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1888(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1889(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1890(const QJsonValue&, ValidationContext&, const QString&);
-void validateProjectV9Node1891(const QJsonValue&, ValidationContext&, const QString&);
+void validateNode1891(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1892(const QJsonValue&, ValidationContext&, const QString&);
 void validateProjectV9Node1893(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1894(const QJsonValue&, ValidationContext&, const QString&);
-void validateNode1895(const QJsonValue&, ValidationContext&, const QString&);
+void validateProjectV9Node1895(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1896(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1897(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1898(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1899(const QJsonValue&, ValidationContext&, const QString&);
-void validateProjectV9Node1900(const QJsonValue&, ValidationContext&, const QString&);
+void validateNode1900(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1901(const QJsonValue&, ValidationContext&, const QString&);
-void validateNode1902(const QJsonValue&, ValidationContext&, const QString&);
+void validateProjectV9Node1902(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1903(const QJsonValue&, ValidationContext&, const QString&);
-void validateProjectV9Node1904(const QJsonValue&, ValidationContext&, const QString&);
+void validateNode1904(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1905(const QJsonValue&, ValidationContext&, const QString&);
-void validateNode1906(const QJsonValue&, ValidationContext&, const QString&);
+void validateProjectV9Node1906(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1907(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1908(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1909(const QJsonValue&, ValidationContext&, const QString&);
@@ -2131,19 +2131,19 @@ void validateNode1912(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1913(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1914(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1915(const QJsonValue&, ValidationContext&, const QString&);
-void validateProjectV9Node1916(const QJsonValue&, ValidationContext&, const QString&);
+void validateNode1916(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1917(const QJsonValue&, ValidationContext&, const QString&);
-void validateNode1918(const QJsonValue&, ValidationContext&, const QString&);
+void validateProjectV9Node1918(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1919(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1920(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1921(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1922(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1923(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1924(const QJsonValue&, ValidationContext&, const QString&);
-void validateProjectV9Node1925(const QJsonValue&, ValidationContext&, const QString&);
-void validateProjectV9Node1926(const QJsonValue&, ValidationContext&, const QString&);
-void validateNode1927(const QJsonValue&, ValidationContext&, const QString&);
-void validateNode1928(const QJsonValue&, ValidationContext&, const QString&);
+void validateNode1925(const QJsonValue&, ValidationContext&, const QString&);
+void validateNode1926(const QJsonValue&, ValidationContext&, const QString&);
+void validateProjectV9Node1927(const QJsonValue&, ValidationContext&, const QString&);
+void validateProjectV9Node1928(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1929(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1930(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1931(const QJsonValue&, ValidationContext&, const QString&);
@@ -2156,9 +2156,9 @@ void validateNode1937(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1938(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1939(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1940(const QJsonValue&, ValidationContext&, const QString&);
-void validateProjectV9Node1941(const QJsonValue&, ValidationContext&, const QString&);
+void validateNode1941(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1942(const QJsonValue&, ValidationContext&, const QString&);
-void validateNode1943(const QJsonValue&, ValidationContext&, const QString&);
+void validateProjectV9Node1943(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1944(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1945(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1946(const QJsonValue&, ValidationContext&, const QString&);
@@ -2171,33 +2171,33 @@ void validateNode1952(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1953(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1954(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1955(const QJsonValue&, ValidationContext&, const QString&);
-void validateProjectV9Node1956(const QJsonValue&, ValidationContext&, const QString&);
+void validateNode1956(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1957(const QJsonValue&, ValidationContext&, const QString&);
-void validateNode1958(const QJsonValue&, ValidationContext&, const QString&);
+void validateProjectV9Node1958(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1959(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1960(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1961(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1962(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1963(const QJsonValue&, ValidationContext&, const QString&);
-void validateProjectV9Node1964(const QJsonValue&, ValidationContext&, const QString&);
+void validateNode1964(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1965(const QJsonValue&, ValidationContext&, const QString&);
-void validateNode1966(const QJsonValue&, ValidationContext&, const QString&);
+void validateProjectV9Node1966(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1967(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1968(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1969(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1970(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1971(const QJsonValue&, ValidationContext&, const QString&);
-void validateProjectV9Node1972(const QJsonValue&, ValidationContext&, const QString&);
+void validateNode1972(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1973(const QJsonValue&, ValidationContext&, const QString&);
-void validateNode1974(const QJsonValue&, ValidationContext&, const QString&);
+void validateProjectV9Node1974(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1975(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1976(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1977(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1978(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1979(const QJsonValue&, ValidationContext&, const QString&);
-void validateProjectV9Node1980(const QJsonValue&, ValidationContext&, const QString&);
+void validateNode1980(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1981(const QJsonValue&, ValidationContext&, const QString&);
-void validateNode1982(const QJsonValue&, ValidationContext&, const QString&);
+void validateProjectV9Node1982(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1983(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1984(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1985(const QJsonValue&, ValidationContext&, const QString&);
@@ -2210,17 +2210,17 @@ void validateNode1991(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1992(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1993(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1994(const QJsonValue&, ValidationContext&, const QString&);
-void validateProjectV9Node1995(const QJsonValue&, ValidationContext&, const QString&);
+void validateNode1995(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1996(const QJsonValue&, ValidationContext&, const QString&);
-void validateNode1997(const QJsonValue&, ValidationContext&, const QString&);
+void validateProjectV9Node1997(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1998(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode1999(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode2000(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode2001(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode2002(const QJsonValue&, ValidationContext&, const QString&);
-void validateProjectV9Node2003(const QJsonValue&, ValidationContext&, const QString&);
+void validateNode2003(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode2004(const QJsonValue&, ValidationContext&, const QString&);
-void validateNode2005(const QJsonValue&, ValidationContext&, const QString&);
+void validateProjectV9Node2005(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode2006(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode2007(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode2008(const QJsonValue&, ValidationContext&, const QString&);
@@ -2241,21 +2241,21 @@ void validateNode2022(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode2023(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode2024(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode2025(const QJsonValue&, ValidationContext&, const QString&);
-void validateProjectV9Node2026(const QJsonValue&, ValidationContext&, const QString&);
+void validateNode2026(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode2027(const QJsonValue&, ValidationContext&, const QString&);
-void validateNode2028(const QJsonValue&, ValidationContext&, const QString&);
+void validateProjectV9Node2028(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode2029(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode2030(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode2031(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode2032(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode2033(const QJsonValue&, ValidationContext&, const QString&);
-void validatePackV4Node2034(const QJsonValue&, ValidationContext&, const QString&);
-void validatePackV4Node2035(const QJsonValue&, ValidationContext&, const QString&);
-void validateNode2036(const QJsonValue&, ValidationContext&, const QString&);
-void validateNode2037(const QJsonValue&, ValidationContext&, const QString&);
-void validatePackV4Node2038(const QJsonValue&, ValidationContext&, const QString&);
+void validateNode2034(const QJsonValue&, ValidationContext&, const QString&);
+void validateNode2035(const QJsonValue&, ValidationContext&, const QString&);
+void validatePackV4Node2036(const QJsonValue&, ValidationContext&, const QString&);
+void validatePackV4Node2037(const QJsonValue&, ValidationContext&, const QString&);
+void validateNode2038(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode2039(const QJsonValue&, ValidationContext&, const QString&);
-void validateNode2040(const QJsonValue&, ValidationContext&, const QString&);
+void validatePackV4Node2040(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode2041(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode2042(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode2043(const QJsonValue&, ValidationContext&, const QString&);
@@ -2263,10 +2263,10 @@ void validateNode2044(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode2045(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode2046(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode2047(const QJsonValue&, ValidationContext&, const QString&);
-void validatePackV4Node2048(const QJsonValue&, ValidationContext&, const QString&);
-void validatePackV4Node2049(const QJsonValue&, ValidationContext&, const QString&);
-void validateNode2050(const QJsonValue&, ValidationContext&, const QString&);
-void validateNode2051(const QJsonValue&, ValidationContext&, const QString&);
+void validateNode2048(const QJsonValue&, ValidationContext&, const QString&);
+void validateNode2049(const QJsonValue&, ValidationContext&, const QString&);
+void validatePackV4Node2050(const QJsonValue&, ValidationContext&, const QString&);
+void validatePackV4Node2051(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode2052(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode2053(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode2054(const QJsonValue&, ValidationContext&, const QString&);
@@ -2277,19 +2277,19 @@ void validateNode2058(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode2059(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode2060(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode2061(const QJsonValue&, ValidationContext&, const QString&);
-void validatePackV4Node2062(const QJsonValue&, ValidationContext&, const QString&);
+void validateNode2062(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode2063(const QJsonValue&, ValidationContext&, const QString&);
-void validateNode2064(const QJsonValue&, ValidationContext&, const QString&);
+void validatePackV4Node2064(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode2065(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode2066(const QJsonValue&, ValidationContext&, const QString&);
-void validatePackV4Node2067(const QJsonValue&, ValidationContext&, const QString&);
+void validateNode2067(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode2068(const QJsonValue&, ValidationContext&, const QString&);
-void validateNode2069(const QJsonValue&, ValidationContext&, const QString&);
+void validatePackV4Node2069(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode2070(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode2071(const QJsonValue&, ValidationContext&, const QString&);
-void validatePackV4Node2072(const QJsonValue&, ValidationContext&, const QString&);
+void validateNode2072(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode2073(const QJsonValue&, ValidationContext&, const QString&);
-void validateNode2074(const QJsonValue&, ValidationContext&, const QString&);
+void validatePackV4Node2074(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode2075(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode2076(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode2077(const QJsonValue&, ValidationContext&, const QString&);
@@ -2303,6 +2303,8 @@ void validateNode2084(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode2085(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode2086(const QJsonValue&, ValidationContext&, const QString&);
 void validateNode2087(const QJsonValue&, ValidationContext&, const QString&);
+void validateNode2088(const QJsonValue&, ValidationContext&, const QString&);
+void validateNode2089(const QJsonValue&, ValidationContext&, const QString&);
 
 void validateProjectV7Node0(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
@@ -13120,7 +13122,7 @@ void validateNode1364(const QJsonValue& value, ValidationContext& context, const
 
 void validateNode1365(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    validateProjectV9Node1834(value, context, path);
+    validateProjectV9Node1836(value, context, path);
 }
 
 void validateNode1366(const QJsonValue& value, ValidationContext& context, const QString& path)
@@ -13263,7 +13265,7 @@ void validateNode1382(const QJsonValue& value, ValidationContext& context, const
 
 void validateNode1383(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    validateProjectV9Node1834(value, context, path);
+    validateProjectV9Node1836(value, context, path);
 }
 
 void validateNode1384(const QJsonValue& value, ValidationContext& context, const QString& path)
@@ -13393,22 +13395,22 @@ void validateNode1401(const QJsonValue& value, ValidationContext& context, const
 
 void validateNode1402(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    validateProjectV9Node1843(value, context, path);
+    validateProjectV9Node1845(value, context, path);
 }
 
 void validateNode1403(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    validateProjectV9Node1885(value, context, path);
+    validateProjectV9Node1887(value, context, path);
 }
 
 void validateNode1404(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    validateProjectV9Node1900(value, context, path);
+    validateProjectV9Node1902(value, context, path);
 }
 
 void validateNode1405(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    validateProjectV9Node1926(value, context, path);
+    validateProjectV9Node1928(value, context, path);
 }
 
 void validateProjectV9Node1406(const QJsonValue& value, ValidationContext& context, const QString& path)
@@ -13739,7 +13741,7 @@ void validateNode1447(const QJsonValue& value, ValidationContext& context, const
 
 void validateNode1448(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    validateProjectV9Node1843(value, context, path);
+    validateProjectV9Node1845(value, context, path);
 }
 
 void validateNode1449(const QJsonValue& value, ValidationContext& context, const QString& path)
@@ -13749,12 +13751,12 @@ void validateNode1449(const QJsonValue& value, ValidationContext& context, const
 
 void validateNode1450(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    validateProjectV9Node1900(value, context, path);
+    validateProjectV9Node1902(value, context, path);
 }
 
 void validateNode1451(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    validateProjectV9Node1926(value, context, path);
+    validateProjectV9Node1928(value, context, path);
 }
 
 void validateProjectV9Node1452(const QJsonValue& value, ValidationContext& context, const QString& path)
@@ -13889,7 +13891,7 @@ void validateNode1467(const QJsonValue& value, ValidationContext& context, const
 
 void validateNode1468(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    validateProjectV9Node1925(value, context, path);
+    validateProjectV9Node1927(value, context, path);
 }
 
 void validateNode1469(const QJsonValue& value, ValidationContext& context, const QString& path)
@@ -13933,7 +13935,7 @@ void validateNode1473(const QJsonValue& value, ValidationContext& context, const
 
 void validateNode1474(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    validateProjectV9Node1925(value, context, path);
+    validateProjectV9Node1927(value, context, path);
 }
 
 void validateNode1475(const QJsonValue& value, ValidationContext& context, const QString& path)
@@ -14036,7 +14038,7 @@ void validateProjectV9Node1486(const QJsonValue& value, ValidationContext& conte
 
 void validateNode1487(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    validateProjectV9Node1925(value, context, path);
+    validateProjectV9Node1927(value, context, path);
 }
 
 void validateNode1488(const QJsonValue& value, ValidationContext& context, const QString& path)
@@ -14059,7 +14061,7 @@ void validateProjectV9Node1489(const QJsonValue& value, ValidationContext& conte
 
 void validateNode1490(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    validateProjectV9Node1925(value, context, path);
+    validateProjectV9Node1927(value, context, path);
 }
 
 void validateNode1491(const QJsonValue& value, ValidationContext& context, const QString& path)
@@ -14308,7 +14310,7 @@ void validateNode1521(const QJsonValue& value, ValidationContext& context, const
 
 void validateNode1522(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    validateProjectV9Node1925(value, context, path);
+    validateProjectV9Node1927(value, context, path);
 }
 
 void validateNode1523(const QJsonValue& value, ValidationContext& context, const QString& path)
@@ -15002,7 +15004,7 @@ void validateNode1605(const QJsonValue& value, ValidationContext& context, const
 
 void validateProjectV9Node1606(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    validateProjectV9Node1925(value, context, path);
+    validateProjectV9Node1927(value, context, path);
 }
 
 void validateProjectV9Node1607(const QJsonValue& value, ValidationContext& context, const QString& path)
@@ -15025,7 +15027,7 @@ void validateProjectV9Node1607(const QJsonValue& value, ValidationContext& conte
 
 void validateNode1608(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    validateProjectV9Node1925(value, context, path);
+    validateProjectV9Node1927(value, context, path);
 }
 
 void validateNode1609(const QJsonValue& value, ValidationContext& context, const QString& path)
@@ -15322,7 +15324,7 @@ void validateNode1644(const QJsonValue& value, ValidationContext& context, const
 
 void validateNode1645(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    validateProjectV9Node1925(value, context, path);
+    validateProjectV9Node1927(value, context, path);
 }
 
 void validateNode1646(const QJsonValue& value, ValidationContext& context, const QString& path)
@@ -15445,7 +15447,7 @@ void validateNode1660(const QJsonValue& value, ValidationContext& context, const
 
 void validateNode1661(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    validateProjectV9Node1925(value, context, path);
+    validateProjectV9Node1927(value, context, path);
 }
 
 void validateNode1662(const QJsonValue& value, ValidationContext& context, const QString& path)
@@ -15658,7 +15660,7 @@ void validateNode1689(const QJsonValue& value, ValidationContext& context, const
 
 void validateNode1690(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    validateProjectV9Node1925(value, context, path);
+    validateProjectV9Node1927(value, context, path);
 }
 
 void validateNode1691(const QJsonValue& value, ValidationContext& context, const QString& path)
@@ -15794,7 +15796,7 @@ void validateNode1706(const QJsonValue& value, ValidationContext& context, const
 
 void validateNode1707(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    validateProjectV9Node1834(value, context, path);
+    validateProjectV9Node1836(value, context, path);
 }
 
 void validateNode1708(const QJsonValue& value, ValidationContext& context, const QString& path)
@@ -15817,12 +15819,12 @@ void validateProjectV9Node1709(const QJsonValue& value, ValidationContext& conte
 
 void validateNode1710(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    validateProjectV9Node1925(value, context, path);
+    validateProjectV9Node1927(value, context, path);
 }
 
 void validateNode1711(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    validateProjectV9Node1925(value, context, path);
+    validateProjectV9Node1927(value, context, path);
 }
 
 void validateProjectV9Node1712(const QJsonValue& value, ValidationContext& context, const QString& path)
@@ -15840,12 +15842,12 @@ void validateProjectV9Node1712(const QJsonValue& value, ValidationContext& conte
 
 void validateNode1713(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    validateProjectV9Node1925(value, context, path);
+    validateProjectV9Node1927(value, context, path);
 }
 
 void validateNode1714(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    validateProjectV9Node1925(value, context, path);
+    validateProjectV9Node1927(value, context, path);
 }
 
 void validateProjectV9Node1715(const QJsonValue& value, ValidationContext& context, const QString& path)
@@ -15865,12 +15867,12 @@ void validateProjectV9Node1715(const QJsonValue& value, ValidationContext& conte
 
 void validateNode1716(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    validateProjectV9Node1925(value, context, path);
+    validateProjectV9Node1927(value, context, path);
 }
 
 void validateNode1717(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    validateProjectV9Node1925(value, context, path);
+    validateProjectV9Node1927(value, context, path);
 }
 
 void validateNode1718(const QJsonValue& value, ValidationContext& context, const QString& path)
@@ -16180,7 +16182,7 @@ void validateNode1754(const QJsonValue& value, ValidationContext& context, const
 
 void validateNode1755(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    validateProjectV9Node1925(value, context, path);
+    validateProjectV9Node1927(value, context, path);
 }
 
 void validateNode1756(const QJsonValue& value, ValidationContext& context, const QString& path)
@@ -16421,7 +16423,7 @@ void validateNode1785(const QJsonValue& value, ValidationContext& context, const
 
 void validateNode1786(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    validateProjectV9Node1829(value, context, path);
+    validateProjectV9Node1831(value, context, path);
 }
 
 void validateNode1787(const QJsonValue& value, ValidationContext& context, const QString& path)
@@ -16431,164 +16433,155 @@ void validateNode1787(const QJsonValue& value, ValidationContext& context, const
 
 void validateNode1788(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    validateProjectV9Node1916(value, context, path);
+    validateProjectV9Node1918(value, context, path);
 }
 
 void validateProjectV9Node1789(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    if (!context.requireTypes(value, {JsonType::Object}, path)) return;
-    if (!value.isObject()) return;
-    const QJsonObject object = value.toObject();
-    context.requireFields(object, QStringList{QStringLiteral("stableRuleOrdinal"), QStringLiteral("priority"), QStringLiteral("cells")}, path);
-    if (object.contains(QStringLiteral("cells")))
-        validateNode1790(object.value(QStringLiteral("cells")), context, context.childPath(path, QStringLiteral("cells")));
-    if (object.contains(QStringLiteral("priority")))
-        validateNode1795(object.value(QStringLiteral("priority")), context, context.childPath(path, QStringLiteral("priority")));
-    if (object.contains(QStringLiteral("stableRuleOrdinal")))
-        validateNode1796(object.value(QStringLiteral("stableRuleOrdinal")), context, context.childPath(path, QStringLiteral("stableRuleOrdinal")));
-    context.rejectUnknownFields(object, QStringList{QStringLiteral("cells"), QStringLiteral("priority"), QStringLiteral("stableRuleOrdinal")}, path);
+    context.requireOneOf(value, {validateNode1790, validateNode1791}, path);
 }
 
 void validateNode1790(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    if (!context.requireTypes(value, {JsonType::Array}, path)) return;
-    if (value.isArray()) {
-        const QJsonArray array = value.toArray();
-        for (qsizetype index = 0; index < array.size(); ++index)
-            validateNode1791(array.at(index), context, path + QStringLiteral("[%1]").arg(index));
-    }
+    validateProjectV9Node1607(value, context, path);
 }
 
 void validateNode1791(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    context.requireOneOf(value, {validateNode1792, validateNode1793}, path);
+    validateProjectV9Node1652(value, context, path);
 }
 
-void validateNode1792(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateProjectV9Node1792(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    if (!context.requireTypes(value, {JsonType::Integer, JsonType::Null}, path)) return;
+    if (!context.requireTypes(value, {JsonType::Object}, path)) return;
+    if (!value.isObject()) return;
+    const QJsonObject object = value.toObject();
+    context.requireFields(object, QStringList{QStringLiteral("childGuid"), QStringLiteral("stableMemberOrdinal"), QStringLiteral("occurrences"), QStringLiteral("curves")}, path);
+    if (object.contains(QStringLiteral("childGuid")))
+        validateNode1793(object.value(QStringLiteral("childGuid")), context, context.childPath(path, QStringLiteral("childGuid")));
+    if (object.contains(QStringLiteral("curves")))
+        validateNode1794(object.value(QStringLiteral("curves")), context, context.childPath(path, QStringLiteral("curves")));
+    if (object.contains(QStringLiteral("occurrences")))
+        validateNode1796(object.value(QStringLiteral("occurrences")), context, context.childPath(path, QStringLiteral("occurrences")));
+    if (object.contains(QStringLiteral("stableMemberOrdinal")))
+        validateNode1798(object.value(QStringLiteral("stableMemberOrdinal")), context, context.childPath(path, QStringLiteral("stableMemberOrdinal")));
+    context.rejectUnknownFields(object, QStringList{QStringLiteral("childGuid"), QStringLiteral("curves"), QStringLiteral("occurrences"), QStringLiteral("stableMemberOrdinal")}, path);
 }
 
 void validateNode1793(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    if (!context.requireTypes(value, {JsonType::Object}, path)) return;
-    if (!value.isObject()) return;
-    const QJsonObject object = value.toObject();
-    context.requireFields(object, QStringList{QStringLiteral("labelId")}, path);
-    if (object.contains(QStringLiteral("labelId")))
-        validateNode1794(object.value(QStringLiteral("labelId")), context, context.childPath(path, QStringLiteral("labelId")));
-    context.rejectUnknownFields(object, QStringList{QStringLiteral("labelId")}, path);
+    validateProjectV9Node1927(value, context, path);
 }
 
 void validateNode1794(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    validateProjectV9Node1925(value, context, path);
+    if (!context.requireTypes(value, {JsonType::Array}, path)) return;
+    if (value.isArray()) {
+        const QJsonArray array = value.toArray();
+        for (qsizetype index = 0; index < array.size(); ++index)
+            validateNode1795(array.at(index), context, path + QStringLiteral("[%1]").arg(index));
+    }
 }
 
 void validateNode1795(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    if (!context.requireTypes(value, {JsonType::Integer}, path)) return;
-    context.requireMinimum(value, 0, path);
-    context.requireMaximum(value, 4294967295, path);
-}
-
-void validateNode1796(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    if (!context.requireTypes(value, {JsonType::Integer}, path)) return;
-    context.requireMinimum(value, 0, path);
-    context.requireMaximum(value, 4294967295, path);
-}
-
-void validateProjectV9Node1797(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    context.requireOneOf(value, {validateNode1798, validateNode1799}, path);
-}
-
-void validateNode1798(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    validateProjectV9Node1607(value, context, path);
-}
-
-void validateNode1799(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    validateProjectV9Node1652(value, context, path);
-}
-
-void validateProjectV9Node1800(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    if (!context.requireTypes(value, {JsonType::Object}, path)) return;
-    if (!value.isObject()) return;
-    const QJsonObject object = value.toObject();
-    context.requireFields(object, QStringList{QStringLiteral("childGuid"), QStringLiteral("stableMemberOrdinal"), QStringLiteral("occurrences"), QStringLiteral("conditions"), QStringLiteral("curves")}, path);
-    if (object.contains(QStringLiteral("childGuid")))
-        validateNode1801(object.value(QStringLiteral("childGuid")), context, context.childPath(path, QStringLiteral("childGuid")));
-    if (object.contains(QStringLiteral("conditions")))
-        validateNode1802(object.value(QStringLiteral("conditions")), context, context.childPath(path, QStringLiteral("conditions")));
-    if (object.contains(QStringLiteral("curves")))
-        validateNode1804(object.value(QStringLiteral("curves")), context, context.childPath(path, QStringLiteral("curves")));
-    if (object.contains(QStringLiteral("occurrences")))
-        validateNode1806(object.value(QStringLiteral("occurrences")), context, context.childPath(path, QStringLiteral("occurrences")));
-    if (object.contains(QStringLiteral("stableMemberOrdinal")))
-        validateNode1808(object.value(QStringLiteral("stableMemberOrdinal")), context, context.childPath(path, QStringLiteral("stableMemberOrdinal")));
-    context.rejectUnknownFields(object, QStringList{QStringLiteral("childGuid"), QStringLiteral("conditions"), QStringLiteral("curves"), QStringLiteral("occurrences"), QStringLiteral("stableMemberOrdinal")}, path);
-}
-
-void validateNode1801(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    validateProjectV9Node1925(value, context, path);
-}
-
-void validateNode1802(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    if (!context.requireTypes(value, {JsonType::Array}, path)) return;
-    if (value.isArray()) {
-        const QJsonArray array = value.toArray();
-        for (qsizetype index = 0; index < array.size(); ++index)
-            validateNode1803(array.at(index), context, path + QStringLiteral("[%1]").arg(index));
-    }
-}
-
-void validateNode1803(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
     validateProjectV9Node1789(value, context, path);
 }
 
-void validateNode1804(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    if (!context.requireTypes(value, {JsonType::Array}, path)) return;
-    if (value.isArray()) {
-        const QJsonArray array = value.toArray();
-        for (qsizetype index = 0; index < array.size(); ++index)
-            validateNode1805(array.at(index), context, path + QStringLiteral("[%1]").arg(index));
-    }
-}
-
-void validateNode1805(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    validateProjectV9Node1797(value, context, path);
-}
-
-void validateNode1806(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode1796(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Array}, path)) return;
     context.requireMinItems(value, 1, path);
     if (value.isArray()) {
         const QJsonArray array = value.toArray();
         for (qsizetype index = 0; index < array.size(); ++index)
-            validateNode1807(array.at(index), context, path + QStringLiteral("[%1]").arg(index));
+            validateNode1797(array.at(index), context, path + QStringLiteral("[%1]").arg(index));
     }
 }
 
-void validateNode1807(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode1797(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     validateProjectV9Node1809(value, context, path);
 }
 
-void validateNode1808(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode1798(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Integer}, path)) return;
     context.requireMinimum(value, 0, path);
     context.requireMaximum(value, 4294967295, path);
+}
+
+void validateProjectV9Node1799(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    if (!context.requireTypes(value, {JsonType::Object}, path)) return;
+    if (!value.isObject()) return;
+    const QJsonObject object = value.toObject();
+    context.requireFields(object, QStringList{QStringLiteral("stableRuleOrdinal"), QStringLiteral("target"), QStringLiteral("cells")}, path);
+    if (object.contains(QStringLiteral("cells")))
+        validateNode1800(object.value(QStringLiteral("cells")), context, context.childPath(path, QStringLiteral("cells")));
+    if (object.contains(QStringLiteral("stableRuleOrdinal")))
+        validateNode1805(object.value(QStringLiteral("stableRuleOrdinal")), context, context.childPath(path, QStringLiteral("stableRuleOrdinal")));
+    if (object.contains(QStringLiteral("target")))
+        validateNode1806(object.value(QStringLiteral("target")), context, context.childPath(path, QStringLiteral("target")));
+    context.rejectUnknownFields(object, QStringList{QStringLiteral("cells"), QStringLiteral("stableRuleOrdinal"), QStringLiteral("target")}, path);
+}
+
+void validateNode1800(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    if (!context.requireTypes(value, {JsonType::Array}, path)) return;
+    if (value.isArray()) {
+        const QJsonArray array = value.toArray();
+        for (qsizetype index = 0; index < array.size(); ++index)
+            validateNode1801(array.at(index), context, path + QStringLiteral("[%1]").arg(index));
+    }
+}
+
+void validateNode1801(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    context.requireOneOf(value, {validateNode1802, validateNode1803}, path);
+}
+
+void validateNode1802(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    if (!context.requireTypes(value, {JsonType::Integer, JsonType::Null}, path)) return;
+}
+
+void validateNode1803(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    if (!context.requireTypes(value, {JsonType::Object}, path)) return;
+    if (!value.isObject()) return;
+    const QJsonObject object = value.toObject();
+    context.requireFields(object, QStringList{QStringLiteral("labelId")}, path);
+    if (object.contains(QStringLiteral("labelId")))
+        validateNode1804(object.value(QStringLiteral("labelId")), context, context.childPath(path, QStringLiteral("labelId")));
+    context.rejectUnknownFields(object, QStringList{QStringLiteral("labelId")}, path);
+}
+
+void validateNode1804(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    validateProjectV9Node1927(value, context, path);
+}
+
+void validateNode1805(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    if (!context.requireTypes(value, {JsonType::Integer}, path)) return;
+    context.requireMinimum(value, 0, path);
+    context.requireMaximum(value, 4294967295, path);
+}
+
+void validateNode1806(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    context.requireOneOf(value, {validateNode1807, validateNode1808}, path);
+}
+
+void validateNode1807(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    validateProjectV9Node1927(value, context, path);
+}
+
+void validateNode1808(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    if (!context.requireTypes(value, {JsonType::Null}, path)) return;
 }
 
 void validateProjectV9Node1809(const QJsonValue& value, ValidationContext& context, const QString& path)
@@ -16632,18 +16625,20 @@ void validateProjectV9Node1813(const QJsonValue& value, ValidationContext& conte
     if (!context.requireTypes(value, {JsonType::Object}, path)) return;
     if (!value.isObject()) return;
     const QJsonObject object = value.toObject();
-    context.requireFields(object, QStringList{QStringLiteral("occurrenceOrdinalHighWater"), QStringLiteral("ruleOrdinalHighWater"), QStringLiteral("entries"), QStringLiteral("matchAxes"), QStringLiteral("blendAxes")}, path);
+    context.requireFields(object, QStringList{QStringLiteral("occurrenceOrdinalHighWater"), QStringLiteral("ruleOrdinalHighWater"), QStringLiteral("entries"), QStringLiteral("matchAxes"), QStringLiteral("matchRows"), QStringLiteral("blendAxes")}, path);
     if (object.contains(QStringLiteral("blendAxes")))
         validateNode1814(object.value(QStringLiteral("blendAxes")), context, context.childPath(path, QStringLiteral("blendAxes")));
     if (object.contains(QStringLiteral("entries")))
         validateNode1823(object.value(QStringLiteral("entries")), context, context.childPath(path, QStringLiteral("entries")));
     if (object.contains(QStringLiteral("matchAxes")))
         validateNode1825(object.value(QStringLiteral("matchAxes")), context, context.childPath(path, QStringLiteral("matchAxes")));
+    if (object.contains(QStringLiteral("matchRows")))
+        validateNode1827(object.value(QStringLiteral("matchRows")), context, context.childPath(path, QStringLiteral("matchRows")));
     if (object.contains(QStringLiteral("occurrenceOrdinalHighWater")))
-        validateNode1827(object.value(QStringLiteral("occurrenceOrdinalHighWater")), context, context.childPath(path, QStringLiteral("occurrenceOrdinalHighWater")));
+        validateNode1829(object.value(QStringLiteral("occurrenceOrdinalHighWater")), context, context.childPath(path, QStringLiteral("occurrenceOrdinalHighWater")));
     if (object.contains(QStringLiteral("ruleOrdinalHighWater")))
-        validateNode1828(object.value(QStringLiteral("ruleOrdinalHighWater")), context, context.childPath(path, QStringLiteral("ruleOrdinalHighWater")));
-    context.rejectUnknownFields(object, QStringList{QStringLiteral("blendAxes"), QStringLiteral("entries"), QStringLiteral("matchAxes"), QStringLiteral("occurrenceOrdinalHighWater"), QStringLiteral("ruleOrdinalHighWater")}, path);
+        validateNode1830(object.value(QStringLiteral("ruleOrdinalHighWater")), context, context.childPath(path, QStringLiteral("ruleOrdinalHighWater")));
+    context.rejectUnknownFields(object, QStringList{QStringLiteral("blendAxes"), QStringLiteral("entries"), QStringLiteral("matchAxes"), QStringLiteral("matchRows"), QStringLiteral("occurrenceOrdinalHighWater"), QStringLiteral("ruleOrdinalHighWater")}, path);
 }
 
 void validateNode1814(const QJsonValue& value, ValidationContext& context, const QString& path)
@@ -16676,7 +16671,7 @@ void validateNode1816(const QJsonValue& value, ValidationContext& context, const
 
 void validateNode1817(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    validateProjectV9Node1925(value, context, path);
+    validateProjectV9Node1927(value, context, path);
 }
 
 void validateNode1818(const QJsonValue& value, ValidationContext& context, const QString& path)
@@ -16686,7 +16681,7 @@ void validateNode1818(const QJsonValue& value, ValidationContext& context, const
 
 void validateNode1819(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    validateProjectV9Node1925(value, context, path);
+    validateProjectV9Node1927(value, context, path);
 }
 
 void validateNode1820(const QJsonValue& value, ValidationContext& context, const QString& path)
@@ -16696,7 +16691,7 @@ void validateNode1820(const QJsonValue& value, ValidationContext& context, const
 
 void validateNode1821(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    validateProjectV9Node1925(value, context, path);
+    validateProjectV9Node1927(value, context, path);
 }
 
 void validateNode1822(const QJsonValue& value, ValidationContext& context, const QString& path)
@@ -16716,7 +16711,7 @@ void validateNode1823(const QJsonValue& value, ValidationContext& context, const
 
 void validateNode1824(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    validateProjectV9Node1800(value, context, path);
+    validateProjectV9Node1792(value, context, path);
 }
 
 void validateNode1825(const QJsonValue& value, ValidationContext& context, const QString& path)
@@ -16731,57 +16726,62 @@ void validateNode1825(const QJsonValue& value, ValidationContext& context, const
 
 void validateNode1826(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    validateProjectV9Node1925(value, context, path);
+    validateProjectV9Node1927(value, context, path);
 }
 
 void validateNode1827(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    if (!context.requireTypes(value, {JsonType::Integer}, path)) return;
-    context.requireMinimum(value, 0, path);
-    context.requireMaximum(value, 4294967296, path);
+    if (!context.requireTypes(value, {JsonType::Array}, path)) return;
+    if (value.isArray()) {
+        const QJsonArray array = value.toArray();
+        for (qsizetype index = 0; index < array.size(); ++index)
+            validateNode1828(array.at(index), context, path + QStringLiteral("[%1]").arg(index));
+    }
 }
 
 void validateNode1828(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    validateProjectV9Node1799(value, context, path);
+}
+
+void validateNode1829(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Integer}, path)) return;
     context.requireMinimum(value, 0, path);
     context.requireMaximum(value, 4294967296, path);
 }
 
-void validateProjectV9Node1829(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode1830(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    if (!context.requireTypes(value, {JsonType::Integer}, path)) return;
+    context.requireMinimum(value, 0, path);
+    context.requireMaximum(value, 4294967296, path);
+}
+
+void validateProjectV9Node1831(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Object}, path)) return;
     if (!value.isObject()) return;
     const QJsonObject object = value.toObject();
     context.requireFields(object, QStringList{QStringLiteral("shared"), QStringLiteral("platforms")}, path);
     if (object.contains(QStringLiteral("platforms")))
-        validateNode1830(object.value(QStringLiteral("platforms")), context, context.childPath(path, QStringLiteral("platforms")));
+        validateNode1832(object.value(QStringLiteral("platforms")), context, context.childPath(path, QStringLiteral("platforms")));
     if (object.contains(QStringLiteral("shared")))
-        validateNode1833(object.value(QStringLiteral("shared")), context, context.childPath(path, QStringLiteral("shared")));
+        validateNode1835(object.value(QStringLiteral("shared")), context, context.childPath(path, QStringLiteral("shared")));
     context.rejectUnknownFields(object, QStringList{QStringLiteral("platforms"), QStringLiteral("shared")}, path);
 }
 
-void validateNode1830(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode1832(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Object}, path)) return;
     if (!value.isObject()) return;
     const QJsonObject object = value.toObject();
     for (auto it = object.constBegin(); it != object.constEnd(); ++it)
-        validateNode1832(it.key(), context, context.childPath(path, it.key()));
+        validateNode1834(it.key(), context, context.childPath(path, it.key()));
     const QStringList knownFields = QStringList{};
     for (auto it = object.constBegin(); it != object.constEnd(); ++it)
         if (!knownFields.contains(it.key()))
-            validateNode1831(it.value(), context, context.childPath(path, it.key()));
-}
-
-void validateNode1831(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    validateProjectV9Node1813(value, context, path);
-}
-
-void validateNode1832(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    validateProjectV9Node1925(value, context, path);
+            validateNode1833(it.value(), context, context.childPath(path, it.key()));
 }
 
 void validateNode1833(const QJsonValue& value, ValidationContext& context, const QString& path)
@@ -16789,298 +16789,249 @@ void validateNode1833(const QJsonValue& value, ValidationContext& context, const
     validateProjectV9Node1813(value, context, path);
 }
 
-void validateProjectV9Node1834(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode1834(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    validateProjectV9Node1927(value, context, path);
+}
+
+void validateNode1835(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    validateProjectV9Node1813(value, context, path);
+}
+
+void validateProjectV9Node1836(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     QStringList conditionErrors;
     ValidationContext conditionContext(QString(), conditionErrors);
-    validateNode1839(value, conditionContext, path);
+    validateNode1841(value, conditionContext, path);
     if (conditionErrors.isEmpty())
-        validateNode1841(value, context, path);
+        validateNode1843(value, context, path);
     if (!context.requireTypes(value, {JsonType::Object}, path)) return;
     if (!value.isObject()) return;
     const QJsonObject object = value.toObject();
     context.requireFields(object, QStringList{QStringLiteral("sendLevel"), QStringLiteral("targetBusRef")}, path);
     if (object.contains(QStringLiteral("duckTarget")))
-        validateNode1835(object.value(QStringLiteral("duckTarget")), context, context.childPath(path, QStringLiteral("duckTarget")));
+        validateNode1837(object.value(QStringLiteral("duckTarget")), context, context.childPath(path, QStringLiteral("duckTarget")));
     if (object.contains(QStringLiteral("sendLevel")))
-        validateNode1836(object.value(QStringLiteral("sendLevel")), context, context.childPath(path, QStringLiteral("sendLevel")));
+        validateNode1838(object.value(QStringLiteral("sendLevel")), context, context.childPath(path, QStringLiteral("sendLevel")));
     if (object.contains(QStringLiteral("targetBusRef")))
-        validateNode1837(object.value(QStringLiteral("targetBusRef")), context, context.childPath(path, QStringLiteral("targetBusRef")));
+        validateNode1839(object.value(QStringLiteral("targetBusRef")), context, context.childPath(path, QStringLiteral("targetBusRef")));
     if (object.contains(QStringLiteral("type")))
-        validateNode1838(object.value(QStringLiteral("type")), context, context.childPath(path, QStringLiteral("type")));
+        validateNode1840(object.value(QStringLiteral("type")), context, context.childPath(path, QStringLiteral("type")));
     context.rejectUnknownFields(object, QStringList{QStringLiteral("duckTarget"), QStringLiteral("sendLevel"), QStringLiteral("targetBusRef"), QStringLiteral("type")}, path);
-}
-
-void validateNode1835(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    if (!context.requireTypes(value, {JsonType::Boolean}, path)) return;
-}
-
-void validateNode1836(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    if (!context.requireTypes(value, {JsonType::Number}, path)) return;
 }
 
 void validateNode1837(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    validateProjectV9Node1712(value, context, path);
+    if (!context.requireTypes(value, {JsonType::Boolean}, path)) return;
 }
 
 void validateNode1838(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    if (!context.requireTypes(value, {JsonType::String}, path)) return;
-    context.requireEnum(value, QJsonArray{QJsonValue(QStringLiteral("Send")), QJsonValue(QStringLiteral("Sidechain"))}, path);
+    if (!context.requireTypes(value, {JsonType::Number}, path)) return;
 }
 
 void validateNode1839(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    if (!value.isObject()) return;
-    const QJsonObject object = value.toObject();
-    context.requireFields(object, QStringList{QStringLiteral("duckTarget")}, path);
-    if (object.contains(QStringLiteral("duckTarget")))
-        validateNode1840(object.value(QStringLiteral("duckTarget")), context, context.childPath(path, QStringLiteral("duckTarget")));
+    validateProjectV9Node1712(value, context, path);
 }
 
 void validateNode1840(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    context.requireConst(value, QJsonValue(true), path);
+    if (!context.requireTypes(value, {JsonType::String}, path)) return;
+    context.requireEnum(value, QJsonArray{QJsonValue(QStringLiteral("Send")), QJsonValue(QStringLiteral("Sidechain"))}, path);
 }
 
 void validateNode1841(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!value.isObject()) return;
     const QJsonObject object = value.toObject();
-    context.requireFields(object, QStringList{QStringLiteral("type")}, path);
-    if (object.contains(QStringLiteral("type")))
-        validateNode1842(object.value(QStringLiteral("type")), context, context.childPath(path, QStringLiteral("type")));
+    context.requireFields(object, QStringList{QStringLiteral("duckTarget")}, path);
+    if (object.contains(QStringLiteral("duckTarget")))
+        validateNode1842(object.value(QStringLiteral("duckTarget")), context, context.childPath(path, QStringLiteral("duckTarget")));
 }
 
 void validateNode1842(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
+    context.requireConst(value, QJsonValue(true), path);
+}
+
+void validateNode1843(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    if (!value.isObject()) return;
+    const QJsonObject object = value.toObject();
+    context.requireFields(object, QStringList{QStringLiteral("type")}, path);
+    if (object.contains(QStringLiteral("type")))
+        validateNode1844(object.value(QStringLiteral("type")), context, context.childPath(path, QStringLiteral("type")));
+}
+
+void validateNode1844(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
     context.requireConst(value, QJsonValue(QStringLiteral("Sidechain")), path);
 }
 
-void validateProjectV9Node1843(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateProjectV9Node1845(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Object}, path)) return;
     if (!value.isObject()) return;
     const QJsonObject object = value.toObject();
     if (object.contains(QStringLiteral("distinguishLanguage")))
-        validateNode1844(object.value(QStringLiteral("distinguishLanguage")), context, context.childPath(path, QStringLiteral("distinguishLanguage")));
+        validateNode1846(object.value(QStringLiteral("distinguishLanguage")), context, context.childPath(path, QStringLiteral("distinguishLanguage")));
     if (object.contains(QStringLiteral("scheduleOffsetSec")))
-        validateNode1845(object.value(QStringLiteral("scheduleOffsetSec")), context, context.childPath(path, QStringLiteral("scheduleOffsetSec")));
+        validateNode1847(object.value(QStringLiteral("scheduleOffsetSec")), context, context.childPath(path, QStringLiteral("scheduleOffsetSec")));
     if (object.contains(QStringLiteral("sources")))
-        validateNode1846(object.value(QStringLiteral("sources")), context, context.childPath(path, QStringLiteral("sources")));
+        validateNode1848(object.value(QStringLiteral("sources")), context, context.childPath(path, QStringLiteral("sources")));
     context.rejectUnknownFields(object, QStringList{QStringLiteral("distinguishLanguage"), QStringLiteral("scheduleOffsetSec"), QStringLiteral("sources")}, path);
 }
 
-void validateNode1844(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode1846(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Boolean}, path)) return;
 }
 
-void validateNode1845(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode1847(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Number}, path)) return;
     context.requireMinimum(value, 0, path);
 }
 
-void validateNode1846(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode1848(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    validateProjectV9Node1880(value, context, path);
+    validateProjectV9Node1882(value, context, path);
 }
 
-void validateProjectV9Node1847(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateProjectV9Node1849(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Object}, path)) return;
     if (!value.isObject()) return;
     const QJsonObject object = value.toObject();
     context.requireFields(object, QStringList{QStringLiteral("entryId"), QStringLiteral("sourceId")}, path);
     if (object.contains(QStringLiteral("entryId")))
-        validateNode1848(object.value(QStringLiteral("entryId")), context, context.childPath(path, QStringLiteral("entryId")));
+        validateNode1850(object.value(QStringLiteral("entryId")), context, context.childPath(path, QStringLiteral("entryId")));
     if (object.contains(QStringLiteral("fadeIn")))
-        validateNode1849(object.value(QStringLiteral("fadeIn")), context, context.childPath(path, QStringLiteral("fadeIn")));
+        validateNode1851(object.value(QStringLiteral("fadeIn")), context, context.childPath(path, QStringLiteral("fadeIn")));
     if (object.contains(QStringLiteral("fadeOut")))
-        validateNode1850(object.value(QStringLiteral("fadeOut")), context, context.childPath(path, QStringLiteral("fadeOut")));
+        validateNode1852(object.value(QStringLiteral("fadeOut")), context, context.childPath(path, QStringLiteral("fadeOut")));
     if (object.contains(QStringLiteral("loopProvenance")))
-        validateNode1851(object.value(QStringLiteral("loopProvenance")), context, context.childPath(path, QStringLiteral("loopProvenance")));
+        validateNode1853(object.value(QStringLiteral("loopProvenance")), context, context.childPath(path, QStringLiteral("loopProvenance")));
     if (object.contains(QStringLiteral("loopRegion")))
-        validateNode1852(object.value(QStringLiteral("loopRegion")), context, context.childPath(path, QStringLiteral("loopRegion")));
+        validateNode1854(object.value(QStringLiteral("loopRegion")), context, context.childPath(path, QStringLiteral("loopRegion")));
     if (object.contains(QStringLiteral("name")))
-        validateNode1855(object.value(QStringLiteral("name")), context, context.childPath(path, QStringLiteral("name")));
+        validateNode1857(object.value(QStringLiteral("name")), context, context.childPath(path, QStringLiteral("name")));
     if (object.contains(QStringLiteral("rangeContentHash")))
-        validateNode1856(object.value(QStringLiteral("rangeContentHash")), context, context.childPath(path, QStringLiteral("rangeContentHash")));
+        validateNode1858(object.value(QStringLiteral("rangeContentHash")), context, context.childPath(path, QStringLiteral("rangeContentHash")));
     if (object.contains(QStringLiteral("sourceId")))
-        validateNode1857(object.value(QStringLiteral("sourceId")), context, context.childPath(path, QStringLiteral("sourceId")));
+        validateNode1859(object.value(QStringLiteral("sourceId")), context, context.childPath(path, QStringLiteral("sourceId")));
     if (object.contains(QStringLiteral("trimEndFrame")))
-        validateNode1858(object.value(QStringLiteral("trimEndFrame")), context, context.childPath(path, QStringLiteral("trimEndFrame")));
+        validateNode1860(object.value(QStringLiteral("trimEndFrame")), context, context.childPath(path, QStringLiteral("trimEndFrame")));
     if (object.contains(QStringLiteral("trimStartFrame")))
-        validateNode1859(object.value(QStringLiteral("trimStartFrame")), context, context.childPath(path, QStringLiteral("trimStartFrame")));
+        validateNode1861(object.value(QStringLiteral("trimStartFrame")), context, context.childPath(path, QStringLiteral("trimStartFrame")));
     context.rejectUnknownFields(object, QStringList{QStringLiteral("entryId"), QStringLiteral("fadeIn"), QStringLiteral("fadeOut"), QStringLiteral("loopProvenance"), QStringLiteral("loopRegion"), QStringLiteral("name"), QStringLiteral("rangeContentHash"), QStringLiteral("sourceId"), QStringLiteral("trimEndFrame"), QStringLiteral("trimStartFrame")}, path);
-}
-
-void validateNode1848(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    validateProjectV9Node1925(value, context, path);
-}
-
-void validateNode1849(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    validateProjectV9Node1860(value, context, path);
 }
 
 void validateNode1850(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    validateProjectV9Node1866(value, context, path);
+    validateProjectV9Node1927(value, context, path);
 }
 
 void validateNode1851(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    context.requireEnum(value, QJsonArray{QJsonValue(QStringLiteral("file")), QJsonValue(QStringLiteral("authored"))}, path);
+    validateProjectV9Node1862(value, context, path);
 }
 
 void validateNode1852(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    validateProjectV9Node1868(value, context, path);
+}
+
+void validateNode1853(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    context.requireEnum(value, QJsonArray{QJsonValue(QStringLiteral("file")), QJsonValue(QStringLiteral("authored"))}, path);
+}
+
+void validateNode1854(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Object}, path)) return;
     if (!value.isObject()) return;
     const QJsonObject object = value.toObject();
     context.requireFields(object, QStringList{QStringLiteral("startFrame"), QStringLiteral("endFrame")}, path);
     if (object.contains(QStringLiteral("endFrame")))
-        validateNode1853(object.value(QStringLiteral("endFrame")), context, context.childPath(path, QStringLiteral("endFrame")));
+        validateNode1855(object.value(QStringLiteral("endFrame")), context, context.childPath(path, QStringLiteral("endFrame")));
     if (object.contains(QStringLiteral("startFrame")))
-        validateNode1854(object.value(QStringLiteral("startFrame")), context, context.childPath(path, QStringLiteral("startFrame")));
+        validateNode1856(object.value(QStringLiteral("startFrame")), context, context.childPath(path, QStringLiteral("startFrame")));
     context.rejectUnknownFields(object, QStringList{QStringLiteral("endFrame"), QStringLiteral("startFrame")}, path);
-}
-
-void validateNode1853(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    if (!context.requireTypes(value, {JsonType::Integer}, path)) return;
-    context.requireMinimum(value, 0, path);
-}
-
-void validateNode1854(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    if (!context.requireTypes(value, {JsonType::Integer}, path)) return;
-    context.requireMinimum(value, 0, path);
 }
 
 void validateNode1855(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    if (!context.requireTypes(value, {JsonType::String}, path)) return;
-    context.requireMinLength(value, 1, path);
+    if (!context.requireTypes(value, {JsonType::Integer}, path)) return;
+    context.requireMinimum(value, 0, path);
 }
 
 void validateNode1856(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    if (!context.requireTypes(value, {JsonType::String}, path)) return;
-    context.requireMinLength(value, 1, path);
+    if (!context.requireTypes(value, {JsonType::Integer}, path)) return;
+    context.requireMinimum(value, 0, path);
 }
 
 void validateNode1857(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    validateProjectV9Node1739(value, context, path);
+    if (!context.requireTypes(value, {JsonType::String}, path)) return;
+    context.requireMinLength(value, 1, path);
 }
 
 void validateNode1858(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    if (!context.requireTypes(value, {JsonType::Integer}, path)) return;
-    context.requireMinimum(value, 0, path);
+    if (!context.requireTypes(value, {JsonType::String}, path)) return;
+    context.requireMinLength(value, 1, path);
 }
 
 void validateNode1859(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    validateProjectV9Node1739(value, context, path);
+}
+
+void validateNode1860(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Integer}, path)) return;
     context.requireMinimum(value, 0, path);
 }
 
-void validateProjectV9Node1860(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode1861(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    if (!context.requireTypes(value, {JsonType::Integer}, path)) return;
+    context.requireMinimum(value, 0, path);
+}
+
+void validateProjectV9Node1862(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Object}, path)) return;
     if (!value.isObject()) return;
     const QJsonObject object = value.toObject();
     context.requireFields(object, QStringList{QStringLiteral("durationFrames"), QStringLiteral("curve"), QStringLiteral("handles")}, path);
     if (object.contains(QStringLiteral("curve")))
-        validateNode1861(object.value(QStringLiteral("curve")), context, context.childPath(path, QStringLiteral("curve")));
+        validateNode1863(object.value(QStringLiteral("curve")), context, context.childPath(path, QStringLiteral("curve")));
     if (object.contains(QStringLiteral("durationFrames")))
-        validateNode1862(object.value(QStringLiteral("durationFrames")), context, context.childPath(path, QStringLiteral("durationFrames")));
+        validateNode1864(object.value(QStringLiteral("durationFrames")), context, context.childPath(path, QStringLiteral("durationFrames")));
     if (object.contains(QStringLiteral("handles")))
-        validateNode1863(object.value(QStringLiteral("handles")), context, context.childPath(path, QStringLiteral("handles")));
+        validateNode1865(object.value(QStringLiteral("handles")), context, context.childPath(path, QStringLiteral("handles")));
     context.rejectUnknownFields(object, QStringList{QStringLiteral("curve"), QStringLiteral("durationFrames"), QStringLiteral("handles")}, path);
-}
-
-void validateNode1861(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    if (!context.requireTypes(value, {JsonType::Array}, path)) return;
-    context.requireConst(value, QJsonValue(QJsonArray{QJsonValue(QJsonObject{{QStringLiteral("x"), QJsonValue(0)}, {QStringLiteral("value"), QJsonValue(0)}}), QJsonValue(QJsonObject{{QStringLiteral("x"), QJsonValue(1)}, {QStringLiteral("value"), QJsonValue(1)}})}), path);
-}
-
-void validateNode1862(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    if (!context.requireTypes(value, {JsonType::Integer}, path)) return;
-    context.requireMinimum(value, 0, path);
-    context.requireMaximum(value, 9007199254740992, path);
 }
 
 void validateNode1863(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Array}, path)) return;
-    context.requireMinItems(value, 1, path);
-    context.requireMaxItems(value, 1, path);
-    if (value.isArray()) {
-        const QJsonArray array = value.toArray();
-        for (qsizetype index = 0; index < array.size(); ++index)
-            validateNode1864(array.at(index), context, path + QStringLiteral("[%1]").arg(index));
-    }
+    context.requireConst(value, QJsonValue(QJsonArray{QJsonValue(QJsonObject{{QStringLiteral("x"), QJsonValue(0)}, {QStringLiteral("value"), QJsonValue(0)}}), QJsonValue(QJsonObject{{QStringLiteral("x"), QJsonValue(1)}, {QStringLiteral("value"), QJsonValue(1)}})}), path);
 }
 
 void validateNode1864(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    if (!context.requireTypes(value, {JsonType::Array}, path)) return;
-    context.requireMinItems(value, 4, path);
-    context.requireMaxItems(value, 4, path);
-    if (value.isArray()) {
-        const QJsonArray array = value.toArray();
-        for (qsizetype index = 0; index < array.size(); ++index)
-            validateNode1865(array.at(index), context, path + QStringLiteral("[%1]").arg(index));
-    }
-}
-
-void validateNode1865(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    if (!context.requireTypes(value, {JsonType::Number}, path)) return;
-    context.requireMinimum(value, 0, path);
-    context.requireMaximum(value, 1, path);
-}
-
-void validateProjectV9Node1866(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    if (!context.requireTypes(value, {JsonType::Object}, path)) return;
-    if (!value.isObject()) return;
-    const QJsonObject object = value.toObject();
-    context.requireFields(object, QStringList{QStringLiteral("durationFrames"), QStringLiteral("curve"), QStringLiteral("handles")}, path);
-    if (object.contains(QStringLiteral("curve")))
-        validateNode1867(object.value(QStringLiteral("curve")), context, context.childPath(path, QStringLiteral("curve")));
-    if (object.contains(QStringLiteral("durationFrames")))
-        validateNode1868(object.value(QStringLiteral("durationFrames")), context, context.childPath(path, QStringLiteral("durationFrames")));
-    if (object.contains(QStringLiteral("handles")))
-        validateNode1869(object.value(QStringLiteral("handles")), context, context.childPath(path, QStringLiteral("handles")));
-    context.rejectUnknownFields(object, QStringList{QStringLiteral("curve"), QStringLiteral("durationFrames"), QStringLiteral("handles")}, path);
-}
-
-void validateNode1867(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    if (!context.requireTypes(value, {JsonType::Array}, path)) return;
-    context.requireConst(value, QJsonValue(QJsonArray{QJsonValue(QJsonObject{{QStringLiteral("x"), QJsonValue(0)}, {QStringLiteral("value"), QJsonValue(1)}}), QJsonValue(QJsonObject{{QStringLiteral("x"), QJsonValue(1)}, {QStringLiteral("value"), QJsonValue(0)}})}), path);
-}
-
-void validateNode1868(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Integer}, path)) return;
     context.requireMinimum(value, 0, path);
     context.requireMaximum(value, 9007199254740992, path);
 }
 
-void validateNode1869(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode1865(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Array}, path)) return;
     context.requireMinItems(value, 1, path);
@@ -17088,11 +17039,11 @@ void validateNode1869(const QJsonValue& value, ValidationContext& context, const
     if (value.isArray()) {
         const QJsonArray array = value.toArray();
         for (qsizetype index = 0; index < array.size(); ++index)
-            validateNode1870(array.at(index), context, path + QStringLiteral("[%1]").arg(index));
+            validateNode1866(array.at(index), context, path + QStringLiteral("[%1]").arg(index));
     }
 }
 
-void validateNode1870(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode1866(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Array}, path)) return;
     context.requireMinItems(value, 4, path);
@@ -17100,363 +17051,412 @@ void validateNode1870(const QJsonValue& value, ValidationContext& context, const
     if (value.isArray()) {
         const QJsonArray array = value.toArray();
         for (qsizetype index = 0; index < array.size(); ++index)
-            validateNode1871(array.at(index), context, path + QStringLiteral("[%1]").arg(index));
+            validateNode1867(array.at(index), context, path + QStringLiteral("[%1]").arg(index));
     }
 }
 
-void validateNode1871(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode1867(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Number}, path)) return;
     context.requireMinimum(value, 0, path);
     context.requireMaximum(value, 1, path);
 }
 
-void validateProjectV9Node1872(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateProjectV9Node1868(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    if (!context.requireTypes(value, {JsonType::Object}, path)) return;
+    if (!value.isObject()) return;
+    const QJsonObject object = value.toObject();
+    context.requireFields(object, QStringList{QStringLiteral("durationFrames"), QStringLiteral("curve"), QStringLiteral("handles")}, path);
+    if (object.contains(QStringLiteral("curve")))
+        validateNode1869(object.value(QStringLiteral("curve")), context, context.childPath(path, QStringLiteral("curve")));
+    if (object.contains(QStringLiteral("durationFrames")))
+        validateNode1870(object.value(QStringLiteral("durationFrames")), context, context.childPath(path, QStringLiteral("durationFrames")));
+    if (object.contains(QStringLiteral("handles")))
+        validateNode1871(object.value(QStringLiteral("handles")), context, context.childPath(path, QStringLiteral("handles")));
+    context.rejectUnknownFields(object, QStringList{QStringLiteral("curve"), QStringLiteral("durationFrames"), QStringLiteral("handles")}, path);
+}
+
+void validateNode1869(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    if (!context.requireTypes(value, {JsonType::Array}, path)) return;
+    context.requireConst(value, QJsonValue(QJsonArray{QJsonValue(QJsonObject{{QStringLiteral("x"), QJsonValue(0)}, {QStringLiteral("value"), QJsonValue(1)}}), QJsonValue(QJsonObject{{QStringLiteral("x"), QJsonValue(1)}, {QStringLiteral("value"), QJsonValue(0)}})}), path);
+}
+
+void validateNode1870(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    if (!context.requireTypes(value, {JsonType::Integer}, path)) return;
+    context.requireMinimum(value, 0, path);
+    context.requireMaximum(value, 9007199254740992, path);
+}
+
+void validateNode1871(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    if (!context.requireTypes(value, {JsonType::Array}, path)) return;
+    context.requireMinItems(value, 1, path);
+    context.requireMaxItems(value, 1, path);
+    if (value.isArray()) {
+        const QJsonArray array = value.toArray();
+        for (qsizetype index = 0; index < array.size(); ++index)
+            validateNode1872(array.at(index), context, path + QStringLiteral("[%1]").arg(index));
+    }
+}
+
+void validateNode1872(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    if (!context.requireTypes(value, {JsonType::Array}, path)) return;
+    context.requireMinItems(value, 4, path);
+    context.requireMaxItems(value, 4, path);
+    if (value.isArray()) {
+        const QJsonArray array = value.toArray();
+        for (qsizetype index = 0; index < array.size(); ++index)
+            validateNode1873(array.at(index), context, path + QStringLiteral("[%1]").arg(index));
+    }
+}
+
+void validateNode1873(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    if (!context.requireTypes(value, {JsonType::Number}, path)) return;
+    context.requireMinimum(value, 0, path);
+    context.requireMaximum(value, 1, path);
+}
+
+void validateProjectV9Node1874(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Object}, path)) return;
     if (!value.isObject()) return;
     const QJsonObject object = value.toObject();
     context.requireFields(object, QStringList{QStringLiteral("entries"), QStringLiteral("active"), QStringLiteral("platforms")}, path);
     if (object.contains(QStringLiteral("active")))
-        validateNode1873(object.value(QStringLiteral("active")), context, context.childPath(path, QStringLiteral("active")));
+        validateNode1875(object.value(QStringLiteral("active")), context, context.childPath(path, QStringLiteral("active")));
     if (object.contains(QStringLiteral("entries")))
-        validateNode1874(object.value(QStringLiteral("entries")), context, context.childPath(path, QStringLiteral("entries")));
+        validateNode1876(object.value(QStringLiteral("entries")), context, context.childPath(path, QStringLiteral("entries")));
     if (object.contains(QStringLiteral("platforms")))
-        validateNode1876(object.value(QStringLiteral("platforms")), context, context.childPath(path, QStringLiteral("platforms")));
+        validateNode1878(object.value(QStringLiteral("platforms")), context, context.childPath(path, QStringLiteral("platforms")));
     context.rejectUnknownFields(object, QStringList{QStringLiteral("active"), QStringLiteral("entries"), QStringLiteral("platforms")}, path);
 }
 
-void validateNode1873(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode1875(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::String, JsonType::Null}, path)) return;
 }
 
-void validateNode1874(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode1876(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Array}, path)) return;
     if (value.isArray()) {
         const QJsonArray array = value.toArray();
         for (qsizetype index = 0; index < array.size(); ++index)
-            validateNode1875(array.at(index), context, path + QStringLiteral("[%1]").arg(index));
+            validateNode1877(array.at(index), context, path + QStringLiteral("[%1]").arg(index));
     }
 }
 
-void validateNode1875(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode1877(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    validateProjectV9Node1847(value, context, path);
+    validateProjectV9Node1849(value, context, path);
 }
 
-void validateNode1876(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode1878(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Object}, path)) return;
     if (!value.isObject()) return;
     const QJsonObject object = value.toObject();
     for (auto it = object.constBegin(); it != object.constEnd(); ++it)
-        validateNode1879(it.key(), context, context.childPath(path, it.key()));
+        validateNode1881(it.key(), context, context.childPath(path, it.key()));
     const QStringList knownFields = QStringList{};
     for (auto it = object.constBegin(); it != object.constEnd(); ++it)
         if (!knownFields.contains(it.key()))
-            validateNode1877(it.value(), context, context.childPath(path, it.key()));
+            validateNode1879(it.value(), context, context.childPath(path, it.key()));
 }
 
-void validateNode1877(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode1879(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Object}, path)) return;
     if (!value.isObject()) return;
     const QJsonObject object = value.toObject();
     context.requireFields(object, QStringList{QStringLiteral("active")}, path);
     if (object.contains(QStringLiteral("active")))
-        validateNode1878(object.value(QStringLiteral("active")), context, context.childPath(path, QStringLiteral("active")));
+        validateNode1880(object.value(QStringLiteral("active")), context, context.childPath(path, QStringLiteral("active")));
     context.rejectUnknownFields(object, QStringList{QStringLiteral("active")}, path);
 }
 
-void validateNode1878(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode1880(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::String, JsonType::Null}, path)) return;
 }
 
-void validateNode1879(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode1881(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    validateProjectV9Node1925(value, context, path);
+    validateProjectV9Node1927(value, context, path);
 }
 
-void validateProjectV9Node1880(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateProjectV9Node1882(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Object}, path)) return;
     if (!value.isObject()) return;
     const QJsonObject object = value.toObject();
     context.requireFields(object, QStringList{QStringLiteral("plain"), QStringLiteral("localized")}, path);
     if (object.contains(QStringLiteral("localized")))
-        validateNode1881(object.value(QStringLiteral("localized")), context, context.childPath(path, QStringLiteral("localized")));
+        validateNode1883(object.value(QStringLiteral("localized")), context, context.childPath(path, QStringLiteral("localized")));
     if (object.contains(QStringLiteral("plain")))
-        validateNode1884(object.value(QStringLiteral("plain")), context, context.childPath(path, QStringLiteral("plain")));
+        validateNode1886(object.value(QStringLiteral("plain")), context, context.childPath(path, QStringLiteral("plain")));
     context.rejectUnknownFields(object, QStringList{QStringLiteral("localized"), QStringLiteral("plain")}, path);
 }
 
-void validateNode1881(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode1883(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Object}, path)) return;
     if (!value.isObject()) return;
     const QJsonObject object = value.toObject();
     for (auto it = object.constBegin(); it != object.constEnd(); ++it)
-        validateNode1883(it.key(), context, context.childPath(path, it.key()));
+        validateNode1885(it.key(), context, context.childPath(path, it.key()));
     const QStringList knownFields = QStringList{};
     for (auto it = object.constBegin(); it != object.constEnd(); ++it)
         if (!knownFields.contains(it.key()))
-            validateNode1882(it.value(), context, context.childPath(path, it.key()));
+            validateNode1884(it.value(), context, context.childPath(path, it.key()));
 }
 
-void validateNode1882(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode1884(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    validateProjectV9Node1872(value, context, path);
+    validateProjectV9Node1874(value, context, path);
 }
 
-void validateNode1883(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode1885(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::String}, path)) return;
     context.requireMinLength(value, 1, path);
 }
 
-void validateNode1884(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode1886(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    validateProjectV9Node1872(value, context, path);
+    validateProjectV9Node1874(value, context, path);
 }
 
-void validateProjectV9Node1885(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateProjectV9Node1887(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Object}, path)) return;
     if (!value.isObject()) return;
     const QJsonObject object = value.toObject();
     if (object.contains(QStringLiteral("attenuation")))
-        validateNode1886(object.value(QStringLiteral("attenuation")), context, context.childPath(path, QStringLiteral("attenuation")));
+        validateNode1888(object.value(QStringLiteral("attenuation")), context, context.childPath(path, QStringLiteral("attenuation")));
     if (object.contains(QStringLiteral("attenuationDistanceScaling")))
-        validateNode1887(object.value(QStringLiteral("attenuationDistanceScaling")), context, context.childPath(path, QStringLiteral("attenuationDistanceScaling")));
+        validateNode1889(object.value(QStringLiteral("attenuationDistanceScaling")), context, context.childPath(path, QStringLiteral("attenuationDistanceScaling")));
     if (object.contains(QStringLiteral("attenuationGuid")))
-        validateNode1888(object.value(QStringLiteral("attenuationGuid")), context, context.childPath(path, QStringLiteral("attenuationGuid")));
+        validateNode1890(object.value(QStringLiteral("attenuationGuid")), context, context.childPath(path, QStringLiteral("attenuationGuid")));
     if (object.contains(QStringLiteral("is3DEnabled")))
-        validateNode1889(object.value(QStringLiteral("is3DEnabled")), context, context.childPath(path, QStringLiteral("is3DEnabled")));
+        validateNode1891(object.value(QStringLiteral("is3DEnabled")), context, context.childPath(path, QStringLiteral("is3DEnabled")));
     if (object.contains(QStringLiteral("spatializationMix")))
-        validateNode1890(object.value(QStringLiteral("spatializationMix")), context, context.childPath(path, QStringLiteral("spatializationMix")));
+        validateNode1892(object.value(QStringLiteral("spatializationMix")), context, context.childPath(path, QStringLiteral("spatializationMix")));
     context.rejectUnknownFields(object, QStringList{QStringLiteral("attenuation"), QStringLiteral("attenuationDistanceScaling"), QStringLiteral("attenuationGuid"), QStringLiteral("is3DEnabled"), QStringLiteral("spatializationMix")}, path);
-}
-
-void validateNode1886(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    if (!context.requireTypes(value, {JsonType::String}, path)) return;
-}
-
-void validateNode1887(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    if (!context.requireTypes(value, {JsonType::Number}, path)) return;
 }
 
 void validateNode1888(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    validateProjectV9Node1925(value, context, path);
+    if (!context.requireTypes(value, {JsonType::String}, path)) return;
 }
 
 void validateNode1889(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    if (!context.requireTypes(value, {JsonType::Boolean}, path)) return;
+    if (!context.requireTypes(value, {JsonType::Number}, path)) return;
 }
 
 void validateNode1890(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
+    validateProjectV9Node1927(value, context, path);
+}
+
+void validateNode1891(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    if (!context.requireTypes(value, {JsonType::Boolean}, path)) return;
+}
+
+void validateNode1892(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
     if (!context.requireTypes(value, {JsonType::Number}, path)) return;
 }
 
-void validateProjectV9Node1891(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateProjectV9Node1893(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Array}, path)) return;
     if (value.isArray()) {
         const QJsonArray array = value.toArray();
         for (qsizetype index = 0; index < array.size(); ++index)
-            validateNode1892(array.at(index), context, path + QStringLiteral("[%1]").arg(index));
+            validateNode1894(array.at(index), context, path + QStringLiteral("[%1]").arg(index));
     }
 }
 
-void validateNode1892(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode1894(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::String}, path)) return;
 }
 
-void validateProjectV9Node1893(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateProjectV9Node1895(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Object}, path)) return;
     if (!value.isObject()) return;
     const QJsonObject object = value.toObject();
     context.requireFields(object, QStringList{QStringLiteral("clipGuid"), QStringLiteral("targetGuid"), QStringLiteral("start"), QStringLiteral("duration"), QStringLiteral("stableOccurrenceOrdinal"), QStringLiteral("playableProperties")}, path);
     if (object.contains(QStringLiteral("clipGuid")))
-        validateNode1894(object.value(QStringLiteral("clipGuid")), context, context.childPath(path, QStringLiteral("clipGuid")));
+        validateNode1896(object.value(QStringLiteral("clipGuid")), context, context.childPath(path, QStringLiteral("clipGuid")));
     if (object.contains(QStringLiteral("duration")))
-        validateNode1895(object.value(QStringLiteral("duration")), context, context.childPath(path, QStringLiteral("duration")));
+        validateNode1897(object.value(QStringLiteral("duration")), context, context.childPath(path, QStringLiteral("duration")));
     if (object.contains(QStringLiteral("playableProperties")))
-        validateNode1896(object.value(QStringLiteral("playableProperties")), context, context.childPath(path, QStringLiteral("playableProperties")));
+        validateNode1898(object.value(QStringLiteral("playableProperties")), context, context.childPath(path, QStringLiteral("playableProperties")));
     if (object.contains(QStringLiteral("stableOccurrenceOrdinal")))
-        validateNode1897(object.value(QStringLiteral("stableOccurrenceOrdinal")), context, context.childPath(path, QStringLiteral("stableOccurrenceOrdinal")));
+        validateNode1899(object.value(QStringLiteral("stableOccurrenceOrdinal")), context, context.childPath(path, QStringLiteral("stableOccurrenceOrdinal")));
     if (object.contains(QStringLiteral("start")))
-        validateNode1898(object.value(QStringLiteral("start")), context, context.childPath(path, QStringLiteral("start")));
+        validateNode1900(object.value(QStringLiteral("start")), context, context.childPath(path, QStringLiteral("start")));
     if (object.contains(QStringLiteral("targetGuid")))
-        validateNode1899(object.value(QStringLiteral("targetGuid")), context, context.childPath(path, QStringLiteral("targetGuid")));
+        validateNode1901(object.value(QStringLiteral("targetGuid")), context, context.childPath(path, QStringLiteral("targetGuid")));
     context.rejectUnknownFields(object, QStringList{QStringLiteral("clipGuid"), QStringLiteral("duration"), QStringLiteral("playableProperties"), QStringLiteral("stableOccurrenceOrdinal"), QStringLiteral("start"), QStringLiteral("targetGuid")}, path);
 }
 
-void validateNode1894(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode1896(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    validateProjectV9Node1925(value, context, path);
+    validateProjectV9Node1927(value, context, path);
 }
 
-void validateNode1895(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode1897(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Integer}, path)) return;
     context.requireMinimum(value, 1, path);
 }
 
-void validateNode1896(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode1898(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     validateProjectV9Node1729(value, context, path);
 }
 
-void validateNode1897(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode1899(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Integer}, path)) return;
     context.requireMinimum(value, 0, path);
     context.requireMaximum(value, 4294967295, path);
 }
 
-void validateNode1898(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode1900(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Integer}, path)) return;
 }
 
-void validateNode1899(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode1901(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    validateProjectV9Node1925(value, context, path);
+    validateProjectV9Node1927(value, context, path);
 }
 
-void validateProjectV9Node1900(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateProjectV9Node1902(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Object}, path)) return;
     if (!value.isObject()) return;
     const QJsonObject object = value.toObject();
     if (object.contains(QStringLiteral("clips")))
-        validateNode1901(object.value(QStringLiteral("clips")), context, context.childPath(path, QStringLiteral("clips")));
+        validateNode1903(object.value(QStringLiteral("clips")), context, context.childPath(path, QStringLiteral("clips")));
     if (object.contains(QStringLiteral("occurrenceOrdinalHighWater")))
-        validateNode1903(object.value(QStringLiteral("occurrenceOrdinalHighWater")), context, context.childPath(path, QStringLiteral("occurrenceOrdinalHighWater")));
+        validateNode1905(object.value(QStringLiteral("occurrenceOrdinalHighWater")), context, context.childPath(path, QStringLiteral("occurrenceOrdinalHighWater")));
     context.rejectUnknownFields(object, QStringList{QStringLiteral("clips"), QStringLiteral("occurrenceOrdinalHighWater")}, path);
 }
 
-void validateNode1901(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode1903(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Array}, path)) return;
     if (value.isArray()) {
         const QJsonArray array = value.toArray();
         for (qsizetype index = 0; index < array.size(); ++index)
-            validateNode1902(array.at(index), context, path + QStringLiteral("[%1]").arg(index));
+            validateNode1904(array.at(index), context, path + QStringLiteral("[%1]").arg(index));
     }
 }
 
-void validateNode1902(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode1904(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    validateProjectV9Node1893(value, context, path);
+    validateProjectV9Node1895(value, context, path);
 }
 
-void validateNode1903(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode1905(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Integer}, path)) return;
     context.requireMinimum(value, 0, path);
     context.requireMaximum(value, 4294967296, path);
 }
 
-void validateProjectV9Node1904(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateProjectV9Node1906(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Object}, path)) return;
     if (!value.isObject()) return;
     const QJsonObject object = value.toObject();
     context.requireFields(object, QStringList{QStringLiteral("durationSeconds"), QStringLiteral("curve"), QStringLiteral("handles")}, path);
     if (object.contains(QStringLiteral("curve")))
-        validateNode1905(object.value(QStringLiteral("curve")), context, context.childPath(path, QStringLiteral("curve")));
+        validateNode1907(object.value(QStringLiteral("curve")), context, context.childPath(path, QStringLiteral("curve")));
     if (object.contains(QStringLiteral("durationSeconds")))
-        validateNode1909(object.value(QStringLiteral("durationSeconds")), context, context.childPath(path, QStringLiteral("durationSeconds")));
+        validateNode1911(object.value(QStringLiteral("durationSeconds")), context, context.childPath(path, QStringLiteral("durationSeconds")));
     if (object.contains(QStringLiteral("handles")))
-        validateNode1910(object.value(QStringLiteral("handles")), context, context.childPath(path, QStringLiteral("handles")));
+        validateNode1912(object.value(QStringLiteral("handles")), context, context.childPath(path, QStringLiteral("handles")));
     context.rejectUnknownFields(object, QStringList{QStringLiteral("curve"), QStringLiteral("durationSeconds"), QStringLiteral("handles")}, path);
 }
 
-void validateNode1905(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode1907(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Array}, path)) return;
     if (value.isArray()) {
         const QJsonArray array = value.toArray();
         for (qsizetype index = 0; index < array.size(); ++index)
-            validateNode1906(array.at(index), context, path + QStringLiteral("[%1]").arg(index));
+            validateNode1908(array.at(index), context, path + QStringLiteral("[%1]").arg(index));
     }
 }
 
-void validateNode1906(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode1908(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Object}, path)) return;
     if (!value.isObject()) return;
     const QJsonObject object = value.toObject();
     context.requireFields(object, QStringList{QStringLiteral("x"), QStringLiteral("value")}, path);
     if (object.contains(QStringLiteral("value")))
-        validateNode1907(object.value(QStringLiteral("value")), context, context.childPath(path, QStringLiteral("value")));
+        validateNode1909(object.value(QStringLiteral("value")), context, context.childPath(path, QStringLiteral("value")));
     if (object.contains(QStringLiteral("x")))
-        validateNode1908(object.value(QStringLiteral("x")), context, context.childPath(path, QStringLiteral("x")));
+        validateNode1910(object.value(QStringLiteral("x")), context, context.childPath(path, QStringLiteral("x")));
     context.rejectUnknownFields(object, QStringList{QStringLiteral("value"), QStringLiteral("x")}, path);
-}
-
-void validateNode1907(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    if (!context.requireTypes(value, {JsonType::Number}, path)) return;
-}
-
-void validateNode1908(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    if (!context.requireTypes(value, {JsonType::Number}, path)) return;
 }
 
 void validateNode1909(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Number}, path)) return;
-    context.requireMinimum(value, 0, path);
 }
 
 void validateNode1910(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    if (!context.requireTypes(value, {JsonType::Number}, path)) return;
+}
+
+void validateNode1911(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    if (!context.requireTypes(value, {JsonType::Number}, path)) return;
+    context.requireMinimum(value, 0, path);
+}
+
+void validateNode1912(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Array}, path)) return;
     if (value.isArray()) {
         const QJsonArray array = value.toArray();
         for (qsizetype index = 0; index < array.size(); ++index)
-            validateNode1911(array.at(index), context, path + QStringLiteral("[%1]").arg(index));
+            validateNode1913(array.at(index), context, path + QStringLiteral("[%1]").arg(index));
     }
 }
 
-void validateNode1911(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode1913(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Object}, path)) return;
     if (!value.isObject()) return;
     const QJsonObject object = value.toObject();
     context.requireFields(object, QStringList{QStringLiteral("h1x"), QStringLiteral("h1y"), QStringLiteral("h2x"), QStringLiteral("h2y")}, path);
     if (object.contains(QStringLiteral("h1x")))
-        validateNode1912(object.value(QStringLiteral("h1x")), context, context.childPath(path, QStringLiteral("h1x")));
+        validateNode1914(object.value(QStringLiteral("h1x")), context, context.childPath(path, QStringLiteral("h1x")));
     if (object.contains(QStringLiteral("h1y")))
-        validateNode1913(object.value(QStringLiteral("h1y")), context, context.childPath(path, QStringLiteral("h1y")));
+        validateNode1915(object.value(QStringLiteral("h1y")), context, context.childPath(path, QStringLiteral("h1y")));
     if (object.contains(QStringLiteral("h2x")))
-        validateNode1914(object.value(QStringLiteral("h2x")), context, context.childPath(path, QStringLiteral("h2x")));
+        validateNode1916(object.value(QStringLiteral("h2x")), context, context.childPath(path, QStringLiteral("h2x")));
     if (object.contains(QStringLiteral("h2y")))
-        validateNode1915(object.value(QStringLiteral("h2y")), context, context.childPath(path, QStringLiteral("h2y")));
+        validateNode1917(object.value(QStringLiteral("h2y")), context, context.childPath(path, QStringLiteral("h2y")));
     context.rejectUnknownFields(object, QStringList{QStringLiteral("h1x"), QStringLiteral("h1y"), QStringLiteral("h2x"), QStringLiteral("h2y")}, path);
-}
-
-void validateNode1912(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    if (!context.requireTypes(value, {JsonType::Number}, path)) return;
-}
-
-void validateNode1913(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    if (!context.requireTypes(value, {JsonType::Number}, path)) return;
 }
 
 void validateNode1914(const QJsonValue& value, ValidationContext& context, const QString& path)
@@ -17469,69 +17469,68 @@ void validateNode1915(const QJsonValue& value, ValidationContext& context, const
     if (!context.requireTypes(value, {JsonType::Number}, path)) return;
 }
 
-void validateProjectV9Node1916(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode1916(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    if (!context.requireTypes(value, {JsonType::Number}, path)) return;
+}
+
+void validateNode1917(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    if (!context.requireTypes(value, {JsonType::Number}, path)) return;
+}
+
+void validateProjectV9Node1918(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Object}, path)) return;
     if (!value.isObject()) return;
     const QJsonObject object = value.toObject();
     context.requireFields(object, QStringList{QStringLiteral("rules")}, path);
     if (object.contains(QStringLiteral("rules")))
-        validateNode1917(object.value(QStringLiteral("rules")), context, context.childPath(path, QStringLiteral("rules")));
+        validateNode1919(object.value(QStringLiteral("rules")), context, context.childPath(path, QStringLiteral("rules")));
     context.rejectUnknownFields(object, QStringList{QStringLiteral("rules")}, path);
 }
 
-void validateNode1917(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode1919(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Array}, path)) return;
     if (value.isArray()) {
         const QJsonArray array = value.toArray();
         for (qsizetype index = 0; index < array.size(); ++index)
-            validateNode1918(array.at(index), context, path + QStringLiteral("[%1]").arg(index));
+            validateNode1920(array.at(index), context, path + QStringLiteral("[%1]").arg(index));
     }
 }
 
-void validateNode1918(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode1920(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Object}, path)) return;
     if (!value.isObject()) return;
     const QJsonObject object = value.toObject();
     context.requireFields(object, QStringList{QStringLiteral("source"), QStringLiteral("target"), QStringLiteral("exitTiming"), QStringLiteral("sourceFadeOut"), QStringLiteral("entryMode"), QStringLiteral("targetFadeIn")}, path);
     if (object.contains(QStringLiteral("entryMode")))
-        validateNode1919(object.value(QStringLiteral("entryMode")), context, context.childPath(path, QStringLiteral("entryMode")));
+        validateNode1921(object.value(QStringLiteral("entryMode")), context, context.childPath(path, QStringLiteral("entryMode")));
     if (object.contains(QStringLiteral("exitTiming")))
-        validateNode1920(object.value(QStringLiteral("exitTiming")), context, context.childPath(path, QStringLiteral("exitTiming")));
+        validateNode1922(object.value(QStringLiteral("exitTiming")), context, context.childPath(path, QStringLiteral("exitTiming")));
     if (object.contains(QStringLiteral("source")))
-        validateNode1921(object.value(QStringLiteral("source")), context, context.childPath(path, QStringLiteral("source")));
+        validateNode1923(object.value(QStringLiteral("source")), context, context.childPath(path, QStringLiteral("source")));
     if (object.contains(QStringLiteral("sourceFadeOut")))
-        validateNode1922(object.value(QStringLiteral("sourceFadeOut")), context, context.childPath(path, QStringLiteral("sourceFadeOut")));
+        validateNode1924(object.value(QStringLiteral("sourceFadeOut")), context, context.childPath(path, QStringLiteral("sourceFadeOut")));
     if (object.contains(QStringLiteral("target")))
-        validateNode1923(object.value(QStringLiteral("target")), context, context.childPath(path, QStringLiteral("target")));
+        validateNode1925(object.value(QStringLiteral("target")), context, context.childPath(path, QStringLiteral("target")));
     if (object.contains(QStringLiteral("targetFadeIn")))
-        validateNode1924(object.value(QStringLiteral("targetFadeIn")), context, context.childPath(path, QStringLiteral("targetFadeIn")));
+        validateNode1926(object.value(QStringLiteral("targetFadeIn")), context, context.childPath(path, QStringLiteral("targetFadeIn")));
     context.rejectUnknownFields(object, QStringList{QStringLiteral("entryMode"), QStringLiteral("exitTiming"), QStringLiteral("source"), QStringLiteral("sourceFadeOut"), QStringLiteral("target"), QStringLiteral("targetFadeIn")}, path);
 }
 
-void validateNode1919(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode1921(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::String}, path)) return;
     context.requireEnum(value, QJsonArray{QJsonValue(QStringLiteral("EntryMarker")), QJsonValue(QStringLiteral("SamePosition"))}, path);
 }
 
-void validateNode1920(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode1922(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::String}, path)) return;
     context.requireEnum(value, QJsonArray{QJsonValue(QStringLiteral("Immediate")), QJsonValue(QStringLiteral("NaturalEnd")), QJsonValue(QStringLiteral("NextBeat")), QJsonValue(QStringLiteral("NextBar")), QJsonValue(QStringLiteral("NextMarker")), QJsonValue(QStringLiteral("ExitMarker"))}, path);
-}
-
-void validateNode1921(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    if (!context.requireTypes(value, {JsonType::String, JsonType::Null}, path)) return;
-    context.requireUuid(value, path);
-}
-
-void validateNode1922(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    validateProjectV9Node1904(value, context, path);
 }
 
 void validateNode1923(const QJsonValue& value, ValidationContext& context, const QString& path)
@@ -17542,126 +17541,137 @@ void validateNode1923(const QJsonValue& value, ValidationContext& context, const
 
 void validateNode1924(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    validateProjectV9Node1904(value, context, path);
+    validateProjectV9Node1906(value, context, path);
 }
 
-void validateProjectV9Node1925(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode1925(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    if (!context.requireTypes(value, {JsonType::String, JsonType::Null}, path)) return;
+    context.requireUuid(value, path);
+}
+
+void validateNode1926(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    validateProjectV9Node1906(value, context, path);
+}
+
+void validateProjectV9Node1927(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::String}, path)) return;
     context.requireUuid(value, path);
 }
 
-void validateProjectV9Node1926(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateProjectV9Node1928(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Object}, path)) return;
     if (!value.isObject()) return;
     const QJsonObject object = value.toObject();
     if (object.contains(QStringLiteral("defaultValue")))
-        validateNode1927(object.value(QStringLiteral("defaultValue")), context, context.childPath(path, QStringLiteral("defaultValue")));
+        validateNode1929(object.value(QStringLiteral("defaultValue")), context, context.childPath(path, QStringLiteral("defaultValue")));
     if (object.contains(QStringLiteral("description")))
-        validateNode1928(object.value(QStringLiteral("description")), context, context.childPath(path, QStringLiteral("description")));
+        validateNode1930(object.value(QStringLiteral("description")), context, context.childPath(path, QStringLiteral("description")));
     if (object.contains(QStringLiteral("displayScale")))
-        validateNode1929(object.value(QStringLiteral("displayScale")), context, context.childPath(path, QStringLiteral("displayScale")));
+        validateNode1931(object.value(QStringLiteral("displayScale")), context, context.childPath(path, QStringLiteral("displayScale")));
     if (object.contains(QStringLiteral("kind")))
-        validateNode1930(object.value(QStringLiteral("kind")), context, context.childPath(path, QStringLiteral("kind")));
+        validateNode1932(object.value(QStringLiteral("kind")), context, context.childPath(path, QStringLiteral("kind")));
     if (object.contains(QStringLiteral("labels")))
-        validateNode1931(object.value(QStringLiteral("labels")), context, context.childPath(path, QStringLiteral("labels")));
+        validateNode1933(object.value(QStringLiteral("labels")), context, context.childPath(path, QStringLiteral("labels")));
     if (object.contains(QStringLiteral("precision")))
-        validateNode1936(object.value(QStringLiteral("precision")), context, context.childPath(path, QStringLiteral("precision")));
+        validateNode1938(object.value(QStringLiteral("precision")), context, context.childPath(path, QStringLiteral("precision")));
     if (object.contains(QStringLiteral("rangeMax")))
-        validateNode1937(object.value(QStringLiteral("rangeMax")), context, context.childPath(path, QStringLiteral("rangeMax")));
+        validateNode1939(object.value(QStringLiteral("rangeMax")), context, context.childPath(path, QStringLiteral("rangeMax")));
     if (object.contains(QStringLiteral("rangeMin")))
-        validateNode1938(object.value(QStringLiteral("rangeMin")), context, context.childPath(path, QStringLiteral("rangeMin")));
+        validateNode1940(object.value(QStringLiteral("rangeMin")), context, context.childPath(path, QStringLiteral("rangeMin")));
     if (object.contains(QStringLiteral("unit")))
-        validateNode1939(object.value(QStringLiteral("unit")), context, context.childPath(path, QStringLiteral("unit")));
+        validateNode1941(object.value(QStringLiteral("unit")), context, context.childPath(path, QStringLiteral("unit")));
     if (object.contains(QStringLiteral("writers")))
-        validateNode1940(object.value(QStringLiteral("writers")), context, context.childPath(path, QStringLiteral("writers")));
+        validateNode1942(object.value(QStringLiteral("writers")), context, context.childPath(path, QStringLiteral("writers")));
     context.rejectUnknownFields(object, QStringList{QStringLiteral("defaultValue"), QStringLiteral("description"), QStringLiteral("displayScale"), QStringLiteral("kind"), QStringLiteral("labels"), QStringLiteral("precision"), QStringLiteral("rangeMax"), QStringLiteral("rangeMin"), QStringLiteral("unit"), QStringLiteral("writers")}, path);
 }
 
-void validateNode1927(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode1929(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Number}, path)) return;
 }
 
-void validateNode1928(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode1930(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::String}, path)) return;
 }
 
-void validateNode1929(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode1931(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Integer}, path)) return;
     context.requireMinimum(value, 0, path);
     context.requireMaximum(value, 255, path);
 }
 
-void validateNode1930(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode1932(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     context.requireEnum(value, QJsonArray{QJsonValue(0), QJsonValue(1)}, path);
 }
 
-void validateNode1931(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode1933(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Array}, path)) return;
     if (value.isArray()) {
         const QJsonArray array = value.toArray();
         for (qsizetype index = 0; index < array.size(); ++index)
-            validateNode1932(array.at(index), context, path + QStringLiteral("[%1]").arg(index));
+            validateNode1934(array.at(index), context, path + QStringLiteral("[%1]").arg(index));
     }
 }
 
-void validateNode1932(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode1934(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Object}, path)) return;
     if (!value.isObject()) return;
     const QJsonObject object = value.toObject();
     context.requireFields(object, QStringList{QStringLiteral("anchor"), QStringLiteral("name")}, path);
     if (object.contains(QStringLiteral("anchor")))
-        validateNode1933(object.value(QStringLiteral("anchor")), context, context.childPath(path, QStringLiteral("anchor")));
+        validateNode1935(object.value(QStringLiteral("anchor")), context, context.childPath(path, QStringLiteral("anchor")));
     if (object.contains(QStringLiteral("id")))
-        validateNode1934(object.value(QStringLiteral("id")), context, context.childPath(path, QStringLiteral("id")));
+        validateNode1936(object.value(QStringLiteral("id")), context, context.childPath(path, QStringLiteral("id")));
     if (object.contains(QStringLiteral("name")))
-        validateNode1935(object.value(QStringLiteral("name")), context, context.childPath(path, QStringLiteral("name")));
+        validateNode1937(object.value(QStringLiteral("name")), context, context.childPath(path, QStringLiteral("name")));
     context.rejectUnknownFields(object, QStringList{QStringLiteral("anchor"), QStringLiteral("id"), QStringLiteral("name")}, path);
-}
-
-void validateNode1933(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    if (!context.requireTypes(value, {JsonType::Integer}, path)) return;
-}
-
-void validateNode1934(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    validateProjectV9Node1925(value, context, path);
 }
 
 void validateNode1935(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    if (!context.requireTypes(value, {JsonType::String}, path)) return;
+    if (!context.requireTypes(value, {JsonType::Integer}, path)) return;
 }
 
 void validateNode1936(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    if (!context.requireTypes(value, {JsonType::Integer}, path)) return;
+    validateProjectV9Node1927(value, context, path);
 }
 
 void validateNode1937(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    if (!context.requireTypes(value, {JsonType::Number}, path)) return;
+    if (!context.requireTypes(value, {JsonType::String}, path)) return;
 }
 
 void validateNode1938(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    if (!context.requireTypes(value, {JsonType::Number}, path)) return;
+    if (!context.requireTypes(value, {JsonType::Integer}, path)) return;
 }
 
 void validateNode1939(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    if (!context.requireTypes(value, {JsonType::String}, path)) return;
+    if (!context.requireTypes(value, {JsonType::Number}, path)) return;
 }
 
 void validateNode1940(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    if (!context.requireTypes(value, {JsonType::Number}, path)) return;
+}
+
+void validateNode1941(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    if (!context.requireTypes(value, {JsonType::String}, path)) return;
+}
+
+void validateNode1942(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Integer}, path)) return;
     context.requireEnum(value, QJsonArray{QJsonValue(1), QJsonValue(2), QJsonValue(3)}, path);
@@ -17669,566 +17679,556 @@ void validateNode1940(const QJsonValue& value, ValidationContext& context, const
     context.requireMaximum(value, 3, path);
 }
 
-void validateProjectV9Node1941(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateProjectV9Node1943(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Object}, path)) return;
     if (!value.isObject()) return;
     const QJsonObject object = value.toObject();
     context.requireFields(object, QStringList{QStringLiteral("harkenDocument"), QStringLiteral("content")}, path);
     if (object.contains(QStringLiteral("content")))
-        validateNode1942(object.value(QStringLiteral("content")), context, context.childPath(path, QStringLiteral("content")));
+        validateNode1944(object.value(QStringLiteral("content")), context, context.childPath(path, QStringLiteral("content")));
     if (object.contains(QStringLiteral("harkenDocument")))
-        validateNode1950(object.value(QStringLiteral("harkenDocument")), context, context.childPath(path, QStringLiteral("harkenDocument")));
+        validateNode1952(object.value(QStringLiteral("harkenDocument")), context, context.childPath(path, QStringLiteral("harkenDocument")));
     context.rejectUnknownFields(object, QStringList{QStringLiteral("content"), QStringLiteral("harkenDocument")}, path);
 }
 
-void validateNode1942(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode1944(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Object}, path)) return;
     if (!value.isObject()) return;
     const QJsonObject object = value.toObject();
     context.requireFields(object, QStringList{QStringLiteral("guid"), QStringLiteral("type"), QStringLiteral("name"), QStringLiteral("parentRef"), QStringLiteral("actions")}, path);
     if (object.contains(QStringLiteral("actions")))
-        validateNode1943(object.value(QStringLiteral("actions")), context, context.childPath(path, QStringLiteral("actions")));
+        validateNode1945(object.value(QStringLiteral("actions")), context, context.childPath(path, QStringLiteral("actions")));
     if (object.contains(QStringLiteral("guid")))
-        validateNode1945(object.value(QStringLiteral("guid")), context, context.childPath(path, QStringLiteral("guid")));
+        validateNode1947(object.value(QStringLiteral("guid")), context, context.childPath(path, QStringLiteral("guid")));
     if (object.contains(QStringLiteral("name")))
-        validateNode1946(object.value(QStringLiteral("name")), context, context.childPath(path, QStringLiteral("name")));
+        validateNode1948(object.value(QStringLiteral("name")), context, context.childPath(path, QStringLiteral("name")));
     if (object.contains(QStringLiteral("notes")))
-        validateNode1947(object.value(QStringLiteral("notes")), context, context.childPath(path, QStringLiteral("notes")));
+        validateNode1949(object.value(QStringLiteral("notes")), context, context.childPath(path, QStringLiteral("notes")));
     if (object.contains(QStringLiteral("parentRef")))
-        validateNode1948(object.value(QStringLiteral("parentRef")), context, context.childPath(path, QStringLiteral("parentRef")));
+        validateNode1950(object.value(QStringLiteral("parentRef")), context, context.childPath(path, QStringLiteral("parentRef")));
     if (object.contains(QStringLiteral("type")))
-        validateNode1949(object.value(QStringLiteral("type")), context, context.childPath(path, QStringLiteral("type")));
+        validateNode1951(object.value(QStringLiteral("type")), context, context.childPath(path, QStringLiteral("type")));
     context.rejectUnknownFields(object, QStringList{QStringLiteral("actions"), QStringLiteral("guid"), QStringLiteral("name"), QStringLiteral("notes"), QStringLiteral("parentRef"), QStringLiteral("type")}, path);
 }
 
-void validateNode1943(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode1945(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Array}, path)) return;
     if (value.isArray()) {
         const QJsonArray array = value.toArray();
         for (qsizetype index = 0; index < array.size(); ++index)
-            validateNode1944(array.at(index), context, path + QStringLiteral("[%1]").arg(index));
+            validateNode1946(array.at(index), context, path + QStringLiteral("[%1]").arg(index));
     }
 }
 
-void validateNode1944(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode1946(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     validateProjectV9Node1324(value, context, path);
 }
 
-void validateNode1945(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode1947(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    validateProjectV9Node1925(value, context, path);
+    validateProjectV9Node1927(value, context, path);
 }
 
-void validateNode1946(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode1948(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::String}, path)) return;
     context.requireMinLength(value, 1, path);
 }
 
-void validateNode1947(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    if (!context.requireTypes(value, {JsonType::String}, path)) return;
-}
-
-void validateNode1948(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    validateProjectV9Node1715(value, context, path);
-}
-
 void validateNode1949(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::String}, path)) return;
-    context.requireConst(value, QJsonValue(QStringLiteral("Action")), path);
 }
 
 void validateNode1950(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    if (!context.requireTypes(value, {JsonType::Object}, path)) return;
-    if (!value.isObject()) return;
-    const QJsonObject object = value.toObject();
-    for (auto it = object.constBegin(); it != object.constEnd(); ++it)
-        validateNode1955(it.key(), context, context.childPath(path, it.key()));
-    context.requireFields(object, QStringList{QStringLiteral("type"), QStringLiteral("id"), QStringLiteral("projectId"), QStringLiteral("schemaVersion")}, path);
-    if (object.contains(QStringLiteral("id")))
-        validateNode1951(object.value(QStringLiteral("id")), context, context.childPath(path, QStringLiteral("id")));
-    if (object.contains(QStringLiteral("projectId")))
-        validateNode1952(object.value(QStringLiteral("projectId")), context, context.childPath(path, QStringLiteral("projectId")));
-    if (object.contains(QStringLiteral("schemaVersion")))
-        validateNode1953(object.value(QStringLiteral("schemaVersion")), context, context.childPath(path, QStringLiteral("schemaVersion")));
-    if (object.contains(QStringLiteral("type")))
-        validateNode1954(object.value(QStringLiteral("type")), context, context.childPath(path, QStringLiteral("type")));
+    validateProjectV9Node1715(value, context, path);
 }
 
 void validateNode1951(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::String}, path)) return;
-    context.requireUuid(value, path);
+    context.requireConst(value, QJsonValue(QStringLiteral("Action")), path);
 }
 
 void validateNode1952(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    if (!context.requireTypes(value, {JsonType::String}, path)) return;
-    context.requireUuid(value, path);
+    if (!context.requireTypes(value, {JsonType::Object}, path)) return;
+    if (!value.isObject()) return;
+    const QJsonObject object = value.toObject();
+    for (auto it = object.constBegin(); it != object.constEnd(); ++it)
+        validateNode1957(it.key(), context, context.childPath(path, it.key()));
+    context.requireFields(object, QStringList{QStringLiteral("type"), QStringLiteral("id"), QStringLiteral("projectId"), QStringLiteral("schemaVersion")}, path);
+    if (object.contains(QStringLiteral("id")))
+        validateNode1953(object.value(QStringLiteral("id")), context, context.childPath(path, QStringLiteral("id")));
+    if (object.contains(QStringLiteral("projectId")))
+        validateNode1954(object.value(QStringLiteral("projectId")), context, context.childPath(path, QStringLiteral("projectId")));
+    if (object.contains(QStringLiteral("schemaVersion")))
+        validateNode1955(object.value(QStringLiteral("schemaVersion")), context, context.childPath(path, QStringLiteral("schemaVersion")));
+    if (object.contains(QStringLiteral("type")))
+        validateNode1956(object.value(QStringLiteral("type")), context, context.childPath(path, QStringLiteral("type")));
 }
 
 void validateNode1953(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    if (!context.requireTypes(value, {JsonType::Integer}, path)) return;
-    context.requireConst(value, QJsonValue(9), path);
+    if (!context.requireTypes(value, {JsonType::String}, path)) return;
+    context.requireUuid(value, path);
 }
 
 void validateNode1954(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::String}, path)) return;
-    context.requireConst(value, QJsonValue(QStringLiteral("project.action")), path);
+    context.requireUuid(value, path);
 }
 
 void validateNode1955(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
+    if (!context.requireTypes(value, {JsonType::Integer}, path)) return;
+    context.requireConst(value, QJsonValue(9), path);
+}
+
+void validateNode1956(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    if (!context.requireTypes(value, {JsonType::String}, path)) return;
+    context.requireConst(value, QJsonValue(QStringLiteral("project.action")), path);
+}
+
+void validateNode1957(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
     context.requirePattern(value, QStringLiteral("^(?!(studioVersion|savedStudioVersion|propertyModel)$)"), path);
 }
 
-void validateProjectV9Node1956(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateProjectV9Node1958(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Object}, path)) return;
     if (!value.isObject()) return;
     const QJsonObject object = value.toObject();
     context.requireFields(object, QStringList{QStringLiteral("harkenDocument"), QStringLiteral("content")}, path);
     if (object.contains(QStringLiteral("content")))
-        validateNode1957(object.value(QStringLiteral("content")), context, context.childPath(path, QStringLiteral("content")));
+        validateNode1959(object.value(QStringLiteral("content")), context, context.childPath(path, QStringLiteral("content")));
     if (object.contains(QStringLiteral("harkenDocument")))
-        validateNode1958(object.value(QStringLiteral("harkenDocument")), context, context.childPath(path, QStringLiteral("harkenDocument")));
+        validateNode1960(object.value(QStringLiteral("harkenDocument")), context, context.childPath(path, QStringLiteral("harkenDocument")));
     context.rejectUnknownFields(object, QStringList{QStringLiteral("content"), QStringLiteral("harkenDocument")}, path);
 }
 
-void validateNode1957(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode1959(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     validateProjectV9Node1752(value, context, path);
 }
 
-void validateNode1958(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode1960(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Object}, path)) return;
     if (!value.isObject()) return;
     const QJsonObject object = value.toObject();
     for (auto it = object.constBegin(); it != object.constEnd(); ++it)
-        validateNode1963(it.key(), context, context.childPath(path, it.key()));
+        validateNode1965(it.key(), context, context.childPath(path, it.key()));
     context.requireFields(object, QStringList{QStringLiteral("type"), QStringLiteral("id"), QStringLiteral("projectId"), QStringLiteral("schemaVersion")}, path);
     if (object.contains(QStringLiteral("id")))
-        validateNode1959(object.value(QStringLiteral("id")), context, context.childPath(path, QStringLiteral("id")));
+        validateNode1961(object.value(QStringLiteral("id")), context, context.childPath(path, QStringLiteral("id")));
     if (object.contains(QStringLiteral("projectId")))
-        validateNode1960(object.value(QStringLiteral("projectId")), context, context.childPath(path, QStringLiteral("projectId")));
+        validateNode1962(object.value(QStringLiteral("projectId")), context, context.childPath(path, QStringLiteral("projectId")));
     if (object.contains(QStringLiteral("schemaVersion")))
-        validateNode1961(object.value(QStringLiteral("schemaVersion")), context, context.childPath(path, QStringLiteral("schemaVersion")));
+        validateNode1963(object.value(QStringLiteral("schemaVersion")), context, context.childPath(path, QStringLiteral("schemaVersion")));
     if (object.contains(QStringLiteral("type")))
-        validateNode1962(object.value(QStringLiteral("type")), context, context.childPath(path, QStringLiteral("type")));
-}
-
-void validateNode1959(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    if (!context.requireTypes(value, {JsonType::String}, path)) return;
-    context.requireUuid(value, path);
-}
-
-void validateNode1960(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    if (!context.requireTypes(value, {JsonType::String}, path)) return;
-    context.requireUuid(value, path);
+        validateNode1964(object.value(QStringLiteral("type")), context, context.childPath(path, QStringLiteral("type")));
 }
 
 void validateNode1961(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    if (!context.requireTypes(value, {JsonType::Integer}, path)) return;
-    context.requireConst(value, QJsonValue(9), path);
+    if (!context.requireTypes(value, {JsonType::String}, path)) return;
+    context.requireUuid(value, path);
 }
 
 void validateNode1962(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::String}, path)) return;
-    context.requireConst(value, QJsonValue(QStringLiteral("project.attenuation")), path);
+    context.requireUuid(value, path);
 }
 
 void validateNode1963(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
+    if (!context.requireTypes(value, {JsonType::Integer}, path)) return;
+    context.requireConst(value, QJsonValue(9), path);
+}
+
+void validateNode1964(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    if (!context.requireTypes(value, {JsonType::String}, path)) return;
+    context.requireConst(value, QJsonValue(QStringLiteral("project.attenuation")), path);
+}
+
+void validateNode1965(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
     context.requirePattern(value, QStringLiteral("^(?!(studioVersion|savedStudioVersion|propertyModel)$)"), path);
 }
 
-void validateProjectV9Node1964(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateProjectV9Node1966(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Object}, path)) return;
     if (!value.isObject()) return;
     const QJsonObject object = value.toObject();
     context.requireFields(object, QStringList{QStringLiteral("harkenDocument"), QStringLiteral("content")}, path);
     if (object.contains(QStringLiteral("content")))
-        validateNode1965(object.value(QStringLiteral("content")), context, context.childPath(path, QStringLiteral("content")));
+        validateNode1967(object.value(QStringLiteral("content")), context, context.childPath(path, QStringLiteral("content")));
     if (object.contains(QStringLiteral("harkenDocument")))
-        validateNode1966(object.value(QStringLiteral("harkenDocument")), context, context.childPath(path, QStringLiteral("harkenDocument")));
+        validateNode1968(object.value(QStringLiteral("harkenDocument")), context, context.childPath(path, QStringLiteral("harkenDocument")));
     context.rejectUnknownFields(object, QStringList{QStringLiteral("content"), QStringLiteral("harkenDocument")}, path);
 }
 
-void validateNode1965(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode1967(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     validateProjectV9Node1752(value, context, path);
 }
 
-void validateNode1966(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode1968(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Object}, path)) return;
     if (!value.isObject()) return;
     const QJsonObject object = value.toObject();
     for (auto it = object.constBegin(); it != object.constEnd(); ++it)
-        validateNode1971(it.key(), context, context.childPath(path, it.key()));
+        validateNode1973(it.key(), context, context.childPath(path, it.key()));
     context.requireFields(object, QStringList{QStringLiteral("type"), QStringLiteral("id"), QStringLiteral("projectId"), QStringLiteral("schemaVersion")}, path);
     if (object.contains(QStringLiteral("id")))
-        validateNode1967(object.value(QStringLiteral("id")), context, context.childPath(path, QStringLiteral("id")));
+        validateNode1969(object.value(QStringLiteral("id")), context, context.childPath(path, QStringLiteral("id")));
     if (object.contains(QStringLiteral("projectId")))
-        validateNode1968(object.value(QStringLiteral("projectId")), context, context.childPath(path, QStringLiteral("projectId")));
+        validateNode1970(object.value(QStringLiteral("projectId")), context, context.childPath(path, QStringLiteral("projectId")));
     if (object.contains(QStringLiteral("schemaVersion")))
-        validateNode1969(object.value(QStringLiteral("schemaVersion")), context, context.childPath(path, QStringLiteral("schemaVersion")));
+        validateNode1971(object.value(QStringLiteral("schemaVersion")), context, context.childPath(path, QStringLiteral("schemaVersion")));
     if (object.contains(QStringLiteral("type")))
-        validateNode1970(object.value(QStringLiteral("type")), context, context.childPath(path, QStringLiteral("type")));
-}
-
-void validateNode1967(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    if (!context.requireTypes(value, {JsonType::String}, path)) return;
-    context.requireUuid(value, path);
-}
-
-void validateNode1968(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    if (!context.requireTypes(value, {JsonType::String}, path)) return;
-    context.requireUuid(value, path);
+        validateNode1972(object.value(QStringLiteral("type")), context, context.childPath(path, QStringLiteral("type")));
 }
 
 void validateNode1969(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    if (!context.requireTypes(value, {JsonType::Integer}, path)) return;
-    context.requireConst(value, QJsonValue(9), path);
+    if (!context.requireTypes(value, {JsonType::String}, path)) return;
+    context.requireUuid(value, path);
 }
 
 void validateNode1970(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::String}, path)) return;
-    context.requireConst(value, QJsonValue(QStringLiteral("project.effect")), path);
+    context.requireUuid(value, path);
 }
 
 void validateNode1971(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    context.requirePattern(value, QStringLiteral("^(?!(studioVersion|savedStudioVersion|propertyModel)$)"), path);
-}
-
-void validateProjectV9Node1972(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    if (!context.requireTypes(value, {JsonType::Object}, path)) return;
-    if (!value.isObject()) return;
-    const QJsonObject object = value.toObject();
-    context.requireFields(object, QStringList{QStringLiteral("harkenDocument"), QStringLiteral("content")}, path);
-    if (object.contains(QStringLiteral("content")))
-        validateNode1973(object.value(QStringLiteral("content")), context, context.childPath(path, QStringLiteral("content")));
-    if (object.contains(QStringLiteral("harkenDocument")))
-        validateNode1974(object.value(QStringLiteral("harkenDocument")), context, context.childPath(path, QStringLiteral("harkenDocument")));
-    context.rejectUnknownFields(object, QStringList{QStringLiteral("content"), QStringLiteral("harkenDocument")}, path);
-}
-
-void validateNode1973(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    validateProjectV9Node1752(value, context, path);
-}
-
-void validateNode1974(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    if (!context.requireTypes(value, {JsonType::Object}, path)) return;
-    if (!value.isObject()) return;
-    const QJsonObject object = value.toObject();
-    for (auto it = object.constBegin(); it != object.constEnd(); ++it)
-        validateNode1979(it.key(), context, context.childPath(path, it.key()));
-    context.requireFields(object, QStringList{QStringLiteral("type"), QStringLiteral("id"), QStringLiteral("projectId"), QStringLiteral("schemaVersion")}, path);
-    if (object.contains(QStringLiteral("id")))
-        validateNode1975(object.value(QStringLiteral("id")), context, context.childPath(path, QStringLiteral("id")));
-    if (object.contains(QStringLiteral("projectId")))
-        validateNode1976(object.value(QStringLiteral("projectId")), context, context.childPath(path, QStringLiteral("projectId")));
-    if (object.contains(QStringLiteral("schemaVersion")))
-        validateNode1977(object.value(QStringLiteral("schemaVersion")), context, context.childPath(path, QStringLiteral("schemaVersion")));
-    if (object.contains(QStringLiteral("type")))
-        validateNode1978(object.value(QStringLiteral("type")), context, context.childPath(path, QStringLiteral("type")));
-}
-
-void validateNode1975(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    if (!context.requireTypes(value, {JsonType::String}, path)) return;
-    context.requireUuid(value, path);
-}
-
-void validateNode1976(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    if (!context.requireTypes(value, {JsonType::String}, path)) return;
-    context.requireUuid(value, path);
-}
-
-void validateNode1977(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Integer}, path)) return;
     context.requireConst(value, QJsonValue(9), path);
 }
 
-void validateNode1978(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode1972(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::String}, path)) return;
-    context.requireConst(value, QJsonValue(QStringLiteral("project.conversion")), path);
+    context.requireConst(value, QJsonValue(QStringLiteral("project.effect")), path);
 }
 
-void validateNode1979(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode1973(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    context.requirePattern(value, QStringLiteral("^(?!(studioVersion|savedStudioVersion|packSchemaVersion|propertyModel)$)"), path);
+    context.requirePattern(value, QStringLiteral("^(?!(studioVersion|savedStudioVersion|propertyModel)$)"), path);
 }
 
-void validateProjectV9Node1980(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateProjectV9Node1974(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Object}, path)) return;
     if (!value.isObject()) return;
     const QJsonObject object = value.toObject();
     context.requireFields(object, QStringList{QStringLiteral("harkenDocument"), QStringLiteral("content")}, path);
     if (object.contains(QStringLiteral("content")))
-        validateNode1981(object.value(QStringLiteral("content")), context, context.childPath(path, QStringLiteral("content")));
+        validateNode1975(object.value(QStringLiteral("content")), context, context.childPath(path, QStringLiteral("content")));
     if (object.contains(QStringLiteral("harkenDocument")))
-        validateNode1989(object.value(QStringLiteral("harkenDocument")), context, context.childPath(path, QStringLiteral("harkenDocument")));
+        validateNode1976(object.value(QStringLiteral("harkenDocument")), context, context.childPath(path, QStringLiteral("harkenDocument")));
     context.rejectUnknownFields(object, QStringList{QStringLiteral("content"), QStringLiteral("harkenDocument")}, path);
 }
 
+void validateNode1975(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    validateProjectV9Node1752(value, context, path);
+}
+
+void validateNode1976(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    if (!context.requireTypes(value, {JsonType::Object}, path)) return;
+    if (!value.isObject()) return;
+    const QJsonObject object = value.toObject();
+    for (auto it = object.constBegin(); it != object.constEnd(); ++it)
+        validateNode1981(it.key(), context, context.childPath(path, it.key()));
+    context.requireFields(object, QStringList{QStringLiteral("type"), QStringLiteral("id"), QStringLiteral("projectId"), QStringLiteral("schemaVersion")}, path);
+    if (object.contains(QStringLiteral("id")))
+        validateNode1977(object.value(QStringLiteral("id")), context, context.childPath(path, QStringLiteral("id")));
+    if (object.contains(QStringLiteral("projectId")))
+        validateNode1978(object.value(QStringLiteral("projectId")), context, context.childPath(path, QStringLiteral("projectId")));
+    if (object.contains(QStringLiteral("schemaVersion")))
+        validateNode1979(object.value(QStringLiteral("schemaVersion")), context, context.childPath(path, QStringLiteral("schemaVersion")));
+    if (object.contains(QStringLiteral("type")))
+        validateNode1980(object.value(QStringLiteral("type")), context, context.childPath(path, QStringLiteral("type")));
+}
+
+void validateNode1977(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    if (!context.requireTypes(value, {JsonType::String}, path)) return;
+    context.requireUuid(value, path);
+}
+
+void validateNode1978(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    if (!context.requireTypes(value, {JsonType::String}, path)) return;
+    context.requireUuid(value, path);
+}
+
+void validateNode1979(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    if (!context.requireTypes(value, {JsonType::Integer}, path)) return;
+    context.requireConst(value, QJsonValue(9), path);
+}
+
+void validateNode1980(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    if (!context.requireTypes(value, {JsonType::String}, path)) return;
+    context.requireConst(value, QJsonValue(QStringLiteral("project.conversion")), path);
+}
+
 void validateNode1981(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    context.requirePattern(value, QStringLiteral("^(?!(studioVersion|savedStudioVersion|packSchemaVersion|propertyModel)$)"), path);
+}
+
+void validateProjectV9Node1982(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    if (!context.requireTypes(value, {JsonType::Object}, path)) return;
+    if (!value.isObject()) return;
+    const QJsonObject object = value.toObject();
+    context.requireFields(object, QStringList{QStringLiteral("harkenDocument"), QStringLiteral("content")}, path);
+    if (object.contains(QStringLiteral("content")))
+        validateNode1983(object.value(QStringLiteral("content")), context, context.childPath(path, QStringLiteral("content")));
+    if (object.contains(QStringLiteral("harkenDocument")))
+        validateNode1991(object.value(QStringLiteral("harkenDocument")), context, context.childPath(path, QStringLiteral("harkenDocument")));
+    context.rejectUnknownFields(object, QStringList{QStringLiteral("content"), QStringLiteral("harkenDocument")}, path);
+}
+
+void validateNode1983(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Object}, path)) return;
     if (!value.isObject()) return;
     const QJsonObject object = value.toObject();
     context.requireFields(object, QStringList{QStringLiteral("type"), QStringLiteral("guid"), QStringLiteral("name"), QStringLiteral("parentRef"), QStringLiteral("components")}, path);
     if (object.contains(QStringLiteral("components")))
-        validateNode1982(object.value(QStringLiteral("components")), context, context.childPath(path, QStringLiteral("components")));
+        validateNode1984(object.value(QStringLiteral("components")), context, context.childPath(path, QStringLiteral("components")));
     if (object.contains(QStringLiteral("guid")))
-        validateNode1983(object.value(QStringLiteral("guid")), context, context.childPath(path, QStringLiteral("guid")));
+        validateNode1985(object.value(QStringLiteral("guid")), context, context.childPath(path, QStringLiteral("guid")));
     if (object.contains(QStringLiteral("name")))
-        validateNode1984(object.value(QStringLiteral("name")), context, context.childPath(path, QStringLiteral("name")));
+        validateNode1986(object.value(QStringLiteral("name")), context, context.childPath(path, QStringLiteral("name")));
     if (object.contains(QStringLiteral("notes")))
-        validateNode1985(object.value(QStringLiteral("notes")), context, context.childPath(path, QStringLiteral("notes")));
+        validateNode1987(object.value(QStringLiteral("notes")), context, context.childPath(path, QStringLiteral("notes")));
     if (object.contains(QStringLiteral("parentRef")))
-        validateNode1986(object.value(QStringLiteral("parentRef")), context, context.childPath(path, QStringLiteral("parentRef")));
+        validateNode1988(object.value(QStringLiteral("parentRef")), context, context.childPath(path, QStringLiteral("parentRef")));
     if (object.contains(QStringLiteral("playableProperties")))
-        validateNode1987(object.value(QStringLiteral("playableProperties")), context, context.childPath(path, QStringLiteral("playableProperties")));
+        validateNode1989(object.value(QStringLiteral("playableProperties")), context, context.childPath(path, QStringLiteral("playableProperties")));
     if (object.contains(QStringLiteral("type")))
-        validateNode1988(object.value(QStringLiteral("type")), context, context.childPath(path, QStringLiteral("type")));
+        validateNode1990(object.value(QStringLiteral("type")), context, context.childPath(path, QStringLiteral("type")));
     context.rejectUnknownFields(object, QStringList{QStringLiteral("components"), QStringLiteral("guid"), QStringLiteral("name"), QStringLiteral("notes"), QStringLiteral("parentRef"), QStringLiteral("playableProperties"), QStringLiteral("type")}, path);
 }
 
-void validateNode1982(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode1984(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     validateProjectV9Node1392(value, context, path);
 }
 
-void validateNode1983(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode1985(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    validateProjectV9Node1925(value, context, path);
+    validateProjectV9Node1927(value, context, path);
 }
 
-void validateNode1984(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode1986(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::String}, path)) return;
     context.requireMinLength(value, 1, path);
 }
 
-void validateNode1985(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    if (!context.requireTypes(value, {JsonType::String}, path)) return;
-}
-
-void validateNode1986(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    validateProjectV9Node1715(value, context, path);
-}
-
 void validateNode1987(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    validateProjectV9Node1374(value, context, path);
+    if (!context.requireTypes(value, {JsonType::String}, path)) return;
 }
 
 void validateNode1988(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    if (!context.requireTypes(value, {JsonType::String}, path)) return;
-    context.requireConst(value, QJsonValue(QStringLiteral("Bus")), path);
+    validateProjectV9Node1715(value, context, path);
 }
 
 void validateNode1989(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    if (!context.requireTypes(value, {JsonType::Object}, path)) return;
-    if (!value.isObject()) return;
-    const QJsonObject object = value.toObject();
-    for (auto it = object.constBegin(); it != object.constEnd(); ++it)
-        validateNode1994(it.key(), context, context.childPath(path, it.key()));
-    context.requireFields(object, QStringList{QStringLiteral("type"), QStringLiteral("id"), QStringLiteral("projectId"), QStringLiteral("schemaVersion")}, path);
-    if (object.contains(QStringLiteral("id")))
-        validateNode1990(object.value(QStringLiteral("id")), context, context.childPath(path, QStringLiteral("id")));
-    if (object.contains(QStringLiteral("projectId")))
-        validateNode1991(object.value(QStringLiteral("projectId")), context, context.childPath(path, QStringLiteral("projectId")));
-    if (object.contains(QStringLiteral("schemaVersion")))
-        validateNode1992(object.value(QStringLiteral("schemaVersion")), context, context.childPath(path, QStringLiteral("schemaVersion")));
-    if (object.contains(QStringLiteral("type")))
-        validateNode1993(object.value(QStringLiteral("type")), context, context.childPath(path, QStringLiteral("type")));
+    validateProjectV9Node1374(value, context, path);
 }
 
 void validateNode1990(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::String}, path)) return;
-    context.requireUuid(value, path);
+    context.requireConst(value, QJsonValue(QStringLiteral("Bus")), path);
 }
 
 void validateNode1991(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    if (!context.requireTypes(value, {JsonType::String}, path)) return;
-    context.requireUuid(value, path);
-}
-
-void validateNode1992(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    if (!context.requireTypes(value, {JsonType::Integer}, path)) return;
-    context.requireConst(value, QJsonValue(9), path);
-}
-
-void validateNode1993(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    if (!context.requireTypes(value, {JsonType::String}, path)) return;
-    context.requireConst(value, QJsonValue(QStringLiteral("project.bus")), path);
-}
-
-void validateNode1994(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    context.requirePattern(value, QStringLiteral("^(?!(studioVersion|savedStudioVersion|propertyModel)$)"), path);
-}
-
-void validateProjectV9Node1995(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    if (!context.requireTypes(value, {JsonType::Object}, path)) return;
-    if (!value.isObject()) return;
-    const QJsonObject object = value.toObject();
-    context.requireFields(object, QStringList{QStringLiteral("harkenDocument"), QStringLiteral("content")}, path);
-    if (object.contains(QStringLiteral("content")))
-        validateNode1996(object.value(QStringLiteral("content")), context, context.childPath(path, QStringLiteral("content")));
-    if (object.contains(QStringLiteral("harkenDocument")))
-        validateNode1997(object.value(QStringLiteral("harkenDocument")), context, context.childPath(path, QStringLiteral("harkenDocument")));
-    context.rejectUnknownFields(object, QStringList{QStringLiteral("content"), QStringLiteral("harkenDocument")}, path);
-}
-
-void validateNode1996(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    validateProjectV9Node1640(value, context, path);
-}
-
-void validateNode1997(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Object}, path)) return;
     if (!value.isObject()) return;
     const QJsonObject object = value.toObject();
     for (auto it = object.constBegin(); it != object.constEnd(); ++it)
-        validateNode2002(it.key(), context, context.childPath(path, it.key()));
+        validateNode1996(it.key(), context, context.childPath(path, it.key()));
     context.requireFields(object, QStringList{QStringLiteral("type"), QStringLiteral("id"), QStringLiteral("projectId"), QStringLiteral("schemaVersion")}, path);
     if (object.contains(QStringLiteral("id")))
-        validateNode1998(object.value(QStringLiteral("id")), context, context.childPath(path, QStringLiteral("id")));
+        validateNode1992(object.value(QStringLiteral("id")), context, context.childPath(path, QStringLiteral("id")));
     if (object.contains(QStringLiteral("projectId")))
-        validateNode1999(object.value(QStringLiteral("projectId")), context, context.childPath(path, QStringLiteral("projectId")));
+        validateNode1993(object.value(QStringLiteral("projectId")), context, context.childPath(path, QStringLiteral("projectId")));
     if (object.contains(QStringLiteral("schemaVersion")))
-        validateNode2000(object.value(QStringLiteral("schemaVersion")), context, context.childPath(path, QStringLiteral("schemaVersion")));
+        validateNode1994(object.value(QStringLiteral("schemaVersion")), context, context.childPath(path, QStringLiteral("schemaVersion")));
     if (object.contains(QStringLiteral("type")))
-        validateNode2001(object.value(QStringLiteral("type")), context, context.childPath(path, QStringLiteral("type")));
+        validateNode1995(object.value(QStringLiteral("type")), context, context.childPath(path, QStringLiteral("type")));
 }
 
-void validateNode1998(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode1992(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::String}, path)) return;
     context.requireUuid(value, path);
 }
 
-void validateNode1999(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode1993(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::String}, path)) return;
     context.requireUuid(value, path);
 }
 
-void validateNode2000(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode1994(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Integer}, path)) return;
     context.requireConst(value, QJsonValue(9), path);
 }
 
-void validateNode2001(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode1995(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::String}, path)) return;
-    context.requireConst(value, QJsonValue(QStringLiteral("project.layer")), path);
+    context.requireConst(value, QJsonValue(QStringLiteral("project.bus")), path);
 }
 
-void validateNode2002(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode1996(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     context.requirePattern(value, QStringLiteral("^(?!(studioVersion|savedStudioVersion|propertyModel)$)"), path);
 }
 
-void validateProjectV9Node2003(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateProjectV9Node1997(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Object}, path)) return;
     if (!value.isObject()) return;
     const QJsonObject object = value.toObject();
     context.requireFields(object, QStringList{QStringLiteral("harkenDocument"), QStringLiteral("content")}, path);
     if (object.contains(QStringLiteral("content")))
-        validateNode2004(object.value(QStringLiteral("content")), context, context.childPath(path, QStringLiteral("content")));
+        validateNode1998(object.value(QStringLiteral("content")), context, context.childPath(path, QStringLiteral("content")));
     if (object.contains(QStringLiteral("harkenDocument")))
-        validateNode2019(object.value(QStringLiteral("harkenDocument")), context, context.childPath(path, QStringLiteral("harkenDocument")));
+        validateNode1999(object.value(QStringLiteral("harkenDocument")), context, context.childPath(path, QStringLiteral("harkenDocument")));
     context.rejectUnknownFields(object, QStringList{QStringLiteral("content"), QStringLiteral("harkenDocument")}, path);
 }
 
+void validateNode1998(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    validateProjectV9Node1640(value, context, path);
+}
+
+void validateNode1999(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    if (!context.requireTypes(value, {JsonType::Object}, path)) return;
+    if (!value.isObject()) return;
+    const QJsonObject object = value.toObject();
+    for (auto it = object.constBegin(); it != object.constEnd(); ++it)
+        validateNode2004(it.key(), context, context.childPath(path, it.key()));
+    context.requireFields(object, QStringList{QStringLiteral("type"), QStringLiteral("id"), QStringLiteral("projectId"), QStringLiteral("schemaVersion")}, path);
+    if (object.contains(QStringLiteral("id")))
+        validateNode2000(object.value(QStringLiteral("id")), context, context.childPath(path, QStringLiteral("id")));
+    if (object.contains(QStringLiteral("projectId")))
+        validateNode2001(object.value(QStringLiteral("projectId")), context, context.childPath(path, QStringLiteral("projectId")));
+    if (object.contains(QStringLiteral("schemaVersion")))
+        validateNode2002(object.value(QStringLiteral("schemaVersion")), context, context.childPath(path, QStringLiteral("schemaVersion")));
+    if (object.contains(QStringLiteral("type")))
+        validateNode2003(object.value(QStringLiteral("type")), context, context.childPath(path, QStringLiteral("type")));
+}
+
+void validateNode2000(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    if (!context.requireTypes(value, {JsonType::String}, path)) return;
+    context.requireUuid(value, path);
+}
+
+void validateNode2001(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    if (!context.requireTypes(value, {JsonType::String}, path)) return;
+    context.requireUuid(value, path);
+}
+
+void validateNode2002(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    if (!context.requireTypes(value, {JsonType::Integer}, path)) return;
+    context.requireConst(value, QJsonValue(9), path);
+}
+
+void validateNode2003(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    if (!context.requireTypes(value, {JsonType::String}, path)) return;
+    context.requireConst(value, QJsonValue(QStringLiteral("project.layer")), path);
+}
+
 void validateNode2004(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    context.requirePattern(value, QStringLiteral("^(?!(studioVersion|savedStudioVersion|propertyModel)$)"), path);
+}
+
+void validateProjectV9Node2005(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    if (!context.requireTypes(value, {JsonType::Object}, path)) return;
+    if (!value.isObject()) return;
+    const QJsonObject object = value.toObject();
+    context.requireFields(object, QStringList{QStringLiteral("harkenDocument"), QStringLiteral("content")}, path);
+    if (object.contains(QStringLiteral("content")))
+        validateNode2006(object.value(QStringLiteral("content")), context, context.childPath(path, QStringLiteral("content")));
+    if (object.contains(QStringLiteral("harkenDocument")))
+        validateNode2021(object.value(QStringLiteral("harkenDocument")), context, context.childPath(path, QStringLiteral("harkenDocument")));
+    context.rejectUnknownFields(object, QStringList{QStringLiteral("content"), QStringLiteral("harkenDocument")}, path);
+}
+
+void validateNode2006(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Object}, path)) return;
     if (!value.isObject()) return;
     const QJsonObject object = value.toObject();
     context.requireFields(object, QStringList{QStringLiteral("metadata"), QStringLiteral("deployPlatforms")}, path);
     if (object.contains(QStringLiteral("audio")))
-        validateNode2005(object.value(QStringLiteral("audio")), context, context.childPath(path, QStringLiteral("audio")));
+        validateNode2007(object.value(QStringLiteral("audio")), context, context.childPath(path, QStringLiteral("audio")));
     if (object.contains(QStringLiteral("buildExportPackMetadata")))
-        validateNode2006(object.value(QStringLiteral("buildExportPackMetadata")), context, context.childPath(path, QStringLiteral("buildExportPackMetadata")));
+        validateNode2008(object.value(QStringLiteral("buildExportPackMetadata")), context, context.childPath(path, QStringLiteral("buildExportPackMetadata")));
     if (object.contains(QStringLiteral("buildExportProjectData")))
-        validateNode2007(object.value(QStringLiteral("buildExportProjectData")), context, context.childPath(path, QStringLiteral("buildExportProjectData")));
+        validateNode2009(object.value(QStringLiteral("buildExportProjectData")), context, context.childPath(path, QStringLiteral("buildExportProjectData")));
     if (object.contains(QStringLiteral("buildExportWaveforms")))
-        validateNode2008(object.value(QStringLiteral("buildExportWaveforms")), context, context.childPath(path, QStringLiteral("buildExportWaveforms")));
+        validateNode2010(object.value(QStringLiteral("buildExportWaveforms")), context, context.childPath(path, QStringLiteral("buildExportWaveforms")));
     if (object.contains(QStringLiteral("buildWaveformOutputDir")))
-        validateNode2009(object.value(QStringLiteral("buildWaveformOutputDir")), context, context.childPath(path, QStringLiteral("buildWaveformOutputDir")));
+        validateNode2011(object.value(QStringLiteral("buildWaveformOutputDir")), context, context.childPath(path, QStringLiteral("buildWaveformOutputDir")));
     if (object.contains(QStringLiteral("defaultLanguage")))
-        validateNode2010(object.value(QStringLiteral("defaultLanguage")), context, context.childPath(path, QStringLiteral("defaultLanguage")));
+        validateNode2012(object.value(QStringLiteral("defaultLanguage")), context, context.childPath(path, QStringLiteral("defaultLanguage")));
     if (object.contains(QStringLiteral("deployLanguages")))
-        validateNode2011(object.value(QStringLiteral("deployLanguages")), context, context.childPath(path, QStringLiteral("deployLanguages")));
+        validateNode2013(object.value(QStringLiteral("deployLanguages")), context, context.childPath(path, QStringLiteral("deployLanguages")));
     if (object.contains(QStringLiteral("deployPlatforms")))
-        validateNode2012(object.value(QStringLiteral("deployPlatforms")), context, context.childPath(path, QStringLiteral("deployPlatforms")));
+        validateNode2014(object.value(QStringLiteral("deployPlatforms")), context, context.childPath(path, QStringLiteral("deployPlatforms")));
     if (object.contains(QStringLiteral("metadata")))
-        validateNode2014(object.value(QStringLiteral("metadata")), context, context.childPath(path, QStringLiteral("metadata")));
+        validateNode2016(object.value(QStringLiteral("metadata")), context, context.childPath(path, QStringLiteral("metadata")));
     if (object.contains(QStringLiteral("packBuildOutputDir")))
-        validateNode2015(object.value(QStringLiteral("packBuildOutputDir")), context, context.childPath(path, QStringLiteral("packBuildOutputDir")));
+        validateNode2017(object.value(QStringLiteral("packBuildOutputDir")), context, context.childPath(path, QStringLiteral("packBuildOutputDir")));
     if (object.contains(QStringLiteral("sourceAssets")))
-        validateNode2016(object.value(QStringLiteral("sourceAssets")), context, context.childPath(path, QStringLiteral("sourceAssets")));
+        validateNode2018(object.value(QStringLiteral("sourceAssets")), context, context.childPath(path, QStringLiteral("sourceAssets")));
     context.rejectUnknownFields(object, QStringList{QStringLiteral("audio"), QStringLiteral("buildExportPackMetadata"), QStringLiteral("buildExportProjectData"), QStringLiteral("buildExportWaveforms"), QStringLiteral("buildWaveformOutputDir"), QStringLiteral("defaultLanguage"), QStringLiteral("deployLanguages"), QStringLiteral("deployPlatforms"), QStringLiteral("metadata"), QStringLiteral("packBuildOutputDir"), QStringLiteral("sourceAssets")}, path);
-}
-
-void validateNode2005(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    validateProjectV9Node1740(value, context, path);
-}
-
-void validateNode2006(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    if (!context.requireTypes(value, {JsonType::Boolean}, path)) return;
 }
 
 void validateNode2007(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    if (!context.requireTypes(value, {JsonType::Boolean}, path)) return;
+    validateProjectV9Node1740(value, context, path);
 }
 
 void validateNode2008(const QJsonValue& value, ValidationContext& context, const QString& path)
@@ -18238,398 +18238,397 @@ void validateNode2008(const QJsonValue& value, ValidationContext& context, const
 
 void validateNode2009(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    if (!context.requireTypes(value, {JsonType::String}, path)) return;
+    if (!context.requireTypes(value, {JsonType::Boolean}, path)) return;
 }
 
 void validateNode2010(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    if (!context.requireTypes(value, {JsonType::String}, path)) return;
+    if (!context.requireTypes(value, {JsonType::Boolean}, path)) return;
 }
 
 void validateNode2011(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    validateProjectV9Node1891(value, context, path);
+    if (!context.requireTypes(value, {JsonType::String}, path)) return;
 }
 
 void validateNode2012(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    if (!context.requireTypes(value, {JsonType::String}, path)) return;
+}
+
+void validateNode2013(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    validateProjectV9Node1893(value, context, path);
+}
+
+void validateNode2014(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Array}, path)) return;
     context.requireMinItems(value, 1, path);
     if (value.isArray()) {
         const QJsonArray array = value.toArray();
         for (qsizetype index = 0; index < array.size(); ++index)
-            validateNode2013(array.at(index), context, path + QStringLiteral("[%1]").arg(index));
+            validateNode2015(array.at(index), context, path + QStringLiteral("[%1]").arg(index));
     }
-}
-
-void validateNode2013(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    validateProjectV9Node1747(value, context, path);
-}
-
-void validateNode2014(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    validateProjectV9Node1745(value, context, path);
 }
 
 void validateNode2015(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    if (!context.requireTypes(value, {JsonType::String}, path)) return;
+    validateProjectV9Node1747(value, context, path);
 }
 
 void validateNode2016(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    if (!context.requireTypes(value, {JsonType::Object}, path)) return;
-    if (!value.isObject()) return;
-    const QJsonObject object = value.toObject();
-    for (auto it = object.constBegin(); it != object.constEnd(); ++it)
-        validateNode2018(it.key(), context, context.childPath(path, it.key()));
-    const QStringList knownFields = QStringList{};
-    for (auto it = object.constBegin(); it != object.constEnd(); ++it)
-        if (!knownFields.contains(it.key()))
-            validateNode2017(it.value(), context, context.childPath(path, it.key()));
+    validateProjectV9Node1745(value, context, path);
 }
 
 void validateNode2017(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::String}, path)) return;
-    context.requireMinLength(value, 1, path);
 }
 
 void validateNode2018(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    context.requirePattern(value, QStringLiteral("^[1-9][0-9]{0,9}$"), path);
-}
-
-void validateNode2019(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Object}, path)) return;
     if (!value.isObject()) return;
     const QJsonObject object = value.toObject();
     for (auto it = object.constBegin(); it != object.constEnd(); ++it)
-        validateNode2025(it.key(), context, context.childPath(path, it.key()));
-    context.requireFields(object, QStringList{QStringLiteral("type"), QStringLiteral("id"), QStringLiteral("projectId"), QStringLiteral("schemaVersion"), QStringLiteral("studioVersion")}, path);
-    if (object.contains(QStringLiteral("id")))
-        validateNode2020(object.value(QStringLiteral("id")), context, context.childPath(path, QStringLiteral("id")));
-    if (object.contains(QStringLiteral("projectId")))
-        validateNode2021(object.value(QStringLiteral("projectId")), context, context.childPath(path, QStringLiteral("projectId")));
-    if (object.contains(QStringLiteral("schemaVersion")))
-        validateNode2022(object.value(QStringLiteral("schemaVersion")), context, context.childPath(path, QStringLiteral("schemaVersion")));
-    if (object.contains(QStringLiteral("studioVersion")))
-        validateNode2023(object.value(QStringLiteral("studioVersion")), context, context.childPath(path, QStringLiteral("studioVersion")));
-    if (object.contains(QStringLiteral("type")))
-        validateNode2024(object.value(QStringLiteral("type")), context, context.childPath(path, QStringLiteral("type")));
+        validateNode2020(it.key(), context, context.childPath(path, it.key()));
+    const QStringList knownFields = QStringList{};
+    for (auto it = object.constBegin(); it != object.constEnd(); ++it)
+        if (!knownFields.contains(it.key()))
+            validateNode2019(it.value(), context, context.childPath(path, it.key()));
 }
 
-void validateNode2020(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    if (!context.requireTypes(value, {JsonType::String}, path)) return;
-    context.requireUuid(value, path);
-}
-
-void validateNode2021(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    if (!context.requireTypes(value, {JsonType::String}, path)) return;
-    context.requireUuid(value, path);
-}
-
-void validateNode2022(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    if (!context.requireTypes(value, {JsonType::Integer}, path)) return;
-    context.requireConst(value, QJsonValue(9), path);
-}
-
-void validateNode2023(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode2019(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::String}, path)) return;
     context.requireMinLength(value, 1, path);
 }
 
+void validateNode2020(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    context.requirePattern(value, QStringLiteral("^[1-9][0-9]{0,9}$"), path);
+}
+
+void validateNode2021(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    if (!context.requireTypes(value, {JsonType::Object}, path)) return;
+    if (!value.isObject()) return;
+    const QJsonObject object = value.toObject();
+    for (auto it = object.constBegin(); it != object.constEnd(); ++it)
+        validateNode2027(it.key(), context, context.childPath(path, it.key()));
+    context.requireFields(object, QStringList{QStringLiteral("type"), QStringLiteral("id"), QStringLiteral("projectId"), QStringLiteral("schemaVersion"), QStringLiteral("studioVersion")}, path);
+    if (object.contains(QStringLiteral("id")))
+        validateNode2022(object.value(QStringLiteral("id")), context, context.childPath(path, QStringLiteral("id")));
+    if (object.contains(QStringLiteral("projectId")))
+        validateNode2023(object.value(QStringLiteral("projectId")), context, context.childPath(path, QStringLiteral("projectId")));
+    if (object.contains(QStringLiteral("schemaVersion")))
+        validateNode2024(object.value(QStringLiteral("schemaVersion")), context, context.childPath(path, QStringLiteral("schemaVersion")));
+    if (object.contains(QStringLiteral("studioVersion")))
+        validateNode2025(object.value(QStringLiteral("studioVersion")), context, context.childPath(path, QStringLiteral("studioVersion")));
+    if (object.contains(QStringLiteral("type")))
+        validateNode2026(object.value(QStringLiteral("type")), context, context.childPath(path, QStringLiteral("type")));
+}
+
+void validateNode2022(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    if (!context.requireTypes(value, {JsonType::String}, path)) return;
+    context.requireUuid(value, path);
+}
+
+void validateNode2023(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    if (!context.requireTypes(value, {JsonType::String}, path)) return;
+    context.requireUuid(value, path);
+}
+
 void validateNode2024(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    if (!context.requireTypes(value, {JsonType::Integer}, path)) return;
+    context.requireConst(value, QJsonValue(9), path);
+}
+
+void validateNode2025(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    if (!context.requireTypes(value, {JsonType::String}, path)) return;
+    context.requireMinLength(value, 1, path);
+}
+
+void validateNode2026(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::String}, path)) return;
     context.requireConst(value, QJsonValue(QStringLiteral("project.root")), path);
 }
 
-void validateNode2025(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode2027(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     context.requirePattern(value, QStringLiteral("^(?!(savedStudioVersion|propertyModel)$)"), path);
 }
 
-void validateProjectV9Node2026(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateProjectV9Node2028(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Object}, path)) return;
     if (!value.isObject()) return;
     const QJsonObject object = value.toObject();
     context.requireFields(object, QStringList{QStringLiteral("harkenDocument"), QStringLiteral("content")}, path);
     if (object.contains(QStringLiteral("content")))
-        validateNode2027(object.value(QStringLiteral("content")), context, context.childPath(path, QStringLiteral("content")));
+        validateNode2029(object.value(QStringLiteral("content")), context, context.childPath(path, QStringLiteral("content")));
     if (object.contains(QStringLiteral("harkenDocument")))
-        validateNode2028(object.value(QStringLiteral("harkenDocument")), context, context.childPath(path, QStringLiteral("harkenDocument")));
+        validateNode2030(object.value(QStringLiteral("harkenDocument")), context, context.childPath(path, QStringLiteral("harkenDocument")));
     context.rejectUnknownFields(object, QStringList{QStringLiteral("content"), QStringLiteral("harkenDocument")}, path);
 }
 
-void validateNode2027(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode2029(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     validateProjectV9Node1752(value, context, path);
 }
 
-void validateNode2028(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode2030(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Object}, path)) return;
     if (!value.isObject()) return;
     const QJsonObject object = value.toObject();
     for (auto it = object.constBegin(); it != object.constEnd(); ++it)
-        validateNode2033(it.key(), context, context.childPath(path, it.key()));
+        validateNode2035(it.key(), context, context.childPath(path, it.key()));
     context.requireFields(object, QStringList{QStringLiteral("type"), QStringLiteral("id"), QStringLiteral("projectId"), QStringLiteral("schemaVersion")}, path);
     if (object.contains(QStringLiteral("id")))
-        validateNode2029(object.value(QStringLiteral("id")), context, context.childPath(path, QStringLiteral("id")));
+        validateNode2031(object.value(QStringLiteral("id")), context, context.childPath(path, QStringLiteral("id")));
     if (object.contains(QStringLiteral("projectId")))
-        validateNode2030(object.value(QStringLiteral("projectId")), context, context.childPath(path, QStringLiteral("projectId")));
+        validateNode2032(object.value(QStringLiteral("projectId")), context, context.childPath(path, QStringLiteral("projectId")));
     if (object.contains(QStringLiteral("schemaVersion")))
-        validateNode2031(object.value(QStringLiteral("schemaVersion")), context, context.childPath(path, QStringLiteral("schemaVersion")));
+        validateNode2033(object.value(QStringLiteral("schemaVersion")), context, context.childPath(path, QStringLiteral("schemaVersion")));
     if (object.contains(QStringLiteral("type")))
-        validateNode2032(object.value(QStringLiteral("type")), context, context.childPath(path, QStringLiteral("type")));
-}
-
-void validateNode2029(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    if (!context.requireTypes(value, {JsonType::String}, path)) return;
-    context.requireUuid(value, path);
-}
-
-void validateNode2030(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    if (!context.requireTypes(value, {JsonType::String}, path)) return;
-    context.requireUuid(value, path);
+        validateNode2034(object.value(QStringLiteral("type")), context, context.childPath(path, QStringLiteral("type")));
 }
 
 void validateNode2031(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    if (!context.requireTypes(value, {JsonType::Integer}, path)) return;
-    context.requireConst(value, QJsonValue(9), path);
+    if (!context.requireTypes(value, {JsonType::String}, path)) return;
+    context.requireUuid(value, path);
 }
 
 void validateNode2032(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::String}, path)) return;
-    context.requireConst(value, QJsonValue(QStringLiteral("project.variable")), path);
+    context.requireUuid(value, path);
 }
 
 void validateNode2033(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
+    if (!context.requireTypes(value, {JsonType::Integer}, path)) return;
+    context.requireConst(value, QJsonValue(9), path);
+}
+
+void validateNode2034(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    if (!context.requireTypes(value, {JsonType::String}, path)) return;
+    context.requireConst(value, QJsonValue(QStringLiteral("project.variable")), path);
+}
+
+void validateNode2035(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
     context.requirePattern(value, QStringLiteral("^(?!(studioVersion|savedStudioVersion|propertyModel)$)"), path);
 }
 
-void validatePackV4Node2034(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validatePackV4Node2036(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::String}, path)) return;
     context.requirePattern(value, QStringLiteral("^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"), path);
 }
 
-void validatePackV4Node2035(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validatePackV4Node2037(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Object}, path)) return;
     if (!value.isObject()) return;
     const QJsonObject object = value.toObject();
     context.requireFields(object, QStringList{QStringLiteral("name"), QStringLiteral("guid")}, path);
     if (object.contains(QStringLiteral("guid")))
-        validateNode2036(object.value(QStringLiteral("guid")), context, context.childPath(path, QStringLiteral("guid")));
+        validateNode2038(object.value(QStringLiteral("guid")), context, context.childPath(path, QStringLiteral("guid")));
     if (object.contains(QStringLiteral("name")))
-        validateNode2037(object.value(QStringLiteral("name")), context, context.childPath(path, QStringLiteral("name")));
+        validateNode2039(object.value(QStringLiteral("name")), context, context.childPath(path, QStringLiteral("name")));
     context.rejectUnknownFields(object, QStringList{QStringLiteral("guid"), QStringLiteral("name")}, path);
 }
 
-void validateNode2036(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode2038(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    validatePackV4Node2034(value, context, path);
+    validatePackV4Node2036(value, context, path);
 }
 
-void validateNode2037(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode2039(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::String}, path)) return;
     context.requireMinLength(value, 1, path);
 }
 
-void validatePackV4Node2038(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validatePackV4Node2040(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Object}, path)) return;
     if (!value.isObject()) return;
     const QJsonObject object = value.toObject();
     context.requireFields(object, QStringList{QStringLiteral("packStableId"), QStringLiteral("platform"), QStringLiteral("language"), QStringLiteral("objects")}, path);
     if (object.contains(QStringLiteral("language")))
-        validateNode2039(object.value(QStringLiteral("language")), context, context.childPath(path, QStringLiteral("language")));
+        validateNode2041(object.value(QStringLiteral("language")), context, context.childPath(path, QStringLiteral("language")));
     if (object.contains(QStringLiteral("objects")))
-        validateNode2040(object.value(QStringLiteral("objects")), context, context.childPath(path, QStringLiteral("objects")));
+        validateNode2042(object.value(QStringLiteral("objects")), context, context.childPath(path, QStringLiteral("objects")));
     if (object.contains(QStringLiteral("packStableId")))
-        validateNode2046(object.value(QStringLiteral("packStableId")), context, context.childPath(path, QStringLiteral("packStableId")));
+        validateNode2048(object.value(QStringLiteral("packStableId")), context, context.childPath(path, QStringLiteral("packStableId")));
     if (object.contains(QStringLiteral("platform")))
-        validateNode2047(object.value(QStringLiteral("platform")), context, context.childPath(path, QStringLiteral("platform")));
+        validateNode2049(object.value(QStringLiteral("platform")), context, context.childPath(path, QStringLiteral("platform")));
     context.rejectUnknownFields(object, QStringList{QStringLiteral("language"), QStringLiteral("objects"), QStringLiteral("packStableId"), QStringLiteral("platform")}, path);
 }
 
-void validateNode2039(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode2041(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::String}, path)) return;
 }
 
-void validateNode2040(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode2042(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Array}, path)) return;
     if (value.isArray()) {
         const QJsonArray array = value.toArray();
         for (qsizetype index = 0; index < array.size(); ++index)
-            validateNode2041(array.at(index), context, path + QStringLiteral("[%1]").arg(index));
+            validateNode2043(array.at(index), context, path + QStringLiteral("[%1]").arg(index));
     }
 }
 
-void validateNode2041(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode2043(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Object}, path)) return;
     if (!value.isObject()) return;
     const QJsonObject object = value.toObject();
     context.requireFields(object, QStringList{QStringLiteral("guid"), QStringLiteral("name"), QStringLiteral("type"), QStringLiteral("path")}, path);
     if (object.contains(QStringLiteral("guid")))
-        validateNode2042(object.value(QStringLiteral("guid")), context, context.childPath(path, QStringLiteral("guid")));
+        validateNode2044(object.value(QStringLiteral("guid")), context, context.childPath(path, QStringLiteral("guid")));
     if (object.contains(QStringLiteral("name")))
-        validateNode2043(object.value(QStringLiteral("name")), context, context.childPath(path, QStringLiteral("name")));
+        validateNode2045(object.value(QStringLiteral("name")), context, context.childPath(path, QStringLiteral("name")));
     if (object.contains(QStringLiteral("path")))
-        validateNode2044(object.value(QStringLiteral("path")), context, context.childPath(path, QStringLiteral("path")));
+        validateNode2046(object.value(QStringLiteral("path")), context, context.childPath(path, QStringLiteral("path")));
     if (object.contains(QStringLiteral("type")))
-        validateNode2045(object.value(QStringLiteral("type")), context, context.childPath(path, QStringLiteral("type")));
+        validateNode2047(object.value(QStringLiteral("type")), context, context.childPath(path, QStringLiteral("type")));
     context.rejectUnknownFields(object, QStringList{QStringLiteral("guid"), QStringLiteral("name"), QStringLiteral("path"), QStringLiteral("type")}, path);
-}
-
-void validateNode2042(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    validatePackV4Node2034(value, context, path);
-}
-
-void validateNode2043(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    if (!context.requireTypes(value, {JsonType::String}, path)) return;
-    context.requireMinLength(value, 1, path);
 }
 
 void validateNode2044(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    if (!context.requireTypes(value, {JsonType::String}, path)) return;
+    validatePackV4Node2036(value, context, path);
 }
 
 void validateNode2045(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::String}, path)) return;
-    context.requireEnum(value, QJsonArray{QJsonValue(QStringLiteral("Action")), QJsonValue(QStringLiteral("Sound")), QJsonValue(QStringLiteral("Container")), QJsonValue(QStringLiteral("Track")), QJsonValue(QStringLiteral("Segment")), QJsonValue(QStringLiteral("Layer")), QJsonValue(QStringLiteral("Variable")), QJsonValue(QStringLiteral("Attenuation")), QJsonValue(QStringLiteral("Bus"))}, path);
+    context.requireMinLength(value, 1, path);
 }
 
 void validateNode2046(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::String}, path)) return;
-    context.requirePattern(value, QStringLiteral("^[1-9][0-9]{0,19}$"), path);
 }
 
 void validateNode2047(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::String}, path)) return;
+    context.requireEnum(value, QJsonArray{QJsonValue(QStringLiteral("Action")), QJsonValue(QStringLiteral("Sound")), QJsonValue(QStringLiteral("Container")), QJsonValue(QStringLiteral("Track")), QJsonValue(QStringLiteral("Segment")), QJsonValue(QStringLiteral("Layer")), QJsonValue(QStringLiteral("Variable")), QJsonValue(QStringLiteral("Attenuation")), QJsonValue(QStringLiteral("Bus"))}, path);
+}
+
+void validateNode2048(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    if (!context.requireTypes(value, {JsonType::String}, path)) return;
+    context.requirePattern(value, QStringLiteral("^[1-9][0-9]{0,19}$"), path);
+}
+
+void validateNode2049(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    if (!context.requireTypes(value, {JsonType::String}, path)) return;
     context.requireMinLength(value, 1, path);
 }
 
-void validatePackV4Node2048(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validatePackV4Node2050(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Integer}, path)) return;
     context.requireConst(value, QJsonValue(4), path);
 }
 
-void validatePackV4Node2049(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validatePackV4Node2051(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Object}, path)) return;
     if (!value.isObject()) return;
     const QJsonObject object = value.toObject();
     context.requireFields(object, QStringList{QStringLiteral("packMetadataVersion"), QStringLiteral("projectGuid"), QStringLiteral("projectName"), QStringLiteral("studioVersion"), QStringLiteral("studioSchemaVersion"), QStringLiteral("platforms"), QStringLiteral("languages")}, path);
     if (object.contains(QStringLiteral("languages")))
-        validateNode2050(object.value(QStringLiteral("languages")), context, context.childPath(path, QStringLiteral("languages")));
+        validateNode2052(object.value(QStringLiteral("languages")), context, context.childPath(path, QStringLiteral("languages")));
     if (object.contains(QStringLiteral("packMetadataVersion")))
-        validateNode2052(object.value(QStringLiteral("packMetadataVersion")), context, context.childPath(path, QStringLiteral("packMetadataVersion")));
+        validateNode2054(object.value(QStringLiteral("packMetadataVersion")), context, context.childPath(path, QStringLiteral("packMetadataVersion")));
     if (object.contains(QStringLiteral("platforms")))
-        validateNode2053(object.value(QStringLiteral("platforms")), context, context.childPath(path, QStringLiteral("platforms")));
+        validateNode2055(object.value(QStringLiteral("platforms")), context, context.childPath(path, QStringLiteral("platforms")));
     if (object.contains(QStringLiteral("projectGuid")))
-        validateNode2058(object.value(QStringLiteral("projectGuid")), context, context.childPath(path, QStringLiteral("projectGuid")));
+        validateNode2060(object.value(QStringLiteral("projectGuid")), context, context.childPath(path, QStringLiteral("projectGuid")));
     if (object.contains(QStringLiteral("projectName")))
-        validateNode2059(object.value(QStringLiteral("projectName")), context, context.childPath(path, QStringLiteral("projectName")));
+        validateNode2061(object.value(QStringLiteral("projectName")), context, context.childPath(path, QStringLiteral("projectName")));
     if (object.contains(QStringLiteral("studioSchemaVersion")))
-        validateNode2060(object.value(QStringLiteral("studioSchemaVersion")), context, context.childPath(path, QStringLiteral("studioSchemaVersion")));
+        validateNode2062(object.value(QStringLiteral("studioSchemaVersion")), context, context.childPath(path, QStringLiteral("studioSchemaVersion")));
     if (object.contains(QStringLiteral("studioVersion")))
-        validateNode2061(object.value(QStringLiteral("studioVersion")), context, context.childPath(path, QStringLiteral("studioVersion")));
+        validateNode2063(object.value(QStringLiteral("studioVersion")), context, context.childPath(path, QStringLiteral("studioVersion")));
     context.rejectUnknownFields(object, QStringList{QStringLiteral("languages"), QStringLiteral("packMetadataVersion"), QStringLiteral("platforms"), QStringLiteral("projectGuid"), QStringLiteral("projectName"), QStringLiteral("studioSchemaVersion"), QStringLiteral("studioVersion")}, path);
 }
 
-void validateNode2050(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode2052(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Array}, path)) return;
     if (value.isArray()) {
         const QJsonArray array = value.toArray();
         for (qsizetype index = 0; index < array.size(); ++index)
-            validateNode2051(array.at(index), context, path + QStringLiteral("[%1]").arg(index));
+            validateNode2053(array.at(index), context, path + QStringLiteral("[%1]").arg(index));
     }
 }
 
-void validateNode2051(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode2053(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::String}, path)) return;
     context.requireMinLength(value, 1, path);
     context.requirePattern(value, QStringLiteral("^(?![Ss][Ff][Xx]$).+$"), path);
 }
 
-void validateNode2052(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode2054(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    validatePackV4Node2048(value, context, path);
+    validatePackV4Node2050(value, context, path);
 }
 
-void validateNode2053(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode2055(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Array}, path)) return;
     if (value.isArray()) {
         const QJsonArray array = value.toArray();
         for (qsizetype index = 0; index < array.size(); ++index)
-            validateNode2054(array.at(index), context, path + QStringLiteral("[%1]").arg(index));
+            validateNode2056(array.at(index), context, path + QStringLiteral("[%1]").arg(index));
     }
 }
 
-void validateNode2054(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode2056(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Object}, path)) return;
     if (!value.isObject()) return;
     const QJsonObject object = value.toObject();
     context.requireFields(object, QStringList{QStringLiteral("guid"), QStringLiteral("name"), QStringLiteral("basePlatform")}, path);
     if (object.contains(QStringLiteral("basePlatform")))
-        validateNode2055(object.value(QStringLiteral("basePlatform")), context, context.childPath(path, QStringLiteral("basePlatform")));
+        validateNode2057(object.value(QStringLiteral("basePlatform")), context, context.childPath(path, QStringLiteral("basePlatform")));
     if (object.contains(QStringLiteral("guid")))
-        validateNode2056(object.value(QStringLiteral("guid")), context, context.childPath(path, QStringLiteral("guid")));
+        validateNode2058(object.value(QStringLiteral("guid")), context, context.childPath(path, QStringLiteral("guid")));
     if (object.contains(QStringLiteral("name")))
-        validateNode2057(object.value(QStringLiteral("name")), context, context.childPath(path, QStringLiteral("name")));
+        validateNode2059(object.value(QStringLiteral("name")), context, context.childPath(path, QStringLiteral("name")));
     context.rejectUnknownFields(object, QStringList{QStringLiteral("basePlatform"), QStringLiteral("guid"), QStringLiteral("name")}, path);
-}
-
-void validateNode2055(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    if (!context.requireTypes(value, {JsonType::String}, path)) return;
-    context.requireEnum(value, QJsonArray{QJsonValue(QStringLiteral("Windows")), QJsonValue(QStringLiteral("macOS")), QJsonValue(QStringLiteral("Linux")), QJsonValue(QStringLiteral("Android")), QJsonValue(QStringLiteral("iOS"))}, path);
-}
-
-void validateNode2056(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    validatePackV4Node2034(value, context, path);
 }
 
 void validateNode2057(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::String}, path)) return;
-    context.requireMinLength(value, 1, path);
+    context.requireEnum(value, QJsonArray{QJsonValue(QStringLiteral("Windows")), QJsonValue(QStringLiteral("macOS")), QJsonValue(QStringLiteral("Linux")), QJsonValue(QStringLiteral("Android")), QJsonValue(QStringLiteral("iOS"))}, path);
 }
 
 void validateNode2058(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    validatePackV4Node2034(value, context, path);
+    validatePackV4Node2036(value, context, path);
 }
 
 void validateNode2059(const QJsonValue& value, ValidationContext& context, const QString& path)
@@ -18640,8 +18639,7 @@ void validateNode2059(const QJsonValue& value, ValidationContext& context, const
 
 void validateNode2060(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    if (!context.requireTypes(value, {JsonType::Integer}, path)) return;
-    context.requireMinimum(value, 1, path);
+    validatePackV4Node2036(value, context, path);
 }
 
 void validateNode2061(const QJsonValue& value, ValidationContext& context, const QString& path)
@@ -18650,196 +18648,193 @@ void validateNode2061(const QJsonValue& value, ValidationContext& context, const
     context.requireMinLength(value, 1, path);
 }
 
-void validatePackV4Node2062(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode2062(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    if (!context.requireTypes(value, {JsonType::Integer}, path)) return;
+    context.requireMinimum(value, 1, path);
+}
+
+void validateNode2063(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    if (!context.requireTypes(value, {JsonType::String}, path)) return;
+    context.requireMinLength(value, 1, path);
+}
+
+void validatePackV4Node2064(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Object}, path)) return;
     if (!value.isObject()) return;
     const QJsonObject object = value.toObject();
     context.requireFields(object, QStringList{QStringLiteral("name"), QStringLiteral("guid"), QStringLiteral("labels")}, path);
     if (object.contains(QStringLiteral("guid")))
-        validateNode2063(object.value(QStringLiteral("guid")), context, context.childPath(path, QStringLiteral("guid")));
+        validateNode2065(object.value(QStringLiteral("guid")), context, context.childPath(path, QStringLiteral("guid")));
     if (object.contains(QStringLiteral("labels")))
-        validateNode2064(object.value(QStringLiteral("labels")), context, context.childPath(path, QStringLiteral("labels")));
+        validateNode2066(object.value(QStringLiteral("labels")), context, context.childPath(path, QStringLiteral("labels")));
     if (object.contains(QStringLiteral("name")))
-        validateNode2066(object.value(QStringLiteral("name")), context, context.childPath(path, QStringLiteral("name")));
+        validateNode2068(object.value(QStringLiteral("name")), context, context.childPath(path, QStringLiteral("name")));
     context.rejectUnknownFields(object, QStringList{QStringLiteral("guid"), QStringLiteral("labels"), QStringLiteral("name")}, path);
 }
 
-void validateNode2063(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode2065(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    validatePackV4Node2034(value, context, path);
+    validatePackV4Node2036(value, context, path);
 }
 
-void validateNode2064(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode2066(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Array}, path)) return;
     if (value.isArray()) {
         const QJsonArray array = value.toArray();
         for (qsizetype index = 0; index < array.size(); ++index)
-            validateNode2065(array.at(index), context, path + QStringLiteral("[%1]").arg(index));
+            validateNode2067(array.at(index), context, path + QStringLiteral("[%1]").arg(index));
     }
 }
 
-void validateNode2065(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode2067(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    validatePackV4Node2035(value, context, path);
-}
-
-void validateNode2066(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    if (!context.requireTypes(value, {JsonType::String}, path)) return;
-    context.requireMinLength(value, 1, path);
-}
-
-void validatePackV4Node2067(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    if (!context.requireTypes(value, {JsonType::Object}, path)) return;
-    if (!value.isObject()) return;
-    const QJsonObject object = value.toObject();
-    context.requireFields(object, QStringList{QStringLiteral("soundGuid"), QStringLiteral("file"), QStringLiteral("trimStartFrame"), QStringLiteral("trimEndFrame")}, path);
-    if (object.contains(QStringLiteral("file")))
-        validateNode2068(object.value(QStringLiteral("file")), context, context.childPath(path, QStringLiteral("file")));
-    if (object.contains(QStringLiteral("soundGuid")))
-        validateNode2069(object.value(QStringLiteral("soundGuid")), context, context.childPath(path, QStringLiteral("soundGuid")));
-    if (object.contains(QStringLiteral("trimEndFrame")))
-        validateNode2070(object.value(QStringLiteral("trimEndFrame")), context, context.childPath(path, QStringLiteral("trimEndFrame")));
-    if (object.contains(QStringLiteral("trimStartFrame")))
-        validateNode2071(object.value(QStringLiteral("trimStartFrame")), context, context.childPath(path, QStringLiteral("trimStartFrame")));
-    context.rejectUnknownFields(object, QStringList{QStringLiteral("file"), QStringLiteral("soundGuid"), QStringLiteral("trimEndFrame"), QStringLiteral("trimStartFrame")}, path);
+    validatePackV4Node2037(value, context, path);
 }
 
 void validateNode2068(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::String}, path)) return;
     context.requireMinLength(value, 1, path);
-    context.requirePattern(value, QStringLiteral("^.+\\.vkd$"), path);
 }
 
-void validateNode2069(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validatePackV4Node2069(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    validatePackV4Node2034(value, context, path);
+    if (!context.requireTypes(value, {JsonType::Object}, path)) return;
+    if (!value.isObject()) return;
+    const QJsonObject object = value.toObject();
+    context.requireFields(object, QStringList{QStringLiteral("soundGuid"), QStringLiteral("file"), QStringLiteral("trimStartFrame"), QStringLiteral("trimEndFrame")}, path);
+    if (object.contains(QStringLiteral("file")))
+        validateNode2070(object.value(QStringLiteral("file")), context, context.childPath(path, QStringLiteral("file")));
+    if (object.contains(QStringLiteral("soundGuid")))
+        validateNode2071(object.value(QStringLiteral("soundGuid")), context, context.childPath(path, QStringLiteral("soundGuid")));
+    if (object.contains(QStringLiteral("trimEndFrame")))
+        validateNode2072(object.value(QStringLiteral("trimEndFrame")), context, context.childPath(path, QStringLiteral("trimEndFrame")));
+    if (object.contains(QStringLiteral("trimStartFrame")))
+        validateNode2073(object.value(QStringLiteral("trimStartFrame")), context, context.childPath(path, QStringLiteral("trimStartFrame")));
+    context.rejectUnknownFields(object, QStringList{QStringLiteral("file"), QStringLiteral("soundGuid"), QStringLiteral("trimEndFrame"), QStringLiteral("trimStartFrame")}, path);
 }
 
 void validateNode2070(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    if (!context.requireTypes(value, {JsonType::String}, path)) return;
+    context.requireMinLength(value, 1, path);
+    context.requirePattern(value, QStringLiteral("^.+\\.vkd$"), path);
+}
+
+void validateNode2071(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    validatePackV4Node2036(value, context, path);
+}
+
+void validateNode2072(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Integer}, path)) return;
     context.requireMinimum(value, 1, path);
     context.requireMaximum(value, 9007199254740992, path);
 }
 
-void validateNode2071(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode2073(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Integer}, path)) return;
     context.requireMinimum(value, 0, path);
     context.requireMaximum(value, 9007199254740992, path);
 }
 
-void validatePackV4Node2072(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validatePackV4Node2074(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Object}, path)) return;
-    context.requireOneOf(value, {validateNode2073, validateNode2074, validateNode2081}, path);
+    context.requireOneOf(value, {validateNode2075, validateNode2076, validateNode2083}, path);
 }
 
-void validateNode2073(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode2075(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    validatePackV4Node2049(value, context, path);
+    validatePackV4Node2051(value, context, path);
 }
 
-void validateNode2074(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode2076(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Object}, path)) return;
     if (!value.isObject()) return;
     const QJsonObject object = value.toObject();
     context.requireFields(object, QStringList{QStringLiteral("packMetadataVersion"), QStringLiteral("name"), QStringLiteral("guid")}, path);
     if (object.contains(QStringLiteral("guid")))
-        validateNode2075(object.value(QStringLiteral("guid")), context, context.childPath(path, QStringLiteral("guid")));
+        validateNode2077(object.value(QStringLiteral("guid")), context, context.childPath(path, QStringLiteral("guid")));
     if (object.contains(QStringLiteral("metadata")))
-        validateNode2076(object.value(QStringLiteral("metadata")), context, context.childPath(path, QStringLiteral("metadata")));
+        validateNode2078(object.value(QStringLiteral("metadata")), context, context.childPath(path, QStringLiteral("metadata")));
     if (object.contains(QStringLiteral("name")))
-        validateNode2077(object.value(QStringLiteral("name")), context, context.childPath(path, QStringLiteral("name")));
+        validateNode2079(object.value(QStringLiteral("name")), context, context.childPath(path, QStringLiteral("name")));
     if (object.contains(QStringLiteral("packMetadataVersion")))
-        validateNode2078(object.value(QStringLiteral("packMetadataVersion")), context, context.childPath(path, QStringLiteral("packMetadataVersion")));
+        validateNode2080(object.value(QStringLiteral("packMetadataVersion")), context, context.childPath(path, QStringLiteral("packMetadataVersion")));
     if (object.contains(QStringLiteral("waveforms")))
-        validateNode2079(object.value(QStringLiteral("waveforms")), context, context.childPath(path, QStringLiteral("waveforms")));
+        validateNode2081(object.value(QStringLiteral("waveforms")), context, context.childPath(path, QStringLiteral("waveforms")));
     context.rejectUnknownFields(object, QStringList{QStringLiteral("guid"), QStringLiteral("metadata"), QStringLiteral("name"), QStringLiteral("packMetadataVersion"), QStringLiteral("waveforms")}, path);
 }
 
-void validateNode2075(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    validatePackV4Node2034(value, context, path);
-}
-
-void validateNode2076(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    validatePackV4Node2038(value, context, path);
-}
-
 void validateNode2077(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    validatePackV4Node2036(value, context, path);
+}
+
+void validateNode2078(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    validatePackV4Node2040(value, context, path);
+}
+
+void validateNode2079(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::String}, path)) return;
     context.requireMinLength(value, 1, path);
 }
 
-void validateNode2078(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode2080(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    validatePackV4Node2048(value, context, path);
+    validatePackV4Node2050(value, context, path);
 }
 
-void validateNode2079(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode2081(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Array}, path)) return;
     if (value.isArray()) {
         const QJsonArray array = value.toArray();
         for (qsizetype index = 0; index < array.size(); ++index)
-            validateNode2080(array.at(index), context, path + QStringLiteral("[%1]").arg(index));
+            validateNode2082(array.at(index), context, path + QStringLiteral("[%1]").arg(index));
     }
 }
 
-void validateNode2080(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode2082(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    validatePackV4Node2067(value, context, path);
+    validatePackV4Node2069(value, context, path);
 }
 
-void validateNode2081(const QJsonValue& value, ValidationContext& context, const QString& path)
+void validateNode2083(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
     if (!context.requireTypes(value, {JsonType::Object}, path)) return;
     if (!value.isObject()) return;
     const QJsonObject object = value.toObject();
     context.requireFields(object, QStringList{QStringLiteral("packMetadataVersion"), QStringLiteral("variables")}, path);
     if (object.contains(QStringLiteral("metadata")))
-        validateNode2082(object.value(QStringLiteral("metadata")), context, context.childPath(path, QStringLiteral("metadata")));
+        validateNode2084(object.value(QStringLiteral("metadata")), context, context.childPath(path, QStringLiteral("metadata")));
     if (object.contains(QStringLiteral("packMetadataVersion")))
-        validateNode2083(object.value(QStringLiteral("packMetadataVersion")), context, context.childPath(path, QStringLiteral("packMetadataVersion")));
+        validateNode2085(object.value(QStringLiteral("packMetadataVersion")), context, context.childPath(path, QStringLiteral("packMetadataVersion")));
     if (object.contains(QStringLiteral("variables")))
-        validateNode2084(object.value(QStringLiteral("variables")), context, context.childPath(path, QStringLiteral("variables")));
+        validateNode2086(object.value(QStringLiteral("variables")), context, context.childPath(path, QStringLiteral("variables")));
     if (object.contains(QStringLiteral("waveforms")))
-        validateNode2086(object.value(QStringLiteral("waveforms")), context, context.childPath(path, QStringLiteral("waveforms")));
+        validateNode2088(object.value(QStringLiteral("waveforms")), context, context.childPath(path, QStringLiteral("waveforms")));
     context.rejectUnknownFields(object, QStringList{QStringLiteral("metadata"), QStringLiteral("packMetadataVersion"), QStringLiteral("variables"), QStringLiteral("waveforms")}, path);
-}
-
-void validateNode2082(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    validatePackV4Node2038(value, context, path);
-}
-
-void validateNode2083(const QJsonValue& value, ValidationContext& context, const QString& path)
-{
-    validatePackV4Node2048(value, context, path);
 }
 
 void validateNode2084(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    if (!context.requireTypes(value, {JsonType::Array}, path)) return;
-    if (value.isArray()) {
-        const QJsonArray array = value.toArray();
-        for (qsizetype index = 0; index < array.size(); ++index)
-            validateNode2085(array.at(index), context, path + QStringLiteral("[%1]").arg(index));
-    }
+    validatePackV4Node2040(value, context, path);
 }
 
 void validateNode2085(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    validatePackV4Node2062(value, context, path);
+    validatePackV4Node2050(value, context, path);
 }
 
 void validateNode2086(const QJsonValue& value, ValidationContext& context, const QString& path)
@@ -18854,7 +18849,22 @@ void validateNode2086(const QJsonValue& value, ValidationContext& context, const
 
 void validateNode2087(const QJsonValue& value, ValidationContext& context, const QString& path)
 {
-    validatePackV4Node2067(value, context, path);
+    validatePackV4Node2064(value, context, path);
+}
+
+void validateNode2088(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    if (!context.requireTypes(value, {JsonType::Array}, path)) return;
+    if (value.isArray()) {
+        const QJsonArray array = value.toArray();
+        for (qsizetype index = 0; index < array.size(); ++index)
+            validateNode2089(array.at(index), context, path + QStringLiteral("[%1]").arg(index));
+    }
+}
+
+void validateNode2089(const QJsonValue& value, ValidationContext& context, const QString& path)
+{
+    validatePackV4Node2069(value, context, path);
 }
 
 }
@@ -18937,35 +18947,35 @@ bool validateProjectDocument(int version, QStringView documentType,
         return false;
     case 9:
         if (documentType == QLatin1String("project.action")) {
-            validateProjectV9Node1941(document, context, QStringLiteral("$"));
+            validateProjectV9Node1943(document, context, QStringLiteral("$"));
             return true;
         }
         if (documentType == QLatin1String("project.attenuation")) {
-            validateProjectV9Node1956(document, context, QStringLiteral("$"));
+            validateProjectV9Node1958(document, context, QStringLiteral("$"));
             return true;
         }
         if (documentType == QLatin1String("project.bus")) {
-            validateProjectV9Node1980(document, context, QStringLiteral("$"));
+            validateProjectV9Node1982(document, context, QStringLiteral("$"));
             return true;
         }
         if (documentType == QLatin1String("project.conversion")) {
-            validateProjectV9Node1972(document, context, QStringLiteral("$"));
+            validateProjectV9Node1974(document, context, QStringLiteral("$"));
             return true;
         }
         if (documentType == QLatin1String("project.effect")) {
-            validateProjectV9Node1964(document, context, QStringLiteral("$"));
+            validateProjectV9Node1966(document, context, QStringLiteral("$"));
             return true;
         }
         if (documentType == QLatin1String("project.layer")) {
-            validateProjectV9Node1995(document, context, QStringLiteral("$"));
+            validateProjectV9Node1997(document, context, QStringLiteral("$"));
             return true;
         }
         if (documentType == QLatin1String("project.root")) {
-            validateProjectV9Node2003(document, context, QStringLiteral("$"));
+            validateProjectV9Node2005(document, context, QStringLiteral("$"));
             return true;
         }
         if (documentType == QLatin1String("project.variable")) {
-            validateProjectV9Node2026(document, context, QStringLiteral("$"));
+            validateProjectV9Node2028(document, context, QStringLiteral("$"));
             return true;
         }
         errors.append(QStringLiteral("%1 $: expected an available verified Schema, got unknown document type %2").arg(relativePath, documentType));
@@ -18984,7 +18994,7 @@ bool validatePackMetadata(int version,
     ValidationContext context(relativePath, errors);
     switch (version) {
     case 4:
-        validatePackV4Node2072(document, context, QStringLiteral("$"));
+        validatePackV4Node2074(document, context, QStringLiteral("$"));
         return true;
     default:
         errors.append(QStringLiteral("%1 $: expected an available verified Schema, got unsupported Pack version").arg(relativePath));

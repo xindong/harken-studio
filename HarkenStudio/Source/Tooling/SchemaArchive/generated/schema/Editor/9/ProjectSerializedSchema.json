@@ -2218,7 +2218,50 @@
       ],
       "type": "object"
     },
-    "selectionCondition": {
+    "selectionCurve": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/identifiedSelectionCurve"
+        },
+        {
+          "$ref": "#/$defs/legacySelectionCurve"
+        }
+      ]
+    },
+    "selectionEntry": {
+      "additionalProperties": false,
+      "properties": {
+        "childGuid": {
+          "$ref": "#/$defs/uuid"
+        },
+        "curves": {
+          "items": {
+            "$ref": "#/$defs/selectionCurve"
+          },
+          "type": "array"
+        },
+        "occurrences": {
+          "items": {
+            "$ref": "#/$defs/selectionOccurrence"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "stableMemberOrdinal": {
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "childGuid",
+        "stableMemberOrdinal",
+        "occurrences",
+        "curves"
+      ],
+      "type": "object"
+    },
+    "selectionMatchRow": {
       "additionalProperties": false,
       "properties": {
         "cells": {
@@ -2246,71 +2289,26 @@
           },
           "type": "array"
         },
-        "priority": {
-          "maximum": 4294967295,
-          "minimum": 0,
-          "type": "integer"
-        },
         "stableRuleOrdinal": {
           "maximum": 4294967295,
           "minimum": 0,
           "type": "integer"
+        },
+        "target": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
         "stableRuleOrdinal",
-        "priority",
+        "target",
         "cells"
-      ],
-      "type": "object"
-    },
-    "selectionCurve": {
-      "oneOf": [
-        {
-          "$ref": "#/$defs/identifiedSelectionCurve"
-        },
-        {
-          "$ref": "#/$defs/legacySelectionCurve"
-        }
-      ]
-    },
-    "selectionEntry": {
-      "additionalProperties": false,
-      "properties": {
-        "childGuid": {
-          "$ref": "#/$defs/uuid"
-        },
-        "conditions": {
-          "items": {
-            "$ref": "#/$defs/selectionCondition"
-          },
-          "type": "array"
-        },
-        "curves": {
-          "items": {
-            "$ref": "#/$defs/selectionCurve"
-          },
-          "type": "array"
-        },
-        "occurrences": {
-          "items": {
-            "$ref": "#/$defs/selectionOccurrence"
-          },
-          "minItems": 1,
-          "type": "array"
-        },
-        "stableMemberOrdinal": {
-          "maximum": 4294967295,
-          "minimum": 0,
-          "type": "integer"
-        }
-      },
-      "required": [
-        "childGuid",
-        "stableMemberOrdinal",
-        "occurrences",
-        "conditions",
-        "curves"
       ],
       "type": "object"
     },
@@ -2391,6 +2389,12 @@
           },
           "type": "array"
         },
+        "matchRows": {
+          "items": {
+            "$ref": "#/$defs/selectionMatchRow"
+          },
+          "type": "array"
+        },
         "occurrenceOrdinalHighWater": {
           "maximum": 4294967296,
           "minimum": 0,
@@ -2407,6 +2411,7 @@
         "ruleOrdinalHighWater",
         "entries",
         "matchAxes",
+        "matchRows",
         "blendAxes"
       ],
       "type": "object"

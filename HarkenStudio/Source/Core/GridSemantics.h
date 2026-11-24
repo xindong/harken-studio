@@ -91,9 +91,8 @@ struct GridTableDef
         return true;
     }
 
-    bool addRow(const QUuid& target)
+    bool addRow(const QUuid& target = {})
     {
-        if (target.isNull()) return false;
         Row r;
         r.target = target;
         r.cells.resize(axes.size());
@@ -170,12 +169,13 @@ struct DiscreteGridResult
 // Conjunctive hit (absent cell = wildcard), then axis-order lexicographic
 // tie-break: first axis where exactly one contender holds a precise cell
 // decides; identical patterns keep the earlier row (duplicate rows take
-// first). No hit = silence, no implicit default.
+// first). Rows without a target never hit. No hit = silence, no implicit
+// default.
 DiscreteGridResult evalDiscreteGrid(const DiscreteGridDef& grid,
                                     const std::vector<float>& axisValues,
                                     const VariableLookup& variables = {});
 
-enum class GridLintKind : uint8_t { DuplicateRow = 0, UnreachableRow = 1 };
+enum class GridLintKind : uint8_t { DuplicateRow = 0, UnreachableRow = 1, UnassignedRow = 2 };
 
 struct GridLintFinding
 {

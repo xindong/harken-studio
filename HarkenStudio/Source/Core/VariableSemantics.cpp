@@ -243,26 +243,24 @@ QStringList restoreLoadedLabelReferences(ProjectData& project)
             for (auto* table : selection->selections.tables()) {
                 for (size_t axis = 0; axis < table->matchAxes.size(); ++axis) {
                     auto* variable = variables.value(table->matchAxes[axis], nullptr);
-                    for (auto& entry : table->entries) {
-                        for (auto& condition : entry.conditions) {
-                            if (axis >= condition.cells.size() || !condition.cells[axis]) continue;
-                            auto& cell = *condition.cells[axis];
-                            if (!cell.labelId.isNull()) continue;
-                            const auto matches = variable ? std::count_if(variable->labels.begin(), variable->labels.end(),
-                                [&](const auto& label) { return label.anchor == cell.legacyValue; }) : 0;
-                            if (!variable || matches > 1) {
-                                diagnostics.append(QStringLiteral("Grid '%1' index %2 has a missing or ambiguous Label; its numeric condition is retained")
-                                    .arg(item->name).arg(cell.legacyValue));
-                                continue;
-                            }
-                            const auto* label = labelAtIndex(variable->labels, cell.legacyValue);
-                            if (!label) {
-                                variable->labels.push_back({cell.legacyValue, {}, QUuid::createUuidV5(table->matchAxes[axis],
-                                    QByteArray("grid-label-") + QByteArray::number(cell.legacyValue))});
-                                label = &variable->labels.back();
-                            }
-                            cell = DiscreteGridCell(label->id);
+                    for (auto& row : table->matchRows) {
+                        if (axis >= row.cells.size() || !row.cells[axis]) continue;
+                        auto& cell = *row.cells[axis];
+                        if (!cell.labelId.isNull()) continue;
+                        const auto matches = variable ? std::count_if(variable->labels.begin(), variable->labels.end(),
+                            [&](const auto& label) { return label.anchor == cell.legacyValue; }) : 0;
+                        if (!variable || matches > 1) {
+                            diagnostics.append(QStringLiteral("Grid '%1' index %2 has a missing or ambiguous Label; its numeric condition is retained")
+                                .arg(item->name).arg(cell.legacyValue));
+                            continue;
                         }
+                        const auto* label = labelAtIndex(variable->labels, cell.legacyValue);
+                        if (!label) {
+                            variable->labels.push_back({cell.legacyValue, {}, QUuid::createUuidV5(table->matchAxes[axis],
+                                QByteArray("grid-label-") + QByteArray::number(cell.legacyValue))});
+                            label = &variable->labels.back();
+                        }
+                        cell = DiscreteGridCell(label->id);
                     }
                 }
             }

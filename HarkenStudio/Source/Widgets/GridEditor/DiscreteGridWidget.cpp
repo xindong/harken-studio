@@ -200,7 +200,6 @@ DiscreteGridWidget::DiscreteGridWidget(QWidget* parent)
             this, [this](const PlatformContext&) {
         const QSignalBlocker blocker(table_);
         axisAdder_->cancelPendingSelection();
-        rowAdder_->cancelPendingSelection();
         requestedSelection_.reset();
         matrix_->clearSelection();
         reload();
@@ -249,7 +248,7 @@ bool DiscreteGridWidget::eventFilter(QObject* watched, QEvent* event)
         if (mouse->button() == Qt::LeftButton && !(mouse->modifiers() & Qt::ControlModifier)
             && row >= 0 && row < static_cast<int>(grid_.rows.size())
             && table_->selectionModel()->isRowSelected(row, {}))
-            emit auditionTargetRequested(grid_.rows[row].target);
+            requestAudition(grid_.rows[row].target);
     }
     return QWidget::eventFilter(watched, event);
 }
@@ -276,23 +275,6 @@ void DiscreteGridWidget::buildUi()
         axisAdder_->setCurrentObjectID(0);
     });
     axisAdder_->hide();
-
-    rowAdder_ = new ObjectRefWidget(this);
-    rowAdder_->setRequired(false);
-    rowAdder_->setObjectName(QStringLiteral("gridAddRowRef"));
-    rowAdder_->setFilterTypes(ItemTypeCatalog::allowedChildTypesOf(ProjectItem::Type::Container));
-    rowAdder_->setSelectorTitle(tr("Add Child"));
-    rowAdder_->setIsSelectable([this](uint32_t id) {
-        if (!boundItem_) return false;
-        return std::any_of(boundItem_->children.begin(), boundItem_->children.end(),
-            [id](const auto& child) { return child && child->objectID == id; });
-    });
-    connect(rowAdder_, &ObjectRefWidget::objectChanged, this, [this](uint32_t id) {
-        if (ProjectItem* item = ProjectManager::instance().findItemByObjectID(id))
-            commitAddRow(item->guid);
-        rowAdder_->setCurrentObjectID(0);
-    });
-    rowAdder_->hide();
 
     matrix_ = new MatrixTableWidget(this);
     table_ = matrix_->table();
@@ -322,13 +304,13 @@ void DiscreteGridWidget::buildUi()
     removeBtn_ = footer->removeButton();
     removeBtn_->setObjectName(QStringLiteral("gridRemoveBtn"));
     auto* addMenu = new QMenu(addBtn_);
-    addRowAction_ = addMenu->addAction(tr("Add Child"));
+    auto* addRow = addMenu->addAction(tr("Add Row"));
     auto* addVariable = addMenu->addAction(tr("Add Variable"));
-    connect(addBtn_, &QToolButton::clicked, this, [this, addMenu, addVariable] {
+    connect(addBtn_, &QToolButton::clicked, this, [this, addMenu, addRow, addVariable] {
         const QPointer<DiscreteGridWidget> self(this);
         const auto* chosen = addMenu->exec(addBtn_->mapToGlobal(QPoint(0, addBtn_->height())));
         if (!self) return;
-        if (chosen == addRowAction_) openAddRowSelector();
+        if (chosen == addRow) commitAddRow();
         else if (chosen == addVariable) openAddAxisSelector();
     });
     connect(removeBtn_, &QToolButton::clicked, this, [this] {
@@ -345,7 +327,7 @@ void DiscreteGridWidget::buildUi()
             if (rows.isEmpty())
                 emit auditionTargetRequested(boundItem_->guid);
             else if (rows.front().row() < static_cast<int>(grid_.rows.size()))
-                emit auditionTargetRequested(grid_.rows[rows.front().row()].target);
+                requestAudition(grid_.rows[rows.front().row()].target);
         });
     connect(matrix_, &MatrixTableWidget::columnMoveRequested, this,
         [this](int from, int to) { moveAxis(from - kFirstAxisColumn, to - kFirstAxisColumn); });
@@ -360,11 +342,9 @@ void DiscreteGridWidget::setBoundItem(ProjectItem* item)
         matrix_->clearSelection();
         requestedSelection_.reset();
         axisAdder_->cancelPendingSelection();
-        rowAdder_->cancelPendingSelection();
         grid_ = {};
     }
     boundItem_ = item;
-    rowAdder_->setDirectChildParentGuid(item ? item->guid : QUuid{});
     reload();
 }
 
@@ -546,11 +526,19 @@ void DiscreteGridWidget::refreshDerived()
         const auto finding = std::find_if(findings.begin(), findings.end(),
             [r](const auto& value) { return value.row == r; });
         if (finding != findings.end()) {
-            warning = finding->kind == GridSemantics::GridLintKind::DuplicateRow
-                ? tr("Duplicate row: same conditions and target as row %1. The earlier row always wins.")
-                      .arg(finding->blockingRow + 1)
-                : tr("Unreachable row: same conditions as row %1 with a different target. The earlier row always wins.")
-                      .arg(finding->blockingRow + 1);
+            switch (finding->kind) {
+            case GridSemantics::GridLintKind::DuplicateRow:
+                warning = tr("Duplicate row: same conditions and target as row %1. The earlier row always wins.")
+                    .arg(finding->blockingRow + 1);
+                break;
+            case GridSemantics::GridLintKind::UnreachableRow:
+                warning = tr("Unreachable row: same conditions as row %1 with a different target. The earlier row always wins.")
+                    .arg(finding->blockingRow + 1);
+                break;
+            case GridSemantics::GridLintKind::UnassignedRow:
+                warning = tr("No Child assigned. The row is skipped at playback.");
+                break;
+            }
         }
         table_->item(r, 0)->setData(TableTextRole, static_cast<int>(
             warning.isEmpty() ? TableTextState::Normal : TableTextState::Warning));
@@ -596,6 +584,11 @@ bool DiscreteGridWidget::isNestedGridTarget(const QUuid& target) const
 {
     ProjectItem* item = ProjectManager::instance().findItemByGuid(target);
     return GridEditorWidget::acceptsItem(item);
+}
+
+void DiscreteGridWidget::requestAudition(const QUuid& target)
+{
+    emit auditionTargetRequested(target.isNull() && boundItem_ ? boundItem_->guid : target);
 }
 
 bool DiscreteGridWidget::commitGrid(const DiscreteGridDef& next, const QString& undoText)
@@ -694,11 +687,10 @@ bool DiscreteGridWidget::commitReplaceAxis(int axis, const QUuid& variableId)
     return true;
 }
 
-bool DiscreteGridWidget::commitAddRow(const QUuid& target)
+bool DiscreteGridWidget::commitAddRow()
 {
     DiscreteGridDef next = grid_;
-    if (!next.addRow(target))
-        return false;
+    next.addRow();
     if (!commitGrid(next, tr("Add Match Row"))) return false;
     requestedSelection_ = std::pair{static_cast<int>(next.rows.size()) - 1, (table_->currentColumn() - kFirstAxisColumn)};
     return true;
@@ -733,14 +725,14 @@ bool DiscreteGridWidget::commitMoveRow(int from, int to)
 bool DiscreteGridWidget::commitReplaceRow(int row, const QUuid& target)
 {
     if (!boundItem_ || row < 0 || row >= static_cast<int>(grid_.rows.size())
-        || !GridSemantics::isGridTargetCandidate(*boundItem_, target)) return false;
+        || (!target.isNull() && !GridSemantics::isGridTargetCandidate(*boundItem_, target))) return false;
     if (grid_.rows[row].target == target) return true;
     DiscreteGridDef next = grid_;
     next.rows[row].target = target;
     const bool updateAudition = table_->selectionModel()->isRowSelected(row, {});
-    if (!commitGrid(next, tr("Replace Match Child"))) return false;
+    if (!commitGrid(next, target.isNull() ? tr("Clear Match Child") : tr("Replace Match Child"))) return false;
     requestedSelection_ = std::pair{row, (table_->currentColumn() - kFirstAxisColumn)};
-    if (updateAudition) emit auditionTargetRequested(target);
+    if (updateAudition) requestAudition(target);
     return true;
 }
 
@@ -749,19 +741,11 @@ void DiscreteGridWidget::openAddAxisSelector(QWidget* anchor)
     axisAdder_->openSelector(anchor ? anchor : addBtn_);
 }
 
-void DiscreteGridWidget::openAddRowSelector()
-{
-    rowAdder_->openSelector(addBtn_);
-}
-
 void DiscreteGridWidget::refreshActions()
 {
     const bool bound = boundItem_ && boundItem_->comp<VSelection>();
-    const bool hasChildren = bound && !boundItem_->children.empty();
     axisAdder_->setEnabled(bound);
     addBtn_->setEnabled(bound);
-    rowAdder_->setEnabled(hasChildren);
-    addRowAction_->setEnabled(hasChildren);
     const int axis = matrix_->selectedColumn() - kFirstAxisColumn;
     const bool columnSelected = axis >= 0 && axis < static_cast<int>(grid_.axes.size());
     const bool rowSelected = table_->currentRow() >= 0
@@ -815,6 +799,8 @@ void DiscreteGridWidget::rebuildReferenceWidgets()
     for (int row = 0; row < static_cast<int>(grid_.rows.size()); ++row) {
         auto* ref = new ObjectRefWidget(matrix_);
         ref->setObjectName(QStringLiteral("gridTargetRef"));
+        ref->setRequired(false);
+        ref->setClearSupport(true);
         ref->setCompact(true);
         ref->setCompactPickable(true);
         ref->setFilterTypes(ItemTypeCatalog::allowedChildTypesOf(ProjectItem::Type::Container));
@@ -831,15 +817,17 @@ void DiscreteGridWidget::rebuildReferenceWidgets()
         const auto* item = ProjectManager::instance().findItemByGuid(target);
         if (item)
             ref->setCurrentObjectID(item->objectID);
-        else
+        else if (!target.isNull())
             ref->setUnresolvedReference(target.toString(QUuid::WithoutBraces));
         connect(ref, &ObjectRefWidget::objectChanged, this, [this, ref, row, target](uint32_t id) {
             const auto* child = ProjectManager::instance().findItemByObjectID(id);
-            if (child && commitReplaceRow(row, child->guid)) return;
+            if ((id == 0 || child) && commitReplaceRow(row, child ? child->guid : QUuid{})) return;
             if (auto* original = ProjectManager::instance().findItemByGuid(target))
                 ref->setCurrentObjectID(original->objectID);
-            else
+            else if (!target.isNull())
                 ref->setUnresolvedReference(target.toString(QUuid::WithoutBraces));
+            else
+                ref->setCurrentObjectID(0);
         });
         table_->setCellWidget(row, 1, ref);
         targetRefs_.push_back(ref);

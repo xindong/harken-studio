@@ -569,7 +569,7 @@ TEST(ProjectContract, ParentDependenciesKeepInheritedTargetsWithoutExpandingPlay
         for (qsizetype index = 0; index < children.size(); ++index) {
             const auto ordinal = static_cast<uint32_t>(index);
             data.shared.entries.push_back({QUuid(children.at(index)), ordinal,
-                {{ordinal, ordinal, 50}}, {}, {}});
+                {{ordinal, ordinal, 50}}, {}});
         }
         if (!variable.isEmpty()) data.shared.matchAxes.push_back(QUuid(variable));
         return QJsonObject{{QStringLiteral("selection"), QJsonObject{

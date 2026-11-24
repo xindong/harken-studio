@@ -1030,6 +1030,7 @@ bool buildContainerAuthoring(ProjectItem& item, const ProjectIndex& index,
         for (uint32_t rowIndex = 0;
              rowIndex < matches.rows.size(); ++rowIndex) {
             const auto& source = matches.rows[rowIndex];
+            if (source.target.isNull()) continue;
             const auto target = index.byGuid.find(authoringGuid(source.target));
             if (target != index.byGuid.end()
                 && included.find(target->second) == included.end())

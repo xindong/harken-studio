@@ -414,6 +414,7 @@ struct Builder
         }
         const auto visitRows = [&](const auto& rows, const QString& field) {
             for (const auto& row : rows) {
+                if (row.target.isNull()) continue;
                 const ProjectItem* target = byGuid(row.target, container.runtimeId(),
                                                    field, path);
                 if (!target)
@@ -427,7 +428,7 @@ struct Builder
         };
         if (selection->mode == SelectionMode::Match) {
             const auto grid = selection->matchGrid(platform);
-            visitRows(grid.rows, QStringLiteral("selections.conditions"));
+            visitRows(grid.rows, QStringLiteral("selections.matchRows"));
             if (grid.axes.size() > 1)
                 capability(RuntimeCapabilityFeature::MultiAxisGrid,
                            RuntimeCapabilityState::UnavailableEngineContract,

@@ -99,21 +99,18 @@ void cleanSelectionTable(QJsonObject& table, const QSet<QUuid>& guids)
         if (deleted(axis.value(QStringLiteral("variable")), guids))
             axis.insert(QStringLiteral("variable"), QJsonValue::Null);
     });
-    auto entries = filtered(table.value(QStringLiteral("entries")).toArray(), [&](const auto& row) {
+    const auto entries = filtered(table.value(QStringLiteral("entries")).toArray(), [&](const auto& row) {
         return deleted(row.toObject().value(QStringLiteral("childGuid")), guids);
     });
-    for (int i = 0; i < entries.size(); ++i) {
-        auto entry = entries.at(i).toObject();
-        if (!removedAxes.isEmpty()) {
-            editArray(entry, QStringLiteral("conditions"), [&](QJsonObject& condition) {
-                auto cells = condition.value(QStringLiteral("cells")).toArray();
-                for (auto it = removedAxes.crbegin(); it != removedAxes.crend(); ++it)
-                    if (*it < cells.size()) cells.removeAt(*it);
-                condition.insert(QStringLiteral("cells"), cells);
-            });
-        }
-        entries.replace(i, entry);
-    }
+    editArray(table, QStringLiteral("matchRows"), [&](QJsonObject& row) {
+        if (deleted(row.value(QStringLiteral("target")), guids))
+            row.insert(QStringLiteral("target"), QJsonValue::Null);
+        if (removedAxes.isEmpty()) return;
+        auto cells = row.value(QStringLiteral("cells")).toArray();
+        for (auto it = removedAxes.crbegin(); it != removedAxes.crend(); ++it)
+            if (*it < cells.size()) cells.removeAt(*it);
+        row.insert(QStringLiteral("cells"), cells);
+    });
     if (table.contains(QStringLiteral("entries")))
         table.insert(QStringLiteral("entries"), entries);
 }

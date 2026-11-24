@@ -8,7 +8,6 @@
 #include <utility>
 #include <vector>
 
-class QAction;
 class QTableWidget;
 class QToolButton;
 
@@ -34,7 +33,7 @@ public:
     bool commitAddAxis(const QUuid& variableId);
     bool commitRemoveAxis(int axis);
     bool commitReplaceAxis(int axis, const QUuid& variableId);
-    bool commitAddRow(const QUuid& target);
+    bool commitAddRow();
     bool commitRemoveRow(int row);
     bool commitMoveRow(int from, int to);
     bool commitReplaceRow(int row, const QUuid& target);
@@ -43,7 +42,6 @@ public:
     QTableWidget* table() const { return table_; }
 
     void openAddAxisSelector(QWidget* anchor = nullptr);
-    void openAddRowSelector();
 
 signals:
     void auditionTargetRequested(const QUuid& target);
@@ -70,6 +68,7 @@ private:
 
     std::vector<std::optional<float>> axisEvalValues() const;
     bool isNestedGridTarget(const QUuid& target) const;
+    void requestAudition(const QUuid& target);
 
     ProjectItem* boundItem_ = nullptr;
     DiscreteGridDef grid_;
@@ -79,10 +78,8 @@ private:
     std::optional<std::pair<int, int>> requestedSelection_;
 
     ObjectRefWidget* axisAdder_ = nullptr;
-    ObjectRefWidget* rowAdder_ = nullptr;
     QToolButton* addBtn_ = nullptr;
     QToolButton* removeBtn_ = nullptr;
-    QAction* addRowAction_ = nullptr;
     QTableWidget* table_ = nullptr;
     MatrixTableWidget* matrix_ = nullptr;
     std::vector<ObjectRefWidget*> axisHeaderRefs_;
