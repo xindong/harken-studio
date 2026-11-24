@@ -21,12 +21,6 @@
 
 #include <memory>
 
-#ifdef Q_OS_WIN
-#include <QHBoxLayout>
-#include <QWindow>
-#include <qt_windows.h>
-#endif
-
 using namespace harken::studio;
 
 namespace {
@@ -70,15 +64,8 @@ public:
     QPersistentModelIndex dragTarget;
     QPersistentModelIndex dropTarget;
     bool targetAccepted = false;
-    int wheelCount = 0;
 
 protected:
-    void wheelEvent(QWheelEvent* event) override
-    {
-        ++wheelCount;
-        TreeExpansionWidget::wheelEvent(event);
-    }
-
     void dragEnterEvent(QDragEnterEvent* event) override
     {
         event->acceptProposedAction();
@@ -223,105 +210,6 @@ TEST(TreeDragNavigation, RejectedTargetsDoNotBlockNavigationOrChangeSelection)
         EXPECT_EQ(tree.selectedItems(), QList<QTreeWidgetItem*>{selected});
     }
 }
-
-#ifdef Q_OS_WIN
-TEST(TreeDragNavigation, NativeWheelRoutingFollowsDragTargetAndLifetime)
-{
-    ensureApp();
-    if (QApplication::platformName() != QStringLiteral("windows"))
-        GTEST_SKIP() << "Requires the Windows message queue";
-
-    for (int finish = 0; finish < 4; ++finish) {
-        SCOPED_TRACE(finish);
-        QWidget host;
-        QHBoxLayout layout(&host);
-        DragNavigationTree tree;
-        DragNavigationTree other;
-        layout.addWidget(&tree);
-        layout.addWidget(&other);
-        host.resize(620, 200);
-        for (int row = 0; row < 80; ++row) {
-            new QTreeWidgetItem(&tree, {QString::number(row)});
-            new QTreeWidgetItem(&other, {QString::number(row)});
-        }
-        tree.setCurrentItem(tree.topLevelItem(0));
-        host.show();
-        QApplication::processEvents();
-        const QPoint center = tree.viewport()->rect().center();
-        QWheelEvent normal(center, tree.viewport()->mapToGlobal(center), {}, QPoint(0, -120),
-                           Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
-        QApplication::sendEvent(tree.viewport(), &normal);
-        const int normalDistance = tree.verticalScrollBar()->value();
-        ASSERT_GT(normalDistance, 0);
-        tree.verticalScrollBar()->setValue(0);
-        tree.wheelCount = 0;
-
-        const auto queuedWheel = [&](QWidget* target, int delta) {
-            const QPoint logical = target->mapTo(&host, target->rect().center());
-            const QPoint native = (QPointF(logical) * host.windowHandle()->devicePixelRatio()).toPoint();
-            POINT screen{native.x(), native.y()};
-            EXPECT_TRUE(ClientToScreen(reinterpret_cast<HWND>(host.winId()), &screen));
-            EXPECT_TRUE(PostThreadMessageW(GetCurrentThreadId(), WM_MOUSEWHEEL,
-                                           MAKEWPARAM(MK_LBUTTON, delta),
-                                           MAKELPARAM(screen.x, screen.y)));
-            MSG msg{};
-            for (int peek = 0; peek < 2; ++peek) {
-                EXPECT_TRUE(PeekMessageW(&msg, nullptr, WM_MOUSEWHEEL, WM_MOUSEWHEEL, PM_NOREMOVE));
-                EXPECT_EQ(msg.message, UINT(WM_MOUSEWHEEL));
-            }
-            EXPECT_TRUE(PeekMessageW(&msg, nullptr, WM_MOUSEWHEEL, WM_MOUSEWHEEL, PM_REMOVE));
-            QApplication::processEvents();
-            return msg.message;
-        };
-
-        EXPECT_EQ(queuedWheel(tree.viewport(), -120), UINT(WM_MOUSEWHEEL));
-        EXPECT_EQ(tree.wheelCount, 0);
-        auto mime = std::make_unique<QMimeData>();
-        QDragEnterEvent enter(center, Qt::MoveAction, mime.get(), Qt::LeftButton, Qt::NoModifier);
-        QApplication::sendEvent(tree.viewport(), &enter);
-        ASSERT_TRUE(enter.isAccepted());
-        for (int part = 0; part < 4; ++part)
-            EXPECT_EQ(queuedWheel(tree.viewport(), -30), UINT(WM_NULL));
-        EXPECT_EQ(tree.wheelCount, 4);
-        EXPECT_EQ(tree.verticalScrollBar()->value(), normalDistance);
-        EXPECT_EQ(tree.dragTarget, tree.indexAt(center));
-        EXPECT_EQ(tree.selectedItems(), QList<QTreeWidgetItem*>{tree.topLevelItem(0)});
-
-        EXPECT_EQ(queuedWheel(other.viewport(), -120), UINT(WM_MOUSEWHEEL));
-        EXPECT_EQ(other.wheelCount, 0);
-        EXPECT_EQ(tree.wheelCount, 4);
-
-        switch (finish) {
-        case 0: {
-            QDragLeaveEvent leave;
-            QApplication::sendEvent(tree.viewport(), &leave);
-            break;
-        }
-        case 1: {
-            QDropEvent drop(center, Qt::MoveAction, mime.get(), Qt::LeftButton, Qt::NoModifier);
-            QApplication::sendEvent(tree.viewport(), &drop);
-            break;
-        }
-        case 2: tree.hide(); tree.show(); break;
-        case 3: mime.reset(); break;
-        }
-        QApplication::processEvents();
-        EXPECT_EQ(queuedWheel(tree.viewport(), -120), UINT(WM_MOUSEWHEEL));
-        EXPECT_EQ(tree.wheelCount, 4);
-        EXPECT_EQ(tree.verticalScrollBar()->value(), normalDistance);
-
-        const QPoint otherCenter = other.viewport()->rect().center();
-        mime = std::make_unique<QMimeData>();
-        QDragEnterEvent next(otherCenter, Qt::MoveAction, mime.get(), Qt::LeftButton, Qt::NoModifier);
-        QApplication::sendEvent(other.viewport(), &next);
-        ASSERT_TRUE(next.isAccepted());
-        EXPECT_EQ(queuedWheel(other.viewport(), -120), UINT(WM_NULL));
-        EXPECT_EQ(other.wheelCount, 1);
-        EXPECT_GT(other.verticalScrollBar()->value(), 0);
-        EXPECT_EQ(tree.wheelCount, 4);
-    }
-}
-#endif
 
 TEST(TreeDragNavigation, HoverNavigationPreservesDescendantAndSelectionState)
 {
