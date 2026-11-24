@@ -4,7 +4,6 @@
 #include <QJsonArray>
 
 #include <algorithm>
-#include <cmath>
 #include <limits>
 #include <utility>
 
@@ -66,23 +65,17 @@ QJsonObject ConversionConfig::toJson() const
 std::optional<ConversionConfig> ConversionConfig::fromJson(const QJsonObject& json, QString* error)
 {
     ConversionConfig config;
-    const bool legacy = json.contains("sampleRateTiers");
-    const auto rows = json.value(legacy ? "sampleRateTiers" : "rules");
-    if (!rows.isArray() || json.size() != (legacy ? 3 : 1)) {
+    const auto rows = json.value("rules");
+    if (!rows.isArray() || json.size() != 1) {
         fail(error, QStringLiteral("Invalid conversion configuration"));
         return std::nullopt;
     }
     config.rules.clear();
     for (const auto& entry : rows.toArray()) {
         const auto row = entry.toObject();
-        const auto& encoding = legacy ? json : row;
-        const auto format = encoding.value("format").toString();
+        const auto format = row.value("format").toString();
         const bool vorbis = format == QLatin1String("Vorbis");
-        const auto legacyQuality = encoding.value("vorbisQuality");
-        if ((!vorbis && format != QLatin1String("PCM"))
-            || row.size() != (legacy ? 2 : vorbis ? 4 : 3)
-            || ((legacy || !legacyQuality.isUndefined()) && (!legacyQuality.isDouble() || !std::isfinite(legacyQuality.toDouble())
-                || legacyQuality.toDouble() < 0.0 || legacyQuality.toDouble() > 1.0))) {
+        if ((!vorbis && format != QLatin1String("PCM")) || row.size() != (vorbis ? 4 : 3)) {
             fail(error, QStringLiteral("Invalid format or quality in conversion rule"));
             return std::nullopt;
         }
@@ -104,8 +97,7 @@ std::optional<ConversionConfig> ConversionConfig::fromJson(const QJsonObject& js
         rule.sampleRate = static_cast<std::uint32_t>(integerRate);
         if (vorbis) {
             rule.format = ConversionFormat::Vorbis;
-            rule.vorbisQuality = legacyQuality.isUndefined() ? row.value("quality").toInt(-1)
-                : qRound(static_cast<float>(legacyQuality.toDouble()) * kMaxVorbisQuality);
+            rule.vorbisQuality = row.value("quality").toInt(-1);
         }
         config.rules.push_back(rule);
     }

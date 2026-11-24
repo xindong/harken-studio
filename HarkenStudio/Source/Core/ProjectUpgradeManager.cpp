@@ -225,20 +225,6 @@ bool isIteratorDotEntry(const QString& relativePath)
         || relativePath.endsWith(QStringLiteral("/.."));
 }
 
-bool migrationInputsUnchanged(const ProjectUpgradeAnalysis& analysis)
-{
-    for (auto input = analysis.migrationPlan.inputFingerprints.cbegin();
-         input != analysis.migrationPlan.inputFingerprints.cend(); ++input) {
-        const QString path = QDir(analysis.projectDirectory).filePath(input.key());
-        if (input.value().isEmpty()) {
-            if (QFileInfo::exists(path)) return false;
-        } else if (fileFingerprint(path) != input.value()) {
-            return false;
-        }
-    }
-    return true;
-}
-
 QByteArray treeFingerprint(const QString& directory, const ProjectDataPolicy& dataPolicy)
 {
     QStringList entries;
@@ -544,8 +530,7 @@ ProjectUpgradeResult ProjectUpgradeManager::execute(
         result.error = projectIssueCode(result.issue) + QChar(':') + result.detail;
         return result;
     }
-    if (!migrationInputsUnchanged(analysis)
-        || fileFingerprint(analysis.projectFilePath) != analysis.sourceFingerprint
+    if (fileFingerprint(analysis.projectFilePath) != analysis.sourceFingerprint
         || treeFingerprint(analysis.projectDirectory, analysis.dataPolicy)
                != analysis.sourceTreeFingerprint) {
         result.issue = ProjectIssue::ProjectChangedDuringUpgrade;
@@ -646,8 +631,7 @@ ProjectUpgradeResult ProjectUpgradeManager::execute(
         }
     }
 
-    if (!migrationInputsUnchanged(analysis)
-        || treeFingerprint(analysis.projectDirectory, analysis.dataPolicy)
+    if (treeFingerprint(analysis.projectDirectory, analysis.dataPolicy)
                != analysis.sourceTreeFingerprint) {
         result.error = QStringLiteral("Project changed while staging; upgrade was cancelled");
         QDir(stagingDirectory).removeRecursively();
@@ -702,8 +686,7 @@ ProjectUpgradeResult ProjectUpgradeManager::execute(
         QDir(stagingDirectory).removeRecursively();
         return result;
     };
-    if (!migrationInputsUnchanged(analysis)
-        || treeFingerprint(analysis.projectDirectory, analysis.dataPolicy)
+    if (treeFingerprint(analysis.projectDirectory, analysis.dataPolicy)
                != analysis.sourceTreeFingerprint)
         return failWithRollback(QStringLiteral("Project changed before upgrade commit"));
     if (!transaction->replaceFromDirectory(

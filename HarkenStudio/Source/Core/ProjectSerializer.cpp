@@ -915,46 +915,6 @@ bool ProjectSerializer::decodeComponentReferences(QJsonObject* components) const
     return true;
 }
 
-bool ProjectSerializer::removeRetiredPlayableProperties(QJsonObject* properties) const
-{
-    if (!properties) return false;
-    ProjectDocument::discardRetiredMakeUpGain(properties);
-    const QString key = QStringLiteral("spatial.attenuationCurveType");
-    const QString graphKey = QStringLiteral("signalGraph");
-    const QString presenceKey = QStringLiteral("presence");
-    const QString presence = properties->value(presenceKey).toString();
-    bool validPresence = false;
-    const uint64_t bits = presence.toULongLong(&validPresence, 16);
-    constexpr uint64_t curveBit = UINT64_C(0x1000);
-    constexpr uint64_t graphBit = UINT64_C(0x8000);
-    const bool curve = properties->contains(key) || (bits & curveBit) != 0;
-    const bool graph = properties->contains(graphKey) || (bits & graphBit) != 0;
-    if (!curve && !graph) return true;
-    const uint64_t remainingBits = bits & ~(curveBit | graphBit);
-    if (!validPresence
-        || PlayablePropertyAuthoringV1::encodePresence(bits) != presence
-        || !PlayablePropertyAuthoringV1::decodePresence(
-            PlayablePropertyAuthoringV1::encodePresence(remainingBits))) {
-        lastError_ = curve
-            ? QStringLiteral("Retired spatial.attenuationCurveType has an invalid value or presence")
-            : QStringLiteral("Retired signalGraph has an invalid presence");
-        return false;
-    }
-    if (curve) {
-        const QJsonValue value = properties->value(key);
-        if ((bits & curveBit) == 0 || !value.isDouble()
-            || value.toInt(-1) < 0 || value.toInt(-1) > 2
-            || value.toDouble() != value.toInt(-1)) {
-            lastError_ = QStringLiteral("Retired spatial.attenuationCurveType has an invalid value or presence");
-            return false;
-        }
-    }
-    properties->remove(key);
-    properties->remove(graphKey);
-    (*properties)[presenceKey] = PlayablePropertyAuthoringV1::encodePresence(remainingBits);
-    return true;
-}
-
 bool ProjectSerializer::rewritePlayableReferenceFields(QJsonObject* properties,
                                                        bool encode) const
 {
@@ -1066,7 +1026,6 @@ bool ProjectSerializer::decodePlayableReferences(QJsonObject* properties,
             return false;
         }
     }
-    if (!removeRetiredPlayableProperties(properties)) return false;
     if (!rewritePlayableReferenceFields(properties, false)) return false;
     const QLatin1String overlaysKey(
         PlayablePropertyAuthoringV1::kPlatformOverridesJsonKey);
@@ -1077,7 +1036,6 @@ bool ProjectSerializer::decodePlayableReferences(QJsonObject* properties,
     for (const QJsonValue& rowValue : overlaysValue.toArray()) {
         if (!rowValue.isObject()) return false;
         QJsonObject row = rowValue.toObject();
-        if (!removeRetiredPlayableProperties(&row)) return false;
         if (!rewritePlayableReferenceFields(&row, false)) return false;
         rewritten.append(row);
     }

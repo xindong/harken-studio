@@ -408,7 +408,6 @@ std::optional<BindingAddress> parseAddress(const QJsonObject& object)
     if (addressObject.isEmpty()) return std::nullopt;
     const auto hostClass = BindingContractSemantics::parseHostClass(
         addressObject.value(QStringLiteral("hostClass")).toString());
-    if (addressObject.contains(QStringLiteral("targetFamily"))) return std::nullopt;
     const int slotId = addressObject.value(QStringLiteral("slotId")).toInt();
     if (!hostClass || slotId < 1 || slotId > 16) return std::nullopt;
     BindingAddress address;

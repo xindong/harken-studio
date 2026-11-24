@@ -187,7 +187,7 @@
           "$ref": "#/$defs/projectPlatformId"
         },
         "presence": {
-          "pattern": "^000000000000[0-38-b][014589cd][0-9a-f][0-38-b]$",
+          "pattern": "^000000000000[02][014589cd][0-9a-f][0-38-b]$",
           "type": "string"
         },
         "sends": {
@@ -195,21 +195,6 @@
             "$ref": "#/$defs/send"
           },
           "type": "array"
-        },
-        "signalGraph": {
-          "deprecated": true,
-          "type": "array"
-        },
-        "spatial.attenuationCurveType": {
-          "deprecated": true,
-          "enum": [
-            0,
-            1,
-            2
-          ],
-          "maximum": 4294967295,
-          "minimum": 0,
-          "type": "integer"
         },
         "spatial.attenuationDistanceScaling": {
           "type": "number"
@@ -266,7 +251,7 @@
           "type": "array"
         },
         "presence": {
-          "pattern": "^000000000000[0-38-b][014589cd][0-9a-f][0-38-b]$",
+          "pattern": "^000000000000[02][014589cd][0-9a-f][0-38-b]$",
           "type": "string"
         },
         "sends": {
@@ -274,21 +259,6 @@
             "$ref": "#/$defs/send"
           },
           "type": "array"
-        },
-        "signalGraph": {
-          "deprecated": true,
-          "type": "array"
-        },
-        "spatial.attenuationCurveType": {
-          "deprecated": true,
-          "enum": [
-            0,
-            1,
-            2
-          ],
-          "maximum": 4294967295,
-          "minimum": 0,
-          "type": "integer"
         },
         "spatial.attenuationDistanceScaling": {
           "type": "number"
@@ -533,9 +503,6 @@
       },
       "type": "object"
     },
-    "gridAxis": {
-      "$ref": "#/$defs/uuid"
-    },
     "layerNode": {
       "additionalProperties": false,
       "properties": {
@@ -716,23 +683,8 @@
           "$ref": "#/$defs/projectPlatformId"
         },
         "presence": {
-          "pattern": "^000000000000[0189]0[01][0-38-b]$",
+          "pattern": "^00000000000000[01][0-38-b]$",
           "type": "string"
-        },
-        "signalGraph": {
-          "deprecated": true,
-          "type": "array"
-        },
-        "spatial.attenuationCurveType": {
-          "deprecated": true,
-          "enum": [
-            0,
-            1,
-            2
-          ],
-          "maximum": 4294967295,
-          "minimum": 0,
-          "type": "integer"
         },
         "streamingMode": {
           "enum": [
@@ -771,23 +723,8 @@
           "type": "array"
         },
         "presence": {
-          "pattern": "^000000000000[0189]0[01][0-38-b]$",
+          "pattern": "^00000000000000[01][0-38-b]$",
           "type": "string"
-        },
-        "signalGraph": {
-          "deprecated": true,
-          "type": "array"
-        },
-        "spatial.attenuationCurveType": {
-          "deprecated": true,
-          "enum": [
-            0,
-            1,
-            2
-          ],
-          "maximum": 4294967295,
-          "minimum": 0,
-          "type": "integer"
         },
         "streamingMode": {
           "enum": [
@@ -1808,10 +1745,7 @@
           "items": {
             "oneOf": [
               {
-                "type": [
-                  "integer",
-                  "null"
-                ]
+                "type": "null"
               },
               {
                 "type": "object",
@@ -1836,16 +1770,6 @@
       ]
     },
     "selectionCurve": {
-      "oneOf": [
-        {
-          "$ref": "#/$defs/identifiedSelectionCurve"
-        },
-        {
-          "$ref": "#/$defs/legacySelectionCurve"
-        }
-      ]
-    },
-    "identifiedSelectionCurve": {
       "type": "object",
       "additionalProperties": false,
       "oneOf": [
@@ -1987,99 +1911,6 @@
         "handles"
       ]
     },
-    "legacySelectionCurve": {
-      "type": "object",
-      "additionalProperties": false,
-      "oneOf": [
-        {
-          "properties": {
-            "variable": {"type": "null"},
-            "points": {"maxItems": 0},
-            "handles": {"maxItems": 0}
-          }
-        },
-        {
-          "properties": {
-            "points": {"minItems": 2, "maxItems": 2},
-            "handles": {"minItems": 1, "maxItems": 1}
-          }
-        },
-        {
-          "properties": {
-            "points": {"minItems": 3, "maxItems": 3},
-            "handles": {"minItems": 2, "maxItems": 2}
-          }
-        },
-        {
-          "properties": {
-            "points": {"minItems": 4, "maxItems": 4},
-            "handles": {"minItems": 3, "maxItems": 3}
-          }
-        },
-        {
-          "properties": {
-            "points": {"minItems": 5, "maxItems": 5},
-            "handles": {"minItems": 4, "maxItems": 4}
-          }
-        },
-        {
-          "properties": {
-            "points": {"minItems": 6, "maxItems": 6},
-            "handles": {"minItems": 5, "maxItems": 5}
-          }
-        },
-        {
-          "properties": {
-            "points": {"minItems": 7, "maxItems": 7},
-            "handles": {"minItems": 6, "maxItems": 6}
-          }
-        },
-        {
-          "properties": {
-            "points": {"minItems": 8, "maxItems": 8},
-            "handles": {"minItems": 7, "maxItems": 7}
-          }
-        }
-      ],
-      "properties": {
-        "order": {"type": "integer", "minimum": 0, "maximum": 4294967295},
-        "variable": {
-          "oneOf": [{"$ref": "#/$defs/uuid"}, {"type": "null"}]
-        },
-        "points": {
-          "type": "array",
-          "minItems": 0,
-          "maxItems": 8,
-          "items": {
-            "type": "array",
-            "minItems": 2,
-            "maxItems": 2,
-            "items": {
-              "type": "number"
-            }
-          }
-        },
-        "handles": {
-          "type": "array",
-          "minItems": 0,
-          "maxItems": 7,
-          "items": {
-            "type": "array",
-            "minItems": 4,
-            "maxItems": 4,
-            "items": {
-              "type": "number"
-            }
-          }
-        }
-      },
-      "required": [
-        "order",
-        "variable",
-        "points",
-        "handles"
-      ]
-    },
     "selectionEntry": {
       "type": "object",
       "additionalProperties": false,
@@ -2148,36 +1979,26 @@
         "blendAxes": {
           "type": "array",
           "items": {
-            "oneOf": [
-              {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                  "guid": {
-                    "$ref": "#/$defs/uuid"
-                  },
-                  "variable": {
-                    "oneOf": [
-                      {
-                        "$ref": "#/$defs/uuid"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  }
-                },
-                "required": [
-                  "guid",
-                  "variable"
-                ]
-              },
-              {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "guid": {
                 "$ref": "#/$defs/uuid"
               },
-              {
-                "type": "null"
+              "variable": {
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/uuid"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               }
+            },
+            "required": [
+              "guid",
+              "variable"
             ]
           }
         }
@@ -2337,69 +2158,20 @@
       ],
       "type": "object"
     },
-    "conversionSampleRateTier": {
+    "conversionComponent": {
+      "type": "object",
       "additionalProperties": false,
       "properties": {
-        "maxBytes": {
-          "$ref": "#/$defs/conversionSizeLimit"
-        },
-        "sampleRate": {
-          "$ref": "#/$defs/conversionSampleRate"
+        "rules": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/conversionRule"
+          }
         }
       },
       "required": [
-        "maxBytes",
-        "sampleRate"
-      ],
-      "type": "object"
-    },
-    "conversionComponent": {
-      "oneOf": [
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "rules": {
-              "type": "array",
-              "minItems": 1,
-              "items": {
-                "$ref": "#/$defs/conversionRule"
-              }
-            }
-          },
-          "required": [
-            "rules"
-          ]
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "format": {
-              "enum": [
-                "PCM",
-                "Vorbis"
-              ]
-            },
-            "vorbisQuality": {
-              "type": "number",
-              "minimum": 0,
-              "maximum": 1
-            },
-            "sampleRateTiers": {
-              "type": "array",
-              "minItems": 1,
-              "items": {
-                "$ref": "#/$defs/conversionSampleRateTier"
-              }
-            }
-          },
-          "required": [
-            "format",
-            "vorbisQuality",
-            "sampleRateTiers"
-          ],
-          "type": "object"
-        }
+        "rules"
       ]
     },
     "conversionSizeLimit": {
@@ -2467,25 +2239,13 @@
               "type": "integer",
               "minimum": 0,
               "maximum": 10
-            },
-            "vorbisQuality": {
-              "type": "number",
-              "minimum": 0,
-              "maximum": 1
             }
           },
           "required": [
             "maxBytes",
             "sampleRate",
-            "format"
-          ],
-          "oneOf": [
-            {
-              "required": ["quality"]
-            },
-            {
-              "required": ["vorbisQuality"]
-            }
+            "format",
+            "quality"
           ]
         }
       ]
@@ -3033,13 +2793,11 @@
     "headerAdditionalProperties": "ignorable metadata, preserved on save",
     "preservedModulePayloads": {
       "mixNodeComponent.bindings": "unknown object fields and opaque entries preserved; known values parsed by module",
-      "mixNodeComponent.effects": "unknown object fields preserved; known values parsed by module",
-      "playableOverrideRow.signalGraph": "retired input; discarded with its presence bit when loading",
-      "playableProperties.signalGraph": "retired input; discarded with its presence bit when loading"
+      "mixNodeComponent.effects": "unknown object fields preserved; known values parsed by module"
     },
     "unknownBehaviorFields": "reject outside preserved module payloads",
     "unknownComponents": "reject",
-    "unknownEnumValues": "reject in current behavior fields; legacy fields follow module migration rules"
+    "unknownEnumValues": "reject"
   },
   "x-harken-projectRules": [
     {

@@ -47,7 +47,6 @@ struct MixingDef
 namespace MixingSemantics {
 
 using VariableValue = std::function<std::optional<float>(const QUuid&)>;
-QUuid legacyRowGuid(const QUuid& variable);
 std::optional<QHash<QUuid, float>> evaluate(const MixingDef& mixing,
                                            const VariableValue& value);
 void remapTargets(MixingDef& mixing, const QHash<QUuid, QUuid>& guidMap);

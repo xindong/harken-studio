@@ -1,5 +1,7 @@
 #include "ProjectUserData.h"
 
+#include "AssetPipeline/PathUtils.h"
+
 #include <QDir>
 #include <QFile>
 #include <QJsonDocument>
@@ -33,6 +35,20 @@ bool write(const QString& projectRoot, const QString& fileName, QJsonObject data
     const QByteArray bytes = QJsonDocument(data).toJson(QJsonDocument::Indented);
     QSaveFile file(target.filePath(fileName));
     return file.open(QIODevice::WriteOnly) && file.write(bytes) == bytes.size() && file.commit();
+}
+
+bool importFromCache(const QString& projectRoot)
+{
+    const QDir cache(PathUtils::getDotCacheDir(projectRoot));
+    for (const auto* fileName : {kEditorLayout, kPackExportSelection}) {
+        const QString name = QLatin1String(fileName);
+        if (directory(projectRoot).exists(name) || !cache.exists(name)) continue;
+        QFile file(cache.filePath(name));
+        if (!file.open(QIODevice::ReadOnly)) return false;
+        const auto document = QJsonDocument::fromJson(file.readAll());
+        if (document.isObject() && !write(projectRoot, name, document.object())) return false;
+    }
+    return true;
 }
 
 }

@@ -90,7 +90,7 @@ NormalizedDeclaration normalizeDeclarationForKind(VariableKind kind,
                                                   float defaultValue);
 
 std::vector<ProjectItem*> fileBoundVariables(ProjectData* project);
-QStringList restoreLoadedLabelReferences(ProjectData& project);
+QStringList loadedVariableDiagnostics(ProjectData& project);
 
 }
 }
