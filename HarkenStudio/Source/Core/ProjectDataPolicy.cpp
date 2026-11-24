@@ -2,6 +2,7 @@
 
 #include "AssetPipeline/PathUtils.h"
 #include "ProjectLocator.h"
+#include "ProjectUserData.h"
 
 #include <QDir>
 #include <QFile>
@@ -76,8 +77,9 @@ ProjectDataClass ProjectDataPolicy::classify(const QString& relativePath) const
     if (path.startsWith(QStringLiteral(".harken-project-"))
         || path.startsWith(QStringLiteral(".harken-upgrade-")))
         return ProjectDataClass::TransactionControl;
+    const QString userData = QLatin1String(ProjectUserData::kDirectory);
     if (path == QStringLiteral(".trash") || path.startsWith(QStringLiteral(".trash/"))
-        || path == QStringLiteral(".cache/editor_layout.json"))
+        || path == userData || path.startsWith(userData + QLatin1Char('/')))
         return ProjectDataClass::Preserved;
     if (path == QStringLiteral(".cache") || path.startsWith(QStringLiteral(".cache/")))
         return ProjectDataClass::Derived;

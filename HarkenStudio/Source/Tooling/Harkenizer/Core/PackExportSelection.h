@@ -72,14 +72,15 @@ public:
     static PackExportSelectionStore& instance();
 
     void openProject(const ProjectData& project);
+    void relocateProject(const ProjectData& project);
     void closeProject();
     const PackExportSelection& selection() const;
     void setSelection(const ProjectData& project, PackExportSelection selection);
 
 private:
-    bool save() const;
+    void save() const;
 
-    QString settingsKey_;
+    QString projectRoot_;
     PackExportSelection selection_;
 };
 

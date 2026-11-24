@@ -1,15 +1,11 @@
 #include "Tooling/Harkenizer/Core/PackExportSelection.h"
 
-#include "AssetPipeline/PathUtils.h"
 #include "ProjectLanguageSemantics.h"
 #include "ProjectTypes.h"
+#include "ProjectUserData.h"
 
 #include <QDebug>
-#include <QDir>
-#include <QFile>
 #include <QFileInfo>
-#include <QJsonDocument>
-#include <QSettings>
 #include <QSet>
 #include <algorithm>
 #include <set>
@@ -68,24 +64,12 @@ PackExportSelectionStore& PackExportSelectionStore::instance()
 void PackExportSelectionStore::openProject(const ProjectData& project)
 {
     closeProject();
-    settingsKey_ = QStringLiteral("PackExportSelection/%1").arg(project.projectId);
+    projectRoot_ = QFileInfo(project.projectPath).absolutePath();
     selection_.selectedPlatformIds = project.platformIds();
     selection_.currentPlatformId = project.platformIds().value(0);
-    QSettings settings(QSettings::defaultFormat(), QSettings::UserScope,
-                       QStringLiteral("HarkenSound"), QStringLiteral("HarkenStudio"));
-    const auto legacyPath = QDir(PathUtils::getDotCacheDir(QFileInfo(project.projectPath).absolutePath()))
-        .filePath(QStringLiteral("pack-export-selection.json"));
-    QByteArray bytes = settings.value(settingsKey_).toByteArray();
-    const bool migrate = !settings.contains(settingsKey_);
-    if (migrate) {
-        QFile file(legacyPath);
-        if (!file.open(QIODevice::ReadOnly)) return;
-        bytes = file.readAll();
-    }
-    const auto document = QJsonDocument::fromJson(bytes);
-    const auto root = document.object();
-    bool valid = document.isObject() && root.value(QStringLiteral("version")).toInt() == 1
-        && root.value(QStringLiteral("selectedPlatformIds")).isArray()
+    const auto root = ProjectUserData::read(projectRoot_,
+        QLatin1String(ProjectUserData::kPackExportSelection));
+    bool valid = root.value(QStringLiteral("selectedPlatformIds")).isArray()
         && root.value(QStringLiteral("actionTargeting")).isArray();
     PackExportSelection loaded;
     loaded.currentPlatformId = root.value(QStringLiteral("currentPlatformId")).toString();
@@ -116,18 +100,20 @@ void PackExportSelectionStore::openProject(const ProjectData& project)
         }
         loaded.actionTargeting.push_back(std::move(entry));
     }
-    if (!valid) {
-        if (migrate) QFile::remove(legacyPath);
-        return;
-    }
+    if (!valid) return;
     reconcile(project, loaded);
     selection_ = std::move(loaded);
-    if (!migrate || save()) QFile::remove(legacyPath);
+}
+
+void PackExportSelectionStore::relocateProject(const ProjectData& project)
+{
+    projectRoot_ = QFileInfo(project.projectPath).absolutePath();
+    save();
 }
 
 void PackExportSelectionStore::closeProject()
 {
-    settingsKey_.clear();
+    projectRoot_.clear();
     selection_ = {};
 }
 
@@ -145,23 +131,16 @@ void PackExportSelectionStore::setSelection(const ProjectData& project,
     save();
 }
 
-bool PackExportSelectionStore::save() const
+void PackExportSelectionStore::save() const
 {
-    if (settingsKey_.isEmpty()) return false;
+    if (projectRoot_.isEmpty()) return;
     QJsonArray targeting;
     for (const auto& row : selection_.actionTargeting) targeting.append(row.toJson());
-    const QJsonObject root{{QStringLiteral("version"), 1},
-        {QStringLiteral("currentPlatformId"), selection_.currentPlatformId},
-        {QStringLiteral("selectedPlatformIds"), QJsonArray::fromStringList(selection_.selectedPlatformIds)},
-        {QStringLiteral("actionTargeting"), targeting}};
-    const auto bytes = QJsonDocument(root).toJson(QJsonDocument::Compact);
-    QSettings settings(QSettings::defaultFormat(), QSettings::UserScope,
-                       QStringLiteral("HarkenSound"), QStringLiteral("HarkenStudio"));
-    settings.setValue(settingsKey_, bytes);
-    settings.sync();
-    if (settings.status() == QSettings::NoError) return true;
-    qWarning() << "Failed to save pack export selection:" << settingsKey_;
-    return false;
+    if (!ProjectUserData::write(projectRoot_, QLatin1String(ProjectUserData::kPackExportSelection), {
+            {QStringLiteral("currentPlatformId"), selection_.currentPlatformId},
+            {QStringLiteral("selectedPlatformIds"), QJsonArray::fromStringList(selection_.selectedPlatformIds)},
+            {QStringLiteral("actionTargeting"), targeting}}))
+        qWarning() << "Failed to save pack export selection:" << projectRoot_;
 }
 
 }

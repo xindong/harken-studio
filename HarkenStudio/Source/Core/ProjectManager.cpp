@@ -2405,7 +2405,7 @@ bool ProjectManager::saveProjectInternal(bool relocateSources, QString* error)
     auto& registry = AssetRegistry::instance();
     if (relocateSources) {
         registry.replaceSnapshot(projectRoot.path(), registry.snapshot());
-        PackExportSelectionStore::instance().openProject(*m_currentProject);
+        PackExportSelectionStore::instance().relocateProject(*m_currentProject);
         PackArtifactCache::instance().openProject(*m_currentProject);
     }
     registry.markAllCommitted();

@@ -4,9 +4,9 @@
 
 #include "AppSettings.h"
 #include "AssetPipeline/AssetRegistry.h"
-#include "AssetPipeline/PathUtils.h"
 #include "BuiltinLayouts.h"
 #include "NamedLayoutStore.h"
+#include "ProjectUserData.h"
 #include "WorkspaceDockFactory.h"
 #include "../Widgets/LogPanel/LogPanel.h"
 #include "WorkspaceWindowTypes.h"
@@ -26,10 +26,6 @@
 #include <QInputDialog>
 #include <QMessageBox>
 #include <QLineEdit>
-#include <QFile>
-#include <QFileInfo>
-#include <QSaveFile>
-#include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QDateTime>
@@ -869,14 +865,6 @@ void LayoutController::enforceDisabledDocks()
 }
 
 
-static QString projectLayoutCacheFile()
-{
-    const QString root = AssetRegistry::instance().projectRoot();
-    if (root.isEmpty())
-        return QString();
-    return PathUtils::getDotCacheDir(root) + "/editor_layout.json";
-}
-
 static bool validLayoutState(const QJsonObject& json)
 {
     return json.value(QLatin1String("instances")).isArray()
@@ -890,26 +878,18 @@ void LayoutController::loadProjectLayout()
     QJsonObject current;
     QString name;
 
-    const QString path = projectLayoutCacheFile();
-    if (!path.isEmpty()) {
-        QFile file(path);
-        if (file.open(QIODevice::ReadOnly)) {
-            QJsonParseError parseError;
-            const QJsonDocument document = QJsonDocument::fromJson(
-                file.readAll(), &parseError);
-            QJsonObject obj = document.object();
-            file.close();
-            obj["dockState"] = obj.take(QLatin1String("state"));
-            if (parseError.error == QJsonParseError::NoError && validLayoutState(obj)
-                && obj.value(QLatin1String("baseLayout")).isString()) {
-                workingLayouts_ = obj.take(QLatin1String("workingLayouts")).toObject();
-                for (const QString& key : workingLayouts_.keys()) {
-                    if (!validLayoutState(workingLayouts_.value(key).toObject()))
-                        workingLayouts_.remove(key);
-                }
-                name = obj.take(QLatin1String("baseLayout")).toString();
-                current = obj;
+    const QString root = AssetRegistry::instance().projectRoot();
+    if (!root.isEmpty()) {
+        QJsonObject obj = ProjectUserData::read(root, QLatin1String(ProjectUserData::kEditorLayout));
+        obj["dockState"] = obj.take(QLatin1String("state"));
+        if (validLayoutState(obj) && obj.value(QLatin1String("baseLayout")).isString()) {
+            workingLayouts_ = obj.take(QLatin1String("workingLayouts")).toObject();
+            for (const QString& key : workingLayouts_.keys()) {
+                if (!validLayoutState(workingLayouts_.value(key).toObject()))
+                    workingLayouts_.remove(key);
             }
+            name = obj.take(QLatin1String("baseLayout")).toString();
+            current = obj;
         }
     }
 
@@ -938,28 +918,16 @@ void LayoutController::saveProjectLayout()
 {
     QJsonObject obj = captureLayoutState();
     workingLayouts_.insert(currentLayoutName_, obj);
-    const QString path = projectLayoutCacheFile();
-    if (path.isEmpty())
+    const QString root = AssetRegistry::instance().projectRoot();
+    if (root.isEmpty())
         return;
-    if (!PathUtils::ensureDirectory(QFileInfo(path).absolutePath())) {
-        LogPanel::logError(LogCategory::Layout,
-                           tr("Failed to prepare the project layout folder."));
-        return;
-    }
 
     obj["state"] = obj.take(QLatin1String("dockState"));
     obj["baseLayout"] = currentLayoutName_;
     obj["workingLayouts"] = workingLayouts_;
 
-    QSaveFile file(path);
-    if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        const QByteArray bytes = QJsonDocument(obj).toJson(QJsonDocument::Indented);
-        if (file.write(bytes) != bytes.size() || !file.commit())
-            LogPanel::logError(LogCategory::Layout,
-                               tr("Failed to commit project layout cache: %1").arg(path));
-    } else {
-        LogPanel::logError(LogCategory::Layout, tr("Failed to write project layout cache: %1").arg(path));
-    }
+    if (!ProjectUserData::write(root, QLatin1String(ProjectUserData::kEditorLayout), obj))
+        LogPanel::logError(LogCategory::Layout, tr("Failed to save the project layout: %1").arg(root));
 }
 
 void LayoutController::ensureDocksForSpecs(const QList<harken::studio::DockInstanceSpec>& specs)
