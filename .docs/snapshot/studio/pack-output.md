@@ -38,7 +38,7 @@ CLI 构建结果的每个媒体包含 `format`、`originalBytes`、`outputBytes`
 | Export All | 导出全部包，不改变已有勾选状态 |
 | Force Re-export | 默认关闭；开启时强制重新生成本次范围内的包，仅作用于常规 Export／Export All |
 | Self-cleaning | 默认开启；所选平台全部成功后清理整个目标目录，仅保留本次有效产物；关闭时保留退出清单的文件 |
-| 右键 Export／Force Re-export | 以点击的 Action 包及对应清单为内容更新目标；忽略底部两开关，不清理，保留其他包内容与既有 Init，缺少 Init 时创建 |
+| 右键 Export／Force Re-export | 以点击的 Action 包及对应清单为内容更新目标，忽略底部两开关，不清理，保留其他 Action 包内容。复用既有 Init，按需更新 Ducking 接收器，缺少 Init 时创建 |
 | 分语言导出 | 各语言按独立选择出包；同语言 PostAction 依赖被取消勾选时报错 |
 
 表注：Self-cleaning 包含取消、删除或改名的平台目录，以及任意后缀文件和 Unity .meta。右键单包导出不自动导出依赖包，也不检查混合新旧包的共享内容兼容性。
@@ -284,7 +284,9 @@ Pack 的 `.bytes` 布局由 Engine 定义，唯一来源是 `HarkenEngine/Schema
 
 有效目录 kind 共 16 个。DiscreteVariable(5)、MeterWiring(6)、Action(10)、InitRoutingCatalog(20)、GameplayCatalog(25)、VariableNameCatalog(28) 已退役，读取端不再接纳；Action 的当前生产数据位于分区 body。Engine 只以 ID 识别创作内容，名称与 ID 的换算由 Studio 与 Integration 依据伴随 JSON 完成。
 
-Studio 写入 Pack 的分区仍只有 shipping V18。Engine 按 owner 接受可读的 V18、V19、V20 分区，用于原生音乐和信号发布；Studio 的 Pack 读取只接受 shipping V18。
+Studio 按分区选择 body 版本。包含 Ducking 路由或接收器的分区写 V20，语义指纹使用 V7。其余分区写 V18，使用 V5。Studio 检查、复用和增量导出既有 Pack 时按分区头读取 V18 或 V20。Engine 的 Pack 检查与激活按各分区头读取 V18、V19、V20。
+
+Studio 从目标平台生效的 Sidechain 中发布已勾选 Target Ducking 的路由。Send 按普通音频混音发布，未勾选的 Sidechain 保存在工程中。Bus → Bus 路由和每个目标 Bus 的共享接收器写入 Init。Sound → Bus 路由随最终 Sound 的定义进入每个包含它的 Action Pack。增量导出会按新旧分区中实际保留的路由更新 Init 接收器。多个 Action Pack 若共享 Sound，各自携带该 Sound 的完整路由。Engine 在同时激活时核对这些路由与增益。相同的路由只应用一次，卸载其中一个 Pack 后其余 Pack 仍可使用该路由。共享 Sound 的路由或增益不同会导致本次组合激活失败。
 
 ## Limiter 试听与 Pack 桥接（2026-11-12）
 
@@ -294,7 +296,7 @@ Bus 发布投影使用 publication vintage 5（`TopologyVolumeSendAndEffectsNeut
 
 当前 Studio Preview 中，Voice／Bus 编辑前后的链均只含 Limiter（含空链）时，参数拖动、Active、链条增删、替换和重排均作用于当前播放，无需停止重播。涉及其他效果类型时，链结构与来源替换仍沿原有生命周期延后生效，已安装槽位的 Active 和来源兼容的参数可即时更新；受在播消费者阻挡的 Bus 事务保留至消费者释放，消费者检查覆盖旧发布代际仍存活的播放。该延后限制用于 Studio Preview，正式 PackSet 的替换与卸载沿用既有生命周期。
 
-Bus publication 5、Preview descriptor V4、shipping body V18 和已发布 Pack Schema 4 属于不同版本空间。本次继续只修改 `Pack/current`，不修改历史合同或执行发布换代；对外发布前仍须按合同审计完成新的 Pack 代际。
+Bus publication 5、Preview descriptor V4、分区 body 版本和已发布 Pack Schema 4 属于不同版本空间。此阶段只修改 `Pack/current`。对外发布前仍须按合同审计完成新的 Pack 代际。
 
 配套 Engine 改动包含合同读入、旁通安装、运行状态镜像、Bus 效果事务与 PackSet 消费；复用既有 DSP、实例池和音频命令。旧 Preview 协议的默认删除校验与无关 Signal 提交规则保持原有行为。
 

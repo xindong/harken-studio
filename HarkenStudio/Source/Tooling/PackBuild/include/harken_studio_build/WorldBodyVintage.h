@@ -25,6 +25,10 @@ inline constexpr std::uint32_t kCurrentWorldBodyVintageV20 = 20;
 inline constexpr std::uint32_t kCurrentWorldShippingBodyVintage =
     HK_PACK_SHIPPING_BODY_VINTAGE;
 
+inline constexpr bool IsReadableCurrentWorldBodyVintage(std::uint32_t vintage) noexcept {
+    return vintage == kCurrentWorldShippingBodyVintage || vintage == kCurrentWorldBodyVintageV20;
+}
+
 } // namespace harken::studio::build
 
 #endif // HARKEN_STUDIO_BUILD_CURRENT_WORLD_BODY_VINTAGE_H

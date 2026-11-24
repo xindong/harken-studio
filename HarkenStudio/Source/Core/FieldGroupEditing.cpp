@@ -58,7 +58,7 @@ QString groupMessage(FieldGroupDiagnosticCode code)
     case FieldGroupDiagnosticCode::WrongReferenceKind:
         return QStringLiteral("Referenced object has an incompatible type");
     case FieldGroupDiagnosticCode::DuplicateSendTarget:
-        return QStringLiteral("Send targets must be unique");
+        return QStringLiteral("A target can have only one route with the same Type and Target Ducking setting");
     case FieldGroupDiagnosticCode::MissingLocalHistory:
         return QStringLiteral("A local or root field group requires a complete current value");
     case FieldGroupDiagnosticCode::EmptyRequiredReference:
@@ -289,10 +289,10 @@ Diagnostics validateView(const EditingContext& context,
             const auto outputBus = std::get<OutputFieldGroup>(output.value->payload).outputBusRef;
             const auto& sends = std::get<SendFieldGroup>(send.value->payload).sends;
             for (std::size_t row = 0; row < sends.size(); ++row) {
-                if (sends[row].mode != harken::studio::project_schema::SendMode::Sidechain
+                if ((sends[row].type == harken::studio::project_schema::SendType::Send || sends[row].duckTarget)
                     && sends[row].targetBusID == outputBus)
                     addDiagnostic(diagnostics, EditCode::OutputSendConflict,
-                        QStringLiteral("Only a Sidechain Send can target the effective Output"),
+                        QStringLiteral("Only a Sidechain with Target Ducking off can target the effective Output"),
                         fromFieldGroupGuid(definition.guid),
                         FieldGroupId::Send, scope, QStringLiteral("targetBusID"), row, outputBus);
             }

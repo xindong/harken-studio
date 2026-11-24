@@ -215,15 +215,13 @@ using SemanticOrderKey = std::uint64_t;
 using BusId = harken::studio::types::ObjectId;
 inline constexpr BusId kReservedBusId{};
 
-enum class SendMode : std::uint8_t {
-    Mix = 0,
-    Ducking = 1,
-    Sidechain = 2
+enum class SendType : std::uint8_t {
+    Send,
+    Sidechain
 };
 
-inline constexpr bool IsValidSendMode(SendMode mode) {
-    return mode == SendMode::Mix || mode == SendMode::Ducking
-        || mode == SendMode::Sidechain;
+inline constexpr bool IsValidSendRoute(SendType type, bool duckTarget) {
+    return (type == SendType::Send && !duckTarget) || type == SendType::Sidechain;
 }
 
 // One entry in a content object's send list: a level dispatched to a target bus

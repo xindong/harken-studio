@@ -19,6 +19,7 @@
 #include <limits>
 #include <map>
 #include <new>
+#include <ranges>
 #include <set>
 #include <stdexcept>
 #include <tuple>
@@ -1915,6 +1916,25 @@ WorldInstallStatus EncodeIdentityDefinition(const PackComposition::PublishedOwne
     return WorldInstallStatus::Ok;
 }
 
+bool SameLocalSoundRelations(const PackComposition::PublishedOwner& left,
+                             const PackComposition::PublishedOwner& right,
+                             const PackComposition::IdentityIndexEntry& entry) {
+    if (entry.identityClass != kInitCatalogIdentityClassPlayable ||
+        left.view.playableProperties[entry.localRow].contentPropertyKind !=
+            playableproperties::ContentPropertyKindV1::Sound) return true;
+    const auto fromSound = [&](const SignalRelationV1& row) {
+        return row.source.kind == SignalEndpointKindV1::Sound && row.source.stableId == entry.stableId;
+    };
+    const auto rows = [&](const ContainerWorldInstallViewV1& world) {
+        return std::span(world.signalRelations, world.signalRelationCount) | std::views::filter(fromSound);
+    };
+    return std::ranges::equal(rows(left.view), rows(right.view),
+        [](const SignalRelationV1& a, const SignalRelationV1& b) {
+            return a.stableId == b.stableId && a.source == b.source && a.target == b.target &&
+                   a.consumer == b.consumer && SameFloatBits(a.sendGainDb, b.sendGainDb);
+        });
+}
+
 template <typename T, typename Key>
 void DeduplicateRows(std::vector<T>& rows, Key key) {
     rows.erase(std::unique(rows.begin(), rows.end(),
@@ -2151,11 +2171,18 @@ VnResult ValidateCompositeWorld(
                         owner.view.transitionCount) ||
             !AppendRows(&scratch.actions, owner.view.actions,
                         owner.view.actionCount) ||
-            !AppendRows(&scratch.signalRelations, owner.view.signalRelations,
-                        owner.view.signalRelationCount) ||
             !AppendRows(&scratch.signalReceivers, owner.view.signalReceivers,
                         owner.view.signalReceiverCount)) {
             return VN_BAD_PACK;
+        }
+        for (const auto& relation : std::span(owner.view.signalRelations, owner.view.signalRelationCount)) {
+            if (relation.source.kind == SignalEndpointKindV1::Sound &&
+                FindPlayableProperty(owner.view, playableproperties::ContentPropertyKindV1::Sound,
+                                     relation.source.stableId)) {
+                const auto* firstProvider = BinaryFind(published.index, relation.source.stableId);
+                if (&published.owners[firstProvider->packSlot] != &owner) continue;
+            }
+            scratch.signalRelations.push_back(relation);
         }
     }
 
@@ -2224,8 +2251,6 @@ VnResult ValidateCompositeWorld(
             return std::pair(a.target.kind, a.target.stableId) <
                    std::pair(b.target.kind, b.target.stableId);
         });
-    // Unlike replicated definition bodies, a relation and a receiver each
-    // have one owner. Final world validation rejects duplicates, even equal ones.
     DeduplicateRows(scratch.variables, [](const auto& row) { return row.variableId; });
     DeduplicateRows(scratch.properties, [](const auto& row) { return row.stableId; });
     DeduplicateRows(scratch.occurrences, [](const auto& row) {
@@ -3214,7 +3239,8 @@ VnResult PackComposition::BuildIndex(PublishedView& view,
             if (left.packSlot == right.packSlot ||
                 left.identityClass != right.identityClass ||
                 leftEncoded != WorldInstallStatus::Ok || rightEncoded != WorldInstallStatus::Ok ||
-                leftDefinition != rightDefinition) {
+                leftDefinition != rightDefinition ||
+                !SameLocalSoundRelations(view.owners[left.packSlot], view.owners[right.packSlot], left)) {
                 facts->conflictingStableId = right.stableId;
                 facts->conflictingPackA = view.owners[left.packSlot].packStableId;
                 facts->conflictingPackB = view.owners[right.packSlot].packStableId;

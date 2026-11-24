@@ -1328,16 +1328,8 @@
     "fieldGroupSendRow": {
       "additionalProperties": false,
       "properties": {
-        "mode": {
-          "enum": [
-            0,
-            1,
-            2
-          ],
-          "type": "integer"
-        },
-        "modeVolumes": {
-          "$ref": "#/$defs/sendModeVolumes"
+        "duckTarget": {
+          "type": "boolean"
         },
         "sendLevel": {
           "maximum": 24,
@@ -1346,13 +1338,40 @@
         },
         "targetBusID": {
           "$ref": "#/$defs/uuid"
+        },
+        "type": {
+          "enum": [
+            "Send",
+            "Sidechain"
+          ],
+          "type": "string"
         }
       },
       "required": [
         "targetBusID",
         "sendLevel"
       ],
-      "type": "object"
+      "type": "object",
+      "if": {
+        "properties": {
+          "duckTarget": {
+            "const": true
+          }
+        },
+        "required": [
+          "duckTarget"
+        ]
+      },
+      "then": {
+        "properties": {
+          "type": {
+            "const": "Sidechain"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      }
     },
     "fieldGroupSharedGroups": {
       "additionalProperties": false,
@@ -1578,50 +1597,48 @@
     "send": {
       "additionalProperties": false,
       "properties": {
-        "mode": {
-          "enum": [
-            0,
-            1,
-            2
-          ],
-          "type": "integer"
-        },
-        "modeVolumes": {
-          "$ref": "#/$defs/sendModeVolumes"
+        "duckTarget": {
+          "type": "boolean"
         },
         "sendLevel": {
           "type": "number"
         },
         "targetBusRef": {
           "$ref": "#/$defs/objectReference"
+        },
+        "type": {
+          "enum": [
+            "Send",
+            "Sidechain"
+          ],
+          "type": "string"
         }
       },
       "required": [
         "sendLevel",
         "targetBusRef"
       ],
-      "type": "object"
-    },
-    "sendModeVolumes": {
-      "additionalProperties": false,
-      "properties": {
-        "0": {
-          "maximum": 24,
-          "minimum": -96,
-          "type": "number"
+      "type": "object",
+      "if": {
+        "properties": {
+          "duckTarget": {
+            "const": true
+          }
         },
-        "1": {
-          "maximum": 24,
-          "minimum": -96,
-          "type": "number"
-        },
-        "2": {
-          "maximum": 24,
-          "minimum": -96,
-          "type": "number"
-        }
+        "required": [
+          "duckTarget"
+        ]
       },
-      "type": "object"
+      "then": {
+        "properties": {
+          "type": {
+            "const": "Sidechain"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      }
     },
     "soundComponent": {
       "additionalProperties": false,

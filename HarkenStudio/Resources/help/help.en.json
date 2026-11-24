@@ -73,8 +73,12 @@
       }
     },
     "mixnode.sends": {
-      "title": "Sends",
-      "body": "Use the add button to choose Mix with..., Duck..., or Sidechain to..., then select a Target bus. Mix adds audio, Ducking defines a route to a ducking detector, and Sidechain defines an auxiliary signal route for sidechain receivers. Volume (-96 to +24 dB) controls the source signal gain for all three modes; for Ducking, it controls detector input gain rather than target attenuation. Each row remembers Volume separately for each Mode while sharing Target. A mode used for the first time keeps the current Volume; returning to it restores its last value. Each target can appear once per mode. Conflicting Mode options are disabled. Mix and Ducking cannot share the Output target; Sidechain can. Currently, audition and export include only Mix; Ducking and Sidechain remain saved as editing configurations."
+      "title": "Send",
+      "body": "Choose a Target bus to mix this signal into. Volume sets the send gain from −96 to +24 dB. Send and Sidechain share inheritance and platform overrides."
+    },
+    "mixnode.sidechains": {
+      "title": "Sidechain",
+      "body": "Choose Sidechain to... or Sidechain to... (Ducking Enabled), then select a bus. Target Ducking makes this signal trigger ducking on that bus during audition and in exported Packs. Volume sets the detector input gain and stays the same when you toggle Target Ducking. An unchecked sidechain is saved for a plugin input. Only an unchecked sidechain can target the source’s Output bus."
     },
     "audio.loopCount": {
       "title": "Loop",
@@ -113,7 +117,7 @@
     },
     "bus.receives": {
       "title": "Receives",
-      "body": "Read-only summary of send routes into this bus and their levels. Edit Sends on the source object to change them."
+      "body": "Lists incoming Send and Sidechain routes. Volume is the source gain. For a Sidechain, Ducking shows whether the source is configured to duck this bus. Edit the route on the source object."
     },
     "variable.kind": {
       "title": "Kind",

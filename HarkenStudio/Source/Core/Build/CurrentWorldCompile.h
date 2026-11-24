@@ -42,7 +42,7 @@ public:
         transitions;
     std::vector<harkencurrentworldcompiler::ActionProgramAuthoringV1> actions;
     std::vector<harkencurrentworldcompiler::DuckingSendAuthoringV1> duckingSends;
-    bool includePreviewDucking = false;
+    bool emitEmptySignalTables = false;
     std::vector<SoundSource> soundSources;
     std::unordered_map<harken::studio::types::ObjectId, std::uint64_t> soundContentRevisions;
     std::shared_ptr<const bridge::CurrentWorldSoundPreparation> soundPreparation;

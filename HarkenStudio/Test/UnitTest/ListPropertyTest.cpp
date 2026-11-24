@@ -3,6 +3,8 @@
 #include "Widgets/Inspector/InspectorCustomizationBootstrap.h"
 #include "Widgets/Inspector/InspectorCustomizationRegistry.h"
 #include "Widgets/Inspector/InspectorLayout.h"
+#include "Widgets/Inspector/BusInspectorSchema.h"
+#include "Widgets/Shared/SchemaFieldPick.h"
 #include "Widgets/Inspector/Drawers/ListFieldDrawer.h"
 #include "Widgets/Common/ParameterBinding.h"
 #include "Widgets/Common/ParameterSlider.h"
@@ -12,12 +14,16 @@
 #include <gtest/gtest.h>
 
 #include <QApplication>
+#include <QCheckBox>
 #include <QComboBox>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QMenu>
+#include <QMouseEvent>
+#include <QStyleOptionButton>
 #include <QToolButton>
 
+#include <algorithm>
 #include <memory>
 
 namespace {
@@ -119,6 +125,65 @@ bool optionEnabled(const QComboBox* combo, int value)
         && index.flags().testFlag(Qt::ItemIsSelectable);
 }
 
+}
+
+TEST(ListProperty, ReadOnlyTextColumnBoundaryKeepsUserWidthsAfterLayoutChanges)
+{
+    using namespace harken::studio;
+    auto* drawer = listDrawer();
+    ASSERT_NE(drawer, nullptr);
+    const auto* receives = pickSchemaField(busInspectorSchema(), QLatin1String("receives"));
+    ASSERT_NE(receives, nullptr);
+    auto descriptor = *receives;
+    descriptor.field = QStringLiteral("readOnlyColumnResizeTest");
+    std::unique_ptr<QWidget> widget(drawer->build(descriptor, nullptr));
+    const QVariantMap entry{{"source", 0u}, {"level", 0.0}, {"type", "Sidechain"}, {"duckTarget", true}};
+    drawer->bind(widget.get(), QVariantList{entry}, nullptr);
+    widget->resize(420, 180);
+    widget->show();
+    QApplication::processEvents();
+    auto* table = widget->findChild<TableWidget*>();
+    ASSERT_NE(table, nullptr);
+    table->refreshLayout();
+    const int last = table->columnCount() - 1;
+    ASSERT_GE(last, 1);
+    auto* text = table->headerCell(last - 1);
+    auto* tail = table->headerCell(last);
+    const int textWidth = text->width();
+    const int tailWidth = tail->width();
+    const auto labels = widget->findChildren<QLabel*>();
+    const auto sidechain = std::find_if(labels.begin(), labels.end(), [](const QLabel* label) {
+        return label->text() == QStringLiteral("Sidechain");
+    });
+    ASSERT_NE(sidechain, labels.end());
+    EXPECT_GE((*sidechain)->contentsRect().width(), (*sidechain)->fontMetrics().horizontalAdvance((*sidechain)->text()));
+    auto* header = table->header();
+    auto mouse = [&](QPoint point, QEvent::Type eventType, Qt::MouseButton button, Qt::MouseButtons buttons) {
+        QMouseEvent event(eventType, point, header->mapToGlobal(point), button, buttons, Qt::NoModifier);
+        QApplication::sendEvent(header, &event);
+    };
+    auto drag = [&](int delta) {
+        QPoint point(tail->x(), tail->geometry().center().y());
+        mouse(point, QEvent::MouseButtonPress, Qt::LeftButton, Qt::LeftButton);
+        point.rx() += delta;
+        mouse(point, QEvent::MouseMove, Qt::NoButton, Qt::LeftButton);
+        mouse(point, QEvent::MouseButtonRelease, Qt::LeftButton, Qt::NoButton);
+    };
+    drag(12);
+    EXPECT_NEAR(tail->width(), tailWidth - 12, 1);
+    drag(-36);
+    EXPECT_NEAR(text->width(), textWidth - 24, 1);
+    EXPECT_NEAR(tail->width(), tailWidth + 24, 1);
+
+    table->moveColumn(last, 1);
+    EXPECT_EQ(table->columnOrder().at(1), last);
+    drawer->bind(widget.get(), QVariantList{entry, entry}, nullptr);
+    widget->resize(280, 180);
+    QApplication::processEvents();
+    widget->resize(420, 180);
+    QApplication::processEvents();
+    EXPECT_NEAR(text->width(), textWidth - 24, 1);
+    EXPECT_NEAR(tail->width(), tailWidth + 24, 1);
 }
 
 TEST(ListProperty, CancelledEditorsCannotWriteToReboundRows)
@@ -399,4 +464,45 @@ TEST(ListProperty, ReadOnlyNumberedTablesDoNotExposeRowMutation)
     EXPECT_EQ(changes, 0);
     EXPECT_EQ(widget->findChild<QToolButton*>(QStringLiteral("listAdd_entries")), nullptr);
     EXPECT_EQ(widget->findChild<QToolButton*>(QStringLiteral("listRemoveSelected_entries")), nullptr);
+}
+
+TEST(ListProperty, BooleanIndicatorsStayCenteredAndLimitTheirHitArea)
+{
+    using namespace harken::studio;
+    auto* drawer = listDrawer();
+    ASSERT_NE(drawer, nullptr);
+    for (const bool readOnly : {false, true}) {
+        auto descriptor = ListHarnessComp::schema().front();
+        PropertyDescriptor active;
+        active.field = QStringLiteral("active");
+        active.type = PropType::Bool;
+        descriptor.elementSchema.push_back(active);
+        descriptor.flags.readOnly = readOnly;
+        if (readOnly) descriptor.listPresentation = ListPresentation::Display;
+        auto row = makeEntry(7u, -6.0);
+        row[active.field] = true;
+        std::unique_ptr<QWidget> widget(drawer->build(descriptor, nullptr));
+        drawer->bind(widget.get(), QVariantList{row}, nullptr);
+        auto* check = widget->findChild<QCheckBox*>();
+        ASSERT_NE(check, nullptr);
+        auto* cell = check->parentWidget();
+        int changes = 0;
+        drawer->connectChanged(widget.get(), [&](const QVariant&) { ++changes; });
+        widget->show();
+        for (int width : {420, 660}) {
+            widget->resize(width, widget->sizeHint().height());
+            QCoreApplication::processEvents();
+            QStyleOptionButton option;
+            option.initFrom(check);
+            const auto indicator = check->style()->subElementRect(QStyle::SE_CheckBoxIndicator, &option, check);
+            const auto center = check->mapTo(cell, indicator.center());
+            EXPECT_NEAR(center.x(), cell->rect().center().x(), 1);
+            EXPECT_NEAR(center.y(), cell->rect().center().y(), 1);
+            EXPECT_EQ(cell->childAt(center), check);
+            EXPECT_NE(cell->childAt(QPoint(cell->width() / 4, center.y())), check);
+        }
+        EXPECT_EQ(check->isEnabled(), !readOnly);
+        check->click();
+        EXPECT_EQ(changes, readOnly ? 0 : 1);
+    }
 }

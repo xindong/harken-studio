@@ -1307,7 +1307,7 @@ void HashSignalEndpoint(Fnv64& hash, const SignalEndpointRefV1& ref) noexcept {
 }
 
 bool ValidateCurrentWorldSectionGroupsV1(const ContainerWorldInstallViewV1 &world) noexcept {
-    if ((world.sourceBodyVintage != kCurrentWorldShippingBodyVintage && world.sourceBodyVintage != kCurrentWorldBodyVintageV20) ||
+    if (!IsReadableCurrentWorldBodyVintage(world.sourceBodyVintage) ||
         !PointerMatches(world.playablePropertyCount, world.playableProperties) ||
         !PointerMatches(world.playableOccurrenceCount, world.playableOccurrences) ||
         world.playablePropertyCount > kHardPlayablePropertyProgramCapacity ||
@@ -1920,6 +1920,14 @@ std::uint64_t ComputeCurrentWorldFingerprintV7(
         hash.U32(row.reserved);
     }
     return hash.Finish();
+}
+
+std::uint64_t ComputeCurrentWorldBodyFingerprint(const ContainerWorldInstallViewV1& world) noexcept {
+    switch (world.sourceBodyVintage) {
+    case kCurrentWorldShippingBodyVintage: return ComputeCurrentWorldFingerprintV5(world);
+    case kCurrentWorldBodyVintageV20: return ComputeCurrentWorldFingerprintV7(world);
+    default: return 0;
+    }
 }
 
 WorldInstallStatus ValidateCurrentWorldImpl(const ContainerWorldInstallViewV1 &world,
@@ -3054,8 +3062,7 @@ WorldInstallStatus ValidateCurrentWorldImpl(const ContainerWorldInstallViewV1 &w
         return WorldInstallStatus::InvalidFormat;
     }
     if (!ValidateSignalTables(world, scope)) return WorldInstallStatus::InvalidWorld;
-    const auto expectedFingerprint = world.sourceBodyVintage == kCurrentWorldBodyVintageV20
-        ? ComputeCurrentWorldFingerprintV7(world) : ComputeCurrentWorldFingerprintV5(world);
+    const auto expectedFingerprint = ComputeCurrentWorldBodyFingerprint(world);
     if (world.identity.runtimeSemanticFingerprint == 0 ||
         world.identity.runtimeSemanticFingerprint != expectedFingerprint) {
         return WorldInstallStatus::InvalidWorld;
@@ -3117,7 +3124,7 @@ std::uint64_t detail::ComputeCurrentWorldLocalCapabilityMaskV1(
 
 WorldInstallStatus ValidateCurrentWorldV1(const ContainerWorldInstallViewV1 &world) noexcept {
     try {
-        if ((world.sourceBodyVintage != kCurrentWorldShippingBodyVintage && world.sourceBodyVintage != kCurrentWorldBodyVintageV20))
+        if (!IsReadableCurrentWorldBodyVintage(world.sourceBodyVintage))
             return WorldInstallStatus::InvalidFormat;
         if (!ValidateCurrentWorldSectionGroupsV1(world))
             return WorldInstallStatus::InvalidWorld;
@@ -3130,7 +3137,7 @@ WorldInstallStatus ValidateCurrentWorldV1(const ContainerWorldInstallViewV1 &wor
 WorldInstallStatus detail::ValidateCurrentWorldPartitionLocalV1(
     const ContainerWorldInstallViewV1 &world) noexcept {
     try {
-        if (world.sourceBodyVintage != kCurrentWorldShippingBodyVintage)
+        if (!IsReadableCurrentWorldBodyVintage(world.sourceBodyVintage))
             return WorldInstallStatus::InvalidFormat;
         if (!ValidateCurrentWorldSectionGroupsV1(world))
             return WorldInstallStatus::InvalidWorld;

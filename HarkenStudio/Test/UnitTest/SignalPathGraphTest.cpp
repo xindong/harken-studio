@@ -50,9 +50,9 @@ protected:
         output(c1, b1);
         output(s5, b3);
         output(l2, b1);
-        send(c1, {{toFieldGroupGuid(b2->guid), -6.0f, SendMode::Mix},
-                  {toFieldGroupGuid(b2->guid), 3.0f, SendMode::Ducking},
-                  {toFieldGroupGuid(b2->guid), -12.0f, SendMode::Sidechain}});
+        send(c1, {{toFieldGroupGuid(b2->guid), -6.0f, SendType::Send, false},
+                  {toFieldGroupGuid(b2->guid), 3.0f, SendType::Sidechain, true},
+                  {toFieldGroupGuid(b2->guid), -12.0f, SendType::Sidechain, false}});
     }
 
     ProjectItem* create(const char* name, T type, ProjectItem* parent = nullptr)
@@ -187,30 +187,30 @@ TEST_F(SignalPathGraphTest, BusRoutingProjectionsAgreeAcrossScopesWithoutChangin
     const auto* field = PlayablePropertyAuthoringV1::fieldByName(QStringLiteral("sends"));
     ASSERT_TRUE(locator);
     ASSERT_NE(field, nullptr);
-    const auto rows = [](const ProjectItem* target, SendMode mode, float gain) {
-        return QJsonArray{QJsonObject{
-            {QStringLiteral("targetBusID"), static_cast<qint64>(target->objectID)},
-            {QStringLiteral("mode"), static_cast<int>(mode)},
-            {QStringLiteral("sendLevel"), gain}}};
-    };
+    const QJsonArray sharedRows{Send{b2->objectID, -6.0f, SendType::Send, false}.toJson()};
+    const QJsonArray windowsRows{
+        Send{b3->objectID, 3.0f, SendType::Sidechain, true}.toJson(),
+        Send{b3->objectID, -12.0f, SendType::Sidechain, false}.toJson()};
     ASSERT_TRUE(PlayablePropertyAuthoringV1::setOverride(
-        *b1, *locator, field->id, rows(b2, SendMode::Mix, -6.0f), std::nullopt));
+        *b1, *locator, field->id, sharedRows, std::nullopt));
     const auto shared = captureBusSendState(*b1);
     ASSERT_TRUE(shared);
     ASSERT_TRUE(PlayablePropertyAuthoringV1::setOverride(
-        *b1, *locator, field->id, rows(b3, SendMode::Ducking, 3.0f), HarkenTest::PlatformIds::Windows));
+        *b1, *locator, field->id, windowsRows, HarkenTest::PlatformIds::Windows));
 
     struct Expected {
         PlatformScope scope;
         ProjectItem* target;
-        SendMode mode;
+        SendType type;
+        bool duckTarget;
         float gain;
     };
     const Expected cases[] = {
-        {std::nullopt, b2, SendMode::Mix, -6.0f},
-        {HarkenTest::PlatformIds::Windows, b3, SendMode::Ducking, 3.0f},
-        {HarkenTest::PlatformIds::Android, b2, SendMode::Mix, -6.0f},
-        {std::nullopt, b2, SendMode::Mix, -6.0f},
+        {std::nullopt, b2, SendType::Send, false, -6.0f},
+        {HarkenTest::PlatformIds::Windows, b3, SendType::Sidechain, true, 3.0f},
+        {HarkenTest::PlatformIds::Windows, b3, SendType::Sidechain, false, -12.0f},
+        {HarkenTest::PlatformIds::Android, b2, SendType::Send, false, -6.0f},
+        {std::nullopt, b2, SendType::Send, false, -6.0f},
     };
     for (const auto& expected : cases) {
         const auto scope = toFieldGroupScope(expected.scope);
@@ -218,10 +218,13 @@ TEST_F(SignalPathGraphTest, BusRoutingProjectionsAgreeAcrossScopesWithoutChangin
         const auto resolved = ReferenceSlotResolution::resolveEffectiveSends(
             ReferenceSlotResolution::buildResolutionScope(project, b1, scope));
         ASSERT_TRUE(resolved.valid);
-        ASSERT_EQ(resolved.sends.size(), 1);
-        EXPECT_EQ(resolved.sends.front().targetBusID, expected.target->objectID);
-        EXPECT_EQ(resolved.sends.front().mode, expected.mode);
-        EXPECT_FLOAT_EQ(resolved.sends.front().sendLevel, linear);
+        ASSERT_EQ(resolved.sends.size(), expected.type == SendType::Sidechain ? 2u : 1u);
+        const auto found = std::find_if(resolved.sends.begin(), resolved.sends.end(), [&](const auto& send) {
+            return send.targetBusID == expected.target->objectID && send.type == expected.type
+                && send.duckTarget == expected.duckTarget;
+        });
+        ASSERT_NE(found, resolved.sends.end());
+        EXPECT_FLOAT_EQ(found->sendLevel, linear);
         EXPECT_EQ(resolved.authoringScope,
             expected.scope == PlatformScope{HarkenTest::PlatformIds::Windows} ? scope : FieldGroupScope{});
 
@@ -234,16 +237,17 @@ TEST_F(SignalPathGraphTest, BusRoutingProjectionsAgreeAcrossScopesWithoutChangin
         for (size_t index = 0; index < graph.edges.size(); ++index) {
             const auto& edge = graph.edges[index];
             if (edge.kind != SignalPathEdgeKind::Send
-                || graph.nodes[edge.from.occurrenceIndex].key.objectGuid != b1->guid) continue;
+                || graph.nodes[edge.from.occurrenceIndex].key.objectGuid != b1->guid
+                || edge.type != expected.type || edge.duckTarget != expected.duckTarget) continue;
             ++matching;
             EXPECT_EQ(graph.nodes[edge.to.occurrenceIndex].key.objectGuid, expected.target->guid);
-            EXPECT_EQ(edge.mode, expected.mode);
             EXPECT_FLOAT_EQ(edge.sendLevel, linear);
             const auto gain = signalPathGainValue(project, graph, index);
             ASSERT_TRUE(gain);
             EXPECT_FLOAT_EQ(*gain, linear);
             ASSERT_LT(index, described.size());
-            EXPECT_EQ(described[index].sendMode, expected.mode);
+            EXPECT_EQ(described[index].sendType, expected.type);
+            EXPECT_EQ(described[index].duckTarget, expected.duckTarget);
             ASSERT_TRUE(described[index].gainContent.sendVolume);
             EXPECT_FLOAT_EQ(*described[index].gainContent.sendVolume, linear);
         }

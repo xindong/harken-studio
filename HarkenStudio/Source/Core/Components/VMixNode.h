@@ -188,21 +188,18 @@ inline const PropertySchema& VMixNode::schema()
                 .refFilter=static_cast<int>(ProjectItem::Type::Bus) },
               { .field="sendLevel", .type=PropType::Float, .label="Volume", .unit=" dB",
                 .min=HK_PACK_PROPERTY_SEND_LEVEL_MIN, .max=HK_PACK_PROPERTY_SEND_LEVEL_MAX, .def=0.0, .decimals=1,
-                .toolTip="Gain applied to the sent signal. In Ducking mode, this controls the detector input level, not the target bus attenuation." },
-              { .field="mode", .type=PropType::Enum, .label="Mode", .def=0,
-                .options={{"Mix", 0, "Mix with..."}, {"Ducking", 1, "Duck..."}, {"Sidechain", 2, "Sidechain to..."}},
-                .toolTip="Mix adds audio to the target bus. Ducking drives built-in ducking on the target bus. Sidechain supplies an auxiliary signal to sidechain receivers." },
+                .toolTip="Gain applied to the sent signal or sidechain detector input." },
+              { .field="type", .type=PropType::String, .label="Type", .def="Send" },
+              { .field="duckTarget", .type=PropType::Bool, .label="Target Ducking", .def=false,
+                .options={{"Off", false, "Sidechain to..."}, {"On", true, "Sidechain to... (Ducking Enabled)"}},
+                .toolTip="Use this sidechain to drive built-in ducking on the target bus." },
           },
           .get=[](const harken::studio::IComponent* c){
               QVariantList out;
               for (const Send& s : static_cast<const VMixNode*>(c)->sends) {
-                  QVariantMap row{
-                      { QStringLiteral("mode"), static_cast<int>(s.mode) },
-                      { QStringLiteral("targetBusID"), s.targetBusID },
-                      { QStringLiteral("sendLevel"),   linearToDb(s.sendLevel) } };
-                  if (!s.modeVolumesDb.empty())
-                      row.insert(QStringLiteral("modeVolumes"), sendModeVolumesJson(s.modeVolumesDb).toVariantMap());
-                  out.push_back(row);
+                  auto row = s.toJson();
+                  row[QStringLiteral("sendLevel")] = linearToDb(s.sendLevel);
+                  out.push_back(row.toVariantMap());
               }
               return QVariant(out);
           },
@@ -211,17 +208,10 @@ inline const PropertySchema& VMixNode::schema()
               if (m->hostItem() && PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(m->hostItem()->type)) return false;
               std::vector<Send> sends;
               for (const QVariant& e : v.toList()) {
-                  const QVariantMap row = e.toMap();
-                  const auto modeValue = QJsonValue::fromVariant(row.value(QStringLiteral("mode")));
-                  const int mode = modeValue.toInt(-1);
-                  if (row.contains(QStringLiteral("mode")) && (!modeValue.isDouble()
-                      || modeValue.toDouble() != mode || mode < 0 || mode > 2)) return false;
-                  Send send{row.value(QStringLiteral("targetBusID")).toUInt(),
-                            dbToLinear(row.value(QStringLiteral("sendLevel")).toFloat()),
-                            static_cast<SendMode>(row.value(QStringLiteral("mode")).toInt())};
-                  if (!readSendModeVolumes(QJsonObject::fromVariantMap(row).value(QStringLiteral("modeVolumes")),
-                                           send.mode, send.modeVolumesDb)) return false;
-                  sends.push_back(std::move(send));
+                  auto send = Send::fromJson(QJsonObject::fromVariantMap(e.toMap()));
+                  if (!send) return false;
+                  send->sendLevel = dbToLinear(send->sendLevel);
+                  sends.push_back(*send);
               }
               m->sends = std::move(sends);
               return true;

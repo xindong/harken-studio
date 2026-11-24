@@ -139,7 +139,6 @@ private:
     struct GroupBinding {
         FieldGroupInspectorView view;
         std::vector<QPointer<QCheckBox>> inheritControls;
-        QPointer<QWidget> section;
         QString error;
     };
 
@@ -156,13 +155,14 @@ private:
     void setGroupFieldWidgetValue(const FieldBinding& binding, const QVariant& value);
     QVariant groupFieldValue(const QString& field, const FieldGroupInspectorView* preview = nullptr) const;
     bool groupReferenceSelectable(const QString& field, uint32_t candidate,
-                                  harken::studio::project_schema::SendMode mode = harken::studio::project_schema::SendMode::Mix) const;
+                                  harken::studio::project_schema::SendType type = harken::studio::project_schema::SendType::Send,
+                                  bool duckTarget = false) const;
     bool canEditField(const FieldBinding& binding) const;
     bool groupContextMatches(const FieldGroupInspectorView& view, quint64 revision) const;
     void commitFieldChange(const QString& field, const QVariant& value,
-                           const std::optional<QJsonObject>& groupArgs = {});
+                           const std::optional<QJsonObject>& groupArgs = {}, QWidget* source = nullptr);
     void executeGroupAction(FieldGroupId group, const QString& action, QJsonObject args);
-    void showGroupMenu(FieldGroupId group, const QPoint& globalPosition);
+    void showGroupMenu(FieldGroupId group, QWidget* parent, const QPoint& globalPosition);
 
     static bool evalCondition(const QString& expr, const std::function<QVariant(const QString&)>& get);
 

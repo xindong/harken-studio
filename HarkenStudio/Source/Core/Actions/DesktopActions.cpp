@@ -32,6 +32,14 @@ static ActionResult mainWindowNotAvailable()
     return {false, {}, "MAIN_WINDOW_NOT_AVAILABLE", "MainWindow is not available"};
 }
 
+static bool readBlueprintSendRoute(const QJsonObject& args, SendType& type, bool& duckTarget)
+{
+    QJsonObject route = args;
+    route.insert(QStringLiteral("type"), args.value(QStringLiteral("send_type")));
+    route.insert(QStringLiteral("duckTarget"), args.value(QStringLiteral("duck_target")));
+    return readSendRoute(route, type, duckTarget);
+}
+
 void registerDesktopEditorCommands(const DesktopEditorCommandContext& context)
 {
     EditorCommandContext sharedContext{
@@ -127,9 +135,13 @@ void registerDesktopEditorCommands(const DesktopEditorCommandContext& context)
 
                     if (fromIsBlueprint && toIsBlueprint) {
                         QString edgeType = args.value("edge_type").toString();
+                        SendType sendType;
+                        bool duckTarget;
+                        if (!readBlueprintSendRoute(args, sendType, duckTarget))
+                            return {false, {}, "INVALID_ARGS", "Invalid send_type or duck_target"};
                         auto r = bp->connectNodes(static_cast<uint32_t>(outputNode),
                                                   static_cast<uint32_t>(inputNode),
-                                                  edgeType, outputKind, inputKind);
+                                                  edgeType, outputKind, inputKind, sendType, duckTarget);
                         if (!r.success) {
                             return {false, {}, "BLUEPRINT_CONNECT_FAILED", r.error};
                         }
@@ -185,9 +197,13 @@ void registerDesktopEditorCommands(const DesktopEditorCommandContext& context)
                     if (resolves(static_cast<uint32_t>(outputNode), outputKind) &&
                         resolves(static_cast<uint32_t>(inputNode),  inputKind)) {
                         QString edgeType = args.value("edge_type").toString();
+                        SendType sendType;
+                        bool duckTarget;
+                        if (!readBlueprintSendRoute(args, sendType, duckTarget))
+                            return {false, {}, "INVALID_ARGS", "Invalid send_type or duck_target"};
                         if (!bp->disconnectNodes(static_cast<uint32_t>(outputNode),
                                                   static_cast<uint32_t>(inputNode),
-                                                  edgeType, outputKind, inputKind)) {
+                                                  edgeType, outputKind, inputKind, sendType, duckTarget)) {
                             return {false, {}, "BLUEPRINT_DISCONNECT_FAILED",
                                     QString("No Blueprint edge for %1 -> %2").arg(outputNode).arg(inputNode)};
                         }

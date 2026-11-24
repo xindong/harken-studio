@@ -51,8 +51,8 @@ struct OutputFieldGroup {
 struct SendFieldGroupRow {
     harken::studio::project_schema::AuthoringGuid targetBusID{};
     float sendLevel = 0.0f;
-    harken::studio::project_schema::SendMode mode = harken::studio::project_schema::SendMode::Mix;
-    std::map<harken::studio::project_schema::SendMode, float> modeVolumesDb{};
+    harken::studio::project_schema::SendType type = harken::studio::project_schema::SendType::Send;
+    bool duckTarget = false;
 
     bool operator==(const SendFieldGroupRow&) const = default;
 };

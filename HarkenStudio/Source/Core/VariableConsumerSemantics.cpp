@@ -233,7 +233,7 @@ AuditionVariableDependencies dependenciesForAudition(
                 ReferenceSlotResolution::resolveEffectiveOutputBusId(scope)), self);
         }
         for (const auto& send : ReferenceSlotResolution::resolveEffectiveSends(scope).sends)
-            if (send.mode == SendMode::Mix)
+            if (send.type == SendType::Send)
                 self(byObject.value(send.targetBusID), self);
         if (item->type == ProjectItem::Type::Bus) return;
 

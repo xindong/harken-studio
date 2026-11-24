@@ -320,10 +320,23 @@ const QMap<QString, Contract>& contracts()
         put({"set_bus_properties"}, requireAny(object({{"bus_id", uint32()}, {"volume", number()}, {"pitch", number()},
             {"pan", number()}, {"mute", boolean()}, {"solo", boolean()}, {"outputBusVolume", number()}}, {"bus_id"}),
             {"volume", "pitch", "pan", "mute", "solo", "outputBusVolume"}));
-        const auto send = object({{"src_bus", text()}, {"target_bus_id", uint32()},
+        const auto sendType = withDefault(choice({"Send", "Sidechain"}), "Send");
+        const auto duckTarget = withDefault(boolean(), false);
+        const auto sendRoute = [&](QJsonObject fields, const QJsonArray& required) {
+            fields.insert("type", sendType);
+            fields.insert("duckTarget", duckTarget);
+            auto schema = object(fields, required);
+            schema.insert("anyOf", QJsonArray{
+                QJsonObject{{"properties", QJsonObject{{"duckTarget", QJsonObject{{"const", false}}}}}},
+                QJsonObject{{"required", QJsonArray{"type"}},
+                    {"properties", QJsonObject{{"type", QJsonObject{{"const", "Sidechain"}}}}}}
+            });
+            return schema;
+        };
+        const auto send = sendRoute({{"src_bus", text()}, {"target_bus_id", uint32()},
             {"level", described(withDefault(nonnegative(), 1), "Linear gain: 0 is silence (-96 dB), 1 is unity, 0.5 is approximately -6.02 dB.")}}, {"src_bus", "target_bus_id"});
         put({"set_send", "set_send_level"}, send);
-        put({"remove_send"}, object({{"src_bus", text()}, {"target_bus_id", uint32()}}, {"src_bus", "target_bus_id"}));
+        put({"remove_send"}, sendRoute({{"src_bus", text()}, {"target_bus_id", uint32()}}, {"src_bus", "target_bus_id"}));
 
         const auto container = [&](QJsonObject properties, const QJsonArray& required = {}) {
             properties.insert("container_path", text());
@@ -350,9 +363,8 @@ const QMap<QString, Contract>& contracts()
             if (command == "set_field_group_field" || command == "clear_field_group_field_override") { fields.insert("field", text()); required.append("field"); }
             if (command == "set_field_group_field") { fields.insert("value", described({}, "Typed value: GUID for outputBusRef/spatial.attenuationRef/settingsRef, boolean for spatial.is3DEnabled, number for scalar fields; null resets outputBusRef to Master or clears settingsRef.")); required.append("value"); }
             if (command == "replace_field_group_sends") {
-                fields.insert("sends", array(object({{"targetBusID", uuid()}, {"sendLevel", number()},
-                    {"mode", QJsonObject{{"type", "integer"}, {"enum", QJsonArray{0, 1, 2}}}},
-                    {"modeVolumes", object({{"0", number()}, {"1", number()}, {"2", number()}})}}, {"targetBusID", "sendLevel"})));
+                fields.insert("sends", array(sendRoute({{"targetBusID", uuid()}, {"sendLevel", number()}},
+                                                      {"targetBusID", "sendLevel"})));
                 required.append("sends");
             }
             if (command == "replace_field_group_effects") {

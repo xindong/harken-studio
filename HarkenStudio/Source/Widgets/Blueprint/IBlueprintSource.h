@@ -68,7 +68,8 @@ struct BlueprintEdgeDesc {
     int               fromPortPairIndex = 0;
     int               toPortPairIndex = 0;
     NodeContentInfo   gainContent;
-    SendMode          sendMode = SendMode::Mix;
+    SendType          sendType = SendType::Send;
+    bool              duckTarget = false;
 };
 
 class IBlueprintSource : public QObject {
@@ -93,11 +94,11 @@ public:
     virtual bool onConnect(uint32_t , uint32_t ,
                            const QString& ,
                            const QString& ,
-                           const QString& ) { return false; }
+                           const QString& , SendType, bool) { return false; }
     virtual bool onDisconnect(uint32_t , uint32_t ,
                               const QString& ,
                               const QString& ,
-                              const QString& ) { return false; }
+                              const QString& , SendType, bool) { return false; }
     virtual bool onDelete(BlueprintNodeKind , uint32_t ) { return false; }
 
     virtual void contextMenu(QMenu& ,

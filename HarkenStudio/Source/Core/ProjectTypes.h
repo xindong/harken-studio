@@ -97,48 +97,47 @@ enum class ProjectItemType {
     Conversion = 11
 };
 
-using SendMode = harken::studio::project_schema::SendMode;
+using SendType = harken::studio::project_schema::SendType;
 
-inline QJsonObject sendModeVolumesJson(const std::map<SendMode, float>& volumes)
+inline QString sendTypeName(SendType type)
 {
-    QJsonObject result;
-    for (const auto& [mode, volume] : volumes)
-        result.insert(QString::number(static_cast<int>(mode)), volume);
-    return result;
+    return type == SendType::Sidechain ? QStringLiteral("Sidechain") : QStringLiteral("Send");
 }
 
-inline bool readSendModeVolumes(const QJsonValue& value, SendMode activeMode,
-                                std::map<SendMode, float>& volumes)
+inline bool readSendRoute(const QJsonObject& row, SendType& type, bool& duckTarget)
 {
-    if (!value.isUndefined() && !value.isObject()) return false;
-    std::map<SendMode, float> parsed;
-    const auto object = value.toObject();
-    for (auto it = object.begin(); it != object.end(); ++it) {
-        if (it.key() != QLatin1String("0") && it.key() != QLatin1String("1")
-            && it.key() != QLatin1String("2")) return false;
-        const auto mode = static_cast<SendMode>(it.key().toInt());
-        const double volume = it.value().toDouble();
-        if (mode == activeMode || !it.value().isDouble() || !std::isfinite(volume)
-            || volume < -96.0 || volume > 24.0) return false;
-        parsed.emplace(mode, static_cast<float>(volume));
-    }
-    volumes = std::move(parsed);
-    return true;
+    const auto typeValue = row.value(QStringLiteral("type"));
+    const auto duckValue = row.value(QStringLiteral("duckTarget"));
+    if (row.contains(QStringLiteral("mode")) || row.contains(QStringLiteral("modeVolumes"))
+        || (!duckValue.isUndefined() && !duckValue.isBool())) return false;
+    if (typeValue.isUndefined() || typeValue == QStringLiteral("Send"))
+        type = SendType::Send;
+    else if (typeValue == QStringLiteral("Sidechain"))
+        type = SendType::Sidechain;
+    else
+        return false;
+    duckTarget = duckValue.toBool();
+    return harken::studio::project_schema::IsValidSendRoute(type, duckTarget);
+}
+
+inline void writeSendRoute(QJsonObject& row, SendType type, bool duckTarget)
+{
+    row[QStringLiteral("type")] = sendTypeName(type);
+    row[QStringLiteral("duckTarget")] = duckTarget;
 }
 
 struct Send
 {
     uint32_t targetBusID = 0;
     float sendLevel = 0.0f;
-    SendMode mode = SendMode::Mix;
-    std::map<SendMode, float> modeVolumesDb{};
+    SendType type = SendType::Send;
+    bool duckTarget = false;
 
     QJsonObject toJson() const {
         QJsonObject obj;
         obj["targetBusID"] = static_cast<qint64>(targetBusID);
         obj["sendLevel"] = sendLevel;
-        obj["mode"] = static_cast<int>(mode);
-        if (!modeVolumesDb.empty()) obj["modeVolumes"] = sendModeVolumesJson(modeVolumesDb);
+        writeSendRoute(obj, type, duckTarget);
         return obj;
     }
 
@@ -146,8 +145,7 @@ struct Send
         Send send;
         send.targetBusID = static_cast<uint32_t>(obj["targetBusID"].toInteger());
         send.sendLevel = static_cast<float>(obj["sendLevel"].toDouble());
-        send.mode = static_cast<SendMode>(obj["mode"].toInt());
-        if (!readSendModeVolumes(obj.value(QStringLiteral("modeVolumes")), send.mode, send.modeVolumesDb))
+        if (!readSendRoute(obj, send.type, send.duckTarget))
             return std::nullopt;
         return send;
     }
@@ -250,14 +248,15 @@ struct SendViewInfo
     uint32_t targetBusID = 0;
     QString  targetBusName;
     float    sendLevel = 0.0f;
-    SendMode mode = SendMode::Mix;
+    SendType type = SendType::Send;
+    bool duckTarget = false;
 
     QJsonObject toJson() const {
         QJsonObject obj;
         obj["targetBusID"] = static_cast<qint64>(targetBusID);
         obj["targetBusName"] = targetBusName;
         obj["sendLevel"] = sendLevel;
-        obj["mode"] = static_cast<int>(mode);
+        writeSendRoute(obj, type, duckTarget);
         return obj;
     }
 };
@@ -273,7 +272,8 @@ struct IncomingSendInfo
     uint32_t fromBusID = 0;
     QString  fromName;
     float    level = 0.0f;
-    SendMode mode = SendMode::Mix;
+    SendType type = SendType::Send;
+    bool duckTarget = false;
 };
 
 struct BusChainNode

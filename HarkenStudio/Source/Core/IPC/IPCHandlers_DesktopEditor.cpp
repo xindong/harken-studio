@@ -152,7 +152,8 @@ QJsonObject IPCServer::handleGetNodeGraph(const QJsonObject& args)
                     obj["type"] = type;
                     if (e.kind == BlueprintEdgeKind::Send) {
                         obj["send_index"] = static_cast<int>(e.sendIndex);
-                        obj["mode"] = static_cast<int>(e.sendMode);
+                        obj["send_type"] = sendTypeName(e.sendType);
+                        obj["duck_target"] = e.duckTarget;
                     }
                     bpConns.append(obj);
                 }

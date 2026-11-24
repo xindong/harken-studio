@@ -1041,10 +1041,9 @@ TEST_F(ProjectDocumentRoundTripTest, OrdinaryEditsAndUndoPreserveTheSameDocument
             if (item != manager.getMasterBusItem())
                 properties.append({QStringLiteral("sends"), QJsonArray{QJsonObject{
                     {QStringLiteral("targetBusID"), static_cast<qint64>(manager.getMasterBusItem()->objectID)},
-                    {QStringLiteral("mode"), static_cast<int>(SendMode::Sidechain)},
-                    {QStringLiteral("sendLevel"), -6.0},
-                    {QStringLiteral("modeVolumes"), QJsonObject{
-                        {QStringLiteral("0"), -18.0}, {QStringLiteral("1"), -12.0}}}}}});
+                    {QStringLiteral("type"), QStringLiteral("Sidechain")},
+                    {QStringLiteral("duckTarget"), false},
+                    {QStringLiteral("sendLevel"), -6.0}}}});
         } else if (item->type == ProjectItem::Type::Action) {
             const auto* target = manager.findItemByGuid(segmentGuid_);
             ASSERT_NE(target, nullptr);

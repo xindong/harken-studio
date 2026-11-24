@@ -882,8 +882,10 @@ MoveItemCommand::MoveItemCommand(
                 QJsonArray rows;
                 for (const auto& value : before->value.value.toArray()) {
                     const auto row = value.toObject();
+                    SendType type;
+                    bool duckTarget;
                     if (row.value(QStringLiteral("targetBusID")).toInteger() != newParent->objectID
-                        || static_cast<SendMode>(row.value(QStringLiteral("mode")).toInt()) == SendMode::Sidechain)
+                        || (readSendRoute(row, type, duckTarget) && type == SendType::Sidechain && !duckTarget))
                         rows.append(value);
                 }
                 if (rows == before->value.value.toArray()) continue;

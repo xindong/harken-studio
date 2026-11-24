@@ -219,7 +219,7 @@ QByteArray pathEdgeIdentity(const SignalPathGraph& graph, size_t index)
         << static_cast<quint64>(edge.from.portPairIndex)
         << graph.nodes[edge.to.occurrenceIndex].key.objectGuid
         << static_cast<quint64>(edge.to.portPairIndex) << static_cast<int>(edge.kind)
-        << static_cast<int>(edge.mode) << edge.routingSource.has_value();
+        << static_cast<int>(edge.type) << edge.duckTarget << edge.routingSource.has_value();
     if (edge.routingSource) {
         stream << edge.routingSource->objectGuid << edge.routingSource->scope.has_value();
         if (edge.routingSource->scope) stream << fromFieldGroupGuid(*edge.routingSource->scope);
@@ -846,7 +846,7 @@ void BlueprintCanvasWidget::materializeFromSource_()
             stream << pathProjectId_ << QString::fromLatin1(flowDirectionToString(flowDir_))
                 << key.from << key.to << static_cast<int>(key.kind)
                 << key.routingSource.value_or(QUuid());
-            if (key.mode != SendMode::Mix) stream << static_cast<int>(key.mode);
+            if (key.kind == SignalPathEdgeKind::Send) stream << static_cast<int>(key.type) << key.duckTarget;
             gainPositionKeys_[index] = QStringLiteral("Blueprint/RouteGainLayout/Gains/")
                 + QString::fromLatin1(QCryptographicHash::hash(identity, QCryptographicHash::Sha256).toHex());
         }
@@ -1189,12 +1189,12 @@ void BlueprintCanvasWidget::onBusChanged(uint32_t ,
 
 BlueprintCanvasWidget::ConnectResult
 BlueprintCanvasWidget::connectNodes(uint32_t fromId, uint32_t toId, QString edgeType,
-                                    QString fromKind, QString toKind)
+                                    QString fromKind, QString toKind, SendType sendType, bool duckTarget)
 {
     ConnectResult r;
     if (!activeSource_) { r.error = QStringLiteral("no_source"); return r; }
     if (!activeSource_->supportsEditing()) { r.error = QStringLiteral("unsupported"); return r; }
-    r.success = activeSource_->onConnect(fromId, toId, edgeType, fromKind, toKind);
+    r.success = activeSource_->onConnect(fromId, toId, edgeType, fromKind, toKind, sendType, duckTarget);
     if (activeSource_ == chainSource_.get()) r = chainSource_->lastConnectResult();
     if (r.success) {
         materializeFromSource_();
@@ -1241,10 +1241,10 @@ bool BlueprintCanvasWidget::applyConnectPlan_(SignalPathConnectPlan plan)
 }
 
 bool BlueprintCanvasWidget::disconnectNodes(uint32_t fromId, uint32_t toId, QString edgeType,
-                                            QString fromKind, QString toKind)
+                                            QString fromKind, QString toKind, SendType sendType, bool duckTarget)
 {
     if (!activeSource_ || !activeSource_->supportsEditing()) return false;
-    const bool ok = activeSource_->onDisconnect(fromId, toId, edgeType, fromKind, toKind);
+    const bool ok = activeSource_->onDisconnect(fromId, toId, edgeType, fromKind, toKind, sendType, duckTarget);
     if (ok) materializeFromSource_();
     return ok;
 }
@@ -1733,7 +1733,7 @@ BlueprintCanvasWidget::PathEdgeKey BlueprintCanvasWidget::signalPathEdgeKey_(siz
     const auto& edge = graph.edges[index];
     return {graph.nodes[edge.from.occurrenceIndex].key.objectGuid,
         graph.nodes[edge.to.occurrenceIndex].key.objectGuid, edge.kind,
-        edge.routingSource ? std::make_optional(edge.routingSource->objectGuid) : std::nullopt, edge.mode};
+        edge.routingSource ? std::make_optional(edge.routingSource->objectGuid) : std::nullopt, edge.type, edge.duckTarget};
 }
 
 void BlueprintCanvasWidget::setSignalPathEdgeSelected_(size_t index, bool selected)

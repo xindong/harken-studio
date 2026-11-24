@@ -35,9 +35,9 @@ public:
     std::vector<BlueprintEdgeDesc> buildEdges() override;
     bool                           supportsEditing() const override { return true; }
     bool onConnect(uint32_t fromId, uint32_t toId, const QString& edgeType,
-                   const QString& fromKind, const QString& toKind) override;
+                   const QString& fromKind, const QString& toKind, SendType sendType, bool duckTarget) override;
     bool onDisconnect(uint32_t fromId, uint32_t toId, const QString& edgeType,
-                      const QString& fromKind, const QString& toKind) override;
+                      const QString& fromKind, const QString& toKind, SendType sendType, bool duckTarget) override;
     bool onDelete(BlueprintNodeKind kind, uint32_t id) override;
 
     void                   loadItem(ProjectItem* item);
@@ -79,11 +79,11 @@ private:
     BlueprintConnectResult doConnect(uint32_t fromId, uint32_t toId,
                                      const QString& edgeType,
                                      const QString& fromKind,
-                                     const QString& toKind);
+                                     const QString& toKind, SendType sendType, bool duckTarget);
     bool                   doDisconnect(uint32_t fromId, uint32_t toId,
                                         const QString& edgeType,
                                         const QString& fromKind,
-                                        const QString& toKind);
+                                        const QString& toKind, SendType sendType, bool duckTarget);
     void                   rebuildViewForCurrentTarget();
     void                   persistLayerVisibility() const;
     std::array<bool, 3> layerVisibility_ {true, true, true};

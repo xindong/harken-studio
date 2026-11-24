@@ -25,7 +25,7 @@ enum class PropertyCategory : uint8_t { Basic, Route, Spatial, Limitation };
 enum class PropertySection : uint8_t {
     None, Playback, Status, Advanced, Source, Selection, Step, Dimension,
     Label, Clip, Custom, Output, Input, Send, Receive, Rating, PlaybackPriority, Effect,
-    FilterLowPass, FilterHighPass, FilterLowShelf, FilterHighShelf, Conversion
+    FilterLowPass, FilterHighPass, FilterLowShelf, FilterHighShelf, Conversion, Sidechain
 };
 
 struct EnumOption { QString text; QVariant value; QString addActionText{}; };
@@ -104,6 +104,8 @@ struct PropertyDescriptor
     std::function<bool(uint32_t, const QVariantMap&, uint32_t)> refSelectableForElement;
     QString toolTip;
     std::function<QVariantMap(const QVariantMap&, const QString&, const QVariant&)> editElement;
+    QVariantMap listRowFilter;
+    QString storageField;
 };
 
 using PropertySchema = std::vector<PropertyDescriptor>;

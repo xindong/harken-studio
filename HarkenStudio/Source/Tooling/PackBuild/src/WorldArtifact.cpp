@@ -30,7 +30,7 @@ bool EncodeCurrentWorldArtifactV1(const ContainerWorldInstallViewV1 &world,
                                   std::vector<std::uint8_t> &out) noexcept {
     try {
         std::vector<std::uint8_t> body;
-        if (!EncodeCurrentWorldShippingBody(world, body) ||
+        if (!EncodeCurrentWorldPartitionBody(world, body) ||
             body.size() > kCurrentWorldArtifactMaxBodyBytes ||
             body.size() >
                 std::numeric_limits<std::size_t>::max() - kCurrentWorldArtifactHeaderBytes) {
@@ -45,7 +45,7 @@ bool EncodeCurrentWorldArtifactV1(const ContainerWorldInstallViewV1 &world,
         AppendU16(out, 0);
         AppendU32(out, kCurrentWorldArtifactHeaderBytes);
         AppendU32(out, 1);
-        AppendU32(out, kCurrentWorldShippingBodyVintage);
+        AppendU32(out, world.sourceBodyVintage);
         AppendU64(out, body.size());
         AppendU64(out, Fnv1a64(body.data(), body.size()));
         AppendU64(out, world.identity.runtimeSemanticFingerprint);

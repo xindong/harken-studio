@@ -296,7 +296,7 @@ CompileResultV1 CompileCurrentWorldV1(
     const std::map<harken::studio::types::ObjectId, std::uint32_t>& propertyAuthoredOrders = {},
     const std::set<std::uint32_t>& reservedPropertyAuthoredOrders = {},
     const std::vector<DuckingSendAuthoringV1>& duckingSends = {},
-    bool includePreviewDucking = false);
+    bool emitEmptySignalTables = false);
 
 } // namespace harkencurrentworldcompiler
 

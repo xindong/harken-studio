@@ -116,6 +116,45 @@ TEST(PackSignalRelation, ReceiverConfigurationAlsoRequiresDeclaredClosure) {
     EXPECT_EQ(composition.PrepareCommit({Candidate(1, provider), Candidate(2, consumer, 1)},
         nullptr, 0, 8, 0, &prepared), VN_BAD_PACK);
 }
+
+TEST(PackSignalRelation, ReplicatedSoundKeepsOneRouteAndRejectsConflictingOwners) {
+    const auto sound = SoundProperty();
+    SignalReceiverV1 receiver;
+    receiver.target.stableId = VN_BUS_MASTER;
+    ContainerWorldInstallViewV1 init;
+    init.signalReceivers = &receiver;
+    init.signalReceiverCount = 1;
+    SignalRelationV1 relation;
+    relation.stableId = harkentest::ObjectId(200);
+    relation.source = {SignalEndpointKindV1::Sound, 0, sound.stableId, sound.programSemanticFingerprint, 0};
+    relation.target = receiver.target;
+    ContainerWorldInstallViewV1 copy;
+    copy.playableProperties = &sound;
+    copy.playablePropertyCount = 1;
+    copy.signalRelations = &relation;
+    copy.signalRelationCount = 1;
+    const auto receiverOwner = Candidate(1, init);
+    const auto first = Candidate(2, copy, 1);
+    const auto second = Candidate(3, copy, 1);
+    PackComposition composition{};
+    ASSERT_EQ(VN_OK, composition.Commit({receiverOwner, first, second}, nullptr, 0, 8, 0));
+    ASSERT_EQ(1u, composition.Published()->signalRelations.size());
+    EXPECT_EQ(relation.stableId, composition.Published()->signalRelations.front().stableId);
+    ASSERT_EQ(VN_OK, composition.Commit({receiverOwner, second}, nullptr, 0, 8, 0));
+    ASSERT_EQ(1u, composition.Published()->signalRelations.size());
+    const auto previous = composition.Published();
+    ContainerWorldInstallViewV1 external;
+    external.signalRelations = &relation;
+    external.signalRelationCount = 1;
+    EXPECT_EQ(VN_BAD_PACK, composition.Commit(
+        {receiverOwner, first, second, Candidate(4, external, 2)}, nullptr, 0, 8, 0));
+    relation.sendGainDb = -12;
+    EXPECT_EQ(VN_BAD_PACK, composition.Commit({receiverOwner, first, Candidate(3, copy, 1)}, nullptr, 0, 8, 0));
+    copy.signalRelations = nullptr;
+    copy.signalRelationCount = 0;
+    EXPECT_EQ(VN_BAD_PACK, composition.Commit({receiverOwner, first, Candidate(3, copy, 1)}, nullptr, 0, 8, 0));
+    EXPECT_EQ(previous, composition.Published());
+}
 } // namespace
 
 namespace {

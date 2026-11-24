@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <set>
+#include <tuple>
 
 namespace harken::studio {
 
@@ -106,27 +107,23 @@ QString validateBusRouting(const ProjectData& project, const std::vector<BusSend
             if (scope && state && !state->value.present) state = stateFor(*bus, {});
             if (!state || (state->value.present && !state->value.value.isArray()))
                 return QStringLiteral("Bus Send configuration is unavailable");
-            std::set<std::pair<uint32_t, SendMode>> identities;
+            std::set<std::tuple<uint32_t, SendType, bool>> identities;
             for (const auto& value : state->value.present ? state->value.value.toArray() : QJsonArray{}) {
                 if (!value.isObject()) return QStringLiteral("Bus Send row is invalid");
                 const auto row = value.toObject();
                 const double rawTarget = row.value(QStringLiteral("targetBusID")).toDouble();
                 const auto target = static_cast<uint32_t>(row.value(QStringLiteral("targetBusID")).toInteger());
-                const auto rawMode = row.value(QStringLiteral("mode"));
-                const int modeValue = rawMode.isUndefined() ? 0 : rawMode.toInt(-1);
-                const auto mode = static_cast<SendMode>(modeValue);
+                SendType type;
+                bool duckTarget;
                 const auto rawGain = row.value(QStringLiteral("sendLevel"));
                 const double gain = rawGain.toDouble();
-                std::map<SendMode, float> volumes;
                 if (!row.value(QStringLiteral("targetBusID")).isDouble() || rawTarget != target
                     || !buses.contains(target) || target == bus->objectID
-                    || (!rawMode.isUndefined() && (!rawMode.isDouble() || rawMode.toDouble() != modeValue))
-                    || modeValue < 0 || modeValue > 2 || !rawGain.isDouble() || !std::isfinite(gain)
+                    || !readSendRoute(row, type, duckTarget) || !rawGain.isDouble() || !std::isfinite(gain)
                     || gain < -96.0 || gain > 24.0
-                    || !readSendModeVolumes(row.value(QStringLiteral("modeVolumes")), mode, volumes)
-                    || (mode != SendMode::Sidechain && target == output)
-                    || !identities.emplace(target, mode).second)
-                    return QStringLiteral("Bus Send has an invalid target, mode, volume, or output conflict");
+                    || ((type == SendType::Send || duckTarget) && target == output)
+                    || !identities.emplace(target, type, duckTarget).second)
+                    return QStringLiteral("Bus Send has an invalid target, type, Target Ducking setting, volume, or output conflict");
                 routes.sendTargets[bus->objectID].push_back(target);
             }
         }

@@ -68,6 +68,7 @@
 #include <map>
 #include <memory>
 #include <set>
+#include <span>
 #include <string>
 #include <tuple>
 #include <unordered_map>
@@ -1535,7 +1536,6 @@ bool sliceWorld(
     PackMeta* pack,
     QString* error)
 {
-    harken::studio::build::ContainerWorldInstallViewV1 slice = world;
     for (std::uint32_t i = 0; i < world.variableCount; ++i) {
         if (ownedBy(owners, world.variables[i].variableId, packStableId))
             variables->push_back(world.variables[i]);
@@ -1654,27 +1654,22 @@ bool sliceWorld(
         actions->push_back(action);
     }
 
-    slice.variables = variables->empty() ? nullptr : variables->data();
-    slice.variableCount = static_cast<std::uint32_t>(variables->size());
-    slice.playableProperties = playables->empty() ? nullptr : playables->data();
-    slice.playablePropertyCount = static_cast<std::uint32_t>(playables->size());
-    slice.playableOccurrences = occurrences->empty() ? nullptr : occurrences->data();
-    slice.playableOccurrenceCount = static_cast<std::uint32_t>(occurrences->size());
-    slice.trackSchedules = tracks->empty() ? nullptr : tracks->data();
-    slice.trackScheduleCount = static_cast<std::uint32_t>(tracks->size());
-    slice.segmentSchedules = segments->empty() ? nullptr : segments->data();
-    slice.segmentScheduleCount = static_cast<std::uint32_t>(segments->size());
-    slice.containers = containers->empty() ? nullptr : containers->data();
-    slice.containerCount = static_cast<std::uint32_t>(containers->size());
-    slice.transitions = transitions->empty() ? nullptr : transitions->data();
-    slice.transitionCount = static_cast<std::uint32_t>(transitions->size());
-    slice.actions = actions->empty() ? nullptr : actions->data();
-    slice.actionCount = static_cast<std::uint32_t>(actions->size());
-    slice.identity.capabilityMask =
-        harken::studio::build::detail::ComputeCurrentWorldLocalCapabilityMaskV1(slice);
-    slice.identity.runtimeSemanticFingerprint =
-        harken::studio::build::ComputeCurrentWorldFingerprintV5(slice);
     return true;
+}
+
+void setPartitionSignals(harken::studio::build::ContainerWorldInstallViewV1& slice,
+                         std::span<const harken::studio::build::SignalRelationV1> relations,
+                         std::span<const harken::studio::build::SignalReceiverV1> receivers)
+{
+    slice.signalRelations = relations.empty() ? nullptr : relations.data();
+    slice.signalRelationCount = static_cast<std::uint32_t>(relations.size());
+    slice.signalReceivers = receivers.empty() ? nullptr : receivers.data();
+    slice.signalReceiverCount = static_cast<std::uint32_t>(receivers.size());
+    slice.sourceBodyVintage = relations.empty() && receivers.empty()
+        ? harken::studio::build::kCurrentWorldShippingBodyVintage
+        : harken::studio::build::kCurrentWorldBodyVintageV20;
+    slice.identity.capabilityMask = harken::studio::build::detail::ComputeCurrentWorldLocalCapabilityMaskV1(slice);
+    slice.identity.runtimeSemanticFingerprint = harken::studio::build::ComputeCurrentWorldBodyFingerprint(slice);
 }
 
 bool encodePartition(std::uint64_t packStableId,
@@ -1685,14 +1680,14 @@ bool encodePartition(std::uint64_t packStableId,
                      std::uint64_t partitionRevision = 1)
 {
     std::vector<std::uint8_t> body;
-    if (!harken::studio::build::EncodeCurrentWorldShippingBody(slice, body)) {
+    if (!harken::studio::build::EncodeCurrentWorldPartitionBody(slice, body)) {
         if (error)
             *error = QStringLiteral("Failed to encode definition partition");
         return false;
     }
     harken::studio::build::PackCanonicalPartitionHeader header;
     header.headerBytes = harken::studio::build::kPackBytes<HkPackCanonicalPartitionHeader>;
-    header.bodyVintage = harken::studio::build::kCanonicalDefinitionPartitionBodyVintage;
+    header.bodyVintage = slice.sourceBodyVintage;
     header.bodyBytes = body.size();
     header.bodyChecksum = harken::studio::build::Fnv1a64(body.data(), body.size());
     header.packStableId = packStableId;
@@ -1880,6 +1875,7 @@ std::set<harken::studio::types::ObjectId> effectPresetReferences(
 bool harmonizePublicationCapacity(std::vector<PackMeta>* packs,
                                   PackBuildState* buildState,
                                   const std::map<harken::studio::types::ObjectId, std::vector<std::uint8_t>>& authoredPresets,
+                                   std::map<harken::studio::types::ObjectId, harken::studio::build::SignalReceiverV1> receivers,
                                   QString* error)
 {
     std::vector<std::unique_ptr<harken::studio::build::CurrentWorldBodyImage>> bodies;
@@ -1887,6 +1883,7 @@ bool harmonizePublicationCapacity(std::vector<PackMeta>* packs,
     harken::studio::build::WorldCapacitySummaryV1 common;
     QStringList languages{QString()};
     std::map<harken::studio::types::ObjectId, std::vector<std::uint8_t>> presets;
+    std::set<harken::studio::types::ObjectId> receiverTargets;
     for (const auto& pack : *packs) {
         if (pack.packKind != HK_PACK_KIND_INIT) continue;
         const auto& entries = pack.retained ? pack.previousEntries : pack.resourceEntries;
@@ -1951,7 +1948,20 @@ bool harmonizePublicationCapacity(std::vector<PackMeta>* packs,
                 return false;
             }
         }
-        mergeCapacity(&common, body->ProductionView()->capacity);
+        const auto& view = *body->ProductionView();
+        if (view.signalRelationCount && pack.packKind != HK_PACK_KIND_INIT
+            && !harken::studio::build::CanonicalBusTripleEqual(
+                harken::studio::build::PartitionBusTriple(header),
+                harken::studio::build::PartitionBusTriple(headers.front()))) {
+            *error = QStringLiteral("Ducking in Pack '%1' requires an updated Bus snapshot. Re-export Init with its Actions.")
+                .arg(pack.fileName);
+            return false;
+        }
+        for (std::uint32_t i = 0; i < view.signalRelationCount; ++i)
+            receiverTargets.insert(view.signalRelations[i].target.stableId);
+        for (std::uint32_t i = 0; i < view.signalReceiverCount; ++i)
+            receivers.try_emplace(view.signalReceivers[i].target.stableId, view.signalReceivers[i]);
+        mergeCapacity(&common, view.capacity);
         if (pack.previousValid) mergeCapacity(&common, pack.previousCapacity);
         if (!languages.contains(pack.language)) languages.append(pack.language);
         headers.push_back(header);
@@ -2024,12 +2034,26 @@ bool harmonizePublicationCapacity(std::vector<PackMeta>* packs,
             return false;
         }
     }
+    std::vector<harken::studio::build::SignalReceiverV1> initReceivers;
+    for (const auto& target : receiverTargets) {
+        const auto receiver = receivers.find(target);
+        if (receiver == receivers.end()) {
+            *error = QStringLiteral("Missing Ducking receiver for Bus %1").arg(objectIdString(target));
+            return false;
+        }
+        initReceivers.push_back(receiver->second);
+    }
     for (std::size_t i = 0; i < packs->size(); ++i) {
         auto& pack = (*packs)[i];
         auto world = *bodies[i]->ProductionView();
-        if (!mergeCapacity(&world.capacity, common)) continue;
-        world.identity.runtimeSemanticFingerprint =
-            harken::studio::build::ComputeCurrentWorldFingerprintV5(world);
+        const auto previousFingerprint = world.identity.runtimeSemanticFingerprint;
+        const bool capacityChanged = mergeCapacity(&world.capacity, common);
+        if (pack.packKind == HK_PACK_KIND_INIT) {
+            setPartitionSignals(world, {world.signalRelations, world.signalRelationCount}, initReceivers);
+        } else if (capacityChanged) {
+            world.identity.runtimeSemanticFingerprint = harken::studio::build::ComputeCurrentWorldBodyFingerprint(world);
+        }
+        if (!capacityChanged && world.identity.runtimeSemanticFingerprint == previousFingerprint) continue;
         if (!encodePartition(pack.packStableId, world, pack.ownedDefinitions,
                 &pack.partitionPayload, error,
                 harken::studio::build::PartitionBusTriple(headers[i]),
@@ -2056,7 +2080,7 @@ bool readExistingPack(const QDir& output, const QString& path,
             reinterpret_cast<const std::uint8_t*>(bytes.constData()), bytes.size(), &image)
                 != harken::studio::build::kPackOk
         || !body.Decode(image.partitionBody.data(), image.partitionBody.size(),
-            harken::studio::build::kCanonicalDefinitionPartitionBodyVintage)) {
+            image.partitionHeader.bodyVintage)) {
         *error = QStringLiteral("Cannot read existing Pack '%1'").arg(path);
         return false;
     }
@@ -2182,7 +2206,7 @@ bool inspectPackPublication(const QString& directory, const QString& projectId,
                 bytes.size(), &image) == harken::studio::build::kPackOk;
         const bool decoded = parsed
             && body.Decode(image.partitionBody.data(), image.partitionBody.size(),
-                harken::studio::build::kCanonicalDefinitionPartitionBodyVintage);
+                image.partitionHeader.bodyVintage);
         if (!decoded) {
             if (requireComplete && selected && hasPackMetadata)
                 return reject(QStringLiteral("Invalid published Pack '%1'").arg(path));
@@ -2448,7 +2472,7 @@ bool inspectPackPublication(const QString& directory, const QString& projectId,
                 || harken::studio::build::ParsePackCanonicalImage(reinterpret_cast<const std::uint8_t*>(bytes.constData()),
                     bytes.size(), &image) != harken::studio::build::kPackOk
                 || !body.Decode(image.partitionBody.data(), image.partitionBody.size(),
-                    harken::studio::build::kCanonicalDefinitionPartitionBodyVintage)
+                    image.partitionHeader.bodyVintage)
                 || body.ProductionView()->identity.projectId != expectedProject) continue;
             if ((image.packKind == HK_PACK_KIND_CANONICAL_CONTENT
                     && harken::studio::build::ValidateCanonicalInitDependency(image.dependencyEdges, initId)
@@ -3060,6 +3084,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
     std::set<std::uint32_t> reservedPropertyOrders, reservedContainerOrders;
     std::vector<PublicationAuthoredOrders> publicationOrders;
     std::set<harken::studio::types::ObjectId> neutralDefinitionIds = sharedLayerIds;
+    std::map<harken::studio::types::ObjectId, harken::studio::build::SignalReceiverV1> receivers;
     if (request.options.updateSelectedOnly) {
         for (const auto& variant : request.plan->variants) {
             if (!variant.variant.language.isEmpty()) continue;
@@ -3224,6 +3249,17 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
                             .arg(harken::studio::objectIdString(compiled.relatedStableId)).arg(language));
         }
         const harken::studio::build::ContainerWorldInstallViewV1& world = compiled.world->View();
+        std::vector<harken::studio::build::SignalRelationV1> busRelations;
+        std::unordered_map<harken::studio::types::ObjectId, std::vector<harken::studio::build::SignalRelationV1>> soundRelations;
+        for (std::uint32_t i = 0; i < world.signalRelationCount; ++i) {
+            const auto& relation = world.signalRelations[i];
+            if (relation.source.kind == harken::studio::build::SignalEndpointKindV1::Bus)
+                busRelations.push_back(relation);
+            else
+                soundRelations[relation.source.stableId].push_back(relation);
+        }
+        for (std::uint32_t i = 0; i < world.signalReceiverCount; ++i)
+            receivers.try_emplace(world.signalReceivers[i].target.stableId, world.signalReceivers[i]);
         if (request.options.updateSelectedOnly) {
             for (std::uint32_t i = 0; i < world.playablePropertyCount; ++i) {
                 const auto& property = world.playableProperties[i];
@@ -3454,10 +3490,22 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
             slice.transitionCount = static_cast<std::uint32_t>(pack.slicedTransitions.size());
             slice.actions = pack.slicedActions.empty() ? nullptr : pack.slicedActions.data();
             slice.actionCount = static_cast<std::uint32_t>(pack.slicedActions.size());
-            slice.identity.capabilityMask =
-                harken::studio::build::detail::ComputeCurrentWorldLocalCapabilityMaskV1(slice);
-            slice.identity.runtimeSemanticFingerprint =
-                harken::studio::build::ComputeCurrentWorldFingerprintV5(slice);
+            std::vector<harken::studio::build::SignalRelationV1> relations;
+            if (pack.packStableId == initId) {
+                relations = busRelations;
+            } else if (!soundRelations.empty()) {
+                for (const auto& playable : pack.slicedPlayables) {
+                    const auto source = soundRelations.find(playable.stableId);
+                    if (source == soundRelations.end()) continue;
+                    for (auto relation : source->second) {
+                        relation.source.expectedPropertyFingerprint = playable.programSemanticFingerprint;
+                        relations.push_back(relation);
+                    }
+                }
+                std::sort(relations.begin(), relations.end(),
+                          [](const auto& a, const auto& b) { return a.stableId < b.stableId; });
+            }
+            setPartitionSignals(slice, relations, {});
             if (!encodePartition(pack.packStableId, slice, pack.ownedDefinitions,
                                  &pack.partitionPayload, &compileError, busTriple))
                 return fail(compileError);
@@ -3540,7 +3588,8 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
             else packs.push_back(std::move(retained));
         }
     }
-    if (!harmonizePublicationCapacity(&packs, request.options.packBuildState.get(), authoredPresets, &compileError))
+    if (!harmonizePublicationCapacity(&packs, request.options.packBuildState.get(), authoredPresets,
+                                      std::move(receivers), &compileError))
         return fail(compileError);
     std::set<harken::studio::types::ObjectId> bindingIds;
     std::erase_if(lowering.programs, [&](const auto& program) {

@@ -123,7 +123,8 @@ const QMap<QString, QJsonObject>& schemas()
         for (const auto* name : {"connect_nodes", "disconnect_nodes"})
             result[name] = object({{"output_node", integer(1, 4294967295.0)}, {"input_node", integer(1, 4294967295.0)},
                 {"output_node_kind", choice({"item", "bus"})}, {"input_node_kind", choice({"item", "bus"})},
-                {"edge_type", text("Connection kind supported by the active Blueprint source.")}}, {"output_node", "input_node"});
+                {"edge_type", text("Connection kind supported by the active Blueprint source.")},
+                {"send_type", choice({"Send", "Sidechain"})}, {"duck_target", flag(false)}}, {"output_node", "input_node"});
         result["set_node_override"] = object({{"node_id", integer(1, 4294967295.0)},
             {"override", QJsonObject{{"type", "boolean"}}}}, {"node_id", "override"});
         result["set_canvas_flow"] = object({{"direction", choice({"LR", "RL", "TB", "BT"})}}, {"direction"});
