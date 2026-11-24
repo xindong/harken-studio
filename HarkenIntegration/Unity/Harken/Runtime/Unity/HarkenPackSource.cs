@@ -69,10 +69,19 @@ namespace Harken.Unity
             error = null;
             return VnResult.VN_OK;
         }
+
+        [Obsolete("Use CapturePackSource.")]
+        public VnResult CaptureCompanion(TextAsset initJson, out PackSource source, out string error,
+            string selectedLanguage = null)
+            => CapturePackSource(initJson, out source, out error, selectedLanguage);
     }
 
     public sealed class HarkenPreviewContent
     {
+#pragma warning disable 618
+        private HarkenPreparedPacks preparedPacks;
+        internal HarkenPreparedPacks PreparedPacks => preparedPacks ??= new HarkenPreparedPacks(this);
+#pragma warning restore 618
         internal HarkenPreviewContent(ActionCatalogSnapshot snapshot) { Snapshot = snapshot; }
         internal ActionCatalogSnapshot Snapshot { get; }
         internal uint PresentationRevision { get; set; }
@@ -90,5 +99,16 @@ namespace Harken.Unity
                 startupIds: startupIds, locators: Snapshot.Names);
             return result == VnResult.VN_OK ? session.PrepareStartupPacks() : result;
         }
+    }
+
+    [Obsolete("Use HarkenPreviewContent.")]
+    public sealed class HarkenPreparedPacks
+    {
+        private GameplayPublication publication;
+        internal HarkenPreparedPacks(HarkenPreviewContent content) { Content = content; }
+        internal HarkenPreviewContent Content { get; }
+        public GameplayPublication Publication => publication ??= new GameplayPublication(Content.Snapshot);
+        public VnResult Start(ulong[] startupIds, ref VnConfig config, out PackBootstrapSession session)
+            => Content.Start(startupIds, ref config, out session);
     }
 }

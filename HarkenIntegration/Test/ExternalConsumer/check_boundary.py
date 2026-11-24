@@ -55,6 +55,17 @@ def verify(integration, work):
     # Reflection checks every generated symbol's effective public visibility.
     run(["dotnet", str(positive / "Harken.ExternalConsumer.dll"), "--surface", str(policy)],
         work / "surface.log")
+    for edition in ("DEVELOPMENT", "RELEASE"):
+        output = work / "obsolete" / edition
+        run(["dotnet", "build", str(fixture / "Harken.Core.csproj"), "-c", "Release",
+             f"-p:HarkenIntegrationRoot={staged}", f"-p:HarkenNativeEdition={edition}",
+             "--artifacts-path", str(output / "artifacts"), "-o", str(output / "library"), "--nologo"],
+            work / f"obsolete-library-{edition}.log")
+        run(["dotnet", "build", str(fixture / "Consumer.csproj"), "-c", "Release",
+             f"-p:HarkenCoreAssembly={output / 'library/Harken.Core.dll'}",
+             f"-p:ConsumerSource={fixture / 'ObsoleteApi.cs'}",
+             "--artifacts-path", str(output / "artifacts"), "-o", str(output / "consumer"), "--nologo"],
+            work / f"obsolete-consumer-{edition}.log")
     for name, expression in NEGATIVE.items():
         source = work / f"Denied_{name}.cs"
         source.write_text("using System; using Harken; class Denied { static void Main() { "

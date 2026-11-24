@@ -494,6 +494,8 @@ namespace Harken
         VN_ACTION_TARGET_ACTION = 4,
         VN_ACTION_TARGET_VARIABLE = 5,
         VN_ACTION_TARGET_BUS = 6,
+        [Obsolete("Use VN_ACTION_TARGET_SEGMENT.")]
+        VN_ACTION_TARGET_PIECE = VN_ACTION_TARGET_SEGMENT,
     }
 
     public enum VnActionFiringState : uint

@@ -115,6 +115,10 @@ namespace Harken.Unity.Editor
                 finally { preview.scopeBusy = false; }
             }
 
+            [Obsolete("Use HarkenPreviewContent.")]
+            public VnResult Prepare(HarkenPreparedPacks source, string[] actionNames)
+                => Prepare(source?.Content, actionNames);
+
             private VnResult PrepareGuarded(HarkenPreviewContent source, string[] actionNames)
             {
                 if (disposed || preview.shutdownRequested) return Observe(VnResult.VN_NOT_INITIALIZED, "<prepare>");
@@ -332,6 +336,10 @@ namespace Harken.Unity.Editor
             VnConfig config = CreateConfig(nullDevice);
             return Adopt(source.Start(startupIds, ref config, out session));
         }
+
+        [Obsolete("Use HarkenPreviewContent.")]
+        public VnResult Prepare(HarkenPreparedPacks source, ulong[] startupIds, bool nullDevice = false)
+            => Prepare(source?.Content, startupIds, nullDevice);
 
         private VnResult CanPrepare()
             => EditorApplication.isPlayingOrWillChangePlaymode || IsPrepared || (current != null && current.IsPrepared)

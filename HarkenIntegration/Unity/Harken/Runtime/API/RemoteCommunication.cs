@@ -1,7 +1,6 @@
 #if HARKEN_NATIVE_DEVELOPMENT || (!HARKEN_NATIVE_RELEASE && (UNITY_EDITOR || DEVELOPMENT_BUILD))
 #define HARKEN_ENGINE_DEV
 #endif
-#if HARKEN_ENGINE_DEV
 using System;
 using System.Runtime.InteropServices;
 
@@ -9,6 +8,7 @@ namespace Harken
 {
     internal static class RemoteCommunication
     {
+#if HARKEN_ENGINE_DEV
         private static readonly uint ConfigSize = (uint)Marshal.SizeOf<VnRemoteConfig>();
         private static readonly uint StatusSize = (uint)Marshal.SizeOf<VnRemoteStatus>();
 
@@ -51,6 +51,19 @@ namespace Harken
             status.structSize = StatusSize;
             return HarkenNative.Vn_RemoteGetStatus(ref status);
         }
+#else
+        public static VnResult Start(
+            string applicationName, string bindAddress = "127.0.0.1", int port = 0,
+            bool enableDiscovery = true, int discoveryPort = 0, string projectName = null)
+            => VnResult.VN_CAPABILITY_UNAVAILABLE;
+
+        public static VnResult Stop() => VnResult.VN_CAPABILITY_UNAVAILABLE;
+
+        public static VnResult GetStatus(out VnRemoteStatus status)
+        {
+            status = default;
+            return VnResult.VN_CAPABILITY_UNAVAILABLE;
+        }
+#endif
     }
 }
-#endif

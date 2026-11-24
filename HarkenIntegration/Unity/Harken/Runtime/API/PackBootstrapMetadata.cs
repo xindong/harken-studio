@@ -731,7 +731,7 @@ namespace Harken
             session = null;
             try
             {
-                VnResult result = PackByteProvider.InspectInitPack(init.Facts.packStableId, PackByteProvider.PreparedBytes,
+                VnResult result = PackByteProvider.InspectInit(init.Facts.packStableId, PackByteProvider.PreparedBytes,
                     init.Bytes, out InitPackInspection inspection);
                 if (result != VnResult.VN_OK) return result;
                 result = ApplyRecommendations(ref config, inspection, 0);

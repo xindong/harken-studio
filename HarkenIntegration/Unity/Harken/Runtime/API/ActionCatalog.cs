@@ -13,6 +13,17 @@ namespace Harken
         public string Name { get; }
         public VnObjectId ActionId { get; }
         public ulong PackStableId { get; }
+
+        [Obsolete("Use ActionId.")] public VnObjectId ActionStableId => ActionId;
+        [Obsolete("Use PackStableId.")] public ulong OwnerPackStableId => PackStableId;
+        [Obsolete("Always zero.")] public ulong NameBindingRevision => 0;
+        [Obsolete("Always zero.")] public ulong CallableFingerprint => 0;
+        [Obsolete("Always zero.")] public ulong ProviderClosureFingerprint => 0;
+#pragma warning disable 618
+        [Obsolete("Use ActionCatalogEntry.")]
+        public static implicit operator GameplayAction(ActionCatalogEntry entry)
+            => entry == null ? null : new GameplayAction(entry);
+#pragma warning restore 618
     }
 
     public sealed class ActionCatalog

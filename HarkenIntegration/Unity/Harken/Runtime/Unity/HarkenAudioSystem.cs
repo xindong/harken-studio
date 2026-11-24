@@ -246,7 +246,6 @@ namespace Harken.Unity
             return ObserveResult("HarkenAudioSystem.ConfigureLifecycleBeforeStartup", VnResult.VN_OK);
         }
 
-#if HARKEN_ENGINE_DEV
         public VnResult RetryRemoteCommunication()
         {
             if (!IsGameplayThread())
@@ -267,7 +266,6 @@ namespace Harken.Unity
             if (result != VnResult.VN_OK) Debug.LogWarning(LastRemoteError, this);
             return result;
         }
-#endif
 
         public VnResult SetMasterVolume(float volume)
         {
@@ -522,6 +520,12 @@ namespace Harken.Unity
             platformConfigured = true;
             return ObserveResult("HarkenAudioSystem.ConfigurePlatformBeforeStartup", VnResult.VN_OK);
         }
+
+        [Obsolete("Platforms are selected by name; use ConfigurePlatformBeforeStartup(platformName).")]
+        public VnResult ConfigurePlatformBeforeStartup(string platformId, string platformName)
+            => string.IsNullOrEmpty(platformId)
+                ? ConfigurePlatformBeforeStartup(platformName)
+                : ObserveResult("HarkenAudioSystem.ConfigurePlatformBeforeStartup", VnResult.VN_INVALID_ARG);
 
         public VnResult ConfigureLanguageBeforeStartup(string selectedLanguage)
         {

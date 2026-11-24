@@ -23,6 +23,10 @@ namespace Harken.Unity
             return VnResult.VN_OK;
         }
 
+        [Obsolete("Use ConfigurePackSourceBeforeStartup.")]
+        public VnResult ConfigureCompanionSourceBeforeStartup(PackSource source)
+            => ConfigurePackSourceBeforeStartup(source);
+
         public VnResult StartRuntime(PackSource source)
         {
             if (!TryBeginStartup(out VnResult rejection)) return rejection;

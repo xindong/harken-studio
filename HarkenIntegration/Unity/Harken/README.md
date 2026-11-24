@@ -37,7 +37,7 @@ Games that own the audio session can call `await PackBootstrap.StartLevelAsync(s
 
 - The package version is the `version` field of `package.json`. It is independent of the Harken Studio and Harken engine versions.
 - The package ships two native library editions: Release (`HarkenEngine`) and Development (`HarkenEngineDev`). **Project Settings > Harken > Project > Native Library** selects the edition: *Automatic* uses Development in the Editor and in Development Builds and Release otherwise; *Release* and *Development* force one edition everywhere. Restart Unity after changing it.
-- APIs that exist only in the Development edition are compiled only when `HARKEN_ENGINE_DEV` is defined, so Release builds never reference them.
+- Remote communication works only with the Development edition; with the Release edition its methods return `VN_CAPABILITY_UNAVAILABLE`.
 - Startup refuses a native library whose ABI major version differs from the managed bindings.
 - Each package version reads one Pack metadata version (currently 4). Export Packs with a Harken Studio release that writes that version. The engine checks the Pack binary version itself.
 

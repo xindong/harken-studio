@@ -1,6 +1,3 @@
-#if HARKEN_NATIVE_DEVELOPMENT || (!HARKEN_NATIVE_RELEASE && (UNITY_EDITOR || DEVELOPMENT_BUILD))
-#define HARKEN_ENGINE_DEV
-#endif
 using System;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -125,11 +122,11 @@ namespace Harken
         public static VnResult SetHostOutputMute(uint mute01, uint fadeMs)
             => HarkenNative.Vn_SetHostOutputMute(mute01, fadeMs);
 
-#if HARKEN_ENGINE_DEV
         /// <summary>
         /// Explicitly enables optional communication for the initialized host.
         /// Call on the externally synchronized engine thread. Failure leaves
         /// audio running; the host may retry without creating another session.
+        /// Returns VN_CAPABILITY_UNAVAILABLE with the Release native library.
         /// </summary>
         public static VnResult StartRemoteCommunication(
             string applicationName, string bindAddress = "127.0.0.1", int port = 0,
@@ -143,7 +140,6 @@ namespace Harken
         /// <summary>Reads communication state, including the last startup failure.</summary>
         public static VnResult QueryRemoteCommunication(out VnRemoteStatus status)
             => RemoteCommunication.GetStatus(out status);
-#endif
 
         public static VnResult Term()
         {
