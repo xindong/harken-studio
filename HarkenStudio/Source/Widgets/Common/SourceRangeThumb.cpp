@@ -27,11 +27,10 @@ int frameX(uint64_t frame, uint64_t total, const QRectF& r)
 
 }
 
-SourceRangeThumb::SourceRangeThumb(QWidget* parent, Mode mode)
+SourceRangeThumb::SourceRangeThumb(QWidget* parent)
     : PreviewField(parent)
 {
     setObjectName(QStringLiteral("sourceRangeThumb"));
-    setAttribute(Qt::WA_TransparentForMouseEvents, mode == Mode::ReadOnly);
     setEnabled(false);
     connect(&MediaPool::instance(), &MediaPool::waveformReady, this, [this](uint32_t sourceID) {
         if (source_.sourceId == sourceID)
@@ -46,8 +45,7 @@ void SourceRangeThumb::setSource(const SoundSourceDef& source, const AssetInfo* 
     asset_ = asset ? std::optional<AssetInfo>{*asset} : std::nullopt;
     sourceMissing_ = !AssetRegistry::instance().sourceFileExists(source.sourceId);
     setEnabled(!sourceMissing_);
-    setCursor(!sourceMissing_ && !testAttribute(Qt::WA_TransparentForMouseEvents)
-        ? Qt::PointingHandCursor : Qt::ArrowCursor);
+    setCursor(sourceMissing_ ? Qt::ArrowCursor : Qt::PointingHandCursor);
     peaks_ = !sourceMissing_ && asset && !asset->absolutePath.isEmpty()
         ? WaveformCache::loadShared(asset->absolutePath) : nullptr;
     const auto range = SoundSourceSemantics::effectiveRange(source_, asset);

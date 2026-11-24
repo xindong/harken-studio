@@ -1498,10 +1498,8 @@ void PropertyEditorEngine::setWidgetValue(QWidget* widget, const QString& widget
 
     if (widgetType == QStringLiteral("text"))
     {
-        if (auto* edit = qobject_cast<QLineEdit*>(widget)) {
-            edit->blockSignals(true); edit->setText(value.toString());
-            edit->blockSignals(false);
-        }
+        if (auto* edit = qobject_cast<QLineEdit*>(widget))
+            edit->setText(value.toString());
         return;
     }
 

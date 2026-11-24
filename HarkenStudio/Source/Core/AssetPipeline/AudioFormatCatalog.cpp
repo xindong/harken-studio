@@ -1,5 +1,7 @@
 #include "AudioFormatCatalog.h"
 
+#include "PathUtils.h"
+
 namespace harken::studio {
 
 const QStringList& AudioFormatCatalog::extensions()
@@ -26,6 +28,13 @@ QStringList AudioFormatCatalog::filePatterns()
 bool AudioFormatCatalog::containsExtension(const QString& extension)
 {
     return extensions().contains(extension.toLower());
+}
+
+QString AudioFormatCatalog::displayName(const QString& filePath)
+{
+    const QFileInfo file(PathUtils::normalizeToUnix(filePath));
+    const QString stem = file.completeBaseName();
+    return !stem.isEmpty() && containsExtension(file.suffix()) ? stem : file.fileName();
 }
 
 }

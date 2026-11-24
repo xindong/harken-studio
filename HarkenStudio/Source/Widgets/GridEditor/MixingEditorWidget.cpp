@@ -328,7 +328,7 @@ void MixingEditorWidget::buildRow(int index)
     view.children->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
     view.children->setColumns(QStringLiteral("mixing.children"), {
         {QStringLiteral("target"), tr("Child"), 400},
-        {QStringLiteral("activeSource"), tr("Active Source"), 600}});
+        {QStringLiteral("waveform"), tr("Waveform"), 600}});
     auto* footer = view.children->footer();
     footer->addButton()->setToolTip(tr("Add Child"));
     view.removeChild = footer->removeButton();

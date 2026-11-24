@@ -130,6 +130,7 @@ QJsonObject SourceResult::toJson() const
     QJsonObject result{{QStringLiteral("sound"), soundGuid.toString(QUuid::WithoutBraces)},
         {QStringLiteral("sound_name"), soundName}, {QStringLiteral("source_id"), static_cast<qint64>(source.sourceId)},
         {QStringLiteral("source_entry"), source.entryId.toString(QUuid::WithoutBraces)},
+        {QStringLiteral("source_name"), source.name},
         {QStringLiteral("source_path"), sourcePath}, {QStringLiteral("language"), language},
         {QStringLiteral("conversion"), presetGuid.isNull() ? QJsonValue(QJsonValue::Null)
             : QJsonValue(presetGuid.toString(QUuid::WithoutBraces))},

@@ -2971,9 +2971,7 @@ ProjectItem* ProjectManager::createAudioItem(ProjectItem* parent, const QString&
     }
     auto identityGuard = guardFieldGroupIdentities(m_currentProject, ProjectItem::Type::Sound);
     if (auto* sound = newItem->comp<VSound>(); sound && sourceID != 0) {
-        SoundSourceDef source;
-        source.entryId = QUuid::createUuid();
-        source.sourceId = sourceID;
+        const auto source = SoundSourceSemantics::createEntry(sourceID, relativePath);
         sound->sources.plain.entries.push_back(source);
         sound->sources.plain.active = source.entryId;
         SoundSourceEditing::syncActiveProjection(
@@ -3035,9 +3033,7 @@ ProjectItem* ProjectManager::createRootAudioItem(const QString& name,
         return nullptr;
     auto identityGuard = guardFieldGroupIdentities(m_currentProject, ProjectItem::Type::Sound);
     if (auto* sound = newItem->comp<VSound>(); sound && sourceID != 0) {
-        SoundSourceDef source;
-        source.entryId = QUuid::createUuid();
-        source.sourceId = sourceID;
+        const auto source = SoundSourceSemantics::createEntry(sourceID, relativePath);
         sound->sources.plain.entries.push_back(source);
         sound->sources.plain.active = source.entryId;
         SoundSourceEditing::syncActiveProjection(

@@ -168,7 +168,7 @@ inline QJsonObject setItemPropertySchema()
                     QStringLiteral("trimStartFrame"), QStringLiteral("trimEndFrame"),
                     QStringLiteral("fadeIn"), QStringLiteral("fadeOut"),
                     QStringLiteral("loopRegion"), QStringLiteral("loopProvenance"),
-                    QStringLiteral("rangeContentHash")}}}}
+                    QStringLiteral("rangeContentHash"), QStringLiteral("name")}}}}
         }}
     };
     auto values = schema.value(QStringLiteral("propertyValues")).toObject();

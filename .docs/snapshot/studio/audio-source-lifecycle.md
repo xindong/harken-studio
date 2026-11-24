@@ -7,7 +7,7 @@ Resources 指 Explorer 中的原始音频文件树，引用行指 Sound → Sour
 | 情况 | Resources 文件树 | Sound → Sources | 层级树、蓝图中的 Sound |
 |---|---|---|---|
 | 文件可用，波形已生成 | 正常显示 | 正常引用与波形 | 正常 |
-| 非 Active 文件丢失 | 文件行消失 | 保留引用行；Original 标红，Source 留空且不可编辑 | 不因该行缺失变红 |
+| 非 Active 文件丢失 | 文件行消失 | 保留引用行；Original 标红，Waveform 留空且不可编辑 | 不因该行缺失变红 |
 | Active 文件丢失 | 文件行消失 | 同上，保留 Active 选择 | 名称、图标主题错误红 |
 | 文件恢复到原引用路径 | 自动重新出现 | 恢复引用与编辑入口，波形随后刷新 | 解除缺失红色 |
 
@@ -82,8 +82,9 @@ Inspector 的组内导入高光仅围住目标语言组的标题、音源行和�
 | 文件导入空的引用组 | 追加引用，底层文件可新建、复用或恢复 | 首个成功新行成为 Active |
 | 文件导入已有引用的组 | 恢复或追加；重复导入可再加一行 | 保留原选择，包括未选择 |
 | 分组表尾 → Add existing | 在按钮所属语言组追加引用，不复制文件；普通模式使用普通组 | 保留原选择；当前不自动选首行 |
-| Original 选择器更换资源 | 只更换这一行；保留行身份、裁剪、已有循环 | 保留 |
+| Original 选择器更换资源 | 只更换这一行；保留行身份、Name、裁剪、已有循环 | 保留 |
 | 删除引用行 | 只删行，不删共享文件 | 清除指向该行的选择；平台回退共享选择 |
+| 修改 Name | 只修改引用名称，不改文件、不停止试听；External Editor 标签随之更新 | 保留 |
 | 行排序／裁剪／循环编辑 | 只修改引用，不改共享文件 | 保留 |
 | Relink | 所选文件写入原路径，沿用 ID，全部引用使用新内容；名称可不同 | 保留 |
 
@@ -138,7 +139,7 @@ Inspector 的组内导入高光仅围住目标语言组的标题、音源行和�
 |---|---|
 | 默认状态 | Fade In、Fade Out 时长均为 0；初始淡入为 Quadratic Ease-Out，归一化进度为 `y = 1 − (1 − x)²`；淡出与淡入沿时间方向镜像，对应 Quadratic Ease-In；已有保存的曲线保留原形状，不迁移 |
 | 编辑入口 | Sound → Sources 引用行的 External Editor，直接在波形上编辑 |
-| 波形预览 | File Viewer、Sound 的 Source 列、Grid 的 Active Source 列、Blueprint 和 Timeline 共用 Source 波形视图，由公共渲染器统一处理 Trim 与 Fade；按包络缩放振幅，素材库显示原始波形 |
+| 波形预览 | File Viewer、Sound 与 Grid 的 Waveform 列、Blueprint 和 Timeline 共用 Source 波形视图，由公共渲染器统一处理 Trim 与 Fade；按包络缩放振幅，素材库显示原始波形 |
 | 预览更新 | 编辑器拖动时本地实时预览；提交、撤销和重做复用 Trim 的 `sources` 变更通知，所有引用预览自动更新；原始波形缓存共享，同文件的不同 Source 引用各自应用设置 |
 | Trim 交互 | 仅顶部抓手可拖动、双击或右键编辑裁剪；主体竖线只作位置指示，不拦截 Fade 点 |
 | 拖动顶部锚点 | 水平调整该侧时长；淡入、淡出不可重叠 |
@@ -168,7 +169,7 @@ Inspector 的组内导入高光仅围住目标语言组的标题、音源行和�
 | 空 Settings | 不转换：以原始采样率输出 PCM，裁剪、淡入淡出等 Source 处理照常生效 |
 | Converted 首次播放 | 没有产物时按需转换后播放。PCM 注册处理后的样本，Vorbis 将与 Pack 相同的常驻编码块注册到开发版 Engine，由 Engine 解码播放 |
 | 转换入口 | 预设双击或 Settings 双击打开下方独立 Conversion Editor；Convert 处理当前主平台、有效引用该预设的各语言 Active Source，按文件并行、共享缓存且可取消 |
-| 显示边界 | 转换过程不显示进度、状态或失败文字，错误只进日志。结果表的 Active Source 列以只读波形显示当前主平台、该行语言下的激活条目及其裁剪与循环。未转换的产物字段留空 |
+| 显示边界 | 转换过程不显示进度、状态或失败文字，错误只进日志。结果表的 Active Source 列显示当前主平台、该行语言下激活条目的名称。未转换的产物字段留空 |
 | External Editor File Properties | Sound → Sources 引用行打开的 External Editor 在波形下方用表格显示工程相对路径、绝对路径、声道、采样率、时长、大小与音频编码。Original 显示原文件，Converted 显示已有产物。有预设但未转换时留空，无有效预设则显示原文件 |
 | 刷新与失效 | 转换完成、预设／引用修改、平台或模式变化刷新结果及文件属性；相关试听停止，下次播放按新输入重建 |
 | 层级树状态 | Missing／Orphaned／Error 保持原语义；可用 Sound 按当前平台的有效预设和缓存 key 显示 Converted／Not Converted；无预设显示 Available，不再有 Outdated 警告色 |

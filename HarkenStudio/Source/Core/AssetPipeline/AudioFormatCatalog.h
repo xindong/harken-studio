@@ -10,6 +10,7 @@ public:
     static const QStringList& extensions();
     static QStringList filePatterns();
     static bool containsExtension(const QString& extension);
+    static QString displayName(const QString& filePath);
 };
 
 }

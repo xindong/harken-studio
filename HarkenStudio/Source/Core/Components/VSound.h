@@ -49,6 +49,7 @@ struct SoundSourceDef
     std::optional<SoundLoopRegion> loopRegion;
     SoundLoopProvenance loopProvenance = SoundLoopProvenance::Authored;
     QString rangeContentHash;
+    QString name;
 
     bool operator==(const SoundSourceDef&) const = default;
 };

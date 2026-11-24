@@ -230,8 +230,9 @@ void ImportSoundSourcesCommand::collectEntries()
         ImportedEntry entry;
         entry.sourceID = result.sourceID;
         if (planned.restoreID == 0)
-            entry.source.entryId = QUuid::createUuid();
-        entry.source.sourceId = result.sourceID;
+            entry.source = SoundSourceSemantics::createEntry(result.sourceID, result.relativePath);
+        else
+            entry.source.sourceId = result.sourceID;
         const AssetInfo* info = AssetRegistry::instance().getAsset(result.sourceID);
         if (info)
             entry.source.rangeContentHash = info->contentHash;

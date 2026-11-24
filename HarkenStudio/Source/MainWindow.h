@@ -433,7 +433,8 @@ private:
     void refreshInspectorDockTitles();
     void refreshBoundEditorDockTitles(
         const QString& base, const QList<QWidget*>& panels,
-        const std::function<ProjectItem*(QWidget*)>& boundItem);
+        const std::function<QStringList(QWidget*)>& titlePath);
+    void refreshExternalEditorDockTitles();
     void refreshGridEditorDockTitles();
     void refreshTimelineEditorDockTitles();
 

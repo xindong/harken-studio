@@ -81,6 +81,7 @@
 |---|---|
 | 表头与文字 | Body 字体，默认 10 pt；保留原大小写，普通表头不额外加粗 |
 | 对象图标 | 默认 20 逻辑像素 |
+| 文本框 | 内容左对齐，未聚焦时从首字符开始显示 |
 | 字段高度 | 默认基准 24 逻辑像素，按字体增高；行高包含字段及上下留白 |
 | 单元格留白 | 默认左右各 4、上下至少各 2 逻辑像素；字段垂直居中 |
 | 同格控件 | 相邻间距默认 8 逻辑像素；可伸展字段等分宽度，装饰及限宽控件按自身尺寸布局 |
@@ -112,7 +113,7 @@
 | 悬浮与添加切点 | 在可添加切点的位置，文件大小读数叠画在色块上方同一行的固定刻度上，轮廓外的文字始终可见。色块内显示高亮竖虚线，色块下方的圆形 `+` 与读数对齐。`+` 和读数沿用坐标轴指示块的底色与前景色。`+` 使用控件描边 `border.secondary`，悬浮时仅填充色切换为 `background.hover`。悬停或拖动分隔条时只显示分隔条高亮和固定刻度。单击 `+` 或从右键菜单选择 `Add Split...`，均以预览处的大小打开切分弹窗。固定刻度与游标读数只读。表脚加号切分选中段，未选中时切分末段。新段继承原段配置，可在弹窗中调整并确认 |
 | 选行与删除 | 单击色块内部选中对应行，选择表格行也会高亮同编号区块。选框画在色块内部，四边等宽。分隔条占用独立空间，按下实际分隔条清除选行，拖动和松开时均保持空选。减号仅对选中的有限规则可用。删除后其区间并入下一条规则，下一条自动选中，区块与行号同步更新 |
 | 格式与采样率 | Target format 为 PCM／Vorbis。Vorbis 的 Target quality 通过滑块或数值框选择 0–10 的整数档，默认 4，PCM 的 Target quality 单元格留空。Target sample rate 可选 Original（不重采样）或受支持的离散值，有限阈值可增删，`Inf` 末行不可删除 |
-| 引用结果 | 下半区列出主平台上有效引用此预设的 Sound。Active Source 以只读波形展示该行语言的激活条目。没有有效缓存时 Converted 各列和 Ratio 留空 |
+| 引用结果 | 下半区列出主平台上有效引用此预设的 Sound。Active Source 显示该行语言激活条目的名称，悬停显示源文件路径。Sound 引用单击定位、双击打开。没有有效缓存时 Converted 各列和 Ratio 留空 |
 | Convert | Convert 是 Configuration 右下角的独立按钮，位于规则表下方，与表格右缘对齐。点击后为当前平台引用该预设的源文件生成产物，已有缓存直接跳过。收起 Result 后仍可执行转换。转换不显示进度或状态，Esc 可取消未完成工作 |
 | 文件属性 | Sound → Sources 引用行打开的 External Editor（波形编辑）下半区显示 File Properties 表，可拖动分隔条调整高度。Relative Path 相对工程根目录，Absolute Path 指向同一文件。两种路径均使用操作系统的目录分隔符。表中还显示声道、采样率、时长、大小与音频编码 |
 | 属性切换 | 跟随 Toolbar 的 Original／Converted 与当前平台；Converted 无缓存时留空，有效 Conversion 为空时显示原件；File Viewer 不显示 Studio 处理后的信息，始终显示并播放源文件 |
@@ -122,17 +123,17 @@
 
 | 模式 | 表格 / 画布结构 | 当前能力 |
 |---|---|---|
-| Random | #、Child、Weight、Active Source | 支持重复 Child、引用替换、增删、拖入与排序；Single + Draw 使用频率权重，Shuffle / Queue 使用顺序权重 |
-| Sequence | #、Child、Active Source | 与 Random 共用条目编辑，不显示 Weight |
-| Match | #、Child、Active Source、Variable 条件列 | 双维度矩阵；行与变量列分别选择及排序，变量列顺序影响匹配优先级 |
-| Blend | #、Variable 与 Child 副表、混合曲线画布 | 每行一个可选 Variable，Child 副表含 Child 与 Active Source；支持独立行高与控制区比例调宽 |
+| Random | #、Child、Weight、Waveform | 支持重复 Child、引用替换、增删、拖入与排序；Single + Draw 使用频率权重，Shuffle / Queue 使用顺序权重 |
+| Sequence | #、Child、Waveform | 与 Random 共用条目编辑，不显示 Weight |
+| Match | #、Child、Waveform、Variable 条件列 | 双维度矩阵；行与变量列分别选择及排序，变量列顺序影响匹配优先级 |
+| Blend | #、Variable 与 Child 副表、混合曲线画布 | 每行一个可选 Variable，Child 副表含 Child 与 Waveform；支持独立行高与控制区比例调宽 |
 
 注：四种模式共用当前平台的条目，切换保留非活动策略数据；Inspector 只保留模式与行为字段。预览及 Pack 仅消费当前模式与平台。
 
 | 共同行为 | 当前表现 |
 |---|---|
 | Child 选择范围 | 仅当前 Container 的类型匹配直属孩子；父级仅显示归属，不可选 |
-| Active Source | 显示 Child 为 Sound 时当前平台、语言的激活源；其他类型留空，ALL 下源不一致显示 Mixed；点击有效波形打开对应源编辑器 |
+| Waveform | 显示 Child 为 Sound 时当前平台、语言的激活源；其他类型留空，ALL 下源不一致显示 Mixed；点击有效波形打开对应源编辑器 |
 | 默认列比例 | 除 # 外：Random 为 20% / 20% / 60%，Sequence 为 40% / 60%，Match 为 25% / 25% / 首个条件列 50%；Blend 副表为 40% / 60% |
 | 行试听 | Random、Sequence、Match 选中 Child 行设为试听目标；Inspector 与编辑器保持当前 Container；清选恢复当前层级 Container |
 | 引用替换与刷新 | 成功替换已选 Child 后同步试听目标；其他行编辑、被动刷新和焦点变化不接管目标 |
@@ -141,11 +142,11 @@
 
 | Match 项目 | 当前表现 |
 |---|---|
-| 空表 | 零行，保留 #、Child、Active Source 与一个空 Variable 引用列；空引用不形成数据 |
+| 空表 | 零行，保留 #、Child、Waveform 与一个空 Variable 引用列；空引用不形成数据 |
 | 条件输入 | 通配值显示 `*`，下拉项为 `* (Any)`；范围不超过 64 个整数时列出全部值，超出时列标签并允许输入整数；拒绝非整数与越界值 |
 | 缺失引用 | Label 保留 (missing) 及原引用，未经编辑不转为通配；更换 Variable 保留原条件，无法解析或越界时拒绝 |
 | 增删 | 加号提供 New Variable、Select Variable、Select Child；减号删除所选行或变量列，列头菜单也可删列 |
-| 排序 | #、Child、Active Source 固定在左侧；移动变量同时移动条件列，移动行保留整行内容，均可撤销；同等匹配优先级下行序决定胜者 |
+| 排序 | #、Child、Waveform 固定在左侧；移动变量同时移动条件列，移动行保留整行内容，均可撤销；同等匹配优先级下行序决定胜者 |
 | 预览与诊断 | 使用 Control 覆盖值或变量默认值；胜出条件高亮，重复或无法胜出的行显示警告及阻挡行号，不改项目数据或用户选择 |
 
 | Blend 项目 | 当前表现 |

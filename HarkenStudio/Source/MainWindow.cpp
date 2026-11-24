@@ -222,6 +222,15 @@ void applyFramelessFloatingChrome(ads::CFloatingDockContainer* fw)
 #endif
 
 namespace {
+
+QStringList itemTitlePath(const ProjectItem* item)
+{
+    QStringList path;
+    for (; item; item = item->parent)
+        path.prepend(item->name);
+    return path;
+}
+
 class PackExportDialog final : public BaseDialog
 {
 public:
@@ -552,6 +561,8 @@ void MainWindow::initializeStructure(
                 if (auto* item = ProjectManager::instance().findItemByGuid(guid))
                     selectionRouter_->selectItem(item, true);
             }, Qt::QueuedConnection);
+            connect(ed, &ExternalEditorPanel::titleChanged,
+                    this, &MainWindow::refreshExternalEditorDockTitles);
             wireStandaloneEditorPin(ed);
             return ed;
         };
@@ -638,10 +649,6 @@ void MainWindow::initializeStructure(
             editor->setPanelId(id);
             connect(editor, &ConversionEditorPanel::panelFocused, this, [this](int panelId) {
                 panelRegistry_->setLastFocusedPanelId(QStringLiteral("ConversionEditor"), panelId);
-            });
-            connect(editor, &ConversionEditorPanel::navigateRequested, this, [this](const QUuid& guid) {
-                if (auto* item = ProjectManager::instance().findItemByGuid(guid))
-                    selectionRouter_->selectItem(item, true);
             });
             connect(editor, &QWidget::windowTitleChanged, this, [this, editor](const QString& title) {
                 if (auto* dock = dockOfPanel(editor))
@@ -2380,7 +2387,7 @@ void MainWindow::createPrimaryWorkspaceDocks()
         WorkspaceDockFactory::setContent(controlDock_, controlPanel_, ads::CDockWidget::ForceNoScrollArea);
         connect(controlPanel_, &ControlPanel::contextChanged, this, [this] {
             refreshBoundEditorDockTitles(tr("Control"), {controlPanel_},
-                [](QWidget* panel) { return static_cast<ControlPanel*>(panel)->boundItem(); });
+                [](QWidget* panel) { return itemTitlePath(static_cast<ControlPanel*>(panel)->boundItem()); });
         });
     }
     dockManager_->addDockWidget(ads::BottomDockWidgetArea, controlDock_);
@@ -2838,6 +2845,8 @@ bool MainWindow::applyWorkspacePanelRestoreSpec(const DockInstanceSpec& spec)
             refreshGridEditorDockTitles();
         else if (spec.typeId == QLatin1String("TimelineEditor"))
             refreshTimelineEditorDockTitles();
+        else if (spec.typeId == QLatin1String("ExternalEditor"))
+            refreshExternalEditorDockTitles();
         return true;
     }
 
@@ -3675,7 +3684,7 @@ void MainWindow::refreshInspectorDockTitles()
 
 void MainWindow::refreshBoundEditorDockTitles(
     const QString& base, const QList<QWidget*>& panels,
-    const std::function<ProjectItem*(QWidget*)>& boundItem)
+    const std::function<QStringList(QWidget*)>& titlePath)
 {
     QList<ads::CDockWidget*> docks;
     QList<QStringList> paths;
@@ -3684,17 +3693,7 @@ void MainWindow::refreshBoundEditorDockTitles(
         ads::CDockWidget* d = dockOfPanel(p);
         if (!d) continue;
         docks << d;
-
-        QStringList path;
-        if (ProjectItem* item = boundItem(p)) {
-            QStringList anc;
-            for (ProjectItem* a = item->parent; a; a = a->parent)
-                anc << a->name;
-            for (int j = anc.size() - 1; j >= 0; --j)
-                path << anc[j];
-            path << item->name;
-        }
-        paths << path;
+        paths << titlePath(p);
     }
 
     const QStringList titles = instanceTitles(base, paths);
@@ -3704,15 +3703,26 @@ void MainWindow::refreshBoundEditorDockTitles(
     }
 }
 
+void MainWindow::refreshExternalEditorDockTitles()
+{
+    refreshBoundEditorDockTitles(tr("External Editor"),
+        panelRegistry_->allPanels(QStringLiteral("ExternalEditor")),
+        [](QWidget* w) -> QStringList {
+            auto* ed = qobject_cast<ExternalEditorPanel*>(w);
+            return ed && !ed->selection().isEmpty()
+                ? itemTitlePath(ed->boundItem()) + ed->sourceTitlePath() : QStringList();
+        });
+}
+
 void MainWindow::refreshGridEditorDockTitles()
 {
     QList<QWidget*> panels;
     for (GridEditorPanel* p : allGridEditorPanels())
         panels << p;
     refreshBoundEditorDockTitles(tr("Selection Editor"), panels,
-        [](QWidget* w) -> ProjectItem* {
+        [](QWidget* w) {
             auto* p = qobject_cast<GridEditorPanel*>(w);
-            return p ? p->boundItem() : nullptr;
+            return itemTitlePath(p ? p->boundItem() : nullptr);
         });
 }
 
@@ -3722,9 +3732,9 @@ void MainWindow::refreshTimelineEditorDockTitles()
     for (TimelineEditorPanel* p : allTimelineEditorPanels())
         panels << p;
     refreshBoundEditorDockTitles(tr("Timeline Editor"), panels,
-        [](QWidget* w) -> ProjectItem* {
+        [](QWidget* w) {
             auto* p = qobject_cast<TimelineEditorPanel*>(w);
-            return p ? p->boundItem() : nullptr;
+            return itemTitlePath(p ? p->boundItem() : nullptr);
         });
 }
 

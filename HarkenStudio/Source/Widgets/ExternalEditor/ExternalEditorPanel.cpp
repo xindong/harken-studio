@@ -72,6 +72,10 @@ ExternalEditorPanel::ExternalEditorPanel(QWidget* parent)
     connect(&project, &ProjectManager::projectClosed, this, &ExternalEditorPanel::clearEditor);
     connect(&project, &ProjectManager::itemMoved, this,
             &ExternalEditorPanel::refreshAttenuationReference, Qt::QueuedConnection);
+    connect(&project, &ProjectManager::itemMoved, this, &ExternalEditorPanel::titleChanged,
+            Qt::QueuedConnection);
+    connect(&project, &ProjectManager::itemRenamed, this, &ExternalEditorPanel::titleChanged,
+            Qt::QueuedConnection);
     connect(&project, &ProjectManager::itemDeleted, this, [this](ProjectItem* item) {
         if (item && item->guid == selection_.ownerGuid)
             clearEditor();
@@ -88,6 +92,8 @@ ExternalEditorPanel::ExternalEditorPanel(QWidget* parent)
         if (item && item->guid == selection_.ownerGuid
             && (property == QLatin1String("sources") || property == QLatin1String("distinguishLanguage")))
             refreshSource();
+        if (item && item->guid == selection_.ownerGuid && property == QLatin1String("sourceName"))
+            emit titleChanged();
         if (property == QLatin1String("fieldGroups") || property == QLatin1String("attenuationRef")
             || property == QLatin1String("dimensions") || property == QLatin1String("maxDistance"))
             refreshAttenuationReference();
@@ -191,6 +197,21 @@ void ExternalEditorPanel::showContent(QWidget* content)
     sourceView_->setVisible(content == sourceView_);
     filter_->setVisible(content == filter_);
     updateGeometry();
+    emit titleChanged();
+}
+
+QStringList ExternalEditorPanel::sourceTitlePath() const
+{
+    const auto* source = currentSource();
+    if (!source || source->name.isEmpty()) return {};
+    const auto* sound = boundItem()->comp<VSound>();
+    QStringList path;
+    if (sound->distinguishLanguage) {
+        for (auto it = sound->sources.localized.cbegin(); it != sound->sources.localized.cend(); ++it)
+            for (const auto& entry : it->entries)
+                if (entry.entryId == source->entryId) path << it.key();
+    }
+    return path << source->name;
 }
 
 void ExternalEditorPanel::showBindingAddMenu()

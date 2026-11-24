@@ -11,7 +11,7 @@
 
 | 对象 | 表格 | Tab > Section | 列名 | 数据与编辑性质 |
 |---|---|---|---|---|
-| Sound | Sources | Basic > Source | # / Source / Original / Active | 音频引用配置 |
+| Sound | Sources | Basic > Source | # / Name / Waveform / Original / Active | 音频引用配置 |
 | Track | Clips | Basic > Clip | # / Child | 音频片段配置 |
 | Action | Steps | Basic > Step | # / Type / Target / Delay / 无标题展开列 | 动作步骤配置，末列展开详情 |
 | Attenuation | Dimensions | Basic > Dimension | # / Property / Curve | 衰减维度配置 |
@@ -66,7 +66,8 @@
 | Sources / Language | 关闭时显示普通组，开启时显示全部项目语言组（含空组）；Toolbar 当前语言置顶，其余按项目语言顺序；两类数据分别保留 |
 | Sources / 拖入 | 组内导入边框限定目标语言组；Original 引用框独立处理引用替换与高光，拒绝的拖入不转为组内导入 |
 | Sources / Active | 同一平台与语言只选一个来源；多平台不一致时显示半勾选 |
-| Sources / Source | 展示音频裁剪与循环范围，可打开范围编辑；文件缺失时留空且不可编辑 |
+| Sources / Name | 音源名称，创建时取源文件名，之后不随文件改名或 Original 更换变化；允许重名，空白或非法输入标红并提示，结束编辑时恢复旧值；改名可撤销，不打断试听 |
+| Sources / Waveform | 展示音频裁剪与循环范围，可打开范围编辑；文件缺失时留空且不可编辑 |
 | Sources / 缺失引用 | 保留引用及 Active；Original 标红，仅当前平台与语言的 Active 来源缺失使 Sound 标红 |
 | Playback / Filter | Sound、Container、Layer、Track、Segment、Bus 的 MixNode 属性；标签加共享预览窗，点击进入 External Editor；全默认时淡化，有非默认值时激活，均可编辑 |
 | Steps / Set Variable | 详情含 Value 与 Scope；Scope 为 Global／Emitter，默认 Emitter，随步骤保存，更换 Target 不重置 |

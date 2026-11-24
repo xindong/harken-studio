@@ -1,5 +1,7 @@
 #include "SoundSourceSemantics.h"
 
+#include "AssetPipeline/AudioFormatCatalog.h"
+#include "NameValidator.h"
 #include "ProjectPlatform.h"
 #include "ProjectLanguageSemantics.h"
 
@@ -116,6 +118,29 @@ std::optional<double> secondsFromFrames(uint64_t frames, uint32_t sampleRate)
 {
     if (sampleRate == 0) return std::nullopt;
     return static_cast<double>(frames) / sampleRate;
+}
+
+QString defaultName(const QString& filePath)
+{
+    return NameValidator::makeUniqueName(AudioFormatCatalog::displayName(filePath),
+        [](const QString&) { return true; });
+}
+
+SoundSourceDef createEntry(uint32_t sourceId, const QString& filePath)
+{
+    SoundSourceDef source;
+    source.entryId = QUuid::createUuid();
+    source.sourceId = sourceId;
+    source.name = defaultName(filePath);
+    return source;
+}
+
+bool sameExceptNames(SoundSources a, SoundSources b)
+{
+    for (auto* sources : {&a, &b})
+        for (auto* set : sourceSets(*sources))
+            for (auto& entry : set->entries) entry.name.clear();
+    return a == b;
 }
 
 std::vector<SoundSourceSet*> sourceSets(SoundSources& sources)
@@ -303,6 +328,8 @@ QJsonArray entriesToJson(const std::vector<SoundSourceDef>& sources)
         }
         if (!source.rangeContentHash.isEmpty())
             json[QStringLiteral("rangeContentHash")] = source.rangeContentHash;
+        if (!source.name.isEmpty())
+            json[QStringLiteral("name")] = source.name;
         array.append(json);
     }
     return array;
@@ -326,7 +353,7 @@ std::optional<std::vector<SoundSourceDef>> entriesFromJson(const QJsonArray& jso
             QStringLiteral("trimStartFrame"), QStringLiteral("trimEndFrame"),
             QStringLiteral("fadeIn"), QStringLiteral("fadeOut"),
             QStringLiteral("loopRegion"), QStringLiteral("loopProvenance"),
-            QStringLiteral("rangeContentHash")};
+            QStringLiteral("rangeContentHash"), QStringLiteral("name")};
         for (auto it = row.begin(); it != row.end(); ++it)
             if (!fields.contains(it.key())) return fail(QStringLiteral("unknown source entry field"));
         SoundSourceDef source;
@@ -381,6 +408,12 @@ std::optional<std::vector<SoundSourceDef>> entriesFromJson(const QJsonArray& jso
             if (!anchor.isString() || anchor.toString().isEmpty())
                 return fail(QStringLiteral("rangeContentHash is invalid"));
             source.rangeContentHash = anchor.toString();
+        }
+        if (row.contains(QStringLiteral("name"))) {
+            const QJsonValue name = row.value(QStringLiteral("name"));
+            if (!name.isString() || name.toString().isEmpty())
+                return fail(QStringLiteral("source name is invalid"));
+            source.name = name.toString();
         }
         result.push_back(std::move(source));
     }

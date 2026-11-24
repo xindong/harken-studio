@@ -61,6 +61,29 @@ VQLValue activeSourceLanguage(const ProjectItem& item, const ProjectData*)
     return source ? SoundSourceEditing::previewLanguage(
         item, LanguageContextService::instance().language()) : QString{};
 }
+VQLValue activeSourceName(const ProjectItem& item, const ProjectData*)
+{
+    const SoundSourceDef* source = SoundSourceEditing::activeSource(
+        item, PlatformContextService::instance().context().primary,
+        SoundSourceEditing::previewLanguage(
+            item, LanguageContextService::instance().language()));
+    return source ? source->name : QString{};
+}
+VQLValue sourceNames(const ProjectItem& item, const ProjectData*)
+{
+    const auto* sound = item.comp<VSound>();
+    if (!sound) return QString{};
+    QStringList names;
+    const auto append = [&names](const SoundSourceSet& set) {
+        for (const auto& entry : set.entries) names.append(entry.name);
+    };
+    if (sound->distinguishLanguage) {
+        for (const auto& set : sound->sources.localized) append(set);
+    } else {
+        append(sound->sources.plain);
+    }
+    return names.join(QStringLiteral(", "));
+}
 VQLValue loopCount(const ProjectItem& item, const ProjectData*)
 {
     const auto* audio = item.comp<VAudio>();
@@ -97,13 +120,15 @@ VQLValue isTriggerable(const ProjectItem& item, const ProjectData*)
     return ItemTypeCatalog::isTriggerable(item.type);
 }
 
-constexpr std::array<FieldDescriptor, 14> kFields = {{
+constexpr std::array<FieldDescriptor, 16> kFields = {{
     {"name", "name", name},
     {"type", "type", type},
     {"objectid", "objectID", objectId},
     {"sourceid", "sourceID", sourceId},
     {"sourcecount", "sourceCount", sourceCount},
     {"activesourcelanguage", "activeSourceLanguage", activeSourceLanguage},
+    {"activesourcename", "activeSourceName", activeSourceName},
+    {"sourcenames", "sourceNames", sourceNames},
     {"loopcount", "loopCount", loopCount},
     {"scheduleoffsetsec", "scheduleOffsetSec", scheduleOffsetSec},
     {"childcount", "childCount", childCount},

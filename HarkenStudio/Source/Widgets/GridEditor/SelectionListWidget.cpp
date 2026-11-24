@@ -195,7 +195,7 @@ QWidget* SelectionListWidget::buildHeader()
         {QStringLiteral("Number"), QStringLiteral("#"), 0},
         {QStringLiteral("Child"), tr("Child"), 200, 0, QStringLiteral("selectionChildHeader")},
         {QStringLiteral("Weight"), tr("Weight"), 200, 0, QStringLiteral("selectionChildWeightHeader")},
-        {QStringLiteral("ActiveSource"), tr("Active Source"), 600}
+        {QStringLiteral("Waveform"), tr("Waveform"), 600}
     });
     return box_->header();
 }
