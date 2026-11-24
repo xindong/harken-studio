@@ -84,6 +84,13 @@ std::optional<quint64> parseSize(const QString& text, int unit)
     return whole * scale + fractionBytes;
 }
 
+int editableSizeUnit(quint64 bytes)
+{
+    int unit = sizeUnit(bytes);
+    while (unit > 0 && parseSize(sizeValue(bytes, unit), unit) != bytes) --unit;
+    return unit;
+}
+
 double sizePosition(quint64 bytes)
 {
     const double root = std::sqrt(static_cast<double>(bytes) / unitScale(2));
@@ -110,6 +117,12 @@ QString conversionSizeText(quint64 bytes)
     return sizeValue(bytes, unit) + QLatin1Char(' ') + kSizeUnits[unit];
 }
 
+QString exactConversionSizeText(quint64 bytes)
+{
+    const int unit = editableSizeUnit(bytes);
+    return sizeValue(bytes, unit) + QLatin1Char(' ') + kSizeUnits[unit];
+}
+
 ConversionSizeField::ConversionSizeField(quint64 bytes, QWidget* parent)
     : QWidget(parent), value_(new QLineEdit(this)), unit_(new QComboBox(this)), bytes_(bytes)
 {
@@ -118,7 +131,7 @@ ConversionSizeField::ConversionSizeField(quint64 bytes, QWidget* parent)
     ThemeLayout::spacing(layout, ThemeLayout::Space::Control);
     layout->addWidget(value_, 7);
     layout->addWidget(unit_, 3);
-    const int unit = sizeUnit(bytes);
+    const int unit = editableSizeUnit(bytes);
     unit_->addItems(kSizeUnits);
     unit_->setCurrentIndex(unit);
     value_->setMaxLength(80);

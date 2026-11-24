@@ -24,7 +24,7 @@
 | C07 | 配置 | Sound、Container、Layer、Track、Segment、Bus / Send | 混入目标 Bus 的发送增益 |
 | C08 | 配置 | External Editor / Binding | 仅编辑本地贡献 |
 | C09 | 配置 | Container Selection Editor / Transition | # / Source / Exit / Fade Out / Target / Entry / Fade In；按匹配具体程度排序，默认规则最后 |
-| C12 | 配置 | Conversion Editor / Configuration | # / Size range / Sample rate / Format / Quality。表上方的文件大小分段条与行号从 1 开始对应，规则按原始文件大小从 `0 B` 到 `Inf` 排列 |
+| C12 | 配置 | Conversion Editor / Configuration | # / Original size range / Target sample rate / Target format / Target quality。表上方的文件大小分段条与行号从 1 开始对应，规则按原始文件大小从 `0 B` 到 `Inf` 排列 |
 | C13 | 配置 | Sound、Container、Layer、Track、Segment、Bus / Effects | Basic > Effect；# / Effect / Active；本地效果器链配置 |
 | C14 | 配置 | Sound、Container、Layer、Track、Segment、Bus / Sidechain | 辅助信号路由与目标 Ducking 开关 |
 | D01 | 展示 | Bus Inspector / Inputs | 路由反向查询，无序号列 |
@@ -95,7 +95,7 @@
 | C10 / Platform Configuration | 左侧平台导航；右侧为所选平台的名称、基础平台类型与 Default conversion ObjectRef，指定该平台新建根对象的默认预设，可清空 |
 | C11 / Language Configuration | 左侧语言导航与增删，右侧名称；无语言时右侧留空，加号通过弹窗新增 |
 | 平台与语言编辑 | 结束编辑即提交，无效输入恢复旧值；支持项目撤销并随项目保存 |
-| 平台默认值 | 新项目依次创建 Windows、Android、macOS、iOS；默认工程只有 Low Quality 一个 Conversion 预设，仅 Android／iOS 将其作为平台默认值 |
+| 平台默认值 | 新项目依次创建 Windows、Android、macOS、iOS。Windows 和 macOS 默认使用 Default Quality，Android 和 iOS 默认使用 Medium Quality。内置的 Multiple Quality 可手动选用 |
 | 导航布局 | 无表头，保留当前激活项；纵向槽常驻、无横向滚动，不适用普通表格的空白与 Esc 清选 |
 | 主 toolbar | 提供 Original / Converted 试听开关，与平台（含 ALL）、语言一起按本机工程记忆；播放控件居中，Layout 在最右侧 |
 | Layout 切换与保存 | 切换保留各布局在当前工程的工作状态；同名保存更新预设，另存后切换当前布局身份 |
@@ -106,11 +106,12 @@
 | 项目 | 当前表现 |
 |---|---|
 | 入口与布局 | 双击 Assets 中的 Conversion 预设或 Inspector 的 Settings 引用，在中央区域下方打开独立 Conversion Editor。Configuration 在上，Result 在下，与 Selection Editor 共用居中标题、可折叠分区和可拖动的分隔线。规则表脚仅保留增删按钮，结果表铺满 Result 分区。Conversion Editor 独立记忆分区高度和展开状态 |
-| 配置规则 | `#` 使用标准编号列宽，其余四列默认等宽。Size range 只读，范围用半角连接号分隔，整体左对齐，例如 `0 B - 32 KB`、`32 KB - 256 KB`。等于切点的文件使用左段的采样率、格式和质量。不同平台可引用不同预设 |
+| 配置规则 | `#` 使用标准编号列宽，其余四列默认等宽。Original size range 左对齐，用 `[0 B, 32 KB]`、`(32 KB, 256 KB]`、`(256 KB, Inf)` 表示区间。等于切点的文件使用左段的采样率、格式和质量。不同平台可引用不同预设 |
+| 编辑范围 | 双击 Original size range 可同时调整该行的两个切点。下限也是前一行的上限，上限也是后一行的下限。确认或撤销时，两侧边界一起更新。首行下限固定为 `0 B`，末行上限固定为 `Inf`。只有一行时，用加号添加首个切点 |
 | 切分大小 | 编号区块使用主题的多类顺序色，文件大小每满 1024 进一档单位。刻度、范围和切点输入框最多显示两位小数，省略末尾的零。切换单位保留原始字节数。区块至少留出表格编号列的点选宽度，上方的密集刻度优先显示当前切点。色块间的空隙透出 Configuration 背景，默认缩放下宽 2 px。悬停或拖动时，整条空隙使用表头分隔线的高亮色。拖动时相邻两行实时预览，松开后可一步撤销。双击分隔线可编辑大小，选 `B` 可精确输入整数字节数 |
 | 悬浮与添加切点 | 在可添加切点的位置，文件大小读数叠画在色块上方同一行的固定刻度上，轮廓外的文字始终可见。色块内显示高亮竖虚线，色块下方的圆形 `+` 与读数对齐。`+` 和读数沿用坐标轴指示块的底色与前景色。`+` 使用控件描边 `border.secondary`，悬浮时仅填充色切换为 `background.hover`。悬停或拖动分隔条时只显示分隔条高亮和固定刻度。单击 `+` 或从右键菜单选择 `Add Split...`，均以预览处的大小打开切分弹窗。固定刻度与游标读数只读。表脚加号切分选中段，未选中时切分末段。新段继承原段配置，可在弹窗中调整并确认 |
 | 选行与删除 | 单击色块内部选中对应行，选择表格行也会高亮同编号区块。选框画在色块内部，四边等宽。分隔条占用独立空间，按下实际分隔条清除选行，拖动和松开时均保持空选。减号仅对选中的有限规则可用。删除后其区间并入下一条规则，下一条自动选中，区块与行号同步更新 |
-| 格式与采样率 | Format 为 PCM／Vorbis；Vorbis 的 Quality 通过滑块或数值框选择 0–10 的整数档，默认 4，PCM 的 Quality 单元格留空。采样率可选 Original（不重采样）或受支持的离散值，有限阈值可增删，`Inf` 末行不可删除 |
+| 格式与采样率 | Target format 为 PCM／Vorbis。Vorbis 的 Target quality 通过滑块或数值框选择 0–10 的整数档，默认 4，PCM 的 Target quality 单元格留空。Target sample rate 可选 Original（不重采样）或受支持的离散值，有限阈值可增删，`Inf` 末行不可删除 |
 | 引用结果 | 下半区列出主平台上有效引用此预设的 Sound。Active Source 以只读波形展示该行语言的激活条目。没有有效缓存时 Converted 各列和 Ratio 留空 |
 | Convert | Convert 是 Configuration 右下角的独立按钮，位于规则表下方，与表格右缘对齐。点击后为当前平台引用该预设的源文件生成产物，已有缓存直接跳过。收起 Result 后仍可执行转换。转换不显示进度或状态，Esc 可取消未完成工作 |
 | 文件属性 | Sound → Sources 引用行打开的 External Editor（波形编辑）下半区显示 File Properties 表，可拖动分隔条调整高度。Relative Path 相对工程根目录，Absolute Path 指向同一文件。两种路径均使用操作系统的目录分隔符。表中还显示声道、采样率、时长、大小与音频编码 |

@@ -684,23 +684,6 @@ void ensureDefaultMasterBus(ProjectData& project)
 
 namespace {
 
-void createDefaultConversion(ProjectData& project)
-{
-    auto item = std::make_shared<ProjectItem>(ConversionDefaults::lowQualityName(), ProjectItem::Type::Conversion);
-    item->attachDefaultComponents();
-    item->objectID = project.generateObjectID();
-    item->guid = QUuid::createUuid();
-    item->comp<VConversion>()->config = ConversionDefaults::lowQuality();
-    for (const auto& platform : project.platforms)
-        if (ConversionDefaults::usesLowQuality(platform.basePlatform))
-            project.defaultConversionRefs.insert(platform.id, item->guid);
-    ProjectFileBinding binding;
-    binding.parentFolder = QStringLiteral("Conversions");
-    binding.rootItem = item;
-    project.getBucketForType(ProjectItem::Type::Conversion)->push_back(std::move(binding));
-    project.setObjectFileLocation(item.get(), nullptr, {});
-}
-
 QString layerPackFileName(const ProjectItem& layer)
 {
     return NameValidator::objectFileName(layer.name, layer.guid);
@@ -1495,7 +1478,7 @@ bool validateProjectTemplate(const ProjectConfig& config, QString* error)
     ProjectData candidate;
     candidate.platforms = config.platforms;
     ensureDefaultMasterBus(candidate);
-    createDefaultConversion(candidate);
+    ConversionDefaults::createProjectPresets(candidate);
     return TemplateApplyService::seedTemplateInto(candidate, config.templateData, error);
 }
 
@@ -1633,7 +1616,7 @@ bool ProjectManager::createMainProjectFile(const ProjectConfig& config, const QS
     }
 
     ProjectLoaderInternal::loadLayersPacksImpl(projectRoot, project, m_serializer, nullptr);
-    createDefaultConversion(project);
+    ConversionDefaults::createProjectPresets(project);
 
     if (!config.templateId.isEmpty() && !config.templateData.isEmpty()) {
         QString tmplErr;
@@ -1834,7 +1817,7 @@ PreparedProject ProjectManager::prepareProject(const ProjectConfig& config,
     project.sampleRate = config.sampleRate;
     project.channelConfig = config.channelConfig;
     ensureDefaultMasterBus(project);
-    createDefaultConversion(project);
+    ConversionDefaults::createProjectPresets(project);
 
     if (!config.templateId.isEmpty() && !config.templateData.isEmpty()) {
         QString templateError;

@@ -27,7 +27,7 @@ QString inspectorCategoryTitle(PropertyCategory category)
     case PropertyCategory::Basic: return QStringLiteral("Basic");
     case PropertyCategory::Route: return QStringLiteral("Route");
     case PropertyCategory::Spatial: return QStringLiteral("Spatial");
-    case PropertyCategory::Limitation: return QStringLiteral("Limitation");
+    case PropertyCategory::Performance: return QStringLiteral("Performance");
     }
     throw std::invalid_argument("Unknown Inspector category");
 }
@@ -52,8 +52,8 @@ const std::vector<InspectorSectionInfo>& inspectorSections()
         {PropertySection::Sidechain, PropertyCategory::Route, "sidechain", "Sidechain"},
         {PropertySection::Receive, PropertyCategory::Route, "receive", "Receive"},
         {PropertySection::Rating, PropertyCategory::Spatial, "rating", "Rating"},
-        {PropertySection::PlaybackPriority, PropertyCategory::Limitation, "playback_priority", "Playback Priority"},
-        {PropertySection::Conversion, PropertyCategory::Limitation, "conversion", "Conversion"},
+        {PropertySection::PlaybackPriority, PropertyCategory::Performance, "playback_priority", "Playback Priority"},
+        {PropertySection::Conversion, PropertyCategory::Performance, "conversion", "Conversion"},
         {PropertySection::FilterLowPass, PropertyCategory::Basic, "filter_low_pass", "Low Pass"},
         {PropertySection::FilterHighPass, PropertyCategory::Basic, "filter_high_pass", "High Pass"},
         {PropertySection::FilterLowShelf, PropertyCategory::Basic, "filter_low_shelf", "Low Shelf"},

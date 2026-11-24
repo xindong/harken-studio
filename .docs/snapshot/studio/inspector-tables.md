@@ -107,7 +107,7 @@ Frequency 范围为 20–20000 Hz，四节默认值依次为 20000、20、200、
 | 发送 | Sends | Route > Send |
 | 空间属性 | 声像、3D 开关、衰减引用、衰减距离缩放 | Spatial > Rating |
 | 效果器 | 整条 Effects 链，含 Custom／Preset、顺序、Active | Basic > Effect |
-| 转换 | Settings（Conversion 预设引用，可清空） | Limitation > Conversion，位于 Playback Priority 之后 |
+| 转换 | Settings（Conversion 预设引用，可清空） | Performance > Conversion，位于 Playback Priority 之后 |
 
 Conversion 适用于 Sound、Container、Layer、Track、Segment，Bus 与 Action 不适用。该 section 只有 Inherit 与 Settings，与其他字段组一样随 Toolbar 平台编辑 Shared 或平台覆写；根对象隐藏 Inherit，继承时展示有效预设且禁止修改引用，仍保留定位和双击打开独立 Conversion Editor。
 

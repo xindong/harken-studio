@@ -20,7 +20,7 @@ namespace harken::studio {
 enum class PropType : uint8_t { Float, Int, Bool, Enum, Color, ObjectRef, String, List, Range, Struct };
 enum class ListPresentation : uint8_t { Configuration, Display };
 
-enum class PropertyCategory : uint8_t { Basic, Route, Spatial, Limitation };
+enum class PropertyCategory : uint8_t { Basic, Route, Spatial, Performance };
 
 enum class PropertySection : uint8_t {
     None, Playback, Status, Advanced, Source, Selection, Step, Dimension,
