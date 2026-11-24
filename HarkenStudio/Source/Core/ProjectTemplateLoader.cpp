@@ -556,11 +556,7 @@ QString ProjectTemplateLoader::runtimeDir() {
 void ProjectTemplateLoader::ensureUserTemplatesSeeded() {
     const QString target = runtimeDir();
     removeRetiredBuiltInTemplates(target);
-    if (QFileInfo::exists(target)) {
-        return;
-    }
-    if (!QDir().mkpath(target)) {
-        qWarning() << "[ProjectTemplate] failed to mkpath" << target;
+    if (QDir(target).exists() && !QDir(target).isEmpty()) {
         return;
     }
 
@@ -585,6 +581,10 @@ void ProjectTemplateLoader::ensureUserTemplatesSeeded() {
                     << vr.summary;
             continue;
         }
+        if (!QDir().mkpath(target)) {
+            qWarning() << "[ProjectTemplate] failed to mkpath" << target;
+            return;
+        }
         const QString dst = QDir(target).filePath(fi.fileName());
         if (!QFile::copy(fi.absoluteFilePath(), dst)) {
             qWarning() << "[ProjectTemplate] seed copy failed"
@@ -593,6 +593,7 @@ void ProjectTemplateLoader::ensureUserTemplatesSeeded() {
         }
         ++seeded;
     }
+    if (seeded > 0) removeRetiredBuiltInTemplates(target);
     qInfo() << "[ProjectTemplate] seed complete:" << seeded << "file(s) into"
             << target;
 }

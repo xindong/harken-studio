@@ -33,7 +33,7 @@
 | 分组与复制 | `create_parent {"items":["Footstep","Landing"],"type":"Container","name":"Movement"}` 将已有同级对象放入新父对象。`duplicate_items {"items":["Movement"]}` 在原位置复制整棵子树，两者均返回新对象的 GUID |
 | 工程内剪贴板 | 在同一次 `shell` 或 `run` 中使用 `copy_item`、`cut_item` 和 `paste_item`。`items` 可指定多个对象。`paste_item {"target_bucket":"Variables"}` 将复制时的快照粘贴到 Variables 桶根，`target_path` 可将复制或剪切的对象粘贴到兼容的父对象 |
 | 粘贴属性 | 复制单个来源后，`paste_properties {"targets":["Walk","Run"]}` 将剪贴板中的属性应用到多个兼容目标。显式传 `source_path` 时使用该来源此刻的属性 |
-| 另存工程 | `save_project_as {"path":"../Variant/Variant.hsp"}` 保存当前会话中的工程和已登记的音频原件。成功后同一会话的查询与后续编辑都使用目标工程。要制作独立副本，给它使用单独的工程目录 |
+| 另存工程 | `save_project_as {"path":"../Variant/Variant.hsp"}` 保存当前会话中的工程和已登记的音频原件。目标可以是当前工程文件，制作副本时须选择尚无 `.hsp` 工程的目录。成功后同一会话的查询与后续编辑都使用目标工程 |
 | Action | `create_action` 创建对象，`set_item_property(property=steps)` 编辑有序步骤。`get_action_definition.steps` 返回可直接写回的步骤数组，包括目标、延迟、Stop 淡出、SetVariable 值与作用域、Reset 作用域及适用的量化参数 |
 | 播放和发布 | 工程内可试听并查询电平，`export_pack` 导出当前会话，`build` 按已保存的工程构建。下文列出资源、转换、总线、字段组与时间线的具体参数 |
 
@@ -149,7 +149,7 @@ harken> help exit
 | 效果链 | Studio 当前提供 Limiter。内联行使用 `custom.type="limiter"` 和 `custom.parameters=[ceilingDb,releaseMs]`，预设行使用 `effectGuid`。Bus 通过 `set_item_property` 写入 `effects`，可播放定义通过 `replace_field_group_effects` 写入 Shared 或平台效果链 |
 | 衰减 | `set_attenuation_curve` 编辑 `volume` 或 `pitch` 的 `points` 与贝塞尔 `handles`，`get_attenuation` 读回完整定义。对象通过空间字段组的 `spatial.attenuationRef` 引用衰减预设 |
 | 字段组 | `definition_guid` 加 `scope:"Shared"` 或 `platform_ids`；根定义直接编辑字段，继承模式使用共享字段组命令 |
-| 总线 | `set_bus_volume_db/get_bus_volume_db` 使用创作 dB；`set_output_bus_gain/get_output_bus_gain` 只读写 Bus 输出增益；路由目的地使用 Bus 层级或可播放定义字段组 |
+| 总线 | `set_bus_volume_db/get_bus_volume_db` 使用创作 dB。`set_output_bus_gain/get_output_bus_gain` 读写 Bus 的 Shared 输出增益。用 `set_item_property` 设置 `outputBusVolume` 时，传入 `platform_ids` 可按平台写入 dB，传入同一组 ID 和 `override_operation="clear_platform_override"` 可恢复 Shared 值。父 Bus 的 `get_bus_properties.inputs[].level_db` 返回当前试听平台的有效增益。路由目的地使用 Bus 层级或可播放定义字段组。 |
 | Send / Sidechain | `set_send`、`set_send_level` 和 `remove_send` 通过目标、`type`（`Send` 或 `Sidechain`）及布尔值 `duckTarget` 定位路由。默认操作 Send。Bus 命令的 `level` 是非负线性增益，1 为单位增益。路由行中的 `sendLevel` 使用 dB |
 | Input / Receive 来源 | 在目标 Bus 上调用 `get_bus_properties {"bus_id":"<Bus GUID>"}`。`inputs` 列出子 Bus 和向该 Bus 主输出的可播放定义，`receives` 列出有效的 Send 和 Sidechain 来源。两组均使用当前试听平台，每行包含 `source_guid`、`source_name`、`source_authoring_handle` 和 `level_db`。`receives` 还包含 `type` 和 `duckTarget`。工程重开后可用 `source_guid` 定位同一来源 |
 | 试听上下文 | `set_preview_context` 接受 `platform_id`、`all_platforms`、`language` 和 `media_mode` 中的一项或多项，`get_preview_context` 读回完整选择。`all_platforms` 控制工具栏的 All 编辑范围，`platform_id` 选择主试听平台。平台 ID 和语言取自 `list_project_platforms` 和 `list_project_languages`。媒体模式使用 `Original` 或 `Converted`。选择按工程保存在本机，无需 `--save` |

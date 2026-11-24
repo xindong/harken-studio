@@ -295,7 +295,10 @@ private:
         }
         if (redo && !removed_) return true;
         if (!redo && !registry.isUncommitted(asset_.sourceID)) return true;
-        if (redo && (registry.contains(asset_.sourceID)
+        asset_.absolutePath = absolutePath(asset_.relativePath);
+        if (asset_.absolutePath.isEmpty()) {
+            error = QObject::tr("The source path must stay inside AudioSources.");
+        } else if (redo && (registry.contains(asset_.sourceID)
             || registry.findAssetByPath(asset_.absolutePath) || QFileInfo::exists(asset_.absolutePath))) {
             error = QObject::tr("Cannot restore '%1': the source ID or path is already in use.")
                 .arg(asset_.relativePath);
@@ -379,7 +382,9 @@ private:
         const auto* missing = registry.getAsset(missing_.sourceID);
         const QString from = redo ? source_.relativePath : missing_.relativePath;
         const QString to = redo ? missing_.relativePath : source_.relativePath;
-        if (!source || source->relativePath != from || !registry.sourceFileExists(source_.sourceID)
+        missing_.absolutePath = absolutePath(missing_.relativePath);
+        if (missing_.absolutePath.isEmpty()
+            || !source || source->relativePath != from || !registry.sourceFileExists(source_.sourceID)
             || QFileInfo::exists(absolutePath(to)) || (redo && (!missing || missing->relativePath != to))
             || (!redo && missing)
             || std::any_of(references_.cbegin(), references_.cend(), [&](const Reference& ref) {

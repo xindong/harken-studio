@@ -550,7 +550,6 @@ ActionResult handleBusItemProperty(ProjectManager* projectManager, ProjectItem* 
                                    const QString& propertyName, const QJsonObject& args,
                                    const QObject* originator)
 {
-    Q_UNUSED(projectManager);
     if (propertyName == QStringLiteral("outputBusId")
         || propertyName == QStringLiteral("outputBus")
         || propertyName == QStringLiteral("output_bus")) {
@@ -558,6 +557,10 @@ ActionResult handleBusItemProperty(ProjectManager* projectManager, ProjectItem* 
                 QString("Output of bus '%1' derives from its parent bus; use move_item instead")
                     .arg(item->name)};
     }
+    if (propertyName == QStringLiteral("outputBusVolume")
+        && (args.contains(QStringLiteral("platform_ids"))
+            || args.contains(QStringLiteral("override_operation"))))
+        return handlePlayableItemProperty(projectManager, item, propertyName, args, originator);
     QJsonObject busArgs;
     busArgs.insert(QStringLiteral("bus_id"), static_cast<qint64>(item->objectID));
     QJsonValue value = args.value(QStringLiteral("value"));

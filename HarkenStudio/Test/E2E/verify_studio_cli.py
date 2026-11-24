@@ -172,6 +172,43 @@ def verify_shell(cli: Path, environment: dict, root: Path, audio_output: bool) -
             return json.loads(completed.stdout)
 
         verify_shell_help(send, commands)
+
+        def request(command, **args):
+            result = send(command + " " + json.dumps(args))
+            assert result["status"] == "ok", result
+            return result["result"]
+
+        def import_resource(name, sample):
+            path = root / name
+            with wave.open(str(path), "wb") as stream:
+                stream.setparams((1, 2, 48000, 0, "NONE", "not compressed"))
+                stream.writeframes(struct.pack("<h", sample) * 2400)
+            return request("import_audio_resources", files=[str(path)])["source_ids"][0]
+
+        replay = root / "Replay" / "Replay.hsp"
+        replay.parent.mkdir()
+        source_id = import_resource("missing.wav", 1000)
+        request("undo")
+        request("save_project_as", path=str(replay))
+        request("redo")
+        restored = Path(request("get_asset_info", source_id=source_id)["absolute_path"])
+        assert restored == replay.parent / "AudioSources" / "missing.wav" and restored.is_file()
+        assert not (directory / "AudioSources" / restored.name).exists()
+        replacement_id = import_resource("replacement.wav", 2000)
+        request("save_project")
+        restored.unlink()
+        request("restore_audio_resource", source_id=replacement_id, missing_id=source_id)
+        fork = root / "Restored" / "Restored.hsp"
+        fork.parent.mkdir()
+        request("save_project_as", path=str(fork))
+        request("undo")
+        missing = Path(request("get_asset_info", source_id=source_id)["absolute_path"])
+        assert missing == fork.parent / "AudioSources" / "missing.wav" and not missing.exists()
+        request("redo")
+        repaired = Path(request("get_asset_info", source_id=replacement_id)["absolute_path"])
+        assert repaired == missing and repaired.is_file()
+        request("save_project")
+
         initialize = "init_engine " + json.dumps({"device_mode": "real" if audio_output else "null"})
         for line in ['get_item_info {"path":"SessionAction"}', "commands save_project", initialize,
                      *(["start_output"] if audio_output else []), "close_project"]:
@@ -192,6 +229,30 @@ def verify_shell(cli: Path, environment: dict, root: Path, audio_output: bool) -
         reader.join(timeout=30)
         process.stdout.close()
     assert not reader.is_alive()
+
+
+def verify_bus_inputs(call, project, child, parent) -> None:
+    platforms = call("exec", "list_project_platforms", "--project", project)["result"]["platforms"]
+    alternate = call("exec", "create_project_platform", "--project", project, "--input", "-", "--save",
+                     data={"name": "Alternate", "base_platform": "Windows"})["result"]["platform_id"]
+    gain = {"path": child, "property": "outputBusVolume"}
+    scoped = {**gain, "platform_ids": [alternate]}
+    inputs = {"cmd": "get_bus_properties", "args": {"bus_id": parent}}
+    alternate_preview = {"cmd": "set_preview_context", "args": {"platform_id": alternate}}
+    main_preview = {"cmd": "set_preview_context", "args": {"platform_id": platforms[0]["id"]}}
+    edits = [
+        {"cmd": "set_output_bus_gain", "args": {"bus_name": child, "db": -3}},
+        {"cmd": "set_item_property", "args": {**scoped, "value": -12}},
+        {"cmd": "set_item_property", "args": {**gain, "value": -6}},
+        main_preview, inputs, alternate_preview, inputs,
+        {"cmd": "set_item_property", "args": {**scoped, "override_operation": "clear_platform_override"}},
+        inputs, {"cmd": "undo"}, inputs, {"cmd": "redo"}, inputs, {"cmd": "undo"}]
+    for commands, expected in ((edits, [-6, -12, -6, -12, -6]),
+                               ([main_preview, inputs, alternate_preview, inputs], [-6, -12])):
+        results = call("run", "--project", project, "--input", "-", "--save", data=commands)["results"]
+        levels = [row["level_db"] for result in results for row in result["result"].get("inputs", [])
+                  if row["source_guid"] == child]
+        assert levels == expected, levels
 
 
 def verify(cli: Path, work: Path, audio_output: bool = True) -> None:
@@ -297,6 +358,7 @@ def verify(cli: Path, work: Path, audio_output: bool = True) -> None:
         buses = call("exec", "list_buses", "--project", created["path"])["result"]["buses"]
         by_name = {bus["name"]: bus for bus in buses}
         assert by_name["Ambience"]["parent_bus_ref"] == by_name["Master Bus"]["bus_id"], buses
+        verify_bus_inputs(call, created["path"], by_name["Ambience"]["bus_id"], by_name["Master Bus"]["bus_id"])
         for invalid_request in ({"cmd": "not_a_registered_command"},
                                 {"cmd": "save_project", "args": {"typo": True}}):
             rejected = call("run", "--input", "-", data=[
@@ -328,10 +390,10 @@ def verify(cli: Path, work: Path, audio_output: bool = True) -> None:
                 flags.append("--save")
             return call(*flags, data=arguments or {}, exit_code=exit_code)
 
-        def authored_contents():
-            return {path.relative_to(project_dir).as_posix(): path.read_bytes()
-                    for path in project_dir.rglob("*") if path.is_file()
-                    and ".cache" not in path.relative_to(project_dir).parts}
+        def authored_contents(directory=project_dir):
+            return {path.relative_to(directory).as_posix(): path.read_bytes()
+                    for path in directory.rglob("*") if path.is_file()
+                    and ".cache" not in path.relative_to(directory).parts}
 
         for invalid_request in ({"cmd": "list_items", "args": []}, {"cmd": "list_items", "arguments": {}}):
             call("run", "--project", str(project), "--input", "-", "--save", data=[
@@ -621,7 +683,15 @@ def verify(cli: Path, work: Path, audio_output: bool = True) -> None:
 
         alternate = root / "AlternateProject" / "AlternateProject.hsp"
         alternate.parent.mkdir()
+        other = Path(created["path"])
+        other_saved = authored_contents(other.parent)
         saved = authored_contents()
+        for target in (other, other.with_name("Copy.hsp"), project.with_name("Sibling.hsp"),
+                       alternate.with_suffix(""), alternate.with_suffix(".json")):
+            execute("save_project_as", {"path": str(target)}, exit_code=1)
+        assert authored_contents(other.parent) == other_saved
+        assert authored_contents() == saved
+        assert not list(alternate.parent.iterdir())
         call("run", "--project", str(project), "--input", "-", data=[
             {"cmd": "rename_audio_resource", "args": {"path": source.relative_to(project.parent / "AudioSources").as_posix(),
                                                       "name": "alternate-tone.wav"}},

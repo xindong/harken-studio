@@ -2063,6 +2063,11 @@ bool ProjectManager::saveProjectAs(const QString& path, QString* error, bool* fo
         return false;
     }
     const QFileInfo destination(path);
+    if (destination.suffix().compare(QStringLiteral("hsp"), Qt::CaseInsensitive) != 0
+        || destination.isDir() || destination.isSymLink()) {
+        if (error) *error = tr("Choose a .hsp project file as the destination.");
+        return false;
+    }
     const auto file = QDir::cleanPath(destination.absoluteFilePath());
     auto acquisition = ProjectInstance::acquire(file, forwarded ? ProjectInstance::ActivationPolicy::Allow
                                                                : ProjectInstance::ActivationPolicy::Deny);
@@ -2072,6 +2077,14 @@ bool ProjectManager::saveProjectAs(const QString& path, QString* error, bool* fo
         return false;
     }
     const QString previousPath = m_currentProject->projectPath;
+    if (destination == QFileInfo(previousPath))
+        return saveProjectInternal(false, error);
+    const QDir directory = destination.absoluteDir();
+    if (directory.exists() && (!directory.isReadable()
+        || !directory.entryList({QStringLiteral("*.hsp")}, QDir::Files | QDir::Hidden | QDir::System).isEmpty())) {
+        if (error) *error = tr("Choose a new project directory. The destination must be readable and contain no .hsp project.");
+        return false;
+    }
     const QString previousName = m_currentProject->name;
     const bool relocateSources = ProjectInstance::identityForProject(file)
         != ProjectInstance::identityForProject(previousPath);
@@ -6345,13 +6358,16 @@ std::vector<MainInputInfo> ProjectManager::collectMainInputs(uint32_t busId) con
 {
     std::vector<MainInputInfo> out;
     if (!m_currentProject) return out;
-    for (const auto* bus : getChildBusItems(busId)) {
-        const auto* mix = bus->comp<VMixNode>();
-        out.push_back({bus->objectID, mix->outputBusVolume, bus->guid, bus->name});
+    const auto scope = currentWorldPlatformScope(PlatformContextService::instance().context());
+    constexpr auto gain = static_cast<uint8_t>(harkenplayableproperties::PlayablePropertyIdV1::OutputBusVolume);
+    for (auto* bus : getChildBusItems(busId)) {
+        const auto locator = PlayablePropertyAuthoringV1::definitionLocator(*bus);
+        if (!locator) continue;
+        const auto state = PlayablePropertyAuthoringV1::readProperty(*bus, *locator, gain, scope);
+        if (state && state->value.isDouble())
+            out.push_back({bus->objectID, static_cast<float>(state->value.toDouble()), bus->guid, bus->name});
     }
-    const auto snapshot = buildFieldGroupEffectiveSnapshot(
-        *m_currentProject,
-        toFieldGroupScope(currentWorldPlatformScope(PlatformContextService::instance().context())));
+    const auto snapshot = buildFieldGroupEffectiveSnapshot(*m_currentProject, toFieldGroupScope(scope));
     forEachMixNodeItem([&](ProjectItem* item, VMixNode*) {
         const auto guid = toFieldGroupGuid(item->guid);
         const auto effective = snapshot.definitions.find(guid);

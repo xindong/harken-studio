@@ -183,7 +183,7 @@ const QMap<QString, Contract>& contracts()
             object(), true);
         put({"save_project", "close_project", "shutdown_engine", "start_output", "stop_output", "undo", "redo"}, object());
         put({"save_project_as"}, described(object({{"path", text()}}, {"path"}),
-            "Save the open project at the destination .hsp path and continue editing the saved project there."));
+            "Save to the current .hsp file or to a .hsp file in a directory containing no project, then continue editing there."));
         put({"get_preview_context"}, object(), true);
         put({"set_preview_context"}, requireAny(object({
             {"platform_id", projectPlatformIdSchema()},
