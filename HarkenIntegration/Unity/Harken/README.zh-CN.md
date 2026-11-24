@@ -24,6 +24,12 @@ Harken 是一套游戏音频中间件。声音设计师在 Harken Studio 中编�
 - 在 Unity 编辑器中预览 Action。
 - 让 Harken Studio 连接正在运行的游戏进行实时观察。
 
+需要按角色选声音时，为每个角色创建自己的空间声源。在游戏线程调用
+`source.SetValue("AudioPerspective", "FirstPerson")`，也可以传数值。
+写入成功后，将同一个声源传给 `PlayAction` 或 `PlayActionAsync`。
+局部值在这个声源上持续有效，异步播放在资源准备完成、实际提交时读取。
+对同一变量进行全局写入会清除各声源的局部值。
+
 ## 环境要求
 
 | 项目 | 要求 |

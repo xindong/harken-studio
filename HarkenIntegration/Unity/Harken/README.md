@@ -24,6 +24,13 @@ Games that own the audio session can call `await PackBootstrap.StartLevelAsync(s
 - Preview Actions in the Unity Editor.
 - Connect Harken Studio to a running game for live inspection.
 
+For character-specific playback, create a spatial source for each character.
+On the game thread, call `source.SetValue("AudioPerspective", "FirstPerson")`
+or pass a numeric value. After the write succeeds, pass the same source to
+`PlayAction` or `PlayActionAsync`. A local value persists across plays on that
+source. An asynchronous play uses the source's value when it posts after
+preparation. A global write to the same Variable clears its local overrides.
+
 ## Requirements
 
 | Item | Requirement |

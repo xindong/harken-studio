@@ -197,7 +197,7 @@ namespace Harken
             }
         }
 
-        private VnResult RequireOwnerThread()
+        internal VnResult RequireOwnerThread()
         {
             return Environment.CurrentManagedThreadId == ownerThreadId
                 ? VnResult.VN_OK
