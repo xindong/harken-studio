@@ -1037,6 +1037,7 @@ ActionResult handleSoundItemProperty(ProjectManager* projectManager, ProjectItem
     const SoundAuthoringState oldState = captureSoundAuthoringState(*sound);
     SoundAuthoringState newState = oldState;
     QJsonValue canonicalValue;
+    bool namesOnly = false;
     if (propertyName == QStringLiteral("scheduleOffsetSec")) {
         const QJsonValue value = args.value(QStringLiteral("value"));
         if (!value.isDouble() || !std::isfinite(value.toDouble())
@@ -1091,10 +1092,8 @@ ActionResult handleSoundItemProperty(ProjectManager* projectManager, ProjectItem
                     [&](const auto& entry) { return entry.entryId == source.entryId; });
                 const QString previousName = before == previous.end() ? QString() : before->name;
                 if (source.name.isEmpty())
-                    source.name = previousName;
-                if (source.name.isEmpty())
-                    source.name = SoundSourceSemantics::defaultName(
-                        resolveAsset(source.sourceId)->relativePath);
+                    source.name = before != previous.end() ? previousName
+                        : SoundSourceSemantics::defaultName(resolveAsset(source.sourceId)->relativePath);
                 NameValidator::Result nameResult;
                 if (source.name != previousName
                     && !NameValidator::validateDisplayName(source.name, &nameResult))
@@ -1108,9 +1107,13 @@ ActionResult handleSoundItemProperty(ProjectManager* projectManager, ProjectItem
             SoundSourceSemantics::settleLoopProvenance(set.entries, resolveAsset);
             SoundSourceSemantics::stampAuthoringAnchors(set.entries, previous, resolveAsset);
         };
-        prepareSet(newState.sources.plain, oldState.sources.plain);
-        for (auto it = newState.sources.localized.begin(); it != newState.sources.localized.end(); ++it)
-            prepareSet(it.value(), oldState.sources.localized.value(it.key()));
+        namesOnly = newState.sources != oldState.sources
+            && SoundSourceSemantics::sameExceptNames(newState.sources, oldState.sources);
+        if (!namesOnly) {
+            prepareSet(newState.sources.plain, oldState.sources.plain);
+            for (auto it = newState.sources.localized.begin(); it != newState.sources.localized.end(); ++it)
+                prepareSet(it.value(), oldState.sources.localized.value(it.key()));
+        }
         canonicalValue = SoundSourceSemantics::toJson(newState.sources);
     }
 
@@ -1128,8 +1131,7 @@ ActionResult handleSoundItemProperty(ProjectManager* projectManager, ProjectItem
         return result;
     const uint32_t objectID = item->objectID;
     result.authoringWriteSet = QSet<QUuid>{item->guid};
-    if (propertyName == QStringLiteral("sources")
-        && SoundSourceSemantics::sameExceptNames(newState.sources, oldState.sources)) {
+    if (namesOnly) {
         applySoundSourceNames(objectID, newState.sources, originator);
         result.undoFn = [objectID, sources = oldState.sources] { applySoundSourceNames(objectID, sources); };
         result.redoFn = [objectID, sources = newState.sources] { applySoundSourceNames(objectID, sources); };

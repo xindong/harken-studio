@@ -389,7 +389,7 @@ void AudioEngine::bindCurrentWorldPlatformContext()
         return;
     currentWorldPlatformBound_ = true;
     const auto trackProperty = [this](ProjectItem* item, const QString& property) {
-        if (property == QLatin1String("dirty")) return;
+        if (property == QLatin1String("dirty") || property == QLatin1String("sourceName")) return;
         const auto* field = PlayablePropertyAuthoringV1::fieldByName(property);
         using Property = harkenplayableproperties::PlayablePropertyIdV1;
         if (item && item->type != ProjectItem::Type::Bus && field
