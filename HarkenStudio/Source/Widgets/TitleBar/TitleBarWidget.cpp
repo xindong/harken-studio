@@ -205,7 +205,7 @@ void TitleBarWidget::layoutVersionLabel() {
 int TitleBarWidget::syncContentMetrics(const ThemeMetrics& metrics) {
     const int textHeight = menuBar_ ? menuBar_->fontMetrics().height()
                                     : fontMetrics().height();
-    const int targetHeight = qMax(metrics.chrome.mainWindowMenuBarHeight, textHeight);
+    const int targetHeight = qMax(metrics.chrome.titleBarHeight, textHeight);
     int itemHeight = targetHeight;
     int contentWidth = 0;
     if (menuBar_) {

@@ -81,37 +81,26 @@ ads--CDockAreaWidget {
 ads--CDockAreaTitleBar {
     background-color: @BG_SECONDARY@;
     border-bottom: @BORDER_WIDTH@px solid @BORDER_PRIMARY@;
-    min-height: @LARGE_HEIGHT@px;
-    padding: 0;
+    min-height: @TAB_ROW_CONTENT_HEIGHT@px;
+    padding: @BORDER_WIDTH@px 0 0 0;
 }
 
-ads--CDockAreaTitleBar QPushButton {
+ads--CTitleBarButton,
+#tabCloseButton {
     border: none;
-    padding: @SPACING_COMPACT@px;
-}
-
-ads--CTitleBarButton {
-    padding: 0px 0px;
+    padding: 0;
+    min-width: @CONTROL_HEIGHT@px;
+    max-width: @CONTROL_HEIGHT@px;
+    min-height: @CONTROL_HEIGHT@px;
+    max-height: @CONTROL_HEIGHT@px;
     qproperty-iconSize: @ICON_EXTENT@px @ICON_EXTENT@px;
 }
 
-#dockAreaCloseButton,
-#startupLoadingCloseButton,
-#dockPinButton {
+#startupLoadingCloseButton {
     border: none;
     padding: @BORDER_WIDTH@px;
     max-width: @CLOSE_BUTTON_EXTENT@px;
     max-height: @CLOSE_BUTTON_EXTENT@px;
-}
-
-#dockPinButton {
-    qproperty-iconSize: @ICON_EXTENT@px @ICON_EXTENT@px;
-}
-
-#tabsMenuButton {
-    qproperty-iconSize: @ICON_EXTENT@px @ICON_EXTENT@px;
-    min-width: @ICON_EXTENT@px;
-    min-height: @ICON_EXTENT@px;
 }
 
 #tabsMenuButton::menu-indicator {
@@ -124,7 +113,6 @@ ads--CDockAreaTabBar,
 #tabsContainerWidget {
     background-color: @BG_SECONDARY@;
     border: none;
-    min-height: @LARGE_HEIGHT@px;
 }
 
 ads--CDockWidgetTab {
@@ -132,9 +120,8 @@ ads--CDockWidgetTab {
     border: none;
     border-top: @ACCENT_BORDER_WIDTH@px solid @ACTIVE_TAB_ACCENT@;
     margin-right: @SPACING_COMPACT@px;
-    padding: @SPACING_COMPACT@px @SPACING_XSMALL@px @SPACING_XSMALL@px @SPACING_XSMALL@px;
-    min-height: @CONTROL_HEIGHT@px;
-    qproperty-iconSize: @SMALL_ICON_EXTENT@px @SMALL_ICON_EXTENT@px;
+    padding: 0 @SPACING_XSMALL@px @ACCENT_BORDER_WIDTH@px @SPACING_XSMALL@px;
+    qproperty-iconSize: @ICON_EXTENT@px @ICON_EXTENT@px;
 }
 
 ads--CDockWidgetTab:hover {
@@ -158,14 +145,13 @@ ads--CDockWidgetTab[focused="true"] QLabel {
     color: @ACCENT@;
 }
 
-/* --- Tab Close Button --------------------------------------------------- */
-
-#tabCloseButton {
-    margin-top: @SPACING_COMPACT@px;
-    border: none;
-    padding: 0px -@SPACING_COMPACT@px;
-    qproperty-iconSize: @ICON_EXTENT@px @ICON_EXTENT@px;
+#dockWidgetTabLabel,
+#autoHideTitleLabel {
+    min-height: 1em;
+    padding-bottom: @SPACING_COMPACT@px;
 }
+
+/* --- Tab Close Button --------------------------------------------------- */
 
 #dockAreaCloseButton:hover:enabled,
 #startupLoadingCloseButton:hover:enabled,
@@ -239,7 +225,8 @@ ads--CAutoHideDockContainer {
 ads--CAutoHideDockContainer ads--CDockAreaTitleBar {
     background-color: @BG_SECONDARY@;
     border-bottom: @ACCENT_BORDER_WIDTH@px solid @ACCENT@;
-    padding: 0px;
+    min-height: @AUTO_HIDE_TAB_ROW_CONTENT_HEIGHT@px;
+    padding: @ACCENT_BORDER_WIDTH@px 0 0 0;
 }
 
 #autoHideTitleLabel {
@@ -278,7 +265,8 @@ ads--CResizeHandle {
     number("@SPACING_MEDIUM@", metrics.spacingMedium);
     number("@CONTROL_HEIGHT@", metrics.controlHeight);
     number("@COMPACT_HEIGHT@", metrics.control.compactHeight);
-    number("@LARGE_HEIGHT@", metrics.control.largeHeight);
+    number("@TAB_ROW_CONTENT_HEIGHT@", qMax(0, metrics.chrome.titleBarHeight - 2 * metrics.borderWidth));
+    number("@AUTO_HIDE_TAB_ROW_CONTENT_HEIGHT@", qMax(0, metrics.chrome.titleBarHeight - 2 * metrics.accentBorderWidth));
     number("@ICON_EXTENT@", metrics.iconExtent);
     number("@SMALL_ICON_EXTENT@", metrics.control.smallIconExtent);
     number("@CLOSE_BUTTON_EXTENT@", metrics.iconExtent + metrics.spacingCompact);

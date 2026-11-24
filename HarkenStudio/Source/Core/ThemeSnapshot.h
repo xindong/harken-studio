@@ -190,9 +190,8 @@ struct ThemeMetrics
     } form;
 
     struct Chrome {
-        int mainWindowMenuBarHeight = 0;
-        int mainWindowToolBarHeight = 0;
         int titleBarHeight = 0;
+        int mainWindowToolBarHeight = 0;
         int windowButtonWidth = 0;
         int windowMinimumWidth = 0;
         int windowMinimumHeight = 0;

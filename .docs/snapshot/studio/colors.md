@@ -57,9 +57,11 @@
 
 Explorer 的 Assets / Resources 与 Selection Editor 的 Content / Transition 共用面板分区（`PaneSection` / `PaneSectionStack`）：带首要边界外框，标题居中，分区间 1px 边界可拖动调高，收起后让出空间并记住尺寸；标题只有底边线，首个分区上方由外框、其余由分隔边界提供上边线，切换按钮铺满标题栏，悬停底色 `background.tertiary` 上下贴边，鼠标为手形。Inspector 与设置表单按“块”排列：字段行高等于字段高，行与行之间、分节内容的上下边距都是控件间距，因此字段行与表格等块状内容离分节标题的距离一致，行距与树和表格的行高同为 24。蓝图节点行、标题栏窗口按钮宽、Fader 最小高度和 Timeline 标尺高度不随字段高收缩，分别取行高或较大控件高度推导。重命名编辑框高度为字段高并在行内居中，横向起点退回边框与 `QLineEdit` 固有文字边距，编辑时文字位置不变。
 
+Dock 标签栏以 `chrome.titleBarHeight` 为行高基准，默认总高 30 个逻辑像素，字体较大时可随内容增高。顶部预留与底边线等厚的空间，标签图标、关闭、固定和标签菜单按钮在整行内垂直居中。标签图标与蓝图工具栏共用 `iconExtent`，同行按钮使用 `controlHeight` 方形背景，默认均为 20 × 20 个逻辑像素，上下各留 5 像素。标签文字统一使用底部紧凑内距校正基线。
+
 主窗口、浮动窗口与对话框标题栏共用 `TitleBarBase`，由它负责背景绘制、标题栏与窗口按钮尺寸，以及主题、字体、屏幕和最大化状态变化。窗口按钮基于 `QAbstractButton`，尺寸只由标题栏根据主题壳层尺寸和内容高度设置，不继承表单 `QPushButton` 的字段高度限制；QSS 只声明其视觉状态。各类标题栏按菜单、项目名或对话框名称计算所需的内容高度。
 
-`ThemeLayout::Space` 只剩 `None / Tight / Control / Section / Panel`，原 Medium / Large / XLarge 不再对业务开放；QSS 也不再提供 `@spacing*@`，改用 `@panelPadding@`、`@sectionGap@`、`@controlGap@`、`@tightGap@`、`@rowInset@`、`@fieldHeight@`、`@sectionHeaderHeight@` 与控件文字左右留白 `@textPadding@`。工具条类区域统一为左右面板内边距、上下紧凑间距。主窗口菜单栏的高度基准为 `chrome.mainWindowMenuBarHeight`，默认 30 个逻辑像素。主窗口工具栏使用 `chrome.mainWindowToolBarHeight`，默认 36 个逻辑像素。内容行在工具栏内垂直居中，容器高度包含该行及上下紧凑间距。标题文字或菜单项超过基准时，菜单栏按内容增高。HarkenStyle 将 `QToolBar` 的条目边距和框架宽度设为 0。蓝图画布节点内部行保持世界坐标中的原有密度，不套用面板行高。
+`ThemeLayout::Space` 只剩 `None / Tight / Control / Section / Panel`，原 Medium / Large / XLarge 不再对业务开放；QSS 也不再提供 `@spacing*@`，改用 `@panelPadding@`、`@sectionGap@`、`@controlGap@`、`@tightGap@`、`@rowInset@`、`@fieldHeight@`、`@sectionHeaderHeight@` 与控件文字左右留白 `@textPadding@`。工具条类区域统一为左右面板内边距、上下紧凑间距。主窗口菜单栏、浮动面板和对话框的标题栏共用 `chrome.titleBarHeight`，默认 30 个逻辑像素。主窗口工具栏使用 `chrome.mainWindowToolBarHeight`，默认 36 个逻辑像素。内容行在工具栏内垂直居中，容器高度包含该行及上下紧凑间距。字体或菜单项需要更多空间时，标题栏按内容增高。HarkenStyle 将 `QToolBar` 的条目边距和框架宽度设为 0。蓝图画布节点内部行保持世界坐标中的原有密度，不套用面板行高。
 
 主窗口工具栏的平台、语言和布局选择器共用 `ToolBarComboBox`。选择器与 Remote、Capture、ALL 按钮共用工具栏控件高度，基准是 `fieldHeight + controlGap`，默认 24 个逻辑像素，并至少容纳字体和图标。Remote 和 Capture 按钮为正方形，图标使用 `iconExtent`，默认 20 个逻辑像素。ALL 按钮的宽度随文字和左右留白确定。选择器使用直角且无描边。选择器与普通按钮共用常态底色 `background.tertiary`，文字和箭头取 `text.primary`。悬停时两者都在各自底色上叠加 `background.hoverOverlay`。工具栏选择器展开或获得键盘导航焦点时也显示该叠加色。鼠标操作收起弹窗后，指针移开即恢复常态底色。平台和语言弹出选项列表，布局弹出操作菜单。
 
