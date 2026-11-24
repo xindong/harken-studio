@@ -3,10 +3,12 @@
 #include "EffectChainSemantics.h"
 #include "ItemPropertySchema.h"
 #include "ProjectPlatformCommandSchema.h"
+#include "VariableSemantics.h"
 
 #include <QJsonArray>
 #include <QMap>
 #include <QSet>
+#include <limits>
 
 namespace harken::studio {
 namespace {
@@ -146,8 +148,9 @@ QJsonObject effect()
 {
     auto schema = object({{"guid", uuid()}, {"mode", choice({"custom", "preset"})},
         {"effectGuid", uuid()}, {"bypass", boolean()},
-        {"custom", object({{"type", choice({"feedbackDelay", "threeBandTone", "gain", "limiter", "compressor"})},
-                            {"parameters", array(number(), 1)}}, {"type", "parameters"})}}, {"guid"});
+        {"custom", object({{"type", choice({EffectChainSemantics::typeName(EffectType::Limiter)})},
+                            {"parameters", described(tuple(EffectChainSemantics::parameterCount(EffectType::Limiter)),
+                                "Limiter ceiling in dB followed by release in milliseconds.")}}, {"type", "parameters"})}}, {"guid"});
     schema.insert("oneOf", QJsonArray{
         QJsonObject{{"required", QJsonArray{"mode", "custom"}}, {"properties", QJsonObject{{"mode", QJsonObject{{"const", "custom"}}}}},
                     {"not", QJsonObject{{"required", QJsonArray{"effectGuid"}}}}},
@@ -179,6 +182,14 @@ const QMap<QString, Contract>& contracts()
              "list_packs", "list_project_languages", "search_status", "validate_pack", "validate_pack_build_readiness"},
             object(), true);
         put({"save_project", "close_project", "shutdown_engine", "start_output", "stop_output", "undo", "redo"}, object());
+        put({"save_project_as"}, described(object({{"path", text()}}, {"path"}),
+            "Save the open project at the destination .hsp path and continue editing the saved project there."));
+        put({"get_preview_context"}, object(), true);
+        put({"set_preview_context"}, requireAny(object({
+            {"platform_id", projectPlatformIdSchema()},
+            {"all_platforms", described(boolean(), "Select the Studio toolbar's All edit scope while keeping the primary audition platform.")},
+            {"language", described(text(), "Project language returned by list_project_languages.")},
+            {"media_mode", choice({"Original", "Converted"})}}), {"platform_id", "all_platforms", "language", "media_mode"}));
         put({"remote_disconnect", "stop_remote_capture"}, object());
         put({"start_remote_capture"}, object({{"output_path", text()}}));
         put({"get_remote_status", "get_remote_catalog"}, object(), true);
@@ -223,10 +234,11 @@ const QMap<QString, Contract>& contracts()
 
         const auto conversionSelector = described(text(), "Conversion preset GUID or unambiguous project path or name.");
         const auto nullableConversion = QJsonObject{{"anyOf", QJsonArray{conversionSelector, QJsonObject{{"type", "null"}}}}};
+        put({"get_conversion_fields"}, object({{"conversion", conversionSelector}}, {"conversion"}), true);
         put({"create_conversion"}, object({{"name", text()}, {"folder", described(text(),
             "Existing directory in Conversions, relative to that bucket or prefixed with Conversions/.")}}, {"name"}));
-        auto tierLimit = integer(0, 9223372036854775807.0);
-        const auto tier = object({{"max_bytes", QJsonObject{{"anyOf", QJsonArray{tierLimit, QJsonObject{{"type", "null"}}}}}},
+        const QJsonObject nonnegativeInt64{{"type", "integer"}, {"minimum", 0}, {"maximum", std::numeric_limits<qint64>::max()}};
+        const auto tier = object({{"max_bytes", QJsonObject{{"anyOf", QJsonArray{nonnegativeInt64, QJsonObject{{"type", "null"}}}}}},
             {"sample_rate", QJsonObject{{"type", "integer"}, {"enum", QJsonArray{0, 8000, 11025, 16000, 22050, 24000, 32000, 44100, 48000}}}}},
             {"max_bytes", "sample_rate"});
         const auto quality = integer(0, kMaxVorbisQuality);
@@ -247,6 +259,11 @@ const QMap<QString, Contract>& contracts()
         conversionFields.insert("oneOf", QJsonArray{QJsonObject{{"required", QJsonArray{"rules"}}},
             alternatives({"format", "quality", "sample_rate_tiers"})});
         put({"set_conversion_fields"}, conversionFields);
+        put({"set_conversion_rule_range"}, requireAny(object({{"conversion", conversionSelector},
+            {"rule_index", described(integer(), "Zero-based index in the preset's ordered rules.")},
+            {"min_bytes", described(nonnegativeInt64, "Exclusive lower boundary in original file bytes, shared with the preceding rule. Omit for the first rule.")},
+            {"max_bytes", described(nonnegativeInt64, "Inclusive upper boundary in original file bytes, shared with the following rule. Omit for the final rule.")}},
+            {"conversion", "rule_index"}), {"min_bytes", "max_bytes"}));
         put({"set_object_conversion"}, object({{"object", text()}, {"inherit", boolean()},
             {"settings", described(nullableConversion, "Local preset reference, or null for no conversion. Omit to retain local history; unavailable when inherit is true.")},
             {"platform_id", described(projectPlatformIdSchema(), "Platform override to edit. Omit to edit Shared.")}},
@@ -266,24 +283,52 @@ const QMap<QString, Contract>& contracts()
             {"sample_rate", withDefault(integer(1), 48000)},
             {"channel_config", withDefault(choice({"mono", "stereo", "5_1", "7_1", "atmos_7_1_4"}), "stereo")},
             {"platforms", platformRows}, {"template_id", text()},
-            {"template_data", described({{"type", "object"}, {"minProperties", 1}}, "Full project template data. Supply template_id together with template_data.")}}, {"name", "location"});
+            {"template_data", described({{"type", "object"}, {"minProperties", 1}}, "Optional inline template for template_id. With only template_id, use an installed template from list_project_templates.")}}, {"name", "location"});
         createProject.insert("oneOf", QJsonArray{
-            QJsonObject{{"required", QJsonArray{"template_id", "template_data"}}},
+            QJsonObject{{"required", QJsonArray{"template_id"}}},
             QJsonObject{{"not", alternatives({"template_id", "template_data"})}}});
         put({"create_project"}, createProject);
-        put({"create_item"}, object({{"parent", text(false)}, {"name", text()}, {"type", text()},
-            {"kind", choice({"Step", "Smooth"})}}, {"name", "type"}));
+        put({"list_project_templates"}, object(), true);
+        const auto itemFolder = described(text(), "Existing project bucket or directory, e.g. Layers/Ambience.");
+        auto createItem = object({{"parent", text(false)}, {"folder", itemFolder}, {"name", text()}, {"type", described(text(),
+            "Sound, Container, Track, Segment, Layer, Action, Variable, Attenuation, Effect or Conversion. Use create_bus for a Bus.")},
+            {"kind", choice({"Step", "Smooth"})}}, {"name", "type"});
+        createItem.insert("not", QJsonObject{{"required", QJsonArray{"folder", "parent"}}});
+        put({"create_item"}, createItem);
+        const auto itemList = described(array(text(), 1, true), "Project item GUIDs or unambiguous paths or names.");
+        put({"duplicate_items"}, object({{"items", itemList}}, {"items"}));
+        put({"create_parent"}, object({{"items", itemList}, {"type", choice({"Container", "Track", "Segment", "Layer", "Bus"})},
+            {"name", text()}}, {"items", "type", "name"}));
         put({"create_action"}, object({{"name", text()}, {"parent", text(false)}}, {"name"}));
+        const auto clipMove = object({{"source_track", text()}, {"destination_track", text()},
+            {"clip_guid", uuid()}, {"start", described(nonnegativeInt64, "Destination position in the Segment's time domain (nanoseconds or musical ticks).")}},
+            {"source_track", "destination_track", "clip_guid", "start"});
+        put({"move_track_clips"}, object({{"moves", array(clipMove, 1)}}, {"moves"}));
         put({"rename_item"}, itemSelector({{"new_name", text()}}, {"new_name"}, true));
-        put({"delete_item", "copy_item", "cut_item"}, itemSelector());
-        put({"move_item"}, requireAny(itemSelector({{"new_parent", text()}, {"new_parent_id", uint32()}}), {"new_parent", "new_parent_id"}));
-        auto paste = requireAny(object({{"target_path", text()}, {"target_object_id", uint32()},
-            {"source_path", text()}, {"source_object_id", uint32()}, {"op", choice({"copy", "cut"})}}), {"target_path", "target_object_id"});
-        put({"paste_item"}, paste);
-        auto propertiesPaste = paste.value("properties").toObject();
-        propertiesPaste.remove("op");
-        paste.insert("properties", propertiesPaste);
-        put({"paste_properties"}, requireAny(paste, {"source_path", "source_object_id"}));
+        put({"delete_item"}, itemSelector());
+        auto clipboardItems = object({{"path", text()}, {"object_id", uint32()}, {"items", itemList}});
+        clipboardItems.insert("oneOf", QJsonArray{alternatives({"path", "object_id"}),
+            QJsonObject{{"required", QJsonArray{"items"}}}});
+        put({"copy_item", "cut_item"}, clipboardItems);
+        auto moveItem = itemSelector({{"new_parent", text()}, {"new_parent_id", uint32()}, {"folder", itemFolder}});
+        moveItem.insert("oneOf", QJsonArray{alternatives({"new_parent", "new_parent_id"}),
+            QJsonObject{{"required", QJsonArray{"folder"}}}});
+        put({"move_item"}, moveItem);
+        QJsonObject pasteFields{{"target_path", text()}, {"target_object_id", uint32()},
+            {"source_path", text()}, {"source_object_id", uint32()}};
+        auto propertyTargets = pasteFields;
+        propertyTargets.insert("targets", itemList);
+        auto propertiesPaste = object(propertyTargets);
+        propertiesPaste.insert("oneOf", QJsonArray{alternatives({"target_path", "target_object_id"}),
+            QJsonObject{{"required", QJsonArray{"targets"}}}});
+        put({"paste_properties"}, described(propertiesPaste,
+            "Paste properties to objects of the same type. Omit the source to use the session clipboard."));
+        pasteFields.insert("op", choice({"copy", "cut"}));
+        pasteFields.insert("target_bucket", described(text(), "Project bucket root, such as Variables or Layers. Accepts copied objects."));
+        auto pasteItem = object(pasteFields);
+        pasteItem.insert("oneOf", QJsonArray{alternatives({"target_path", "target_object_id"}),
+            QJsonObject{{"required", QJsonArray{"target_bucket"}}}});
+        put({"paste_item"}, pasteItem);
         put({"create_folder", "delete_folder"}, object({{"path", text()}}, {"path"}));
         put({"rename_folder"}, object({{"path", text()}, {"new_name", text()}}, {"path", "new_name"}));
         put({"move_folder"}, object({{"path", text()}, {"new_parent", text()}}, {"path", "new_parent"}));
@@ -291,6 +336,15 @@ const QMap<QString, Contract>& contracts()
         effectChain.insert("maxItems", static_cast<int>(EffectChainLedger::kCapacity));
         auto itemProperty = setItemPropertySchema();
         auto itemPropertyValues = itemProperty.value("propertyValues").toObject();
+        itemPropertyValues.insert("kind", described(integer(0, 1), "Variable kind. 0 selects Step and 1 selects Smooth."));
+        itemPropertyValues.insert("defaultValue", number());
+        itemPropertyValues.insert("rangeMin", nonnegative());
+        itemPropertyValues.insert("rangeMax", nonnegative());
+        auto range = tuple(2);
+        range.insert("items", nonnegative());
+        itemPropertyValues.insert("range", range);
+        itemPropertyValues.insert("labels", array(object({{"id", uuid()}, {"name", text(false)},
+            {"anchor", integer(0, VariableSemantics::kStepExactIntBound)}}, {"anchor", "name"})));
         itemPropertyValues.insert("effects", described(effectChain,
             "Complete Bus FX chain in processing order. Preserve slot guid and bypass when replacing or converting an effect. Use replace_field_group_effects for playable definitions."));
         itemProperty.insert("propertyValues", itemPropertyValues);
@@ -427,8 +481,31 @@ const QMap<QString, Contract>& contracts()
         importAudio.insert("anyOf", QJsonArray{QJsonObject{{"required", QJsonArray{"pack"}}},
             QJsonObject{{"not", alternatives({"target_parent_path", "target_parent_id"})}}});
         put({"import_audio"}, importAudio);
-        put({"import_audio_files"}, object({{"files", array(text(), 1)}, {"target_container_id", described(uint32(),
-            "Target authoring handle: container, sound or output bus. Omit to import at the project root.")}}, {"files"}));
+        const auto importPaths = described(array(text(), 1), "Audio files or folders to scan recursively for supported audio files.");
+        auto importFiles = object({{"files", importPaths}, {"target_container_id", described(uint32(),
+            "Target authoring handle: container, sound or output bus. Omit to import at the project root.")},
+            {"language", described(text(), "Project language group of the target Sound. Defaults to the preview language.")},
+            {"entry_id", described(uuid(), "Target Sound source row. Its group determines the language and resolves ambiguous missing files.")}}, {"files"});
+        importFiles.insert("anyOf", QJsonArray{QJsonObject{{"required", QJsonArray{"target_container_id"}}},
+            QJsonObject{{"not", alternatives({"language", "entry_id"})}}});
+        put({"import_audio_files"}, importFiles);
+        const auto resourceFolder = described(text(false), "Folder relative to the project audio sources root. Omit or use an empty string for the root.");
+        put({"list_audio_resources"}, described(object({{"folder", resourceFolder}}),
+            "List folders and original audio files directly inside a Resources folder."), true);
+        put({"create_audio_folder"}, described(object({{"folder", resourceFolder}, {"name", text()}}, {"name"}),
+            "Create an empty Resources folder. Returns the actual relative path."));
+        put({"rename_audio_resource"}, described(object({{"path", text()}, {"name", text()}}, {"path", "name"}),
+            "Rename an original audio file or folder, preserving references. Include the existing extension for files."));
+        put({"move_audio_resources"}, described(object({{"paths", array(text(), 1, true)}, {"folder", resourceFolder}}, {"paths"}),
+            "Move relative Resources paths into an existing Resources folder, preserving source identities."));
+        put({"delete_audio_folder"}, described(object({{"path", text()}}, {"path"}), "Delete an empty Resources folder."));
+        put({"restore_audio_resource"}, described(object({{"source_id", uint32()}, {"missing_id", uint32()}}, {"source_id", "missing_id"}),
+            "Restore a missing audio resource by renaming an existing resource and redirecting the missing resource's references."));
+        put({"relink_audio_resource"}, described(object({{"source_id", uint32()}, {"file", text()}}, {"source_id", "file"}),
+            "Replace an original Resources file with the chosen audio file, keeping its source ID, path and references. Supports undo and discard."));
+        put({"import_audio_resources"}, described(object({{"files", importPaths}, {"folder", resourceFolder},
+            {"replace", withDefault(boolean(), false)}}, {"files"}),
+            "Import original audio files into Resources without creating Sounds. Set replace to overwrite different contents at matching paths."));
         put({"cleanup_cache"}, object({{"max_age_days", withDefault(integer(), 90)}, {"max_size_bytes", withDefault(integer(0, 9007199254740991.0), 0)}}));
         put({"regenerate_waveform_cache"}, object({{"path", described(text(), "Imported audio path. Omit to rebuild every waveform in the open project.")}}));
         const auto replacements = QJsonObject{{"type", "object"}, {"minProperties", 1},

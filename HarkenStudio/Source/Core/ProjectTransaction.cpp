@@ -1121,10 +1121,14 @@ std::unique_ptr<ProjectTransaction> ProjectTransaction::beginImpl(
     if (delta) {
         transaction->delta_ = true;
         transaction->readSet_ = delta->readSet;
-        for (const FileWrite& write : delta->writes)
-            transaction->stagedFiles_.insert(retainedFileKey(write.path), StagedFile{
-                write.bytes, QCryptographicHash::hash(write.bytes, QCryptographicHash::Sha256),
-                write.permissions});
+        for (const FileWrite& write : delta->writes) {
+            const auto key = retainedFileKey(write.path);
+            if (write.copyFrom.isEmpty())
+                transaction->stagedFiles_.insert(key, StagedFile{write.bytes,
+                    QCryptographicHash::hash(write.bytes, QCryptographicHash::Sha256), write.permissions});
+            else
+                transaction->copiedSources_.insert(key, write.copyFrom);
+        }
         if (normalized.size() >= kParallelFileOperationMinimum
             || normalized.size() + delta->readSet.size() >= kParallelVerificationMinimum)
             transaction->verificationPool_ = transactionVerificationPool();
@@ -1671,7 +1675,7 @@ bool ProjectTransaction::install(QJsonObject journal, const QString& stagedDirec
         QString* error = &result.error;
         QJsonObject entry = entries.at(index).toObject();
         const QString relative = entry.value(QStringLiteral("path")).toString();
-        const QString source = QDir(stagedDirectory).filePath(relative);
+        const QString source = copiedSources_.value(retainedFileKey(relative), QDir(stagedDirectory).filePath(relative));
         const QString target = QDir(projectDirectory_).filePath(relative);
         const bool existed = entry.value(QStringLiteral("existed")).toBool();
         const QString displaced = existed
@@ -1722,7 +1726,7 @@ bool ProjectTransaction::install(QJsonObject journal, const QString& stagedDirec
             entry.insert(QStringLiteral("operation"), QStringLiteral("write"));
             entry.insert(QStringLiteral("newHash"),
                          QString::fromLatin1(staged->hash.toHex()));
-        } else if (!delta_ && QFileInfo(source).isFile()) {
+        } else if (copiedSources_.contains(retainedFileKey(relative)) || (!delta_ && QFileInfo(source).isFile())) {
             const QString snapshot = QDir(backupDirectory_).filePath(
                 QStringLiteral(".staged/") + relative);
             QByteArray expectedHash;

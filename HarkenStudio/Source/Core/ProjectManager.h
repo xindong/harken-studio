@@ -193,6 +193,7 @@ public:
     void setStartupProgressCallback(
         std::function<void(StartupPhase)> callback);
     bool saveProject();
+    bool saveProjectAs(const QString& path, QString* error = nullptr, bool* forwarded = nullptr);
     bool closeProject();
 
     ProjectData* currentProject() const { return m_currentProject.get(); }
@@ -611,6 +612,7 @@ signals:
 
 private:
     explicit ProjectManager(QObject* parent = nullptr);
+    bool saveProjectInternal(bool relocateSources, QString* error);
     ~ProjectManager() override;
     void initializeRuntimeSync();
     void bindPreviewMediaContext();
@@ -618,7 +620,7 @@ private:
     void invalidatePreviewMedia(const QVector<ProjectItem*>& sounds);
 
     bool createDirectoryStructure(const QString& projectRoot);
-    bool createMainProjectFile(const ProjectConfig& config, const QString& projectRoot);
+    static bool createMainProjectFile(const ProjectConfig& config, const QString& projectRoot, QString& error);
     ProjectItem* createItemImpl(ProjectItem* parent, const QString& name,
                                 ProjectItem::Type type, const QString& path,
                                 const QString& bucketFolderHint, UndoCommand* undoParent,

@@ -16,6 +16,7 @@
 
 #include <QDir>
 #include <algorithm>
+#include <iterator>
 
 namespace harken::studio {
 namespace {
@@ -121,6 +122,30 @@ ActionResult execute(ProjectManager& manager, const QString& name, const QJsonOb
     auto* item = selected.item;
     if (objectCommand && !PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(item->type))
         return invalid(QStringLiteral("Object does not support Conversion settings"));
+    if (name == QStringLiteral("get_conversion_fields"))
+        return success(describePreset(*project, *item));
+    if (name == QStringLiteral("set_conversion_rule_range")) {
+        const auto before = item->comp<VConversion>()->config;
+        const auto index = args.value("rule_index").toInteger(-1);
+        if (index < 0 || index >= std::ssize(before.rules))
+            return invalid(QStringLiteral("rule_index is outside the preset's rules"));
+        auto next = before;
+        if (args.contains("min_bytes")) {
+            if (index == 0) return invalid(QStringLiteral("The first rule's lower boundary is fixed at zero"));
+            const auto minimum = args.value("min_bytes").toInteger(-1);
+            if (minimum < 0) return invalid(QStringLiteral("min_bytes must fit a nonnegative 64-bit integer"));
+            next.rules[index - 1].maxBytes = static_cast<std::uint64_t>(minimum);
+        }
+        if (args.contains("max_bytes")) {
+            if (!next.rules[index].maxBytes) return invalid(QStringLiteral("The final rule's upper boundary is unbounded"));
+            const auto maximum = args.value("max_bytes").toInteger(-1);
+            if (maximum < 0) return invalid(QStringLiteral("max_bytes must fit a nonnegative 64-bit integer"));
+            next.rules[index].maxBytes = static_cast<std::uint64_t>(maximum);
+        }
+        if (!ConversionEditing::setConfig(manager, item->guid, next, before, originator, &error))
+            return invalid(error);
+        return success(describePreset(*project, *item));
+    }
     if (name == QStringLiteral("set_default_conversion")) {
         const auto platform = platformFor(*project, args);
         if (!platform) return invalid(QStringLiteral("Unknown project platform ID"));
@@ -242,7 +267,8 @@ ActionResult execute(ProjectManager& manager, const QString& name, const QJsonOb
 
 void registerConversionActions(ActionManager& manager, ProjectManager* projectManager)
 {
-    for (const auto* name : {"create_conversion", "set_conversion_fields", "set_object_conversion",
+    for (const auto* name : {"create_conversion", "get_conversion_fields", "set_conversion_fields",
+        "set_conversion_rule_range", "set_object_conversion",
         "set_default_conversion", "get_effective_conversion", "get_conversion_results", "convert"}) {
         ActionDef action;
         action.id = QLatin1String(name);
@@ -250,6 +276,7 @@ void registerConversionActions(ActionManager& manager, ProjectManager* projectMa
         action.category = QStringLiteral("asset");
         action.undoable = action.id == QStringLiteral("create_conversion")
             || action.id == QStringLiteral("set_conversion_fields")
+            || action.id == QStringLiteral("set_conversion_rule_range")
             || action.id == QStringLiteral("set_object_conversion")
             || action.id == QStringLiteral("set_default_conversion");
         action.paramSchema = commandInputSchema(action.id);

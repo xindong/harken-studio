@@ -465,7 +465,8 @@ QString absolutePath(const QString& relativePath)
     if (root.isEmpty())
         return {};
     const QString audioRoot = PathUtils::getAudioSourcesDir(root);
-    if (QFileInfo(audioRoot).isSymLink())
+    const QFileInfo rootInfo(audioRoot);
+    if (rootInfo.isSymLink() || rootInfo.isJunction())
         return {};
     if (relativePath.isEmpty())
         return audioRoot;
@@ -476,7 +477,8 @@ QString absolutePath(const QString& relativePath)
     QString current = audioRoot;
     for (const QString& segment : relativePath.split(QLatin1Char('/'))) {
         current = QDir(current).filePath(segment);
-        if (QFileInfo(current).isSymLink())
+        const QFileInfo info(current);
+        if (info.isSymLink() || info.isJunction())
             return {};
     }
     return current;
@@ -557,6 +559,10 @@ bool restoreByRename(uint32_t sourceID, uint32_t missingID, QString* error)
         || registry.sourceFileExists(missingID) || absolutePath(source->relativePath).isEmpty()
         || absolutePath(missing->relativePath).isEmpty())
         return fail(error, QObject::tr("The source or missing destination changed. Review them and try again."));
+    const QFileInfo missingPath(missing->relativePath);
+    if (pathKey(QFileInfo(source->relativePath).path()) != pathKey(missingPath.path()))
+        return fail(error, QObject::tr("Move the source into the missing resource's folder before renaming it."));
+    if (!validateRename(source->relativePath, missingPath.fileName(), error)) return false;
     auto command = std::make_unique<RestoreByRenameCommand>(*source, *missing);
     if (!command->tryReplay(true)) {
         if (command->isObsolete()) {
@@ -798,6 +804,7 @@ bool copyFile(const QString& source, const QString& destination, QString* error)
 void commitChanges()
 {
     pendingChanges.clear();
+    discardRollbackChanges.clear();
 }
 
 bool recoverDiscard(QString* error)
@@ -815,7 +822,7 @@ bool recoverDiscard(QString* error)
     return true;
 }
 
-bool discardChanges(QString* error, bool* rollbackFailed)
+bool discardChanges(QString* error, bool* rollbackFailed, bool retainUntilCommit)
 {
     if (rollbackFailed)
         *rollbackFailed = false;
@@ -851,7 +858,8 @@ bool discardChanges(QString* error, bool* rollbackFailed)
         changes.append(it->reversed());
     if (!applyBatch(changes, ApplyMode::Discard, error, rollbackFailed))
         return false;
-    pendingChanges.clear();
+    if (retainUntilCommit) discardRollbackChanges = std::move(changes);
+    else pendingChanges.clear();
     return true;
 }
 

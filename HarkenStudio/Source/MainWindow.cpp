@@ -1139,9 +1139,14 @@ void MainWindow::setupAudioEngine()
     });
     connect(&ProjectManager::instance(), &ProjectManager::projectSaved,
             this, [this]() {
+        const auto* project = ProjectManager::instance().currentProject();
+        if (project && currentProjectPath_ != project->projectPath) {
+            currentProjectPath_ = project->projectPath;
+            addRecentProject(currentProjectPath_);
+            updateWindowTitle();
+        }
         if (aiService_)
-            aiService_->setConversationScope(aiConversationScope(
-                ProjectManager::instance().currentProject()));
+            aiService_->setConversationScope(aiConversationScope(project));
     });
     aiService_->setConversationScope(
         aiConversationScope(ProjectManager::instance().currentProject()));
@@ -4357,43 +4362,15 @@ void MainWindow::onSaveProjectAs()
     if (fileName.isEmpty())
         return;
 
-    auto acquisition = ProjectInstance::acquire(fileName);
-    if (acquisition.status == ProjectInstance::Status::Forwarded)
-        return;
-    if (acquisition.status == ProjectInstance::Status::Failed) {
-        QMessageBox::warning(this, tr("Save Project"), acquisition.error);
-        return;
-    }
-
-    const QString previousPath = currentProjectPath_;
-    const QString previousProjectPath = pmProject ? pmProject->projectPath : QString();
-    const QString previousName = pmProject ? pmProject->name : QString();
-    currentProjectPath_ = fileName;
-
-    if (pmProject)
-    {
-        pmProject->projectPath = fileName;
-        pmProject->name = QFileInfo(fileName).baseName();
-    }
-
-    auto& manager = ProjectManager::instance();
-    const bool wasWatching = manager.fileWatcher()->isWatching();
-    if (!manager.saveProject()) {
-        currentProjectPath_ = previousPath;
-        if (pmProject) {
-            pmProject->projectPath = previousProjectPath;
-            pmProject->name = previousName;
-        }
-        if (wasWatching)
-            manager.startWatchingCurrentProject();
-        LogPanel::logError(LogCategory::File, tr("Failed to save project"));
+    QString error;
+    bool forwarded = false;
+    if (!ProjectManager::instance().saveProjectAs(fileName, &error, &forwarded)) {
+        if (!forwarded) QMessageBox::warning(this, tr("Save Project"), error);
         return;
     }
-    manager.m_projectInstance = std::move(acquisition.instance);
     setProjectModified(false);
     saveProjectLayout();
     setStatusMessage(tr("Saved: %1").arg(currentProjectPath_));
-    updateWindowTitle();
 }
 
 void MainWindow::onEngineIntegrations()

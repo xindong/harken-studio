@@ -290,6 +290,13 @@ def verify(cli: Path, work: Path, audio_output: bool = True) -> None:
     with tempfile.TemporaryDirectory(prefix="studio cli \u00e9-\u5de5\u7a0b-", dir=work) as temporary:
         root = Path(temporary).resolve()
         assert root.is_relative_to(work.resolve())
+        template = {"displayName": "Mixer", "description": "Two-bus hierarchy",
+                    "bus": {"name": "Master Bus", "children": [{"name": "Ambience"}]}}
+        created = call("exec", "create_project", "--input", "-", data={
+            "name": "FromTemplate", "location": str(root), "template_id": "Mixer", "template_data": template})["result"]
+        buses = call("exec", "list_buses", "--project", created["path"])["result"]["buses"]
+        by_name = {bus["name"]: bus for bus in buses}
+        assert by_name["Ambience"]["parent_bus_ref"] == by_name["Master Bus"]["bus_id"], buses
         for invalid_request in ({"cmd": "not_a_registered_command"},
                                 {"cmd": "save_project", "args": {"typo": True}}):
             rejected = call("run", "--input", "-", data=[
@@ -393,8 +400,29 @@ def verify(cli: Path, work: Path, audio_output: bool = True) -> None:
         execute("set_conversion_fields", {"conversion": conversion, "rules": [
             {"max_bytes": 1, "sample_rate": 0, "format": "PCM"},
             {"max_bytes": None, "sample_rate": 24000, "format": "Vorbis", "quality": 6}]}, save=True)
-        effective = execute("get_effective_conversion", {"object": tone_guid, "platform_id": platform})["result"]
+        preset_args = {"conversion": conversion}
+        saved_rules = execute("get_conversion_fields", preset_args)["result"]["rules"]
+        preview = execute("set_preview_context", {"platform_id": platform, "all_platforms": False, "media_mode": "Converted"})["result"]
+        assert preview["platform_id"] == platform and preview["all_platforms"] is False
+        assert execute("get_preview_context")["result"] == preview
+        boundary = call("run", "--project", str(project), "--input", "-", data=[
+            {"cmd": "set_conversion_rule_range", "args": {
+                **preset_args, "rule_index": 1, "min_bytes": audio.stat().st_size}},
+            {"cmd": "get_effective_conversion", "args": {"object": tone_guid}},
+            {"cmd": "undo"},
+            {"cmd": "get_conversion_fields", "args": preset_args},
+            {"cmd": "get_effective_conversion", "args": {"object": tone_guid}}])["results"]
+        assert boundary[1]["result"]["format"] == "PCM", boundary
+        assert boundary[3]["result"]["rules"] == saved_rules, boundary
+        effective = boundary[4]["result"]
         assert (effective["format"], effective["quality"], effective["sample_rate"]) == ("Vorbis", 6, 24000), effective
+        audition = call("run", "--project", str(project), "--input", "-", data=[
+            {"cmd": "init_engine", "args": {"device_mode": "null_realtime"}},
+            {"cmd": "audition_play", "args": {"object_path": "tone"}},
+            {"cmd": "get_conversion_results", "args": conversion_args}])["results"]
+        assert audition[1]["result"]["auditionID"] > 0, audition
+        assert audition[2]["result"]["sources"][0]["converted"]["format"] == "Vorbis", audition
+        execute("set_preview_context", {"media_mode": "Original"})
         encoded = execute("convert", conversion_args)["result"]
         encoded_file = encoded["sources"][0]["converted"]
         assert encoded_file["format"] == "Vorbis" and encoded_file["bytes"] > 0, encoded
@@ -566,6 +594,50 @@ def verify(cli: Path, work: Path, audio_output: bool = True) -> None:
             assert authored_contents() == saved
             assert not recovery_output.exists()
         journal.unlink()
+
+        arrangement = [
+            {"cmd": "create_item", "args": {"type": "Segment", "name": "Arrangement"}},
+            {"cmd": "create_item", "args": {"type": "Track", "parent": "Arrangement", "name": "Lead"}},
+            {"cmd": "create_item", "args": {"type": "Track", "parent": "Arrangement", "name": "AlternateLead"}},
+            {"cmd": "move_item", "args": {"path": "tone", "new_parent": "Lead"}},
+            {"cmd": "create_item", "args": {"type": "Variable", "name": "Intensity"}},
+            {"cmd": "set_item_property", "args": {"path": "Intensity", "property": "defaultValue", "value": 40}},
+            {"cmd": "create_action", "args": {"name": "PlayArrangement"}},
+            {"cmd": "set_item_property", "args": {"path": "PlayArrangement", "property": "steps",
+                "value": [{"type": "Play", "targetName": "Arrangement"}]}}
+        ]
+        call("run", "--project", str(project), "--input", "-", "--save", data=arrangement)
+        lead = execute("get_item_info", {"path": "Lead"})["result"]
+        clip = lead["components"]["tracktimeline"]["clips"][0]
+        execute("move_track_clips", {"moves": [{"source_track": "Lead", "destination_track": "AlternateLead",
+            "clip_guid": clip["clipGuid"], "start": 480}]}, save=True)
+        moved = execute("get_item_info", {"path": "AlternateLead"})["result"]["components"]["tracktimeline"]["clips"]
+        assert len(moved) == 1 and moved[0]["clipGuid"] == clip["clipGuid"] and moved[0]["targetGuid"] == tone_guid
+        assert moved[0]["start"] == 480
+        assert execute("get_item_info", {"path": "Intensity"})["result"]["components"]["variable"]["defaultValue"] == 40
+        arrangement_output = root / "arrangement-build"
+        call(*build_flags, "--output", str(arrangement_output))
+        assert any(artifact.stem == "PlayArrangement" for artifact in arrangement_output.rglob("*.bytes"))
+
+        alternate = root / "AlternateProject" / "AlternateProject.hsp"
+        alternate.parent.mkdir()
+        saved = authored_contents()
+        call("run", "--project", str(project), "--input", "-", data=[
+            {"cmd": "rename_audio_resource", "args": {"path": source.relative_to(project.parent / "AudioSources").as_posix(),
+                                                      "name": "alternate-tone.wav"}},
+            {"cmd": "rename_item", "args": {"path": "PlayArrangement", "new_name": "PlayAlternate"}},
+            {"cmd": "save_project_as", "args": {"path": str(alternate)}}])
+        assert authored_contents() == saved
+        assert source.read_bytes() == original and not source.with_name("alternate-tone.wav").exists()
+        copied = call("exec", "get_asset_info", "--project", str(alternate), "--input", "-",
+                      data={"source_id": imported["source_id"]})["result"]
+        copied_source = Path(copied["absolute_path"]).resolve()
+        assert copied_source.is_relative_to(alternate.parent) and copied_source.name == "alternate-tone.wav"
+        assert copied_source.read_bytes() == original
+        alternate_output = root / "alternate-build"
+        call("build", "--project", str(alternate), "--all", "--platform-id", platform, "--self-clean", "off",
+             "--output", str(alternate_output))
+        assert any(artifact.stem == "PlayAlternate" for artifact in alternate_output.rglob("*.bytes"))
     print("CLI protocol, desktop isolation, persistence, conversion, read-only builds and pack equivalence passed.")
 
 

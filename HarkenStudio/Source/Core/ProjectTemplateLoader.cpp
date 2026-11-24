@@ -548,6 +548,8 @@ void removeRetiredBuiltInTemplates(const QString& directory)
 QString ProjectTemplateLoader::runtimeDir() {
     const auto root = QStandardPaths::writableLocation(
         QStandardPaths::AppDataLocation);
+    if (QCoreApplication::applicationName() == QStringLiteral("HarkenStudioCLI"))
+        return QDir::cleanPath(QDir(root).filePath(QStringLiteral("../HarkenStudio/Templates")));
     return QDir(root).filePath(QStringLiteral("Templates"));
 }
 
@@ -628,7 +630,20 @@ std::vector<TemplateLocation> ProjectTemplateLoader::listAvailable() {
     return out;
 }
 
+QJsonArray ProjectTemplateLoader::catalog() {
+    ensureUserTemplatesSeeded();
+    QJsonArray templates;
+    for (const auto& location : listAvailable()) {
+        if (load(location.id))
+            templates.append(QJsonObject{{"id", location.id}, {"displayName", location.displayName},
+                                         {"description", location.description}});
+    }
+    return templates;
+}
+
 std::optional<ProjectTemplateData> ProjectTemplateLoader::load(const QString& id) {
+    if (id.isEmpty() || id.contains('/') || id.contains('\\') || id.contains(':'))
+        return std::nullopt;
     const QString path = QDir(runtimeDir()).filePath(id + QStringLiteral(".json"));
     if (!QFileInfo::exists(path)) {
         qWarning() << "[ProjectTemplate] load: file missing" << path;

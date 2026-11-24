@@ -31,6 +31,6 @@ bool replayFiles(const QList<std::shared_ptr<TransactionalUndoCommand>>& command
 bool copyFile(const QString& source, const QString& destination, QString* error = nullptr);
 void commitChanges();
 bool recoverDiscard(QString* error = nullptr);
-bool discardChanges(QString* error = nullptr, bool* rollbackFailed = nullptr);
+bool discardChanges(QString* error = nullptr, bool* rollbackFailed = nullptr, bool retainUntilCommit = false);
 
 }

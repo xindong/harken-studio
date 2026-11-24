@@ -265,11 +265,14 @@ struct MainInputInfo
 {
     uint32_t sourceID = 0;
     float levelDb = 0.0f;
+    QUuid sourceGuid;
+    QString sourceName;
 };
 
 struct IncomingSendInfo
 {
     uint32_t fromBusID = 0;
+    QUuid sourceGuid;
     QString  fromName;
     float    level = 0.0f;
     SendType type = SendType::Send;

@@ -225,8 +225,10 @@ const AssetInfo* AssetRegistry::findAssetByContentHash(const QString& contentHas
     return nullptr;
 }
 
-const AssetInfo* AssetRegistry::findAssetByPath(const QString& absolutePath) const
+const AssetInfo* AssetRegistry::findAssetByPath(const QString& path) const
 {
+    if (path.isEmpty()) return nullptr;
+    const QString absolutePath = QFileInfo(QDir::fromNativeSeparators(path)).absoluteFilePath();
     QMutexLocker lock(&mutex_);
 
     if (!projectRoot_.isEmpty()) {

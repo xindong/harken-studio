@@ -8,6 +8,7 @@
 #include "../ItemTypeCatalog.h"
 #include "../ItemPropertySchema.h"
 #include "../ProjectManager.h"
+#include "../ProjectTemplateLoader.h"
 #include "../AssetPipeline/PathUtils.h"
 #include "../ProjectLanguageSemantics.h"
 #include "../NameValidator.h"
@@ -78,6 +79,18 @@ ActionResult applyBusPropertiesArgs(const QJsonObject& args, const QObject* orig
 
 namespace {
 
+ActionResult resolveItemList(ProjectData* project, const QJsonArray& selectors, QList<ProjectItem*>& items)
+{
+    for (const auto& selector : selectors) {
+        const auto selected = resolveProjectSelector(project, selector.toString());
+        if (!selected.ok)
+            return {false, {{"candidates", selected.candidates}}, selected.errorCode, selected.errorMessage};
+        if (!items.contains(selected.item))
+            items.append(selected.item);
+    }
+    return {true, {}};
+}
+
 bool jsonValueAsBool(const QJsonValue& valueArg)
 {
     if (valueArg.isBool()) return valueArg.toBool();
@@ -85,6 +98,19 @@ bool jsonValueAsBool(const QJsonValue& valueArg)
     const QString s = valueArg.toString().trimmed().toLower();
     return s == QStringLiteral("true") || s == QStringLiteral("1")
         || s == QStringLiteral("yes") || s == QStringLiteral("on");
+}
+
+bool parseFolderPath(const QString& value, QString* bucket, QString* relative)
+{
+    const QStringList parts = QDir::fromNativeSeparators(value).split(QLatin1Char('/'), Qt::KeepEmptyParts);
+    if (!ItemTypeCatalog::bucketAllowsFolder(parts.front())) return false;
+    for (const QString& part : parts) {
+        if (part.trimmed() != part || part.endsWith(QLatin1Char('.'))
+            || !NameValidator::validateFileName(part)) return false;
+    }
+    *bucket = parts.front();
+    *relative = parts.mid(1).join(QLatin1Char('/'));
+    return true;
 }
 
 bool claimsBusItemProperty(ProjectItem* item, const QString& propertyName)
@@ -1855,6 +1881,9 @@ ActionResult handleSelectionItemProperty(ProjectManager* projectManager, Project
         return handleSelectionTransitionsProperty(projectManager, item, args, originator);
 
     auto* sel = item->comp<VSelection>();
+    if (propertyName == QStringLiteral("variableResponse")
+        && sel->mode != SelectionMode::Match && sel->mode != SelectionMode::Blend)
+        return {false, {}, "INVALID_ARGS", "Variable response requires Match or Blend mode"};
     const VSelection previous = *sel;
     VSelection candidate = *sel;
 
@@ -2083,18 +2112,74 @@ void registerProjectActions(ActionManager& mgr,
     registerConversionActions(mgr, projectManager);
     {
         ActionDef def;
-        def.id = "save_project";
-        def.paramSchema = commandInputSchema(def.id);
-        def.displayName = "Save Project";
+        def.id = "list_project_templates";
+        def.displayName = "List Project Templates";
         def.category = "project";
         def.undoable = false;
+        def.paramSchema = commandInputSchema(def.id);
+        def.handler = [](const QJsonObject&) -> ActionResult {
+            ActionResult result{};
+            result.success = true;
+            result.data = {{"templates", ProjectTemplateLoader::catalog()}};
+            return result;
+        };
+        mgr.registerAction(def);
+    }
+    {
+        ActionDef def;
+        def.id = "move_track_clips";
+        def.displayName = "Move Track Clips";
+        def.category = "timeline";
+        def.paramSchema = commandInputSchema(def.id);
         def.handler = [projectManager](const QJsonObject& args) -> ActionResult {
-            Q_UNUSED(args);
+            auto* project = projectManager ? projectManager->currentProject() : nullptr;
+            if (!project) return {false, {}, "NO_PROJECT_OPEN", "No project is currently open"};
+            std::vector<TimelineEditing::ClipMove> moves;
+            for (const auto& value : args.value("moves").toArray()) {
+                const auto row = value.toObject();
+                const auto source = resolveProjectSelector(project, row.value("source_track").toString(), ProjectItem::Type::Track);
+                if (!source.ok) return {false, {{"candidates", source.candidates}}, source.errorCode, source.errorMessage};
+                const auto destination = resolveProjectSelector(project, row.value("destination_track").toString(), ProjectItem::Type::Track);
+                if (!destination.ok) return {false, {{"candidates", destination.candidates}}, destination.errorCode, destination.errorMessage};
+                if (source.item != destination.item && (!source.item->parent || source.item->parent != destination.item->parent
+                        || source.item->parent->type != ProjectItem::Type::Segment))
+                    return {false, {}, "INVALID_ARGUMENTS", "A cross-track move requires tracks of the same Segment"};
+                moves.push_back({source.item->guid, destination.item->guid, QUuid(row.value("clip_guid").toString()),
+                                 row.value("start").toInteger(-1)});
+            }
+            QString error;
+            auto command = TimelineEditing::makeClipMoveCommand(projectManager, moves, &error);
+            if (!error.isEmpty()) return {false, {}, "INVALID_ARGUMENTS", error};
+            const bool changed = command != nullptr;
+            if (command) {
+                if (!command->tryReplay(true))
+                    return {false, {}, "MOVE_CLIPS_FAILED", "The track clips could not be moved"};
+                UndoRedoManager::instance().push(command.release());
+            }
+            return {true, {{"changed", changed}}};
+        };
+        mgr.registerAction(def);
+    }
+    for (const auto* name : {"save_project", "save_project_as"}) {
+        ActionDef def;
+        def.id = QLatin1String(name);
+        def.paramSchema = commandInputSchema(def.id);
+        const bool saveAs = def.id == QStringLiteral("save_project_as");
+        def.displayName = saveAs ? QStringLiteral("Save Project As") : QStringLiteral("Save Project");
+        def.category = "project";
+        def.undoable = false;
+        def.handler = [projectManager, saveAs](const QJsonObject& args) -> ActionResult {
             if (!projectManager)
                 return {false, {}, "PROJECT_MANAGER_NOT_AVAILABLE", "ProjectManager is not available"};
             if (!projectManager->isProjectOpen())
                 return {false, {}, "NO_PROJECT_OPEN", "No project is currently open"};
 
+            if (saveAs) {
+                QString error;
+                if (!projectManager->saveProjectAs(args.value("path").toString(), &error))
+                    return {false, {}, "SAVE_PROJECT_FAILED", error};
+                return {true, {{"success", true}, {"path", projectManager->currentProject()->projectPath}}};
+            }
             if (!projectManager->saveProject())
                 return {false, {}, "SAVE_PROJECT_FAILED", "Failed to save the project"};
             return {true, QJsonObject{{"success", true}}};
@@ -2156,6 +2241,13 @@ void registerProjectActions(ActionManager& mgr,
             if (args.contains("template_data") && !args.value("template_data").isObject())
                 return {false, {}, "INVALID_ARGS", "template_data must be a JSON object"};
             config.templateData = args.value("template_data").toObject();
+            if (!config.templateId.isEmpty() && !args.contains("template_data")) {
+                ProjectTemplateLoader::ensureUserTemplatesSeeded();
+                const auto installed = ProjectTemplateLoader::load(config.templateId);
+                if (!installed)
+                    return {false, {}, "TEMPLATE_NOT_FOUND", "The selected project template is unavailable"};
+                config.templateData = installed->toJson();
+            }
 
             if (!projectManager->createProject(config))
                 return {false, {}, "CREATE_PROJECT_FAILED",
@@ -2210,23 +2302,9 @@ void registerProjectActions(ActionManager& mgr,
             ProjectData* project = projectManager ? projectManager->currentProject() : nullptr;
             if (!project)
                 return {false, {}, "NO_PROJECT_OPEN", "No project is currently open"};
-            const auto parsePath = [](const QString& value, QString* bucket,
-                                      QString* relative) {
-                const QStringList parts = QDir::fromNativeSeparators(value)
-                    .split(QLatin1Char('/'), Qt::KeepEmptyParts);
-                if (parts.isEmpty() || !ItemTypeCatalog::bucketAllowsFolder(parts.front()))
-                    return false;
-                for (const QString& part : parts) {
-                    if (part.trimmed() != part || part.endsWith(QLatin1Char('.'))
-                        || !NameValidator::validateFileName(part)) return false;
-                }
-                *bucket = parts.front();
-                *relative = parts.mid(1).join(QLatin1Char('/'));
-                return true;
-            };
             QString bucket;
             QString relative;
-            if (!parsePath(args.value("path").toString(), &bucket, &relative))
+            if (!parseFolderPath(args.value("path").toString(), &bucket, &relative))
                 return {false, {}, "INVALID_PATH", "path must start with a folder-enabled bucket"};
             const auto describe = [project, &bucket](const PhysicalFolder* folder) {
                 return QJsonObject{{"name", folder->name}, {"bucket", bucket},
@@ -2293,7 +2371,7 @@ void registerProjectActions(ActionManager& mgr,
             if (command == QLatin1String("move_folder")) {
                 QString destinationBucket;
                 QString destination;
-                if (!parsePath(args.value("new_parent").toString(), &destinationBucket, &destination)
+                if (!parseFolderPath(args.value("new_parent").toString(), &destinationBucket, &destination)
                     || destinationBucket != bucket)
                     return {false, {}, "INVALID_PATH", "new_parent must be in the same bucket"};
                 PhysicalFolder* parent = destination.isEmpty() ? nullptr
@@ -2383,7 +2461,15 @@ void registerProjectActions(ActionManager& mgr,
                     return {false, {}, "INVALID_ARGS", "Variable kind must be Step or Smooth"};
                 variableKind = kind == QStringLiteral("Step") ? VariableKind::Step : VariableKind::Smooth;
             }
-            ProjectItem* item = projectManager->createItem(parent, name, type, {}, {}, nullptr, variableKind);
+            QString folder;
+            if (args.contains("folder")) {
+                QString bucket;
+                if (parent || !parseFolderPath(args.value("folder").toString(), &bucket, &folder)
+                    || bucket != ItemTypeCatalog::folderNameOf(ItemTypeCatalog::bucketOf(type))
+                    || (!folder.isEmpty() && !project->findFolderByPath(bucket, folder)))
+                    return {false, {}, "INVALID_FOLDER", "folder must identify an existing directory in the item's bucket"};
+            }
+            ProjectItem* item = projectManager->createItem(parent, name, type, folder, {}, nullptr, variableKind);
             if (item)
             {
                 ActionResult r;
@@ -2590,14 +2676,23 @@ void registerProjectActions(ActionManager& mgr,
 
             if (path.isEmpty() && objectID == 0)
                 return {false, {}, "INVALID_ARGS", "path or object_id is required"};
-            if (newParentPath.isEmpty() && newParentID == 0)
-                return {false, {}, "INVALID_ARGS", "new_parent or new_parent_id is required"};
+            if (newParentPath.isEmpty() && newParentID == 0 && !args.contains("folder"))
+                return {false, {}, "INVALID_ARGS", "new_parent, new_parent_id or folder is required"};
 
             ProjectItem* item = resolveItemByPathOrObjectID(project, path, objectID);
             if (!item)
                 return {false, {}, "ITEM_NOT_FOUND",
                         QString("Item '%1' (id=%2) not found").arg(path).arg(objectID)};
 
+            if (args.contains("folder")) {
+                QString bucket, relative;
+                if (!newParentPath.isEmpty() || newParentID != 0
+                    || !parseFolderPath(args.value("folder").toString(), &bucket, &relative)
+                    || !projectManager->moveEntriesToFolder({item}, {}, bucket, relative))
+                    return {false, {}, "MOVE_FAILED", "Cannot move the item into the requested project directory"};
+                return {true, {{"guid", item->guid.toString(QUuid::WithoutBraces)},
+                               {"path", project->itemPath(item)}, {"folder", args.value("folder")}}};
+            }
             ProjectItem* newParent = resolveItemByPathOrObjectID(project, newParentPath, newParentID);
             if (!newParent)
                 return {false, {}, "PARENT_NOT_FOUND",
@@ -2623,6 +2718,45 @@ void registerProjectActions(ActionManager& mgr,
         mgr.registerAction(def);
     }
 
+    for (const auto* name : {"duplicate_items", "create_parent"}) {
+        ActionDef def;
+        def.id = QLatin1String(name);
+        def.displayName = def.id == "create_parent" ? "Create Parent" : "Duplicate Items";
+        def.category = "project";
+        def.paramSchema = commandInputSchema(def.id);
+        def.undoable = true;
+        def.handler = [projectManager, id = def.id](const QJsonObject& args) -> ActionResult {
+            auto* project = projectManager ? projectManager->currentProject() : nullptr;
+            if (!project) return {false, {}, "NO_PROJECT_OPEN", "No project is currently open"};
+            QList<ProjectItem*> items;
+            const auto resolved = resolveItemList(project, args.value("items").toArray(), items);
+            if (!resolved.success) return resolved;
+            const auto describe = [project](const ProjectItem* item) {
+                return QJsonObject{{"guid", item->guid.toString(QUuid::WithoutBraces)}, {"name", item->name},
+                    {"path", project->itemPath(item)}, {"authoring_handle", static_cast<qint64>(item->objectID)}};
+            };
+            if (id == "create_parent") {
+                const auto type = stringToItemType(args.value("type").toString());
+                QString error;
+                if (!type || !projectManager->canCreateParentContainer(items, *type, &error))
+                    return {false, {}, "INVALID_PARENT", error};
+                auto* parent = projectManager->createParentContainer(items, *type, args.value("name").toString());
+                if (!parent) return {false, {}, "CREATE_FAILED", "Cannot create the requested parent"};
+                return {true, describe(parent)};
+            }
+            const auto roots = projectManager->normalizeSubtreeItems(items);
+            if (roots.isEmpty() || !projectManager->canDuplicateItems(roots))
+                return {false, {}, "NOT_ELIGIBLE", "The selected objects cannot be duplicated"};
+            QJsonArray copies;
+            for (const auto* item : projectManager->duplicateItems(roots))
+                copies.append(describe(item));
+            if (copies.size() != roots.size())
+                return {false, {{"items", copies}}, "DUPLICATE_FAILED", "Could not duplicate every selected object"};
+            return {true, {{"items", copies}}};
+        };
+        mgr.registerAction(def);
+    }
+
     for (const auto& kind : { std::make_pair(QString("copy_item"), ProjectManager::ClipboardOp::Copy),
                               std::make_pair(QString("cut_item"),  ProjectManager::ClipboardOp::Cut) })
     {
@@ -2642,30 +2776,35 @@ void registerProjectActions(ActionManager& mgr,
             if (!project)
                 return {false, {}, "NO_PROJECT_OPEN", "Project closed during command"};
 
-            QString path = args["path"].toString().trimmed();
-            uint32_t objectID = static_cast<uint32_t>(args["object_id"].toDouble(0));
-            if (path.isEmpty() && objectID == 0)
-                return {false, {}, "INVALID_ARGS", "path or object_id is required"};
-
-            ProjectItem* item = resolveItemByPathOrObjectID(project, path, objectID);
-            if (!item)
-                return {false, {}, "ITEM_NOT_FOUND",
-                        QString("Item '%1' (id=%2) not found").arg(path).arg(objectID)};
-
-            const int stored = projectManager->setClipboard(QList<ProjectItem*>{ item }, op);
+            QList<ProjectItem*> items;
+            if (args.contains("items")) {
+                const auto resolved = resolveItemList(project, args.value("items").toArray(), items);
+                if (!resolved.success) return resolved;
+            } else {
+                const QString path = args.value("path").toString().trimmed();
+                const auto objectID = static_cast<uint32_t>(args.value("object_id").toInteger());
+                auto* item = resolveItemByPathOrObjectID(project, path, objectID);
+                if (!item)
+                    return {false, {}, "ITEM_NOT_FOUND",
+                            QString("Item '%1' (id=%2) not found").arg(path).arg(objectID)};
+                items.append(item);
+            }
+            const int stored = projectManager->setClipboard(items, op);
             if (stored == 0)
-                return {false, {}, "NOT_ELIGIBLE",
-                        QString("'%1' cannot be placed on the clipboard (folders and buses are excluded).").arg(item->name)};
+                return {false, {}, "NOT_ELIGIBLE", "The selected objects cannot be placed on the clipboard"};
 
             ActionResult r;
             r.success = true;
             r.data = QJsonObject{
                 {"stored", stored},
-                {"op", (op == ProjectManager::ClipboardOp::Copy) ? "copy" : "cut"},
-                {"name", item->name},
-                {"object_id", static_cast<qint64>(itemShortID(item))},
-                {"type", itemTypeToString(item->type)}
+                {"op", (op == ProjectManager::ClipboardOp::Copy) ? "copy" : "cut"}
             };
+            if (items.size() == 1) {
+                const auto* item = items.front();
+                r.data["name"] = item->name;
+                r.data["object_id"] = static_cast<qint64>(itemShortID(item));
+                r.data["type"] = itemTypeToString(item->type);
+            }
             return r;
         };
         mgr.registerAction(def);
@@ -2689,11 +2828,11 @@ void registerProjectActions(ActionManager& mgr,
 
             QString targetPath = args["target_path"].toString().trimmed();
             uint32_t targetID = static_cast<uint32_t>(args["target_object_id"].toDouble(0));
-            if (targetPath.isEmpty() && targetID == 0)
-                return {false, {}, "INVALID_ARGS", "target_path or target_object_id is required"};
-
-            ProjectItem* target = resolveItemByPathOrObjectID(project, targetPath, targetID);
-            if (!target)
+            const QString bucket = args.value("target_bucket").toString();
+            if (!bucket.isEmpty() && !project->getBucketForFolder(bucket))
+                return {false, {}, "INVALID_PATH", "Unknown project bucket: " + bucket};
+            ProjectItem* target = bucket.isEmpty() ? resolveItemByPathOrObjectID(project, targetPath, targetID) : nullptr;
+            if (bucket.isEmpty() && !target)
                 return {false, {}, "PARENT_NOT_FOUND",
                         QString("Target '%1' (id=%2) not found").arg(targetPath).arg(targetID)};
 
@@ -2707,12 +2846,18 @@ void registerProjectActions(ActionManager& mgr,
                 const QString opStr = args["op"].toString().trimmed().toLower();
                 const ProjectManager::ClipboardOp op = (opStr == "cut")
                     ? ProjectManager::ClipboardOp::Cut : ProjectManager::ClipboardOp::Copy;
+                if (!bucket.isEmpty() && op == ProjectManager::ClipboardOp::Cut)
+                    return {false, {}, "PASTE_FAILED", "Cut objects require an object destination"};
                 if (projectManager->setClipboard(QList<ProjectItem*>{ src }, op) == 0)
                     return {false, {}, "NOT_ELIGIBLE",
                             QString("'%1' cannot be placed on the clipboard.").arg(src->name)};
             }
 
-            std::vector<ProjectItem*> created = projectManager->pasteClipboard(target);
+            if (!bucket.isEmpty() && projectManager->clipboardOp() == ProjectManager::ClipboardOp::Cut)
+                return {false, {}, "PASTE_FAILED", "Cut objects require an object destination"};
+            const int expected = projectManager->clipboardCount();
+            const auto created = bucket.isEmpty() ? projectManager->pasteClipboard(target)
+                                                  : projectManager->pasteClipboardAtBucketRoot(bucket);
             if (created.empty())
                 return {false, {}, "PASTE_FAILED", "Nothing was pasted (empty clipboard or incompatible target)"};
 
@@ -2729,6 +2874,8 @@ void registerProjectActions(ActionManager& mgr,
             ActionResult r;
             r.success = true;
             r.data = QJsonObject{ {"pasted", static_cast<int>(created.size())}, {"items", items} };
+            if (items.size() != expected)
+                return {false, r.data, "PASTE_FAILED", "Only part of the clipboard selection was pasted"};
             return r;
         };
         mgr.registerAction(def);
@@ -2754,32 +2901,41 @@ void registerProjectActions(ActionManager& mgr,
             uint32_t srcID = static_cast<uint32_t>(args["source_object_id"].toDouble(0));
             QString tgtPath = args["target_path"].toString().trimmed();
             uint32_t tgtID = static_cast<uint32_t>(args["target_object_id"].toDouble(0));
-            if (srcPath.isEmpty() && srcID == 0)
-                return {false, {}, "INVALID_ARGS", "source_path or source_object_id is required"};
-            if (tgtPath.isEmpty() && tgtID == 0)
-                return {false, {}, "INVALID_ARGS", "target_path or target_object_id is required"};
+            QList<ProjectItem*> targets;
+            if (args.contains("targets")) {
+                const auto resolved = resolveItemList(project, args.value("targets").toArray(), targets);
+                if (!resolved.success) return resolved;
+            } else {
+                auto* target = resolveItemByPathOrObjectID(project, tgtPath, tgtID);
+                if (!target)
+                    return {false, {}, "ITEM_NOT_FOUND",
+                            QString("Target '%1' (id=%2) not found").arg(tgtPath).arg(tgtID)};
+                targets.append(target);
+            }
 
-            ProjectItem* source = resolveItemByPathOrObjectID(project, srcPath, srcID);
-            if (!source)
-                return {false, {}, "SOURCE_NOT_FOUND",
-                        QString("Source '%1' (id=%2) not found").arg(srcPath).arg(srcID)};
-            ProjectItem* target = resolveItemByPathOrObjectID(project, tgtPath, tgtID);
-            if (!target)
-                return {false, {}, "ITEM_NOT_FOUND",
-                        QString("Target '%1' (id=%2) not found").arg(tgtPath).arg(tgtID)};
-
-            if (!projectManager->pasteProperties(source, QList<ProjectItem*>{ target }))
-                return {false, {}, "PASTE_PROPERTIES_FAILED",
-                        QString("Could not paste properties from '%1' onto '%2' (type mismatch or nothing copyable)").arg(source->name, target->name)};
-
-            ActionResult r;
-            r.success = true;
-            r.data = QJsonObject{
-                {"source", source->name},
-                {"target", target->name},
-                {"target_object_id", static_cast<qint64>(itemShortID(target))}
-            };
-            return r;
+            const ProjectItem* source = nullptr;
+            if (srcPath.isEmpty() && srcID == 0) {
+                const auto sources = projectManager->resolveClipboardSources();
+                if (sources.size() != 1)
+                    return {false, {}, "PASTE_PROPERTIES_FAILED", "Paste Properties requires one source on the clipboard"};
+                source = sources.front();
+            } else {
+                source = resolveItemByPathOrObjectID(project, srcPath, srcID);
+                if (!source)
+                    return {false, {}, "SOURCE_NOT_FOUND",
+                            QString("Source '%1' (id=%2) not found").arg(srcPath).arg(srcID)};
+            }
+            if (!projectManager->pasteProperties(source, targets))
+                return {false, {}, "PASTE_PROPERTIES_FAILED", "Cannot paste properties to the selected objects"};
+            QJsonArray guids;
+            for (const auto* target : targets)
+                guids.append(target->guid.toString(QUuid::WithoutBraces));
+            QJsonObject result{{"source", source->name}, {"targets", guids}};
+            if (targets.size() == 1) {
+                result["target"] = targets.front()->name;
+                result["target_object_id"] = static_cast<qint64>(itemShortID(targets.front()));
+            }
+            return {true, result};
         };
         mgr.registerAction(def);
     }

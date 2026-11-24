@@ -263,6 +263,7 @@ set(HARKEN_STUDIO_COMMAND_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/Actions/AdvancedActions.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/Actions/AdvancedActionResult.h
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/Actions/AssetActions.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/Actions/AudioResourceActions.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/Actions/TemplateActions.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/Actions/ActionSelectors.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/Actions/ActionSelectors.h

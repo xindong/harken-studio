@@ -1,8 +1,10 @@
 
 #include "PropertySchemaJson.h"
 #include "InspectorLayout.h"
+#include "Core/BindingSemantics.h"
 #include "Core/ComponentCatalog.h"
 #include "Core/ItemTypeCatalog.h"
+#include "Core/PlayablePropertyAuthoringV1.h"
 #include "SoundInspectorSchema.h"
 #include "ContainerInspectorSchema.h"
 #include "TrackInspectorSchema.h"
@@ -118,7 +120,7 @@ QString widgetString(const PropertyDescriptor& d)
     return QStringLiteral("text");
 }
 
-QJsonObject rowToJson(const PropertyDescriptor& d)
+QJsonObject rowToJson(const PropertyDescriptor& d, ProjectItemType hostType)
 {
     QJsonObject row;
     row[QStringLiteral("type")]  = widgetString(d);
@@ -126,6 +128,15 @@ QJsonObject rowToJson(const PropertyDescriptor& d)
     row[QStringLiteral("label")] = d.label;
     row[QStringLiteral("showLabel")] = d.type != PropType::List;
     row[QStringLiteral("readOnly")] = d.flags.readOnly;
+    if (PlayablePropertyAuthoringV1::isDefinitionType(hostType)) {
+        const auto address = BindingContractSemantics::addressFromDescriptor(d, hostType);
+        if (address && BindingContractSemantics::isBindable(BindingContractSemantics::derive(*address))) {
+            auto binding = BindingSemantics::defaultBinding(*address, {}).toJson().toObject();
+            binding.remove(QStringLiteral("guid"));
+            binding.remove(QStringLiteral("variable"));
+            row[QStringLiteral("binding")] = binding;
+        }
+    }
     if (d.type == PropType::List)
         row[QStringLiteral("tableKind")] = d.listPresentation == ListPresentation::Display
             ? QStringLiteral("display") : QStringLiteral("config");
@@ -152,7 +163,7 @@ QJsonObject rowToJson(const PropertyDescriptor& d)
     if (!d.elementSchema.empty()) {
         QJsonArray children;
         for (const auto& element : d.elementSchema)
-            children.append(rowToJson(element));
+            children.append(rowToJson(element, d.type == PropType::List ? ProjectItemType::None : hostType));
         row[d.type == PropType::List ? QStringLiteral("columns") : QStringLiteral("children")] = children;
     }
     return row;
@@ -165,12 +176,15 @@ QJsonObject propertySchemaToJson(const PropertySchema& schema,
                                  const QStringList& itemTypes)
 {
     validateInspectorSchema(schema);
+    const auto hostType = itemTypes.size() == 1
+        ? ItemTypeCatalog::parseTypeName(itemTypes.front(), Qt::CaseSensitive, false).value_or(ProjectItemType::None)
+        : ProjectItemType::None;
     QJsonArray sections;
     for (const auto& info : inspectorSections())
     {
         QJsonArray children;
         for (const auto& field : schema)
-            if (field.section == info.section) children.append(rowToJson(field));
+            if (field.section == info.section) children.append(rowToJson(field, hostType));
         if (children.isEmpty()) continue;
         QJsonObject sec;
         sec[QStringLiteral("type")]     = QStringLiteral("collapsible");

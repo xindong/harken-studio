@@ -4,6 +4,7 @@
 namespace harken::studio {
 
 void registerTemplateActions(ActionManager& manager, ProjectManager* project);
+void registerAudioResourceActions(ActionManager& manager);
 
 void registerEditorCommands(const EditorCommandContext& context)
 {
@@ -20,6 +21,7 @@ void registerEditorCommands(const EditorCommandContext& context)
     registerSpatialActions(manager, context.engine, context.project);
     registerAdvancedActions(manager, context.engine);
     registerAssetActions(manager, context.engine, context.project);
+    registerAudioResourceActions(manager);
     registerSystemActions(manager, context.engine, context.audition,
                           context.dispatcher->activePlaybacksMap());
     registerRemoteActions(manager);
