@@ -35,31 +35,29 @@ bool AudioImportGate::mimeHasAudio(const QMimeData* mimeData)
 
 QStringList AudioImportGate::extractAudioFiles(const QMimeData* mimeData)
 {
-    QStringList result;
+    QStringList paths;
     if (!mimeData || !mimeData->hasUrls())
-        return result;
-
-    const QStringList filters = AudioFormatCatalog::filePatterns();
-
-    for (const QUrl& url : mimeData->urls())
-    {
+        return paths;
+    for (const QUrl& url : mimeData->urls()) {
         const QString localPath = url.toLocalFile();
-        if (localPath.isEmpty())
-            continue;
-
+        if (localPath.isEmpty()) continue;
         const QFileInfo info(localPath);
-        if (info.isDir())
-        {
+        if (info.isDir() || acceptedExtensions().contains(info.suffix().toLower()))
+            paths.append(localPath);
+    }
+    return expandDirectories(paths);
+}
+
+QStringList AudioImportGate::expandDirectories(const QStringList& paths)
+{
+    QStringList result;
+    const QStringList filters = AudioFormatCatalog::filePatterns();
+    for (const auto& localPath : paths) {
+        if (QFileInfo(localPath).isDir()) {
             QDirIterator it(localPath, filters, QDir::Files, QDirIterator::Subdirectories);
-            while (it.hasNext())
-            {
-                it.next();
-                result << it.filePath();
-            }
-        }
-        else if (acceptedExtensions().contains(info.suffix().toLower()))
-        {
-            result << localPath;
+            while (it.hasNext()) result.append(it.next());
+        } else {
+            result.append(localPath);
         }
     }
 

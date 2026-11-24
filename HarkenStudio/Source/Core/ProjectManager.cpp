@@ -533,12 +533,6 @@ bool saveS3HierarchyBucket(const QString& projectRoot,
     return allOk;
 }
 
-const ProjectLoaderInternal::SingleObjHierarchySpec* findS3Spec(const QString& folder)
-{
-    for (const auto& s : ProjectLoaderInternal::s3Specs()) if (s.folderName == folder) return &s;
-    return nullptr;
-}
-
 }
 
 
@@ -645,14 +639,6 @@ bool saveBussesPacksImpl(const QString& projectRoot,
              << "Bus files (allOk=" << allOk << ")";
     if (!allOk && errOut) *errOut = QStringLiteral("One or more bus Pack files failed to save");
     return allOk;
-}
-
-int countRootBuses(const ProjectData& project)
-{
-    if (!project.busses.empty() && project.busses[0].rootItem) {
-        return 1;
-    }
-    return 0;
 }
 
 }
@@ -836,6 +822,25 @@ bool saveLayersBucket(const QString& projectRoot,
              << "Layer files (allOk=" << allOk << ")";
     if (!allOk && errOut) *errOut = QStringLiteral("One or more Layer Pack files failed to save");
     return allOk;
+}
+
+bool saveProjectBuckets(const QString& root, ProjectData& project, ProjectSerializer& serializer,
+                       QString& error, ProjectSaveSnapshot* snapshot = nullptr,
+                       QHash<QUuid, QJsonObject>* serializedItems = nullptr)
+{
+    if (!saveActionsBucket(root, project.projectId, project, project.actions, serializer, snapshot)) {
+        error = QStringLiteral("Cannot save Action documents");
+        return false;
+    }
+    for (const auto& spec : ProjectLoaderInternal::s3Specs()) {
+        auto* bucket = project.getBucketForFolder(spec.folderName);
+        if (bucket && !saveS3HierarchyBucket(root, project.projectId, project, spec, *bucket, serializer, snapshot)) {
+            error = QStringLiteral("Cannot save %1 documents").arg(spec.folderName);
+            return false;
+        }
+    }
+    return saveLayersBucket(root, project.projectId, project, project.layers, serializer, &error, snapshot, serializedItems)
+        && saveBussesPacksImpl(root, project, serializer, &error, snapshot);
 }
 
 }
@@ -1534,6 +1539,10 @@ bool ProjectManager::createProject(const ProjectConfig& config)
                                : acquisition.error);
         return false;
     }
+    if (!QDir(projectRoot).entryList({QStringLiteral("*.hsp")}, QDir::Files).isEmpty()) {
+        emit errorOccurred(tr("The directory already contains a project."));
+        return false;
+    }
 
     if (!createDirectoryStructure(projectRoot))
     {
@@ -1546,9 +1555,9 @@ bool ProjectManager::createProject(const ProjectConfig& config)
     AssetRegistry::instance().setProjectRoot(projectRoot);
     qDebug() << "[ProjectManager] New project root set to:" << projectRoot;
 
-    if (!createMainProjectFile(config, projectRoot))
-    {
-        emit errorOccurred("Failed to create main project file.");
+    QString writeError;
+    if (!createMainProjectFile(config, projectRoot, writeError)) {
+        emit errorOccurred(writeError);
         return false;
     }
 
@@ -1574,87 +1583,43 @@ bool ProjectManager::createDirectoryStructure(const QString& projectRoot)
     return true;
 }
 
-bool ProjectManager::createMainProjectFile(const ProjectConfig& config, const QString& projectRoot)
+bool ProjectManager::createMainProjectFile(const ProjectConfig& config, const QString& projectRoot, QString& error)
 {
-    QString platformError;
-    if (!ProjectPlatformSemantics::validatePlatforms(config.platforms, &platformError)) {
-        emit errorOccurred(platformError);
-        return false;
-    }
+    ProjectSerializer serializer;
     ProjectData project;
     project.name = config.name;
-    project.projectPath = QDir(projectRoot).filePath(config.name + ".hsp");
-
+    project.projectPath = QDir(projectRoot).filePath(config.name + QStringLiteral(".hsp"));
     project.platforms = config.platforms;
-    project.sampleRate        = config.sampleRate;
-    project.channelConfig     = config.channelConfig;
+    project.sampleRate = config.sampleRate;
+    project.channelConfig = config.channelConfig;
 
-    m_projectIndex = std::make_unique<harken::studio::ProjectIndex>();
-    if (!m_projectIndex->loadFromCache(projectRoot)) {
-        qDebug() << "[ProjectManager] ProjectIndex cache miss/stale -- rebuilding from disk";
-    }
-    const auto scanResult = m_projectIndex->scanProjectRoot(projectRoot);
-    if (scanResult != harken::studio::ProjectIndex::ScanResult::Ok) {
-        qWarning() << "[ProjectManager] ProjectIndex scan returned non-Ok:" << static_cast<int>(scanResult);
-    }
-    m_projectIndex->saveToCache(projectRoot);
-    qDebug() << "[ProjectManager] ProjectIndex entries:" << m_projectIndex->entryCount();
-
-    {
-        QString busErr;
-        ProjectLoaderInternal::loadBussesPacksImpl(projectRoot, project, m_serializer, &busErr);
-        if (countRootBuses(project) == 0) {
-            ensureDefaultMasterBus(project);
-            saveBussesPacksImpl(projectRoot, project, m_serializer, nullptr);
-        }
-    }
-
-    ProjectLoaderInternal::loadActions(projectRoot, project, m_serializer);
-
+    const QDir buses(ProjectLoaderInternal::busFolderAbs(projectRoot));
+    if (!buses.entryList({QStringLiteral("*.vp")}, QDir::Files).isEmpty()
+        && !ProjectLoaderInternal::loadBussesPacksImpl(projectRoot, project, serializer, &error))
+        return false;
+    ensureDefaultMasterBus(project);
+    if (!ProjectLoaderInternal::loadActions(projectRoot, project, serializer, &error)) return false;
     for (const auto& spec : ProjectLoaderInternal::s3Specs()) {
-        ProjectLoaderInternal::loadS3Hierarchy(projectRoot, spec, project, m_serializer);
+        if (!ProjectLoaderInternal::loadS3Hierarchy(projectRoot, spec, project, serializer, &error)) return false;
     }
-
-    ProjectLoaderInternal::loadLayersPacksImpl(projectRoot, project, m_serializer, nullptr);
+    if (!ProjectLoaderInternal::loadLayersPacksImpl(projectRoot, project, serializer, &error)) return false;
     ConversionDefaults::createProjectPresets(project);
-
-    if (!config.templateId.isEmpty() && !config.templateData.isEmpty()) {
-        QString tmplErr;
-        if (!TemplateApplyService::seedTemplateInto(
-                project, config.templateData, &tmplErr)) {
-            qWarning() << "[createMainProjectFile] template seed failed:" << tmplErr;
-            emit errorOccurred(QStringLiteral("Template seed failed: %1").arg(tmplErr));
-        } else {
-            saveBussesPacksImpl(projectRoot, project, m_serializer, nullptr);
-            for (const auto& spec : ProjectLoaderInternal::s3Specs()) {
-                auto* bucket = project.getBucketForFolder(spec.folderName);
-                if (!bucket || bucket->empty()) continue;
-                if (!saveS3HierarchyBucket(
-                        projectRoot, project.projectId, project, spec, *bucket,
-
-                        m_serializer)) {
-                    qWarning() << "[createMainProjectFile] saveS3HierarchyBucket failed for"
-                               << spec.folderName;
-                }
-            }
-        }
-    }
+    if (!config.templateId.isEmpty() && !config.templateData.isEmpty()
+        && !TemplateApplyService::seedTemplateInto(project, config.templateData, &error))
+        return false;
 
     ensureUniqueObjectIds(project);
-    QString identityError;
-    if (!validateProjectObjectIdentities(project, &identityError)) {
-        emit errorOccurred(identityError);
+    if (!validateProjectObjectIdentities(project, &error)) return false;
+    if (!serializer.prepareReferenceWrite(project)) {
+        error = serializer.lastError();
         return false;
     }
-    if (project.projectId.isEmpty())
-        project.projectId = QUuid::createUuid().toString(QUuid::WithoutBraces);
-    if (!m_serializer.prepareReferenceWrite(project))
+    if (!saveProjectBuckets(projectRoot, project, serializer, error)) return false;
+    if (!serializer.saveProject(project.projectPath, project)) {
+        error = serializer.lastError();
         return false;
-    const auto* conversionSpec = findS3Spec(QStringLiteral("Conversions"));
-    if (!conversionSpec || !saveS3HierarchyBucket(projectRoot, project.projectId, project,
-            *conversionSpec, *project.getBucketForType(ProjectItem::Type::Conversion), m_serializer))
-        return false;
-    return m_serializer.saveProject(project.projectPath, project);
+    }
+    return true;
 }
 
 void ProjectManager::drainPendingDestruction()
@@ -1808,45 +1773,9 @@ PreparedProject ProjectManager::prepareProject(const ProjectConfig& config,
         }
     }
 
-    ProjectSerializer serializer;
-    ProjectData project;
-    project.name = config.name;
-    project.projectPath = root.filePath(config.name + QStringLiteral(".hsp"));
-    project.projectId = QUuid::createUuid().toString(QUuid::WithoutBraces);
-    project.platforms = config.platforms;
-    project.sampleRate = config.sampleRate;
-    project.channelConfig = config.channelConfig;
-    ensureDefaultMasterBus(project);
-    ConversionDefaults::createProjectPresets(project);
-
-    if (!config.templateId.isEmpty() && !config.templateData.isEmpty()) {
-        QString templateError;
-        if (!TemplateApplyService::seedTemplateInto(
-                project, config.templateData, &templateError)) {
-            failed.error = templateError;
-            return failed;
-        }
-    }
-
-    QString busError;
-    if (!serializer.prepareReferenceWrite(project)
-        || !saveBussesPacksImpl(projectRoot, project, serializer, &busError)
-        || !serializer.saveProject(project.projectPath, project)) {
-        failed.error = !serializer.lastError().isEmpty()
-                           ? serializer.lastError()
-                           : busError.isEmpty()
-                           ? QStringLiteral("Failed to create project files")
-                           : busError;
-        return failed;
-    }
-    for (const auto& spec : ProjectLoaderInternal::s3Specs()) {
-        auto* bucket = project.getBucketForFolder(spec.folderName);
-        if (bucket && !bucket->empty())
-            saveS3HierarchyBucket(projectRoot, project.projectId, project, spec, *bucket,
-
-                                  serializer);
-    }
-    return prepareProject(project.projectPath, false, {}, {}, std::move(cancelled));
+    if (!createMainProjectFile(config, projectRoot, failed.error)) return failed;
+    return prepareProject(root.filePath(config.name + QStringLiteral(".hsp")),
+                          false, {}, {}, std::move(cancelled));
 }
 
 PreparedProject ProjectManager::prepareProject(const QString& filePath,
@@ -2122,13 +2051,67 @@ std::unique_ptr<ProjectSaveBaseline> ProjectManager::captureSaveBaseline(
 
 bool ProjectManager::saveProject()
 {
-    if (PackGenerationRecordStore::instance().isExporting()) return false;
-    if (!m_currentProject || !m_itemSaveState) return false;
+    return saveProjectInternal(false, nullptr);
+}
+
+bool ProjectManager::saveProjectAs(const QString& path, QString* error, bool* forwarded)
+{
+    if (error) error->clear();
+    if (forwarded) *forwarded = false;
+    if (!m_currentProject || path.trimmed().isEmpty()) {
+        if (error) *error = tr("An open project and a destination file are required.");
+        return false;
+    }
+    const QFileInfo destination(path);
+    if (destination.suffix().compare(QStringLiteral("hsp"), Qt::CaseInsensitive) != 0
+        || destination.isDir() || destination.isSymLink()) {
+        if (error) *error = tr("Choose a .hsp project file as the destination.");
+        return false;
+    }
+    const auto file = QDir::cleanPath(destination.absoluteFilePath());
+    auto acquisition = ProjectInstance::acquire(file, forwarded ? ProjectInstance::ActivationPolicy::Allow
+                                                               : ProjectInstance::ActivationPolicy::Deny);
+    if (acquisition.status != ProjectInstance::Status::Acquired) {
+        if (forwarded) *forwarded = acquisition.status == ProjectInstance::Status::Forwarded;
+        if (error) *error = acquisition.error;
+        return false;
+    }
+    const QString previousPath = m_currentProject->projectPath;
+    if (destination == QFileInfo(previousPath))
+        return saveProjectInternal(false, error);
+    const QDir directory = destination.absoluteDir();
+    if (directory.exists() && (!directory.isReadable()
+        || !directory.entryList({QStringLiteral("*.hsp")}, QDir::Files | QDir::Hidden | QDir::System).isEmpty())) {
+        if (error) *error = tr("Choose a new project directory. The destination must be readable and contain no .hsp project.");
+        return false;
+    }
+    const QString previousName = m_currentProject->name;
+    const bool relocateSources = ProjectInstance::identityForProject(file)
+        != ProjectInstance::identityForProject(previousPath);
+    const bool wasWatching = m_fileWatcher.isWatching();
+    m_currentProject->projectPath = file;
+    m_currentProject->name = destination.baseName();
+    if (!saveProjectInternal(relocateSources, error)) {
+        m_currentProject->projectPath = previousPath;
+        m_currentProject->name = previousName;
+        if (wasWatching) startWatchingCurrentProject();
+        return false;
+    }
+    m_projectInstance = std::move(acquisition.instance);
+    return true;
+}
+
+bool ProjectManager::saveProjectInternal(bool relocateSources, QString* error)
+{
     QString saveError;
-    const auto fail = [&](const QString& error) {
-        emit errorOccurred(error);
+    const auto fail = [&](const QString& message) {
+        if (error) *error = message;
+        emit errorOccurred(message);
         return false;
     };
+    if (PackGenerationRecordStore::instance().isExporting())
+        return fail(tr("A pack build is in progress."));
+    if (!m_currentProject || !m_itemSaveState) return fail(tr("No project is ready to save."));
     if (!SourceFileSystem::recoverDiscard(&saveError)) return fail(saveError);
     PropertyEditSession::finishAllActive(true);
     m_fileWatcher.refreshSources();
@@ -2175,19 +2158,8 @@ bool ProjectManager::saveProject()
             return fail(QStringLiteral("Cannot prepare the asset registry for saving"));
         ProjectSaveSnapshot snapshot(stagedRoot.path());
         snapshot.prepareDirectoryLayout();
-        bool generated = saveActionsBucket(stagedRoot.path(), stagedProject.projectId,
-            stagedProject, stagedProject.actions, serializer, &snapshot);
-        for (const auto& spec : ProjectLoaderInternal::s3Specs()) {
-            auto* bucket = stagedProject.getBucketForFolder(spec.folderName);
-            if (bucket && !saveS3HierarchyBucket(stagedRoot.path(), stagedProject.projectId,
-                    stagedProject, spec, *bucket, serializer, &snapshot)) generated = false;
-        }
-        if (!saveLayersBucket(stagedRoot.path(), stagedProject.projectId, stagedProject,
-                stagedProject.layers, serializer, &saveError, &snapshot, &plan.serializedItems)
-            || !saveBussesPacksImpl(stagedRoot.path(), stagedProject, serializer, &saveError, &snapshot))
-            generated = false;
-        if (!generated) return fail(saveError.isEmpty()
-            ? QStringLiteral("Cannot generate project documents") : saveError);
+        if (!saveProjectBuckets(stagedRoot.path(), stagedProject, serializer, saveError, &snapshot, &plan.serializedItems))
+            return fail(saveError);
         QDirIterator entries(stagedRoot.path(),
             QDir::AllEntries | QDir::Hidden | QDir::System | QDir::NoDotAndDotDot,
             QDirIterator::Subdirectories);
@@ -2306,6 +2278,32 @@ bool ProjectManager::saveProject()
     }
 
     ProjectTransaction::DeltaPlan transactionPlan;
+    if (relocateSources) {
+        const QString mediaDirectory = QString::fromLatin1(PathUtils::AUDIO_SOURCES_DIR);
+        const QDir sourceRoot(AssetRegistry::instance().projectRoot());
+        QStringList directories{mediaDirectory};
+        while (!directories.isEmpty()) {
+            const QString path = directories.takeLast();
+            const QFileInfo directory(sourceRoot.filePath(path));
+            if (!directory.isDir() || directory.isSymLink() || directory.isJunction()) continue;
+            if (!directory.isReadable()) return fail(tr("Cannot read audio source folder: %1").arg(path));
+            transactionPlan.directories.append({path, true});
+            const auto children = QDir(directory.absoluteFilePath()).entryInfoList(
+                QDir::Dirs | QDir::Hidden | QDir::System | QDir::NoDotAndDotDot);
+            for (const auto& child : children)
+                directories.append(path + QLatin1Char('/') + child.fileName());
+        }
+        for (const auto& asset : AssetRegistry::instance().snapshot()) {
+            const auto source = SourceFileSystem::absolutePath(asset.relativePath);
+            if (source.isEmpty())
+                return fail(tr("Invalid audio source path: %1").arg(asset.relativePath));
+            const QString target = mediaDirectory + QLatin1Char('/') + asset.relativePath;
+            if (QFileInfo::exists(source))
+                transactionPlan.writes.append({target, {}, {}, source});
+            else
+                transactionPlan.readSet.append({target, {}, false});
+        }
+    }
     QSet<QString> writeKeys;
     QHash<QString, QByteArray> committedHashes;
     for (auto it = plan.files.cbegin(); it != plan.files.cend(); ++it) {
@@ -2356,9 +2354,12 @@ bool ProjectManager::saveProject()
         const auto restoreWatcher = qScopeGuard([&] {
             if (resumeWatcher) m_fileWatcher.endProjectWrite(committed ? committedHashes : QHash<QString, QByteArray>{});
         });
-        if (!transaction->applyDelta(&saveError) || !transaction->commit(false, &saveError)) {
+        if (!transaction->applyDelta(&saveError)
+            || (relocateSources && !SourceFileSystem::discardChanges(&saveError, nullptr, true))
+            || !transaction->commit(false, &saveError)) {
             QString rollbackError;
             if (!transaction->rollback(&rollbackError)) emit errorOccurred(rollbackError);
+            if (relocateSources && !SourceFileSystem::recoverDiscard(&rollbackError)) emit errorOccurred(rollbackError);
             return fail(saveError);
         }
         committed = true;
@@ -2402,8 +2403,14 @@ bool ProjectManager::saveProject()
     m_saveBaseline->validation = std::move(plan.validation);
     m_saveBaseline->normalizedDocuments.clear();
     m_externalSavePaths.clear();
-    AssetRegistry::instance().markAllCommitted();
     SourceFileSystem::commitChanges();
+    auto& registry = AssetRegistry::instance();
+    if (relocateSources) {
+        registry.replaceSnapshot(projectRoot.path(), registry.snapshot());
+        PackExportSelectionStore::instance().openProject(*m_currentProject);
+        PackArtifactCache::instance().openProject(*m_currentProject);
+    }
+    registry.markAllCommitted();
     UndoRedoManager::instance().setClean();
     emit projectSaved();
     return true;
@@ -6332,7 +6339,7 @@ std::vector<IncomingSendInfo> ProjectManager::collectIncomingSends(uint32_t busI
             if (!sends) return;
             for (const auto& send : *sends) {
                 if (send.targetBusID == busId)
-                    out.push_back({item->objectID, item->name, send.sendLevel, send.type, send.duckTarget});
+                    out.push_back({item->objectID, item->guid, item->name, send.sendLevel, send.type, send.duckTarget});
             }
             return;
         }
@@ -6343,7 +6350,7 @@ std::vector<IncomingSendInfo> ProjectManager::collectIncomingSends(uint32_t busI
             return;
         for (const auto& send : effective->second.send.sends) {
             if (snapshot.objects.at(send.targetBusID)->objectID == busId)
-                out.push_back({item->objectID, item->name, VMixNode::dbToLinear(send.sendLevel), send.type, send.duckTarget});
+                out.push_back({item->objectID, item->guid, item->name, VMixNode::dbToLinear(send.sendLevel), send.type, send.duckTarget});
         }
     });
     return out;
@@ -6353,13 +6360,16 @@ std::vector<MainInputInfo> ProjectManager::collectMainInputs(uint32_t busId) con
 {
     std::vector<MainInputInfo> out;
     if (!m_currentProject) return out;
-    for (const auto* bus : getChildBusItems(busId)) {
-        const auto* mix = bus->comp<VMixNode>();
-        out.push_back({bus->objectID, mix->outputBusVolume});
+    const auto scope = currentWorldPlatformScope(PlatformContextService::instance().context());
+    constexpr auto gain = static_cast<uint8_t>(harkenplayableproperties::PlayablePropertyIdV1::OutputBusVolume);
+    for (auto* bus : getChildBusItems(busId)) {
+        const auto locator = PlayablePropertyAuthoringV1::definitionLocator(*bus);
+        if (!locator) continue;
+        const auto state = PlayablePropertyAuthoringV1::readProperty(*bus, *locator, gain, scope);
+        if (state && state->value.isDouble())
+            out.push_back({bus->objectID, static_cast<float>(state->value.toDouble()), bus->guid, bus->name});
     }
-    const auto snapshot = buildFieldGroupEffectiveSnapshot(
-        *m_currentProject,
-        toFieldGroupScope(currentWorldPlatformScope(PlatformContextService::instance().context())));
+    const auto snapshot = buildFieldGroupEffectiveSnapshot(*m_currentProject, toFieldGroupScope(scope));
     forEachMixNodeItem([&](ProjectItem* item, VMixNode*) {
         const auto guid = toFieldGroupGuid(item->guid);
         const auto effective = snapshot.definitions.find(guid);
@@ -6368,7 +6378,7 @@ std::vector<MainInputInfo> ProjectManager::collectMainInputs(uint32_t busId) con
             return;
         const auto& output = effective->second.output;
         if (snapshot.objects.at(output.outputBusRef)->objectID == busId)
-            out.push_back({item->objectID, output.outputBusVolume});
+            out.push_back({item->objectID, output.outputBusVolume, item->guid, item->name});
     });
     return out;
 }

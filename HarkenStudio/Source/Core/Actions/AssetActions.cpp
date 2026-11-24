@@ -1,5 +1,6 @@
 
 #include "../CommandSchemas.h"
+#include "../CommandArgumentValidator.h"
 #include "../IPC/DesktopCommandSchemas.h"
 #include "../ActionManager.h"
 #include "../AudioEngine.h"
@@ -16,6 +17,7 @@
 #include "ActionSelectors.h"
 #include "Core/Build/PackagingBridge.h"
 #include <QJsonArray>
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <optional>
@@ -339,9 +341,9 @@ void registerAssetActions(ActionManager& mgr,
         def.paramSchema = commandInputSchema(def.id);
         def.undoable = false;
         def.handler = [](const QJsonObject& args) -> ActionResult {
-            for (auto it = args.begin(); it != args.end(); ++it)
-                if (it.key() != QLatin1String("files") && it.key() != QLatin1String("target_container_id"))
-                    return {false, {}, "INVALID_ARGS", QString("Unknown parameter: %1").arg(it.key())};
+            QString error;
+            if (!validateCommandArguments(args, commandInputSchema("import_audio_files"), &error))
+                return {false, {}, "INVALID_ARGUMENTS", error};
             if (!ProjectManager::instance().isProjectOpen())
                 return {false, {}, "NO_PROJECT_OPEN", "No project is currently open"};
 
@@ -368,7 +370,7 @@ void registerAssetActions(ActionManager& mgr,
                     return {false, {}, "INVALID_ARGS", "files must contain only non-empty path strings"};
                 files.push_back(p);
             }
-            files.removeDuplicates();
+            files = AudioImportGate::expandDirectories(files);
             if (files.isEmpty())
                 return {false, {}, "MISSING_PARAM", "'files' contains no valid path strings"};
 
@@ -391,14 +393,31 @@ void registerAssetActions(ActionManager& mgr,
             ProjectItem* targetParent = target.kind == Kind::Parent ? target.item : nullptr;
             ProjectItem* targetSound = target.kind == Kind::Sources ? target.item : nullptr;
             ProjectItem* targetBus = target.kind == Kind::RootOutput ? target.item : nullptr;
+            if (!targetSound && (args.contains("language") || args.contains("entry_id")))
+                return {false, {}, "INVALID_ARGUMENTS", "language and entry_id require a target Sound"};
             int successCount = 0;
             int failCount = 0;
             int duplicateCount = 0;
             QList<uint32_t> importedSources;
             QList<QUuid> importedGuids;
             if (targetSound) {
+                const QString language = args.value("language").toString(target.language);
+                const auto* sound = targetSound->comp<VSound>();
+                if (args.contains("language") && (!sound->distinguishLanguage
+                    || !ProjectLanguageSemantics::buildLanguages(*project).contains(language)))
+                    return {false, {}, "INVALID_ARGUMENTS", "language must be a project language of a localized Sound"};
+                const QUuid entry(args.value("entry_id").toString());
+                if (args.contains("entry_id") && entry.isNull())
+                    return {false, {}, "INVALID_ARGUMENTS", "entry_id must identify a Sound source row"};
+                if (args.contains("language") && args.contains("entry_id")) {
+                    const auto group = sound->sources.localized.constFind(language);
+                    if (group == sound->sources.localized.cend()
+                        || std::none_of(group->entries.begin(), group->entries.end(),
+                            [&entry](const SoundSourceDef& row) { return row.entryId == entry; }))
+                        return {false, {}, "INVALID_ARGUMENTS", "entry_id is not in the specified language group"};
+                }
                 auto* command = ImportSoundSourcesCommand::pushImport(files,
-                    findFileBindingForItem(*project, targetSound), targetSound, target.language);
+                    findFileBindingForItem(*project, targetSound), targetSound, language, entry);
                 successCount = command->successCount();
                 failCount = command->failCount();
                 duplicateCount = command->duplicateCount();

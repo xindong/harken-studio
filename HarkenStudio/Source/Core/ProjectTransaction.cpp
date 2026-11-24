@@ -40,6 +40,11 @@ constexpr qsizetype kParallelFileOperationMinimum = 8;
 
 bool validJournal(const QJsonObject& journal, QString* error);
 
+bool isFileSystemLink(const QFileInfo& info)
+{
+    return info.isSymLink() || info.isJunction();
+}
+
 #if defined(Q_OS_WIN) || defined(Q_OS_MACOS)
 constexpr Qt::CaseSensitivity kPathCaseSensitivity = Qt::CaseInsensitive;
 #else
@@ -556,7 +561,7 @@ bool validJournal(const QJsonObject& journal, QString* error)
     if (projectDirectory.isEmpty() || backupDirectory.isEmpty()
         || QDir::cleanPath(projectInfo.absoluteFilePath()) != projectDirectory
         || (!adjacentBackup && !managedBackup)
-        || backupInfo.isSymLink()) {
+        || isFileSystemLink(backupInfo)) {
         if (error) *error = QStringLiteral("Project transaction paths are invalid");
         return false;
     }
@@ -832,7 +837,7 @@ bool reconcileDirectories(const QString& projectDirectory, const QJsonArray& dir
     for (const QString& path : remove) {
         const QFileInfo info(path);
         const QString relative = QDir(projectDirectory).relativeFilePath(path);
-        if (info.isSymLink() || (info.isDir()
+        if (isFileSystemLink(info) || (info.isDir()
             && physicalPathSpelling(projectDirectory, relative) == relative
             && !QDir().rmdir(path))) {
             if (error) *error = QStringLiteral("Cannot remove project directory: %1").arg(path);
@@ -840,7 +845,7 @@ bool reconcileDirectories(const QString& projectDirectory, const QJsonArray& dir
         }
     }
     for (const QString& path : create) {
-        if (QFileInfo(path).isSymLink() || !QDir().mkpath(path)) {
+        if (isFileSystemLink(QFileInfo(path)) || !QDir().mkpath(path)) {
             if (error) *error = QStringLiteral("Cannot create project directory: %1").arg(path);
             return false;
         }
@@ -965,7 +970,7 @@ std::unique_ptr<ProjectTransaction> ProjectTransaction::beginReplacement(
     const QString& projectFilePath, const QStringList& writeSet,
     const QString& stagedDirectory, QString* error)
 {
-    if (!QFileInfo(stagedDirectory).isDir() || QFileInfo(stagedDirectory).isSymLink()) {
+    if (!QFileInfo(stagedDirectory).isDir() || isFileSystemLink(QFileInfo(stagedDirectory))) {
         if (error) *error = QStringLiteral("Project staging directory is invalid");
         return nullptr;
     }
@@ -976,7 +981,7 @@ std::unique_ptr<ProjectTransaction> ProjectTransaction::beginReplacement(
     const QString& projectFilePath, const QStringList& writeSet,
     const QString& stagedDirectory, const ProjectSaveSnapshot& snapshot, QString* error)
 {
-    if (!QFileInfo(stagedDirectory).isDir() || QFileInfo(stagedDirectory).isSymLink()) {
+    if (!QFileInfo(stagedDirectory).isDir() || isFileSystemLink(QFileInfo(stagedDirectory))) {
         if (error) *error = QStringLiteral("Project staging directory is invalid");
         return nullptr;
     }
@@ -993,7 +998,7 @@ std::unique_ptr<ProjectTransaction> ProjectTransaction::beginDelta(
             return false;
         QString ancestor = path;
         while (ancestor != QStringLiteral(".")) {
-            if (QFileInfo(QDir(projectDirectory).filePath(ancestor)).isSymLink())
+            if (isFileSystemLink(QFileInfo(QDir(projectDirectory).filePath(ancestor))))
                 return false;
             ancestor = QFileInfo(ancestor).path();
         }
@@ -1100,7 +1105,7 @@ std::unique_ptr<ProjectTransaction> ProjectTransaction::beginImpl(
     ProjectTransactionProgressCallback progress, const DeltaPlan* delta)
 {
     const QString projectDirectory = projectDirectoryFor(projectFilePath);
-    if (!QDir(projectDirectory).exists() || QFileInfo(projectDirectory).isSymLink()) {
+    if (!QDir(projectDirectory).exists() || isFileSystemLink(QFileInfo(projectDirectory))) {
         if (error) *error = QStringLiteral("Project directory does not exist");
         return nullptr;
     }
@@ -1121,10 +1126,14 @@ std::unique_ptr<ProjectTransaction> ProjectTransaction::beginImpl(
     if (delta) {
         transaction->delta_ = true;
         transaction->readSet_ = delta->readSet;
-        for (const FileWrite& write : delta->writes)
-            transaction->stagedFiles_.insert(retainedFileKey(write.path), StagedFile{
-                write.bytes, QCryptographicHash::hash(write.bytes, QCryptographicHash::Sha256),
-                write.permissions});
+        for (const FileWrite& write : delta->writes) {
+            const auto key = retainedFileKey(write.path);
+            if (write.copyFrom.isEmpty())
+                transaction->stagedFiles_.insert(key, StagedFile{write.bytes,
+                    QCryptographicHash::hash(write.bytes, QCryptographicHash::Sha256), write.permissions});
+            else
+                transaction->copiedSources_.insert(key, write.copyFrom);
+        }
         if (normalized.size() >= kParallelFileOperationMinimum
             || normalized.size() + delta->readSet.size() >= kParallelVerificationMinimum)
             transaction->verificationPool_ = transactionVerificationPool();
@@ -1171,7 +1180,7 @@ std::unique_ptr<ProjectTransaction> ProjectTransaction::beginImpl(
         for (const FileRename& rename : delta->renames) {
             const QFileInfo source(QDir(projectDirectory).filePath(rename.source));
             const QFileInfo target(QDir(projectDirectory).filePath(rename.target));
-            if (!source.isFile() || source.isSymLink()
+            if (!source.isFile() || isFileSystemLink(source)
                 || (rename.source.compare(rename.target, kPathCaseSensitivity) != 0
                     && target.exists())) {
                 if (error) *error = QStringLiteral("Project transaction rename is invalid: %1 -> %2")
@@ -1466,7 +1475,7 @@ bool ProjectTransaction::verifyReadSet(const QString& projectFilePath,
         }
         const QString path = root.filePath(read.path);
         const QFileInfo info(path);
-        if (info.isSymLink() || (read.exists ? !info.isFile() : info.exists())) {
+        if (isFileSystemLink(info) || (read.exists ? !info.isFile() : info.exists())) {
             if (error) *error = QStringLiteral("Project transaction dependency changed: %1").arg(path);
             return false;
         }
@@ -1505,7 +1514,7 @@ bool ProjectTransaction::applyDelta(QString* error, ProjectTransactionProgressCa
         const QFileInfo info(QDir(projectDirectory_).filePath(relative));
         const bool exists = info.isDir()
             && physicalPathSpelling(projectDirectory_, relative) == relative;
-        if (info.isSymLink() || exists != directory.value(QStringLiteral("existed")).toBool()) {
+        if (isFileSystemLink(info) || exists != directory.value(QStringLiteral("existed")).toBool()) {
             if (error) *error = QStringLiteral("Project directory changed before transaction write: %1")
                 .arg(info.absoluteFilePath());
             return false;
@@ -1541,14 +1550,14 @@ bool ProjectTransaction::replaceFromDirectory(const QString& stagedDirectory,
                                         const QString& targetRelative,
                                         QSet<QString>& result) {
         const QString path = QDir(root).filePath(sourceRelative);
-        if (QFileInfo(path).isSymLink()) return false;
+        if (isFileSystemLink(QFileInfo(path))) return false;
         if (!QFileInfo(path).isDir()) return true;
         result.insert(targetRelative);
         QDirIterator iterator(path, QDir::Dirs | QDir::Hidden | QDir::System
             | QDir::NoDotAndDotDot, QDirIterator::Subdirectories);
         while (iterator.hasNext()) {
             const QFileInfo info(iterator.next());
-            if (info.isSymLink()) return false;
+            if (isFileSystemLink(info)) return false;
             result.insert(targetRelative + QLatin1Char('/')
                 + ProjectDataPolicy::normalizeRelativePath(
                     QDir(path).relativeFilePath(info.absoluteFilePath())));
@@ -1671,7 +1680,7 @@ bool ProjectTransaction::install(QJsonObject journal, const QString& stagedDirec
         QString* error = &result.error;
         QJsonObject entry = entries.at(index).toObject();
         const QString relative = entry.value(QStringLiteral("path")).toString();
-        const QString source = QDir(stagedDirectory).filePath(relative);
+        const QString source = copiedSources_.value(retainedFileKey(relative), QDir(stagedDirectory).filePath(relative));
         const QString target = QDir(projectDirectory_).filePath(relative);
         const bool existed = entry.value(QStringLiteral("existed")).toBool();
         const QString displaced = existed
@@ -1722,7 +1731,7 @@ bool ProjectTransaction::install(QJsonObject journal, const QString& stagedDirec
             entry.insert(QStringLiteral("operation"), QStringLiteral("write"));
             entry.insert(QStringLiteral("newHash"),
                          QString::fromLatin1(staged->hash.toHex()));
-        } else if (!delta_ && QFileInfo(source).isFile()) {
+        } else if (copiedSources_.contains(retainedFileKey(relative)) || (!delta_ && QFileInfo(source).isFile())) {
             const QString snapshot = QDir(backupDirectory_).filePath(
                 QStringLiteral(".staged/") + relative);
             QByteArray expectedHash;
@@ -1817,7 +1826,7 @@ bool ProjectTransaction::install(QJsonObject journal, const QString& stagedDirec
         QByteArray oldHash = QByteArray::fromHex(
             entry.value(QStringLiteral("oldHash")).toString().toLatin1());
         if (delta_ && QFileInfo::exists(target)) {
-            if (!QFileInfo(target).isFile() || QFileInfo(target).isSymLink()) {
+            if (!QFileInfo(target).isFile() || isFileSystemLink(QFileInfo(target))) {
                 if (error) *error = QStringLiteral("Project transaction target changed kind: %1").arg(target);
                 return false;
             }
@@ -1844,7 +1853,7 @@ bool ProjectTransaction::install(QJsonObject journal, const QString& stagedDirec
         const QString target = QDir(projectDirectory_).filePath(relative);
         if (entry.value(QStringLiteral("operation")) == QStringLiteral("write") && !plannedMatches) {
             const bool replaceExisting = delta_
-                ? QFileInfo(target).isFile() && !QFileInfo(target).isSymLink()
+                ? QFileInfo(target).isFile() && !isFileSystemLink(QFileInfo(target))
                 : entry.value(QStringLiteral("existed")).toBool()
                     && !entry.contains(QStringLiteral("oldPath"))
                     && currentMatchesOldState(target, entry);
@@ -1973,7 +1982,7 @@ bool ProjectTransaction::commit(bool keepJournal, QString* error)
         const QString relative = directory.value(QStringLiteral("path")).toString();
         const bool exists = info.isDir()
             && physicalPathSpelling(projectDirectory_, relative) == relative;
-        if (info.isSymLink()
+        if (isFileSystemLink(info)
             || exists != directory.value(QStringLiteral("retained")).toBool()) {
             if (error) *error = QStringLiteral("Project directory changed before transaction commit: %1")
                 .arg(info.absoluteFilePath());

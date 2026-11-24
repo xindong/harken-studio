@@ -137,7 +137,29 @@ void IPCServer::registerMixerHandlers()
             props["parent_bus_id"] = static_cast<qint64>(parentBus->objectID);
             props["parent_bus_ref"] = objectIdString(
                 parentBus == item ? harken::studio::types::ObjectId{} : parentBus->runtimeId());
-            props["has_receives"] = pm.busHasIncomingSends(item->objectID);
+            QJsonArray inputs;
+            for (const auto& input : pm.collectMainInputs(item->objectID)) {
+                inputs.append(QJsonObject{
+                    {"source_guid", input.sourceGuid.toString(QUuid::WithoutBraces)},
+                    {"source_authoring_handle", static_cast<qint64>(input.sourceID)},
+                    {"source_name", input.sourceName},
+                    {"level_db", input.levelDb}
+                });
+            }
+            props["inputs"] = inputs;
+            QJsonArray receives;
+            for (const auto& incoming : pm.collectIncomingSends(item->objectID)) {
+                QJsonObject row{
+                    {"source_guid", incoming.sourceGuid.toString(QUuid::WithoutBraces)},
+                    {"source_authoring_handle", static_cast<qint64>(incoming.fromBusID)},
+                    {"source_name", incoming.fromName},
+                    {"level_db", VMixNode::linearToDb(incoming.level)}
+                };
+                writeSendRoute(row, incoming.type, incoming.duckTarget);
+                receives.append(row);
+            }
+            props["has_receives"] = !receives.isEmpty();
+            props["receives"] = receives;
             props["volume"] = mix->volume;
             props["pan"] = bc->pan;
             props["mute"] = pm.auditionOverlay().isMuted(item->runtimeId());

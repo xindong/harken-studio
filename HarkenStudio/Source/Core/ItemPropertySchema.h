@@ -13,14 +13,16 @@ namespace harken::studio {
 inline QJsonObject setItemPropertySchema()
 {
     QJsonArray propertyNames{
-        QStringLiteral("volume"), QStringLiteral("mode"), QStringLiteral("playType"),
+        QStringLiteral("notes"), QStringLiteral("volume"), QStringLiteral("mode"), QStringLiteral("playType"),
+        QStringLiteral("variableResponse"),
         QStringLiteral("behavior"), QStringLiteral("selections"),
         QStringLiteral("loopCount"), QStringLiteral("sources"),
         QStringLiteral("scheduleOffsetSec"), QStringLiteral("distinguishLanguage"),
         QStringLiteral("clips"), QStringLiteral("segmentTime"),
         QStringLiteral("markers"), QStringLiteral("spliceByMarker"),
         QStringLiteral("dimensions"), QStringLiteral("maxDistance"),
-        QStringLiteral("range"), QStringLiteral("rangeMin"), QStringLiteral("rangeMax"),
+        QStringLiteral("kind"), QStringLiteral("range"), QStringLiteral("rangeMin"),
+        QStringLiteral("rangeMax"), QStringLiteral("defaultValue"), QStringLiteral("labels"),
         QStringLiteral("transitions"), QStringLiteral("steps"), QStringLiteral("filter"),
         QStringLiteral("effects")};
     for (const auto& field : FilterSemantics::fields())
@@ -79,6 +81,11 @@ inline QJsonObject setItemPropertySchema()
             QJsonObject{{QStringLiteral("required"), QJsonArray{QStringLiteral("authoring_handle")}}}}},
         {QStringLiteral("additionalProperties"), false},
         {QStringLiteral("propertyValues"), QJsonObject{
+            {QStringLiteral("notes"), QJsonObject{{QStringLiteral("type"), QStringLiteral("string")}}},
+            {QStringLiteral("variableResponse"), QJsonObject{
+                {QStringLiteral("type"), QStringLiteral("integer")},
+                {QStringLiteral("enum"), QJsonArray{0, 1}},
+                {QStringLiteral("description"), QStringLiteral("Response of the current Match or Blend mode to variable changes: 0 Fixed, 1 Live.")}}},
             {QStringLiteral("mode"), QJsonObject{
                 {QStringLiteral("type"), QStringLiteral("integer")},
                 {QStringLiteral("enum"), QJsonArray{0, 2, 4, 5}},
@@ -89,7 +96,7 @@ inline QJsonObject setItemPropertySchema()
                 {QStringLiteral("description"), QStringLiteral("Container play type: 0 Single, 1 Queue. Queue applies to Random and Sequence modes.")}}},
             {QStringLiteral("steps"), QJsonObject{
                 {QStringLiteral("type"), QStringLiteral("array")},
-                {QStringLiteral("description"), QStringLiteral("Action steps with type, targetObjectID (authoring handle), targetName, and delay in milliseconds. A unique targetName can resolve the target. get_action_definition reports the resulting targets using target and target_object_id.")},
+                {QStringLiteral("description"), QStringLiteral("Ordered Action steps. Use targetObjectID (authoring handle) or an unambiguous targetName. get_action_definition.steps returns the editable array.")},
                 {QStringLiteral("items"), QJsonObject{
                     {QStringLiteral("type"), QStringLiteral("object")},
                     {QStringLiteral("required"), QJsonArray{QStringLiteral("type")}},
@@ -97,7 +104,17 @@ inline QJsonObject setItemPropertySchema()
                         {QStringLiteral("type"), QJsonObject{{QStringLiteral("type"), QStringLiteral("string")}}},
                         {QStringLiteral("targetObjectID"), QJsonObject{{QStringLiteral("type"), QStringLiteral("integer")}, {QStringLiteral("minimum"), 0}}},
                         {QStringLiteral("targetName"), QJsonObject{{QStringLiteral("type"), QStringLiteral("string")}}},
-                        {QStringLiteral("delay"), QJsonObject{{QStringLiteral("type"), QStringLiteral("number")}, {QStringLiteral("minimum"), 0}}}
+                        {QStringLiteral("delay"), QJsonObject{{"type", "number"}, {"minimum", 0}, {"description", "Delay in milliseconds."}}},
+                        {QStringLiteral("fadeTime"), QJsonObject{{"type", "number"}, {"description", "Stop fade time in milliseconds."}}},
+                        {QStringLiteral("value"), QJsonObject{{"type", "number"}, {"description", "SetVariable value."}}},
+                        {QStringLiteral("scope"), QJsonObject{{"enum", QJsonArray{"Emitter", "Global"}}, {"description", "SetVariable scope."}}},
+                        {QStringLiteral("resetScope"), QJsonObject{{"enum", QJsonArray{"Emitter", "Global"}}, {"description", "Reset scope."}}},
+                        {QStringLiteral("quantize"), QJsonObject{{"type", "object"}, {"description",
+                            "Play, Stop or Post Action timing with referenceObjectID or referenceName, timing and ifSilent."},
+                            {"properties", QJsonObject{{"referenceObjectID", QJsonObject{{"type", "integer"}, {"minimum", 0}}},
+                                {"referenceName", QJsonObject{{"type", "string"}}},
+                                {"timing", QJsonObject{{"enum", QJsonArray{"Immediate", "NextBeat", "NextBar", "NextMarker", "NaturalEnd", "CurrentLoopEnd", "EntryMarker", "ExitMarker"}}}},
+                                {"ifSilent", QJsonObject{{"enum", QJsonArray{"Immediate", "Drop"}}}}}}}}
                     }}
                 }}
             }},

@@ -28,6 +28,7 @@ public:
         QString path;
         QByteArray bytes;
         QFileDevice::Permissions permissions{};
+        QString copyFrom{};
     };
     struct FileRename {
         QString source;
@@ -143,6 +144,7 @@ private:
     QHash<QString, StagedFile> stagedFiles_;
     QHash<QString, QByteArray> retainedFiles_;
     QHash<QString, QString> renamedSources_;
+    QHash<QString, QString> copiedSources_;
     QList<ReadDependency> readSet_;
     QJsonArray deltaDirectories_;
     QByteArray backupFingerprint_;

@@ -263,6 +263,7 @@ set(HARKEN_STUDIO_COMMAND_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/Actions/AdvancedActions.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/Actions/AdvancedActionResult.h
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/Actions/AssetActions.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/Actions/AudioResourceActions.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/Actions/TemplateActions.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/Actions/ActionSelectors.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/Actions/ActionSelectors.h
@@ -644,21 +645,6 @@ if(WIN32)
         COMMENT "Deploying Qt runtime via windeployqt"
     )
 
-    # Built-in project templates — drop *.json next to the executable.
-    # On first launch ProjectTemplateLoader::ensureUserTemplatesSeeded() copies
-    # them into %APPDATA%/HarkenSound/HarkenStudio/Templates/, which is the
-    # runtime source of truth.
-    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Templates")
-        file(GLOB HARKEN_BUILTIN_TEMPLATES "${CMAKE_CURRENT_SOURCE_DIR}/Templates/*.json")
-        foreach(_tpl IN LISTS HARKEN_BUILTIN_TEMPLATES)
-            add_custom_command(TARGET harken_studio POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    "${_tpl}"
-                    $<TARGET_FILE_DIR:harken_studio>
-                COMMENT "Copying built-in project template ${_tpl}"
-            )
-        endforeach()
-    endif()
     endif()
 endif()
 
@@ -675,18 +661,18 @@ if(APPLE AND HARKEN_BUILD_EDITOR)
         COMMENT "Copying the Qt offscreen platform plugin into the bundle"
     )
 
-    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Templates")
-        file(GLOB HARKEN_BUILTIN_TEMPLATES "${CMAKE_CURRENT_SOURCE_DIR}/Templates/*.json")
-        foreach(_tpl IN LISTS HARKEN_BUILTIN_TEMPLATES)
-            add_custom_command(TARGET harken_studio POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    "${_tpl}"
-                    $<TARGET_FILE_DIR:harken_studio>
-                COMMENT "Copying built-in project template ${_tpl}"
-            )
-        endforeach()
-    endif()
 endif()
+
+file(GLOB HARKEN_BUILTIN_TEMPLATES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Templates/*.json")
+foreach(_target IN ITEMS harken_studio_cli harken_studio)
+    if(TARGET ${_target} AND HARKEN_BUILTIN_TEMPLATES)
+        set_property(TARGET ${_target} APPEND PROPERTY LINK_DEPENDS "${HARKEN_BUILTIN_TEMPLATES}")
+        add_custom_command(TARGET ${_target} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${HARKEN_BUILTIN_TEMPLATES} "$<TARGET_FILE_DIR:${_target}>"
+            VERBATIM)
+    endif()
+endforeach()
 
 function(harken_verify_headless_dependencies)
     foreach(root IN LISTS ARGN)

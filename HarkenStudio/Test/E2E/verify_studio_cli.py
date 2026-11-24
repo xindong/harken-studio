@@ -172,6 +172,65 @@ def verify_shell(cli: Path, environment: dict, root: Path, audio_output: bool) -
             return json.loads(completed.stdout)
 
         verify_shell_help(send, commands)
+
+        def request(command, **args):
+            result = send(command + " " + json.dumps(args))
+            assert result["status"] == "ok", result
+            return result["result"]
+
+        def import_resource(name, sample):
+            path = root / name
+            with wave.open(str(path), "wb") as stream:
+                stream.setparams((1, 2, 48000, 0, "NONE", "not compressed"))
+                stream.writeframes(struct.pack("<h", sample) * 2400)
+            return request("import_audio_resources", files=[str(path)])["source_ids"][0]
+
+        replay = root / "Replay" / "Replay.hsp"
+        replay.parent.mkdir()
+        source_id = import_resource("missing.wav", 1000)
+        request("undo")
+        request("save_project_as", path=str(replay))
+        directory = directory.rename(root / "MovedShellAudio")
+        project = directory / project.name
+        request("redo")
+        restored = Path(request("get_asset_info", source_id=source_id)["absolute_path"])
+        assert restored == replay.parent / "AudioSources" / "missing.wav" and restored.is_file()
+        assert not (directory / "AudioSources" / restored.name).exists()
+        replacement_id = import_resource("replacement.wav", 2000)
+        request("save_project")
+        restored.unlink()
+        request("relink_audio_resource", source_id=replacement_id, file=str(root / "missing.wav"))
+        copied = root / "WithMissing" / "WithMissing.hsp"
+        collision = copied.parent / "AudioSources" / restored.name
+        collision.parent.mkdir(parents=True)
+        original = (root / "replacement.wav").read_bytes()
+        collision.write_bytes(original)
+        refused = send("save_project_as " + json.dumps({"path": str(copied)}))
+        assert refused.get("code") == "SAVE_PROJECT_FAILED", refused
+        state = request("get_project_state")
+        assert Path(state["project_path"]) == replay and state["is_dirty"], state
+        assert collision.read_bytes() == original and not copied.exists()
+        collision.unlink()
+        request("save_project_as", path=str(copied))
+        replay.parent.rename(root / "MovedReplay")
+        assert not collision.exists()
+        replaced = Path(request("get_asset_info", source_id=replacement_id)["absolute_path"])
+        request("undo")
+        assert replaced.read_bytes() == original
+        request("redo")
+        assert replaced.read_bytes() == (root / "missing.wav").read_bytes()
+        request("restore_audio_resource", source_id=replacement_id, missing_id=source_id)
+        fork = root / "Restored" / "Restored.hsp"
+        fork.parent.mkdir()
+        request("save_project_as", path=str(fork))
+        request("undo")
+        missing = Path(request("get_asset_info", source_id=source_id)["absolute_path"])
+        assert missing == fork.parent / "AudioSources" / "missing.wav" and not missing.exists()
+        request("redo")
+        repaired = Path(request("get_asset_info", source_id=replacement_id)["absolute_path"])
+        assert repaired == missing and repaired.is_file()
+        request("save_project")
+
         initialize = "init_engine " + json.dumps({"device_mode": "real" if audio_output else "null"})
         for line in ['get_item_info {"path":"SessionAction"}', "commands save_project", initialize,
                      *(["start_output"] if audio_output else []), "close_project"]:
@@ -192,6 +251,30 @@ def verify_shell(cli: Path, environment: dict, root: Path, audio_output: bool) -
         reader.join(timeout=30)
         process.stdout.close()
     assert not reader.is_alive()
+
+
+def verify_bus_inputs(call, project, child, parent) -> None:
+    platforms = call("exec", "list_project_platforms", "--project", project)["result"]["platforms"]
+    alternate = call("exec", "create_project_platform", "--project", project, "--input", "-", "--save",
+                     data={"name": "Alternate", "base_platform": "Windows"})["result"]["platform_id"]
+    gain = {"path": child, "property": "outputBusVolume"}
+    scoped = {**gain, "platform_ids": [alternate]}
+    inputs = {"cmd": "get_bus_properties", "args": {"bus_id": parent}}
+    alternate_preview = {"cmd": "set_preview_context", "args": {"platform_id": alternate}}
+    main_preview = {"cmd": "set_preview_context", "args": {"platform_id": platforms[0]["id"]}}
+    edits = [
+        {"cmd": "set_output_bus_gain", "args": {"bus_name": child, "db": -3}},
+        {"cmd": "set_item_property", "args": {**scoped, "value": -12}},
+        {"cmd": "set_item_property", "args": {**gain, "value": -6}},
+        main_preview, inputs, alternate_preview, inputs,
+        {"cmd": "set_item_property", "args": {**scoped, "override_operation": "clear_platform_override"}},
+        inputs, {"cmd": "undo"}, inputs, {"cmd": "redo"}, inputs, {"cmd": "undo"}]
+    for commands, expected in ((edits, [-6, -12, -6, -12, -6]),
+                               ([main_preview, inputs, alternate_preview, inputs], [-6, -12])):
+        results = call("run", "--project", project, "--input", "-", "--save", data=commands)["results"]
+        levels = [row["level_db"] for result in results for row in result["result"].get("inputs", [])
+                  if row["source_guid"] == child]
+        assert levels == expected, levels
 
 
 def verify(cli: Path, work: Path, audio_output: bool = True) -> None:
@@ -290,6 +373,14 @@ def verify(cli: Path, work: Path, audio_output: bool = True) -> None:
     with tempfile.TemporaryDirectory(prefix="studio cli \u00e9-\u5de5\u7a0b-", dir=work) as temporary:
         root = Path(temporary).resolve()
         assert root.is_relative_to(work.resolve())
+        template = {"displayName": "Mixer", "description": "Two-bus hierarchy",
+                    "bus": {"name": "Master Bus", "children": [{"name": "Ambience"}]}}
+        created = call("exec", "create_project", "--input", "-", data={
+            "name": "FromTemplate", "location": str(root), "template_id": "Mixer", "template_data": template})["result"]
+        buses = call("exec", "list_buses", "--project", created["path"])["result"]["buses"]
+        by_name = {bus["name"]: bus for bus in buses}
+        assert by_name["Ambience"]["parent_bus_ref"] == by_name["Master Bus"]["bus_id"], buses
+        verify_bus_inputs(call, created["path"], by_name["Ambience"]["bus_id"], by_name["Master Bus"]["bus_id"])
         for invalid_request in ({"cmd": "not_a_registered_command"},
                                 {"cmd": "save_project", "args": {"typo": True}}):
             rejected = call("run", "--input", "-", data=[
@@ -321,10 +412,10 @@ def verify(cli: Path, work: Path, audio_output: bool = True) -> None:
                 flags.append("--save")
             return call(*flags, data=arguments or {}, exit_code=exit_code)
 
-        def authored_contents():
-            return {path.relative_to(project_dir).as_posix(): path.read_bytes()
-                    for path in project_dir.rglob("*") if path.is_file()
-                    and ".cache" not in path.relative_to(project_dir).parts}
+        def authored_contents(directory=project_dir):
+            return {path.relative_to(directory).as_posix(): path.read_bytes()
+                    for path in directory.rglob("*") if path.is_file()
+                    and ".cache" not in path.relative_to(directory).parts}
 
         for invalid_request in ({"cmd": "list_items", "args": []}, {"cmd": "list_items", "arguments": {}}):
             call("run", "--project", str(project), "--input", "-", "--save", data=[
@@ -393,8 +484,29 @@ def verify(cli: Path, work: Path, audio_output: bool = True) -> None:
         execute("set_conversion_fields", {"conversion": conversion, "rules": [
             {"max_bytes": 1, "sample_rate": 0, "format": "PCM"},
             {"max_bytes": None, "sample_rate": 24000, "format": "Vorbis", "quality": 6}]}, save=True)
-        effective = execute("get_effective_conversion", {"object": tone_guid, "platform_id": platform})["result"]
+        preset_args = {"conversion": conversion}
+        saved_rules = execute("get_conversion_fields", preset_args)["result"]["rules"]
+        preview = execute("set_preview_context", {"platform_id": platform, "all_platforms": False, "media_mode": "Converted"})["result"]
+        assert preview["platform_id"] == platform and preview["all_platforms"] is False
+        assert execute("get_preview_context")["result"] == preview
+        boundary = call("run", "--project", str(project), "--input", "-", data=[
+            {"cmd": "set_conversion_rule_range", "args": {
+                **preset_args, "rule_index": 1, "min_bytes": audio.stat().st_size}},
+            {"cmd": "get_effective_conversion", "args": {"object": tone_guid}},
+            {"cmd": "undo"},
+            {"cmd": "get_conversion_fields", "args": preset_args},
+            {"cmd": "get_effective_conversion", "args": {"object": tone_guid}}])["results"]
+        assert boundary[1]["result"]["format"] == "PCM", boundary
+        assert boundary[3]["result"]["rules"] == saved_rules, boundary
+        effective = boundary[4]["result"]
         assert (effective["format"], effective["quality"], effective["sample_rate"]) == ("Vorbis", 6, 24000), effective
+        audition = call("run", "--project", str(project), "--input", "-", data=[
+            {"cmd": "init_engine", "args": {"device_mode": "null_realtime"}},
+            {"cmd": "audition_play", "args": {"object_path": "tone"}},
+            {"cmd": "get_conversion_results", "args": conversion_args}])["results"]
+        assert audition[1]["result"]["auditionID"] > 0, audition
+        assert audition[2]["result"]["sources"][0]["converted"]["format"] == "Vorbis", audition
+        execute("set_preview_context", {"media_mode": "Original"})
         encoded = execute("convert", conversion_args)["result"]
         encoded_file = encoded["sources"][0]["converted"]
         assert encoded_file["format"] == "Vorbis" and encoded_file["bytes"] > 0, encoded
@@ -566,6 +678,58 @@ def verify(cli: Path, work: Path, audio_output: bool = True) -> None:
             assert authored_contents() == saved
             assert not recovery_output.exists()
         journal.unlink()
+
+        arrangement = [
+            {"cmd": "create_item", "args": {"type": "Segment", "name": "Arrangement"}},
+            {"cmd": "create_item", "args": {"type": "Track", "parent": "Arrangement", "name": "Lead"}},
+            {"cmd": "create_item", "args": {"type": "Track", "parent": "Arrangement", "name": "AlternateLead"}},
+            {"cmd": "move_item", "args": {"path": "tone", "new_parent": "Lead"}},
+            {"cmd": "create_item", "args": {"type": "Variable", "name": "Intensity"}},
+            {"cmd": "set_item_property", "args": {"path": "Intensity", "property": "defaultValue", "value": 40}},
+            {"cmd": "create_action", "args": {"name": "PlayArrangement"}},
+            {"cmd": "set_item_property", "args": {"path": "PlayArrangement", "property": "steps",
+                "value": [{"type": "Play", "targetName": "Arrangement"}]}}
+        ]
+        call("run", "--project", str(project), "--input", "-", "--save", data=arrangement)
+        lead = execute("get_item_info", {"path": "Lead"})["result"]
+        clip = lead["components"]["tracktimeline"]["clips"][0]
+        execute("move_track_clips", {"moves": [{"source_track": "Lead", "destination_track": "AlternateLead",
+            "clip_guid": clip["clipGuid"], "start": 480}]}, save=True)
+        moved = execute("get_item_info", {"path": "AlternateLead"})["result"]["components"]["tracktimeline"]["clips"]
+        assert len(moved) == 1 and moved[0]["clipGuid"] == clip["clipGuid"] and moved[0]["targetGuid"] == tone_guid
+        assert moved[0]["start"] == 480
+        assert execute("get_item_info", {"path": "Intensity"})["result"]["components"]["variable"]["defaultValue"] == 40
+        arrangement_output = root / "arrangement-build"
+        call(*build_flags, "--output", str(arrangement_output))
+        assert any(artifact.stem == "PlayArrangement" for artifact in arrangement_output.rglob("*.bytes"))
+
+        alternate = root / "AlternateProject" / "AlternateProject.hsp"
+        alternate.parent.mkdir()
+        other = Path(created["path"])
+        other_saved = authored_contents(other.parent)
+        saved = authored_contents()
+        for target in (other, other.with_name("Copy.hsp"), project.with_name("Sibling.hsp"),
+                       alternate.with_suffix(""), alternate.with_suffix(".json")):
+            execute("save_project_as", {"path": str(target)}, exit_code=1)
+        assert authored_contents(other.parent) == other_saved
+        assert authored_contents() == saved
+        assert not list(alternate.parent.iterdir())
+        call("run", "--project", str(project), "--input", "-", data=[
+            {"cmd": "rename_audio_resource", "args": {"path": source.relative_to(project.parent / "AudioSources").as_posix(),
+                                                      "name": "alternate-tone.wav"}},
+            {"cmd": "rename_item", "args": {"path": "PlayArrangement", "new_name": "PlayAlternate"}},
+            {"cmd": "save_project_as", "args": {"path": str(alternate)}}])
+        assert authored_contents() == saved
+        assert source.read_bytes() == original and not source.with_name("alternate-tone.wav").exists()
+        copied = call("exec", "get_asset_info", "--project", str(alternate), "--input", "-",
+                      data={"source_id": imported["source_id"]})["result"]
+        copied_source = Path(copied["absolute_path"]).resolve()
+        assert copied_source.is_relative_to(alternate.parent) and copied_source.name == "alternate-tone.wav"
+        assert copied_source.read_bytes() == original
+        alternate_output = root / "alternate-build"
+        call("build", "--project", str(alternate), "--all", "--platform-id", platform, "--self-clean", "off",
+             "--output", str(alternate_output))
+        assert any(artifact.stem == "PlayAlternate" for artifact in alternate_output.rglob("*.bytes"))
     print("CLI protocol, desktop isolation, persistence, conversion, read-only builds and pack equivalence passed.")
 
 

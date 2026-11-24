@@ -548,17 +548,15 @@ void removeRetiredBuiltInTemplates(const QString& directory)
 QString ProjectTemplateLoader::runtimeDir() {
     const auto root = QStandardPaths::writableLocation(
         QStandardPaths::AppDataLocation);
+    if (QCoreApplication::applicationName() == QStringLiteral("HarkenStudioCLI"))
+        return QDir::cleanPath(QDir(root).filePath(QStringLiteral("../HarkenStudio/Templates")));
     return QDir(root).filePath(QStringLiteral("Templates"));
 }
 
 void ProjectTemplateLoader::ensureUserTemplatesSeeded() {
     const QString target = runtimeDir();
     removeRetiredBuiltInTemplates(target);
-    if (QFileInfo::exists(target)) {
-        return;
-    }
-    if (!QDir().mkpath(target)) {
-        qWarning() << "[ProjectTemplate] failed to mkpath" << target;
+    if (QDir(target).exists() && !QDir(target).isEmpty()) {
         return;
     }
 
@@ -583,6 +581,10 @@ void ProjectTemplateLoader::ensureUserTemplatesSeeded() {
                     << vr.summary;
             continue;
         }
+        if (!QDir().mkpath(target)) {
+            qWarning() << "[ProjectTemplate] failed to mkpath" << target;
+            return;
+        }
         const QString dst = QDir(target).filePath(fi.fileName());
         if (!QFile::copy(fi.absoluteFilePath(), dst)) {
             qWarning() << "[ProjectTemplate] seed copy failed"
@@ -591,6 +593,7 @@ void ProjectTemplateLoader::ensureUserTemplatesSeeded() {
         }
         ++seeded;
     }
+    if (seeded > 0) removeRetiredBuiltInTemplates(target);
     qInfo() << "[ProjectTemplate] seed complete:" << seeded << "file(s) into"
             << target;
 }
@@ -628,7 +631,20 @@ std::vector<TemplateLocation> ProjectTemplateLoader::listAvailable() {
     return out;
 }
 
+QJsonArray ProjectTemplateLoader::catalog() {
+    ensureUserTemplatesSeeded();
+    QJsonArray templates;
+    for (const auto& location : listAvailable()) {
+        if (load(location.id))
+            templates.append(QJsonObject{{"id", location.id}, {"displayName", location.displayName},
+                                         {"description", location.description}});
+    }
+    return templates;
+}
+
 std::optional<ProjectTemplateData> ProjectTemplateLoader::load(const QString& id) {
+    if (id.isEmpty() || id.contains('/') || id.contains('\\') || id.contains(':'))
+        return std::nullopt;
     const QString path = QDir(runtimeDir()).filePath(id + QStringLiteral(".json"));
     if (!QFileInfo::exists(path)) {
         qWarning() << "[ProjectTemplate] load: file missing" << path;

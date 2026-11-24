@@ -28,6 +28,7 @@ public:
     static const QStringList& acceptedExtensions();
     static bool mimeHasAudio(const QMimeData* mimeData);
     static QStringList extractAudioFiles(const QMimeData* mimeData);
+    static QStringList expandDirectories(const QStringList& paths);
 
     static bool canDropOnTarget(const ProjectItem* target);
     static bool bucketAcceptsAudioDrop(const QString& bucketFolderName);

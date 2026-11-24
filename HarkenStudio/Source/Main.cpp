@@ -209,15 +209,7 @@ int main(int argc, char* argv[])
         QCoreApplication app(argc, argv);
         app.setApplicationName(QStringLiteral("HarkenStudio"));
         app.setOrganizationName(QStringLiteral("HarkenSound"));
-        harken::studio::ProjectTemplateLoader::ensureUserTemplatesSeeded();
-        QJsonArray templates;
-        for (const auto& location : harken::studio::ProjectTemplateLoader::listAvailable()) {
-            if (!harken::studio::ProjectTemplateLoader::load(location.id))
-                continue;
-            templates.append(QJsonObject{{QStringLiteral("id"), location.id},
-                                         {QStringLiteral("displayName"), location.displayName},
-                                         {QStringLiteral("description"), location.description}});
-        }
+        const auto templates = harken::studio::ProjectTemplateLoader::catalog();
         const QByteArray json = QJsonDocument(QJsonObject{{QStringLiteral("templates"), templates}})
                                     .toJson(QJsonDocument::Compact);
         std::fwrite(json.constData(), 1, static_cast<size_t>(json.size()), stdout);

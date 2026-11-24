@@ -69,6 +69,7 @@ struct ValidationResult {
 class ProjectTemplateLoader {
 public:
     static std::vector<TemplateLocation> listAvailable();
+    static QJsonArray catalog();
 
     static std::optional<ProjectTemplateData> load(const QString& id);
 

@@ -1,6 +1,7 @@
 #include "CommandArgumentValidator.h"
 #include "IPCServerInternal.h"
 #include "ActionManager.h"
+#include "../ActionStepEditing.h"
 #include "../Components/VAudio.h"
 #include "../Components/VMixNode.h"
 #include "../../Query/LMDBService.h"
@@ -176,6 +177,7 @@ QJsonObject IPCServer::handleGetActionDefinition(const QJsonObject& args)
         {"name", actionItem->name},
         {"found", true},
         {"actions", actionsArray},
+        {"steps", actionComponent ? ActionStepEditing::stepsToJson(actionComponent->steps) : QJsonArray{}},
         {"object_id", static_cast<qint64>(itemShortID(actionItem))},
         {"authoring_handle", static_cast<qint64>(actionItem->objectID)}
     });

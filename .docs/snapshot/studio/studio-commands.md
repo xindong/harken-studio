@@ -1,8 +1,10 @@
 # HarkenStudio 命令接口
 
-快照日期：2026-11-17。Studio 与独立 [HarkenStudioCLI](studioCLI-commands.md) 共享工程、创作、资源处理、撤销、保存及打包命令；Studio 额外提供窗口、选择、布局与控件命令。
+快照日期：2026-11-24。Studio 与独立 [HarkenStudioCLI](studioCLI-commands.md) 共享工程、创作、资源处理、撤销、保存及打包命令；Studio 额外提供窗口、选择、布局与控件命令。
 
 ## 产品边界
+
+可保存的工程创作与验证使用共享命令独立完成，包含模板、工程设置、物理目录、资源文件、对象层级、时间线、参数绑定与发布。仅依赖窗口和控件的交互属于桌面扩展。具体命令与验收流程见 [独立搭建工程的验收基准](studioCLI-commands.md#独立搭建工程的验收基准)。
 
 | 层次 | Studio | StudioCLI |
 |---|---|---|
@@ -100,10 +102,12 @@ HarkenStudioCLI --instance <id> exec list_ui_windows --json
 | 批量音频导入 | `import_audio_files`；接收 `files` 和可选 `target_container_id`，不接收画布坐标；部分失败返回错误并保留成功项和计数 |
 | 总线增益 | `set_bus_volume_db(bus_name, db)` 修改总线增益；`set_output_bus_gain(bus_name, db)` 修改总线输出增益，`get_output_bus_gain` 读回；不更换目的地 |
 | 总线静音与独奏 | `set_bus_mute(bus_name, mute)`、`set_bus_solo(bus_name, solo)`；布尔参数须显式提供 |
+| 总线 Receive | `get_bus_properties(bus_id)` 的 `receives` 返回当前试听平台的有效来源、创作句柄、dB 电平、Send 类型与 `duckTarget` |
 | 可播放定义输出 | 使用字段组 `outputBusRef`、`outputBusVolume`；Bus 层级使用 `move_bus` 与层级查询 |
 | 引擎与播放 | `init_engine`、`shutdown_engine`、`start_output`、`stop_output`、`post_action`；与 CLI 顶层创建工程的 `init` 区分 |
 | 播放与重置就绪 | AudioEngine 对对象试听、Action 播放和容器重置统一检查当前创作版本；GUI 试听在同步期间排队，完成后校验项目、运行时与目标身份。`post_action/post_action_3d/audition_play/audition_reset` 在共享分发器复用检查，未就绪返回 `RUNTIME_SYNC_PENDING` 且不提交操作；三种 CLI 会话等待，工程改变时拒绝继续原请求。GUI 重置未就绪时明确拒绝；已有实例的停止、定位与原始音频试听不受该等待限制 |
 | 试听定位 | `audition_set_position` 返回同一请求的异步完成协议；`audition_get_seek_status(audition_seek_request_id)` 查询最终 `applied/failed`。CLI 等待终态后才响应 |
+| 试听上下文 | `get_preview_context`、`set_preview_context` 读写工具栏的 All 编辑范围、主试听平台、语言及 Original／Converted 媒体模式。写入可指定 `all_platforms`、`platform_id`、`language`、`media_mode` 中的一项或多项，两条命令均返回完整选择。偏好按工程保存在本机 |
 | 试听停止 | `audition_stop` 停止指定实例，省略 ID 时停止所有非 RawFile 试听。返回 `state: stopping/stopped/stop_failed`，请求被接受不代表淡出完成；`audition_get_state` 逐实例返回 `stop_state: none/pending/stopping/failed` 和 `stop_result`，真正结束后移除实例。同名 Action 的实例分别列出。背压会有限重试，失败保留实例供再次停止；重复请求不重启淡出 |
 | 音频转换 | Conversion 预设按源文件大小匹配一行采样率、格式和质量。`convert` 同步生成其引用 Source 的转换缓存，`get_conversion_results` 只读现有结果 |
 | 保存与打包 | `save_project`、`export_pack`；与桌面使用相同工程格式、校验和 `ProjectPackBuildService` |
@@ -122,7 +126,9 @@ Studio、CLI、IPC 与 AI 使用同一组命令、参数校验和创作入口：
 | 命令 | 参数与结果 | 撤销 |
 |---|---|---|
 | `create_conversion` | 必填 `name`；可选 `folder` 指向 Conversions 桶中已有目录。新预设为 Vorbis 质量 4、Original；返回预设 GUID、名称、路径与配置 | 是 |
+| `get_conversion_fields` | `conversion`，返回预设的 GUID、名称、路径和与写入命令同格式的完整规则表 | 只读 |
 | `set_conversion_fields` | `conversion` 和完整的 `rules` 数组 | 是 |
+| `set_conversion_rule_range` | `conversion` 和从 0 开始的 `rule_index`。可同时给出下界 `min_bytes` 和上界 `max_bytes`，或只移动一个边界。首行下界和末行上界固定 | 是 |
 | `set_object_conversion` | `object`、`inherit`，可选 `settings` 指定预设或 `null`，可选 `platform_id` 改写该平台覆写（缺省为 Shared，写入 Shared 引用同时清除各平台覆写）；省略 `settings` 沿用字段组的本地历史，`inherit:true` 不接受 `settings` | 是 |
 | `set_default_conversion` | `platform_id` 与 `conversion`：指定该平台的默认预设，`null` 清空 | 是 |
 | `get_effective_conversion` | `object`，可选 `platform_id`；返回生效预设、来源对象、平台，以及 Sound 当前语言 Source 的最终采样率 | 只读 |
@@ -133,7 +139,7 @@ Studio、CLI、IPC 与 AI 使用同一组命令、参数校验和创作入口：
 
 `rules` 按源文件字节数匹配第一条包含该大小的规则。每行包含 `max_bytes`、`sample_rate` 和 `format`，Vorbis 行还需要 0–10 的整数 `quality`，PCM 行省略该字段。有限上限严格递增，末行使用 `null`（`Inf`）。采样率可选 `0/8000/11025/16000/22050/24000/32000/44100/48000`；`0` 保留原始采样率，目标不低于原始采样率时也保持原样，不升采样。
 
-`get_item_info` 对可播放定义返回 `conversion` 与 `fieldGroups.shared.conversion`；预设配置位于 `components.conversion`。`get_project_info.default_conversion` 返回默认预设 GUID 或 `null`。`get_conversion_results` 不触发编码，尚未生成的 `converted` 为 `null`。`convert` 等待本次转换结束，成功缓存可复用；失败返回 `CONVERSION_FAILED` 并保留逐项错误和已有结果，不使用旧转码作业身份或状态/取消命令。
+`get_item_info` 对可播放定义返回 `conversion` 与 `fieldGroups.shared.conversion`；预设配置位于 `components.conversion`。`get_project_info.default_conversions` 按平台 ID 返回各平台已设置的默认预设 GUID。`get_conversion_results` 不触发编码，尚未生成的 `converted` 为 `null`。`convert` 等待本次转换结束，成功缓存可复用；失败返回 `CONVERSION_FAILED` 并保留逐项错误和已有结果，不使用旧转码作业身份或状态/取消命令。
 
 导出与 Converted 试听共用 PCM／Vorbis 转换缓存。Vorbis 以常驻媒体写入 Pack，支持 1、2、4、6、8 声道。Studio 试听将相同格式的编码块交给开发版 Engine。
 

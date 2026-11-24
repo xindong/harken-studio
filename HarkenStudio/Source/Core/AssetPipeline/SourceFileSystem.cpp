@@ -295,7 +295,10 @@ private:
         }
         if (redo && !removed_) return true;
         if (!redo && !registry.isUncommitted(asset_.sourceID)) return true;
-        if (redo && (registry.contains(asset_.sourceID)
+        asset_.absolutePath = absolutePath(asset_.relativePath);
+        if (asset_.absolutePath.isEmpty()) {
+            error = QObject::tr("The source path must stay inside AudioSources.");
+        } else if (redo && (registry.contains(asset_.sourceID)
             || registry.findAssetByPath(asset_.absolutePath) || QFileInfo::exists(asset_.absolutePath))) {
             error = QObject::tr("Cannot restore '%1': the source ID or path is already in use.")
                 .arg(asset_.relativePath);
@@ -379,7 +382,9 @@ private:
         const auto* missing = registry.getAsset(missing_.sourceID);
         const QString from = redo ? source_.relativePath : missing_.relativePath;
         const QString to = redo ? missing_.relativePath : source_.relativePath;
-        if (!source || source->relativePath != from || !registry.sourceFileExists(source_.sourceID)
+        missing_.absolutePath = absolutePath(missing_.relativePath);
+        if (missing_.absolutePath.isEmpty()
+            || !source || source->relativePath != from || !registry.sourceFileExists(source_.sourceID)
             || QFileInfo::exists(absolutePath(to)) || (redo && (!missing || missing->relativePath != to))
             || (!redo && missing)
             || std::any_of(references_.cbegin(), references_.cend(), [&](const Reference& ref) {
@@ -465,7 +470,8 @@ QString absolutePath(const QString& relativePath)
     if (root.isEmpty())
         return {};
     const QString audioRoot = PathUtils::getAudioSourcesDir(root);
-    if (QFileInfo(audioRoot).isSymLink())
+    const QFileInfo rootInfo(audioRoot);
+    if (rootInfo.isSymLink() || rootInfo.isJunction())
         return {};
     if (relativePath.isEmpty())
         return audioRoot;
@@ -476,7 +482,8 @@ QString absolutePath(const QString& relativePath)
     QString current = audioRoot;
     for (const QString& segment : relativePath.split(QLatin1Char('/'))) {
         current = QDir(current).filePath(segment);
-        if (QFileInfo(current).isSymLink())
+        const QFileInfo info(current);
+        if (info.isSymLink() || info.isJunction())
             return {};
     }
     return current;
@@ -557,6 +564,10 @@ bool restoreByRename(uint32_t sourceID, uint32_t missingID, QString* error)
         || registry.sourceFileExists(missingID) || absolutePath(source->relativePath).isEmpty()
         || absolutePath(missing->relativePath).isEmpty())
         return fail(error, QObject::tr("The source or missing destination changed. Review them and try again."));
+    const QFileInfo missingPath(missing->relativePath);
+    if (pathKey(QFileInfo(source->relativePath).path()) != pathKey(missingPath.path()))
+        return fail(error, QObject::tr("Move the source into the missing resource's folder before renaming it."));
+    if (!validateRename(source->relativePath, missingPath.fileName(), error)) return false;
     auto command = std::make_unique<RestoreByRenameCommand>(*source, *missing);
     if (!command->tryReplay(true)) {
         if (command->isObsolete()) {
@@ -630,9 +641,7 @@ std::unique_ptr<TransactionalUndoCommand> replaceFiles(
     auto& mediaPool = MediaPool::instance();
     mediaPool.beginSourceFileChange();
     const auto resumeReaders = qScopeGuard([&] { mediaPool.endSourceFileChange(); });
-    const auto storage = std::make_shared<QTemporaryDir>(
-        QDir(PathUtils::getDotCacheDir(AssetRegistry::instance().projectRoot()))
-            .filePath(QStringLiteral("source-import-XXXXXX")));
+    const auto storage = std::make_shared<QTemporaryDir>();
     if (!storage->isValid()) {
         fail(error, QObject::tr("Could not keep a copy of the audio files for undo."));
         return {};
@@ -714,13 +723,7 @@ std::unique_ptr<TransactionalUndoCommand> registerImport(
     if (!recoverDiscard(error)) return {};
     QList<Change> changes;
     if (copiedFile) {
-        const QString cache = PathUtils::getDotCacheDir(AssetRegistry::instance().projectRoot());
-        if (!PathUtils::ensureDirectory(cache)) {
-            fail(error, QObject::tr("Could not create the audio undo directory."));
-            return {};
-        }
-        const auto storage = std::make_shared<QTemporaryDir>(
-            QDir(cache).filePath(QStringLiteral("source-import-XXXXXX")));
+        const auto storage = std::make_shared<QTemporaryDir>();
         if (!storage->isValid()) {
             fail(error, QObject::tr("Could not keep a copy of the audio file for undo."));
             return {};
@@ -798,6 +801,7 @@ bool copyFile(const QString& source, const QString& destination, QString* error)
 void commitChanges()
 {
     pendingChanges.clear();
+    discardRollbackChanges.clear();
 }
 
 bool recoverDiscard(QString* error)
@@ -815,7 +819,7 @@ bool recoverDiscard(QString* error)
     return true;
 }
 
-bool discardChanges(QString* error, bool* rollbackFailed)
+bool discardChanges(QString* error, bool* rollbackFailed, bool retainUntilCommit)
 {
     if (rollbackFailed)
         *rollbackFailed = false;
@@ -851,7 +855,8 @@ bool discardChanges(QString* error, bool* rollbackFailed)
         changes.append(it->reversed());
     if (!applyBatch(changes, ApplyMode::Discard, error, rollbackFailed))
         return false;
-    pendingChanges.clear();
+    if (retainUntilCommit) discardRollbackChanges = std::move(changes);
+    else pendingChanges.clear();
     return true;
 }
 

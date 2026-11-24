@@ -1,5 +1,6 @@
 
 #include "../CommandSchemas.h"
+#include "../CommandArgumentValidator.h"
 #include "../IPC/DesktopCommandSchemas.h"
 #include "../ActionManager.h"
 #include "../AudioEngine.h"
@@ -10,6 +11,9 @@
 #include "../ProjectTypes.h"
 #include "../AuditionManager.h"
 #include "../Components/VSelection.h"
+#include "../LanguageContextService.h"
+#include "../PlatformContextService.h"
+#include "../PreviewMediaModeService.h"
 
 #include <cmath>
 #include <limits>
@@ -57,6 +61,59 @@ void registerAuditionActions(ActionManager& mgr,
                               AudioEngine* engine)
 {
     using namespace harken::studio;
+
+    for (const auto* name : {"get_preview_context", "set_preview_context"}) {
+        ActionDef def;
+        def.id = QLatin1String(name);
+        def.displayName = def.id == "get_preview_context" ? "Get Preview Context" : "Set Preview Context";
+        def.category = "audition";
+        def.paramSchema = commandInputSchema(def.id);
+        def.undoable = false;
+        def.handler = [id = def.id](const QJsonObject& args) -> ActionResult {
+            const auto failure = [](const QString& code, const QString& message) {
+                ActionResult result{};
+                result.errorCode = code;
+                result.errorMessage = message;
+                return result;
+            };
+            QString error;
+            if (!validateCommandArguments(args, commandInputSchema(id), &error))
+                return failure("INVALID_ARGUMENTS", error);
+            const auto* project = ProjectManager::instance().currentProject();
+            if (!project)
+                return failure("NO_PROJECT_OPEN", "No project is currently open");
+
+            auto& platforms = PlatformContextService::instance();
+            auto& languages = LanguageContextService::instance();
+            auto& media = PreviewMediaModeService::instance();
+            const auto platform = ProjectPlatformSemantics::parseId(args.value("platform_id").toString());
+            if (args.contains("platform_id") && (!platform || !ProjectPlatformSemantics::find(project->platforms, *platform)))
+                return failure("INVALID_ARGUMENTS", "platform_id must identify a platform in the open project");
+            const QString language = args.value("language").toString();
+            if (args.contains("language") && !languages.availableLanguages().contains(language))
+                return failure("INVALID_ARGUMENTS", "language must identify a language in the open project");
+
+            const auto& context = platforms.context();
+            if (platform)
+                platforms.setSelected({*platform}, *platform, args.value("all_platforms").toBool(context.all));
+            else if (args.contains("all_platforms"))
+                platforms.setAll(args.value("all_platforms").toBool());
+            if (args.contains("language"))
+                languages.setLanguage(language);
+            if (args.contains("media_mode"))
+                media.setMode(args.value("media_mode").toString() == "Converted"
+                    ? PreviewMediaMode::Converted : PreviewMediaMode::Original);
+
+            ActionResult result{};
+            result.success = true;
+            result.data = {{"platform_id", ProjectPlatformSemantics::idString(context.primary)},
+                           {"all_platforms", context.all},
+                           {"language", languages.language()},
+                           {"media_mode", media.mode() == PreviewMediaMode::Converted ? "Converted" : "Original"}};
+            return result;
+        };
+        mgr.registerAction(def);
+    }
 
     {
         ActionDef def;

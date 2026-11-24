@@ -830,6 +830,7 @@ QJsonObject IPCServer::handleGetItemInfo(const QJsonObject& args)
 
     QJsonObject info{
         {"name", item->name},
+        {"notes", item->notes},
         {"type", itemTypeToString(item->type)},
         {"path", buildItemFullPath(project, item)},
         {"asset_path", item->type == ProjectItem::Type::Sound
@@ -848,6 +849,10 @@ QJsonObject IPCServer::handleGetItemInfo(const QJsonObject& args)
     });
     if (!components.isEmpty())
         info.insert("components", components);
+
+    if (PlayablePropertyAuthoringV1::isDefinitionType(item->type))
+        info.insert(QLatin1String(harkenplayableproperties::studio::kEnvelopeJsonKeyV1),
+                    PlayablePropertyAuthoringV1::definitionToJson(*item));
 
     if (PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(item->type)) {
         std::string fieldGroups;
