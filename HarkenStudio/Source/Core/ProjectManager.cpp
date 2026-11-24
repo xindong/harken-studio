@@ -2297,9 +2297,11 @@ bool ProjectManager::saveProjectInternal(bool relocateSources, QString* error)
             const auto source = SourceFileSystem::absolutePath(asset.relativePath);
             if (source.isEmpty())
                 return fail(tr("Invalid audio source path: %1").arg(asset.relativePath));
-            if (!QFileInfo::exists(source)) continue;
-            transactionPlan.writes.append({mediaDirectory + QLatin1Char('/') + asset.relativePath,
-                {}, {}, source});
+            const QString target = mediaDirectory + QLatin1Char('/') + asset.relativePath;
+            if (QFileInfo::exists(source))
+                transactionPlan.writes.append({target, {}, {}, source});
+            else
+                transactionPlan.readSet.append({target, {}, false});
         }
     }
     QSet<QString> writeKeys;

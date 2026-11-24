@@ -190,6 +190,8 @@ def verify_shell(cli: Path, environment: dict, root: Path, audio_output: bool) -
         source_id = import_resource("missing.wav", 1000)
         request("undo")
         request("save_project_as", path=str(replay))
+        directory = directory.rename(root / "MovedShellAudio")
+        project = directory / project.name
         request("redo")
         restored = Path(request("get_asset_info", source_id=source_id)["absolute_path"])
         assert restored == replay.parent / "AudioSources" / "missing.wav" and restored.is_file()
@@ -197,6 +199,26 @@ def verify_shell(cli: Path, environment: dict, root: Path, audio_output: bool) -
         replacement_id = import_resource("replacement.wav", 2000)
         request("save_project")
         restored.unlink()
+        request("relink_audio_resource", source_id=replacement_id, file=str(root / "missing.wav"))
+        copied = root / "WithMissing" / "WithMissing.hsp"
+        collision = copied.parent / "AudioSources" / restored.name
+        collision.parent.mkdir(parents=True)
+        original = (root / "replacement.wav").read_bytes()
+        collision.write_bytes(original)
+        refused = send("save_project_as " + json.dumps({"path": str(copied)}))
+        assert refused.get("code") == "SAVE_PROJECT_FAILED", refused
+        state = request("get_project_state")
+        assert Path(state["project_path"]) == replay and state["is_dirty"], state
+        assert collision.read_bytes() == original and not copied.exists()
+        collision.unlink()
+        request("save_project_as", path=str(copied))
+        replay.parent.rename(root / "MovedReplay")
+        assert not collision.exists()
+        replaced = Path(request("get_asset_info", source_id=replacement_id)["absolute_path"])
+        request("undo")
+        assert replaced.read_bytes() == original
+        request("redo")
+        assert replaced.read_bytes() == (root / "missing.wav").read_bytes()
         request("restore_audio_resource", source_id=replacement_id, missing_id=source_id)
         fork = root / "Restored" / "Restored.hsp"
         fork.parent.mkdir()

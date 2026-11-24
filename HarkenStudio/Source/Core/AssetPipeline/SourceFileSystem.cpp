@@ -641,9 +641,7 @@ std::unique_ptr<TransactionalUndoCommand> replaceFiles(
     auto& mediaPool = MediaPool::instance();
     mediaPool.beginSourceFileChange();
     const auto resumeReaders = qScopeGuard([&] { mediaPool.endSourceFileChange(); });
-    const auto storage = std::make_shared<QTemporaryDir>(
-        QDir(PathUtils::getDotCacheDir(AssetRegistry::instance().projectRoot()))
-            .filePath(QStringLiteral("source-import-XXXXXX")));
+    const auto storage = std::make_shared<QTemporaryDir>();
     if (!storage->isValid()) {
         fail(error, QObject::tr("Could not keep a copy of the audio files for undo."));
         return {};
@@ -725,13 +723,7 @@ std::unique_ptr<TransactionalUndoCommand> registerImport(
     if (!recoverDiscard(error)) return {};
     QList<Change> changes;
     if (copiedFile) {
-        const QString cache = PathUtils::getDotCacheDir(AssetRegistry::instance().projectRoot());
-        if (!PathUtils::ensureDirectory(cache)) {
-            fail(error, QObject::tr("Could not create the audio undo directory."));
-            return {};
-        }
-        const auto storage = std::make_shared<QTemporaryDir>(
-            QDir(cache).filePath(QStringLiteral("source-import-XXXXXX")));
+        const auto storage = std::make_shared<QTemporaryDir>();
         if (!storage->isValid()) {
             fail(error, QObject::tr("Could not keep a copy of the audio file for undo."));
             return {};
