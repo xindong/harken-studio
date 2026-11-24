@@ -66,6 +66,12 @@ protected:
 
 TEST_F(ProjectSettingsPanelTest, CompletedEditsUseProjectHistoryAndExternalChangesRefreshWithoutWritingBack)
 {
+    auto& manager = ProjectManager::instance();
+    auto* project = manager.currentProject();
+    const auto platform = project->platforms.first().id;
+    ASSERT_TRUE(manager.setDefaultConversion(platform, {}));
+    UndoRedoManager::instance().clear();
+
     ProjectSettingsPanel panel;
     auto* name = panel.findChild<QLineEdit*>("projectPlatformName");
     auto* output = panel.findChild<QLineEdit*>("packBuildOutputDirEdit");
@@ -75,9 +81,6 @@ TEST_F(ProjectSettingsPanelTest, CompletedEditsUseProjectHistoryAndExternalChang
     ASSERT_NE(output, nullptr);
     ASSERT_NE(exported, nullptr);
     ASSERT_NE(conversion, nullptr);
-    auto* project = ProjectManager::instance().currentProject();
-    const auto platform = project->platforms.first().id;
-    EXPECT_TRUE(project->defaultConversionFor(platform).isNull());
     EXPECT_EQ(conversion->currentObjectID(), 0u);
     ASSERT_FALSE(project->conversionItems.empty());
     const auto* preset = project->conversionItems.front().rootItem.get();
@@ -110,7 +113,7 @@ TEST_F(ProjectSettingsPanelTest, CompletedEditsUseProjectHistoryAndExternalChang
     EXPECT_EQ(conversion->currentObjectID(), 0u);
     UndoRedoManager::instance().redo();
     EXPECT_EQ(conversion->currentObjectID(), preset->objectID);
-    ASSERT_TRUE(ProjectManager::instance().setDefaultConversion(platform, QUuid{}));
+    ASSERT_TRUE(manager.setDefaultConversion(platform, QUuid{}));
     EXPECT_EQ(conversion->currentObjectID(), 0u);
     UndoRedoManager::instance().undo();
     EXPECT_EQ(conversion->currentObjectID(), preset->objectID);

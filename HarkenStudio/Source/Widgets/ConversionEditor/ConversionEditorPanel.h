@@ -56,6 +56,7 @@ private:
     void selectRange(int index);
     void updateRuleSelection();
     void previewBoundary(int index, quint64 bytes);
+    void editRange(int index);
     void editSplit(int index, quint64 bytes, bool insert);
     bool commitConfig(const ConversionConfig& config);
     void removeRule();

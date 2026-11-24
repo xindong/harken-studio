@@ -13,6 +13,7 @@ namespace harken::studio {
 class AxisIndicatorButton;
 
 QString conversionSizeText(quint64 bytes);
+QString exactConversionSizeText(quint64 bytes);
 
 class ConversionSizeField final : public QWidget
 {

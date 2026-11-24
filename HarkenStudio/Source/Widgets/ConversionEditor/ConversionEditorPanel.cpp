@@ -41,6 +41,8 @@
 #include <QtConcurrent/QtConcurrentRun>
 
 #include <algorithm>
+#include <functional>
+#include <iterator>
 #include <limits>
 
 namespace harken::studio {
@@ -54,10 +56,35 @@ constexpr int kRuleLimitRole = Qt::UserRole;
 
 void setRangeText(QTreeWidgetItem* row, std::optional<uint64_t> previous, std::optional<uint64_t> maximum)
 {
-    const auto minimum = conversionSizeText(previous.value_or(0));
-    const auto text = minimum + QStringLiteral(" - ") + (maximum ? conversionSizeText(*maximum) : kPositiveInfinityText);
+    const auto text = (previous ? QStringLiteral("(") : QStringLiteral("["))
+        + exactConversionSizeText(previous.value_or(0)) + QStringLiteral(", ")
+        + (maximum ? exactConversionSizeText(*maximum) + QLatin1Char(']') : kPositiveInfinityText + QLatin1Char(')'));
     row->setText(SizeRange, text);
-    row->setToolTip(SizeRange, text);
+    row->setToolTip(SizeRange, previous || maximum
+        ? QObject::tr("%1\nDouble-click to edit the shared boundaries.").arg(text)
+        : QObject::tr("This rule covers all original file sizes. Add a split to set a boundary."));
+}
+
+bool execRuleDialog(BaseDialog& dialog, DialogFormLayout* form, const std::function<QString()>& validate)
+{
+    auto* layout = new QVBoxLayout(&dialog);
+    layout->addLayout(form);
+    auto* error = new QLabel(&dialog);
+    error->setWordWrap(true);
+    error->hide();
+    layout->addWidget(error);
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    layout->addWidget(buttons);
+    QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, [&dialog, error, validate] {
+        const auto message = validate();
+        if (message.isEmpty()) dialog.accept();
+        else {
+            error->setText(message);
+            error->show();
+        }
+    });
+    return dialog.exec() == QDialog::Accepted;
 }
 
 QComboBox* sampleRates(QWidget* parent, uint32_t selected)
@@ -128,7 +155,8 @@ ConversionEditorPanel::ConversionEditorPanel(QWidget* parent) : QWidget(parent)
     rulesTable_ = new TableWidget(TableOptions{TableKind::Config, TableBodySizing::Expanding}, body);
     configLayout->addWidget(rulesTable_, 1);
     rules_ = rulesTable_->createItemView(QStringLiteral("conversionRules"),
-        {QStringLiteral("#"), tr("Size range"), tr("Sample rate"), tr("Format"), tr("Quality")}, {0, 1, 1, 1, 1});
+        {QStringLiteral("#"), tr("Original size range"), tr("Target sample rate"), tr("Target format"), tr("Target quality")},
+        {0, 1, 1, 1, 1});
     rulesTable_->setRowNumberColumn(RuleNumber);
     rules_->headerItem()->setToolTip(RuleNumber, tr("Rule numbers match the size ranges above."));
     rules_->setRootIsDecorated(false);
@@ -144,6 +172,9 @@ ConversionEditorPanel::ConversionEditorPanel(QWidget* parent) : QWidget(parent)
     connect(ruleFooter->addButton(), &QToolButton::clicked, this, [this] { splits_->requestSplit(selectedRule().row()); });
     connect(ruleFooter->removeButton(), &QToolButton::clicked, this, &ConversionEditorPanel::removeRule);
     connect(rules_, &QTreeWidget::itemSelectionChanged, this, &ConversionEditorPanel::updateRuleSelection);
+    connect(rules_, &QTreeWidget::doubleClicked, this, [this](const QModelIndex& cell) {
+        if (cell.column() == SizeRange) editRange(cell.row());
+    });
     connect(splits_, &ConversionSizeSplits::rangeSelected, this, &ConversionEditorPanel::selectRange);
     connect(splits_, &ConversionSizeSplits::splitRequested, this, [this](int index, quint64 bytes) { editSplit(index, bytes, true); });
     connect(splits_, &ConversionSizeSplits::editRequested, this, [this](int index, quint64 bytes) { editSplit(index, bytes, false); });
@@ -398,6 +429,55 @@ void ConversionEditorPanel::refreshRules()
     if (restoreIndex >= 0) selectRange(restoreIndex);
 }
 
+void ConversionEditorPanel::editRange(int index)
+{
+    if (!displayed_ || displayed_->rules.size() == 1
+        || std::ssize(displayed_->rules) != rules_->topLevelItemCount()) return;
+    const auto before = *displayed_;
+    const auto preset = itemGuid_;
+    const auto project = ProjectManager::instance().currentProjectLease();
+    const auto maximum = before.rules[index].maxBytes;
+    BaseDialog dialog(this);
+    dialog.setWindowTitle(tr("Edit Original Size Range"));
+    auto* form = new DialogFormLayout;
+    ConversionSizeField* minField = nullptr;
+    ConversionSizeField* maxField = nullptr;
+    if (index > 0) {
+        minField = new ConversionSizeField(*before.rules[index - 1].maxBytes, &dialog);
+        form->addRow(tr("Minimum"), minField);
+    } else {
+        form->addRow(tr("Minimum"), new QLabel(exactConversionSizeText(0), &dialog));
+    }
+    if (maximum) {
+        maxField = new ConversionSizeField(*maximum, &dialog);
+        form->addRow(tr("Maximum"), maxField);
+    } else {
+        form->addRow(tr("Maximum"), new QLabel(kPositiveInfinityText, &dialog));
+    }
+
+    auto next = before;
+    const auto validate = [&]() -> QString {
+        if (minField) {
+            const auto min = minField->bytes();
+            if (!min) return tr("Enter a valid minimum size.");
+            next.rules[index - 1].maxBytes = *min;
+        }
+        if (maxField) {
+            const auto max = maxField->bytes();
+            if (!max) return tr("Enter a valid maximum size.");
+            next.rules[index].maxBytes = *max;
+        }
+        QString error;
+        validateConversionConfig(next, &error);
+        return error;
+    };
+    (minField ? minField : maxField)->setFocus();
+    if (!execRuleDialog(dialog, form, validate) || ProjectManager::instance().currentProjectLease() != project
+        || itemGuid_ != preset || displayed_ != before) return;
+    if (commitConfig(next) && maximum)
+        rules_->topLevelItem(index)->setData(RuleNumber, kRuleLimitRole, QVariant::fromValue(*next.rules[index].maxBytes));
+}
+
 void ConversionEditorPanel::editSplit(int index, quint64 bytes, bool insert)
 {
     if (!displayed_) return;
@@ -411,7 +491,6 @@ void ConversionEditorPanel::editSplit(int index, quint64 bytes, bool insert)
     auto rule = initial;
     BaseDialog dialog(this);
     dialog.setWindowTitle(insert ? tr("Split Range %1").arg(index + 1) : tr("Edit Split %1").arg(index + 1));
-    auto* layout = new QVBoxLayout(&dialog);
     auto* form = new DialogFormLayout;
     auto* field = new ConversionSizeField(bytes, &dialog);
     form->addRow(tr("Split at:"), field);
@@ -436,26 +515,15 @@ void ConversionEditorPanel::editSplit(int index, quint64 bytes, bool insert)
             if (rule.format == ConversionFormat::Vorbis) rule.vorbisQuality = static_cast<int>(level);
         });
     }
-    layout->addLayout(form);
-    auto* error = new QLabel(&dialog);
-    error->setWordWrap(true);
-    error->hide();
-    layout->addWidget(error);
-    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
-    layout->addWidget(buttons);
-    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-    connect(buttons, &QDialogButtonBox::accepted, &dialog, [&] {
+    const auto validate = [&]() -> QString {
         const auto value = field->bytes();
-        if (!value || *value < first || *value > last) {
-            error->setText(tr("Enter a whole-byte size from %1 to %2.").arg(conversionSizeText(first), conversionSizeText(last)));
-            error->show();
-            return;
-        }
+        if (!value || *value < first || *value > last)
+            return tr("Enter a whole-byte size from %1 to %2.").arg(exactConversionSizeText(first), exactConversionSizeText(last));
         rule.maxBytes = *value;
-        dialog.accept();
-    });
+        return {};
+    };
     field->setFocus();
-    if (dialog.exec() != QDialog::Accepted || ProjectManager::instance().currentProjectLease() != project
+    if (!execRuleDialog(dialog, form, validate) || ProjectManager::instance().currentProjectLease() != project
         || itemGuid_ != preset || displayed_ != before) return;
     auto next = before;
     if (insert) next.rules.insert(next.rules.begin() + index, rule);
