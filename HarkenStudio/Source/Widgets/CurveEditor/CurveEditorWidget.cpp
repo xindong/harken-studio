@@ -91,8 +91,6 @@ CurveCanvasProfile bindingCanvasProfile(const BindingContract& contract,
     profile.valueDecimals = contract.outputUnit == BindingOutputUnit::Cent ? 0 : 1;
     profile.clipboardFamily = contract.outputUnit == BindingOutputUnit::Cent
         ? QStringLiteral("pitch")
-        : contract.outputUnit == BindingOutputUnit::Hertz ? QStringLiteral("frequency")
-        : contract.outputUnit == BindingOutputUnit::Dimensionless ? QStringLiteral("dimensionless")
         : QStringLiteral("volume");
     return profile;
 }
@@ -342,16 +340,6 @@ void CurveEditorWidget::reloadBindingView(bool preserveCanvasSelection)
         profile.defaultEndValue = 0.0f;
         profile.clampYToPlot = false;
         profile.preserveOutOfRangeValues = true;
-    }
-    if (binding->address.family == BindingTargetFamily::Filter) {
-        profile.yMin = contract.legalOutputRange.min;
-        profile.yMax = contract.legalOutputRange.max;
-        profile.valueMinimum = std::min(0.0f, contract.legalOutputRange.min);
-        profile.valueMaximum = contract.legalOutputRange.max;
-        profile.yRangeEditable = false;
-        profile.defaultEndValue = 0.0f;
-        profile.clampYToPlot = false;
-        profile.valueDecimals = contract.outputUnit == BindingOutputUnit::Dimensionless ? 3 : 1;
     }
     canvas_->setProfile(profile);
 

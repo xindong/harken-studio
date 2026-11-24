@@ -13,7 +13,6 @@
 #include "Widgets/Inspector/FieldGroupInspectorView.h"
 #include "Widgets/SourceEditor/SourceFilePropertiesView.h"
 #include "Widgets/SourceEditor/SourceRangeEditor.h"
-#include "Widgets/FilterEditor/FilterEditorWidget.h"
 
 #include <QChildEvent>
 #include <QFocusEvent>
@@ -55,10 +54,6 @@ ExternalEditorPanel::ExternalEditorPanel(QWidget* parent)
     sourceView_->setStretchFactor(0, 1);
     sourceView_->setStretchFactor(1, 0);
     layout->addWidget(sourceView_, 1);
-    filter_ = new FilterEditorWidget(this);
-    layout->addWidget(filter_, 1);
-    connect(filter_, &FilterEditorWidget::externalEditorRequested,
-            this, &ExternalEditorPanel::externalEditorRequested);
     showContent(nullptr);
     connect(bindings_, &BindingFieldEditor::curveSelectionChanged, this,
             [this](const CurveSelection& selection) {
@@ -146,8 +141,6 @@ void ExternalEditorPanel::bindSelection(const ExternalEditorSelection& selection
         source_->setSource({}, nullptr);
         sourceProperties_->setSource({}, {}, 0);
     }
-    if (selection_.kind != Kind::Filter)
-        filter_->bindItem(nullptr);
     bindings_->setVisible(selection_.kind == Kind::Binding);
     switch (selection_.kind) {
     case Kind::Binding: {
@@ -168,11 +161,6 @@ void ExternalEditorPanel::bindSelection(const ExternalEditorSelection& selection
         showContent(sourceView_);
         refreshSource();
         break;
-    case Kind::Filter:
-        curve_->clear();
-        filter_->bindItem(boundItem());
-        showContent(filter_);
-        break;
     case Kind::None:
         clearEditor();
         break;
@@ -186,7 +174,6 @@ void ExternalEditorPanel::clearEditor()
     curve_->clear();
     source_->setSource({}, nullptr);
     sourceProperties_->setSource({}, {}, 0);
-    filter_->bindItem(nullptr);
     showContent(nullptr);
 }
 
@@ -195,7 +182,6 @@ void ExternalEditorPanel::showContent(QWidget* content)
     curves_->setVisible(content == curves_);
     curvesScroll_->setVisible(content == curves_);
     sourceView_->setVisible(content == sourceView_);
-    filter_->setVisible(content == filter_);
     updateGeometry();
     emit titleChanged();
 }
@@ -289,14 +275,10 @@ QVariantMap ExternalEditorPanel::snapshotState() const
         state[QStringLiteral("attenuationSlot")] = true;
     if (selection_.kind == ExternalEditorSelection::Kind::Source) {
         state[QStringLiteral("sourceEntryId")] = selection_.sourceEntryId.toString(QUuid::WithoutBraces);
-    } else if (selection_.kind == ExternalEditorSelection::Kind::Filter) {
-        state[QStringLiteral("filter")] = true;
     } else if (selection_.kind == ExternalEditorSelection::Kind::Binding) {
         state[QStringLiteral("bindingHostGuid")] = selection_.curve.hostGuid.toString(QUuid::WithoutBraces);
         state[QStringLiteral("bindingHostClass")] = BindingContractSemantics::hostClassName(selection_.bindingAddress.hostClass);
         state[QStringLiteral("bindingSlotId")] = selection_.bindingAddress.slotId;
-        if (selection_.bindingAddress.family == BindingTargetFamily::Filter)
-            state[QStringLiteral("bindingTargetFamily")] = QStringLiteral("filter");
         state[QStringLiteral("bindingStableId")] = objectIdString(selection_.curve.bindingStableId);
     } else if (selection_.kind == ExternalEditorSelection::Kind::Attenuation) {
         state[QStringLiteral("attenuationGuid")] = selection_.curve.attenuationGuid.toString(QUuid::WithoutBraces);
@@ -323,15 +305,11 @@ void ExternalEditorPanel::restoreState(const QVariantMap& state)
     ExternalEditorSelection selection;
     if (state.contains(QStringLiteral("sourceEntryId"))) {
         selection = ExternalEditorSelection::source(owner, state.value(QStringLiteral("sourceEntryId")).toUuid());
-    } else if (state.value(QStringLiteral("filter")).toBool()) {
-        selection = ExternalEditorSelection::filter(owner);
     } else if (state.contains(QStringLiteral("bindingHostGuid"))) {
         BindingAddress address;
         address.hostClass = BindingContractSemantics::parseHostClass(
             state.value(QStringLiteral("bindingHostClass")).toString()).value_or(BindingHostClass::Voice);
         address.slotId = static_cast<uint8_t>(state.value(QStringLiteral("bindingSlotId")).toUInt());
-        if (state.value(QStringLiteral("bindingTargetFamily")).toString() == QLatin1String("filter"))
-            address.family = BindingTargetFamily::Filter;
         selection = ExternalEditorSelection::fromCurve(CurveSelection::binding(
             state.value(QStringLiteral("bindingHostGuid")).toUuid(), address,
             runtimeObjectId(QUuid(state.value(QStringLiteral("bindingStableId")).toString()))), owner);

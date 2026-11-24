@@ -17,12 +17,6 @@ PreviewField::PreviewField(QWidget* parent)
         this, [this] { update(); });
 }
 
-void PreviewField::setDimmed(bool dimmed)
-{
-    QtControlSkin::setSemanticProperty(this, "dimmed", dimmed);
-    update();
-}
-
 void PreviewField::paintEvent(QPaintEvent*)
 {
     QPainter painter(this);

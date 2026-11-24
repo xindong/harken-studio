@@ -124,7 +124,7 @@ QJsonObject itemSelector(const QJsonObject& extra = {}, const QJsonArray& requir
 QJsonObject bindingAddress()
 {
     return object({{"hostClass", choice({"voice", "bus", "send", "effect"})}, {"slotId", integer(1, 16)},
-                   {"path", uint32(false)}, {"targetFamily", choice({"playable", "filter"})}},
+                   {"path", uint32(false)}},
                   {"hostClass", "slotId"});
 }
 

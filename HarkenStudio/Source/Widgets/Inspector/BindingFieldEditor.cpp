@@ -68,8 +68,7 @@ public:
         yMin_ = std::min(binding.outputMin, binding.outputMax);
         yMax_ = std::max(binding.outputMin, binding.outputMax);
         const auto contract = BindingContractSemantics::derive(binding.address);
-        clipToPlot_ = binding.address.family == BindingTargetFamily::Filter
-            || contract.outputUnit == BindingOutputUnit::Cent;
+        clipToPlot_ = contract.outputUnit == BindingOutputUnit::Cent;
         volume_ = contract.outputUnit
             == BindingOutputUnit::Decibel;
         if (volume_ || clipToPlot_) {

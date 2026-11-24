@@ -9,7 +9,7 @@ namespace harken::studio {
 
 struct ExternalEditorSelection
 {
-    enum class Kind { None, Attenuation, Binding, Source, Filter };
+    enum class Kind { None, Attenuation, Binding, Source };
 
     Kind kind = Kind::None;
     QUuid ownerGuid;
@@ -53,14 +53,6 @@ struct ExternalEditorSelection
 
     bool isEmpty() const { return kind == Kind::None; }
 
-    static ExternalEditorSelection filter(const QUuid& owner)
-    {
-        ExternalEditorSelection selection;
-        selection.kind = Kind::Filter;
-        selection.ownerGuid = owner;
-        return selection;
-    }
-
     bool sameContext(const ExternalEditorSelection& other) const
     {
         if (kind != other.kind || ownerGuid != other.ownerGuid || placement != other.placement)
@@ -73,8 +65,6 @@ struct ExternalEditorSelection
             return bindingAddress == other.bindingAddress;
         case Kind::Source:
             return sourceEntryId == other.sourceEntryId;
-        case Kind::Filter:
-            return true;
         case Kind::None:
             return false;
         }

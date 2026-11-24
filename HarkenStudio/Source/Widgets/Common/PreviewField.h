@@ -12,7 +12,6 @@ class PreviewField : public QWidget
 
 public:
     explicit PreviewField(QWidget* parent = nullptr);
-    void setDimmed(bool dimmed);
 
 signals:
     void clicked();

@@ -10,9 +10,7 @@
 #include "Widgets/Common/CollapsibleSection.h"
 #include "Widgets/Common/ParameterSlider.h"
 #include "Widgets/Common/TableWidget.h"
-#include "Widgets/FilterEditor/FilterPreviewField.h"
 #include "Core/Components/VMixNode.h"
-#include "Core/FilterAuthoring.h"
 #include "Core/MemorySettingsStorage.h"
 #include "Core/PlatformContextService.h"
 #include "Core/ProjectManager.h"
@@ -157,16 +155,13 @@ TEST(PropertyEditorEnginePlatformContext, SwitchingMatchesFreshBindingWithoutAut
     ASSERT_NE(pitch, nullptr);
     ASSERT_TRUE(PlayablePropertyAuthoringV1::setOverride(*item, *locator, pitch->id, 120.0, windows));
     ASSERT_TRUE(PlayablePropertyAuthoringV1::setOverride(*item, *locator, pitch->id, 240.0, android));
-    ASSERT_TRUE(FilterAuthoring::setOverride(*item, "filterLowPassFrequency", 6000.0, windows));
-    ASSERT_TRUE(FilterAuthoring::setOverride(*item, "filterLowPassFrequency", 1200.0, android));
     undo.clear();
     ProjectSerializer serializer;
     ASSERT_TRUE(serializer.prepareReferenceWrite(*manager.currentProject()));
     const auto before = serializer.projectItemToJson(*item);
     PropertySchema schema;
     for (const auto& descriptor : VMixNode::schema()) {
-        if (descriptor.field == "pitch" || descriptor.field == "filter"
-            || descriptor.field == "filterLowPassFrequency")
+        if (descriptor.field == "pitch")
             schema.push_back(descriptor);
     }
     auto bindPage = [&](PropertyEditorEngine& engine) {
@@ -175,13 +170,6 @@ TEST(PropertyEditorEnginePlatformContext, SwitchingMatchesFreshBindingWithoutAut
         std::unique_ptr<QWidget> page(engine.buildPage());
         engine.bindItem(item);
         return page;
-    };
-    auto renderPreview = [](FilterPreviewField* preview) {
-        preview->setFixedSize(240, 64);
-        QImage image(preview->size(), QImage::Format_ARGB32_Premultiplied);
-        image.fill(Qt::transparent);
-        preview->render(&image);
-        return image;
     };
     platforms.setSelected({windows}, windows, false);
     PropertyEditorEngine engine;
@@ -202,22 +190,13 @@ TEST(PropertyEditorEnginePlatformContext, SwitchingMatchesFreshBindingWithoutAut
         platforms.setSelected(context.selected, context.primary, context.all);
         PropertyEditorEngine reference;
         auto referencePage = bindPage(reference);
-        for (const auto* field : {"prop_pitch", "prop_filterLowPassFrequency"}) {
-            SCOPED_TRACE(field);
-            const auto* actual = page->findChild<ParameterSlider*>(field);
-            const auto* expected = referencePage->findChild<ParameterSlider*>(field);
-            ASSERT_NE(actual, nullptr);
-            ASSERT_NE(expected, nullptr);
-            EXPECT_EQ(actual->mixedValue(), expected->mixedValue());
-            if (!expected->mixedValue()) EXPECT_EQ(actual->value(), expected->value());
-            EXPECT_EQ(actual->toolTip(), expected->toolTip());
-        }
-        auto* actualPreview = page->findChild<FilterPreviewField*>("prop_filter");
-        auto* expectedPreview = referencePage->findChild<FilterPreviewField*>("prop_filter");
-        ASSERT_NE(actualPreview, nullptr);
-        ASSERT_NE(expectedPreview, nullptr);
-        EXPECT_EQ(renderPreview(actualPreview), renderPreview(expectedPreview));
-        EXPECT_EQ(actualPreview->toolTip(), expectedPreview->toolTip());
+        const auto* actual = page->findChild<ParameterSlider*>("prop_pitch");
+        const auto* expected = referencePage->findChild<ParameterSlider*>("prop_pitch");
+        ASSERT_NE(actual, nullptr);
+        ASSERT_NE(expected, nullptr);
+        EXPECT_EQ(actual->mixedValue(), expected->mixedValue());
+        if (!expected->mixedValue()) EXPECT_EQ(actual->value(), expected->value());
+        EXPECT_EQ(actual->toolTip(), expected->toolTip());
         EXPECT_EQ(serializer.projectItemToJson(*item), before);
         EXPECT_FALSE(undo.canUndo());
         EXPECT_EQ(changes, 0);

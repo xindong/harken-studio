@@ -62,10 +62,6 @@ private:
     void captureEffectStart();
     void restoreEffectStart();
     bool previewEffects(const QVariant& value);
-    void captureFilterStart();
-    void restoreFilterStart();
-    bool previewFilter(const QJsonValue& value);
-    bool filterStateChanged() const;
 
     ProjectItem* item_;
     QString propertyName_;
@@ -74,7 +70,6 @@ private:
     const QObject* originator_ = nullptr;
     std::optional<PlayablePropertyLocatorV1> playableLocator_;
     std::optional<PlayableStartSnapshot> playableStartState_;
-    std::optional<PlayableStartSnapshot> filterStartState_;
     std::optional<PlayableStartSnapshot> effectStartState_;
     std::optional<QVector<ProjectPlatformId>> platforms_;
     uint8_t playablePropertyId_ = 0;

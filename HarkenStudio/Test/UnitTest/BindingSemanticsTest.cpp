@@ -43,36 +43,6 @@ TEST(BindingSemantics, TypedLedgerRoundtripsCurveAndExtensions)
         harken::studio::commandInputSchema("set_modulator_binding"), &error)) << error.toStdString();
 }
 
-TEST(BindingSemantics, AddressFamiliesRoundtripWithoutAliasing)
-{
-    const auto playable = harken::studio::BindingSemantics::volumeAddress();
-    const auto filter = harken::studio::BindingContractSemantics::filterAddress(
-        playable.slotId, harken::studio::ProjectItemType::Sound);
-    ASSERT_NE(playable, filter);
-    EXPECT_NE(harken::studio::BindingSemantics::addressKey(playable),
-              harken::studio::BindingSemantics::addressKey(filter));
-    harken::studio::BindingLedger ledger;
-    auto volume = harken::studio::BindingSemantics::defaultBinding(playable, guid(3));
-    volume.guid = guid(4);
-    auto frequency = harken::studio::BindingSemantics::defaultBinding(filter, guid(3));
-    frequency.guid = guid(5);
-    ASSERT_TRUE(ledger.upsert(volume));
-    ASSERT_TRUE(ledger.upsert(frequency));
-
-    const auto loaded = harken::studio::BindingLedger::fromJson(ledger.toJson());
-    ASSERT_EQ(loaded.size(), 2);
-    ASSERT_NE(loaded.findFirst(playable), nullptr);
-    ASSERT_NE(loaded.findFirst(filter), nullptr);
-    EXPECT_EQ(loaded.findFirst(playable)->guid, volume.guid);
-    EXPECT_EQ(loaded.findFirst(filter)->guid, frequency.guid);
-    EXPECT_EQ(loaded.toJson(), ledger.toJson());
-    for (float input : {0.0f, 0.5f, 1.0f})
-        EXPECT_FLOAT_EQ(harken::studio::BindingSemantics::contribution(
-            *loaded.findFirst(filter), harken::studio::VariableKind::Smooth, input, 0.0f, 1.0f), 0.0f);
-    EXPECT_EQ(harken::studio::BindingContractSemantics::engineTargetId(filter), std::nullopt);
-    EXPECT_NE(harken::studio::BindingContractSemantics::engineTargetId(playable), std::nullopt);
-}
-
 TEST(BindingSemantics, FixedAuthoringRangePreservesAbsoluteCurveValues)
 {
     const auto address = harken::studio::BindingSemantics::pitchAddress();

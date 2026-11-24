@@ -1,8 +1,6 @@
 add_library(harken_editor_external_editor STATIC
     ExternalEditorPanel.cpp
     ExternalEditorPanel.h
-    ../FilterEditor/FilterEditorWidget.cpp
-    ../FilterEditor/FilterEditorWidget.h
 )
 
 set_target_properties(harken_editor_external_editor PROPERTIES

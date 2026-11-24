@@ -56,10 +56,6 @@ const std::vector<InspectorSectionInfo>& inspectorSections()
         {PropertySection::Rating, PropertyCategory::Spatial, "rating", "Rating"},
         {PropertySection::PlaybackPriority, PropertyCategory::Performance, "playback_priority", "Playback Priority"},
         {PropertySection::Conversion, PropertyCategory::Performance, "conversion", "Conversion"},
-        {PropertySection::FilterLowPass, PropertyCategory::Basic, "filter_low_pass", "Low Pass"},
-        {PropertySection::FilterHighPass, PropertyCategory::Basic, "filter_high_pass", "High Pass"},
-        {PropertySection::FilterLowShelf, PropertyCategory::Basic, "filter_low_shelf", "Low Shelf"},
-        {PropertySection::FilterHighShelf, PropertyCategory::Basic, "filter_high_shelf", "High Shelf"},
     };
     return sections;
 }

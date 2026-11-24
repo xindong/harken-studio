@@ -133,8 +133,6 @@ BindingLowerStatus appendLoweredBinding(const ProjectData& project,
 {
     if (!output)
         return BindingLowerStatus::Fail;
-    if (source.typed && source.address.family == BindingTargetFamily::Filter)
-        return BindingLowerStatus::Skip;
     if (!source.typed) {
         if (bindingShapedUntypedHasIllegalTransitionMs(source))
             return BindingLowerStatus::Fail;

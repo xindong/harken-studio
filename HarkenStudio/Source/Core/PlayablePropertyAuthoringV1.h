@@ -60,7 +60,6 @@ struct PlatformOverrideRowV1
 {
     ProjectPlatformId platformId;
     PlayablePropertyOccurrenceV1 properties;
-    QJsonObject filter;
 
     bool operator==(const PlatformOverrideRowV1&) const = default;
 };
@@ -99,7 +98,7 @@ struct PlatformOverrideLedgerV1
             [](const PlatformOverrideRowV1& row, ProjectPlatformId key) {
                 return row.platformId < key;
             });
-        return &*rows.insert(it, PlatformOverrideRowV1{platform, {}, {}});
+        return &*rows.insert(it, PlatformOverrideRowV1{platform, {}});
     }
 
     bool erase(ProjectPlatformId platform)
@@ -119,7 +118,7 @@ struct PlatformOverrideLedgerV1
         const auto before = rows.size();
         rows.erase(std::remove_if(rows.begin(), rows.end(),
                                   [](const PlatformOverrideRowV1& row) {
-                                      return row.properties.presence.bits == 0 && row.filter.isEmpty();
+                                      return row.properties.presence.bits == 0;
                                   }),
                    rows.end());
         return rows.size() != before;
@@ -128,7 +127,7 @@ struct PlatformOverrideLedgerV1
     bool eraseEmpty(ProjectPlatformId platform)
     {
         auto* row = find(platform);
-        if (!row || row->properties.presence.bits != 0 || !row->filter.isEmpty())
+        if (!row || row->properties.presence.bits != 0)
             return false;
         return erase(platform);
     }
@@ -292,8 +291,7 @@ public:
     static bool platformOverridesFromJson(const QJsonValue& value,
                                           PlatformOverrideLedgerV1* ledger,
                                           QString* error = nullptr,
-                                          bool allowFieldGroupFields = false,
-                                          bool allowFilter = false);
+                                          bool allowFieldGroupFields = false);
 
     static constexpr char kPlatformOverridesJsonKey[] = "platformOverrides";
 

@@ -130,12 +130,6 @@ void CollapsibleSection::setIndicatorColor(const QColor& color)
     applyTheme();
 }
 
-void CollapsibleSection::setHeaderTintColor(const QColor& color)
-{
-    headerTintColor_ = color;
-    refreshAppearance();
-}
-
 void CollapsibleSection::setExpanded(bool expanded)
 {
     if (expanded_ == expanded)
@@ -255,7 +249,7 @@ void CollapsibleSection::refreshAppearance()
         widget->update();
     };
     QString headerStyle = skin.collapsibleHeaderStyle(
-        indicatorColor_, hasCustomIndicator_, lvl, hasTopSeparator_, headerTintColor_);
+        indicatorColor_, hasCustomIndicator_, lvl, hasTopSeparator_);
     if (headerWidget_)
         headerStyle += QStringLiteral("QToolButton { padding-right: %1px; }")
             .arg(headerWidget_->sizeHint().width() + 2 * theme.metrics().layout.sectionGap);

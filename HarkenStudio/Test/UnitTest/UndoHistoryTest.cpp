@@ -1,20 +1,15 @@
 #include "Core/UndoHistory.h"
 #include "Core/ActionManager.h"
 #include "Core/Components/VMixNode.h"
-#include "Core/FilterAuthoring.h"
 #include "Core/PlatformContextService.h"
 #include "Core/ProjectManager.h"
 #include "Core/PropertyEditSession.h"
 #include "Core/UndoCommands.h"
-#include "Widgets/FilterEditor/FilterEditorWidget.h"
-#include "Widgets/FilterEditor/FilterResponseCanvas.h"
 #include "Support/ProjectPlatformTestUtils.h"
 
 #include <gtest/gtest.h>
 
 #include <QApplication>
-#include <QKeyEvent>
-#include <QMouseEvent>
 #include <QStringList>
 #include <QTemporaryDir>
 
@@ -244,7 +239,7 @@ TEST_F(AuthoringEditTransactionTest, CancelledPreviewsRestoreValuesAndOverridePr
     struct FieldCase { QString field; double base; double overlay; double preview; };
     for (const FieldCase field : {
              FieldCase{QStringLiteral("volume"), -6.0, -12.0, -3.0},
-             FieldCase{QStringLiteral("filterLowShelfFrequency"), 400.0, 800.0, 1200.0}}) {
+             FieldCase{QStringLiteral("pitch"), 400.0, 800.0, 1200.0}}) {
         SCOPED_TRACE(field.field.toStdString());
         ASSERT_TRUE(setField(field.field, field.base).success);
         ASSERT_TRUE(setField(field.field, field.overlay, windows).success);
@@ -265,67 +260,6 @@ TEST_F(AuthoringEditTransactionTest, CancelledPreviewsRestoreValuesAndOverridePr
             EXPECT_FALSE(harken::studio::UndoRedoManager::instance().canUndo());
             EXPECT_FALSE(harken::studio::UndoRedoManager::instance().canRedo());
         }
-    }
-}
-
-TEST_F(AuthoringEditTransactionTest, GraphGesturesCancelExactlyAndCommitMultipleFieldsAsOneUndo)
-{
-    const auto windows = HarkenTest::PlatformIds::Windows;
-    ASSERT_TRUE(setField(QStringLiteral("filterLowShelfFrequency"), 400.0).success);
-    ASSERT_TRUE(setField(QStringLiteral("filterLowShelfGain"), 6.0).success);
-    harken::studio::FilterEditorWidget editor;
-    editor.setAttribute(Qt::WA_DontShowOnScreen);
-    editor.resize(720, 640);
-    editor.bindItem(item_);
-    editor.show();
-    QApplication::processEvents();
-    auto* canvas = editor.findChild<harken::studio::FilterResponseCanvas*>();
-    ASSERT_NE(canvas, nullptr);
-    const auto mouse = [canvas](QEvent::Type type, const QPointF& point,
-                                Qt::MouseButton button, Qt::MouseButtons buttons) {
-        QMouseEvent event(type, point, canvas->mapToGlobal(point.toPoint()), button, buttons, Qt::NoModifier);
-        QApplication::sendEvent(canvas, &event);
-    };
-    for (bool all : {true, false}) {
-        SCOPED_TRACE(all);
-        if (all) harken::studio::PlatformContextService::instance().setAll(true);
-        else {
-            ASSERT_TRUE(setField(QStringLiteral("filterLowShelfFrequency"), 900.0, windows).success);
-            harken::studio::PlatformContextService::instance().setSelected({windows}, windows, false);
-        }
-        QApplication::processEvents();
-        ASSERT_TRUE(canvas->isVisible());
-        harken::studio::UndoRedoManager::instance().clearHistory();
-        const auto before = authoredState();
-        const auto scope = all ? harken::studio::PlatformScope{} : harken::studio::PlatformScope{windows};
-        const auto original = harken::studio::FilterAuthoring::effectiveState(*item_, scope).sections[2];
-        ASSERT_FALSE(canvas->renderData().points.isEmpty());
-        const auto point = canvas->renderData().points.front().position;
-        const auto moved = point + QPointF(35.0, -20.0);
-        mouse(QEvent::MouseButtonPress, point, Qt::LeftButton, Qt::LeftButton);
-        mouse(QEvent::MouseMove, moved, Qt::NoButton, Qt::LeftButton);
-        const auto preview = harken::studio::FilterAuthoring::effectiveState(*item_, scope).sections[2];
-        ASSERT_NE(preview.frequency, original.frequency);
-        ASSERT_NE(preview.gain, original.gain);
-        EXPECT_FALSE(harken::studio::UndoRedoManager::instance().canUndo());
-        QKeyEvent escape(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
-        QApplication::sendEvent(canvas, &escape);
-        mouse(QEvent::MouseButtonRelease, moved, Qt::LeftButton, Qt::NoButton);
-        EXPECT_EQ(authoredState(), before);
-        EXPECT_FALSE(harken::studio::UndoRedoManager::instance().canUndo());
-        mouse(QEvent::MouseButtonPress, point, Qt::LeftButton, Qt::LeftButton);
-        mouse(QEvent::MouseMove, moved, Qt::NoButton, Qt::LeftButton);
-        mouse(QEvent::MouseButtonRelease, moved, Qt::LeftButton, Qt::NoButton);
-        const auto after = authoredState();
-        ASSERT_NE(after, before);
-        EXPECT_EQ(harken::studio::UndoRedoManager::instance().undoStack()->count(), 1);
-        ASSERT_TRUE(harken::studio::UndoRedoManager::instance().undo());
-        EXPECT_EQ(authoredState(), before);
-        EXPECT_FALSE(harken::studio::UndoRedoManager::instance().canUndo());
-        ASSERT_TRUE(harken::studio::UndoRedoManager::instance().redo());
-        EXPECT_EQ(authoredState(), after);
-        EXPECT_FALSE(harken::studio::UndoRedoManager::instance().canRedo());
-        ASSERT_TRUE(harken::studio::UndoRedoManager::instance().undo());
     }
 }
 

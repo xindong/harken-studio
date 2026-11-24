@@ -615,7 +615,7 @@ QString QtControlSkin::collapsibleIndicatorStyle(const QColor& color, int alpha,
 }
 
 QString QtControlSkin::collapsibleHeaderStyle(const QColor& indicator, bool custom, int level,
-                                             bool topSeparator, const QColor& backgroundTint) const
+                                             bool topSeparator) const
 {
     const QString indicatorColor = indicator.isValid() ? indicator.name(QColor::HexArgb) : accent();
 
@@ -653,10 +653,6 @@ QString QtControlSkin::collapsibleHeaderStyle(const QColor& indicator, bool cust
     }
     const QString pad = QString("padding: 0px %1px 0px 0px;").arg(metrics().layout.panelPadding);
     const int contentHeight = metrics().layout.sectionHeaderHeight - verticalBorder;
-
-    if (backgroundTint.isValid()) {
-        bg = rgba(backgroundTint, level >= 2 ? 16 : 20);
-    }
 
     return QString(R"(
         QToolButton {

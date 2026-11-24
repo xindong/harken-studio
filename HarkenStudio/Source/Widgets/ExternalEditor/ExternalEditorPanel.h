@@ -14,7 +14,6 @@ class BindingFieldEditor;
 class CurveEditorWidget;
 class SourceFilePropertiesView;
 class SourceRangeEditor;
-class FilterEditorWidget;
 
 class ExternalEditorPanel final : public QWidget
 {
@@ -44,7 +43,6 @@ signals:
     void pinToggled(bool pinned);
     void titleChanged();
     void navigateRequested(const QUuid& guid);
-    void externalEditorRequested(const ExternalEditorSelection& selection);
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
@@ -68,7 +66,6 @@ private:
     QSplitter* sourceView_ = nullptr;
     SourceRangeEditor* source_ = nullptr;
     SourceFilePropertiesView* sourceProperties_ = nullptr;
-    FilterEditorWidget* filter_ = nullptr;
 };
 
 }

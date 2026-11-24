@@ -86,8 +86,7 @@ public:
                 if (BindingContractSemantics::addressFromDescriptor(descriptor,
                         ref.address.hostClass == BindingHostClass::Bus ? ProjectItem::Type::Bus : ProjectItem::Type::Sound)
                     == std::optional<BindingAddress>(ref.address)) {
-                    setText(property_, ref.address.family == BindingTargetFamily::Filter
-                        ? BindingSemantics::slotName(ref.address) : descriptor.label);
+                    setText(property_, descriptor.label);
                     break;
                 }
         } else {
