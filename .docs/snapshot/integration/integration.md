@@ -31,7 +31,7 @@
 | 首关启动 | 启动与首关准备可并行 | `StartLevelAsync` 启动会话并准备首关 Action；Windows 在装载期间后台打开设备，默认组件启动同样提前打开设备 | 已实现 |
 | 故障恢复 | 首次故障可观察，恢复由宿主决定 | `RuntimeRecreationRequired` 与 `QueryRuntimeFault` 提供首次故障；`VN_OUT_OF_MEMORY` 单独出现时会话可继续 | 已实现 |
 | 编辑器静音 | Game 视图静音对 Harken 生效 | Mute Audio 以短淡变静音设备输出，混音与计时不受影响；代码可调用 `SetHostOutputMute` | 已实现 |
-| 旧接口延续 | 已发布且可用的公开接口改名后，旧名继续可用 | 旧名标 `[Obsolete]` 转发到新接口，不承诺移除版本；固定返回失败的旧清单入口与 `HarkenVariableId` 系列已移除；以非友元程序集编译旧用法防止回退 | 已实现 |
+| 旧接口延续 | 已发布且可用的公开接口改名后，旧名继续可用 | 旧名标 `[Obsolete]` 转发到新接口，不承诺移除版本；固定返回失败的旧清单入口与 `HarkenVariableId` 系列已移除；仓内非友元程序集编译 `Harken.Core` 的旧接口用例 | 已实现 |
 | 远程通信可用范围 | 公开方法在两个原生库版本下都可编译 | 正式版返回 `VN_CAPABILITY_UNAVAILABLE`，开发版可用 | 已实现 |
 | 示例交付 | 随包不附示例 | 示例与离线文档已移出集成包 | 已实现 |
 | 集成安装校验 | 安装位置、身份和所有权可检查 | Hub 以 Unity 包清单识别来源，支持 Packages 与允许的 Assets 子目录；`harken-integration.json` 已移除 | 已实现 |
@@ -52,7 +52,7 @@
 | Unity 身份 | 外层分发命名不改变 Unity 包标识、程序集、GUID 或工程安装位置 |
 | 运行库升级 | 游戏工程需更新集成包才能获得原生运行库修正，单独升级 Studio 不会替换游戏工程运行库 |
 | Schema 兼容 | Studio 0.9.2 的 Editor Schema 为 9、Pack Schema 为 4，与 0.9.1 一致；0.9.1 工程无需迁移，既有 Pack 不因升级而强制重打 |
-| 发布工具 | 随包提供 Python 发布工具，调用 StudioCLI 导出后生成逐包压缩、平台 ZIP 或 Windows 常驻发布物 |
+| 发布工具 | 仓内 `HarkenIntegration/Test/PackPublishing` 的 Python 工具调用 StudioCLI 导出后生成逐包压缩、平台 ZIP 或 Windows 常驻发布物。Unity 集成包只分发 `Unity/Harken` 下的内容 |
 
 ## 命名与兼容边界
 

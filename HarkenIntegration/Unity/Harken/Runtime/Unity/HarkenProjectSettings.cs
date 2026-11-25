@@ -5,8 +5,6 @@ using UnityEngine;
 using Harken;
 
 [assembly: InternalsVisibleTo("Harken.Unity.Editor")]
-[assembly: InternalsVisibleTo("Harken.Unity.EditModeTests")]
-[assembly: InternalsVisibleTo("Harken.Unity.PlayModeTests")]
 
 namespace Harken.Unity
 {
@@ -65,17 +63,6 @@ namespace Harken.Unity
             }
             return transient;
         }
-
-        internal static string CaptureStartupState() => JsonUtility.ToJson(ActiveForStartup());
-
-        internal static void RestoreStartupState(string snapshot)
-        {
-            if (!string.IsNullOrEmpty(snapshot))
-                JsonUtility.FromJsonOverwrite(snapshot, ActiveForStartup());
-        }
-
-        internal void SetPackDirectory(string value) => packDirectory = value ?? string.Empty;
-        internal void SetMaxVoices(uint value) => maxVoices = value;
 
         internal static void ApplyStartupCapacity(ref VnConfig config, HarkenProjectSettings settings = null)
         {
@@ -286,19 +273,5 @@ namespace Harken.Unity
             catch (UnauthorizedAccessException) { return false; }
             catch (ArgumentException) { return false; }
         }
-    }
-
-    internal struct HarkenProjectSettingsLease : IDisposable
-    {
-        private readonly string snapshot;
-
-        private HarkenProjectSettingsLease(string snapshot) => this.snapshot = snapshot;
-
-        public HarkenProjectSettings Settings => HarkenProjectSettings.ActiveForStartup();
-
-        public static HarkenProjectSettingsLease Acquire() =>
-            new HarkenProjectSettingsLease(HarkenProjectSettings.CaptureStartupState());
-
-        public void Dispose() => HarkenProjectSettings.RestoreStartupState(snapshot);
     }
 }

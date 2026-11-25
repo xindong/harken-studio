@@ -26,7 +26,7 @@ internal static class Program
     {
         Assembly integration = typeof(HarkenEngine).Assembly;
         string[] friends = integration.GetCustomAttributes<InternalsVisibleToAttribute>().Select(x => x.AssemblyName).ToArray();
-        string[] trusted = { "Harken.Unity", "Harken.Unity.Editor", "Harken.Unity.EditModeTests", "Harken.Unity.PlayModeTests" };
+        string[] trusted = { "Harken.Unity", "Harken.Unity.Editor" };
         Require(friends.OrderBy(x => x).SequenceEqual(trusted.OrderBy(x => x)), "Unexpected friend assembly.");
         Require(!friends.Contains(typeof(Program).Assembly.GetName().Name), "Consumer cannot be a friend.");
         using JsonDocument document = JsonDocument.Parse(File.ReadAllText(policyPath));
