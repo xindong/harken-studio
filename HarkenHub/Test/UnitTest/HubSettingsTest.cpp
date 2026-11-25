@@ -66,6 +66,24 @@ TEST_F(HubSettingsTest, PersistsLanguagePreference)
     EXPECT_EQ(HubSettings::languagePreference(), QStringLiteral("zh_CN"));
 }
 
+TEST_F(HubSettingsTest, ExistingThemeChoiceTakesPrecedenceOverTheFirstUseDefault)
+{
+#ifdef Q_OS_WIN
+    const QString defaultTheme = QStringLiteral("dark");
+#else
+    const QString defaultTheme = QStringLiteral("system");
+#endif
+    EXPECT_EQ(HubSettings::themePreference(), defaultTheme);
+    ASSERT_TRUE(HubSettings::setLanguagePreference(QStringLiteral("en")));
+    EXPECT_EQ(HubSettings::themePreference(), defaultTheme);
+
+    for (const auto& choice : {QStringLiteral("system"), QStringLiteral("light"), QStringLiteral("dark")}) {
+        ASSERT_TRUE(HubSettings::setThemePreference(choice));
+        EXPECT_EQ(HubSettings::themePreference(), choice);
+        EXPECT_EQ(HubSettings::languagePreference(), QStringLiteral("en"));
+    }
+}
+
 TEST_F(HubSettingsTest, PersistsWindowSize)
 {
     EXPECT_FALSE(HubSettings::windowSize().isValid());
