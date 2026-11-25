@@ -1,6 +1,7 @@
 #include <QtTranslation>
 
 static const char* const kReleaseNotesStrings[] = {
+    QT_TRANSLATE_NOOP("HubReleaseNotes", "Add and refresh standalone Studio versions that use the legacy self-test, including Studio 0.9.4."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "Support Unity Integration Packages identified by package.json without the retired integration manifest; check package files without pre-validating Unity target runtimes."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "Open the offline CLI user guide and AI command reference from a separate group in Settings, in English or Simplified Chinese."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "Use the new Hub icon consistently across light and dark themes, windows, the taskbar, tray, shortcuts, installer and update helper."),

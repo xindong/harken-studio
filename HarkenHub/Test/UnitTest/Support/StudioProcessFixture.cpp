@@ -24,6 +24,13 @@ int main(int argc, char* argv[])
         QTextStream(stdout) << "locked" << Qt::endl;
         return app.exec();
     }
+    const auto selfTestOutput = qgetenv("HARKEN_TEST_STUDIO_SELF_TEST_OUTPUT");
+    if (!selfTestOutput.isNull()) {
+        if (!arguments.contains(QStringLiteral("--self-test")) || !arguments.contains(QStringLiteral("--json")))
+            return 2;
+        QTextStream(stdout) << QString::fromUtf8(selfTestOutput) << Qt::endl;
+        return qEnvironmentVariableIntValue("HARKEN_TEST_STUDIO_SELF_TEST_EXIT_CODE");
+    }
     if (arguments.contains(QStringLiteral("--version"))) {
         QTextStream(stdout) << QJsonDocument(HarkenHubTest::studioVersionReport()).toJson(QJsonDocument::Compact);
         return 0;

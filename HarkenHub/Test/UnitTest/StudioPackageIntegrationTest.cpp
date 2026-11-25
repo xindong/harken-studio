@@ -61,7 +61,7 @@ bool editorIsVisible(const QString& project)
         || QFileInfo(state.value("project_path").toString()).canonicalFilePath()
             != QFileInfo(project).canonicalFilePath())
         return false;
-    return query(QStringLiteral("get_ui_tree"), {{"root", "MainWindow"}, {"depth", 0}})
+    return query(QStringLiteral("get_ui_tree"), {{"depth", 0}})
         .value("visible").toBool();
 }
 
