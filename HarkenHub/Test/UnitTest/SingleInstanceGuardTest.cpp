@@ -44,6 +44,11 @@ int runSetupShutdownFixture(const QStringList& arguments)
             otherWindow.setWindowTitle(QStringLiteral("Harken Hub"));
             otherWindow.show();
         }
+        HWND overlay = CreateWindowExW(WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW, L"STATIC", L"", WS_POPUP,
+                                       0, 0, 1, 1, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+        if (!overlay)
+            return 2;
+        ShowWindow(overlay, SW_SHOWNOACTIVATE);
         QObject::connect(&guard, &SingleInstanceGuard::activationRequested, [](const QStringList& received) {
             if (received == QStringList{QStringLiteral("--quit")})
                 QCoreApplication::quit();
@@ -52,8 +57,9 @@ int runSetupShutdownFixture(const QStringList& arguments)
             std::fputs("ready\n", stdout);
             std::fflush(stdout);
         });
-        return harken::hub::ConsentDialog::requestConsent(nullptr, harken::hub::ConsentDialog::hubDocumentId())
-            ? 3 : 0;
+        const bool accepted = harken::hub::ConsentDialog::requestConsent(nullptr, harken::hub::ConsentDialog::hubDocumentId());
+        DestroyWindow(overlay);
+        return accepted ? 3 : 0;
     }
     QObject::connect(&guard, &SingleInstanceGuard::activationRequested,
                      QCoreApplication::instance(), [&](const QStringList& received) {

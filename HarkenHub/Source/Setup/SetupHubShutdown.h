@@ -45,7 +45,8 @@ inline BOOL CALLBACK findOnlyVisibleWindow(HWND window, LPARAM data)
     auto& search = *reinterpret_cast<HubWindowSearch*>(data);
     DWORD owner = 0;
     GetWindowThreadProcessId(window, &owner);
-    if (owner != search.processId || !IsWindowVisible(window))
+    if (owner != search.processId || !IsWindowVisible(window)
+        || (GetWindowLongPtrW(window, GWL_EXSTYLE) & WS_EX_NOACTIVATE))
         return TRUE;
     if (search.window)
         return FALSE;
