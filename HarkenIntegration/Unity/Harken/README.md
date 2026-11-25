@@ -41,22 +41,6 @@ Games that own the audio session can call `await PackBootstrap.StartLevelAsync(s
 - Startup refuses a native library whose ABI major version differs from the managed bindings.
 - Each package version reads one Pack metadata version (currently 5). Export Packs with a Harken Studio release that writes that version. The engine checks the Pack binary version itself.
 
-## Compact Pack Releases
-
-With Python 3.9+ and the Studio CLI installed, run the package's publishing tool on the saved project and a target platform UUID. Choose a new output directory for each release.
-
-```sh
-python Tools~/publish_packs.py --studio-cli /path/to/HarkenStudioCLI --project GameAudio.hsp --platform-id <uuid> --output release-042
-```
-
-Use the resulting platform directory with the normal Unity Pack startup, directory, or reader source. The tool performs a fresh Studio export and copies the complete publication. Each canonical Pack of up to 16 MiB is stored as a single independent gzip member if that saves space. Larger or incompressible Packs, companion JSON and auxiliary files keep their original bytes. The package retains the normal names and validates the expanded canonical Pack before loading it. A directory load streams the compressed member into one bounded output array on the load path. A reader supplying bytes also retains its input until expansion ends. The native loader and gameplay use the canonical bytes.
-
-For direct native file loads or earlier package versions, use the ordinary Studio CLI build directory. When another delivery layer already compresses files, compare its final archive sizes before enabling compact publication.
-
-To publish resident sounds for a Windows game on a Windows build machine, add `--format windows-resident`. Ship the resulting platform directory with the game. `PackBootstrap.StartDirectory` recognizes its `Init.hrp`. On level entry, pass the level's Action names together to `Session.PrepareActions`. Once it succeeds, those Actions can play by name. Each Action has its own `.hrp` file, so an update to one sound in the same project with a compatible Init can ship just the changed file.
-
-Add `--format zip` to publish a standard archive at `<output>/<platform>/Packs.zip`. Archive entries start at the platform root and retain the exact Studio Pack, companion JSON and auxiliary file contents. Entries up to 16 MiB use DEFLATE when it reduces their size. Larger entries and entries that would grow use ZIP storage without compression. A standard ZIP extractor can restore the platform directory for the ordinary file loader.
-
 ## Runtime Faults
 
 If an operation returns `VN_RUNTIME_RECREATE_REQUIRED`, subscribe to `HarkenAudioSystem.RuntimeRecreationRequired` or call `HarkenEngine.QueryRuntimeFault(out RuntimeFaultInfo info)` for the first fault. Stop posting work and shut down and initialize a new session. A `VN_OUT_OF_MEMORY` result alone permits the current session to continue.

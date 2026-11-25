@@ -59,7 +59,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p .temp/package/HarkenIntegration
-          tar -C HarkenIntegration -cf - Unity \
+          tar -C HarkenIntegration -cf - Unity/Harken \
             | tar -C .temp/package/HarkenIntegration -xf -
           runtime_root=".temp/runtime"
           unity_plugins=".temp/package/HarkenIntegration/Unity/Harken/Runtime/Plugins"

@@ -18,7 +18,7 @@ Paired with Harken Studio 0.10.0. Packs must be exported again with Studio 0.10.
 - The Game view **Mute Audio** toggle now also mutes Harken output, with a short fade. `HarkenEngine.SetHostOutputMute` does the same from code.
 - `PackBootstrapSession.SetLanguageAsync` switches the language of a running session. Loaded Actions switch together, or not at all.
 - `PackBootstrap.StartLevelAsync` starts a session and prepares the Actions of the first level together. On Windows it opens the audio device while the Actions load. `VnDeviceMode.VN_DEVICE_REAL_BACKGROUND` selects this device mode for custom hosts.
-- `Tools~/publish_packs.py` publishes Packs in a smaller or faster form: individually compressed Packs, one ZIP archive per platform, or resident Packs for Windows. Directory sources recognize all three; `PackBootstrap.StartArchive` starts from a ZIP archive.
+- `PackBootstrap.StartArchive` starts a session from a ZIP archive of a platform directory.
 - `HarkenSpatialSource.SetValue` sets a Variable, by number or by Label, for sounds played on that source.
 - `HarkenAudioSystem.RuntimeRecreationRequired` and `HarkenEngine.QueryRuntimeFault` report the first fault after which the engine needs a new session (`RuntimeFaultInfo`, `VN_NOTIFY_RUNTIME_RECREATE_REQUIRED`).
 - `VN_OUT_OF_MEMORY` reports a failed allocation that does not end the session.
@@ -52,6 +52,7 @@ Paired with Harken Studio 0.10.0. Packs must be exported again with Studio 0.10.
 
 ### Removed
 
+- The `Tests` folder. When you replace the package by hand, delete the old package folder first: tests left over from an earlier version cause compile errors.
 - Offline documentation (`Documentation~`) and the suspended PlayableDemo sample. Documentation is now online; see `README.md`.
 - The project-specific `HarkenActions.g.cs` and `HarkenVariables.g.cs` symbol files are no longer shipped with the package.
 - The `harken-integration.json` manifest. The package is identified by `package.json` only.

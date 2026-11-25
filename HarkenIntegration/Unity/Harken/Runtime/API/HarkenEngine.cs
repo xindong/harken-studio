@@ -4,8 +4,6 @@ using System.Runtime.InteropServices;
 
 [assembly: InternalsVisibleTo("Harken.Unity")]
 [assembly: InternalsVisibleTo("Harken.Unity.Editor")]
-[assembly: InternalsVisibleTo("Harken.Unity.EditModeTests")]
-[assembly: InternalsVisibleTo("Harken.Unity.PlayModeTests")]
 
 namespace Harken
 {

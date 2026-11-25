@@ -5,7 +5,7 @@ import unittest
 import zipfile
 
 
-tool_path = Path(__file__).resolve().parents[2] / "Unity/Harken/Tools~/publish_packs.py"
+tool_path = Path(__file__).resolve().parents[1] / "PackPublishing/publish_packs.py"
 spec = importlib.util.spec_from_file_location("publish_packs", tool_path)
 publisher = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(publisher)
