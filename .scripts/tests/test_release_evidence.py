@@ -637,15 +637,92 @@ class ReleaseEvidenceTest(unittest.TestCase):
         target_path.parent.mkdir(parents=True)
         shutil.copyfile(self.payload / "app.exe", target_path)
         evidence.write_json(reply / "target.json", target)
-        objects = {"codemodel": {"paths": {"source": str(self.repo)}, "configurations": [
-            {"name": "Release", "targets": [{"id": "hub", "jsonFile": "target.json"}]}]},
+        self.write_file_api_index(reply, {"name": "Release", "targets": [{"id": "hub", "jsonFile": "target.json"}]},
+                                  self.identity)
+
+    def write_file_api_index(self, reply, configuration, identity):
+        objects = {"codemodel": {"paths": {"source": str(self.repo)}, "configurations": [configuration]},
             "cache": {"entries": []}, "toolchains": {"toolchains": []}}
         for kind, value in objects.items():
             evidence.write_json(reply / f"{kind}.json", value)
         evidence.write_json(reply / "index-test.json", {"objects": [
             {"kind": kind, "jsonFile": f"{kind}.json"} for kind in objects],
             "cmake": {"version": {"string": "3.31.6"}}})
-        evidence.write_json(self.build / "generated/release-identity.json", self.identity)
+        evidence.write_json(self.build / "generated/release-identity.json", identity)
+
+    def install_runtime_fixture(self):
+        reply = self.build / ".cmake/api/v1/reply"
+        prefix = self.root / "ios-arm64"
+        (prefix / "lib").mkdir(parents=True)
+        (self.build / "lib/Release").mkdir(parents=True)
+        targets = []
+        installers = []
+        manifest = []
+        for edition, name in (("release", "libHarkenEngine.a"), ("dev", "libHarkenEngineDev.a")):
+            target = "harken_engine_" + edition
+            target_id = target + "::@engine"
+            targets.append({"name": target, "id": target_id, "jsonFile": target + ".json", "directoryIndex": 0})
+            build_path = "lib/Release/" + name
+            evidence.write_json(reply / (target + ".json"), {
+                "name": target, "id": target_id, "type": "STATIC_LIBRARY", "artifacts": [{"path": build_path}],
+                "paths": {"source": "HarkenEngine", "build": "HarkenEngine"},
+                "install": {"prefix": {"path": "/usr/local"}, "destinations": [{"path": "lib"}]}})
+            installers.append({"type": "target", "targetId": target_id, "destination": "lib", "paths": [build_path]})
+            (self.build / build_path).write_bytes(b"built " + name.encode())
+            installed = prefix / "lib" / name
+            installed.write_bytes(b"installed " + name.encode())
+            manifest.append(installed.as_posix())
+        directory = {"source": "HarkenEngine", "build": "HarkenEngine"}
+        evidence.write_json(reply / "directory.json", {"paths": directory, "installers": installers})
+        self.write_file_api_index(reply, {"name": "Release", "targets": targets, "directories": [
+            {**directory, "hasInstallRule": True, "jsonFile": "directory.json"}]},
+            {**self.identity, "platform": "ios-arm64"})
+        (self.build / "install_manifest.txt").write_text("\n".join(manifest), encoding="utf-8")
+        return prefix
+
+    def test_packaged_runtime_matches_the_installed_edition(self):
+        prefix = self.install_runtime_fixture()
+        integration = self.payload / "HarkenIntegration"
+        receipt_path = integration / "BuildEvidence/ios-arm64/runtime-build.json"
+        evidence.main(["--build-dir", str(self.build), "--runtime-install-prefix", str(prefix),
+                       "--runtime-receipt", str(receipt_path)])
+        artifacts = evidence.read_json(receipt_path)["artifacts"]
+        plugins = integration / "Unity/Harken/Runtime/Plugins/iOS"
+        plugins.mkdir(parents=True)
+        for artifact in artifacts:
+            installed = prefix / "lib" / artifact["name"]
+            self.assertEqual(artifact["sha256"], evidence.sha256(self.build / artifact["path"]))
+            self.assertEqual(artifact["installed"]["path"], installed.relative_to(prefix).as_posix())
+            self.assertEqual(artifact["installed"]["sha256"], evidence.sha256(installed))
+            shutil.copyfile(installed, plugins / installed.name)
+        release = plugins / "libHarkenEngine.a"
+        development = plugins / "libHarkenEngineDev.a"
+        for product in ("integration", "studio"):
+            model = {**self.model, "artifacts": self.model["artifacts"] + artifacts}
+            installed_bytes = development.read_bytes()
+            directory = evidence.prepare(product, self.payload, self.build, self.output, "1.0.0", "valid", model=model)
+            self.assertTrue((directory / "receipt.json").is_file())
+            for replacement in (b"altered", (self.build / "lib/Release" / development.name).read_bytes(),
+                                release.read_bytes()):
+                with self.subTest(product=product, replacement=replacement):
+                    development.write_bytes(replacement)
+                    with self.assertRaises(ValueError):
+                        evidence.prepare(product, self.payload, self.build, self.output, "1.0.0", "invalid", model=model)
+            development.write_bytes(installed_bytes)
+            misplaced = plugins.parent / "macOS" / development.name
+            misplaced.parent.mkdir(exist_ok=True)
+            development.rename(misplaced)
+            with self.subTest(product=product, platform="macOS"), self.assertRaises(ValueError):
+                evidence.prepare(product, self.payload, self.build, self.output, "1.0.0", "misplaced", model=model)
+            misplaced.rename(development)
+
+    def test_runtime_receipt_requires_both_editions_in_the_install_manifest(self):
+        prefix = self.install_runtime_fixture()
+        (self.build / "install_manifest.txt").write_text((prefix / "lib/libHarkenEngine.a").as_posix(), encoding="utf-8")
+        receipt = self.root / "runtime-build.json"
+        with self.assertRaises(ValueError):
+            evidence.record_runtime(self.build, receipt, "Release", prefix)
+        self.assertFalse(receipt.exists())
 
     def test_file_api_resolves_only_product_dependency_graph(self):
         self.write_file_api_fixture()
