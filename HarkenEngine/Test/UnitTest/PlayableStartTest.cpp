@@ -37123,7 +37123,8 @@ TEST(PlayableStart, FormalSignalReceiversShareSoundAndContainerMembersAcrossWork
                 ASSERT_EQ(Vn_Update(), VN_OK);
             }
             ASSERT_FALSE(output.left.empty());
-            const double expected = .01 + .2 * (1 - harken::kDuckingBaselineSlope * .01 / .2);
+            const double expected = .01 + .2 * (1 - harken::kDuckingBaselineSlope *
+                harken::kDuckingSquaredLevelScale * .01 * .01 / .2);
             EXPECT_NEAR(output.left.back(), expected, 1e-5);
             // Isolate the raw voice contribution; aggregate amplitude alone
             // cannot distinguish accidental membership with this ducking law.
