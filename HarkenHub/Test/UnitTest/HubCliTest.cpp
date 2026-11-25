@@ -226,6 +226,67 @@ TEST_F(HubCliTest, ConcurrentClientsPreserveIndependentConsentsAndBuildRegistrat
     EXPECT_EQ(run({"versions", "list"})["data"].toObject()["versions"].toArray().size(), 4);
 }
 
+TEST_F(HubCliTest, StandaloneRegistrationRequiresAValidStudioIdentityAcrossProtocolVersions)
+{
+    const auto executable = QString::fromUtf8(HARKEN_HUB_STUDIO_FIXTURE);
+    const QStringList add{"versions", "add-local", "--path", executable};
+    const QStringList refresh{"versions", "refresh-local", "--path", executable};
+    const auto registry = directory.filePath("user/local-builds.json");
+    const auto setReport = [this](const QJsonObject& report) {
+        environment.insert("HARKEN_TEST_STUDIO_SELF_TEST_OUTPUT",
+                           QString::fromUtf8(QJsonDocument(report).toJson(QJsonDocument::Compact)));
+    };
+    const QJsonObject identity{{"product", "HarkenStudio"}, {"version", "0.5.0"},
+        {"buildId", "stable-build"}, {"channel", "stable"}, {"buildType", "ci"},
+        {"ok", true}, {"schemaArchiveOk", true}};
+    auto protocolTwo = identity;
+    protocolTwo["capabilitiesVersion"] = 2;
+    protocolTwo["editorSchemaVersion"] = 5;
+    protocolTwo["packSchemaVersion"] = 3;
+    protocolTwo["gitCommit"] = QString(40, 'a');
+    protocolTwo["gitDirty"] = false;
+    protocolTwo["schemaSnapshotHash"] = QString(64, 'b');
+
+    environment.insert("HARKEN_TEST_STUDIO_SELF_TEST_OUTPUT", "Studio did not return a report");
+    run(add, 3);
+    EXPECT_FALSE(QFileInfo::exists(registry));
+    setReport(protocolTwo);
+    run(add);
+    auto protocolOne = identity;
+    protocolOne["capabilitiesVersion"] = 1;
+    protocolOne["projectSchema"] = QJsonObject{{"current", 1}};
+    protocolOne["buildId"] = "earlier-build";
+    protocolOne["version"] = "0.1.0-test";
+    setReport(protocolOne);
+    run(refresh);
+    const auto saved = read(registry);
+    const auto builds = QJsonDocument::fromJson(saved).object()["localBuilds"].toArray();
+    ASSERT_EQ(builds.size(), 1);
+    EXPECT_EQ(builds.first().toObject()["reportedBuildId"].toString(), "earlier-build");
+    const auto versions = run({"versions", "list"})["data"].toObject()["versions"].toArray();
+    ASSERT_EQ(versions.size(), 1);
+    EXPECT_EQ(versions.first().toObject()["version"].toString(), "0.1.0-test");
+    EXPECT_EQ(versions.first().toObject()["channel"].toString(), "stable");
+    EXPECT_TRUE(versions.first().toObject()["available"].toBool());
+
+    const QJsonObject invalidFields{{"product", "OtherProduct"}, {"ok", false}, {"status", "error"}, {"schemaArchiveOk", false},
+        {"capabilitiesVersion", 3}, {"buildId", " "}, {"editorSchemaVersion", 0}, {"schemaSnapshotHash", "incomplete"}};
+    for (auto field = invalidFields.begin(); field != invalidFields.end(); ++field) {
+        SCOPED_TRACE(field.key().toStdString());
+        auto report = protocolTwo;
+        report[field.key()] = field.value();
+        setReport(report);
+        run(refresh, 3);
+    }
+    protocolOne.remove("projectSchema");
+    setReport(protocolOne);
+    run(refresh, 3);
+    setReport(protocolTwo);
+    environment.insert("HARKEN_TEST_STUDIO_SELF_TEST_EXIT_CODE", "2");
+    run(refresh, 3);
+    EXPECT_EQ(read(registry), saved);
+}
+
 TEST_F(HubCliTest, LogTailCountsRecordsWithAndWithoutATerminatingNewline)
 {
     const auto path = directory.filePath("user/logs/hub-gui.log");

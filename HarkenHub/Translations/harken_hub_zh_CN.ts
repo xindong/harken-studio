@@ -160,6 +160,10 @@
 <context>
     <name>HubReleaseNotes</name>
     <message>
+        <source>Add and refresh standalone Studio versions that use the legacy self-test, including Studio 0.9.4.</source>
+        <translation>支持添加和刷新使用旧版自检方式的独立 Studio，包括 Studio 0.9.4。</translation>
+    </message>
+    <message>
         <source>On Windows, Hub starts in Dark mode until you choose a theme in Settings. The title bar shows the Hub icon and name, and upgrading refreshes the running Hub's taskbar icon.</source>
         <translation>Windows 版 Hub 默认使用深色主题，可在设置中切换。标题栏显示 Hub 图标和名称，升级后运行中的 Hub 会更新任务栏图标。</translation>
     </message>
