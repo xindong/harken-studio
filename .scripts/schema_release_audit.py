@@ -33,6 +33,10 @@ PACK_BINARY = "PackBinary"
 RELEASE_SCOPE_CONFIG_PATH = ".scripts/schema-release-scopes.json"
 TREE_NAMES = ("Editor", "Pack")
 SCHEMA_NAMES = {"Editor": "ProjectSerializedSchema.json", "Pack": "PackMetadataSchema.json"}
+RELEASED_TREE_LAYOUTS = {
+    tree: ((f"{SCHEMA_ROOT_PATH}/{schema_archive.TREE_DIRECTORIES[tree]}", SCHEMA_NAMES[tree]),
+           (f"HarkenSchema/{tree}", former_name))
+    for tree, former_name in (("Editor", SCHEMA_NAMES["Editor"]), ("Pack", "PackManifestSchema.json"))}
 STUDIO_BINARIES = ("HarkenStudio.exe", "HarkenStudio.app/Contents/MacOS/HarkenStudio")
 EDIT_PATHS = {"/content/metadata/name", "/content/name"}
 
@@ -172,6 +176,38 @@ def tree_summary(root: Path, pack_binary_root: Path | None = None) -> dict[str, 
     return result
 
 
+def released_contracts(tag: str) -> dict[str, dict[int, dict[str, Any]]]:
+    result = {}
+    for tree, layouts in RELEASED_TREE_LAYOUTS.items():
+        for directory, name in layouts:
+            manifest = revision_json(tag, f"{directory}/manifest.json")
+            if manifest is not None:
+                break
+        else:
+            raise ValueError(f"{tag}: {tree} manifest is missing")
+        schema_archive.validate_tree_manifest(tree, manifest)
+        result[tree] = {}
+        for version in manifest["published"]:
+            contract = revision_json(tag, f"{directory}/{version}/{name}")
+            if contract is None or schema_archive.source_version(tree, contract) != version:
+                raise ValueError(f"{tag}: {tree} generation {version} is missing or invalid")
+            result[tree][version] = contract
+    return result
+
+
+def released_tree_summary(tag: str) -> dict[str, Any]:
+    result = {}
+    for tree, contracts in released_contracts(tag).items():
+        generation = max(contracts)
+        result[tree] = {"generation": generation, "sha256": digest(canonical_bytes(contracts[generation]))}
+    with schema_root_at(tag, PACK_BINARY_ROOT_PATH) as pack_root:
+        pack = load_pack_binary(pack_root)
+    if pack:
+        result[PACK_BINARY] = {"generation": pack["currentVersion"],
+                               "sha256": files_digest(pack["published"][pack["currentVersion"]])}
+    return result
+
+
 def release_scope_config(revision: str) -> dict[str, list[str]]:
     config = revision_json(revision, RELEASE_SCOPE_CONFIG_PATH)
     if not config or config.get("scopeMapVersion") != 2:
@@ -302,10 +338,9 @@ def published_releases() -> dict[str, dict[str, Any]]:
         version = revision_bytes(tag, "VERSION")
         if version is None or not re.fullmatch(rb"\d+\.\d+\.\d+", version.strip()):
             raise ValueError(f"Published Studio version is missing or invalid: {tag}")
-        with schema_root_at(tag) as root, schema_root_at(tag, PACK_BINARY_ROOT_PATH) as pack_root:
-            releases[tag] = {"product": "HarkenStudio", "version": version.decode("utf-8").strip(),
-                             "gitCommit": run_git(["rev-parse", f"refs/tags/{tag}^{{commit}}"]).stdout.strip(),
-                             "trees": tree_summary(root, pack_root)}
+        releases[tag] = {"product": "HarkenStudio", "version": version.decode("utf-8").strip(),
+                         "gitCommit": run_git(["rev-parse", f"refs/tags/{tag}^{{commit}}"]).stdout.strip(),
+                         "trees": released_tree_summary(tag)}
     return releases
 
 
@@ -325,15 +360,13 @@ def release_schema_errors(root: Path, exclude_tag: str | None = None) -> list[st
     for tag in published_releases():
         if tag == exclude_tag:
             continue
-        with schema_root_at(tag) as previous_root:
-            for tree in TREE_NAMES:
-                previous = schema_archive.load_tree(tree, previous_root)
-                for version, published in previous["published"].items():
-                    if version not in current[tree]["published"]:
-                        errors.append(f"{tag}: Published {tree} generation {version} cannot be removed")
-                        continue
-                    target = current[tree]["published"][version]
-                    errors.extend(f"{tag} {tree}/{version}: {error}" for error in same_generation_errors(tree, published, target))
+        for tree, contracts in released_contracts(tag).items():
+            for version, published in contracts.items():
+                if version not in current[tree]["published"]:
+                    errors.append(f"{tag}: Published {tree} generation {version} cannot be removed")
+                    continue
+                target = current[tree]["published"][version]
+                errors.extend(f"{tag} {tree}/{version}: {error}" for error in same_generation_errors(tree, published, target))
     return errors
 
 
