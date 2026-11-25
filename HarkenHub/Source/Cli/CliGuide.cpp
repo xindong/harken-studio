@@ -51,8 +51,8 @@ QString writeGuides(QString* error)
         "Present the returned plan to the user; submit its opaque token with the identical options only after approval. "
         "Do not automatically accept a replacement token: file or option changes invalidate prior approval. "
         "Document acceptance is a separate user decision: show the complete current documents before submitting a legal acceptance token.</p>"
-        "<p>Hub keeps a temporary backup of the previous integration directory while installing or removing. If the operation fails or is interrupted, "
-        "<code>integrations restore</code> puts that version back; after a successful operation the backup is deleted. "
+        "<p>If an integration update or removal fails or is interrupted, <code>integrations restore</code> can restore the previously installed package "
+        "only when Hub still has its backup. A successful update or removal normally deletes the temporary backup. "
         "Mutating integration commands require the game editor to be closed. Machine-wide installation/repair/uninstall can display the operating system's administrator prompt.</p>");
     if (chinese) {
         QFile introduction(QStringLiteral(":/Resources/cli-ai-reference.zh_CN.html"));

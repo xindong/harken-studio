@@ -27,10 +27,11 @@
 <tr><td>登记本地 Studio 构建</td><td><code>versions add-local --path "D:\Build\HarkenStudio.exe"</code></td></tr>
 <tr><td>查看工程集成关系</td><td><code>integrations list</code></td></tr>
 <tr><td>查找已安装的 Unity 集成包</td><td><code>integrations locate --path "D:\UnityGame"</code></td></tr>
-<tr><td>切换主题</td><td><code>settings set --key theme --value dark</code>；浅色为 <code>light</code>，跟随系统为 <code>system</code></td></tr>
+<tr><td>让主题跟随系统</td><td><code>settings set --key theme --value system</code>。固定浅色用 <code>light</code>，固定深色用 <code>dark</code>。</td></tr>
 <tr><td>检查更新</td><td><code>updates check --product hub</code>；检查 Studio 时改用 <code>studio</code></td></tr>
 <tr><td>读取最近活动日志</td><td><code>diagnostics logs --lines 100</code></td></tr>
 </table>
+<p>在 Windows 上，如果还没选过主题，Hub 默认使用深色。升级后会沿用你保存的选择。运行 <code>settings get</code>，可在 <code>data.theme</code> 中查看当前主题偏好。</p>
 <p>表中每条命令前都要加上 <code>.\HarkenHub.exe --cli</code>。<code>BUILD_ID</code> 要替换为版本列表返回的构建编号。CLI 修改设置后会保存；已经打开的 Hub 窗口需要重新打开才能读取界面与语言改动。自动更新选项会立即通知后台服务；开启时若服务未运行，会启动后台服务，不打开 Hub 窗口。</p>
 <h2>第三步：先看清单，再确认改动</h2>
 <p>安装、修复、移除文件分两步。第一次运行命令，Hub 返回变更计划和 <code>confirmation</code> 确认标识。读完计划，确认无误后，在原命令后补上 <code>--confirm TOKEN</code> 再执行。</p>
@@ -43,7 +44,7 @@
 <p>修改前请关闭 Unity。阅读返回的文件变更清单，再使用相同参数加上确认标识执行，安装或更新所选集成包。</p>
 <p>请使用可信发布来源的完整集成包。Hub 通过 <code>package.json</code> 识别包并检查文件操作；安装成功不代表 Unity 编译、播放和目标平台测试已通过，这些仍需在 Unity 中验证。</p>
 <p>安装或升级会用所选集成包整体替换安装目录，你在目录内做的修改或新增的文件不会保留，请用版本控制保存需要的修改。集成的设置保存在安装目录之外，不受影响。</p>
-<p>移除集成包可用 <code>integrations remove --path "D:\UnityGame"</code>。安装或移除失败、中断后，可用 <code>integrations restore --path "D:\UnityGame"</code> 恢复之前安装的版本。两者都采用先检查再确认的方式。</p>
+<p>移除集成包可用 <code>integrations remove --path "D:\UnityGame"</code>。如果更新或移除失败、意外中断，且 Hub 仍保有原先已安装版本的备份，可用 <code>integrations restore --path "D:\UnityGame"</code> 恢复该版本。两条命令都需要先检查清单，再确认执行。</p>
 <h2>更新、协议与出错后的处理</h2>
 <p>如果在 Studio 安装程序开始前关闭 CLI，恢复流程可能取消这次待执行的安装。请查看 <code>updates status</code>，再重新审阅并确认更新。</p>
 <p>工程命令成功但包含 <code>data.warnings</code> 时，工程改动已经保存，请阅读警告，不要重复移除。修改语言也会通知正在运行的后台服务。新建工程时，父目录必须已经存在。</p>
