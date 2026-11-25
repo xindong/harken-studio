@@ -143,8 +143,12 @@ TEST(SingleInstanceGuard, SetupShutdownWaitsForExitAndRejectsAnUnresponsiveInsta
     }
 }
 
-TEST(SingleInstanceGuard, SetupCanCloseTheInstalledFirstUseDialogWithoutRecordingConsent)
+TEST(SingleInstanceGuard, SetupClosesOnlyAVisibleInstalledFirstUseDialogWithoutRecordingConsent)
 {
+    USEROBJECTFLAGS stationFlags{};
+    ASSERT_TRUE(GetUserObjectInformationW(GetProcessWindowStation(), UOI_FLAGS,
+                                          &stationFlags, sizeof(stationFlags), nullptr));
+    const bool interactive = (stationFlags.dwFlags & WSF_VISIBLE) != 0;
     QTemporaryDir profile;
     ASSERT_TRUE(profile.isValid());
     const QString key = uniqueKey("setup-first-use");
@@ -162,9 +166,16 @@ TEST(SingleInstanceGuard, SetupCanCloseTheInstalledFirstUseDialogWithoutRecordin
     EXPECT_FALSE(HarkenSetup::requestHubExit(pipe.c_str(), L"C:\\Other\\HarkenHub.exe"));
     ASSERT_EQ(child.state(), QProcess::Running);
     const auto expectedPath = QDir::toNativeSeparators(executable).toStdWString();
-    EXPECT_TRUE(HarkenSetup::requestHubExit(pipe.c_str(), expectedPath));
-    EXPECT_TRUE(child.waitForFinished(5000));
-    EXPECT_EQ(child.exitCode(), 0);
+    ASSERT_EQ(HarkenSetup::requestHubExit(pipe.c_str(), expectedPath), interactive);
+    if (interactive) {
+        ASSERT_TRUE(child.waitForFinished(5000));
+        EXPECT_EQ(child.exitCode(), 0);
+    } else {
+        EXPECT_FALSE(child.waitForFinished(100));
+        EXPECT_EQ(child.state(), QProcess::Running);
+        child.kill();
+        ASSERT_TRUE(child.waitForFinished(5000));
+    }
     EXPECT_FALSE(QFileInfo::exists(profile.filePath(QStringLiteral("consents.json"))));
 
     child.start(executable, {QStringLiteral("--setup-shutdown-fixture"), key,
