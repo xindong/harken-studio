@@ -30,10 +30,11 @@ html{color-scheme:light dark}body{font:16px/1.7 system-ui,sans-serif;max-width:9
 <tr><td>Register a local Studio build</td><td><code>versions add-local --path "D:/Build/HarkenStudio.exe"</code></td></tr>
 <tr><td>See integration projects</td><td><code>integrations list</code></td></tr>
 <tr><td>Find installed Unity integration</td><td><code>integrations locate --path "D:/UnityGame"</code></td></tr>
-<tr><td>Switch theme</td><td><code>settings set --key theme --value dark</code> (also <code>light</code> or <code>system</code>)</td></tr>
+<tr><td>Follow the system theme</td><td><code>settings set --key theme --value system</code> (use <code>light</code> or <code>dark</code> for a fixed theme)</td></tr>
 <tr><td>Check updates</td><td><code>updates check --product hub</code> (or <code>studio</code>)</td></tr>
 <tr><td>Read window and background activity logs</td><td><code>diagnostics logs --lines 100</code></td></tr>
 </table>
+<p>On Windows, Hub uses the dark theme until you choose a theme. Upgrades keep your saved choice. Run <code>settings get</code> to see the current preference in <code>data.theme</code>.</p>
 <p>Put <code>./HarkenHub.exe --cli</code> before each command in the table. Replace <code>BUILD_ID</code> with an ID returned by <code>versions list</code> or <code>versions server</code>. CLI setting changes are saved. Reopen an already running Hub window to reload appearance and language choices. Automatic update choices notify the background service immediately; enabling one starts the service if needed, without opening a Hub window.</p>
 <h2>3. Review before changing files</h2>
 <p>Installing, repairing or removing files uses two steps. First run the command without confirmation. Hub returns a plan and a <code>confirmation</code> token. Read the plan, then repeat the same command with <code>--confirm TOKEN</code>.</p>
@@ -46,7 +47,7 @@ html{color-scheme:light dark}body{font:16px/1.7 system-ui,sans-serif;max-width:9
 <p>Keep Unity closed during changes. Read the returned plan, then repeat the command with its confirmation token to install or update the selected integration package.</p>
 <p>Use a complete package from a trusted release. Hub identifies it using <code>package.json</code> and checks the file operation. A successful installation does not mean the package has passed Unity compilation, playback or target-platform tests; run those checks in Unity.</p>
 <p>Installing or updating replaces the whole installation directory with the selected package. Changes or files you added inside it are not kept; keep needed edits in version control. Integration settings are stored outside the installation directory and are kept.</p>
-<p>To remove an integration, use <code>integrations remove --path "D:/UnityGame"</code>. If an installation or removal fails or is interrupted, <code>integrations restore --path "D:/UnityGame"</code> puts back the version that was installed before. Both follow the same review process.</p>
+<p>To remove an integration, use <code>integrations remove --path "D:/UnityGame"</code>. If an update or removal fails or is interrupted and Hub still has a backup of the previously installed package, use <code>integrations restore --path "D:/UnityGame"</code> to restore it. Both commands require review and confirmation.</p>
 <h2>5. Updates, agreements and errors</h2>
 <p>If you close the CLI before a Studio installer starts, the pending attempt may be canceled during recovery. Check <code>updates status</code>, then review and confirm the update again.</p>
 <p>If a successful project command includes <code>data.warnings</code>, the project change is already saved. Read the warning; do not repeat a completed removal. A language change also updates the running background service. New projects require an existing parent directory.</p>

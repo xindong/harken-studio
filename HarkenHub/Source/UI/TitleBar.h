@@ -3,6 +3,8 @@
 #include <QPushButton>
 #include <QWidget>
 
+class QLabel;
+
 namespace harken::hub {
 
 enum class TitleBarButtonKind {
@@ -41,7 +43,12 @@ public:
     TitleBarButton* maximizeButton() const { return btnMaximize_; }
     TitleBarButton* closeButton() const { return btnClose_; }
 
+protected:
+    bool event(QEvent* event) override;
+
 private:
+    void refreshIcon();
+    QLabel* logo_ = nullptr;
     TitleBarButton* btnMinimize_ = nullptr;
     TitleBarButton* btnMaximize_ = nullptr;
     TitleBarButton* btnClose_ = nullptr;

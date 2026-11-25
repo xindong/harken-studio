@@ -97,11 +97,13 @@ ShortcutMigrationResult migrateShellShortcuts(const QString& taskbarIconPath)
     const std::wstring nativeExecutable = QDir::toNativeSeparators(executable).toStdWString();
     for (const KNOWNFOLDERID* folder : {&FOLDERID_Desktop, &FOLDERID_PublicDesktop,
                                       &FOLDERID_Programs, &FOLDERID_CommonPrograms,
-                                      &FOLDERID_RoamingAppData}) {
-        if (!taskbarIconPath.isEmpty() && folder != &FOLDERID_RoamingAppData)
+                                      &FOLDERID_RoamingAppData, &FOLDERID_ImplicitAppShortcuts}) {
+        const bool taskbarShortcut = folder == &FOLDERID_RoamingAppData || folder == &FOLDERID_ImplicitAppShortcuts;
+        if (!taskbarIconPath.isEmpty() && !taskbarShortcut)
             continue;
         PWSTR folderPath = nullptr;
-        if (FAILED(SHGetKnownFolderPath(*folder, KF_FLAG_DEFAULT, nullptr, &folderPath)))
+        const DWORD flags = folder == &FOLDERID_ImplicitAppShortcuts ? KF_FLAG_DONT_VERIFY : KF_FLAG_DEFAULT;
+        if (FAILED(SHGetKnownFolderPath(*folder, flags, nullptr, &folderPath)))
             continue;
         QString root = QString::fromWCharArray(folderPath);
         CoTaskMemFree(folderPath);
@@ -112,11 +114,14 @@ ShortcutMigrationResult migrateShellShortcuts(const QString& taskbarIconPath)
                                  ? QStringLiteral("/Programs") : QStringLiteral("/Desktop"));
             if (folder == &FOLDERID_RoamingAppData)
                 root = testRoot;
+            if (folder == &FOLDERID_ImplicitAppShortcuts)
+                root = testRoot + QStringLiteral("/Microsoft/Internet Explorer/Quick Launch/User Pinned/ImplicitAppShortcuts");
         }
 #endif
         if (folder == &FOLDERID_RoamingAppData)
             root += QStringLiteral("/Microsoft/Internet Explorer/Quick Launch/User Pinned/TaskBar");
-        const bool recursive = folder == &FOLDERID_Programs || folder == &FOLDERID_CommonPrograms;
+        const bool recursive = folder == &FOLDERID_Programs || folder == &FOLDERID_CommonPrograms
+                            || folder == &FOLDERID_ImplicitAppShortcuts;
         QDirIterator shortcuts(root, {QStringLiteral("*.lnk")}, QDir::Files,
                                recursive ? QDirIterator::Subdirectories : QDirIterator::NoIteratorFlags);
         while (shortcuts.hasNext()) {
@@ -171,7 +176,7 @@ ShortcutMigrationResult migrateShellShortcuts(const QString& taskbarIconPath)
                         qWarning() << "Cannot set the Hub shortcut identity:" << shortcut.filePath();
                 }
             }
-            if (folder == &FOLDERID_RoamingAppData && !taskbarIconPath.isEmpty() &&
+            if (taskbarShortcut && !taskbarIconPath.isEmpty() &&
                 SUCCEEDED(link->GetIconLocation(iconPath, MAX_PATH, &iconIndex))) {
                 const QString currentIcon = normalized(QString::fromWCharArray(iconPath));
                 const QString managedRoot = normalized(userDataDir() + QStringLiteral("/shell-icons"));
@@ -195,7 +200,7 @@ ShortcutMigrationResult migrateShellShortcuts(const QString& taskbarIconPath)
             properties.Reset();
             file.Reset();
             link.Reset();
-            if (folder != &FOLDERID_RoamingAppData &&
+            if (!taskbarShortcut &&
                 shortcut.fileName() == QStringLiteral("Harken Studio Hub.lnk")) {
                 const QString renamed = shortcut.dir().filePath(QStringLiteral("Harken Hub.lnk"));
                 if (!QFileInfo::exists(renamed)) {

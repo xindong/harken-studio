@@ -1,6 +1,8 @@
 #include "UI/TitleBar.h"
 
+#include <QEvent>
 #include <QHBoxLayout>
+#include <QLabel>
 #include <QPainter>
 #include <QStyle>
 #include <QStyleOptionButton>
@@ -86,10 +88,24 @@ TitleBar::TitleBar(QWidget* parent)
 {
     setObjectName(QStringLiteral("TitleBarWidget"));
     setFixedHeight(36);
+    setAttribute(Qt::WA_StyledBackground);
 
     auto* layout = new QHBoxLayout(this);
-    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setContentsMargins(12, 0, 0, 0);
     layout->setSpacing(0);
+    logo_ = new QLabel(this);
+    logo_->setObjectName(QStringLiteral("titleBarLogo"));
+    logo_->setFixedSize(18, 18);
+    logo_->setAttribute(Qt::WA_TransparentForMouseEvents);
+    auto* caption = new QLabel(window()->windowTitle(), this);
+    caption->setObjectName(QStringLiteral("titleBarLabel"));
+    caption->setAttribute(Qt::WA_TransparentForMouseEvents);
+    connect(window(), &QWidget::windowTitleChanged, caption, &QLabel::setText);
+    connect(window(), &QWidget::windowIconChanged, this, &TitleBar::refreshIcon);
+    refreshIcon();
+    layout->addWidget(logo_);
+    layout->addSpacing(8);
+    layout->addWidget(caption);
     layout->addStretch();
 
     btnMinimize_ = new TitleBarButton(TitleBarButtonKind::Minimize, this);
@@ -102,6 +118,18 @@ TitleBar::TitleBar(QWidget* parent)
     layout->addWidget(btnMinimize_);
     layout->addWidget(btnMaximize_);
     layout->addWidget(btnClose_);
+}
+
+void TitleBar::refreshIcon()
+{
+    logo_->setPixmap(window()->windowIcon().pixmap(logo_->size(), devicePixelRatioF()));
+}
+
+bool TitleBar::event(QEvent* event)
+{
+    if (event->type() == QEvent::DevicePixelRatioChange && logo_)
+        refreshIcon();
+    return QWidget::event(event);
 }
 
 void TitleBar::setMaximized(bool maximized)

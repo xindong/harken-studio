@@ -135,6 +135,9 @@ TEST_F(ShellShortcutTest, MigrationPreservesUserChoicesAndIsIdempotent)
     const QString legacy = QCoreApplication::applicationDirPath() + QStringLiteral("/HarkenStudioHub.exe");
     const QString arguments = QStringLiteral("--edit-integration --harken-project=\"C:/Project With Spaces/Game.hsp\"");
     const QString pinned = pinnedRoot + QStringLiteral("/Harken Studio Hub.lnk");
+    const QString implicitGroup = QDir(pinnedRoot).absoluteFilePath(QStringLiteral("../ImplicitAppShortcuts/hub-group"));
+    ASSERT_TRUE(QDir().mkpath(implicitGroup));
+    const QString running = implicitGroup + QStringLiteral("/Harken Hub.lnk");
     const QString custom = pinnedRoot + QStringLiteral("/Custom.lnk");
     const QString other = pinnedRoot + QStringLiteral("/Other.lnk");
     const QString desktop = directory.filePath(QStringLiteral("Desktop/Harken Hub.lnk"));
@@ -144,6 +147,7 @@ TEST_F(ShellShortcutTest, MigrationPreservesUserChoicesAndIsIdempotent)
     ASSERT_TRUE(otherFile.open(QIODevice::WriteOnly));
     otherFile.close();
     save(pinned, legacy, legacy, arguments);
+    save(running, executable, directory.filePath(QStringLiteral("shell-icons/previous.ico")), arguments);
     save(custom, executable, customIcon, arguments);
     save(desktop, executable, executable, arguments);
     save(other, otherExecutable, customIcon, arguments);
@@ -159,6 +163,7 @@ TEST_F(ShellShortcutTest, MigrationPreservesUserChoicesAndIsIdempotent)
     ASSERT_FALSE(path.isEmpty());
     ASSERT_EQ(harken::hub::migrateShellShortcuts(path), harken::hub::ShortcutMigrationResult::Complete);
     EXPECT_EQ(read(pinned), (QStringList{executable, path, arguments}));
+    EXPECT_EQ(read(running), (QStringList{executable, path, arguments}));
     EXPECT_EQ(read(custom), (QStringList{executable, customIcon, arguments}));
     EXPECT_EQ(read(desktop), (QStringList{executable, executable, arguments}));
     ASSERT_TRUE(desktopLink.open(QIODevice::ReadOnly));
