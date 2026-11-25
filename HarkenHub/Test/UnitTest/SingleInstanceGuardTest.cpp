@@ -13,6 +13,8 @@
 #ifdef Q_OS_WIN
 #include "Setup/SetupHubShutdown.h"
 #include "UI/ConsentDialog.h"
+#include "UI/HubIcons.h"
+#include <QApplication>
 #include <QDir>
 #include <QFileInfo>
 #include <QProcessEnvironment>
@@ -36,6 +38,7 @@ int runSetupShutdownFixture(const QStringList& arguments)
     if (!guard.isPrimary())
         return 2;
     if (arguments.contains(QStringLiteral("--first-use"))) {
+        harken::hub::HubIcons::installApplicationIcon(*qApp);
         QDialog otherWindow;
         if (arguments.contains(QStringLiteral("--second-window"))) {
             otherWindow.setWindowTitle(QStringLiteral("Harken Hub"));
