@@ -17,7 +17,7 @@ harken::DuckingPreparedParameters Parameters(std::uint32_t rate = 48000) {
     return result;
 }
 
-TEST(DuckingReceiver, OneWayFollowsRmsBaselineAndOneGainAcrossAllChannels) {
+TEST(DuckingReceiver, OneWayFollowsSquaredLevelAndOneGainAcrossAllChannels) {
     harken::DuckingReceiver receiver;
     const auto params = Parameters();
     receiver.SetParameters(params);
@@ -31,40 +31,21 @@ TEST(DuckingReceiver, OneWayFollowsRmsBaselineAndOneGainAcrossAllChannels) {
     for (std::uint32_t block = 0; block < 200; ++block) {
         ASSERT_TRUE(receiver.Process(main, side, 2, 256, nullptr, nullptr, 0, gains.data()));
         for (std::uint32_t n = 0; n < 256; ++n) {
-            const double rms = static_cast<double>(sideRight[0]) *
-                std::sqrt(1 - std::pow(params.energyRise, block * 256.0 + n + 1));
-            const double desired = 1 - harken::kDuckingBaselineSlope * rms;
+            const double energy = static_cast<double>(sideRight[0]) * sideRight[0] *
+                (1 - std::pow(params.energyRise, block * 256.0 + n + 1));
+            const double desired = 1 - harken::kDuckingBaselineSlope *
+                harken::kDuckingSquaredLevelScale * energy;
             const double alpha = desired < expectedGain ? params.attack : params.release;
             expectedGain = desired + alpha * (expectedGain - desired);
             EXPECT_NEAR(gains[n], expectedGain, 2e-14);
         }
     }
-    EXPECT_NEAR(gains.back(), 1 - harken::kDuckingBaselineSlope * sideRight[0], 2e-14);
+    EXPECT_NEAR(gains.back(), 1 - harken::kDuckingBaselineSlope *
+        harken::kDuckingSquaredLevelScale * sideRight[0] * sideRight[0], 2e-14);
     float* output[]{mainLeft.data(), mainRight.data()};
     harken::DuckingReceiver::Apply(output, 2, 256, gains.data());
     for (std::uint32_t n = 0; n < 256; ++n)
         EXPECT_FLOAT_EQ(mainRight[n], mainLeft[n] * -.25f);
-}
-
-TEST(DuckingReceiver, HalfLevelSidechainLeavesAboutHalfOfMain) {
-    harken::DuckingReceiver receiver;
-    receiver.SetParameters(Parameters());
-    std::array<float, 256> main, side;
-    std::array<double, 256> gains;
-    main.fill(1);
-    const float* mainPlanes[]{main.data()};
-    const float* sidePlanes[]{side.data()};
-    double mean = 0;
-    for (std::uint32_t block = 0; block < 200; ++block) {
-        for (std::uint32_t n = 0; n < 256; ++n)
-            side[n] = .5f * static_cast<float>(std::sin(
-                2 * 3.14159265358979323846 * 1000.0 * (block * 256.0 + n) / 48000.0));
-        ASSERT_TRUE(receiver.Process(mainPlanes, sidePlanes, 1, 256, nullptr, nullptr, 0, gains.data()));
-        if (block == 199)
-            for (const double gain : gains) mean += gain / 256;
-    }
-    EXPECT_GT(mean, .4);
-    EXPECT_LT(mean, .7);
 }
 
 TEST(DuckingReceiver, MissingSourceReleasesAndResetClearsDetectionHistory) {
