@@ -1,7 +1,11 @@
 #include <QtTranslation>
 
 static const char* const kReleaseNotesStrings[] = {
+    QT_TRANSLATE_NOOP("HubReleaseNotes", "On Windows, Hub updates taskbar shortcuts after an upgrade or a change of installation folder. They show the current icon and launch Hub from its current location."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "Add and refresh standalone Studio versions that use the legacy self-test, including Studio 0.9.4."),
+    QT_TRANSLATE_NOOP("HubReleaseNotes", "On Windows, Hub starts in Dark mode until you choose a theme in Settings. The title bar shows the Hub icon and name, and upgrading refreshes the running Hub's taskbar icon."),
+    QT_TRANSLATE_NOOP("HubReleaseNotes", "Windows setup can upgrade Hub while its first-use license agreement is open. The upgraded Hub still asks for consent on the next launch."),
+    QT_TRANSLATE_NOOP("HubReleaseNotes", "Unity CLI output and version 4 operation reports use package_preflight (formerly sdk_preflight), compare_package (compare_sdk), install_package (install_sdk) and inspect_installed_package (inspect_installed_sdk). Unreal operation steps use migrate_package (migrate_sdk), validate_package (validate_sdk), apply_package (apply_sdk) and remove_package (remove_sdk)."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "Support Unity Integration Packages identified by package.json without the retired integration manifest; check package files without pre-validating Unity target runtimes."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "Open the offline CLI user guide and AI command reference from a separate group in Settings, in English or Simplified Chinese."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "Use the new Hub icon consistently across light and dark themes, windows, the taskbar, tray, shortcuts, installer and update helper."),

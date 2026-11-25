@@ -1,35 +1,46 @@
 {
   "schemaVersion": 1,
-  "unreleased": [
-    {
-      "category": "improved",
-      "text": "Add and refresh standalone Studio versions that use the legacy self-test, including Studio 0.9.4."
-    },
-    {
-      "category": "improved",
-      "text": "On Windows, Hub starts in Dark mode until you choose a theme in Settings. The title bar shows the Hub icon and name, and upgrading refreshes the running Hub's taskbar icon."
-    },
-    {
-      "category": "improved",
-      "text": "Windows setup can upgrade Hub while its first-use license agreement is open. The upgraded Hub still asks for consent on the next launch."
-    },
-    {
-      "category": "improved",
-      "text": "Unity CLI output and version 4 operation reports use package_preflight (formerly sdk_preflight), compare_package (compare_sdk), install_package (install_sdk) and inspect_installed_package (inspect_installed_sdk). Unreal operation steps use migrate_package (migrate_sdk), validate_package (validate_sdk), apply_package (apply_sdk) and remove_package (remove_sdk)."
-    }
-  ],
+  "unreleased": [],
   "excludedPullRequests": {
     "versionOnly": [],
-    "noHubUserChange": [74, 85, 140, 276, 321],
+    "noHubUserChange": [74, 85, 140, 276, 321, 333, 351],
     "archivedReleases": [18, 20, 30, 31, 34, 49, 56, 59, 61, 63, 70, 76, 80, 82, 98, 100, 102, 105, 109, 113, 117, 121, 133, 136, 141, 143, 144, 147, 148]
   },
   "releases": [
     {
+      "version": "0.2.5",
+      "date": "2026-11-26",
+      "pullRequests": [],
+      "contributors": ["liuxin2-sys"],
+      "changes": [
+        {
+          "category": "improved",
+          "text": "On Windows, Hub updates taskbar shortcuts after an upgrade or a change of installation folder. They show the current icon and launch Hub from its current location."
+        }
+      ]
+    },
+    {
       "version": "0.2.4",
-      "date": "2026-11-17",
-      "pullRequests": [277, 284, 320, 322, 326, 328],
+      "date": "2026-11-26",
+      "pullRequests": [277, 284, 320, 322, 326, 328, 332, 334, 337, 341, 346, 368, 369, 371],
       "contributors": ["liuxin2-sys", "Probus-XD"],
       "changes": [
+        {
+          "category": "improved",
+          "text": "Add and refresh standalone Studio versions that use the legacy self-test, including Studio 0.9.4."
+        },
+        {
+          "category": "improved",
+          "text": "On Windows, Hub starts in Dark mode until you choose a theme in Settings. The title bar shows the Hub icon and name, and upgrading refreshes the running Hub's taskbar icon."
+        },
+        {
+          "category": "improved",
+          "text": "Windows setup can upgrade Hub while its first-use license agreement is open. The upgraded Hub still asks for consent on the next launch."
+        },
+        {
+          "category": "improved",
+          "text": "Unity CLI output and version 4 operation reports use package_preflight (formerly sdk_preflight), compare_package (compare_sdk), install_package (install_sdk) and inspect_installed_package (inspect_installed_sdk). Unreal operation steps use migrate_package (migrate_sdk), validate_package (validate_sdk), apply_package (apply_sdk) and remove_package (remove_sdk)."
+        },
         {
           "category": "improved",
           "text": "Support Unity Integration Packages identified by package.json without the retired integration manifest; check package files without pre-validating Unity target runtimes."

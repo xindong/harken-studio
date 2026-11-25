@@ -23,6 +23,41 @@
 
 namespace harken::hub {
 
+namespace {
+
+bool hasHubIdentity(IPropertyStore* properties)
+{
+    PROPVARIANT identity{};
+    const HRESULT result = properties->GetValue(PKEY_AppUserModel_ID, &identity);
+    const bool matches = SUCCEEDED(result) && identity.vt == VT_LPWSTR &&
+                         QString::fromWCharArray(identity.pwszVal) ==
+                             QString::fromWCharArray(hubAppUserModelId);
+    PropVariantClear(&identity);
+    return matches;
+}
+
+QString missingHubTarget(IShellLinkW* link)
+{
+    wchar_t path[MAX_PATH]{};
+    if (link->GetPath(path, MAX_PATH, nullptr, SLGP_RAWPATH) != S_OK)
+        return {};
+    const QString target = QDir::fromNativeSeparators(QString::fromWCharArray(path));
+    const QFileInfo info(target);
+    if (!info.isAbsolute() ||
+        (info.fileName().compare(QStringLiteral("HarkenHub.exe"), Qt::CaseInsensitive) != 0 &&
+         info.fileName().compare(QStringLiteral("HarkenStudioHub.exe"), Qt::CaseInsensitive) != 0))
+        return {};
+    if (GetFileAttributesW(path) != INVALID_FILE_ATTRIBUTES)
+        return {};
+    const DWORD error = GetLastError();
+    if (error != ERROR_FILE_NOT_FOUND && error != ERROR_PATH_NOT_FOUND)
+        return {};
+    wchar_t volume[MAX_PATH]{};
+    return GetVolumePathNameW(path, volume, MAX_PATH) ? target : QString();
+}
+
+}
+
 QString saveShellIcon(const QIcon& icon, const QString& root)
 {
     const auto sizes = icon.availableSizes();
@@ -94,6 +129,9 @@ ShortcutMigrationResult migrateShellShortcuts(const QString& taskbarIconPath)
         return QDir::cleanPath(QDir::fromNativeSeparators(path)).toCaseFolded();
     };
     const QSet<QString> targets{normalized(executable), normalized(legacy)};
+    const QString applicationDir = QCoreApplication::applicationDirPath();
+    const bool installedHub = normalized(registeredHubInstallDir()) == normalized(applicationDir);
+    const std::wstring nativeDirectory = QDir::toNativeSeparators(applicationDir).toStdWString();
     const std::wstring nativeExecutable = QDir::toNativeSeparators(executable).toStdWString();
     for (const KNOWNFOLDERID* folder : {&FOLDERID_Desktop, &FOLDERID_PublicDesktop,
                                       &FOLDERID_Programs, &FOLDERID_CommonPrograms,
@@ -122,11 +160,14 @@ ShortcutMigrationResult migrateShellShortcuts(const QString& taskbarIconPath)
             root += QStringLiteral("/Microsoft/Internet Explorer/Quick Launch/User Pinned/TaskBar");
         const bool recursive = folder == &FOLDERID_Programs || folder == &FOLDERID_CommonPrograms
                             || folder == &FOLDERID_ImplicitAppShortcuts;
-        QDirIterator shortcuts(root, {QStringLiteral("*.lnk")}, QDir::Files,
+        const QDir::Filters filters = taskbarShortcut && installedHub ? QDir::Files | QDir::System : QDir::Files;
+        QDirIterator shortcuts(root, {QStringLiteral("*.lnk")}, filters,
                                recursive ? QDirIterator::Subdirectories : QDirIterator::NoIteratorFlags);
         while (shortcuts.hasNext()) {
             const QFileInfo shortcut(shortcuts.next());
-            if (!targets.contains(normalized(shortcut.symLinkTarget())))
+            const QString target = normalized(shortcut.symLinkTarget());
+            const bool currentTarget = targets.contains(target);
+            if (!currentTarget && !(taskbarShortcut && installedHub))
                 continue;
             Microsoft::WRL::ComPtr<IShellLinkW> link;
             if (FAILED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
@@ -138,19 +179,38 @@ ShortcutMigrationResult migrateShellShortcuts(const QString& taskbarIconPath)
             const std::wstring path = QDir::toNativeSeparators(shortcut.filePath()).toStdWString();
             if (FAILED(file->Load(path.c_str(), STGM_READWRITE)))
                 continue;
+            Microsoft::WRL::ComPtr<IPropertyStore> properties;
+            const bool matchesIdentity = SUCCEEDED(link.As(&properties)) && hasHubIdentity(properties.Get());
+            QString oldTarget;
+            if (!currentTarget) {
+                if (!matchesIdentity)
+                    continue;
+                oldTarget = missingHubTarget(link.Get());
+                if (oldTarget.isEmpty())
+                    continue;
+                wchar_t workingDirectory[MAX_PATH]{};
+                if (FAILED(link->GetWorkingDirectory(workingDirectory, MAX_PATH)))
+                    continue;
+                if (normalized(QString::fromWCharArray(workingDirectory)) ==
+                        normalized(QFileInfo(oldTarget).absolutePath()) &&
+                    FAILED(link->SetWorkingDirectory(nativeDirectory.c_str())))
+                    continue;
+            }
             bool changed = false;
-            if (normalized(shortcut.symLinkTarget()) == normalized(legacy)) {
+            if (target == normalized(legacy) || !oldTarget.isEmpty()) {
                 if (FAILED(link->SetPath(nativeExecutable.c_str())))
                     continue;
                 changed = true;
             }
             wchar_t iconPath[MAX_PATH]{};
             int iconIndex = 0;
-            if (SUCCEEDED(link->GetIconLocation(iconPath, MAX_PATH, &iconIndex)) &&
-                normalized(QString::fromWCharArray(iconPath)) == normalized(legacy)) {
-                if (FAILED(link->SetIconLocation(nativeExecutable.c_str(), iconIndex)))
-                    continue;
-                changed = true;
+            if (SUCCEEDED(link->GetIconLocation(iconPath, MAX_PATH, &iconIndex))) {
+                const QString previousIcon = normalized(QString::fromWCharArray(iconPath));
+                if (previousIcon == normalized(legacy) || (!oldTarget.isEmpty() && previousIcon == normalized(oldTarget))) {
+                    if (FAILED(link->SetIconLocation(nativeExecutable.c_str(), iconIndex)))
+                        continue;
+                    changed = true;
+                }
             }
             wchar_t description[MAX_PATH]{};
             if (SUCCEEDED(link->GetDescription(description, MAX_PATH)) &&
@@ -159,15 +219,9 @@ ShortcutMigrationResult migrateShellShortcuts(const QString& taskbarIconPath)
                     continue;
                 changed = true;
             }
-            Microsoft::WRL::ComPtr<IPropertyStore> properties;
-            if (!taskbarIconPath.isEmpty() && SUCCEEDED(link.As(&properties))) {
+            if (!taskbarIconPath.isEmpty() && properties && !matchesIdentity) {
                 PROPVARIANT identity{};
-                const HRESULT read = properties->GetValue(PKEY_AppUserModel_ID, &identity);
-                const bool matches = SUCCEEDED(read) && identity.vt == VT_LPWSTR &&
-                                     QString::fromWCharArray(identity.pwszVal) ==
-                                         QString::fromWCharArray(hubAppUserModelId);
-                PropVariantClear(&identity);
-                if (!matches && SUCCEEDED(InitPropVariantFromString(hubAppUserModelId, &identity))) {
+                if (SUCCEEDED(InitPropVariantFromString(hubAppUserModelId, &identity))) {
                     const HRESULT written = properties->SetValue(PKEY_AppUserModel_ID, identity);
                     PropVariantClear(&identity);
                     if (SUCCEEDED(written) && SUCCEEDED(properties->Commit()))
@@ -194,7 +248,7 @@ ShortcutMigrationResult migrateShellShortcuts(const QString& taskbarIconPath)
                 qWarning() << "Cannot update the Hub shortcut:" << shortcut.filePath();
                 continue;
             }
-            if (changed && !taskbarIconPath.isEmpty())
+            if (changed && (!taskbarIconPath.isEmpty() || !oldTarget.isEmpty()))
                 SHChangeNotify(SHCNE_UPDATEITEM, SHCNF_PATHW | SHCNF_FLUSHNOWAIT,
                                path.c_str(), nullptr);
             properties.Reset();

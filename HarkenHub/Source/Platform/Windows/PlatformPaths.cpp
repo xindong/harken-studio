@@ -25,7 +25,7 @@ QString studioBinaryRelativePath()
     return QStringLiteral("HarkenStudio.exe");
 }
 
-QString hubInstallDir()
+QString registeredHubInstallDir()
 {
 #ifdef HARKEN_HUB_TEST_OVERRIDES
     const QString overridePath =
@@ -37,12 +37,13 @@ QString hubInstallDir()
     const QSettings machine(
         QStringLiteral("HKEY_LOCAL_MACHINE\\Software\\HarkenSound\\HarkenHub"),
         QSettings::NativeFormat);
-    const QString registered =
-        machine.value(QStringLiteral("InstallDir")).toString();
-    if (!registered.isEmpty())
-        return QDir::fromNativeSeparators(registered);
+    return QDir::fromNativeSeparators(machine.value(QStringLiteral("InstallDir")).toString());
+}
 
-    return QCoreApplication::applicationDirPath();
+QString hubInstallDir()
+{
+    const QString registered = registeredHubInstallDir();
+    return registered.isEmpty() ? QCoreApplication::applicationDirPath() : registered;
 }
 
 QString userDataDir()
