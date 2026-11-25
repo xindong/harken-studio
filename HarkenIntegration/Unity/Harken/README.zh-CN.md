@@ -4,7 +4,7 @@
 
 `com.harken.core` 把 Harken 游戏音频引擎集成到 Unity 中。
 
-文档：ONLINE_DOCUMENTATION_URL_PENDING
+文档：https://harkenstudio.xd.com/document/0.10.0/zh/unity-%E9%9B%86%E6%88%90.html
 
 ## 产品定位
 

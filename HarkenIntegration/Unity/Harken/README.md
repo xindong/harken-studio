@@ -4,7 +4,7 @@
 
 `com.harken.core` integrates the Harken game-audio engine into Unity.
 
-Documentation: ONLINE_DOCUMENTATION_URL_PENDING
+Documentation: https://harkenstudio.xd.com/document/0.10.0/en/unity-integration.html
 
 ## What It Is
 
