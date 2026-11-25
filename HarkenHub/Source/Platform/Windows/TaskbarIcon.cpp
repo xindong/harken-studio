@@ -76,11 +76,13 @@ TaskbarIcon::TaskbarIcon(QObject* parent)
 
 TaskbarIcon::~TaskbarIcon()
 {
-    qGuiApp->removeEventFilter(this);
-    qGuiApp->removeNativeEventFilter(this);
-    for (QWindow* window : QGuiApplication::allWindows()) {
-        if (window->isTopLevel() && window->handle())
-            setShellProperties(reinterpret_cast<HWND>(window->winId()), {});
+    if (qGuiApp) {
+        qGuiApp->removeEventFilter(this);
+        qGuiApp->removeNativeEventFilter(this);
+        for (QWindow* window : QGuiApplication::allWindows()) {
+            if (window->isTopLevel() && window->handle())
+                setShellProperties(reinterpret_cast<HWND>(window->winId()), {});
+        }
     }
     for (HICON handle : handles_)
         DestroyIcon(handle);

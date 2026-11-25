@@ -12,6 +12,13 @@
 
 #ifdef Q_OS_WIN
 #include "Setup/SetupHubShutdown.h"
+#include "UI/ConsentDialog.h"
+#include "UI/HubIcons.h"
+#include <QApplication>
+#include <QDir>
+#include <QFileInfo>
+#include <QProcessEnvironment>
+#include <QTemporaryDir>
 #endif
 
 #include <atomic>
@@ -30,6 +37,30 @@ int runSetupShutdownFixture(const QStringList& arguments)
     SingleInstanceGuard guard(arguments.value(2));
     if (!guard.isPrimary())
         return 2;
+    if (arguments.contains(QStringLiteral("--first-use"))) {
+        harken::hub::HubIcons::installApplicationIcon(*qApp);
+        QDialog otherWindow;
+        if (arguments.contains(QStringLiteral("--second-window"))) {
+            otherWindow.setWindowTitle(QStringLiteral("Harken Hub"));
+            otherWindow.show();
+        }
+        HWND overlay = CreateWindowExW(WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW, L"STATIC", L"", WS_POPUP,
+                                       0, 0, 1, 1, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+        if (!overlay)
+            return 2;
+        ShowWindow(overlay, SW_SHOWNOACTIVATE);
+        QObject::connect(&guard, &SingleInstanceGuard::activationRequested, [](const QStringList& received) {
+            if (received == QStringList{QStringLiteral("--quit")})
+                QCoreApplication::quit();
+        });
+        QTimer::singleShot(0, []() {
+            std::fputs("ready\n", stdout);
+            std::fflush(stdout);
+        });
+        const bool accepted = harken::hub::ConsentDialog::requestConsent(nullptr, harken::hub::ConsentDialog::hubDocumentId());
+        DestroyWindow(overlay);
+        return accepted ? 3 : 0;
+    }
     QObject::connect(&guard, &SingleInstanceGuard::activationRequested,
                      QCoreApplication::instance(), [&](const QStringList& received) {
         if (received == QStringList{QStringLiteral("--quit")} &&
@@ -110,6 +141,53 @@ TEST(SingleInstanceGuard, SetupShutdownWaitsForExitAndRejectsAnUnresponsiveInsta
             EXPECT_GE(elapsed.elapsed(), 100);
         }
     }
+}
+
+TEST(SingleInstanceGuard, SetupClosesOnlyAVisibleInstalledFirstUseDialogWithoutRecordingConsent)
+{
+    USEROBJECTFLAGS stationFlags{};
+    ASSERT_TRUE(GetUserObjectInformationW(GetProcessWindowStation(), UOI_FLAGS,
+                                          &stationFlags, sizeof(stationFlags), nullptr));
+    const bool interactive = (stationFlags.dwFlags & WSF_VISIBLE) != 0;
+    QTemporaryDir profile;
+    ASSERT_TRUE(profile.isValid());
+    const QString key = uniqueKey("setup-first-use");
+    const std::wstring pipe = (QStringLiteral("\\\\.\\pipe\\") + key).toStdWString();
+    const QString executable = QCoreApplication::applicationFilePath();
+    auto environment = QProcessEnvironment::systemEnvironment();
+    environment.insert(QStringLiteral("QT_QPA_PLATFORM"), QStringLiteral("windows"));
+    environment.insert(QStringLiteral("HARKEN_HUB_USER_ROOT"), profile.path());
+    QProcess child;
+    child.setProcessEnvironment(environment);
+    child.start(executable, {QStringLiteral("--setup-shutdown-fixture"), key, QStringLiteral("--first-use")});
+    ASSERT_TRUE(child.waitForStarted(5000));
+    ASSERT_TRUE(child.waitForReadyRead(5000));
+    ASSERT_TRUE(child.readAllStandardOutput().contains("ready"));
+    EXPECT_FALSE(HarkenSetup::requestHubExit(pipe.c_str(), L"C:\\Other\\HarkenHub.exe"));
+    ASSERT_EQ(child.state(), QProcess::Running);
+    const auto expectedPath = QDir::toNativeSeparators(executable).toStdWString();
+    ASSERT_EQ(HarkenSetup::requestHubExit(pipe.c_str(), expectedPath), interactive);
+    if (interactive) {
+        ASSERT_TRUE(child.waitForFinished(5000));
+        EXPECT_EQ(child.exitCode(), 0);
+    } else {
+        EXPECT_FALSE(child.waitForFinished(100));
+        EXPECT_EQ(child.state(), QProcess::Running);
+        child.kill();
+        ASSERT_TRUE(child.waitForFinished(5000));
+    }
+    EXPECT_FALSE(QFileInfo::exists(profile.filePath(QStringLiteral("consents.json"))));
+
+    child.start(executable, {QStringLiteral("--setup-shutdown-fixture"), key,
+                             QStringLiteral("--first-use"), QStringLiteral("--second-window")});
+    ASSERT_TRUE(child.waitForStarted(5000));
+    ASSERT_TRUE(child.waitForReadyRead(5000));
+    ASSERT_TRUE(child.readAllStandardOutput().contains("ready"));
+    EXPECT_FALSE(HarkenSetup::requestHubExit(pipe.c_str(), expectedPath));
+    EXPECT_EQ(child.state(), QProcess::Running);
+    child.kill();
+    EXPECT_TRUE(child.waitForFinished(5000));
+    EXPECT_FALSE(QFileInfo::exists(profile.filePath(QStringLiteral("consents.json"))));
 }
 #endif
 

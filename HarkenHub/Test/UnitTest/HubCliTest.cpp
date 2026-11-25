@@ -7,6 +7,10 @@
 #include "Platform/PlatformPaths.h"
 #include "Platform/ProcessScan.h"
 #include "ZipTestUtils.h"
+#ifdef Q_OS_WIN
+#include "Platform/UserSession.h"
+#include "Platform/Windows/UserSessionReady.h"
+#endif
 
 #include <QDir>
 #include <QDateTime>
@@ -155,6 +159,40 @@ TEST_F(HubCliTest, PersistentChoicesAndRegistrationRemovalDoNotModifyProjectFile
     EXPECT_TRUE(consents["hub"].toBool());
     EXPECT_TRUE(consents["studio"].toBool());
 }
+
+#ifdef Q_OS_WIN
+TEST_F(HubCliTest, GuiQuitDuringFirstUseLeavesConsentPendingOnNextLaunch)
+{
+    environment.insert("QT_QPA_PLATFORM", "offscreen");
+    environment.insert("HARKEN_HUB_SHELL_ROOT", directory.filePath("shell"));
+    for (int launch = 0; launch < 2; ++launch) {
+        SCOPED_TRACE(launch);
+        harken::hub::UserSessionReady ready;
+        QString error;
+        ASSERT_TRUE(ready.create(harken::hub::currentUserId(), &error)) << error.toStdString();
+        QProcess hub;
+        hub.setProcessEnvironment(environment);
+        hub.start(QStringLiteral(HARKEN_HUB_CLI_FIXTURE), {"--update-ready-event", ready.name()});
+        ASSERT_TRUE(hub.waitForStarted(5000));
+        const HANDLE process = OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION,
+                                           FALSE, static_cast<DWORD>(hub.processId()));
+        ASSERT_NE(process, nullptr);
+        const auto closeProcess = qScopeGuard([process] { CloseHandle(process); });
+        ASSERT_TRUE(ready.wait(process, 10000, &error)) << error.toStdString();
+
+        QProcess quit;
+        quit.setProcessEnvironment(environment);
+        quit.start(QStringLiteral(HARKEN_HUB_CLI_FIXTURE), {"--quit"});
+        ASSERT_TRUE(quit.waitForFinished(5000));
+        ASSERT_EQ(quit.exitStatus(), QProcess::NormalExit);
+        ASSERT_EQ(quit.exitCode(), 0);
+        ASSERT_TRUE(hub.waitForFinished(5000));
+        EXPECT_EQ(hub.exitStatus(), QProcess::NormalExit);
+        EXPECT_EQ(hub.exitCode(), 0);
+        EXPECT_FALSE(QFileInfo::exists(directory.filePath("user/consents.json")));
+    }
+}
+#endif
 
 TEST_F(HubCliTest, ConcurrentClientsPreserveIndependentConsentsAndBuildRegistrations)
 {
