@@ -11,39 +11,50 @@ and this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The package ships two native library editions: Release (`HarkenEngine`) and Development (`HarkenEngineDev`).
 - **Project Settings > Harken > Project > Native Library** selects the edition. *Automatic* uses Development in the Editor and in Development Builds, and Release otherwise; *Release* and *Development* force one edition everywhere. Restart Unity after changing it.
-- The Game view **Mute Audio** toggle now also mutes Harken output, with a short fade.
+- The Game view **Mute Audio** toggle now also mutes Harken output, with a short fade. `HarkenEngine.SetHostOutputMute` does the same from code.
+- `PackBootstrapSession.SetLanguageAsync` switches the language of a running session. Loaded Actions switch together, or not at all.
+- `PackBootstrap.StartLevelAsync` starts a session and prepares the Actions of the first level together. On Windows it opens the audio device while the Actions load. `VnDeviceMode.VN_DEVICE_REAL_BACKGROUND` selects this device mode for custom hosts.
+- `Tools~/publish_packs.py` publishes Packs in a smaller or faster form: individually compressed Packs, one ZIP archive per platform, or resident Packs for Windows. Directory sources recognize all three; `PackBootstrap.StartArchive` starts from a ZIP archive.
+- `HarkenSpatialSource.SetValue` sets a Variable, by number or by Label, for sounds played on that source.
+- `HarkenAudioSystem.RuntimeRecreationRequired` and `HarkenEngine.QueryRuntimeFault` report the first fault after which the engine needs a new session (`RuntimeFaultInfo`, `VN_NOTIFY_RUNTIME_RECREATE_REQUIRED`).
+- `VN_OUT_OF_MEMORY` reports a failed allocation that does not end the session.
 - Startup refuses a native library whose ABI major version does not match the managed bindings.
 
 ### Changed
 
-- Remote communication, snapshot and Monitor APIs are available only with the Development edition (`HARKEN_ENGINE_DEV`). Release builds compile without them.
+- Remote communication, snapshot and Monitor features are available only with the Development edition (`HARKEN_ENGINE_DEV`). With the Release edition, the public remote communication methods return `VN_CAPABILITY_UNAVAILABLE`.
+- Packs, Actions, Action firings, emitters and Variables no longer have configurable limits; the engine grows its storage as needed. **Max Voices** is 0 in new projects, which lets the engine grow up to 16,384; a stored value is kept. **Max Packs**, **Max Actions**, **Max Simultaneous Playbacks**, **Max Emitters** and **Emitter Variable Slots** are removed from Project Settings.
+- The native libraries are named `HarkenEngine` and `HarkenEngineDev` instead of `HarkenCore`.
+- Posting an Action by name needs a session started through `PackBootstrap` or `HarkenAudioSystem`.
 - The package declares its Unity built-in module dependencies (Audio, JSONSerialize, UnityWebRequest), so they cannot be disabled while the package is installed.
 - New settings assets are created at `Assets/Resources/HarkenProjectSettings.asset` and `Assets/Editor/HarkenEditorProjectSettings.asset`. Existing settings assets keep working wherever they are.
-- `HarkenAudioSystem.ConfigurePlatformBeforeStartup` takes only the platform name, and `HarkenEditorCatalog.RefreshPlatform` no longer takes a platform ID.
-- Renamed to match the current Pack metadata terms, without forwarding aliases:
+- `HarkenAudioSystem.ConfigurePlatformBeforeStartup` has an overload that takes only the platform name.
+- `HarkenEditorCatalog.RefreshPlatformDirectory(root, platformName, basePlatform, language)` refreshes a directory by platform name. The released `RefreshPlatform` overload still takes a platform ID as its second argument. Code written against the unreleased four-argument, name-based overload should call `RefreshPlatformDirectory` to keep its platform and language selection.
+- Renamed to match the current Pack metadata terms. The previous names remain as obsolete forwarding members:
   - `HarkenAudioSystem.ConfigureCompanionSourceBeforeStartup` is now `ConfigurePackSourceBeforeStartup`, and `HarkenPackSource.CaptureCompanion` is now `CapturePackSource`.
   - `HarkenStreamingPackSource` is now `HarkenStreamingAssetsPackSource`.
   - `ActionResolved.PublicationGeneration` is now `NameTableGeneration`.
   - `HarkenPreparedPacks` is now `HarkenPreviewContent`, and `HarkenEditorCatalog.PreparedPacks` is now `PreviewContent`.
-- The Editor catalog is rebuilt from the Pack metadata. `GameplayPublication` is replaced by `ActionCatalog` (`ProjectId`, `Language`, `InitPackStableId`, `Actions`, `TryFindAction`, `GetPreparationOrder`), and `GameplayAction` by `ActionCatalogEntry` (`Name`, `ActionId`, `PackStableId`). The `Publication` properties of `HarkenEditorCatalog` and `HarkenPreviewContent` are now `Catalog`. `PackManifestEntry`, `PackIndexEntry`, `RetiredGameplayAction` and the catalog fields that never carried data are removed.
+  - `VN_ACTION_TARGET_PIECE` is now `VN_ACTION_TARGET_SEGMENT`.
+- The Editor catalog is rebuilt from the Pack metadata. `GameplayPublication` is replaced by `ActionCatalog` (`ProjectId`, `Language`, `InitPackStableId`, `Actions`, `TryFindAction`, `GetPreparationOrder`), and `GameplayAction` by `ActionCatalogEntry` (`Name`, `ActionId`, `PackStableId`). `HarkenEditorCatalog.Catalog` and `HarkenPreviewContent.Catalog` expose it. `GameplayPublication`, `GameplayAction`, `PackManifestEntry`, `PackIndexEntry`, `RetiredGameplayAction` and the `Publication` properties remain as obsolete views of the same catalog; fields that never carried data keep their empty values. `HarkenActionPreview.Action` and `HarkenActionWaveform.Action` return `ActionCatalogEntry`, which converts to `GameplayAction`.
 - The Action inspector says Pack directory, Refresh, Save binding and Action instead of publication terms. Bindings saved by earlier versions are not read; save them again.
 - Reading a Pack directory no longer compares file identities through platform system calls or rejects file names that differ only in letter case. It does not detect a Studio export in progress; a partially written Pack is rejected as invalid, so retry after the export finishes.
 
 ### Deprecated
 
-- `StreamSources`, `StreamByteSource`, `StreamReadCancellation` and `StreamSourceRequest`. Studio does not export streaming resources; these types will be removed in the next version.
-- `CurrentWorld` and `CurrentWorldLoadReport`. No product produces current-world envelopes; load Packs through `PackBootstrap`. They will be removed in the next version.
-- The low-level Pack API: `Packs.LoadPack`, `LoadInitPack`, `InspectInitPack`, `ActivateCanonicalPackSet` and `UnloadCanonicalPackSet`, `CanonicalPackMember`, and `PackByteProvider.LoadPack`. Use `PackBootstrap`; these will be removed in the next version.
+- `StreamSources`, `StreamByteSource`, `StreamReadCancellation` and `StreamSourceRequest`, which are new in this version and deprecated from the start. Studio does not export streaming resources.
+- `CurrentWorld` and `CurrentWorldLoadReport`. No product produces current-world envelopes; load Packs through `PackBootstrap`.
+- The low-level Pack API: `Packs.LoadPack`, `LoadInitPack`, `InspectInitPack`, `ActivateCanonicalPackSet` and `UnloadCanonicalPackSet`, `CanonicalPackMember`, `PackByteProvider.LoadPack` and `PackByteProvider.InspectInitPack`. Use `PackBootstrap`.
+- The renamed members listed above, `HarkenAudioSystem.ConfigurePlatformBeforeStartup(string, string)`, `HarkenEditorCatalog.RefreshPlatform`, `HarkenProjectSettings.PlatformId`, and the `HarkenProjectSettings` capacity properties and constants, which no longer have any effect.
 
 ### Removed
 
 - Offline documentation (`Documentation~`) and the suspended PlayableDemo sample. Documentation is now online; see `README.md`.
 - The project-specific `HarkenActions.g.cs` and `HarkenVariables.g.cs` symbol files are no longer shipped with the package.
 - The `harken-integration.json` manifest. The package is identified by `package.json` only.
-- Generated Variable symbols: `HarkenVariableId`, the `HarkenVariableReference` asset, `Values.RegisterGeneratedCatalog`, the `HarkenVariableId` overloads of `Values.SetValue` and `QueryVariable` and of `Emitter.QueryVariable`, and the Variable ID picker. `HarkenVariable` now identifies its Variable by name and project only; use Variable names or `VnObjectId` in code.
+- Generated Variable symbols: `HarkenVariableId`, the `HarkenVariableReference` asset, the `HarkenVariableId` overloads of `Values.SetValue` and `QueryVariable` and of `Emitter.QueryVariable`, and the Variable ID picker. `HarkenVariable` now identifies its Variable by name and project only; use Variable names or `VnObjectId` in code.
 - Entry points of the retired Pack manifest workflow, which only returned an unsupported result: `GameplayPublication.Parse`, `Read` and `ValidateInit`; `Packs.ReplacePack`; `PackBootstrapSession.Publication`; `HarkenPackSource.Capture`; `HarkenPreparedPacks.Capture`, `Create`, `SupplyPack`, `SetDemandProvider` and `SelectedManifestPath`; `HarkenAudioSystem.ConfigurePreparedSourceBeforeStartup`, `ConfigurePreparedBytesBeforeStartup`, `StartRuntime(HarkenPreparedPacks)` and `StartRuntime(string, Func<string, byte[]>, string)`; `HarkenEditorPreview.Prepare(HarkenPackSource, ulong[], bool)`; `HarkenEditorCatalog.Refresh(string, Func<string, byte[]>, string)`; and `HarkenWaveformPublication`.
-- `PackByteProvider.InspectInitPack` is no longer public.
-- The Platform Id project setting, `HarkenProjectSettings.PlatformId`, and the hidden Pack source and platform ID fields of `HarkenAudioSystem`. Select a platform directory by name.
+- The Platform Id project setting and the hidden Pack source and platform ID fields of `HarkenAudioSystem`. Select a platform directory by name.
 
 ### Fixed
 

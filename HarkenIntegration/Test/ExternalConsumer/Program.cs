@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using Harken;
 
@@ -55,7 +56,21 @@ internal static class Program
         RequireNoExcluded("types", integration.GetTypes().Select(type => type.Name));
         RequireNoExcluded("constants", typeof(VnConstants).GetFields(BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic).Select(field => field.Name));
         RequireNoExcluded("results", Enum.GetNames(typeof(VnResult)));
-        RequireNoExcluded("functions", integration.GetType("Harken.HarkenNative", true).GetMethods(BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic).Select(method => method.Name));
+        var functions = new List<string>();
+        foreach (MethodInfo method in integration.GetType("Harken.HarkenNative", true)
+                     .GetMethods(BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic))
+        {
+            var import = method.GetCustomAttribute<DllImportAttribute>();
+            string name = method.Name;
+            if (import != null)
+            {
+                functions.Add(import.EntryPoint ?? name);
+                if (method.IsPrivate && name.EndsWith("Native", StringComparison.Ordinal))
+                    name = name.Substring(0, name.Length - "Native".Length);
+            }
+            functions.Add(name);
+        }
+        RequireNoExcluded("functions", functions);
         Console.WriteLine("Separate, non-friend consumer and all generated type/constant visibility PASS.");
     }
 

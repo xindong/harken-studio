@@ -9,7 +9,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
-from contextlib import contextmanager, redirect_stdout
+from contextlib import redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -642,8 +642,18 @@ class BaselinePackageTest(unittest.TestCase):
     def setUp(self) -> None:
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
-        self.root = Path(self.directory.name)
+        self.root = Path(self.directory.name) / "package"
+        self.root.mkdir()
+        self.tag = Path(self.directory.name) / "tag"
         self.bundle = MODULE.schema_archive.build_bundle()
+        for tree, archive in self.bundle["trees"].items():
+            tree_root = self.tag / MODULE.SCHEMA_ROOT_PATH / MODULE.schema_archive.TREE_DIRECTORIES[tree]
+            tree_root.mkdir(parents=True)
+            (tree_root / "manifest.json").write_text(json.dumps(archive["manifest"]), encoding="utf-8")
+            for version in archive["manifest"]["published"]:
+                name = MODULE.SCHEMA_NAMES[tree]
+                (tree_root / str(version)).mkdir()
+                (tree_root / str(version) / name).write_bytes(self.bundle["installed"][f"{tree}/{version}/{name}"])
         binary = self.root / "HarkenStudio.exe"
         binary.write_bytes(b"released reader")
         for name, value in self.bundle["installed"].items():
@@ -661,12 +671,9 @@ class BaselinePackageTest(unittest.TestCase):
         (self.root / "package-manifest.json").write_text(json.dumps(self.manifest), encoding="utf-8")
 
     def check(self) -> tuple:
-        @contextmanager
-        def original_root(_):
-            yield REPO_ROOT / "HarkenStudio" / "Schema"
         with patch.object(MODULE, "run_git", return_value=SimpleNamespace(stdout="a" * 40)), \
-                patch.object(MODULE, "schema_root_at", original_root):
-            return MODULE.checked_baseline_package("release", self.root)
+                patch.object(MODULE, "REPO_ROOT", self.tag):
+            return MODULE.checked_baseline_package("WORKTREE", self.root)
 
     def test_old_generated_snapshot_identity_is_not_recomputed_by_new_codegen(self) -> None:
         manifest = copy.deepcopy(self.bundle["manifest"])

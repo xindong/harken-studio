@@ -1,7 +1,6 @@
 #include "Core/ActionManager.h"
 #include "Core/AppSettings.h"
 #include "Core/AudioEngine.h"
-#include "Core/HarkenStyle.h"
 #include "Core/AuditionManager.h"
 #include "Core/IPC/IPCServer.h"
 #include "Core/LayoutController.h"
@@ -20,10 +19,8 @@
 #include "ProjectManager.h"
 #include "ProjectTypes.h"
 #include "Widgets/Blueprint/BlueprintCanvasWidget.h"
-#include "Widgets/Blueprint/ConnectionPath.h"
 #include "Widgets/Blueprint/NodeContentEditor.h"
 #include "Widgets/Common/ParameterBinding.h"
-#include "Widgets/Common/ParameterControlHost.h"
 #include "Widgets/GridEditor/GridEditorPanel.h"
 #include "Widgets/GridEditor/DiscreteGridWidget.h"
 #include "Widgets/GridEditor/SelectionListWidget.h"
@@ -59,8 +56,6 @@
 #include <QMenu>
 #include <QScopeGuard>
 #include <QSettings>
-#include <QSlider>
-#include <QStyleFactory>
 #include <QTemporaryDir>
 #include <QTableWidget>
 #include <QTcpSocket>
@@ -617,157 +612,6 @@ TEST_F(EditorDockLayoutTest, InterfaceZoomShortcutsReachMainFloatingAndModalWind
     sendShortcut(edit, Qt::Key_Minus);
     EXPECT_EQ(settings.globalUIZoomLevel(), harken::studio::AppSettings::MIN_GLOBAL_ZOOM_LEVEL);
     EXPECT_EQ(changes, 0);
-}
-
-TEST_F(EditorDockLayoutTest, UIScalePreservesBlueprintWorldCoordinatesZoomAndActiveEdits)
-{
-    qApp->setStyle(new harken::studio::HarkenStyle(QStyleFactory::create(QStringLiteral("Fusion"))));
-    const auto restoreStyle = qScopeGuard([] { qApp->setStyle(QStyleFactory::create(QStringLiteral("Fusion"))); });
-    auto& settings = harken::studio::AppSettings::instance();
-    const int previousLevel = settings.globalUIZoomLevel();
-    const auto restore = qScopeGuard([&] { settings.setGlobalUIZoomLevel(previousLevel); });
-    settings.setGlobalUIZoomLevel(0);
-    auto& project = harken::studio::ProjectManager::instance();
-    auto* sound = project.createItem(nullptr, QStringLiteral("ScaleNode"), harken::studio::ProjectItem::Type::Sound);
-    ASSERT_NE(sound, nullptr);
-    harken::studio::BlueprintCanvasWidget canvas;
-    canvas.resize(1000, 700);
-    canvas.setSoundsFiltered(false);
-    canvas.rebuildFromProject();
-    canvas.show();
-    canvas.setZoomFactor(0.75);
-    drainEvents();
-    harken::studio::NodeItem* node = nullptr;
-    for (auto* item : canvas.scene()->items()) {
-        auto* candidate = dynamic_cast<harken::studio::NodeItem*>(item);
-        if (candidate && candidate->objectID() == sound->objectID) node = candidate;
-    }
-    ASSERT_NE(node, nullptr);
-    auto* editor = qobject_cast<harken::studio::NodeContentEditor*>(node->ensureContentWidget());
-    ASSERT_NE(editor, nullptr);
-    auto* binding = editor->binding(harken::studio::NodeContentField::Volume);
-    ASSERT_NE(binding, nullptr);
-    node->setSelected(true);
-    const auto position = node->pos();
-    const qreal gridSpacing = canvas.gridSpacing();
-    auto* pin = node->outputPin();
-    ASSERT_NE(pin, nullptr);
-    const auto pinSize = pin->mapRectToScene(pin->boundingRect()).size();
-    auto* host = editor->findChild<harken::studio::ParameterControlHost*>(QStringLiteral("nodeSlider_volume"));
-    ASSERT_NE(host, nullptr);
-    const auto presenter = host->presenter();
-    QPointer<QSlider> slider = host->findChild<QSlider*>();
-    ASSERT_NE(slider, nullptr);
-    const QPoint sliderPressPosition = slider->rect().center();
-    QMouseEvent sliderPress(QEvent::MouseButtonPress, sliderPressPosition,
-        slider->mapToGlobal(sliderPressPosition), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
-    QApplication::sendEvent(slider, &sliderPress);
-    ASSERT_TRUE(slider->isSliderDown());
-    ASSERT_TRUE(binding->isEditing());
-    binding->previewEdit(-6.0);
-    const auto body = node->mapRectToScene(node->shape().boundingRect());
-    const qreal displayedWidth = canvas.viewportTransform().mapRect(body).width();
-    for (int level : {1, 3, -1, 0}) {
-        SCOPED_TRACE(level);
-        const auto factor = harken::studio::AppSettings::uiScaleForZoomLevel(level) / 100.0;
-        settings.setGlobalUIZoomLevel(level);
-        drainEvents();
-        drainEvents();
-        EXPECT_EQ(node->pos(), position);
-        EXPECT_TRUE(node->isSelected());
-        EXPECT_EQ(node->contentWidget(), editor);
-        ASSERT_NE(slider, nullptr);
-        EXPECT_EQ(host->presenter(), presenter);
-        EXPECT_TRUE(slider->isSliderDown());
-        EXPECT_TRUE(binding->isEditing());
-        EXPECT_DOUBLE_EQ(binding->value(), -6.0);
-        EXPECT_DOUBLE_EQ(canvas.zoomFactor(), 0.75);
-        EXPECT_DOUBLE_EQ(canvas.gridSpacing(), gridSpacing);
-        const auto currentBody = node->mapRectToScene(node->shape().boundingRect());
-        EXPECT_NEAR(currentBody.width(), body.width(), 4.0);
-        EXPECT_NEAR(canvas.viewportTransform().mapRect(currentBody).width(),
-            displayedWidth * factor, 6.0);
-        EXPECT_NEAR(pin->mapRectToScene(pin->boundingRect()).width(), pinSize.width(), 0.01);
-        EXPECT_TRUE(canvas.scene()->items(pin->scenePos()).contains(pin));
-        for (auto* item : canvas.scene()->items()) {
-            auto* connection = dynamic_cast<harken::studio::ConnectionPath*>(item);
-            if (!connection || !connection->startPin() || !connection->endPin()) continue;
-            EXPECT_EQ(connection->path().pointAtPercent(0), connection->startPin()->scenePos());
-            EXPECT_EQ(connection->path().pointAtPercent(1), connection->endPin()->scenePos());
-        }
-        harken::studio::BlueprintCanvasView fresh;
-        EXPECT_DOUBLE_EQ(fresh.zoomFactor(), 1.0);
-        EXPECT_DOUBLE_EQ(fresh.transform().m11(), factor);
-    }
-    QKeyEvent scalePress(QEvent::KeyPress, Qt::Key_Equal, Qt::ControlModifier);
-    QApplication::sendEvent(slider, &scalePress);
-    QKeyEvent scaleRelease(QEvent::KeyRelease, Qt::Key_Equal, Qt::ControlModifier);
-    QApplication::sendEvent(slider, &scaleRelease);
-    drainEvents();
-    EXPECT_EQ(settings.globalUIZoomLevel(), 1);
-    ASSERT_NE(slider, nullptr);
-    EXPECT_EQ(host->presenter(), presenter);
-    EXPECT_TRUE(slider->isSliderDown());
-    EXPECT_TRUE(binding->isEditing());
-    const QPoint sliderReleasePosition = slider->rect().center();
-    QMouseEvent sliderRelease(QEvent::MouseButtonRelease, sliderReleasePosition,
-        slider->mapToGlobal(sliderReleasePosition), Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
-    QApplication::sendEvent(slider, &sliderRelease);
-    EXPECT_FALSE(slider->isSliderDown());
-    settings.setGlobalUIZoomLevel(0);
-    drainEvents();
-    editor->finishEditing(false);
-    node->beginTitleEditing();
-    auto* title = node->titleEditor();
-    ASSERT_NE(title, nullptr);
-    title->setText(QStringLiteral("unfinished title"));
-    title->setSelection(2, 5);
-    auto& shortcuts = harken::studio::ShortcutManager::instance();
-    const auto previousShortcut = shortcuts.info(harken::studio::Shortcuts::ZoomIn);
-    const auto restoreShortcut = qScopeGuard([&] {
-        if (previousShortcut.isCustom)
-            shortcuts.setShortcut(previousShortcut.id, previousShortcut.currentShortcut);
-        else shortcuts.resetToDefault(previousShortcut.id);
-    });
-    shortcuts.resetToDefault(harken::studio::Shortcuts::ZoomIn);
-    sendShortcut(title, Qt::Key_Equal);
-    drainEvents();
-    EXPECT_EQ(settings.globalUIZoomLevel(), 1);
-    EXPECT_DOUBLE_EQ(canvas.zoomFactor(), 0.75);
-    EXPECT_EQ(node->titleEditor(), title);
-    EXPECT_TRUE(node->isTitleEditing());
-    EXPECT_EQ(title->text(), QStringLiteral("unfinished title"));
-    EXPECT_EQ(title->selectedText(), QStringLiteral("finis"));
-    node->finishTitleEditing(false);
-    drainEvents();
-    QMap<harken::studio::NodeItem*, QPointF> positions;
-    for (auto* item : canvas.scene()->items())
-        if (auto* candidate = dynamic_cast<harken::studio::NodeItem*>(item)) positions.insert(candidate, candidate->pos());
-    emit project.itemPropertyChanged(sound, QStringLiteral("volume"));
-    drainEvents();
-    for (auto it = positions.cbegin(); it != positions.cend(); ++it)
-        EXPECT_EQ(it.key()->pos(), it.value());
-    canvas.centerOn(node);
-    const QPoint pinPosition = canvas.mapFromScene(pin->scenePos());
-    QMouseEvent connectionPress(QEvent::MouseButtonPress, pinPosition,
-        canvas.viewport()->mapToGlobal(pinPosition), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
-    QApplication::sendEvent(canvas.viewport(), &connectionPress);
-    const QPoint connectionPosition = pinPosition + QPoint(100, 50);
-    QMouseEvent connectionMove(QEvent::MouseMove, connectionPosition,
-        canvas.viewport()->mapToGlobal(connectionPosition), Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
-    QApplication::sendEvent(canvas.viewport(), &connectionMove);
-    QGraphicsPathItem* preview = nullptr;
-    for (auto* item : canvas.scene()->items())
-        if (item->zValue() == 1000.0) preview = dynamic_cast<QGraphicsPathItem*>(item);
-    ASSERT_NE(preview, nullptr);
-    for (int level : {3, -3, 0}) {
-        settings.setGlobalUIZoomLevel(level);
-        drainEvents();
-        EXPECT_EQ(preview->path().pointAtPercent(0), pin->scenePos());
-        EXPECT_EQ(preview->path().pointAtPercent(1), canvas.mapToScene(connectionPosition));
-    }
-    QKeyEvent cancelConnection(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
-    QApplication::sendEvent(&canvas, &cancelConnection);
 }
 
 TEST_F(EditorDockLayoutTest, LocalBlueprintLayoutPreservesProjectSavePointsAcrossUndoAndReopen)

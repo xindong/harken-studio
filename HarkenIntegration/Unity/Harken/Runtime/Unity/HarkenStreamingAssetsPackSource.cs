@@ -40,4 +40,11 @@ namespace Harken.Unity
             }
         }
     }
+
+    [Obsolete("Use HarkenStreamingAssetsPackSource.")]
+    public static class HarkenStreamingPackSource
+    {
+        public static PackSource Create(string platformRoot, string language = null)
+            => HarkenStreamingAssetsPackSource.Create(platformRoot, language);
+    }
 }

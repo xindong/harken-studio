@@ -49,7 +49,7 @@ namespace Harken
         public VnResult Unload() => Packs.UnloadPack(this);
     }
 
-    [Obsolete("Use PackBootstrap. This low-level Pack API will be removed in the next version.")]
+    [Obsolete("Use PackBootstrap.")]
     public readonly struct CanonicalPackMember
     {
         public readonly ulong StableId;
@@ -96,7 +96,7 @@ namespace Harken
         private static readonly uint InspectReportSize =
             (uint)Marshal.SizeOf<VnInitPackInspectReport>();
 
-        [Obsolete("Use PackBootstrap. This low-level Pack API will be removed in the next version.")]
+        [Obsolete("Use PackBootstrap.")]
         public static unsafe VnResult ActivateCanonicalPackSet(
             CanonicalPackMember[] members, ulong setRevision,
             out VnCanonicalPackSetActivationReportV1 report,
@@ -196,7 +196,7 @@ namespace Harken
             }
         }
 
-        [Obsolete("Use PackBootstrap. This low-level Pack API will be removed in the next version.")]
+        [Obsolete("Use PackBootstrap.")]
         public static VnResult UnloadCanonicalPackSet(Pack initPack, ulong baseSetRevision,
             ulong unloadRevision)
         {
@@ -208,7 +208,7 @@ namespace Harken
             return ObserveMutation(HarkenNative.Vn_UnloadCanonicalPackSetV1(desc));
         }
 
-        [Obsolete("Use PackBootstrap. This low-level Pack API will be removed in the next version.")]
+        [Obsolete("Use PackBootstrap.")]
         public static unsafe VnResult LoadPack(string utf8Path, out Pack pack)
         {
             pack = default;
@@ -231,7 +231,7 @@ namespace Harken
 
         public static VnResult UnloadPack(Pack pack) => ObserveMutation(HarkenNative.Vn_UnloadPack(pack.Handle));
 
-        [Obsolete("Use PackBootstrap. This low-level Pack API will be removed in the next version.")]
+        [Obsolete("Use PackBootstrap.")]
         public static unsafe VnResult InspectInitPack(
             string utf8Path, out InitPackInspection inspection)
         {
@@ -260,7 +260,7 @@ namespace Harken
             }
         }
 
-        [Obsolete("Use PackBootstrap. This low-level Pack API will be removed in the next version.")]
+        [Obsolete("Use PackBootstrap.")]
         public static unsafe VnResult LoadInitPack(
             string utf8Path, string utf8ContainmentRoot, out Pack pack)
         {

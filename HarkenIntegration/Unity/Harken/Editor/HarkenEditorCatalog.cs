@@ -60,8 +60,15 @@ namespace Harken.Unity.Editor
     {
         private ActionCatalogSnapshot snapshot;
         private object sourceIdentity;
+#pragma warning disable 618
+        private GameplayPublication publication;
+#pragma warning restore 618
         public ActionCatalog Catalog => snapshot?.Catalog;
         public HarkenPreviewContent PreviewContent { get; private set; }
+        [Obsolete("Use PreviewContent.")]
+        public HarkenPreparedPacks PreparedPacks => PreviewContent?.PreparedPacks;
+        [Obsolete("Use Catalog.")]
+        public GameplayPublication Publication => publication ??= snapshot == null ? null : new GameplayPublication(snapshot);
         public string DirectoryPath { get; private set; }
         public VnResult LastResult { get; private set; } = VnResult.VN_CAPABILITY_UNAVAILABLE;
         public string Diagnostic { get; private set; } = "No Pack source is selected.";
@@ -69,7 +76,16 @@ namespace Harken.Unity.Editor
         public VnResult WaveformResult { get; private set; } = VnResult.VN_CAPABILITY_UNAVAILABLE;
         public string WaveformDiagnostic { get; private set; } = "No waveform is selected.";
 
-        public VnResult RefreshPlatform(string root, string platformName,
+        [Obsolete("Use RefreshPlatformDirectory.")]
+        public VnResult RefreshPlatform(string root, string platformName, string basePlatform)
+            => RefreshPlatformDirectory(root, platformName, basePlatform);
+
+        [Obsolete("Use RefreshPlatformDirectory.")]
+        public VnResult RefreshPlatform(string root, string platformId, string platformName,
+            string basePlatform, string language = null)
+            => RefreshPlatformDirectory(root, platformName, basePlatform, language);
+
+        public VnResult RefreshPlatformDirectory(string root, string platformName,
             string basePlatform, string language = null)
             => Refresh(Path.Combine(root ?? "", string.IsNullOrEmpty(platformName) ? basePlatform ?? "" : platformName), language);
 
@@ -137,6 +153,7 @@ namespace Harken.Unity.Editor
             if (result != VnResult.VN_OK) return Fail(result, error);
             bool keepExecution = Equals(sourceIdentity, identity) && next.SameExecution(snapshot);
             snapshot = next;
+            publication = null;
             sourceIdentity = identity;
             if (!keepExecution) PreviewContent = new HarkenPreviewContent(next);
             else PreviewContent.Snapshot.RefreshOrigin(next);
@@ -154,7 +171,7 @@ namespace Harken.Unity.Editor
         {
             ++Revision;
             if (PreviewContent != null) ++PreviewContent.PresentationRevision;
-            snapshot = null; PreviewContent = null; sourceIdentity = null; DirectoryPath = null;
+            snapshot = null; publication = null; PreviewContent = null; sourceIdentity = null; DirectoryPath = null;
             ResetWaveforms(null);
             LastResult = result; Diagnostic = error;
             WaveformResult = result; WaveformDiagnostic = error;
@@ -214,5 +231,13 @@ namespace Harken.Unity.Editor
             if (result == VnResult.VN_OK) samples = waveform.Source.GetMergedMinMax();
             return result;
         }
+    }
+
+    public static class HarkenEditorCatalogExtensions
+    {
+        [Obsolete("Use RefreshPlatformDirectory.")]
+        public static VnResult RefreshPlatform(this HarkenEditorCatalog catalog, string root,
+            string platformName, string basePlatform, string language)
+            => catalog.RefreshPlatformDirectory(root, platformName, basePlatform, language);
     }
 }

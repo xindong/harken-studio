@@ -25,6 +25,7 @@
 #include <QTreeWidgetItemIterator>
 
 #include <memory>
+#include <optional>
 
 using namespace harken::studio;
 
@@ -38,6 +39,17 @@ void ensureApp()
     static char* argv[] = {arg0, nullptr};
     static QApplication app(argc, argv);
 }
+
+class DesktopFocusIsolation : public QObject
+{
+public:
+    DesktopFocusIsolation() { qApp->installEventFilter(this); }
+    bool eventFilter(QObject* watched, QEvent* event) override
+    {
+        return event->type() == QEvent::WindowDeactivate && event->spontaneous()
+            && qobject_cast<SelectorWindow*>(watched);
+    }
+};
 
 SelectorWindow* selectPickerRow(uint32_t id)
 {
@@ -65,6 +77,7 @@ protected:
     void SetUp() override
     {
         ensureApp();
+        focusIsolation_.emplace();
         ASSERT_TRUE(tempDir_.isValid());
         ProjectConfig config;
         config.name = QStringLiteral("ObjectRefDropProject");
@@ -104,6 +117,7 @@ protected:
         return asset;
     }
 
+    std::optional<DesktopFocusIsolation> focusIsolation_;
     QTemporaryDir tempDir_;
     ProjectItem* masterBus_ = nullptr;
     ProjectItem* sound_ = nullptr;
@@ -177,9 +191,10 @@ TEST_F(ObjectRefDropTest, SharedPickerStaysOnScreenWithoutChangingItsOwner)
         ASSERT_TRUE(selector->isVisible());
         EXPECT_EQ(selector->screen(), screen);
         EXPECT_TRUE(available.contains(selector->frameGeometry()));
+        selector->resize(originalSize);
+        QApplication::processEvents();
         SelectorWindow::dismiss(&largeOwner);
         EXPECT_FALSE(selector->isVisible());
-        selector->resize(originalSize);
     }
 }
 

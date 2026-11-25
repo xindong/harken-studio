@@ -9,7 +9,7 @@ import zipfile
 import zlib
 
 
-# PackStorage in the Unity SDK applies the same bound before allocating.
+# PackStorage in the Unity integration applies the same bound before allocating.
 MAX_GZIP_MEMBER_BYTES = 16 * 1024 * 1024
 
 

@@ -1,21 +1,43 @@
 #include "Tooling/Harkenizer/Core/PackExportSelection.h"
 
-#include "AssetPipeline/PathUtils.h"
 #include "ProjectLanguageSemantics.h"
 #include "ProjectTypes.h"
+#include "ProjectUserData.h"
 
 #include <QDebug>
-#include <QDir>
-#include <QFile>
 #include <QFileInfo>
-#include <QJsonDocument>
-#include <QSettings>
 #include <QSet>
 #include <algorithm>
 #include <set>
 
 namespace harken::studio {
 namespace {
+
+bool readSelection(const QJsonObject& root, PackExportSelection& selection)
+{
+    if (!root.value(QStringLiteral("selectedPlatformIds")).isArray()
+        || !root.value(QStringLiteral("actionTargeting")).isArray()) return false;
+    PackExportSelection loaded;
+    loaded.currentPlatformId = root.value(QStringLiteral("currentPlatformId")).toString();
+    for (const auto& value : root.value(QStringLiteral("selectedPlatformIds")).toArray()) {
+        if (!value.isString()) return false;
+        loaded.selectedPlatformIds.append(value.toString());
+    }
+    for (const auto& value : root.value(QStringLiteral("actionTargeting")).toArray()) {
+        const auto row = value.toObject();
+        if (!row.value(QStringLiteral("allPlatforms")).isBool()
+            || !row.value(QStringLiteral("platformIds")).isArray()
+            || (row.contains(QStringLiteral("language")) && !row.value(QStringLiteral("language")).isString()))
+            return false;
+        for (const auto& platform : row.value(QStringLiteral("platformIds")).toArray())
+            if (!platform.isString()) return false;
+        auto entry = ActionPackTargeting::fromJson(row);
+        if (harken::studio::types::IsNull(entry.stableId)) return false;
+        loaded.actionTargeting.push_back(std::move(entry));
+    }
+    selection = std::move(loaded);
+    return true;
+}
 
 void reconcile(const ProjectData& project, PackExportSelection& selection)
 {
@@ -68,66 +90,26 @@ PackExportSelectionStore& PackExportSelectionStore::instance()
 void PackExportSelectionStore::openProject(const ProjectData& project)
 {
     closeProject();
-    settingsKey_ = QStringLiteral("PackExportSelection/%1").arg(project.projectId);
+    projectRoot_ = QFileInfo(project.projectPath).absolutePath();
     selection_.selectedPlatformIds = project.platformIds();
     selection_.currentPlatformId = project.platformIds().value(0);
-    QSettings settings(QSettings::defaultFormat(), QSettings::UserScope,
-                       QStringLiteral("HarkenSound"), QStringLiteral("HarkenStudio"));
-    const auto legacyPath = QDir(PathUtils::getDotCacheDir(QFileInfo(project.projectPath).absolutePath()))
-        .filePath(QStringLiteral("pack-export-selection.json"));
-    QByteArray bytes = settings.value(settingsKey_).toByteArray();
-    const bool migrate = !settings.contains(settingsKey_);
-    if (migrate) {
-        QFile file(legacyPath);
-        if (!file.open(QIODevice::ReadOnly)) return;
-        bytes = file.readAll();
-    }
-    const auto document = QJsonDocument::fromJson(bytes);
-    const auto root = document.object();
-    bool valid = document.isObject() && root.value(QStringLiteral("version")).toInt() == 1
-        && root.value(QStringLiteral("selectedPlatformIds")).isArray()
-        && root.value(QStringLiteral("actionTargeting")).isArray();
-    PackExportSelection loaded;
-    loaded.currentPlatformId = root.value(QStringLiteral("currentPlatformId")).toString();
-    for (const auto& value : root.value(QStringLiteral("selectedPlatformIds")).toArray()) {
-        if (!value.isString()) {
-            valid = false;
-            break;
-        }
-        loaded.selectedPlatformIds.append(value.toString());
-    }
-    for (const auto& value : root.value(QStringLiteral("actionTargeting")).toArray()) {
-        if (!valid) break;
-        const auto row = value.toObject();
-        if (!value.isObject() || !row.value(QStringLiteral("allPlatforms")).isBool()
-            || !row.value(QStringLiteral("platformIds")).isArray()
-            || (row.contains(QStringLiteral("language"))
-                && !row.value(QStringLiteral("language")).isString())) {
-            valid = false;
-            break;
-        }
-        for (const auto& platform : row.value(QStringLiteral("platformIds")).toArray())
-            valid = valid && platform.isString();
-        if (!valid) break;
-        auto entry = ActionPackTargeting::fromJson(row);
-        if (harken::studio::types::IsNull(entry.stableId)) {
-            valid = false;
-            break;
-        }
-        loaded.actionTargeting.push_back(std::move(entry));
-    }
-    if (!valid) {
-        if (migrate) QFile::remove(legacyPath);
-        return;
-    }
-    reconcile(project, loaded);
-    selection_ = std::move(loaded);
-    if (!migrate || save()) QFile::remove(legacyPath);
+    ProjectUserData::load(projectRoot_, QLatin1String(ProjectUserData::kPackExportSelection),
+        [&](const QJsonObject& data) {
+            if (!readSelection(data, selection_)) return false;
+            reconcile(project, selection_);
+            return true;
+        }, QStringLiteral("PackExportSelection/%1").arg(project.projectId));
+}
+
+void PackExportSelectionStore::relocateProject(const ProjectData& project)
+{
+    projectRoot_ = QFileInfo(project.projectPath).absolutePath();
+    save();
 }
 
 void PackExportSelectionStore::closeProject()
 {
-    settingsKey_.clear();
+    projectRoot_.clear();
     selection_ = {};
 }
 
@@ -145,23 +127,16 @@ void PackExportSelectionStore::setSelection(const ProjectData& project,
     save();
 }
 
-bool PackExportSelectionStore::save() const
+void PackExportSelectionStore::save() const
 {
-    if (settingsKey_.isEmpty()) return false;
+    if (projectRoot_.isEmpty()) return;
     QJsonArray targeting;
     for (const auto& row : selection_.actionTargeting) targeting.append(row.toJson());
-    const QJsonObject root{{QStringLiteral("version"), 1},
-        {QStringLiteral("currentPlatformId"), selection_.currentPlatformId},
-        {QStringLiteral("selectedPlatformIds"), QJsonArray::fromStringList(selection_.selectedPlatformIds)},
-        {QStringLiteral("actionTargeting"), targeting}};
-    const auto bytes = QJsonDocument(root).toJson(QJsonDocument::Compact);
-    QSettings settings(QSettings::defaultFormat(), QSettings::UserScope,
-                       QStringLiteral("HarkenSound"), QStringLiteral("HarkenStudio"));
-    settings.setValue(settingsKey_, bytes);
-    settings.sync();
-    if (settings.status() == QSettings::NoError) return true;
-    qWarning() << "Failed to save pack export selection:" << settingsKey_;
-    return false;
+    if (!ProjectUserData::write(projectRoot_, QLatin1String(ProjectUserData::kPackExportSelection), {
+            {QStringLiteral("currentPlatformId"), selection_.currentPlatformId},
+            {QStringLiteral("selectedPlatformIds"), QJsonArray::fromStringList(selection_.selectedPlatformIds)},
+            {QStringLiteral("actionTargeting"), targeting}}))
+        qWarning() << "Failed to save pack export selection:" << projectRoot_;
 }
 
 }

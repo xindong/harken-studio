@@ -12,19 +12,29 @@
 | 同源生成与分类 | 原生签名与远程通道同源，Unity 可见性独立分类 | 生成时检查遗漏或过期分类，托管可见性不改变原生操作及通道策略 | 一致 |
 | ABI 保真 | 原生与托管双侧证明布局一致 | 原生编译时与托管运行时均校验布局，提供独立合同验证 | 一致 |
 | 零 GC 热路径 | 被测热路径的调用线程托管分配为零 | 通过分配计量及正向分配对照验证；缺原生库时跳过，强制原生验证时视为失败 | 一致 |
-| 名称与稳定身份 | 名称和 GUID 均可公开调用，解析基于当前发布 | Action 使用发布清单绑定的独立目录，Variable 使用 Init 目录；支持项目与解析身份校验；退役名称可返回 `VN_GAMEPLAY_NAME_RETIRED`，旧名不自动作为别名 | 一致 |
-| Action 目录生命周期 | 目录与已激活的 Init、项目及 Action 归属一致 | 各语言清单共用 Init，目录由清单独立绑定；Content 加载、卸载与替换保留目录，Init 卸载清除目录；仍可读取旧二进制目录 | 一致 |
+| 名称与稳定身份 | 名称和 GUID 均可公开调用，解析基于当前 Pack | Action 名称来自已装载 Action Pack 的伴随 JSON，Variable 与 Label 名称来自 Init。按名查找未知 Action 返回 `VN_UNKNOWN_ID`。带预期名称与稳定 ID 的引用可识别已改名的 Action 并返回 `VN_GAMEPLAY_NAME_RETIRED` | 一致 |
+| Action 名称表生命周期 | 名称表与已激活的 Init、项目及 Action 归属一致 | 会话启动时按 Init 建立，Action Pack 装载、刷新与语言切换时更新，会话结束时清除；按名播放要求会话经 `PackBootstrap` 或 `HarkenAudioSystem` 启动 | 一致 |
 | AOT | 无运行时代码生成，库名编译时确定 | iOS 使用静态链接，其余平台按构建选择原生库；回调使用静态入口 | 一致 |
 | Unity 坐标边界 | 左手转右手、米制，Listener 与 Emitter 转换一致 | 两者共用无状态转换，已有坐标回归验证 | 一致 |
 | 托管状态归属 | 状态所有者与释放时机明确 | Unity owner 回收会话、回调、Pack 引用与目录状态；回调内关闭延迟到最外层 Update 返回 | 一致 |
 | 平台交付 | 按平台分槽，兼容动态库与 iOS 静态库 | 提供平台产物清单；Android 限 arm64-v8a，包含 Linux x86_64 槽 | 一致 |
 | 运行时精简构建 | 嵌入构建剔除工具、编辑器和测试 | 支持仅运行时构建与移动平台交叉编译 | 一致 |
 | 客人姿态 | 不夺取宿主的进程级音频会话 | iOS 会负责激活会话，但绝不反激活 | 偏差 |
-| Variable 统一写入 | 可选 Emitter 决定 Global / Emitter，结果由 Engine 决定 | `Values.SetValue` 支持 Variable 名称、GUID、typed 引用及数值、Label 名称、Label GUID；全局写入清除该 Variable 的全部局部覆盖 | 一致 |
+| Variable 统一写入 | 可选 Emitter 决定 Global / Emitter，结果由 Engine 决定 | `Values.SetValue` 支持 Variable 名称或 GUID，值可为数值、Label 名称或 Label GUID；空间声源的 `SetValue` 写入该声源的局部值；全局写入清除该 Variable 的全部局部覆盖 | 一致 |
 | Variable 消费范围 | 局部值归 Emitter，Bus 只读全局 | 同一 Emitter 的不同 Action、Play、Layer 共享局部值；路由不改变范围；无公开旧 setter、batch、SetLabel、Clear / ResetVariables 入口 | 一致 |
 | 调用顺序与生命周期 | 不缓存局部值或重排跨 scope 写入 | 同步提交，显式无效 Emitter 拒绝，组件销毁结束 Emitter 及其局部状态 | 一致 |
-| 示例交付 | 示例使用当前公开 API | 展示六类 Action、启动准备与 `Demo_Choice` Variable | 已实现 |
-| 集成安装校验 | 安装位置、身份和所有权可检查 | Hub 以集成包清单识别来源，支持 Packages 与允许的 Assets 子目录 | 已实现 |
+| 原生库版本 | 发行构建不含开发能力 | 随包提供正式版 `HarkenEngine` 与开发版 `HarkenEngineDev`；项目设置可选自动、正式或开发，自动时编辑器与 Development Build 使用开发版；ABI 主版本不一致时拒绝启动 | 已实现 |
+| 容量 | 运行期存储按需增长 | Pack、Action、firing、Emitter 与 Variable 不再有可配置上限；Max Voices 默认 0，按需增长至 16384；旧设置属性标记废弃且无效 | 已实现 |
+| Pack 读取形式 | 同一套启动与准备入口覆盖各交付形式 | 支持目录、StreamingAssets（含 Android）、自定义同步与异步 reader、TextAsset；目录来源识别逐包压缩、平台 ZIP 与 Windows 常驻三种发布形式 | 已实现 |
+| Pack 元数据 | 每个包版本只读取一个元数据版本 | 当前为 4；其他版本返回 `VN_BAD_PACK`，Pack 二进制版本由引擎校验 | 一致 |
+| 语言切换 | 会话内切换且不产生混合状态 | `SetLanguageAsync` 成组替换已装载的 Action，失败不改变任何内容；已在播放的声音保持原语言 | 已实现 |
+| 首关启动 | 启动与首关准备可并行 | `StartLevelAsync` 启动会话并准备首关 Action；Windows 在装载期间后台打开设备，默认组件启动同样提前打开设备 | 已实现 |
+| 故障恢复 | 首次故障可观察，恢复由宿主决定 | `RuntimeRecreationRequired` 与 `QueryRuntimeFault` 提供首次故障；`VN_OUT_OF_MEMORY` 单独出现时会话可继续 | 已实现 |
+| 编辑器静音 | Game 视图静音对 Harken 生效 | Mute Audio 以短淡变静音设备输出，混音与计时不受影响；代码可调用 `SetHostOutputMute` | 已实现 |
+| 旧接口延续 | 已发布且可用的公开接口改名后，旧名继续可用 | 旧名标 `[Obsolete]` 转发到新接口，不承诺移除版本；固定返回失败的旧清单入口与 `HarkenVariableId` 系列已移除；以非友元程序集编译旧用法防止回退 | 已实现 |
+| 远程通信可用范围 | 公开方法在两个原生库版本下都可编译 | 正式版返回 `VN_CAPABILITY_UNAVAILABLE`，开发版可用 | 已实现 |
+| 示例交付 | 随包不附示例 | 示例与离线文档已移出集成包 | 已实现 |
+| 集成安装校验 | 安装位置、身份和所有权可检查 | Hub 以 Unity 包清单识别来源，支持 Packages 与允许的 Assets 子目录；`harken-integration.json` 已移除 | 已实现 |
 | 宿主生命周期 | 暂停、恢复、关闭结果可观察，失败可显式重试 | `Suspend/Resume`、`SetSuspended` 与 `RuntimeEnded` 区分阶段结果；缺 Content 时保留可恢复会话，provider 异常返回 `VN_PACK_PROVIDER_FAILED` | 已实现 |
 
 表注：零 GC 结论限于被测调用线程热路径，不覆盖资源准备、全部字符串入口或音频线程安全。示例与合同验证不等同于生产接入或移动设备验收。
@@ -34,7 +44,7 @@
 | 项目 | 当前状态 |
 |---|---|
 | 产品范围 | 仅维护 Unity Integration，历史 Unreal 集成产品已移除 |
-| 产品版本 | Unity Integration 为 0.3.7，以 Unity 包清单为唯一版本维护源；独立制品与源码清单一致，Studio 随附版本以实际清单为准 |
+| 产品版本 | Unity Integration 的版本以 `package.json` 为准，独立制品与源码清单一致，Studio 随附版本以实际清单为准 |
 | 制品名称 | 内部制品为 `harken-integration-bundle`，独立下载为 `HarkenIntegrationBundle` |
 | 发布与门禁 | 集成包由 `Integration Artifact` 工作流组装交付，`PR Gate Integration` 执行质量门禁 |
 | 发布证据 | 新证据使用 `product=integration`，SBOM 组件名与核验记录产品名一致；既有证据保留原身份，不重写或迁移 |
@@ -42,6 +52,7 @@
 | Unity 身份 | 外层分发命名不改变 Unity 包标识、程序集、GUID 或工程安装位置 |
 | 运行库升级 | 游戏工程需更新集成包才能获得原生运行库修正，单独升级 Studio 不会替换游戏工程运行库 |
 | Schema 兼容 | Studio 0.9.2 的 Editor Schema 为 9、Pack Schema 为 4，与 0.9.1 一致；0.9.1 工程无需迁移，既有 Pack 不因升级而强制重打 |
+| 发布工具 | 随包提供 Python 发布工具，调用 StudioCLI 导出后生成逐包压缩、平台 ZIP 或 Windows 常驻发布物 |
 
 ## 命名与兼容边界
 
@@ -51,7 +62,7 @@ Harken 当前没有 SDK 产品。Unity Integration 是引擎集成产品，其�
 |---|---|
 | 当前源码与工具 | 手写托管 API 位于 `Runtime/API`，生成代码位于 `Runtime/Generated`，Unity 适配位于 `Runtime/Unity`；生成符号的可见性与托管投影策略位于 `Binding/binding_policy.json` |
 | Hub 当前模型 | 代码成员、方法、类型和 UI 对象使用 Integration；SQL 列 `sdkSourcePath`、`sdkInstallPath` 保持既有拼写，代码正名不触发数据库迁移 |
-| 旧版本发现与维护 | 保留 `HarkenSDK` 分发兼容副本、旧环境变量、`Assets/HarkenSDK`、旧备份目录、迁移日志和操作锁名称；旧 `Runtime/Sdk` 仅用于识别旧安装内容 |
+| 旧版本发现与维护 | 保留 `HarkenSDK` 分发兼容副本、旧环境变量、`Assets/HarkenSDK`、旧备份目录、迁移日志和操作锁名称 |
 | 公开接口与数据合同 | 保留公开字段 `sdkCatalogFingerprint`、`sdkSession`，以及既有 JSON 字段、操作步骤 ID 和报告字段；改名会涉及源码或数据消费者，不属于本次产品正名 |
 | 指纹 | 保留 `HARKEN-VARIABLE-SDK-CATALOG-V1` 的原始字节，内部标识符使用 API Catalog；改变域字符串会改变既有内容指纹 |
 | 工具兼容入口 | 当前参数使用 `--integration-root`、`HarkenIntegrationRoot`，继续接受旧参数与属性；已有资格证据的种类、字段和路径不重写 |

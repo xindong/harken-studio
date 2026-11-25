@@ -52,6 +52,7 @@ add_library(harkenizer_core STATIC
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/PlaybackReferenceValidation.cpp
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ProjectContract.cpp
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ProjectDataPolicy.cpp
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ProjectUserData.cpp
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ProjectDocument.cpp
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ProjectIndex.cpp
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ProjectInstance.cpp
@@ -149,6 +150,7 @@ add_library(harkenizer_core STATIC
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/PlaybackReferenceValidation.h
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ProjectContract.h
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ProjectDataPolicy.h
+    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ProjectUserData.h
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ProjectDocument.h
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ProjectIndex.h
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ProjectInstance.h

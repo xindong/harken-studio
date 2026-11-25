@@ -1,6 +1,3 @@
-#if HARKEN_NATIVE_DEVELOPMENT || (!HARKEN_NATIVE_RELEASE && (UNITY_EDITOR || DEVELOPMENT_BUILD))
-#define HARKEN_ENGINE_DEV
-#endif
 using System;
 using System.IO;
 using System.Runtime.CompilerServices;
@@ -17,6 +14,10 @@ namespace Harken.Unity
     {
         public const string ResourceName = "HarkenProjectSettings";
         public const uint DefaultMaxVoices = 0;
+        [Obsolete("Capacities grow on demand; this value has no effect.")] public const uint DefaultMaxPacks = 256;
+        [Obsolete("Capacities grow on demand; this value has no effect.")] public const uint DefaultMaxActions = 256;
+        [Obsolete("Capacities grow on demand; this value has no effect.")] public const uint DefaultMaxActionFirings = 256;
+        [Obsolete("Capacities grow on demand; this value has no effect.")] public const uint UnlimitedActionFirings = 256;
         internal const string ObsoleteRelativePackRoot = "Audio/GeneratedPacks";
 
         [SerializeField] private bool enableCommunicationInBuilds = true;
@@ -40,6 +41,12 @@ namespace Harken.Unity
         public string PlatformName => packPlatform ?? string.Empty;
         public string InitPack => string.IsNullOrEmpty(initPack) ? "Init.bytes" : initPack;
         public string PackDirectory => packDirectory ?? string.Empty;
+        [Obsolete("Capacities grow on demand; this value has no effect.")] public uint MaxPacks => 256;
+        [Obsolete("Capacities grow on demand; this value has no effect.")] public uint MaxActions => 256;
+        [Obsolete("Capacities grow on demand; this value has no effect.")] public uint MaxActionFirings => 256;
+        [Obsolete("Capacities grow on demand; this value has no effect.")] public uint MaxEmitters => 0;
+        [Obsolete("Capacities grow on demand; this value has no effect.")] public uint EmitterVariableSlots => 0;
+        [Obsolete("Platforms are selected by name; use PlatformName.")] public string PlatformId => string.Empty;
         public bool SuppressUnityAudio => suppressUnityAudio;
         public string[] PlayerExports => playerExports ?? Array.Empty<string>();
 
@@ -239,7 +246,6 @@ namespace Harken.Unity
             catch (IOException) { return false; }
         }
 
-#if HARKEN_ENGINE_DEV
         internal static VnResult StartCommunication(string projectName)
         {
             if (!CommunicationEnabled) return VnResult.VN_CAPABILITY_UNAVAILABLE;
@@ -252,7 +258,6 @@ namespace Harken.Unity
                 discoveryPort: settings != null ? settings.remoteDiscoveryPort : 0,
                 projectName: projectName);
         }
-#endif
 
 
         private static bool PathsEqual(string left, string right)

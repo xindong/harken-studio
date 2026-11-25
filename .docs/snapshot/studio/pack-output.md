@@ -142,7 +142,7 @@ GUI、IPC、CLI 会话导出和 CLI 已保存工程构建使用同一个 `Projec
 
 转换 key 包含源内容摘要、有效裁剪／循环、已启用 Source 淡入淡出的有效时长与曲线、量化到实际采样帧的调度偏移、实际采样率、格式及有效编码参数；Vorbis 另包含 quality、编码器版本、声道映射和 seek 粒度。无效果的设置及 PCM 的 quality 不改变 key；不含源 ID、预设 GUID 或平台 UUID。淡入淡出在源采样率下按裁剪两端处理，随后重采样并添加调度前置静音；与对象试听共用算法。打包、Converted 试听与 Convert 使用同一物化任务表，相同 key 的并发请求共用编码，等价转换跨平台复用。`platformCaches` 已退役，不生成逐资产转换 WAV。
 
-`builds.json` 不保存 units、counts、warnings、完整结果、平台配置副本、独立的媒体依赖历史或源摘要副本。名称、语言、统计、警告由当前计划推导，大小／时间由实际文件查询。Publisher 从这张状态表恢复产物显示，后续只维护内存，不再写 `pack-artifacts.json`。包勾选与 Export Platforms 保存到既有用户 QSettings 的 `PackExportSelection/<projectId>`，不作为构建缓存。
+`builds.json` 不保存 units、counts、warnings、完整结果、平台配置副本、独立的媒体依赖历史或源摘要副本。名称、语言、统计、警告由当前计划推导，大小／时间由实际文件查询。Publisher 从这张状态表恢复产物显示，后续只维护内存，不再写 `pack-artifacts.json`。包勾选与 Export Platforms 保存到工程内 `.user/pack-export-selection.json`，不作为构建缓存。
 
 导出波形成功写入后立即记录一次文件状态；请求内按绝对路径共用查询结果，保存包记录时复用该结果。构建状态有变化而需要落盘时，按仍有效的包引用回收波形状态，避免不同平台持有同一文件的互相过期副本。
 
@@ -161,7 +161,7 @@ GUI、IPC、CLI 会话导出和 CLI 已保存工程构建使用同一个 `Projec
 | 平台大小写改名 | 必要时通过 .harken-pack-rename-* 中转目录完成一次改名；不是打包暂存区 |
 | 转换回收 | 每次实际构建结束后、状态落盘前，按当前工程 Sound／平台／语言的有效源和转换设置推导所需 key，删除无用 .pcm／.vcm 及其遗留临时文件；不读音频载荷，不维护持久引用清单；删除失败只记日志、不重试 |
 | 旧缓存清理 | 仅未读到 version 3 的首次／旧状态构建，在保存 version 3 前移除 pack/targets、pack/sources.json、pack-build、pack-inputs、media/pack-derivatives、pack-artifacts.json 和 .vkd.source.json。已读到 version 3 就不再扫描；没有额外迁移标记，删除失败只记日志、不重试 |
-| 旧选择记录处理 | 读取旧 pack-export-selection.json 时，有效内容成功迁移到 QSettings 后删除，无效或版本不支持则直接清除 |
+| 打包选择 | 工程内 `.user/pack-export-selection.json` 保存个人选择。首次打开缺少此文件的工程时，优先从原有 QSettings 的 `PackExportSelection/<projectId>` 读取，其次读取工程旧缓存。写入成功后清理本工程的旧缓存文件，保留设置键供其他工程副本迁移。另存为会将当前选择写入新目录 |
 | 部分打包的保留包发现 | 仅部分打包实际进入构建时枚举最终平台目录，发现仍在磁盘上的保留包，用于容量合并与必要更新；成功缓存不是完整产物清单。完整复用不增加扫描，不保存失败清单或恢复标记 |
 | 输出清理 | 仅 Self-cleaning 请求枚举并清理目标文件；删除成功后同步删掉状态表中退出本输出根的目标／包记录，其他输出根记录保留；删除失败报告错误 |
 | 目标记录回收 | 读状态表时按当前平台定义移除已删除平台；状态表确有变更而需要保存时顺便移除已不存在的目标目录。完整命中不为此扫描其他目标，仍存在的其他输出根记录保留 |
@@ -236,7 +236,7 @@ GUI、IPC、CLI 会话导出和 CLI 已保存工程构建使用同一个 `Projec
 
 | 情况 | 当前结果 |
 |---|---|
-| 输出目录受保护 | 禁止写到工程根、祖先目录、AudioSources、对象目录及其子目录；符号链接解析后同样检查 |
+| 输出目录受保护 | 禁止写到工程根、祖先目录、`.user`、AudioSources、对象目录及其子目录。符号链接解析后同样检查 |
 | 媒体检查范围 | 仅本次选中 Action 的依赖、目标平台和语言；无关缺失音源不阻止构建 |
 | 必需产物不可写 | 实际写入时报告只读、权限或占用错误；不预先反复试写，不自动改权限 |
 | 原样复用产物 | 只读不阻止复用；相等文件保持原位，不为复用再复制 |
@@ -260,7 +260,7 @@ GUI、IPC、CLI 会话导出和 CLI 已保存工程构建使用同一个 `Projec
 | 数据 | 保存范围 | 当前含义 |
 |---|---|---|
 | Name、语言分区 | 当前工程 | 由 Action 和语言依赖派生 |
-| 包勾选、Export Platforms | 既有用户 QSettings，按 projectId 分组 | 不进入工程撤销栈；包勾选不改变导出平台选择 |
+| 包勾选、Export Platforms | 工程内 `.user/pack-export-selection.json` | 不进入工程撤销栈；包勾选不改变导出平台选择 |
 | Built、Size、Modified、File、Version | builds.json 的启动投影及会话内存 | 从已知成功包和实际文件恢复，不另写显示缓存；构建成功与 Self-cleaning 已知删除同步更新 |
 | Result、Cost | 当前工程会话 | GUI 与 IPC 共用；工程关闭后清空，不写缓存或工程文件 |
 | Cost 统计口径 | 每包资源准备与写包 | 不包含共享编译和请求末尾处理耗时，表头与单元格提示说明口径 |

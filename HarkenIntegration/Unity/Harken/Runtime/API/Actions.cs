@@ -114,6 +114,8 @@ namespace Harken
         public ulong NameBindingRevision => revision;
         public ulong CallableFingerprint => fingerprint;
         public ulong NameTableGeneration => generation;
+        [Obsolete("Use NameTableGeneration.")]
+        public ulong PublicationGeneration => generation;
     }
 
     public static class Actions

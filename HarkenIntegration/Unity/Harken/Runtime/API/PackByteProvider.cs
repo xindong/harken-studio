@@ -64,12 +64,17 @@ namespace Harken
             Entries.Remove(key);
         }
 
-        [Obsolete("Use PackBootstrap. This low-level Pack API will be removed in the next version.")]
+        [Obsolete("Use PackBootstrap.")]
         public static VnResult LoadPack(ulong packStableId, Handler handler,
                                         object state, out Pack pack)
             => Invoke(packStableId, handler, state, false, out pack, out _);
 
-        internal static VnResult InspectInitPack(ulong packStableId, Handler handler,
+        [Obsolete("Use PackBootstrap.")]
+        public static VnResult InspectInitPack(ulong packStableId, Handler handler,
+            object state, out InitPackInspection inspection)
+            => InspectInit(packStableId, handler, state, out inspection);
+
+        internal static VnResult InspectInit(ulong packStableId, Handler handler,
             object state, out InitPackInspection inspection)
             => Invoke(packStableId, handler, state, true, out _, out inspection);
 

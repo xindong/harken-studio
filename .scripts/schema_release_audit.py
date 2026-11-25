@@ -15,7 +15,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from functools import cache
 from pathlib import Path, PurePosixPath
-from typing import Any, Iterator
+from typing import Any, Iterator, NamedTuple
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
@@ -172,6 +172,49 @@ def tree_summary(root: Path, pack_binary_root: Path | None = None) -> dict[str, 
     return result
 
 
+class ReleasedTree(NamedTuple):
+    filename: str
+    current_version: int
+    supported_versions: list[int]
+    contracts: dict[int, dict[str, Any]]
+
+
+def released_tree(tag: str, tree: str) -> ReleasedTree:
+    layouts = (
+        (f"{SCHEMA_ROOT_PATH}/{schema_archive.TREE_DIRECTORIES[tree]}", SCHEMA_NAMES[tree]),
+        (f"HarkenSchema/{tree}", "PackManifestSchema.json" if tree == "Pack" else SCHEMA_NAMES[tree]),
+    )
+    for directory, filename in layouts:
+        manifest = revision_json(tag, f"{directory}/manifest.json")
+        if manifest is not None:
+            break
+    else:
+        raise ValueError(f"{tag}: {tree} manifest is missing")
+    schema_archive.validate_tree_manifest(tree, manifest)
+    contracts = {}
+    for version in manifest["published"]:
+        contract = revision_json(tag, f"{directory}/{version}/{filename}")
+        if contract is None or schema_archive.source_version(tree, contract) != version:
+            raise ValueError(f"{tag}: {tree} generation {version} is missing or invalid")
+        contracts[version] = contract
+    current = manifest["published"][-1]
+    return ReleasedTree(filename, current, [*manifest["supportedHistorical"], current], contracts)
+
+
+def released_tree_summary(tag: str) -> dict[str, Any]:
+    result = {}
+    for tree in TREE_NAMES:
+        archive = released_tree(tag, tree)
+        result[tree] = {"generation": archive.current_version,
+                        "sha256": digest(canonical_bytes(archive.contracts[archive.current_version]))}
+    with schema_root_at(tag, PACK_BINARY_ROOT_PATH) as pack_root:
+        pack = load_pack_binary(pack_root)
+    if pack:
+        generation = pack["currentVersion"]
+        result[PACK_BINARY] = {"generation": generation, "sha256": files_digest(pack["published"][generation])}
+    return result
+
+
 def release_scope_config(revision: str) -> dict[str, list[str]]:
     config = revision_json(revision, RELEASE_SCOPE_CONFIG_PATH)
     if not config or config.get("scopeMapVersion") != 2:
@@ -302,10 +345,9 @@ def published_releases() -> dict[str, dict[str, Any]]:
         version = revision_bytes(tag, "VERSION")
         if version is None or not re.fullmatch(rb"\d+\.\d+\.\d+", version.strip()):
             raise ValueError(f"Published Studio version is missing or invalid: {tag}")
-        with schema_root_at(tag) as root, schema_root_at(tag, PACK_BINARY_ROOT_PATH) as pack_root:
-            releases[tag] = {"product": "HarkenStudio", "version": version.decode("utf-8").strip(),
-                             "gitCommit": run_git(["rev-parse", f"refs/tags/{tag}^{{commit}}"]).stdout.strip(),
-                             "trees": tree_summary(root, pack_root)}
+        releases[tag] = {"product": "HarkenStudio", "version": version.decode("utf-8").strip(),
+                         "gitCommit": run_git(["rev-parse", f"refs/tags/{tag}^{{commit}}"]).stdout.strip(),
+                         "trees": released_tree_summary(tag)}
     return releases
 
 
@@ -325,15 +367,13 @@ def release_schema_errors(root: Path, exclude_tag: str | None = None) -> list[st
     for tag in published_releases():
         if tag == exclude_tag:
             continue
-        with schema_root_at(tag) as previous_root:
-            for tree in TREE_NAMES:
-                previous = schema_archive.load_tree(tree, previous_root)
-                for version, published in previous["published"].items():
-                    if version not in current[tree]["published"]:
-                        errors.append(f"{tag}: Published {tree} generation {version} cannot be removed")
-                        continue
-                    target = current[tree]["published"][version]
-                    errors.extend(f"{tag} {tree}/{version}: {error}" for error in same_generation_errors(tree, published, target))
+        for tree in TREE_NAMES:
+            for version, published in released_tree(tag, tree).contracts.items():
+                if version not in current[tree]["published"]:
+                    errors.append(f"{tag}: Published {tree} generation {version} cannot be removed")
+                    continue
+                target = current[tree]["published"][version]
+                errors.extend(f"{tag} {tree}/{version}: {error}" for error in same_generation_errors(tree, published, target))
     return errors
 
 
@@ -624,17 +664,21 @@ def checked_baseline_package(tag: str, root: Path) -> tuple[Path, dict[str, Any]
     previous_manifest = read_object(schema_dir / "build.json")
     if previous_manifest.get("snapshotHash") != schema_archive.snapshot_hash(previous_manifest):
         raise ValueError("Baseline package has an invalid Schema snapshot identity")
-    with schema_root_at(tag) as previous_root:
-        expected = schema_archive.build_bundle(previous_root)
-        if previous_manifest.get("trees") != expected["manifest"]["trees"]:
-            raise ValueError("Baseline package generations do not match its tag")
-        source_paths = {name for name in expected["installed"] if name != "build.json"}
-        installed_paths = {path.relative_to(schema_dir).as_posix() for path in schema_dir.rglob("*") if path.is_file()}
-        if installed_paths != source_paths | {"build.json"}:
-            raise ValueError("Baseline package has an unexpected Schema installation tree")
-        for name in source_paths:
-            if read_object(schema_dir / name) != json.loads(expected["installed"][name]):
-                raise ValueError("Baseline package Schema content does not match its tag")
+    archives = {tree: released_tree(tag, tree) for tree in TREE_NAMES}
+    generations = {tree: {"currentVersion": archive.current_version, "supportedVersions": archive.supported_versions}
+                   for tree, archive in archives.items()}
+    if previous_manifest.get("trees") != generations:
+        raise ValueError("Baseline package generations do not match its tag")
+    contracts = {f"{tree}/{version}/{archive.filename}": contract for tree, archive in archives.items()
+                 for version, contract in archive.contracts.items()}
+    installed_paths = {path.relative_to(schema_dir).as_posix() for path in schema_dir.rglob("*") if path.is_file()}
+    if installed_paths != contracts.keys() | {"build.json"}:
+        raise ValueError("Baseline package has an unexpected Schema installation tree")
+    for name, contract in contracts.items():
+        if not json_equal(read_object(schema_dir / name), contract):
+            raise ValueError("Baseline package Schema content does not match its tag")
+    editor = archives["Editor"]
+    manifest["_editorContract"] = editor.contracts[editor.current_version]
     manifest["_schemaManifest"] = previous_manifest
     manifest["_protectedFiles"] = protected
     return binaries[0], manifest
@@ -716,8 +760,7 @@ def verify_release_readers(current_binary: Path, baseline_readers: dict[str, Pat
                                    work, expected, package)
             old_project = Path(old_report["projectPath"])
             if old_report["editorSchemaVersion"] != current_report["editorSchemaVersion"]:
-                with schema_root_at(tag) as previous_root:
-                    inject_metadata(old_project, schema_archive.load_tree("Editor", previous_root)["current"])
+                inject_metadata(old_project, package["_editorContract"])
                 before = project_documents(old_project)
                 migration = run_probe(current_binary, {"mode": "migrate", "projectPath": str(old_project)},
                                       work, bundle["manifest"])

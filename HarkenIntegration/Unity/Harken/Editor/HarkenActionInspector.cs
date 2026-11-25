@@ -111,7 +111,7 @@ namespace Harken.Unity.Editor
             preview.Shutdown();
             if (source != null) catalog.Refresh(source, language, initJson);
             else if (!string.IsNullOrEmpty(directory))
-                catalog.RefreshPlatform(directory, platformName,
+                catalog.RefreshPlatformDirectory(directory, platformName,
                     HarkenAudioSystem.CurrentPackBasePlatform(), language);
             else if (userRequested)
                 catalog.Refresh(string.Empty, language);

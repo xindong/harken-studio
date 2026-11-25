@@ -255,6 +255,11 @@
       "VN_LOG_RUNTIME_RECREATE_REQUIRED": "tool-types"
     }
   },
+  "managed_aliases": {
+    "VnActionTargetKind": {
+      "VN_ACTION_TARGET_PIECE": "VN_ACTION_TARGET_SEGMENT"
+    }
+  },
   "managed_projection": {
     "excluded_prefixes": {
       "types": [

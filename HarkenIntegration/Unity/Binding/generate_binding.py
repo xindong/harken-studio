@@ -321,6 +321,11 @@ def emit_types(table, policy, layouts):
         lines.append("    {")
         for cname, value in edef["values"].items():
             lines.append("        %s = %d," % (cname, value))
+        for alias, target in policy.get("managed_aliases", {}).get(ename, {}).items():
+            if alias in edef["values"] or target not in edef["values"]:
+                raise ValueError("Invalid managed alias: %s.%s" % (ename, alias))
+            lines.append("        [Obsolete(\"Use %s.\")]" % target)
+            lines.append("        %s = %s," % (alias, target))
         lines.append("    }")
         lines.append("")
 
