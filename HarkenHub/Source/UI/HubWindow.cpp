@@ -790,6 +790,7 @@ void HubWindow::installChrome()
 {
 #ifdef Q_OS_WIN
     titleBar_ = new TitleBar(this);
+    setMenuWidget(titleBar_);
 
     auto* agent = new QWK::WidgetWindowAgent(this);
     agent->setup(this);
@@ -808,15 +809,6 @@ void HubWindow::installChrome()
     });
     connect(titleBar_->closeButton(), &QPushButton::clicked, this, &QWidget::close);
 
-    if (centralWidget() && centralWidget()->layout()) {
-        QLayout* central = centralWidget()->layout();
-        const QMargins margins = central->contentsMargins();
-        central->setContentsMargins(margins.left(),
-                                    margins.top() + titleBar_->height(),
-                                    margins.right(), margins.bottom());
-    }
-    titleBar_->setGeometry(0, 0, width(), titleBar_->height());
-    titleBar_->raise();
 #endif
 }
 
@@ -834,10 +826,6 @@ bool HubWindow::event(QEvent* event)
 void HubWindow::resizeEvent(QResizeEvent* event)
 {
     QMainWindow::resizeEvent(event);
-    if (titleBar_) {
-        titleBar_->setGeometry(0, 0, width(), titleBar_->height());
-        titleBar_->raise();
-    }
     if (windowSizeSaveTimer_ && !isMaximized() && !isMinimized() &&
         !isFullScreen())
         windowSizeSaveTimer_->start();

@@ -3,6 +3,10 @@
   "unreleased": [
     {
       "category": "improved",
+      "text": "On Windows, Hub starts in Dark mode until you choose a theme in Settings. The title bar shows the Hub icon and name, and upgrading refreshes the running Hub's taskbar icon."
+    },
+    {
+      "category": "improved",
       "text": "Windows setup can upgrade Hub while its first-use license agreement is open. The upgraded Hub still asks for consent on the next launch."
     },
     {

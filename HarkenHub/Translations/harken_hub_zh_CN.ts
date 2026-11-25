@@ -160,6 +160,10 @@
 <context>
     <name>HubReleaseNotes</name>
     <message>
+        <source>On Windows, Hub starts in Dark mode until you choose a theme in Settings. The title bar shows the Hub icon and name, and upgrading refreshes the running Hub's taskbar icon.</source>
+        <translation>Windows 版 Hub 默认使用深色主题，可在设置中切换。标题栏显示 Hub 图标和名称，升级后运行中的 Hub 会更新任务栏图标。</translation>
+    </message>
+    <message>
         <source>Windows setup can upgrade Hub while its first-use license agreement is open. The upgraded Hub still asks for consent on the next launch.</source>
         <translation>首次使用的许可协议窗口打开时，Windows 安装程序也可以升级 Hub。升级后再次启动 Hub 时仍需确认许可协议。</translation>
     </message>

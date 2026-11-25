@@ -136,7 +136,12 @@ bool HubSettings::setLanguagePreference(const QString& preference)
 
 QString HubSettings::themePreference()
 {
-    const QString value = loadRoot().value(QStringLiteral("theme")).toString();
+    const QJsonValue stored = loadRoot().value(QStringLiteral("theme"));
+#ifdef Q_OS_WIN
+    if (stored.isUndefined())
+        return QStringLiteral("dark");
+#endif
+    const QString value = stored.toString();
     return value == QStringLiteral("light") || value == QStringLiteral("dark")
         ? value : QStringLiteral("system");
 }
