@@ -35,20 +35,40 @@ inline bool matchesExecutable(DWORD processId, const std::wstring& executable)
     return match;
 }
 
-inline BOOL CALLBACK closeStartupDialog(HWND window, LPARAM processId)
+struct HubWindowSearch {
+    DWORD processId;
+    HWND window = nullptr;
+};
+
+inline BOOL CALLBACK findOnlyVisibleWindow(HWND window, LPARAM data)
 {
+    auto& search = *reinterpret_cast<HubWindowSearch*>(data);
     DWORD owner = 0;
     GetWindowThreadProcessId(window, &owner);
-    if (owner != static_cast<DWORD>(processId) || !IsWindowVisible(window)
-        || GetWindow(window, GW_OWNER) || !IsWindowEnabled(window))
+    if (owner != search.processId || !IsWindowVisible(window))
         return TRUE;
+    if (search.window)
+        return FALSE;
+    search.window = window;
+    return TRUE;
+}
+
+inline void closeStartupDialog(DWORD processId)
+{
+    HubWindowSearch search{processId};
+    if (!EnumWindows(findOnlyVisibleWindow, reinterpret_cast<LPARAM>(&search)))
+        return;
+    HWND window = search.window;
+    if (!window || GetWindow(window, GW_OWNER) || !IsWindowEnabled(window))
+        return;
     const LONG_PTR style = GetWindowLongPtrW(window, GWL_STYLE);
     if (!(style & WS_SYSMENU) || (style & (WS_MINIMIZEBOX | WS_MAXIMIZEBOX)))
-        return TRUE;
+        return;
     wchar_t title[32]{};
-    if (!GetWindowTextW(window, title, 32) || wcscmp(title, L"Harken Hub") != 0)
-        return TRUE;
-    return !PostMessageW(window, WM_CLOSE, 0, 0);
+    DWORD owner = 0;
+    GetWindowThreadProcessId(window, &owner);
+    if (owner == processId && GetWindowTextW(window, title, 32) && wcscmp(title, L"Harken Hub") == 0)
+        PostMessageW(window, WM_CLOSE, 0, 0);
 }
 
 inline bool requestHubExit(PCWSTR pipeName, const std::wstring& guiExecutable = {})
@@ -87,7 +107,7 @@ inline bool requestHubExit(PCWSTR pipeName, const std::wstring& guiExecutable = 
         exited = wait == WAIT_OBJECT_0;
         if (wait == WAIT_TIMEOUT && remaining > grace) {
             if (matchesExecutable(processId, guiExecutable))
-                EnumWindows(closeStartupDialog, processId);
+                closeStartupDialog(processId);
             const ULONGLONG used = GetTickCount64() - started;
             exited = WaitForSingleObject(process, used < 5000 ? static_cast<DWORD>(5000 - used) : 0)
                 == WAIT_OBJECT_0;

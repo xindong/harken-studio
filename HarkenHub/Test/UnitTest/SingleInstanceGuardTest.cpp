@@ -36,6 +36,11 @@ int runSetupShutdownFixture(const QStringList& arguments)
     if (!guard.isPrimary())
         return 2;
     if (arguments.contains(QStringLiteral("--first-use"))) {
+        QDialog otherWindow;
+        if (arguments.contains(QStringLiteral("--second-window"))) {
+            otherWindow.setWindowTitle(QStringLiteral("Harken Hub"));
+            otherWindow.show();
+        }
         QObject::connect(&guard, &SingleInstanceGuard::activationRequested, [](const QStringList& received) {
             if (received == QStringList{QStringLiteral("--quit")})
                 QCoreApplication::quit();
@@ -147,9 +152,21 @@ TEST(SingleInstanceGuard, SetupCanCloseTheInstalledFirstUseDialogWithoutRecordin
     ASSERT_TRUE(child.readAllStandardOutput().contains("ready"));
     EXPECT_FALSE(HarkenSetup::requestHubExit(pipe.c_str(), L"C:\\Other\\HarkenHub.exe"));
     ASSERT_EQ(child.state(), QProcess::Running);
-    EXPECT_TRUE(HarkenSetup::requestHubExit(pipe.c_str(), QDir::toNativeSeparators(executable).toStdWString()));
+    const auto expectedPath = QDir::toNativeSeparators(executable).toStdWString();
+    EXPECT_TRUE(HarkenSetup::requestHubExit(pipe.c_str(), expectedPath));
     EXPECT_TRUE(child.waitForFinished(5000));
     EXPECT_EQ(child.exitCode(), 0);
+    EXPECT_FALSE(QFileInfo::exists(profile.filePath(QStringLiteral("consents.json"))));
+
+    child.start(executable, {QStringLiteral("--setup-shutdown-fixture"), key,
+                             QStringLiteral("--first-use"), QStringLiteral("--second-window")});
+    ASSERT_TRUE(child.waitForStarted(5000));
+    ASSERT_TRUE(child.waitForReadyRead(5000));
+    ASSERT_TRUE(child.readAllStandardOutput().contains("ready"));
+    EXPECT_FALSE(HarkenSetup::requestHubExit(pipe.c_str(), expectedPath));
+    EXPECT_EQ(child.state(), QProcess::Running);
+    child.kill();
+    EXPECT_TRUE(child.waitForFinished(5000));
     EXPECT_FALSE(QFileInfo::exists(profile.filePath(QStringLiteral("consents.json"))));
 }
 #endif
