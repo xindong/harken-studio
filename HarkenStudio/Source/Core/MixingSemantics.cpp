@@ -93,10 +93,8 @@ std::optional<MixingDef> MixingDef::fromJson(const QJsonArray& json)
         MixingRowDef row;
         const auto variable = object.value(QStringLiteral("variable"));
         row.variable = QUuid(variable.toString());
-        const bool hasGuid = object.contains(QStringLiteral("guid"));
-        row.guid = hasGuid ? QUuid(object.value(QStringLiteral("guid")).toString())
-                            : MixingSemantics::legacyRowGuid(row.variable);
-        if (object.size() != (hasGuid ? 3 : 2)
+        row.guid = QUuid(object.value(QStringLiteral("guid")).toString());
+        if (object.size() != 3
             || (!variable.isNull() && (!variable.isString() || row.variable.isNull()))
             || (!row.variable.isNull() && variables.contains(row.variable))
             || row.guid.isNull() || guids.contains(row.guid)
@@ -140,12 +138,6 @@ std::optional<MixingDef> MixingDef::fromJson(const QJsonArray& json)
 }
 
 namespace MixingSemantics {
-
-QUuid legacyRowGuid(const QUuid& variable)
-{
-    static const QUuid nameSpace(QStringLiteral("ff37991a-e8d0-4d2b-99c3-3f9ad6a4c33a"));
-    return QUuid::createUuidV5(nameSpace, variable.toRfc4122());
-}
 
 std::optional<QHash<QUuid, float>> evaluate(const MixingDef& mixing,
                                            const VariableValue& value)

@@ -7,6 +7,10 @@ and this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-11-25
+
+Paired with Harken Studio 0.10.0. Packs must be exported again with Studio 0.10.0 and shipped together with this package: it does not read Packs from earlier versions, and earlier packages do not read Packs from Studio 0.10.0.
+
 ### Added
 
 - The package ships two native library editions: Release (`HarkenEngine`) and Development (`HarkenEngineDev`).
@@ -111,7 +115,8 @@ First public release, paired with Harken Studio 0.9.2.
 
 - Editor Action browsing, selection and preview are unavailable; enter Action Name and Project Id manually in the Inspector.
 
-[Unreleased]: https://github.com/xindong/harken-studio/compare/HarkenStudio-0.9.4...HEAD
+[Unreleased]: https://github.com/xindong/harken-studio/compare/HarkenStudio-0.10.0...HEAD
+[0.10.0]: https://github.com/xindong/harken-studio/releases/tag/HarkenStudio-0.10.0
 [0.9.4]: https://github.com/xindong/harken-studio/releases/tag/HarkenStudio-0.9.4
 [0.9.3]: https://github.com/xindong/harken-studio/releases/tag/HarkenStudio-0.9.3
 [0.3.7]: https://github.com/xindong/harken-studio/releases/tag/HarkenStudio-0.9.2

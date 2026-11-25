@@ -6,7 +6,6 @@
 #include "FieldGroupJson.h"
 #include "harken_buildinfo.h"
 
-#include <QDebug>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QUuid>
@@ -212,8 +211,7 @@ bool ProjectDocument::parse(const QJsonObject& document,
     parsed.header = header;
     parsed.content = document.value(QStringLiteral("content")).toObject();
     if (parsed.schemaVersion == ProjectSchema::kProjectSchemaVersion
-        && (!normalizeContent(&parsed.content, error)
-            || !validateFieldGroupAuthoring(parsed.content, error))) return false;
+        && !validateFieldGroupAuthoring(parsed.content, error)) return false;
     if (data) *data = std::move(parsed);
     return true;
 }
@@ -222,198 +220,6 @@ bool ProjectDocument::validateFieldGroupAuthoring(const QJsonObject& content,
                                                    QString* error)
 {
     return validateAuthoringNode(content, error);
-}
-
-namespace {
-
-void warnDiscarded(const QJsonObject& content, const char* field)
-{
-    qWarning() << "[ProjectDocument] Discarded retired" << field << "from"
-               << content.value(QStringLiteral("name")).toString()
-               << content.value(QStringLiteral("guid")).toString();
-}
-
-bool isDefaultTransitionFade(const QJsonObject& fade)
-{
-    return fade.value(QStringLiteral("durationSeconds")).toDouble() == 0.5
-        && fade.value(QStringLiteral("curve")).toArray().size() == 2;
-}
-
-bool isDefaultTransitionTable(const QJsonObject& table)
-{
-    const auto rules = table.value(QStringLiteral("rules")).toArray();
-    if (rules.size() != 1) return false;
-    const auto rule = rules.first().toObject();
-    const auto timing = rule.value(QStringLiteral("exitTiming")).toString();
-    return rule.value(QStringLiteral("source")).toString().isEmpty()
-        && rule.value(QStringLiteral("target")).toString().isEmpty()
-        && rule.value(QStringLiteral("bridge")).toString().isEmpty()
-        && (timing == QStringLiteral("Immediate") || timing == QStringLiteral("NextBar"))
-        && rule.value(QStringLiteral("entryMode")).toString() == QStringLiteral("EntryMarker")
-        && isDefaultTransitionFade(rule.value(QStringLiteral("sourceFadeOut")).toObject())
-        && isDefaultTransitionFade(rule.value(QStringLiteral("targetFadeIn")).toObject());
-}
-
-void discardRetiredSelectionFields(QJsonObject* selection, const QJsonObject& content)
-{
-    if (selection->contains(QStringLiteral("transitions"))
-        && !isDefaultTransitionTable(selection->take(QStringLiteral("transitions")).toObject()))
-        warnDiscarded(content, "transitions");
-    if (selection->take(QStringLiteral("spliceByMarker")).toBool())
-        warnDiscarded(content, "spliceByMarker");
-}
-
-void discardRetiredActionTiming(QJsonObject* owner, const QString& key, const QJsonObject& content)
-{
-    if (!owner->value(key).isArray()) return;
-    auto steps = owner->value(key).toArray();
-    for (qsizetype index = 0; index < steps.size(); ++index) {
-        auto step = steps[index].toObject();
-        if (!step.contains(QStringLiteral("quantize"))) continue;
-        step.remove(QStringLiteral("quantize"));
-        steps[index] = step;
-        warnDiscarded(content, "Action quantize");
-    }
-    owner->insert(key, steps);
-}
-
-bool discardRetiredSegmentFields(QJsonObject* timeline, const QJsonObject& content, QString* error)
-{
-    const auto time = timeline->take(QStringLiteral("segmentTime")).toObject();
-    if (time.value(QStringLiteral("domain")).toString() == QStringLiteral("Musical")) {
-        if (error)
-            *error = QStringLiteral("Segment '%1' uses musical time, which this version does not support")
-                .arg(content.value(QStringLiteral("name")).toString());
-        return false;
-    }
-    if (!timeline->take(QStringLiteral("markers")).toArray().isEmpty())
-        warnDiscarded(content, "markers");
-    return true;
-}
-
-}
-
-void ProjectDocument::discardRetiredMakeUpGain(QJsonObject* properties)
-{
-    properties->remove(QStringLiteral("makeUpGain"));
-    const QString presenceKey = QStringLiteral("presence");
-    const QString presence = properties->value(presenceKey).toString();
-    bool validPresence = false;
-    const uint64_t bits = presence.toULongLong(&validPresence, 16);
-    if (validPresence && PlayablePropertyAuthoringV1::encodePresence(bits) == presence
-        && (bits & UINT64_C(0x4)) != 0)
-        properties->insert(presenceKey,
-            PlayablePropertyAuthoringV1::encodePresence(bits & ~UINT64_C(0x4)));
-    const QString overlaysKey = QStringLiteral("platformOverrides");
-    if (properties->value(overlaysKey).isArray()) {
-        auto overlays = properties->value(overlaysKey).toArray();
-        for (qsizetype index = 0; index < overlays.size(); ++index) {
-            if (!overlays[index].isObject()) continue;
-            auto row = overlays[index].toObject();
-            discardRetiredMakeUpGain(&row);
-            overlays[index] = row;
-        }
-        properties->insert(overlaysKey, overlays);
-    }
-}
-
-bool ProjectDocument::normalizeContent(QJsonObject* content, QString* error)
-{
-    for (const auto* key : {"expanded", "objectPath", "canvasPos", "nameBindingRevision",
-                            "actionPublishedNameHistory", "paths", "path", "sourceID",
-                            "deploymentProfiles", "extensions", "packExportCurrentPlatformId",
-                            "packExportSelectedPlatformIds", "actionPackTargeting", "packOutputDir",
-                            "unityIntegration", "conversionFailurePolicy", "packGroups"})
-        content->remove(QLatin1String(key));
-    if (content->value(QStringLiteral("metadata")).isObject()) {
-        auto metadata = content->value(QStringLiteral("metadata")).toObject();
-        for (const auto* key : {"createdDate", "modifiedDate", "toolVersion", "version",
-                                "projectTemplateId", "enableLFE", "author", "description"})
-            metadata.remove(QLatin1String(key));
-        content->insert(QStringLiteral("metadata"), metadata);
-    }
-    if (content->value(QStringLiteral("type")) == QJsonValue(QStringLiteral("Bus"))
-        && content->contains(QStringLiteral("componentData"))) {
-        auto components = content->value(QStringLiteral("components")).toObject();
-        const auto bus = content->take(QStringLiteral("componentData"));
-        if (!components.contains(QStringLiteral("bus")))
-            components.insert(QStringLiteral("bus"), bus);
-        content->insert(QStringLiteral("components"), components);
-    }
-    const auto moveField = [error](QJsonObject& object, const QString& from,
-                                   const QString& to) {
-        if (!object.contains(from)) return true;
-        if (object.contains(to)) {
-            if (error) *error = QStringLiteral("Conflicting fields: %1 and %2").arg(from, to);
-            return false;
-        }
-        object.insert(to, object.take(from));
-        return true;
-    };
-    if (content->value(QStringLiteral("type")) == QJsonValue(QStringLiteral("Piece")))
-        content->insert(QStringLiteral("type"), QStringLiteral("Segment"));
-    if (content->value(QStringLiteral("playableProperties")).isObject()) {
-        auto properties = content->value(QStringLiteral("playableProperties")).toObject();
-        discardRetiredMakeUpGain(&properties);
-        content->insert(QStringLiteral("playableProperties"), properties);
-    }
-    discardRetiredActionTiming(content, QStringLiteral("actions"), *content);
-    if (content->value(QStringLiteral("components")).isObject()) {
-        auto components = content->value(QStringLiteral("components")).toObject();
-        if (components.value(QStringLiteral("mixnode")).isObject()) {
-            auto mix = components.value(QStringLiteral("mixnode")).toObject();
-            mix.remove(QStringLiteral("makeUpGain"));
-            components.insert(QStringLiteral("mixnode"), mix);
-        }
-        if (components.value(QStringLiteral("tracktimeline")).isObject()) {
-            auto timeline = components.value(QStringLiteral("tracktimeline")).toObject();
-            if (timeline.value(QStringLiteral("clips")).isArray()) {
-                auto clips = timeline.value(QStringLiteral("clips")).toArray();
-                for (qsizetype index = 0; index < clips.size(); ++index) {
-                    if (!clips[index].isObject()) continue;
-                    auto clip = clips[index].toObject();
-                    if (!clip.value(QStringLiteral("playableProperties")).isObject()) continue;
-                    auto properties = clip.value(QStringLiteral("playableProperties")).toObject();
-                    discardRetiredMakeUpGain(&properties);
-                    clip.insert(QStringLiteral("playableProperties"), properties);
-                    clips[index] = clip;
-                }
-                timeline.insert(QStringLiteral("clips"), clips);
-            }
-            components.insert(QStringLiteral("tracktimeline"), timeline);
-        }
-        if (components.value(QStringLiteral("action")).isObject()) {
-            auto action = components.value(QStringLiteral("action")).toObject();
-            discardRetiredActionTiming(&action, QStringLiteral("steps"), *content);
-            components.insert(QStringLiteral("action"), action);
-        }
-        if (components.value(QStringLiteral("selection")).isObject()) {
-            auto selection = components.value(QStringLiteral("selection")).toObject();
-            discardRetiredSelectionFields(&selection, *content);
-            components.insert(QStringLiteral("selection"), selection);
-        }
-        if (!moveField(components, QStringLiteral("piecetimeline"),
-                        QStringLiteral("segmenttimeline"))) return false;
-        if (components.value(QStringLiteral("segmenttimeline")).isObject()) {
-            auto timeline = components.value(QStringLiteral("segmenttimeline")).toObject();
-            if (!moveField(timeline, QStringLiteral("pieceTime"),
-                            QStringLiteral("segmentTime"))) return false;
-            if (!discardRetiredSegmentFields(&timeline, *content, error)) return false;
-            components.insert(QStringLiteral("segmenttimeline"), timeline);
-        }
-        content->insert(QStringLiteral("components"), components);
-    }
-    if (content->value(QStringLiteral("children")).isArray()) {
-        auto children = content->value(QStringLiteral("children")).toArray();
-        for (qsizetype index = 0; index < children.size(); ++index) {
-            if (!children[index].isObject()) continue;
-            auto child = children[index].toObject();
-            if (!normalizeContent(&child, error)) return false;
-            children[index] = child;
-        }
-        content->insert(QStringLiteral("children"), children);
-    }
-    return true;
 }
 
 }

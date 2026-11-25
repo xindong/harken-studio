@@ -12,6 +12,110 @@
       },
       "type": "object"
     },
+    "actionPackTargeting": {
+      "additionalProperties": false,
+      "properties": {
+        "allPlatforms": {
+          "type": "boolean"
+        },
+        "language": {
+          "type": "string"
+        },
+        "platformIds": {
+          "$ref": "#/$defs/projectPlatformIds"
+        },
+        "stableId": {
+          "$ref": "#/$defs/uuid"
+        }
+      },
+      "required": [
+        "platformIds",
+        "allPlatforms",
+        "stableId"
+      ],
+      "type": "object"
+    },
+    "actionPublishedNameHistoryRow": {
+      "additionalProperties": false,
+      "if": {
+        "properties": {
+          "event": {
+            "enum": [
+              "renamed_from",
+              "reuse_undone"
+            ]
+          }
+        },
+        "required": [
+          "event"
+        ]
+      },
+      "properties": {
+        "event": {
+          "enum": [
+            "created",
+            "deleted",
+            "renamed_from",
+            "reuse_approved",
+            "reuse_undone"
+          ],
+          "type": "string"
+        },
+        "name": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "nameBindingRevision": {
+          "$ref": "#/$defs/positiveInteger"
+        },
+        "objectGuid": {
+          "$ref": "#/$defs/uuid"
+        },
+        "priorName": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "objectGuid",
+        "nameBindingRevision",
+        "event"
+      ],
+      "then": {
+        "required": [
+          "priorName"
+        ]
+      },
+      "type": "object"
+    },
+    "actionQuantize": {
+      "additionalProperties": false,
+      "properties": {
+        "ifSilent": {
+          "enum": [
+            "Immediate",
+            "Drop"
+          ]
+        },
+        "referenceRef": {
+          "$ref": "#/$defs/objectReference"
+        },
+        "timing": {
+          "enum": [
+            "Immediate",
+            "NextBeat",
+            "NextBar",
+            "NextMarker",
+            "NaturalEnd",
+            "CurrentLoopEnd",
+            "EntryMarker",
+            "ExitMarker"
+          ]
+        }
+      },
+      "type": "object"
+    },
     "actionStep": {
       "additionalProperties": false,
       "properties": {
@@ -20,6 +124,9 @@
         },
         "fadeTime": {
           "type": "number"
+        },
+        "quantize": {
+          "$ref": "#/$defs/actionQuantize"
         },
         "resetScope": {
           "enum": [
@@ -174,8 +281,11 @@
           "minimum": 0,
           "type": "integer"
         },
-        "outputBusRef": {
+        "mainOutputBusRef": {
           "$ref": "#/$defs/nullableObjectReference"
+        },
+        "makeUpGain": {
+          "type": "number"
         },
         "outputBusVolume": {
           "type": "number"
@@ -187,7 +297,7 @@
           "$ref": "#/$defs/projectPlatformId"
         },
         "presence": {
-          "pattern": "^000000000000[0-38-b][014589cd][0-9a-f][0-38-b]$",
+          "pattern": "^000000000000[0-38-b][014589cd][0-9a-f]{2}$",
           "type": "string"
         },
         "sends": {
@@ -250,8 +360,11 @@
           "minimum": 0,
           "type": "integer"
         },
-        "outputBusRef": {
+        "mainOutputBusRef": {
           "$ref": "#/$defs/nullableObjectReference"
+        },
+        "makeUpGain": {
+          "type": "number"
         },
         "outputBusVolume": {
           "type": "number"
@@ -266,7 +379,7 @@
           "type": "array"
         },
         "presence": {
-          "pattern": "^000000000000[0-38-b][014589cd][0-9a-f][0-38-b]$",
+          "pattern": "^000000000000[0-38-b][014589cd][0-9a-f]{2}$",
           "type": "string"
         },
         "sends": {
@@ -335,17 +448,11 @@
         "bus": {
           "$ref": "#/$defs/busComponent"
         },
-        "conversion": {
-          "$ref": "#/$defs/conversionComponent"
-        },
-        "effect": {
-          "$ref": "#/$defs/effectComponent"
-        },
         "mixnode": {
           "$ref": "#/$defs/mixNodeComponent"
         },
-        "segmenttimeline": {
-          "$ref": "#/$defs/segmentTimelineComponent"
+        "piecetimeline": {
+          "$ref": "#/$defs/pieceTimelineComponent"
         },
         "selection": {
           "$ref": "#/$defs/selectionComponent"
@@ -364,163 +471,6 @@
         }
       },
       "type": "object"
-    },
-    "conversionComponent": {
-      "oneOf": [
-        {
-          "additionalProperties": false,
-          "properties": {
-            "rules": {
-              "items": {
-                "$ref": "#/$defs/conversionRule"
-              },
-              "minItems": 1,
-              "type": "array"
-            }
-          },
-          "required": [
-            "rules"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "format": {
-              "enum": [
-                "PCM",
-                "Vorbis"
-              ]
-            },
-            "sampleRateTiers": {
-              "items": {
-                "$ref": "#/$defs/conversionSampleRateTier"
-              },
-              "minItems": 1,
-              "type": "array"
-            },
-            "vorbisQuality": {
-              "maximum": 1,
-              "minimum": 0,
-              "type": "number"
-            }
-          },
-          "required": [
-            "format",
-            "vorbisQuality",
-            "sampleRateTiers"
-          ],
-          "type": "object"
-        }
-      ]
-    },
-    "conversionRule": {
-      "oneOf": [
-        {
-          "additionalProperties": false,
-          "properties": {
-            "format": {
-              "const": "PCM"
-            },
-            "maxBytes": {
-              "$ref": "#/$defs/conversionSizeLimit"
-            },
-            "sampleRate": {
-              "$ref": "#/$defs/conversionSampleRate"
-            }
-          },
-          "required": [
-            "maxBytes",
-            "sampleRate",
-            "format"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "oneOf": [
-            {
-              "required": [
-                "quality"
-              ]
-            },
-            {
-              "required": [
-                "vorbisQuality"
-              ]
-            }
-          ],
-          "properties": {
-            "format": {
-              "const": "Vorbis"
-            },
-            "maxBytes": {
-              "$ref": "#/$defs/conversionSizeLimit"
-            },
-            "quality": {
-              "maximum": 10,
-              "minimum": 0,
-              "type": "integer"
-            },
-            "sampleRate": {
-              "$ref": "#/$defs/conversionSampleRate"
-            },
-            "vorbisQuality": {
-              "maximum": 1,
-              "minimum": 0,
-              "type": "number"
-            }
-          },
-          "required": [
-            "maxBytes",
-            "sampleRate",
-            "format"
-          ],
-          "type": "object"
-        }
-      ]
-    },
-    "conversionSampleRate": {
-      "enum": [
-        0,
-        8000,
-        11025,
-        16000,
-        22050,
-        24000,
-        32000,
-        44100,
-        48000
-      ],
-      "type": "integer"
-    },
-    "conversionSampleRateTier": {
-      "additionalProperties": false,
-      "properties": {
-        "maxBytes": {
-          "$ref": "#/$defs/conversionSizeLimit"
-        },
-        "sampleRate": {
-          "$ref": "#/$defs/conversionSampleRate"
-        }
-      },
-      "required": [
-        "maxBytes",
-        "sampleRate"
-      ],
-      "type": "object"
-    },
-    "conversionSizeLimit": {
-      "oneOf": [
-        {
-          "maximum": 9223372036854775807,
-          "minimum": 0,
-          "type": "integer"
-        },
-        {
-          "type": "null"
-        }
-      ]
     },
     "definitionAudioComponent": {
       "additionalProperties": false,
@@ -558,14 +508,11 @@
         "bus": {
           "$ref": "#/$defs/busComponent"
         },
-        "effect": {
-          "$ref": "#/$defs/effectComponent"
-        },
         "mixnode": {
           "$ref": "#/$defs/definitionMixNodeComponent"
         },
-        "segmenttimeline": {
-          "$ref": "#/$defs/segmentTimelineComponent"
+        "piecetimeline": {
+          "$ref": "#/$defs/pieceTimelineComponent"
         },
         "selection": {
           "$ref": "#/$defs/selectionComponent"
@@ -595,6 +542,16 @@
           },
           "type": "array"
         },
+        "effects": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "makeUpGain": {
+          "type": "number"
+        },
         "pitch": {
           "type": "number"
         },
@@ -613,120 +570,42 @@
       },
       "type": "object"
     },
-    "effectComponent": {
+    "deploymentProfile": {
       "additionalProperties": false,
       "properties": {
-        "parameters": {
-          "items": {
-            "type": "number"
-          },
-          "type": "array"
+        "autoDeployAfterBuild": {
+          "type": "boolean"
         },
-        "type": {
-          "const": "limiter",
+        "deployCurrentWorld": {
+          "type": "boolean"
+        },
+        "deployManifest": {
+          "type": "boolean"
+        },
+        "deployPacks": {
+          "type": "boolean"
+        },
+        "destination": {
+          "type": "string"
+        },
+        "engineKind": {
+          "type": "string"
+        },
+        "languages": {
+          "$ref": "#/$defs/stringArray"
+        },
+        "name": {
+          "type": "string"
+        },
+        "platformIds": {
+          "$ref": "#/$defs/projectPlatformIds"
+        },
+        "profileId": {
           "type": "string"
         }
       },
       "required": [
-        "type",
-        "parameters"
-      ],
-      "type": "object"
-    },
-    "effectEntry": {
-      "oneOf": [
-        {
-          "additionalProperties": true,
-          "properties": {
-            "bypass": {
-              "type": "boolean"
-            },
-            "custom": {
-              "$ref": "#/$defs/effectComponent"
-            },
-            "guid": {
-              "$ref": "#/$defs/uuid"
-            },
-            "mode": {
-              "const": "custom",
-              "type": "string"
-            }
-          },
-          "propertyNames": {
-            "pattern": "^(?!(effectRef|effectGuid|type|parameters)$)"
-          },
-          "required": [
-            "guid",
-            "mode",
-            "custom"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": true,
-          "properties": {
-            "bypass": {
-              "type": "boolean"
-            },
-            "effectRef": {
-              "$ref": "#/$defs/objectReference"
-            },
-            "guid": {
-              "$ref": "#/$defs/uuid"
-            },
-            "mode": {
-              "const": "preset",
-              "type": "string"
-            }
-          },
-          "propertyNames": {
-            "pattern": "^(?!(custom|effectGuid|type|parameters)$)"
-          },
-          "required": [
-            "guid",
-            "effectRef"
-          ],
-          "type": "object"
-        }
-      ]
-    },
-    "fieldGroupConversionPayload": {
-      "additionalProperties": false,
-      "properties": {
-        "settingsRef": {
-          "$ref": "#/$defs/fieldGroupGuid"
-        }
-      },
-      "required": [
-        "settingsRef"
-      ],
-      "type": "object"
-    },
-    "fieldGroupEffectFields": {
-      "additionalProperties": false,
-      "minProperties": 1,
-      "properties": {
-        "effects": {
-          "items": {
-            "$ref": "#/$defs/effectEntry"
-          },
-          "type": "array"
-        }
-      },
-      "type": "object"
-    },
-    "fieldGroupEffectPayload": {
-      "additionalProperties": false,
-      "properties": {
-        "effects": {
-          "items": {
-            "$ref": "#/$defs/effectEntry"
-          },
-          "type": "array"
-        }
-      },
-      "required": [
-        "effects"
+        "platformIds"
       ],
       "type": "object"
     },
@@ -734,11 +613,11 @@
       "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
       "type": "string"
     },
-    "fieldGroupOutputFields": {
+    "fieldGroupMainOutputFields": {
       "additionalProperties": false,
       "minProperties": 1,
       "properties": {
-        "outputBusRef": {
+        "mainOutputBusRef": {
           "$ref": "#/$defs/uuid"
         },
         "outputBusVolume": {
@@ -747,10 +626,10 @@
       },
       "type": "object"
     },
-    "fieldGroupOutputPayload": {
+    "fieldGroupMainOutputPayload": {
       "additionalProperties": false,
       "properties": {
-        "outputBusRef": {
+        "mainOutputBusRef": {
           "$ref": "#/$defs/uuid"
         },
         "outputBusVolume": {
@@ -758,46 +637,16 @@
         }
       },
       "required": [
-        "outputBusRef",
+        "mainOutputBusRef",
         "outputBusVolume"
       ],
-      "type": "object"
-    },
-    "fieldGroupPlatformConversion": {
-      "additionalProperties": false,
-      "properties": {
-        "inherit": {
-          "type": "boolean"
-        },
-        "values": {
-          "$ref": "#/$defs/fieldGroupConversionPayload"
-        }
-      },
-      "type": "object"
-    },
-    "fieldGroupPlatformEffect": {
-      "additionalProperties": false,
-      "properties": {
-        "inherit": {
-          "type": "boolean"
-        },
-        "values": {
-          "$ref": "#/$defs/fieldGroupEffectFields"
-        }
-      },
       "type": "object"
     },
     "fieldGroupPlatformGroups": {
       "additionalProperties": false,
       "properties": {
-        "conversion": {
-          "$ref": "#/$defs/fieldGroupPlatformConversion"
-        },
-        "effect": {
-          "$ref": "#/$defs/fieldGroupPlatformEffect"
-        },
-        "output": {
-          "$ref": "#/$defs/fieldGroupPlatformOutput"
+        "mainOutput": {
+          "$ref": "#/$defs/fieldGroupPlatformMainOutput"
         },
         "send": {
           "$ref": "#/$defs/fieldGroupPlatformSend"
@@ -809,14 +658,14 @@
       "required": [],
       "type": "object"
     },
-    "fieldGroupPlatformOutput": {
+    "fieldGroupPlatformMainOutput": {
       "additionalProperties": false,
       "properties": {
         "inherit": {
           "type": "boolean"
         },
         "values": {
-          "$ref": "#/$defs/fieldGroupOutputFields"
+          "$ref": "#/$defs/fieldGroupMainOutputFields"
         }
       },
       "type": "object"
@@ -875,20 +724,7 @@
     },
     "fieldGroupSendRow": {
       "additionalProperties": false,
-      "if": {
-        "properties": {
-          "duckTarget": {
-            "const": true
-          }
-        },
-        "required": [
-          "duckTarget"
-        ]
-      },
       "properties": {
-        "duckTarget": {
-          "type": "boolean"
-        },
         "sendLevel": {
           "maximum": 24,
           "minimum": -96,
@@ -896,102 +732,19 @@
         },
         "targetBusID": {
           "$ref": "#/$defs/uuid"
-        },
-        "type": {
-          "enum": [
-            "Send",
-            "Sidechain"
-          ],
-          "type": "string"
         }
       },
       "required": [
         "targetBusID",
         "sendLevel"
       ],
-      "then": {
-        "properties": {
-          "type": {
-            "const": "Sidechain"
-          }
-        },
-        "required": [
-          "type"
-        ]
-      },
-      "type": "object"
-    },
-    "fieldGroupSharedConversion": {
-      "additionalProperties": false,
-      "if": {
-        "properties": {
-          "inherit": {
-            "const": false
-          }
-        },
-        "required": [
-          "inherit"
-        ]
-      },
-      "properties": {
-        "inherit": {
-          "type": "boolean"
-        },
-        "values": {
-          "$ref": "#/$defs/fieldGroupConversionPayload"
-        }
-      },
-      "required": [
-        "inherit"
-      ],
-      "then": {
-        "required": [
-          "values"
-        ]
-      },
-      "type": "object"
-    },
-    "fieldGroupSharedEffect": {
-      "additionalProperties": false,
-      "if": {
-        "properties": {
-          "inherit": {
-            "const": false
-          }
-        },
-        "required": [
-          "inherit"
-        ]
-      },
-      "properties": {
-        "inherit": {
-          "type": "boolean"
-        },
-        "values": {
-          "$ref": "#/$defs/fieldGroupEffectPayload"
-        }
-      },
-      "required": [
-        "inherit"
-      ],
-      "then": {
-        "required": [
-          "values"
-        ]
-      },
       "type": "object"
     },
     "fieldGroupSharedGroups": {
       "additionalProperties": false,
       "properties": {
-        "conversion": {
-          "$ref": "#/$defs/fieldGroupSharedConversion"
-        },
-        "effect": {
-          "$ref": "#/$defs/fieldGroupSharedEffect"
-        },
-        "output": {
-          "$ref": "#/$defs/fieldGroupSharedOutput"
+        "mainOutput": {
+          "$ref": "#/$defs/fieldGroupSharedMainOutput"
         },
         "send": {
           "$ref": "#/$defs/fieldGroupSharedSend"
@@ -1001,15 +754,13 @@
         }
       },
       "required": [
-        "output",
+        "mainOutput",
         "send",
-        "spatialRating",
-        "effect",
-        "conversion"
+        "spatialRating"
       ],
       "type": "object"
     },
-    "fieldGroupSharedOutput": {
+    "fieldGroupSharedMainOutput": {
       "additionalProperties": false,
       "if": {
         "properties": {
@@ -1026,7 +777,7 @@
           "type": "boolean"
         },
         "values": {
-          "$ref": "#/$defs/fieldGroupOutputPayload"
+          "$ref": "#/$defs/fieldGroupMainOutputPayload"
         }
       },
       "required": [
@@ -1319,6 +1070,22 @@
     "layerNode": {
       "additionalProperties": false,
       "properties": {
+        "canvasPos": {
+          "additionalProperties": false,
+          "properties": {
+            "x": {
+              "type": "number"
+            },
+            "y": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "x",
+            "y"
+          ],
+          "type": "object"
+        },
         "children": {
           "maxItems": 0,
           "type": "array"
@@ -1329,6 +1096,13 @@
         },
         "components": {
           "$ref": "#/$defs/definitionComponents"
+        },
+        "expanded": {
+          "type": "boolean"
+        },
+        "extensions": {
+          "additionalProperties": true,
+          "type": "object"
         },
         "fieldGroups": {
           "$ref": "#/$defs/fieldGroups"
@@ -1342,21 +1116,30 @@
         "notes": {
           "type": "string"
         },
+        "objectPath": {
+          "type": "string"
+        },
         "order": {
           "type": "integer"
         },
         "parentRef": {
           "$ref": "#/$defs/parentRef"
         },
+        "path": {
+          "type": "string"
+        },
         "playableProperties": {
           "$ref": "#/$defs/playableProperties"
+        },
+        "sourceID": {
+          "$ref": "#/$defs/positiveInteger"
         },
         "type": {
           "enum": [
             "Sound",
             "Container",
             "Track",
-            "Segment",
+            "Piece",
             "Layer"
           ]
         }
@@ -1524,6 +1307,34 @@
       ],
       "type": "object"
     },
+    "marker": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "Entry",
+            "Exit",
+            "Custom"
+          ]
+        },
+        "markerGuid": {
+          "$ref": "#/$defs/uuid"
+        },
+        "name": {
+          "type": "string"
+        },
+        "position": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "markerGuid",
+        "kind",
+        "name",
+        "position"
+      ],
+      "type": "object"
+    },
     "mixNodeComponent": {
       "additionalProperties": false,
       "properties": {
@@ -1536,21 +1347,13 @@
         },
         "effects": {
           "items": {
-            "$ref": "#/$defs/effectEntry"
+            "additionalProperties": true,
+            "type": "object"
           },
           "type": "array"
         },
-        "effectsPlatforms": {
-          "additionalProperties": {
-            "items": {
-              "$ref": "#/$defs/effectEntry"
-            },
-            "type": "array"
-          },
-          "propertyNames": {
-            "$ref": "#/$defs/projectPlatformId"
-          },
-          "type": "object"
+        "makeUpGain": {
+          "type": "number"
         },
         "outputBusRef": {
           "$ref": "#/$defs/objectReference"
@@ -1606,6 +1409,31 @@
       ],
       "type": "object"
     },
+    "packGroup": {
+      "additionalProperties": false,
+      "properties": {
+        "actionIds": {
+          "items": {
+            "$ref": "#/$defs/uuid"
+          },
+          "type": "array"
+        },
+        "allPlatforms": {
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string"
+        },
+        "platformIds": {
+          "$ref": "#/$defs/projectPlatformIds"
+        }
+      },
+      "required": [
+        "platformIds",
+        "allPlatforms"
+      ],
+      "type": "object"
+    },
     "parentRef": {
       "additionalProperties": false,
       "properties": {
@@ -1628,6 +1456,128 @@
       ],
       "type": "object"
     },
+    "pieceTime": {
+      "additionalProperties": false,
+      "properties": {
+        "domain": {
+          "enum": [
+            "Absolute",
+            "Musical"
+          ]
+        },
+        "meterMap": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "denominator": {
+                "type": "integer"
+              },
+              "numerator": {
+                "type": "integer"
+              },
+              "tick": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "tick",
+              "numerator",
+              "denominator"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "tempoMap": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "microsecondsPerQuarter": {
+                "type": "integer"
+              },
+              "tick": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "tick",
+              "microsecondsPerQuarter"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "domain"
+      ],
+      "type": "object"
+    },
+    "pieceTimelineComponent": {
+      "additionalProperties": false,
+      "properties": {
+        "markers": {
+          "items": {
+            "$ref": "#/$defs/marker"
+          },
+          "type": "array"
+        },
+        "pieceTime": {
+          "$ref": "#/$defs/pieceTime"
+        }
+      },
+      "type": "object"
+    },
+    "platformConversionSettings": {
+      "additionalProperties": false,
+      "properties": {
+        "format": {
+          "maximum": 5,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "targetSampleRate": {
+          "maximum": 4294967295,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "vorbisAverageBitrate": {
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "vorbisEncodeMode": {
+          "maximum": 1,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "vorbisMaxBitrate": {
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "vorbisMinBitrate": {
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "vorbisQuality": {
+          "maximum": 1.0,
+          "minimum": -0.1,
+          "type": "number"
+        }
+      },
+      "required": [
+        "format",
+        "targetSampleRate",
+        "vorbisAverageBitrate",
+        "vorbisEncodeMode",
+        "vorbisMaxBitrate",
+        "vorbisMinBitrate",
+        "vorbisQuality"
+      ],
+      "type": "object"
+    },
     "playableOverrideRow": {
       "additionalProperties": false,
       "properties": {
@@ -1636,6 +1586,9 @@
           "minimum": 0,
           "type": "integer"
         },
+        "makeUpGain": {
+          "type": "number"
+        },
         "pitch": {
           "type": "number"
         },
@@ -1643,7 +1596,7 @@
           "$ref": "#/$defs/projectPlatformId"
         },
         "presence": {
-          "pattern": "^000000000000[0189]0[01][0-38-b]$",
+          "pattern": "^000000000000[0189]0[01][0-9a-f]$",
           "type": "string"
         },
         "signalGraph": {
@@ -1688,6 +1641,9 @@
           "minimum": 0,
           "type": "integer"
         },
+        "makeUpGain": {
+          "type": "number"
+        },
         "pitch": {
           "type": "number"
         },
@@ -1698,7 +1654,7 @@
           "type": "array"
         },
         "presence": {
-          "pattern": "^000000000000[0189]0[01][0-38-b]$",
+          "pattern": "^000000000000[0189]0[01][0-9a-f]$",
           "type": "string"
         },
         "signalGraph": {
@@ -1738,9 +1694,12 @@
       "minimum": 1,
       "type": "integer"
     },
-    "projectAudio": {
+    "projectMetadata": {
       "additionalProperties": false,
       "properties": {
+        "author": {
+          "type": "string"
+        },
         "channelConfig": {
           "enum": [
             0,
@@ -1751,22 +1710,53 @@
           ],
           "type": "integer"
         },
-        "defaultConversions": {
-          "additionalProperties": {
-            "$ref": "#/$defs/objectReference"
-          },
-          "type": "object"
+        "createdDate": {
+          "type": "string"
         },
-        "renderSampleRate": {
+        "description": {
+          "type": "string"
+        },
+        "enableLFE": {
+          "type": "boolean"
+        },
+        "modifiedDate": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "platforms": {
+          "items": {
+            "$ref": "#/$defs/projectPlatform"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "projectTemplateId": {
+          "type": "string"
+        },
+        "sampleRate": {
           "type": "integer"
+        },
+        "toolVersion": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
         }
       },
+      "required": [
+        "platforms"
+      ],
       "type": "object"
     },
-    "projectMetadata": {
+    "projectPaths": {
       "additionalProperties": false,
       "properties": {
-        "name": {
+        "audioFolder": {
+          "type": "string"
+        },
+        "packFolder": {
           "type": "string"
         }
       },
@@ -1792,18 +1782,66 @@
           "maxLength": 120,
           "minLength": 1,
           "type": "string"
+        },
+        "profile": {
+          "$ref": "#/$defs/projectPlatformProfile"
         }
       },
       "required": [
         "id",
         "name",
-        "basePlatform"
+        "basePlatform",
+        "profile"
       ],
       "type": "object"
     },
     "projectPlatformId": {
       "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
       "type": "string"
+    },
+    "projectPlatformIds": {
+      "items": {
+        "$ref": "#/$defs/projectPlatformId"
+      },
+      "type": "array"
+    },
+    "projectPlatformProfile": {
+      "additionalProperties": false,
+      "properties": {
+        "performResample": {
+          "type": "boolean"
+        },
+        "sizePolicies": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "config": {
+                "$ref": "#/$defs/platformConversionSettings"
+              },
+              "maxBytes": {
+                "maximum": 9223372036854775807,
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "config",
+              "maxBytes"
+            ],
+            "type": "object"
+          },
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "performResample",
+        "sizePolicies"
+      ],
+      "type": "object"
     },
     "s3Pack": {
       "additionalProperties": false,
@@ -1815,6 +1853,13 @@
         "components": {
           "$ref": "#/$defs/components"
         },
+        "expanded": {
+          "type": "boolean"
+        },
+        "extensions": {
+          "additionalProperties": true,
+          "type": "object"
+        },
         "guid": {
           "$ref": "#/$defs/uuid"
         },
@@ -1825,15 +1870,19 @@
         "notes": {
           "type": "string"
         },
+        "objectPath": {
+          "type": "string"
+        },
         "parentRef": {
           "$ref": "#/$defs/parentRef"
+        },
+        "path": {
+          "type": "string"
         },
         "type": {
           "enum": [
             "Variable",
-            "Attenuation",
-            "Effect",
-            "Conversion"
+            "Attenuation"
           ]
         }
       },
@@ -1844,11 +1893,6 @@
         "parentRef",
         "components"
       ],
-      "type": "object"
-    },
-    "segmentTimelineComponent": {
-      "additionalProperties": false,
-      "properties": {},
       "type": "object"
     },
     "selectionBehavior": {
@@ -1913,6 +1957,12 @@
         },
         "selections": {
           "$ref": "#/$defs/selections"
+        },
+        "spliceByMarker": {
+          "type": "boolean"
+        },
+        "transitions": {
+          "$ref": "#/$defs/transitionTable"
         }
       },
       "required": [
@@ -1920,50 +1970,7 @@
       ],
       "type": "object"
     },
-    "selectionCurve": {
-      "oneOf": [
-        {
-          "$ref": "#/$defs/identifiedSelectionCurve"
-        },
-        {
-          "$ref": "#/$defs/legacySelectionCurve"
-        }
-      ]
-    },
-    "selectionEntry": {
-      "additionalProperties": false,
-      "properties": {
-        "childGuid": {
-          "$ref": "#/$defs/uuid"
-        },
-        "curves": {
-          "items": {
-            "$ref": "#/$defs/selectionCurve"
-          },
-          "type": "array"
-        },
-        "occurrences": {
-          "items": {
-            "$ref": "#/$defs/selectionOccurrence"
-          },
-          "minItems": 1,
-          "type": "array"
-        },
-        "stableMemberOrdinal": {
-          "maximum": 4294967295,
-          "minimum": 0,
-          "type": "integer"
-        }
-      },
-      "required": [
-        "childGuid",
-        "stableMemberOrdinal",
-        "occurrences",
-        "curves"
-      ],
-      "type": "object"
-    },
-    "selectionMatchRow": {
+    "selectionCondition": {
       "additionalProperties": false,
       "properties": {
         "cells": {
@@ -1991,26 +1998,71 @@
           },
           "type": "array"
         },
-        "stableRuleOrdinal": {
+        "priority": {
           "maximum": 4294967295,
           "minimum": 0,
           "type": "integer"
         },
-        "target": {
-          "oneOf": [
-            {
-              "$ref": "#/$defs/uuid"
-            },
-            {
-              "type": "null"
-            }
-          ]
+        "stableRuleOrdinal": {
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": "integer"
         }
       },
       "required": [
         "stableRuleOrdinal",
-        "target",
+        "priority",
         "cells"
+      ],
+      "type": "object"
+    },
+    "selectionCurve": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/identifiedSelectionCurve"
+        },
+        {
+          "$ref": "#/$defs/legacySelectionCurve"
+        }
+      ]
+    },
+    "selectionEntry": {
+      "additionalProperties": false,
+      "properties": {
+        "childGuid": {
+          "$ref": "#/$defs/uuid"
+        },
+        "conditions": {
+          "items": {
+            "$ref": "#/$defs/selectionCondition"
+          },
+          "type": "array"
+        },
+        "curves": {
+          "items": {
+            "$ref": "#/$defs/selectionCurve"
+          },
+          "type": "array"
+        },
+        "occurrences": {
+          "items": {
+            "$ref": "#/$defs/selectionOccurrence"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "stableMemberOrdinal": {
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "childGuid",
+        "stableMemberOrdinal",
+        "occurrences",
+        "conditions",
+        "curves"
       ],
       "type": "object"
     },
@@ -2091,12 +2143,6 @@
           },
           "type": "array"
         },
-        "matchRows": {
-          "items": {
-            "$ref": "#/$defs/selectionMatchRow"
-          },
-          "type": "array"
-        },
         "occurrenceOrdinalHighWater": {
           "maximum": 4294967296,
           "minimum": 0,
@@ -2113,7 +2159,6 @@
         "ruleOrdinalHighWater",
         "entries",
         "matchAxes",
-        "matchRows",
         "blendAxes"
       ],
       "type": "object"
@@ -2142,48 +2187,18 @@
     },
     "send": {
       "additionalProperties": false,
-      "if": {
-        "properties": {
-          "duckTarget": {
-            "const": true
-          }
-        },
-        "required": [
-          "duckTarget"
-        ]
-      },
       "properties": {
-        "duckTarget": {
-          "type": "boolean"
-        },
         "sendLevel": {
           "type": "number"
         },
         "targetBusRef": {
           "$ref": "#/$defs/objectReference"
-        },
-        "type": {
-          "enum": [
-            "Send",
-            "Sidechain"
-          ],
-          "type": "string"
         }
       },
       "required": [
         "sendLevel",
         "targetBusRef"
       ],
-      "then": {
-        "properties": {
-          "type": {
-            "const": "Sidechain"
-          }
-        },
-        "required": [
-          "type"
-        ]
-      },
       "type": "object"
     },
     "soundComponent": {
@@ -2207,12 +2222,6 @@
       "properties": {
         "entryId": {
           "$ref": "#/$defs/uuid"
-        },
-        "fadeIn": {
-          "$ref": "#/$defs/soundSourceFadeIn"
-        },
-        "fadeOut": {
-          "$ref": "#/$defs/soundSourceFadeOut"
         },
         "loopProvenance": {
           "enum": [
@@ -2238,10 +2247,6 @@
           ],
           "type": "object"
         },
-        "name": {
-          "minLength": 1,
-          "type": "string"
-        },
         "rangeContentHash": {
           "minLength": 1,
           "type": "string"
@@ -2261,94 +2266,6 @@
       "required": [
         "entryId",
         "sourceId"
-      ],
-      "type": "object"
-    },
-    "soundSourceFadeIn": {
-      "additionalProperties": false,
-      "properties": {
-        "curve": {
-          "const": [
-            {
-              "value": 0,
-              "x": 0
-            },
-            {
-              "value": 1,
-              "x": 1
-            }
-          ],
-          "type": "array"
-        },
-        "durationFrames": {
-          "maximum": 9007199254740992,
-          "minimum": 0,
-          "type": "integer"
-        },
-        "handles": {
-          "items": {
-            "items": {
-              "maximum": 1,
-              "minimum": 0,
-              "type": "number"
-            },
-            "maxItems": 4,
-            "minItems": 4,
-            "type": "array"
-          },
-          "maxItems": 1,
-          "minItems": 1,
-          "type": "array"
-        }
-      },
-      "required": [
-        "durationFrames",
-        "curve",
-        "handles"
-      ],
-      "type": "object"
-    },
-    "soundSourceFadeOut": {
-      "additionalProperties": false,
-      "properties": {
-        "curve": {
-          "const": [
-            {
-              "value": 1,
-              "x": 0
-            },
-            {
-              "value": 0,
-              "x": 1
-            }
-          ],
-          "type": "array"
-        },
-        "durationFrames": {
-          "maximum": 9007199254740992,
-          "minimum": 0,
-          "type": "integer"
-        },
-        "handles": {
-          "items": {
-            "items": {
-              "maximum": 1,
-              "minimum": 0,
-              "type": "number"
-            },
-            "maxItems": 4,
-            "minItems": 4,
-            "type": "array"
-          },
-          "maxItems": 1,
-          "minItems": 1,
-          "type": "array"
-        }
-      },
-      "required": [
-        "durationFrames",
-        "curve",
-        "handles"
       ],
       "type": "object"
     },
@@ -2500,6 +2417,159 @@
       },
       "type": "object"
     },
+    "transitionFade": {
+      "additionalProperties": false,
+      "properties": {
+        "curve": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "value": {
+                "type": "number"
+              },
+              "x": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "x",
+              "value"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "durationSeconds": {
+          "minimum": 0,
+          "type": "number"
+        },
+        "handles": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "h1x": {
+                "type": "number"
+              },
+              "h1y": {
+                "type": "number"
+              },
+              "h2x": {
+                "type": "number"
+              },
+              "h2y": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "h1x",
+              "h1y",
+              "h2x",
+              "h2y"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "durationSeconds",
+        "curve",
+        "handles"
+      ],
+      "type": "object"
+    },
+    "transitionTable": {
+      "additionalProperties": false,
+      "properties": {
+        "rules": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "bridge": {
+                "format": "uuid",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "bridgeFadeIn": {
+                "$ref": "#/$defs/transitionFade"
+              },
+              "bridgeFadeOut": {
+                "$ref": "#/$defs/transitionFade"
+              },
+              "entryMode": {
+                "enum": [
+                  "EntryMarker",
+                  "SamePosition"
+                ],
+                "type": "string"
+              },
+              "exitTiming": {
+                "enum": [
+                  "Immediate",
+                  "NaturalEnd",
+                  "NextBeat",
+                  "NextBar",
+                  "NextMarker",
+                  "ExitMarker"
+                ],
+                "type": "string"
+              },
+              "source": {
+                "format": "uuid",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "sourceFadeOut": {
+                "$ref": "#/$defs/transitionFade"
+              },
+              "target": {
+                "format": "uuid",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "targetFadeIn": {
+                "$ref": "#/$defs/transitionFade"
+              }
+            },
+            "required": [
+              "source",
+              "target",
+              "exitTiming",
+              "sourceFadeOut",
+              "bridge",
+              "bridgeFadeIn",
+              "bridgeFadeOut",
+              "entryMode",
+              "targetFadeIn"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "rules"
+      ],
+      "type": "object"
+    },
+    "unityIntegration": {
+      "additionalProperties": false,
+      "properties": {
+        "autoDeploy": {
+          "type": "boolean"
+        },
+        "projectPath": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
     "uuid": {
       "format": "uuid",
       "type": "string"
@@ -2595,6 +2665,10 @@
                 },
                 "type": "array"
               },
+              "extensions": {
+                "additionalProperties": true,
+                "type": "object"
+              },
               "guid": {
                 "$ref": "#/$defs/uuid"
               },
@@ -2602,7 +2676,10 @@
                 "minLength": 1,
                 "type": "string"
               },
-              "notes": {
+              "nameBindingRevision": {
+                "$ref": "#/$defs/positiveInteger"
+              },
+              "objectPath": {
                 "type": "string"
               },
               "parentRef": {
@@ -2633,6 +2710,14 @@
                 "format": "uuid",
                 "type": "string"
               },
+              "propertyModel": {
+                "const": "fieldGroupsV1",
+                "type": "string"
+              },
+              "savedStudioVersion": {
+                "minLength": 1,
+                "type": "string"
+              },
               "schemaVersion": {
                 "const": 9,
                 "type": "integer"
@@ -2642,14 +2727,13 @@
                 "type": "string"
               }
             },
-            "propertyNames": {
-              "pattern": "^(?!(studioVersion|savedStudioVersion|propertyModel)$)"
-            },
             "required": [
               "type",
               "id",
               "projectId",
-              "schemaVersion"
+              "schemaVersion",
+              "savedStudioVersion",
+              "propertyModel"
             ],
             "type": "object"
           }
@@ -2685,6 +2769,14 @@
                 "format": "uuid",
                 "type": "string"
               },
+              "propertyModel": {
+                "const": "fieldGroupsV1",
+                "type": "string"
+              },
+              "savedStudioVersion": {
+                "minLength": 1,
+                "type": "string"
+              },
               "schemaVersion": {
                 "const": 9,
                 "type": "integer"
@@ -2694,14 +2786,13 @@
                 "type": "string"
               }
             },
-            "propertyNames": {
-              "pattern": "^(?!(studioVersion|savedStudioVersion|propertyModel)$)"
-            },
             "required": [
               "type",
               "id",
               "projectId",
-              "schemaVersion"
+              "schemaVersion",
+              "savedStudioVersion",
+              "propertyModel"
             ],
             "type": "object"
           }
@@ -2716,110 +2807,6 @@
     },
     {
       "pathPatterns": [
-        "Effects/**/*.vp"
-      ],
-      "required": false,
-      "schema": {
-        "additionalProperties": false,
-        "properties": {
-          "content": {
-            "$ref": "#/$defs/s3Pack",
-            "$schema": "https://json-schema.org/draft/2020-12/schema"
-          },
-          "harkenDocument": {
-            "additionalProperties": true,
-            "properties": {
-              "id": {
-                "format": "uuid",
-                "type": "string"
-              },
-              "projectId": {
-                "format": "uuid",
-                "type": "string"
-              },
-              "schemaVersion": {
-                "const": 9,
-                "type": "integer"
-              },
-              "type": {
-                "const": "project.effect",
-                "type": "string"
-              }
-            },
-            "propertyNames": {
-              "pattern": "^(?!(studioVersion|savedStudioVersion|propertyModel)$)"
-            },
-            "required": [
-              "type",
-              "id",
-              "projectId",
-              "schemaVersion"
-            ],
-            "type": "object"
-          }
-        },
-        "required": [
-          "harkenDocument",
-          "content"
-        ],
-        "type": "object"
-      },
-      "type": "project.effect"
-    },
-    {
-      "pathPatterns": [
-        "Conversions/**/*.vp"
-      ],
-      "required": false,
-      "schema": {
-        "additionalProperties": false,
-        "properties": {
-          "content": {
-            "$ref": "#/$defs/s3Pack",
-            "$schema": "https://json-schema.org/draft/2020-12/schema"
-          },
-          "harkenDocument": {
-            "additionalProperties": true,
-            "properties": {
-              "id": {
-                "format": "uuid",
-                "type": "string"
-              },
-              "projectId": {
-                "format": "uuid",
-                "type": "string"
-              },
-              "schemaVersion": {
-                "const": 9,
-                "type": "integer"
-              },
-              "type": {
-                "const": "project.conversion",
-                "type": "string"
-              }
-            },
-            "propertyNames": {
-              "pattern": "^(?!(studioVersion|savedStudioVersion|packSchemaVersion|propertyModel)$)"
-            },
-            "required": [
-              "type",
-              "id",
-              "projectId",
-              "schemaVersion"
-            ],
-            "type": "object"
-          }
-        },
-        "required": [
-          "harkenDocument",
-          "content"
-        ],
-        "type": "object"
-      },
-      "type": "project.conversion"
-    },
-    {
-      "pathPatterns": [
         "Busses/**/*.vp"
       ],
       "required": false,
@@ -2830,20 +2817,21 @@
             "$schema": "https://json-schema.org/draft/2020-12/schema",
             "additionalProperties": false,
             "properties": {
+              "componentData": {
+                "$ref": "#/$defs/busComponent"
+              },
               "components": {
-                "$ref": "#/$defs/components",
-                "required": [
-                  "bus"
-                ]
+                "$ref": "#/$defs/components"
+              },
+              "extensions": {
+                "additionalProperties": true,
+                "type": "object"
               },
               "guid": {
                 "$ref": "#/$defs/uuid"
               },
               "name": {
                 "minLength": 1,
-                "type": "string"
-              },
-              "notes": {
                 "type": "string"
               },
               "parentRef": {
@@ -2862,7 +2850,7 @@
               "guid",
               "name",
               "parentRef",
-              "components"
+              "componentData"
             ],
             "type": "object"
           },
@@ -2877,6 +2865,14 @@
                 "format": "uuid",
                 "type": "string"
               },
+              "propertyModel": {
+                "const": "fieldGroupsV1",
+                "type": "string"
+              },
+              "savedStudioVersion": {
+                "minLength": 1,
+                "type": "string"
+              },
               "schemaVersion": {
                 "const": 9,
                 "type": "integer"
@@ -2886,14 +2882,13 @@
                 "type": "string"
               }
             },
-            "propertyNames": {
-              "pattern": "^(?!(studioVersion|savedStudioVersion|propertyModel)$)"
-            },
             "required": [
               "type",
               "id",
               "projectId",
-              "schemaVersion"
+              "schemaVersion",
+              "savedStudioVersion",
+              "propertyModel"
             ],
             "type": "object"
           }
@@ -2929,6 +2924,14 @@
                 "format": "uuid",
                 "type": "string"
               },
+              "propertyModel": {
+                "const": "fieldGroupsV1",
+                "type": "string"
+              },
+              "savedStudioVersion": {
+                "minLength": 1,
+                "type": "string"
+              },
               "schemaVersion": {
                 "const": 9,
                 "type": "integer"
@@ -2938,14 +2941,13 @@
                 "type": "string"
               }
             },
-            "propertyNames": {
-              "pattern": "^(?!(studioVersion|savedStudioVersion|propertyModel)$)"
-            },
             "required": [
               "type",
               "id",
               "projectId",
-              "schemaVersion"
+              "schemaVersion",
+              "savedStudioVersion",
+              "propertyModel"
             ],
             "type": "object"
           }
@@ -2970,8 +2972,12 @@
             "$schema": "https://json-schema.org/draft/2020-12/schema",
             "additionalProperties": false,
             "properties": {
-              "audio": {
-                "$ref": "#/$defs/projectAudio"
+              "actionPackTargeting": {},
+              "actionPublishedNameHistory": {
+                "items": {
+                  "$ref": "#/$defs/actionPublishedNameHistoryRow"
+                },
+                "type": "array"
               },
               "buildExportPackMetadata": {
                 "type": "boolean"
@@ -2985,24 +2991,43 @@
               "buildWaveformOutputDir": {
                 "type": "string"
               },
+              "conversionFailurePolicy": {
+                "enum": [
+                  "abort_build",
+                  "skip_and_warn"
+                ],
+                "type": "string"
+              },
               "defaultLanguage": {
                 "type": "string"
               },
-              "deployLanguages": {
-                "$ref": "#/$defs/stringArray"
-              },
-              "deployPlatforms": {
+              "deploymentProfiles": {
                 "items": {
-                  "$ref": "#/$defs/projectPlatform"
+                  "$ref": "#/$defs/deploymentProfile"
                 },
-                "minItems": 1,
                 "type": "array"
+              },
+              "extensions": {
+                "additionalProperties": true,
+                "type": "object"
               },
               "metadata": {
                 "$ref": "#/$defs/projectMetadata"
               },
               "packBuildOutputDir": {
                 "type": "string"
+              },
+              "packExportCurrentPlatformId": {},
+              "packExportSelectedPlatformIds": {},
+              "packGroups": {},
+              "packOutputDir": {
+                "type": "string"
+              },
+              "paths": {
+                "$ref": "#/$defs/projectPaths"
+              },
+              "projectLanguages": {
+                "$ref": "#/$defs/stringArray"
               },
               "sourceAssets": {
                 "additionalProperties": {
@@ -3013,11 +3038,14 @@
                   "pattern": "^[1-9][0-9]{0,9}$"
                 },
                 "type": "object"
+              },
+              "unityIntegration": {
+                "$ref": "#/$defs/unityIntegration"
               }
             },
             "required": [
               "metadata",
-              "deployPlatforms"
+              "paths"
             ],
             "type": "object"
           },
@@ -3032,28 +3060,30 @@
                 "format": "uuid",
                 "type": "string"
               },
+              "propertyModel": {
+                "const": "fieldGroupsV1",
+                "type": "string"
+              },
+              "savedStudioVersion": {
+                "minLength": 1,
+                "type": "string"
+              },
               "schemaVersion": {
                 "const": 9,
                 "type": "integer"
-              },
-              "studioVersion": {
-                "minLength": 1,
-                "type": "string"
               },
               "type": {
                 "const": "project.root",
                 "type": "string"
               }
             },
-            "propertyNames": {
-              "pattern": "^(?!(savedStudioVersion|propertyModel)$)"
-            },
             "required": [
               "type",
               "id",
               "projectId",
               "schemaVersion",
-              "studioVersion"
+              "savedStudioVersion",
+              "propertyModel"
             ],
             "type": "object"
           }
@@ -3089,6 +3119,14 @@
                 "format": "uuid",
                 "type": "string"
               },
+              "propertyModel": {
+                "const": "fieldGroupsV1",
+                "type": "string"
+              },
+              "savedStudioVersion": {
+                "minLength": 1,
+                "type": "string"
+              },
               "schemaVersion": {
                 "const": 9,
                 "type": "integer"
@@ -3098,14 +3136,13 @@
                 "type": "string"
               }
             },
-            "propertyNames": {
-              "pattern": "^(?!(studioVersion|savedStudioVersion|propertyModel)$)"
-            },
             "required": [
               "type",
               "id",
               "projectId",
-              "schemaVersion"
+              "schemaVersion",
+              "savedStudioVersion",
+              "propertyModel"
             ],
             "type": "object"
           }
@@ -3120,10 +3157,11 @@
     }
   ],
   "x-harken-extensionPolicy": {
+    "contentExtensions": "ignorable metadata, preserved on save",
     "headerAdditionalProperties": "ignorable metadata, preserved on save",
     "preservedModulePayloads": {
       "mixNodeComponent.bindings": "unknown object fields and opaque entries preserved; known values parsed by module",
-      "mixNodeComponent.effects": "unknown object fields preserved; known values parsed by module",
+      "mixNodeComponent.effects": "unknown object fields and opaque entries preserved; known values parsed by module",
       "playableOverrideRow.signalGraph": "retired input; discarded with its presence bit when loading",
       "playableProperties.signalGraph": "retired input; discarded with its presence bit when loading"
     },
@@ -3144,9 +3182,7 @@
         "project.bus",
         "project.action",
         "project.variable",
-        "project.attenuation",
-        "project.effect",
-        "project.conversion"
+        "project.attenuation"
       ],
       "rule": "documentIdMirrorsRoot"
     },
@@ -3186,69 +3222,11 @@
           ]
         },
         {
-          "kind": "object",
-          "path": [
-            "components",
-            "mixnode",
-            "effects",
-            "*",
-            "effectRef"
-          ],
-          "targetTypes": [
-            "Effect"
-          ]
-        },
-        {
-          "kind": "object",
-          "path": [
-            "components",
-            "mixnode",
-            "effectsPlatforms",
-            "*",
-            "*",
-            "effectRef"
-          ],
-          "targetTypes": [
-            "Effect"
-          ]
-        },
-        {
-          "kind": "object",
-          "path": [
-            "fieldGroups",
-            "shared",
-            "effect",
-            "values",
-            "effects",
-            "*",
-            "effectRef"
-          ],
-          "targetTypes": [
-            "Effect"
-          ]
-        },
-        {
-          "kind": "object",
-          "path": [
-            "fieldGroups",
-            "platforms",
-            "*",
-            "effect",
-            "values",
-            "effects",
-            "*",
-            "effectRef"
-          ],
-          "targetTypes": [
-            "Effect"
-          ]
-        },
-        {
           "allowNull": true,
           "kind": "object",
           "path": [
             "playableProperties",
-            "outputBusRef"
+            "mainOutputBusRef"
           ],
           "targetTypes": [
             "Bus"
@@ -3292,7 +3270,7 @@
             "Sound",
             "Container",
             "Track",
-            "Segment"
+            "Piece"
           ]
         },
         {
@@ -3311,7 +3289,7 @@
             "Sound",
             "Container",
             "Track",
-            "Segment"
+            "Piece"
           ]
         },
         {
@@ -3326,7 +3304,7 @@
           "targetTypes": [
             "Sound",
             "Container",
-            "Segment"
+            "Piece"
           ]
         },
         {
@@ -3338,7 +3316,7 @@
             "clips",
             "*",
             "playableProperties",
-            "outputBusRef"
+            "mainOutputBusRef"
           ],
           "targetTypes": [
             "Bus"
@@ -3388,7 +3366,7 @@
               "Sound",
               "Container",
               "Track",
-              "Segment"
+              "Piece"
             ],
             "Post Action": [
               "Action"
@@ -3403,48 +3381,23 @@
               "Sound",
               "Container",
               "Track",
-              "Segment"
+              "Piece"
             ]
           }
         },
         {
-          "allowNull": true,
-          "kind": "guid",
-          "path": [
-            "fieldGroups",
-            "shared",
-            "conversion",
-            "values",
-            "settingsRef"
-          ],
-          "targetTypes": [
-            "Conversion"
-          ]
-        },
-        {
-          "allowNull": true,
-          "kind": "guid",
-          "path": [
-            "fieldGroups",
-            "platforms",
-            "*",
-            "conversion",
-            "values",
-            "settingsRef"
-          ],
-          "targetTypes": [
-            "Conversion"
-          ]
-        },
-        {
           "kind": "object",
           "path": [
-            "audio",
-            "defaultConversions",
-            "*"
+            "actions",
+            "*",
+            "quantize",
+            "referenceRef"
           ],
           "targetTypes": [
-            "Conversion"
+            "Sound",
+            "Container",
+            "Track",
+            "Piece"
           ]
         }
       ],

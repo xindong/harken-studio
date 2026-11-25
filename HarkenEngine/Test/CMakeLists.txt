@@ -940,35 +940,6 @@ target_include_directories(harken_resample_benchmark PRIVATE
     ${HARKEN_CORE_DIR}/render/include
 )
 
-# Standalone M11 capacity characterizer. It keeps capacity/resource evidence
-# separate from the M10 resampler tool and is driven one scenario at a time by
-# the bounded test runner; it is deliberately not registered with ctest.
-add_executable(harken_runtime_capacity_benchmark
-    Benchmark/RuntimeCapacityBenchmark.cpp
-    UnitTest/AllocationProbe.cpp
-)
-target_link_libraries(harken_runtime_capacity_benchmark PRIVATE harken_core harken_buildinfo)
-target_compile_definitions(harken_runtime_capacity_benchmark PRIVATE
-    HARKEN_BENCHMARK_CONFIGURATION="$<CONFIG>")
-if(WIN32)
-    target_link_libraries(harken_runtime_capacity_benchmark PRIVATE Psapi)
-endif()
-if(HARKEN_ENABLE_STAGE_TAPS)
-    target_compile_definitions(harken_runtime_capacity_benchmark PRIVATE
-        HARKEN_ENABLE_STAGE_TAPS)
-endif()
-target_include_directories(harken_runtime_capacity_benchmark PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}
-    ${HARKEN_CORE_DIR}/api/src
-    ${HARKEN_DEVELOPMENT_PRIVATE_INCLUDES}
-    ${HARKEN_CORE_DIR}/core/include
-    ${HARKEN_CORE_DIR}/dsp/include
-    ${HARKEN_CORE_DIR}/media/include
-    ${HARKEN_PACK_FORMAT_INCLUDE_DIR}
-    ${HARKEN_CORE_DIR}/param/include
-    ${HARKEN_CORE_DIR}/render/include
-)
-
 add_executable(harken_pack_foundation_qualification
     Benchmark/PackFoundationQualification.cpp
 )

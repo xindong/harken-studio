@@ -76,17 +76,13 @@ bool parseMixingRows(const QJsonValue& source, std::vector<SelectionMixingRow>& 
     QSet<QUuid> guids;
     QSet<QUuid> variables;
     for (const auto& value : source.toArray()) {
+        const auto object = value.toObject();
+        if (object.size() != 2) return false;
         SelectionMixingRow row;
-        QJsonValue variable = value;
-        if (value.isObject()) {
-            const auto object = value.toObject();
-            if (object.size() != 2) return false;
-            row.guid = QUuid(object.value(QStringLiteral("guid")).toString());
-            variable = object.value(QStringLiteral("variable"));
-        }
+        row.guid = QUuid(object.value(QStringLiteral("guid")).toString());
+        const auto variable = object.value(QStringLiteral("variable"));
         row.variable = QUuid(variable.toString());
         if (!variable.isNull() && (!variable.isString() || row.variable.isNull())) return false;
-        if (!value.isObject()) row.guid = MixingSemantics::legacyRowGuid(row.variable);
         if (row.guid.isNull() || guids.contains(row.guid)
             || (!row.variable.isNull() && variables.contains(row.variable))) return false;
         guids.insert(row.guid);
@@ -437,21 +433,9 @@ std::optional<SelectionTable> SelectionTable::fromJson(const QJsonObject& json, 
                 || !unsignedInteger(curve.value(QStringLiteral("order"))))
                 return fail(QStringLiteral("Selection curve is invalid"));
             const SelectionMixingRow* mixingRow = nullptr;
-            if (curve.contains(QStringLiteral("blendGuid"))) {
-                const QUuid guid(curve.value(QStringLiteral("blendGuid")).toString());
-                for (const auto& candidate : parsed.mixingRows)
-                    if (candidate.guid == guid) mixingRow = &candidate;
-            } else {
-                const auto reference = curve.value(QStringLiteral("variable"));
-                const QUuid variable(reference.toString());
-                if (!reference.isNull() && (!reference.isString() || variable.isNull()))
-                    return fail(QStringLiteral("Selection curve Variable is invalid"));
-                for (const auto& candidate : parsed.mixingRows) {
-                    if (candidate.variable != variable) continue;
-                    if (mixingRow) return fail(QStringLiteral("Selection curve Variable is ambiguous"));
-                    mixingRow = &candidate;
-                }
-            }
+            const QUuid guid(curve.value(QStringLiteral("blendGuid")).toString());
+            for (const auto& candidate : parsed.mixingRows)
+                if (candidate.guid == guid) mixingRow = &candidate;
             if (!mixingRow || curveRows.contains(mixingRow->guid))
                 return fail(QStringLiteral("Selection curve row is missing or duplicated"));
             const auto& variable = mixingRow->variable;

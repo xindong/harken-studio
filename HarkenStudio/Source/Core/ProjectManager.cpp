@@ -37,6 +37,7 @@
 #include "ProjectSavePlan.h"
 #include "ProjectTransaction.h"
 #include "ProjectUpgradeMessages.h"
+#include "ProjectUserData.h"
 #include "NameValidator.h"
 #include "PlayablePropertyAuthoringV1.h"
 #include "PlaybackReferenceValidation.h"
@@ -287,6 +288,31 @@ void migrateAudioSourceLayout(const QString& projectRoot)
                        << legacyCacheDir;
         }
     }
+}
+
+void resetUpgradedProjectCache(const QString& projectRoot, const QList<AssetInfo>& assets,
+                               ProjectSaveBaseline* baseline)
+{
+    if (!ProjectUserData::importFromCache(projectRoot)) {
+        qWarning() << "[ProjectManager] Kept the project cache because its user data could not be imported:"
+                   << projectRoot;
+        return;
+    }
+    const QFileInfo cache(PathUtils::getDotCacheDir(projectRoot));
+    if (cache.isSymLink() || cache.isJunction()
+        || !QDir(cache.absoluteFilePath()).removeRecursively())
+        qWarning() << "[ProjectManager] Failed to clear the project cache:" << cache.absoluteFilePath();
+    if (baseline) {
+        const auto cached = [](const QString& path) {
+            return path.startsWith(QStringLiteral(".cache/asset_registry/"));
+        };
+        baseline->files.removeIf([&](const auto& entry) { return cached(entry.key()); });
+        baseline->hashes.removeIf([&](const auto& entry) { return cached(entry.key()); });
+        baseline->directories.removeIf(cached);
+    }
+    AssetRegistry::instance().setProjectRoot(projectRoot);
+    if (!AssetRegistry::saveSnapshotToFile(projectRoot, assets))
+        qWarning() << "[ProjectManager] Failed to write the rebuilt asset registry:" << projectRoot;
 }
 
 bool saveOneAction(const QString& targetDirPath, const QString& projectId,
@@ -1860,6 +1886,7 @@ bool ProjectManager::commitPreparedProject(PreparedProject&& prepared)
             return false;
         }
         prepared.releaseUpgradeRecovery();
+        resetUpgradedProjectCache(projectRoot, prepared.assets, saveBaseline.get());
     }
     m_currentProject = std::move(prepared.project);
     m_saveBaseline = std::move(saveBaseline);

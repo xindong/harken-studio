@@ -5,7 +5,6 @@
 #include "TemplateApplyService.h"
 #include "ActionStepUtils.h"
 #include "AuthoringPolicy.h"
-#include "ProjectDocument.h"
 #include "AttenuationStore.h"
 #include "BusPlacementRules.h"
 #include "ConversionDefaults.h"
@@ -377,8 +376,7 @@ bool TemplateApplyService::seedTemplateInto(
                           const QString& folder) -> bool {
         for (const auto& value : source) {
             if (!value.isObject()) return setErr(QStringLiteral("template item must be an object"));
-            auto content = value.toObject();
-            if (!ProjectDocument::normalizeContent(&content, error)) return false;
+            const auto content = value.toObject();
             auto item = std::make_shared<ProjectItem>();
             if (!serializer.projectItemFromJson(content, *item))
                 return setErr(serializer.lastError().isEmpty()
@@ -392,8 +390,7 @@ bool TemplateApplyService::seedTemplateInto(
     };
     for (const auto& value : templateData.content) {
         if (!value.isObject()) return setErr(QStringLiteral("template content must be an object"));
-        auto content = value.toObject();
-        if (!ProjectDocument::normalizeContent(&content, error)) return false;
+        const auto content = value.toObject();
         auto item = std::make_shared<ProjectItem>();
         if (!serializer.projectItemFromJson(content, *item))
             return setErr(serializer.lastError().isEmpty()

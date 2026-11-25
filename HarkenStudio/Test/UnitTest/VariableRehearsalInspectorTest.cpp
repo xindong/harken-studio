@@ -78,13 +78,14 @@ protected:
         smoothVariable->rangeMin = 0.0f;
         smoothVariable->rangeMax = 100.0f;
         smoothVariable->defaultValue = 0.0f;
+        smoothVariable->labels = {{0, QStringLiteral("Zero")}};
 
         auto* selection = container_->compOrCreate<harken::studio::VSelection>();
         selection->mode = harken::studio::SelectionMode::Match;
         auto grid = selection->matchGrid();
         ASSERT_TRUE(grid.addAxis(smooth_->guid));
         ASSERT_TRUE(grid.addRow(child_->guid));
-        ASSERT_TRUE(grid.setCell(0, 0, 0));
+        ASSERT_TRUE(grid.setCell(0, 0, harken::studio::DiscreteGridCell(smoothVariable->labels.front().id)));
         ASSERT_TRUE(selection->selections.shared.setMatchGrid(grid));
 
         harken::studio::UndoRedoManager::instance().clear();
@@ -469,7 +470,7 @@ TEST_F(VariableRehearsalInspectorTest, RangePoliciesKeepDiscreteWritesLegalWitho
     auto* variable = smooth_->comp<harken::studio::VVariable>();
     variable->kind = harken::studio::VariableKind::Step;
     variable->defaultValue = 50.0f;
-    variable->labels = {{0, QStringLiteral("Zero")}, {50, QStringLiteral("Middle")}};
+    variable->labels.push_back({50, QStringLiteral("Middle")});
     const auto oldLabels = variable->getField(QStringLiteral("labels"));
     auto* selection = container_->comp<harken::studio::VSelection>();
     const auto before = selection->selections.toJson();

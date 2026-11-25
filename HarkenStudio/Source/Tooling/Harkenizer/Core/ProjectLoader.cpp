@@ -903,8 +903,8 @@ PreparedProject ProjectLoader::prepareProject(const QString& filePath,
         return {};
 
     const QString projectRoot = QFileInfo(prepared.project->projectPath).absolutePath();
-    const bool registryLoaded =
-        AssetRegistry::loadSnapshotFromFile(projectRoot, prepared.assets);
+    const bool registryLoaded = !prepared.upgradePending
+        && AssetRegistry::loadSnapshotFromFile(projectRoot, prepared.assets);
     prepared.rebuildAssetRegistry = AssetRegistry::reconcileSnapshot(
         projectRoot, prepared.project->sourceAssets, prepared.assets,
         mode == ProjectSerializer::LoadMode::RecoverTransactions) || !registryLoaded;
@@ -913,7 +913,8 @@ PreparedProject ProjectLoader::prepareProject(const QString& filePath,
 
     if (mode == ProjectSerializer::LoadMode::RecoverTransactions) {
         prepared.index = std::make_unique<ProjectIndex>();
-        prepared.index->loadFromCache(projectRoot);
+        if (!prepared.upgradePending)
+            prepared.index->loadFromCache(projectRoot);
         const auto scanResult = prepared.index->scanProjectRoot(projectRoot);
         if (scanResult != ProjectIndex::ScanResult::Ok) {
             qWarning() << "[ProjectManager] ProjectIndex scan returned non-Ok:"
@@ -981,7 +982,7 @@ PreparedProject ProjectLoader::prepareProject(const QString& filePath,
         prepared.project.reset();
         return prepared;
     }
-    prepared.diagnostics.append(VariableSemantics::restoreLoadedLabelReferences(*prepared.project));
+    prepared.diagnostics.append(VariableSemantics::loadedVariableDiagnostics(*prepared.project));
     if (!validatePlaybackReferences(*prepared.project, &prepared.error)) {
         prepared.error = projectIssueCode(ProjectIssue::InvalidPlaybackReference)
             + QStringLiteral(": ") + prepared.error;

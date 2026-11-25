@@ -28,7 +28,6 @@ add_library(harkenizer_core STATIC
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ContainerBehaviorSemantics.cpp
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ConversionDefaults.cpp
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ConversionResolution.cpp
-    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ConversionMigration.cpp
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/CurveSemantics.cpp
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/EffectChainSemantics.cpp
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/FieldGroupDerivedView.cpp
@@ -125,7 +124,6 @@ add_library(harkenizer_core STATIC
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ContainerBehaviorSemantics.h
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ConversionDefaults.h
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ConversionResolution.h
-    ${HARKENIZER_SHARED_SOURCE_DIR}/Core/ConversionMigration.h
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/CurveSemantics.h
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/EffectChainSemantics.h
     ${HARKENIZER_SHARED_SOURCE_DIR}/Core/FieldGroupDerivedView.h
