@@ -12,6 +12,8 @@
 #include <QTemporaryDir>
 #include <QTest>
 #include <windows.h>
+#include <propkey.h>
+#include <propvarutil.h>
 #include <shlobj.h>
 #include <wrl/client.h>
 #include <future>
@@ -68,8 +70,10 @@ protected:
         ASSERT_TRUE(directory.isValid());
         previousRoot = qgetenv("HARKEN_HUB_SHELL_ROOT");
         previousUser = qgetenv("HARKEN_HUB_USER_ROOT");
+        previousInstall = qgetenv("HARKEN_HUB_INSTALL_DIR");
         qputenv("HARKEN_HUB_SHELL_ROOT", directory.path().toUtf8());
         qputenv("HARKEN_HUB_USER_ROOT", directory.path().toUtf8());
+        qputenv("HARKEN_HUB_INSTALL_DIR", QCoreApplication::applicationDirPath().toUtf8());
         initialized = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
         ASSERT_TRUE(SUCCEEDED(initialized) || initialized == RPC_E_CHANGED_MODE);
         pinnedRoot = directory.filePath(QStringLiteral("Microsoft/Internet Explorer/Quick Launch/User Pinned/TaskBar"));
@@ -89,9 +93,14 @@ protected:
             qunsetenv("HARKEN_HUB_USER_ROOT");
         else
             qputenv("HARKEN_HUB_USER_ROOT", previousUser);
+        if (previousInstall.isNull())
+            qunsetenv("HARKEN_HUB_INSTALL_DIR");
+        else
+            qputenv("HARKEN_HUB_INSTALL_DIR", previousInstall);
     }
 
-    void save(const QString& path, const QString& target, const QString& icon, const QString& arguments)
+    void save(const QString& path, const QString& target, const QString& icon, const QString& arguments,
+              const QString& workingDirectory = {}, const wchar_t* appId = nullptr)
     {
         Microsoft::WRL::ComPtr<IShellLinkW> link;
         ASSERT_HRESULT_SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
@@ -99,12 +108,22 @@ protected:
         ASSERT_HRESULT_SUCCEEDED(link->SetPath(QDir::toNativeSeparators(target).toStdWString().c_str()));
         ASSERT_HRESULT_SUCCEEDED(link->SetIconLocation(QDir::toNativeSeparators(icon).toStdWString().c_str(), 0));
         ASSERT_HRESULT_SUCCEEDED(link->SetArguments(arguments.toStdWString().c_str()));
+        ASSERT_HRESULT_SUCCEEDED(link->SetWorkingDirectory(QDir::toNativeSeparators(workingDirectory).toStdWString().c_str()));
+        if (appId) {
+            Microsoft::WRL::ComPtr<IPropertyStore> properties;
+            ASSERT_HRESULT_SUCCEEDED(link.As(&properties));
+            PROPVARIANT value{};
+            ASSERT_HRESULT_SUCCEEDED(InitPropVariantFromString(appId, &value));
+            const auto clear = qScopeGuard([&] { PropVariantClear(&value); });
+            ASSERT_HRESULT_SUCCEEDED(properties->SetValue(PKEY_AppUserModel_ID, value));
+            ASSERT_HRESULT_SUCCEEDED(properties->Commit());
+        }
         Microsoft::WRL::ComPtr<IPersistFile> file;
         ASSERT_HRESULT_SUCCEEDED(link.As(&file));
         ASSERT_HRESULT_SUCCEEDED(file->Save(QDir::toNativeSeparators(path).toStdWString().c_str(), TRUE));
     }
 
-    QStringList read(const QString& path)
+    QStringList read(const QString& path, bool includeWorkingDirectory = false)
     {
         Microsoft::WRL::ComPtr<IShellLinkW> link;
         if (FAILED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
@@ -117,13 +136,20 @@ protected:
         int index = 0;
         if (FAILED(link->GetIconLocation(icon, MAX_PATH, &index)) || FAILED(link->GetArguments(arguments, 2048)))
             return {};
-        return {QFileInfo(path).symLinkTarget(), QDir::fromNativeSeparators(QString::fromWCharArray(icon)),
-                QString::fromWCharArray(arguments)};
+        QStringList result{QFileInfo(path).symLinkTarget(), QDir::fromNativeSeparators(QString::fromWCharArray(icon)),
+                           QString::fromWCharArray(arguments)};
+        if (includeWorkingDirectory) {
+            wchar_t workingDirectory[MAX_PATH]{};
+            if (FAILED(link->GetWorkingDirectory(workingDirectory, MAX_PATH)))
+                return {};
+            result.append(QDir::fromNativeSeparators(QString::fromWCharArray(workingDirectory)));
+        }
+        return result;
     }
 
     QTemporaryDir directory;
     QString pinnedRoot;
-    QByteArray previousRoot, previousUser;
+    QByteArray previousRoot, previousUser, previousInstall;
     HRESULT initialized = E_FAIL;
 };
 
@@ -179,6 +205,52 @@ TEST_F(ShellShortcutTest, MigrationPreservesUserChoicesAndIsIdempotent)
     ASSERT_EQ(harken::hub::migrateShellShortcuts(path), harken::hub::ShortcutMigrationResult::Complete);
     ASSERT_TRUE(migrated.open(QIODevice::ReadOnly));
     EXPECT_EQ(migrated.readAll(), bytes);
+}
+
+TEST_F(ShellShortcutTest, OnlyTheRegisteredHubRepairsOwnedLinksToARemovedInstallation)
+{
+    const QString currentDir = QCoreApplication::applicationDirPath();
+    const QString executable = currentDir + QStringLiteral("/HarkenHub.exe");
+    const QString formerDir = directory.filePath(QStringLiteral("Former Install"));
+    const QString formerHub = formerDir + QStringLiteral("/HarkenHub.exe");
+    const QString formerLauncher = formerDir + QStringLiteral("/HarkenStudioHub.exe");
+    const QString otherDir = directory.filePath(QStringLiteral("Other Install"));
+    const QString otherHub = otherDir + QStringLiteral("/HarkenHub.exe");
+    ASSERT_TRUE(QDir().mkpath(formerDir));
+    ASSERT_TRUE(QDir().mkpath(otherDir));
+    for (const auto& target : {formerHub, formerLauncher, otherHub}) {
+        QFile file(target);
+        ASSERT_TRUE(file.open(QIODevice::WriteOnly));
+    }
+    const QString implicitGroup = directory.filePath(QStringLiteral("Microsoft/Internet Explorer/Quick Launch/User Pinned/ImplicitAppShortcuts/hub-group"));
+    ASSERT_TRUE(QDir().mkpath(implicitGroup));
+    const QString pinned = pinnedRoot + QStringLiteral("/Old Hub.lnk");
+    const QString implicit = implicitGroup + QStringLiteral("/Old launcher.lnk");
+    const QString other = pinnedRoot + QStringLiteral("/Other installation.lnk");
+    const QString unowned = pinnedRoot + QStringLiteral("/Harken Hub.lnk");
+    const QString arguments = QStringLiteral("--edit-integration --harken-project=\"C:/Project With Spaces/Game.hsp\"");
+    const QString customIcon = directory.filePath(QStringLiteral("custom.ico"));
+    const QString icon = harken::hub::saveShellIcon(harken::hub::HubIcons::applicationIcon(), directory.filePath(QStringLiteral("shell-icons")));
+    ASSERT_FALSE(icon.isEmpty());
+    save(pinned, formerHub, formerHub, arguments, formerDir, harken::hub::hubAppUserModelId);
+    save(implicit, formerLauncher, customIcon, arguments, otherDir, harken::hub::hubAppUserModelId);
+    save(other, otherHub, otherHub, arguments, otherDir, harken::hub::hubAppUserModelId);
+    save(unowned, formerHub, icon, arguments, formerDir);
+    ASSERT_TRUE(QFile::remove(formerHub));
+    ASSERT_TRUE(QFile::remove(formerLauncher));
+    ASSERT_TRUE(QDir().rmdir(formerDir));
+
+    qputenv("HARKEN_HUB_INSTALL_DIR", otherDir.toUtf8());
+    ASSERT_EQ(harken::hub::migrateShellShortcuts(icon), harken::hub::ShortcutMigrationResult::Complete);
+    EXPECT_EQ(read(pinned, true), (QStringList{formerHub, formerHub, arguments, formerDir}));
+    EXPECT_EQ(read(implicit, true), (QStringList{formerLauncher, customIcon, arguments, otherDir}));
+
+    qputenv("HARKEN_HUB_INSTALL_DIR", currentDir.toUtf8());
+    ASSERT_EQ(harken::hub::migrateShellShortcuts(icon), harken::hub::ShortcutMigrationResult::Complete);
+    EXPECT_EQ(read(pinned, true), (QStringList{executable, icon, arguments, currentDir}));
+    EXPECT_EQ(read(implicit, true), (QStringList{executable, customIcon, arguments, otherDir}));
+    EXPECT_EQ(read(other, true), (QStringList{otherHub, otherHub, arguments, otherDir}));
+    EXPECT_EQ(read(unowned, true), (QStringList{formerHub, icon, arguments, formerDir}));
 }
 
 TEST_F(ShellShortcutTest, AppliesIconAfterConcurrentMigrationReleasesLock)

@@ -160,6 +160,10 @@
 <context>
     <name>HubReleaseNotes</name>
     <message>
+        <source>On Windows, Hub updates taskbar shortcuts after an upgrade or a change of installation folder. They show the current icon and launch Hub from its current location.</source>
+        <translation>在 Windows 上升级 Hub 或更换安装目录后，任务栏快捷方式会显示新版图标。点击图标即可启动当前安装目录中的 Hub。</translation>
+    </message>
+    <message>
         <source>Add and refresh standalone Studio versions that use the legacy self-test, including Studio 0.9.4.</source>
         <translation>支持添加和刷新使用旧版自检方式的独立 Studio，包括 Studio 0.9.4。</translation>
     </message>
@@ -170,6 +174,10 @@
     <message>
         <source>Windows setup can upgrade Hub while its first-use license agreement is open. The upgraded Hub still asks for consent on the next launch.</source>
         <translation>首次使用的许可协议窗口打开时，Windows 安装程序也可以升级 Hub。升级后再次启动 Hub 时仍需确认许可协议。</translation>
+    </message>
+    <message>
+        <source>Unity CLI output and version 4 operation reports use package_preflight (formerly sdk_preflight), compare_package (compare_sdk), install_package (install_sdk) and inspect_installed_package (inspect_installed_sdk). Unreal operation steps use migrate_package (migrate_sdk), validate_package (validate_sdk), apply_package (apply_sdk) and remove_package (remove_sdk).</source>
+        <translation>Unity 命令行输出和第 4 版操作报告采用新的步骤名：package_preflight（原 sdk_preflight）、compare_package（原 compare_sdk）、install_package（原 install_sdk）和 inspect_installed_package（原 inspect_installed_sdk）。Unreal 的步骤名改为 migrate_package（原 migrate_sdk）、validate_package（原 validate_sdk）、apply_package（原 apply_sdk）和 remove_package（原 remove_sdk）。</translation>
     </message>
     <message><source>Support Unity Integration Packages identified by package.json without the retired integration manifest; check package files without pre-validating Unity target runtimes.</source><translation>支持通过 package.json 识别、不再携带旧集成清单的 Unity 集成包；检查集成包文件，不再预检 Unity 各目标平台的运行库。</translation></message>
     <message>
