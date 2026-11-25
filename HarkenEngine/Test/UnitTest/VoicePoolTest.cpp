@@ -3799,7 +3799,8 @@ TEST(VoicePool, CollectiveSignalStagesShareActualInstancesAcrossSerialAndWorkerR
                 ASSERT_FALSE(result.signalFailed);
                 ASSERT_TRUE(signals->CommitBlock());
             }
-            const double expected = .4 * (1 - harken::kDuckingBaselineSlope * .1 / 1.2);
+            const double expected = .4 * (1 - harken::kDuckingBaselineSlope *
+                harken::kDuckingSquaredLevelScale * .1 * .1 / 1.2);
             for (std::uint32_t n = 0; n < kBlockFrames; ++n) {
                 EXPECT_NEAR(output[channels][n], expected, 1e-5);
                 EXPECT_FLOAT_EQ(output[channels][n], output[channels * 2][n]);
