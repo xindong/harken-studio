@@ -46,6 +46,27 @@ TEST(DuckingReceiver, OneWayFollowsRmsBaselineAndOneGainAcrossAllChannels) {
         EXPECT_FLOAT_EQ(mainRight[n], mainLeft[n] * -.25f);
 }
 
+TEST(DuckingReceiver, HalfLevelSidechainLeavesAboutHalfOfMain) {
+    harken::DuckingReceiver receiver;
+    receiver.SetParameters(Parameters());
+    std::array<float, 256> main, side;
+    std::array<double, 256> gains;
+    main.fill(1);
+    const float* mainPlanes[]{main.data()};
+    const float* sidePlanes[]{side.data()};
+    double mean = 0;
+    for (std::uint32_t block = 0; block < 200; ++block) {
+        for (std::uint32_t n = 0; n < 256; ++n)
+            side[n] = .5f * static_cast<float>(std::sin(
+                2 * 3.14159265358979323846 * 1000.0 * (block * 256.0 + n) / 48000.0));
+        ASSERT_TRUE(receiver.Process(mainPlanes, sidePlanes, 1, 256, nullptr, nullptr, 0, gains.data()));
+        if (block == 199)
+            for (const double gain : gains) mean += gain / 256;
+    }
+    EXPECT_GT(mean, .4);
+    EXPECT_LT(mean, .7);
+}
+
 TEST(DuckingReceiver, MissingSourceReleasesAndResetClearsDetectionHistory) {
     harken::DuckingReceiver receiver;
     receiver.SetParameters(Parameters());

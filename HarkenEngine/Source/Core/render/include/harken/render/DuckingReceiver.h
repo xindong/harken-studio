@@ -26,7 +26,7 @@ inline bool SignalPlaneIsSilent(const float* samples, std::uint32_t frames) noex
 }
 
 
-inline constexpr double kDuckingBaselineSlope = 5.6568542494923801952;
+inline constexpr double kDuckingBaselineSlope = 1.4142135623730950488;
 inline constexpr float kDuckingDefaultAttackMs = 4.156241f;
 inline constexpr float kDuckingDefaultReleaseMs = 1.031215f;
 
