@@ -28,6 +28,10 @@ COMPONENT_INPUTS = (
     {"id": "miniaudio", "notice": "miniaudio", "path": "HarkenEngine/ThirdParty/miniaudio",
      "url": "https://github.com/mackron/miniaudio",
      "evidence": ["HarkenEngine/ThirdParty/miniaudio/miniaudio.h"]},
+    {"id": "harken-vorbis-decoder", "notice": "Harken Vorbis decoder", "path": "HarkenEngine/ThirdParty/vorbis-decoder",
+     "url": "https://github.com/xindong/harken-studio",
+     "evidence": ["HarkenEngine/ThirdParty/vorbis-decoder/COPYING",
+                  "HarkenEngine/ThirdParty/vorbis-decoder/COPYING.ogg"]},
     {"id": "miniaudio-studio", "notice": "miniaudio", "path": "HarkenStudio/ThirdParty/miniaudio",
      "url": "https://github.com/mackron/miniaudio",
      "evidence": ["HarkenStudio/ThirdParty/miniaudio/miniaudio.h"]},
@@ -153,7 +157,41 @@ def payload_state(root: Path, excluded: Path) -> list[dict]:
             if (path.is_file() or path.is_symlink()) and not path.is_relative_to(excluded)]
 
 
-def build_model(build_dir: Path, product: str, configuration: str, extra_targets: tuple[str, ...] = ()) -> dict:
+def record_runtime_install(build_dir: Path, prefix: Path, reply: Path, config: dict, artifacts: list[dict]) -> None:
+    prefix = prefix.resolve()
+    manifest = {Path(line) for line in (build_dir / "install_manifest.txt").read_text(encoding="utf-8").splitlines()}
+    targets = {target["id"]: target["name"] for target in config["targets"] if target["name"] in ROOT_TARGETS["runtime"]}
+    built = {(item["target"], build_dir / item["path"]): item for item in artifacts}
+    installed_targets = set()
+    installed_paths = set()
+    for directory in config["directories"]:
+        if not directory.get("hasInstallRule"):
+            continue
+        for rule in read_json(reply / directory["jsonFile"])["installers"]:
+            target = targets.get(rule.get("targetId"))
+            if not target or rule["type"] != "target" or rule.get("targetIsImportLibrary"):
+                continue
+            for entry in rule["paths"]:
+                source = entry if isinstance(entry, str) else entry["from"]
+                name = Path(source).name if isinstance(entry, str) else entry["to"]
+                artifact = built.get((target, build_dir / source))
+                if not artifact:
+                    raise ValueError(f"Runtime install source is not a built artifact of {target}: {source}")
+                path = prefix / rule["destination"] / name
+                if path not in manifest or not path.resolve().is_relative_to(prefix) or not path.is_file():
+                    raise ValueError(f"Runtime library is missing from the CMake installation: {path}")
+                if target in installed_targets or path in installed_paths:
+                    raise ValueError(f"ambiguous Runtime installation for {target}: {path}")
+                artifact["installed"] = {"path": path.relative_to(prefix).as_posix(), "sha256": sha256(path)}
+                installed_targets.add(target)
+                installed_paths.add(path)
+    missing = set(ROOT_TARGETS["runtime"]) - installed_targets
+    if missing:
+        raise ValueError(f"missing installed Runtime targets: {', '.join(sorted(missing))}")
+
+
+def build_model(build_dir: Path, product: str, configuration: str, extra_targets: tuple[str, ...] = (),
+                install_prefix: Path | None = None) -> dict:
     identity = read_json(build_dir / "generated/release-identity.json")
     source_state = check_source(identity)
     indexes = list((build_dir / ".cmake/api/v1/reply").glob("index-*.json"))
@@ -208,6 +246,8 @@ def build_model(build_dir: Path, product: str, configuration: str, extra_targets
     for name in roots:
         if not any(item["target"] == name for item in artifacts):
             raise ValueError(f"product target has not been built: {name}")
+    if install_prefix is not None:
+        record_runtime_install(build_dir, install_prefix, reply, configs[0], artifacts)
     cache = {entry["name"]: entry["value"] for entry in objects["cache"]["entries"]}
     option_names = {"CMAKE_OSX_ARCHITECTURES", "CMAKE_OSX_DEPLOYMENT_TARGET", "CMAKE_MSVC_RUNTIME_LIBRARY",
                     "ANDROID_ABI", "ANDROID_PLATFORM", "ANDROID_STL", "HARKEN_DISABLE_LMDB",
@@ -397,9 +437,28 @@ def read_macos_deployment(build_dir: Path, product: str, configuration: str, mod
     return report
 
 
+def installed_runtime_plugins(receipts: list[dict]) -> dict[str, dict]:
+    directories = {"windows": "x86_64", "linux": "x86_64", "macos": "macOS",
+                   "ios": "iOS", "android": "Android/arm64-v8a"}
+    plugins = {}
+    for receipt in receipts:
+        for artifact in receipt["artifacts"]:
+            if "installed" not in artifact:
+                continue
+            platform = receipt["identity"]["platform"]
+            directory = directories[platform.split("-", 1)[0]]
+            installed = artifact["installed"]
+            path = directory + "/" + Path(installed["path"]).name
+            if path in plugins:
+                raise ValueError(f"multiple Runtime receipts for Unity plugin: {path}")
+            plugins[path] = {"target": artifact["target"], "platform": platform, **installed}
+    return plugins
+
+
 def verify_payload_binaries(payload: Path, model: dict, qt_root: Path | None,
                             integration_hashes: set[str], payload_records: list[dict] | None = None,
-                            deployment: dict | None = None) -> list[dict]:
+                            deployment: dict | None = None,
+                            installed_plugins: dict[str, dict] | None = None) -> list[dict]:
     artifact_hashes = {entry["sha256"] for entry in model["artifacts"]}
     deployed = {entry["path"]: entry for key in ("libraries", "executables")
                 for entry in (deployment or {}).get(key, [])}
@@ -418,6 +477,8 @@ def verify_payload_binaries(payload: Path, model: dict, qt_root: Path | None,
                 if is_module or is_framework and native_file(path) or is_plugin:
                     qt_files.setdefault(path.name, []).append(path)
     records = []
+    installed_plugins = installed_plugins or {}
+    verified_plugins = set()
     hashes = {item["path"]: item.get("sha256") for item in (payload_records or [])}
     for path in payload.rglob("*"):
         if path.is_symlink() or not path.is_file() or not native_file(path):
@@ -427,6 +488,14 @@ def verify_payload_binaries(payload: Path, model: dict, qt_root: Path | None,
             continue
         digest = hashes.get(relative) or sha256(path)
         record = {"path": relative, "sha256": digest}
+        root, _, plugin = relative.rpartition("/Unity/Harken/Runtime/Plugins/")
+        if Path(root).name in {"HarkenIntegration", "HarkenSDK"} and plugin in installed_plugins:
+            installed = installed_plugins[plugin]
+            if digest != installed["sha256"]:
+                raise ValueError(f"Unity plugin differs from installed Runtime: {relative}")
+            verified_plugins.add(plugin)
+            records.append({**record, "origin": "CMake-installed Runtime", "installedArtifact": installed})
+            continue
         if digest in artifact_hashes:
             records.append({**record, "origin": "CMake target artifact"})
             continue
@@ -447,6 +516,9 @@ def verify_payload_binaries(payload: Path, model: dict, qt_root: Path | None,
                             "deploymentModified": not exact})
             continue
         raise ValueError(f"payload binary has no matching build or supplier: {path.relative_to(payload)}")
+    missing = installed_plugins.keys() - verified_plugins
+    if missing:
+        raise ValueError(f"installed Runtime missing from Unity plugins: {', '.join(sorted(missing))}")
     return records
 
 
@@ -518,14 +590,16 @@ def prepare(product: str, payload: Path, build_dir: Path, output: Path,
                 if item["bom-ref"] not in known:
                     components.append(item)
                     known.add(item["bom-ref"])
-    integration_hashes = {artifact["sha256"] for receipt in integration_receipts for artifact in receipt["artifacts"]}
+    integration_hashes = {artifact["sha256"] for receipt in integration_receipts for artifact in receipt["artifacts"]
+                          if "installed" not in artifact}
     evidence_dir = output / f"{product}-{version}-{build_id}-evidence"
     if evidence_dir.exists():
         raise ValueError(f"release evidence already exists: {evidence_dir}")
     state = payload_state(payload, evidence_dir)
     payload_records = payload_records if payload_records is not None else inventory(payload, evidence_dir)
     deployment = read_macos_deployment(build_dir, product, configuration, model)
-    binary_origins = verify_payload_binaries(payload, model, qt_root, integration_hashes, payload_records, deployment)
+    binary_origins = verify_payload_binaries(payload, model, qt_root, integration_hashes, payload_records, deployment,
+                                            installed_runtime_plugins(integration_receipts))
     qt_sources = read_json(collect_legal_texts.LEGAL_SOURCE_DIRS[product] / "Qt6-SOURCES.json")["source_archives"] if qt else []
     evidence_dir.mkdir(parents=True)
     try:
@@ -603,8 +677,8 @@ def finalize(evidence_dir: Path, artifacts: list[Path], payload: Path,
     return records
 
 
-def record_runtime(build_dir: Path, output: Path, configuration: str) -> None:
-    model = build_model(build_dir, "runtime", configuration)
+def record_runtime(build_dir: Path, output: Path, configuration: str, install_prefix: Path | None = None) -> None:
+    model = build_model(build_dir, "runtime", configuration, install_prefix=install_prefix)
     entries, external = resolve_components(model, "runtime")
     if external:
         raise ValueError("Runtime has fetched dependencies requiring source-delivery review")
@@ -689,13 +763,17 @@ def main(argv: list[str]) -> int:
                         default=os.environ.get("HARKEN_BUILD_CHANNEL", "dev"))
     target = parser.add_mutually_exclusive_group(required=True)
     target.add_argument("--runtime-receipt")
+    parser.add_argument("--runtime-install-prefix", type=Path, help="Prefix used by cmake --install for this Runtime")
     target.add_argument("--integration-payload", "--sdk-payload", dest="integration_payload")
     parser.add_argument("--runtime-receipts")
     parser.add_argument("--output-dir")
     args = parser.parse_args(argv)
     if args.runtime_receipt:
-        record_runtime(Path(args.build_dir).resolve(), Path(args.runtime_receipt).resolve(), args.configuration)
+        record_runtime(Path(args.build_dir).resolve(), Path(args.runtime_receipt).resolve(), args.configuration,
+                       install_prefix=args.runtime_install_prefix.resolve() if args.runtime_install_prefix else None)
     else:
+        if args.runtime_install_prefix:
+            parser.error("--runtime-install-prefix requires --runtime-receipt")
         if not args.runtime_receipts or not args.output_dir:
             parser.error("--integration-payload requires --runtime-receipts and --output-dir")
         payload = Path(args.integration_payload).resolve()

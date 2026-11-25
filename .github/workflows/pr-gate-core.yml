@@ -220,6 +220,13 @@ jobs:
       - name: Build libHarkenEngine.a and libHarkenEngineDev.a
         run: cmake --build build-ios --config Release --target harken_engine --parallel
 
+      - name: Verify installed iOS Runtime evidence
+        run: |
+          cmake --install build-ios --config Release --prefix .temp/runtime/ios-arm64
+          python3 .scripts/release/release_evidence.py --build-dir build-ios \
+            --runtime-install-prefix .temp/runtime/ios-arm64 \
+            --runtime-receipt .temp/runtime/ios-arm64/runtime-build.json
+
   core-android-arm64:
     name: core-android-arm64
     runs-on: ubuntu-latest
