@@ -12,6 +12,11 @@
 
 #ifdef Q_OS_WIN
 #include "Setup/SetupHubShutdown.h"
+#include "UI/ConsentDialog.h"
+#include <QDir>
+#include <QFileInfo>
+#include <QProcessEnvironment>
+#include <QTemporaryDir>
 #endif
 
 #include <atomic>
@@ -30,6 +35,18 @@ int runSetupShutdownFixture(const QStringList& arguments)
     SingleInstanceGuard guard(arguments.value(2));
     if (!guard.isPrimary())
         return 2;
+    if (arguments.contains(QStringLiteral("--first-use"))) {
+        QObject::connect(&guard, &SingleInstanceGuard::activationRequested, [](const QStringList& received) {
+            if (received == QStringList{QStringLiteral("--quit")})
+                QCoreApplication::quit();
+        });
+        QTimer::singleShot(0, []() {
+            std::fputs("ready\n", stdout);
+            std::fflush(stdout);
+        });
+        return harken::hub::ConsentDialog::requestConsent(nullptr, harken::hub::ConsentDialog::hubDocumentId())
+            ? 3 : 0;
+    }
     QObject::connect(&guard, &SingleInstanceGuard::activationRequested,
                      QCoreApplication::instance(), [&](const QStringList& received) {
         if (received == QStringList{QStringLiteral("--quit")} &&
@@ -110,6 +127,30 @@ TEST(SingleInstanceGuard, SetupShutdownWaitsForExitAndRejectsAnUnresponsiveInsta
             EXPECT_GE(elapsed.elapsed(), 100);
         }
     }
+}
+
+TEST(SingleInstanceGuard, SetupCanCloseTheInstalledFirstUseDialogWithoutRecordingConsent)
+{
+    QTemporaryDir profile;
+    ASSERT_TRUE(profile.isValid());
+    const QString key = uniqueKey("setup-first-use");
+    const std::wstring pipe = (QStringLiteral("\\\\.\\pipe\\") + key).toStdWString();
+    const QString executable = QCoreApplication::applicationFilePath();
+    auto environment = QProcessEnvironment::systemEnvironment();
+    environment.insert(QStringLiteral("QT_QPA_PLATFORM"), QStringLiteral("windows"));
+    environment.insert(QStringLiteral("HARKEN_HUB_USER_ROOT"), profile.path());
+    QProcess child;
+    child.setProcessEnvironment(environment);
+    child.start(executable, {QStringLiteral("--setup-shutdown-fixture"), key, QStringLiteral("--first-use")});
+    ASSERT_TRUE(child.waitForStarted(5000));
+    ASSERT_TRUE(child.waitForReadyRead(5000));
+    ASSERT_TRUE(child.readAllStandardOutput().contains("ready"));
+    EXPECT_FALSE(HarkenSetup::requestHubExit(pipe.c_str(), L"C:\\Other\\HarkenHub.exe"));
+    ASSERT_EQ(child.state(), QProcess::Running);
+    EXPECT_TRUE(HarkenSetup::requestHubExit(pipe.c_str(), QDir::toNativeSeparators(executable).toStdWString()));
+    EXPECT_TRUE(child.waitForFinished(5000));
+    EXPECT_EQ(child.exitCode(), 0);
+    EXPECT_FALSE(QFileInfo::exists(profile.filePath(QStringLiteral("consents.json"))));
 }
 #endif
 

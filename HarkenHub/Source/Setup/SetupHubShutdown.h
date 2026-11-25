@@ -1,10 +1,57 @@
 #pragma once
 
 #include <windows.h>
+#include <string>
 
 namespace HarkenSetup {
 
-inline bool requestHubExit(PCWSTR pipeName)
+inline std::wstring installedHubExecutable()
+{
+    DWORD bytes = 0;
+    constexpr auto key = L"Software\\HarkenSound\\HarkenHub";
+    constexpr DWORD flags = RRF_RT_REG_SZ | RRF_SUBKEY_WOW6464KEY;
+    if (RegGetValueW(HKEY_LOCAL_MACHINE, key, L"InstallDir", flags, nullptr, nullptr, &bytes)
+        != ERROR_SUCCESS || bytes <= sizeof(wchar_t))
+        return {};
+    std::wstring path(bytes / sizeof(wchar_t), L'\0');
+    if (RegGetValueW(HKEY_LOCAL_MACHINE, key, L"InstallDir", flags, nullptr, path.data(), &bytes)
+        != ERROR_SUCCESS)
+        return {};
+    path.resize(wcslen(path.c_str()));
+    if (path.empty()) return {};
+    if (path.back() != L'\\') path += L'\\';
+    return path + L"HarkenHub.exe";
+}
+
+inline bool matchesExecutable(DWORD processId, const std::wstring& executable)
+{
+    HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, processId);
+    if (!process) return false;
+    std::wstring path(32768, L'\0');
+    DWORD size = static_cast<DWORD>(path.size());
+    const bool match = QueryFullProcessImageNameW(process, 0, path.data(), &size)
+        && CompareStringOrdinal(path.data(), size, executable.c_str(), -1, TRUE) == CSTR_EQUAL;
+    CloseHandle(process);
+    return match;
+}
+
+inline BOOL CALLBACK closeStartupDialog(HWND window, LPARAM processId)
+{
+    DWORD owner = 0;
+    GetWindowThreadProcessId(window, &owner);
+    if (owner != static_cast<DWORD>(processId) || !IsWindowVisible(window)
+        || GetWindow(window, GW_OWNER) || !IsWindowEnabled(window))
+        return TRUE;
+    const LONG_PTR style = GetWindowLongPtrW(window, GWL_STYLE);
+    if (!(style & WS_SYSMENU) || (style & (WS_MINIMIZEBOX | WS_MAXIMIZEBOX)))
+        return TRUE;
+    wchar_t title[32]{};
+    if (!GetWindowTextW(window, title, 32) || wcscmp(title, L"Harken Hub") != 0)
+        return TRUE;
+    return !PostMessageW(window, WM_CLOSE, 0, 0);
+}
+
+inline bool requestHubExit(PCWSTR pipeName, const std::wstring& guiExecutable = {})
 {
     HANDLE pipe = CreateFileW(pipeName, GENERIC_WRITE, 0, nullptr,
                               OPEN_EXISTING, FILE_FLAG_OVERLAPPED, nullptr);
@@ -33,7 +80,19 @@ inline bool requestHubExit(PCWSTR pipeName)
         CloseHandle(write.hEvent);
     const ULONGLONG elapsed = GetTickCount64() - started;
     const DWORD remaining = elapsed < 5000 ? static_cast<DWORD>(5000 - elapsed) : 0;
-    const bool exited = requested && WaitForSingleObject(process, remaining) == WAIT_OBJECT_0;
+    bool exited = false;
+    if (requested) {
+        const DWORD grace = !guiExecutable.empty() && remaining > 1000 ? 1000 : remaining;
+        const DWORD wait = WaitForSingleObject(process, grace);
+        exited = wait == WAIT_OBJECT_0;
+        if (wait == WAIT_TIMEOUT && remaining > grace) {
+            if (matchesExecutable(processId, guiExecutable))
+                EnumWindows(closeStartupDialog, processId);
+            const ULONGLONG used = GetTickCount64() - started;
+            exited = WaitForSingleObject(process, used < 5000 ? static_cast<DWORD>(5000 - used) : 0)
+                == WAIT_OBJECT_0;
+        }
+    }
     if (process)
         CloseHandle(process);
     return exited;

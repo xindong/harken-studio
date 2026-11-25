@@ -221,7 +221,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR rawCommandLine, int)
     }
 
     const bool backgroundExited = HarkenSetup::requestHubExit(L"\\\\.\\pipe\\HarkenSound.HarkenHub.Background");
-    const bool guiExited = HarkenSetup::requestHubExit(L"\\\\.\\pipe\\HarkenSound.HarkenHub");
+    const bool guiExited = HarkenSetup::requestHubExit(L"\\\\.\\pipe\\HarkenSound.HarkenHub",
+                                                      HarkenSetup::installedHubExecutable());
     if (!backgroundExited || !guiExited)
         return failStaging(HARKEN_SETUP_HUB_RUNNING, quiet, stagingGuard, msiPath, stagingDir);
 

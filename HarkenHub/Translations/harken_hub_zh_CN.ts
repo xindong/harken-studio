@@ -159,6 +159,10 @@
 </context>
 <context>
     <name>HubReleaseNotes</name>
+    <message>
+        <source>Windows setup can upgrade Hub while its first-use license agreement is open. The upgraded Hub still asks for consent on the next launch.</source>
+        <translation>首次使用的许可协议窗口打开时，Windows 安装程序也可以升级 Hub。升级后再次启动 Hub 时仍需确认许可协议。</translation>
+    </message>
     <message><source>Support Unity Integration Packages identified by package.json without the retired integration manifest; check package files without pre-validating Unity target runtimes.</source><translation>支持通过 package.json 识别、不再携带旧集成清单的 Unity 集成包；检查集成包文件，不再预检 Unity 各目标平台的运行库。</translation></message>
     <message>
         <source>Manage projects, Studio versions, Unity integrations, settings and updates from the command line without opening the Hub window.</source>

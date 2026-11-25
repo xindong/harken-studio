@@ -785,6 +785,8 @@ int main(int argc, char* argv[])
         &app, [&pendingActivations](const QStringList& arguments) {
             if (arguments.contains(QStringLiteral("--quit"))) {
                 qInfo() << "Hub received a quit request during startup";
+                if (auto* dialog = qobject_cast<harken::hub::ConsentDialog*>(QApplication::activeModalWidget()))
+                    dialog->reject();
                 QCoreApplication::quit();
             } else {
                 confirmConsentReady(arguments);
