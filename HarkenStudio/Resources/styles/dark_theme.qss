@@ -1367,7 +1367,7 @@ QGroupBox::title:disabled {
    ========================================================================== */
 
 #BlueprintToolBar {
-    background-color: @bgSecondary@;
+    background-color: @bgPrimary@;
     border-bottom: @borderWidth@px solid @borderPrimary@;
 }
 #BlueprintToolSeparator { background-color: @borderPrimary@; border: none; }
