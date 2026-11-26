@@ -3,8 +3,10 @@
 #include "Core/ProjectManager.h"
 #include "Core/FileWatcher.h"
 #include "Core/MigrationManager.h"
+#include "Core/MessageBox.h"
 #include "Core/ProjectOpenProtocol.h"
 #include "Core/ProjectTransaction.h"
+#include "Core/ProjectUpgradeMessages.h"
 #include "Core/IPC/IPCServer.h"
 #include "Core/UndoCommands.h"
 #include "MainWindow.h"
@@ -14,6 +16,7 @@
 #include <gtest/gtest.h>
 
 #include <QAbstractButton>
+#include <QAbstractScrollArea>
 #include <QDirIterator>
 #include <QFileDialog>
 #include <QJsonArray>
@@ -22,6 +25,8 @@
 #include <QProcess>
 #include <QProcessEnvironment>
 #include <QScopeGuard>
+#include <QScreen>
+#include <QScrollBar>
 #include <QPushButton>
 #include <QTemporaryDir>
 #include <QTimer>
@@ -163,6 +168,55 @@ struct ModalResponder
         timer.start(5);
     }
 };
+
+TEST(StudioProjectOpen, DiagnosticsRemainAccessibleWithoutFillingTheScreen)
+{
+    using namespace harken::studio;
+    const QString paths = QStringLiteral("D:/Project/Audio/ReadOnly.vp\n").repeated(1000).trimmed();
+    const QString longLine = QStringLiteral("D:/") + QString(20000, QLatin1Char('x'));
+    const auto issue = ProjectUpgradeMessages::presentation(ProjectIssue::ProjectUpgradeFilesNotWritable, paths);
+    QWidget parent;
+    const QRect desktop = parent.screen()->availableGeometry();
+    parent.setGeometry(desktop.center().x() - 100, desktop.bottom() - 100, 200, 90);
+    parent.show();
+    for (const auto& diagnostic : {paths, longLine}) {
+        StudioMessageBox box(QMessageBox::Critical, QStringLiteral("Open Project"), {}, QMessageBox::Ok, &parent);
+        if (diagnostic == paths)
+            box.setContent(issue.primaryText(), issue.detailedText());
+        else
+            box.setContent(diagnostic);
+        box.show();
+        QApplication::processEvents();
+
+        EXPECT_FALSE(box.text().isEmpty());
+        EXPECT_FALSE(box.text().contains(diagnostic));
+        EXPECT_TRUE(box.detailedText().contains(diagnostic));
+        const auto expectVisibleActions = [&] {
+            const QRect available = box.screen()->availableGeometry();
+            EXPECT_LT(box.frameGeometry().width(), available.width());
+            EXPECT_LT(box.frameGeometry().height(), available.height());
+            EXPECT_TRUE(available.contains(box.frameGeometry()));
+            for (auto* button : box.buttons()) {
+                EXPECT_TRUE(button->isVisible());
+                EXPECT_TRUE(available.contains(QRect(button->mapToGlobal(QPoint()), button->size())));
+            }
+        };
+        expectVisibleActions();
+        QAbstractButton* details = nullptr;
+        for (auto* button : box.buttons()) {
+            if (box.buttonRole(button) == QMessageBox::ActionRole)
+                details = button;
+        }
+        ASSERT_NE(details, nullptr);
+        details->click();
+        QApplication::processEvents();
+        expectVisibleActions();
+        auto* scroll = box.findChild<QAbstractScrollArea*>();
+        ASSERT_NE(scroll, nullptr);
+        EXPECT_TRUE(scroll->isVisible());
+        EXPECT_TRUE(scroll->verticalScrollBar()->maximum() > 0 || scroll->horizontalScrollBar()->maximum() > 0);
+    }
+}
 
 TEST(ProjectOpenApproval, ChangedFilesAndPendingJournalDoNotConsumeApproval)
 {

@@ -19,6 +19,7 @@
 #include "Core/ProjectUpgradeManager.h"
 #include "Core/ProjectOpenApproval.h"
 #include "Core/ProjectUpgradeMessages.h"
+#include "Core/MessageBox.h"
 #include "Core/ShortcutManager.h"
 #include "Core/UndoCommands.h"
 #include "Core/UndoActions.h"
@@ -3969,15 +3970,15 @@ void MainWindow::connectSignals()
 
     connect(&ProjectManager::instance(), &ProjectManager::errorOccurred,
             this, [this](const QString& error) {
-                const QString userError = ProjectUpgradeMessages::userMessage(error);
+                const auto message = ProjectUpgradeMessages::presentation(error);
                 if (ipcServer_ && ipcServer_->isDispatchingCommand()) {
                     qWarning("[ProjectManager] error during IPC dispatch "
                              "(modal suppressed): %s", qUtf8Printable(error));
                     if (statusButton_)
-                        setStatusMessage(userError, LogEntry::Error);
+                        setStatusMessage(message.primaryText(), LogEntry::Error);
                     return;
                 }
-                QMessageBox::warning(this, tr("Error"), userError);
+                showWarningMessage(this, tr("Error"), message.primaryText(), message.detailedText());
             });
     connect(&ProjectManager::instance(), &ProjectManager::warningOccurred,
             this, [this](const QString& warning) {
@@ -4325,14 +4326,14 @@ void MainWindow::onNewProjectViaHub()
 {
     QString error;
     if (!HubLauncher::open(HubPage::NewProject, &error))
-        QMessageBox::warning(this, tr("Harken Hub"), error);
+        showWarningMessage(this, tr("Harken Hub"), error);
 }
 
 void MainWindow::onOpenProjectViaHub()
 {
     QString error;
     if (!HubLauncher::open(HubPage::Projects, &error))
-        QMessageBox::warning(this, tr("Harken Hub"), error);
+        showWarningMessage(this, tr("Harken Hub"), error);
 }
 
 void MainWindow::onSaveProject()
@@ -4375,7 +4376,7 @@ void MainWindow::onSaveProjectAs()
     QString error;
     bool forwarded = false;
     if (!ProjectManager::instance().saveProjectAs(fileName, &error, &forwarded)) {
-        if (!forwarded) QMessageBox::warning(this, tr("Save Project"), error);
+        if (!forwarded) showWarningMessage(this, tr("Save Project"), error);
         return;
     }
     setProjectModified(false);
@@ -4391,7 +4392,7 @@ void MainWindow::onEngineIntegrations()
     QString error;
     if (!HubLauncher::open(HubPage::EditIntegration, &error, false,
                            projectPath)) {
-        QMessageBox::warning(this, tr("Engine Integrations"), error);
+        showWarningMessage(this, tr("Engine Integrations"), error);
     }
 }
 
@@ -4643,7 +4644,7 @@ void MainWindow::generateProjectPacks(const QStringList& platforms,
                     LogPanel::logWarning(LogCategory::Pack, tr("Pack export canceled"));
                 } else {
                     LogPanel::logError(LogCategory::Pack, initializationError);
-                    QMessageBox::warning(window, tr("Pack Export"), initializationError);
+                    showWarningMessage(window, tr("Pack Export"), initializationError);
                 }
             }, Qt::QueuedConnection);
             return;
@@ -5157,7 +5158,7 @@ void MainWindow::onResetPressed()
 void MainWindow::onAudioError(const QString& error)
 {
     setStatusMessage(tr("Audio Error: %1").arg(error), LogEntry::Error);
-    QMessageBox::warning(this, tr("Audio Error"), error);
+    showWarningMessage(this, tr("Audio Error"), error);
 }
 
 void MainWindow::onSaveProgress(int percent, const QString& message)
@@ -5262,7 +5263,7 @@ bool MainWindow::loadProject(
         if (error)
             *error = acquisition.error;
         if (acquisition.status == ProjectInstance::Status::Failed)
-            QMessageBox::warning(this, tr("Open Project"), acquisition.error);
+            showWarningMessage(this, tr("Open Project"), acquisition.error);
         return false;
     }
     ProjectData* existingProject = ProjectManager::instance().currentProject();
@@ -5285,11 +5286,9 @@ bool MainWindow::loadProject(
             *error = internalError;
         const ProjectUpgradeMessages::Presentation message =
             ProjectUpgradeMessages::presentation(internalError, true);
-        LogPanel::logError(LogCategory::File, message.primaryText());
-        QMessageBox box(QMessageBox::Critical, tr("Open Project"),
-                        message.primaryText(), QMessageBox::Ok, this);
-        if (!message.technicalDetails.isEmpty())
-            box.setDetailedText(message.technicalDetails);
+        LogPanel::logError(LogCategory::File, message.userText());
+        StudioMessageBox box(QMessageBox::Critical, tr("Open Project"), {}, QMessageBox::Ok, this);
+        box.setContent(message.primaryText(), message.detailedText());
         box.exec();
     };
 
@@ -5332,9 +5331,9 @@ bool MainWindow::loadProject(
     analysisProgress.hide();
     const ProjectUpgradeAnalysis analysis = analysisWatcher.result();
     if (!analysis.ok) {
-        showOpenFailure(analysis.blockingErrors.isEmpty()
-                            ? tr("Project analysis failed")
-                            : analysis.blockingErrors.first());
+        const QString code = projectIssueCode(analysis.issue);
+        const QString& detail = analysis.detail;
+        showOpenFailure(detail.isEmpty() || detail == code ? code : code + QLatin1Char(':') + detail);
         return false;
     }
     const ProjectOpenDecision decision = confirmProjectOpen(analysis, this);

@@ -13,6 +13,7 @@
 #include <QInputDialog>
 #include <QLabel>
 #include <QMessageBox>
+#include "Core/MessageBox.h"
 #include <QPushButton>
 #include <QShowEvent>
 #include <QSignalBlocker>
@@ -158,9 +159,9 @@ void LayoutPage::onLayoutRenameClicked()
 
     if (!NamedLayoutStore::rename(oldName, newName))
     {
-        QMessageBox::warning(this, tr("Rename Layout"),
-                             tr("Could not rename '%1' to '%2'. The name may be "
-                                "reserved or already in use.").arg(oldName, newName));
+        showWarningMessage(this, tr("Rename Layout"),
+                           tr("Could not rename '%1' to '%2'. The name may be "
+                              "reserved or already in use.").arg(oldName, newName));
         return;
     }
     emit layoutRenamed(oldName, newName);
@@ -175,18 +176,17 @@ void LayoutPage::onLayoutDeleteClicked()
     if (name.isEmpty())
         return;
 
-    const QMessageBox::StandardButton reply = QMessageBox::question(
-        this, tr("Delete Layout"),
-        tr("Delete layout '%1'? This cannot be undone.").arg(name),
-        QMessageBox::Yes | QMessageBox::No);
-    if (reply != QMessageBox::Yes)
+    StudioMessageBox dialog(QMessageBox::Question, tr("Delete Layout"), {},
+                            QMessageBox::Yes | QMessageBox::No, this);
+    dialog.setContent(tr("Delete this layout? This cannot be undone.\n%1").arg(name));
+    if (dialog.exec() != QMessageBox::Yes)
         return;
 
     static_cast<TableWidget*>(layoutTree_->parentWidget())->removeSelectedRow([this, name] {
         if (!NamedLayoutStore::remove(name))
         {
-            QMessageBox::warning(this, tr("Delete Layout"),
-                                 tr("Layout '%1' could not be deleted.").arg(name));
+            showWarningMessage(this, tr("Delete Layout"),
+                               tr("Layout '%1' could not be deleted.").arg(name));
             return false;
         }
         emit layoutDeleted(name);

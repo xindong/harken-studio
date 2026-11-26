@@ -18,8 +18,11 @@ struct Presentation
     QString reason;
     QString nextStep;
     QString technicalDetails;
+    QString userDetails;
 
     QString primaryText() const;
+    QString detailedText() const;
+    QString userText() const;
 };
 
 Presentation presentation(ProjectIssue issue, const QString& detail = {});

@@ -14,15 +14,30 @@ QString hubText(const char* source)
     return QCoreApplication::translate("HarkenHub", source);
 }
 
+QString joinText(const QString& first, const QString& second, const QString& separator)
+{
+    if (first.isEmpty())
+        return second;
+    if (second.isEmpty())
+        return first;
+    return first + separator + second;
+}
+
 }
 
 QString Presentation::primaryText() const
 {
-    if (reason.isEmpty())
-        return nextStep;
-    if (nextStep.isEmpty())
-        return reason;
-    return reason + QLatin1Char(' ') + nextStep;
+    return joinText(reason, nextStep, QStringLiteral(" "));
+}
+
+QString Presentation::detailedText() const
+{
+    return joinText(technicalDetails, userDetails, QStringLiteral("\n"));
+}
+
+QString Presentation::userText() const
+{
+    return joinText(primaryText(), userDetails, QStringLiteral("\n\n"));
 }
 
 Presentation presentation(ProjectIssue issue, const QString& detail)
@@ -102,14 +117,14 @@ Presentation presentation(ProjectIssue issue, const QString& detail)
         break;
     case ProjectIssue::InvalidPlaybackReference:
         result.reason = hubText("This project contains an invalid playback reference.");
-        if (!detail.isEmpty()) result.reason += QLatin1Char('\n') + detail;
+        result.userDetails = detail;
         result.nextStep = hubText("Restore a valid version of the project and try again. No project was changed.");
         break;
     case ProjectIssue::ProjectUpgradeFilesNotWritable:
         result.reason = hubText("Some files needed for the project upgrade are read-only or not writable.");
         result.nextStep = hubText("Check file write protection and access permissions, then try again. If your version control workflow requires checkout or unlocking, do that first. No project data was changed.");
         if (!detail.isEmpty())
-            result.nextStep += QStringLiteral("\n\n") + hubText("Affected files:\n%1").arg(detail);
+            result.userDetails = hubText("Affected files:\n%1").arg(detail);
         break;
     case ProjectIssue::InternalFailure:
         result.reason = hubText("Harken Studio could not finish checking this project.");
@@ -119,11 +134,8 @@ Presentation presentation(ProjectIssue issue, const QString& detail)
     const QString code = projectIssueCode(issue);
     result.technicalDetails = code;
     const QString cleanDetail = detail.trimmed();
-    if (!cleanDetail.isEmpty() && cleanDetail != code) {
-        if (!result.technicalDetails.isEmpty())
-            result.technicalDetails.append(QLatin1Char('\n'));
-        result.technicalDetails.append(cleanDetail);
-    }
+    if (result.userDetails.isEmpty() && !cleanDetail.isEmpty() && cleanDetail != code)
+        result.technicalDetails = joinText(code, cleanDetail, QStringLiteral("\n"));
     return result;
 }
 
@@ -142,17 +154,17 @@ Presentation presentation(const QString& internalError, bool upgradeContext)
             result.technicalDetails.append(QLatin1Char('\n') + value);
         return result;
     }
-    return {value, {}, {}};
+    return {value, {}, {}, {}};
 }
 
 QString userMessage(ProjectIssue issue, const QString& detail)
 {
-    return presentation(issue, detail).primaryText();
+    return presentation(issue, detail).userText();
 }
 
 QString userMessage(const QString& internalError, bool upgradeContext)
 {
-    return presentation(internalError, upgradeContext).primaryText();
+    return presentation(internalError, upgradeContext).userText();
 }
 
 QString progressText(ProjectUpgradePhase phase)

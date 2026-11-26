@@ -1,10 +1,10 @@
 #include "StartupCoordinator.h"
 
+#include "Core/MessageBox.h"
 #include "Core/ProjectTemplateLoader.h"
 #include "Core/ProjectInstance.h"
 #include "Core/ProjectOpenApproval.h"
 #include "Core/ProjectUpgradeManager.h"
-#include "Core/ProjectUpgradeMessages.h"
 #include "Dialogs/StartupLoadingWindow.h"
 #include "MainWindow.h"
 #include "Core/IPC/StudioInstanceTransport.h"
@@ -77,13 +77,14 @@ void StartupCoordinator::start()
     auto acquisition = ProjectInstance::acquire(instancePath, startupArguments_.shell
         ? ProjectInstance::ActivationPolicy::Deny : ProjectInstance::ActivationPolicy::Allow);
     if (acquisition.status == ProjectInstance::Status::Failed) {
-        fail(acquisition.error, 3, QStringLiteral("PROJECT_INSTANCE_UNAVAILABLE"));
+        fail(ProjectUpgradeMessages::presentation(acquisition.error),
+             QStringLiteral("PROJECT_INSTANCE_UNAVAILABLE"));
         return;
     }
     if (acquisition.status == ProjectInstance::Status::Forwarded) {
         if (startupArguments_.createProject) {
-            fail(tr("This project is already open in another Studio window."),
-                 3, QStringLiteral("PROJECT_ALREADY_OPEN"));
+            fail(ProjectUpgradeMessages::presentation(tr("This project is already open in another Studio window.")),
+                 QStringLiteral("PROJECT_ALREADY_OPEN"));
             return;
         }
         terminal_ = true;
@@ -109,7 +110,8 @@ void StartupCoordinator::startProjectPreparation()
         if (!startupArguments_.projectTemplateId.isEmpty()) {
             const auto projectTemplate = ProjectTemplateLoader::load(startupArguments_.projectTemplateId);
             if (!projectTemplate) {
-                fail(tr("The project template is unavailable: %1").arg(startupArguments_.projectTemplateId));
+                fail(ProjectUpgradeMessages::presentation(
+                    tr("The project template is unavailable: %1").arg(startupArguments_.projectTemplateId)));
                 return;
             }
             config.templateId = startupArguments_.projectTemplateId;
@@ -152,14 +154,13 @@ void StartupCoordinator::finishProjectAnalysis()
     }
     analysis_ = analysisWatcher_.result();
     if (!analysis_.ok) {
-        fail(ProjectUpgradeMessages::userMessage(analysis_.issue, analysis_.detail),
-             3, projectIssueCode(analysis_.issue),
-             analysis_.blockingErrors.join(QLatin1Char('\n')));
+        fail(ProjectUpgradeMessages::presentation(analysis_.issue, analysis_.detail),
+             projectIssueCode(analysis_.issue));
         return;
     }
     if (startupArguments_.shell && analysis_.upgradeRequired) {
-        fail(QStringLiteral("Open and upgrade this project in Studio before starting --shell."),
-            3, QStringLiteral("PROJECT_UPGRADE_SELECTION_REQUIRED"));
+        fail(ProjectUpgradeMessages::presentation(QStringLiteral("Open and upgrade this project in Studio before starting --shell.")),
+             QStringLiteral("PROJECT_UPGRADE_SELECTION_REQUIRED"));
         return;
     }
     const ProjectOpenDecision decision = confirmProjectOpen(analysis_, &loading_);
@@ -170,8 +171,7 @@ void StartupCoordinator::finishProjectAnalysis()
         return;
     }
     if (!decision.proceed) {
-        fail(ProjectUpgradeMessages::userMessage(decision.issue),
-             3, projectIssueCode(decision.issue));
+        fail(ProjectUpgradeMessages::presentation(decision.issue), projectIssueCode(decision.issue));
         return;
     }
     upgradeApproval_ = decision.upgradeApproval;
@@ -245,13 +245,13 @@ void StartupCoordinator::tryCommit()
         return;
     if (!prepared_ || !prepared_->project) {
         if (!prepared_ || prepared_->error.isEmpty()) {
-            fail(tr("Harken Studio could not open the project"));
+            fail(ProjectUpgradeMessages::presentation(tr("Harken Studio could not open the project")));
         } else {
-            const QString message = ProjectUpgradeMessages::userMessage(
+            const auto message = ProjectUpgradeMessages::presentation(
                 prepared_->error, !startupArguments_.createProject);
             const QString writeAccessCode = projectIssueCode(ProjectIssue::ProjectUpgradeFilesNotWritable);
             if (prepared_->error.startsWith(writeAccessCode + QLatin1Char(':')))
-                fail(message, 3, writeAccessCode, prepared_->error.mid(writeAccessCode.size() + 1));
+                fail(message, writeAccessCode);
             else
                 fail(message);
         }
@@ -262,7 +262,7 @@ void StartupCoordinator::tryCommit()
     ProjectManager& manager = ProjectManager::instance();
     prepared_->instance = std::move(projectInstance_);
     if (!manager.commitPreparedProject(std::move(*prepared_))) {
-        fail(tr("Harken Studio could not open the project"));
+        fail(ProjectUpgradeMessages::presentation(tr("Harken Studio could not open the project")));
         return;
     }
 
@@ -372,31 +372,23 @@ void StartupCoordinator::finishCancellation()
     });
 }
 
-void StartupCoordinator::fail(const QString& message, int exitCode,
-                              const QString& errorCode,
-                              const QString& technicalDetails)
+void StartupCoordinator::fail(const ProjectUpgradeMessages::Presentation& message,
+                              const QString& errorCode)
 {
     if (terminal_)
         return;
     terminal_ = true;
-    const QString userMessage = ProjectUpgradeMessages::userMessage(message);
     if (startupArguments_.shell) {
-        harken::studio::cli::writeShellResponse(harken::studio::cli::failure(errorCode, userMessage));
+        harken::studio::cli::writeShellResponse(harken::studio::cli::failure(errorCode, message.userText()));
         loading_.dismiss();
-        QTimer::singleShot(0, &application_, [this, exitCode]() { application_.exit(exitCode); });
-        return;
+    } else {
+        StudioMessageBox box(QMessageBox::Critical, tr("Harken Studio"), {}, QMessageBox::Ok, &loading_);
+        const QString details = message.detailedText();
+        box.setContent(message.primaryText(), details.isEmpty() ? errorCode : details);
+        loading_.showFailure(box.text());
+        box.exec();
     }
-    loading_.showFailure(userMessage);
-    QMessageBox box(QMessageBox::Critical, tr("Harken Studio"),
-                    userMessage, QMessageBox::Ok, &loading_);
-    const QString details = technicalDetails.trimmed().isEmpty()
-        ? errorCode : errorCode + QLatin1Char('\n') + technicalDetails;
-    if (!details.trimmed().isEmpty())
-        box.setDetailedText(details);
-    box.exec();
-    QTimer::singleShot(0, &application_, [this, exitCode]() {
-        application_.exit(exitCode);
-    });
+    QTimer::singleShot(0, &application_, [this]() { application_.exit(3); });
 }
 
 }

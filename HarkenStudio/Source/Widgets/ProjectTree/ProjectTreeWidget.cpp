@@ -8,7 +8,7 @@
 #include "Core/AssetPipeline/AudioImportGate.h"
 #include "Core/ThemeManager.h"
 
-#include <QMessageBox>
+#include "Core/MessageBox.h"
 #include <QDrag>
 #include <QDropEvent>
 #include <QDragMoveEvent>
@@ -685,9 +685,9 @@ void ProjectTreeWidget::dropEvent(QDropEvent* event)
     }
 
     if (!rejected.isEmpty()) {
-        QMessageBox::warning(this, tr("Cannot Move Item"),
+        showWarningMessage(this, tr("Cannot Move Item"),
             tr("The following moves were rejected by the hierarchy nesting rules:\n\n%1")
-                .arg(rejected.join("\n")));
+                .arg(rejected.join(QLatin1Char('\n'))));
     }
 
     if (acceptable.isEmpty() && acceptableFolders.isEmpty()) {

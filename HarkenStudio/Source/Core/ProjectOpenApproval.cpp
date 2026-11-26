@@ -1,5 +1,6 @@
 #include "ProjectOpenApproval.h"
 
+#include "MessageBox.h"
 #include "ProjectOpenProtocol.h"
 
 #include <QAbstractButton>
@@ -51,10 +52,8 @@ bool confirmUpgrade(const ProjectUpgradeAnalysis& analysis, QWidget* parent)
         impact += QStringLiteral("\n\n")
             + text("Keep the storage device connected until the update finishes.");
 
-    QMessageBox dialog(QMessageBox::Question, text("Update Project"),
-        text("Update \"%1\" to open it in Harken Studio %2?")
-            .arg(QFileInfo(analysis.projectFilePath).completeBaseName(), currentStudioVersion()),
-        QMessageBox::Ok | QMessageBox::Cancel, parent);
+    StudioMessageBox dialog(QMessageBox::Question, text("Update Project"), {},
+                            QMessageBox::Ok | QMessageBox::Cancel, parent);
     dialog.setObjectName(QStringLiteral("projectUpgradeConfirmation"));
     dialog.setInformativeText(impact);
     dialog.button(QMessageBox::Ok)->setText(text("Update and Open"));
@@ -70,7 +69,8 @@ bool confirmUpgrade(const ProjectUpgradeAnalysis& analysis, QWidget* parent)
             .arg(QLocale().formattedDataSize(analysis.requiredRecoveryBytes));
     details += QStringLiteral("\n\n") + text("Files to update:")
         + QLatin1Char('\n') + analysis.migrationPlan.writeSet.join(QLatin1Char('\n'));
-    dialog.setDetailedText(details);
+    dialog.setContent(text("Update \"%1\" to open it in Harken Studio %2?")
+        .arg(QFileInfo(analysis.projectFilePath).completeBaseName(), currentStudioVersion()), details);
     return dialog.exec() == QMessageBox::Ok;
 }
 

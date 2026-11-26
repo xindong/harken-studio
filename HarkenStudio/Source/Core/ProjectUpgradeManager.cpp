@@ -402,7 +402,8 @@ ProjectUpgradeAnalysis ProjectUpgradeManager::analyze(
     if (!analysis.blockingErrors.isEmpty()) {
         analysis.issue = analysis.probe.issue == ProjectIssue::None
             ? ProjectIssue::ProjectFileDamaged : analysis.probe.issue;
-        analysis.detail = analysis.probe.detail;
+        analysis.detail = analysis.probe.detail.isEmpty() || analysis.blockingErrors.size() > 1
+            ? analysis.blockingErrors.join(QLatin1Char('\n')) : analysis.probe.detail;
         return analysis;
     }
     if (analysis.sourceSchema < 1 || analysis.sourceSchema > analysis.targetSchema) {

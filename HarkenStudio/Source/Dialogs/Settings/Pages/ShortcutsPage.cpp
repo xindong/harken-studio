@@ -15,6 +15,7 @@
 #include <QKeySequenceEdit>
 #include <QMenu>
 #include <QMessageBox>
+#include "Core/MessageBox.h"
 #include <QPushButton>
 #include <QTreeWidget>
 #include <QTreeWidgetItemIterator>
@@ -237,13 +238,12 @@ void ShortcutsPage::commitShortcut(const QString& id, const QKeySequence& sequen
         QStringList names;
         for (const auto& conflictId : conflicts)
             names.append(manager.info(conflictId).displayName);
-        const QMessageBox::StandardButton reply = QMessageBox::question(
-            this, tr("Shortcut Conflict"),
-            tr("This shortcut conflicts with: %1.\n\n"
-               "Reassign it? These commands will lose their shortcuts.")
-                .arg(names.join(QStringLiteral(", "))),
-            QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
-        if (reply != QMessageBox::Yes)
+        StudioMessageBox dialog(QMessageBox::Question, tr("Shortcut Conflict"), {},
+                                QMessageBox::Yes | QMessageBox::No, this);
+        dialog.setDefaultButton(QMessageBox::No);
+        dialog.setContent(tr("Reassign this shortcut? These commands will lose their shortcuts:\n%1")
+            .arg(names.join(QStringLiteral(", "))));
+        if (dialog.exec() != QMessageBox::Yes)
             return;
         if (manager.conflictingShortcuts(id, sequence) == conflicts)
             break;

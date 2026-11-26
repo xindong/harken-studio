@@ -27,7 +27,7 @@
 #include <QDoubleSpinBox>
 #include <QTableWidget>
 #include <QInputDialog>
-#include <QMessageBox>
+#include "Core/MessageBox.h"
 #include <QApplication>
 #include <cmath>
 
@@ -343,7 +343,7 @@ void InspectorPanelPrivate::wireAuthoringCommit(PropertyEditorEngine* engine)
             if (!result.success
                 && (result.errorCode == QLatin1String("VARIABLE_RANGE_CURVE_CONFLICT")
                     || result.errorCode == QLatin1String("INVALID_VARIABLE_RANGE")))
-                QMessageBox::warning(q_ptr, QObject::tr("Cannot Change Variable Range"), result.errorMessage);
+                showWarningMessage(q_ptr, QObject::tr("Cannot Change Variable Range"), result.errorMessage);
             if (!result.success || field == QLatin1String("outputBusId")
                 || field == QLatin1String("range")
                 || PlayablePropertyAuthoringV1::fieldByName(field))

@@ -22,6 +22,7 @@
 #include "Common/WheelGuard.h"
 #include "Core/StartupArguments.h"
 #include "Core/HubLauncher.h"
+#include "Core/MessageBox.h"
 #include "Core/MigrationManager.h"
 #include "Core/ProjectPreflight/ProjectPreflight.h"
 #include "Core/ProjectOpenProtocol.h"
@@ -306,8 +307,11 @@ int main(int argc, char* argv[])
             harken::studio::cli::writeShellResponse(harken::studio::cli::failure(QStringLiteral("STARTUP_FAILED"), message));
             return 3;
         }
-        loading.showFailure(message);
-        QMessageBox::critical(&loading, QObject::tr("Harken Studio"), message);
+        harken::studio::StudioMessageBox box(QMessageBox::Critical, QObject::tr("Harken Studio"), {},
+                                            QMessageBox::Ok, &loading);
+        box.setContent(message);
+        loading.showFailure(box.text());
+        box.exec();
         return 3;
     };
 

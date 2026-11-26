@@ -25,6 +25,7 @@
 #include <QActionGroup>
 #include <QInputDialog>
 #include <QMessageBox>
+#include "Core/MessageBox.h"
 #include <QLineEdit>
 #include <QJsonObject>
 #include <QJsonArray>
@@ -1024,8 +1025,8 @@ QString LayoutController::saveCurrentLayout(QWidget* dialogParent)
     name = name.trimmed();
 
     if (NamedLayoutStore::isReservedName(name)) {
-        QMessageBox::warning(dialogParent, tr("Save Layout"),
-                             tr("Layout name '%1' is reserved").arg(name));
+        showWarningMessage(dialogParent, tr("Save Layout"),
+                           tr("Layout name '%1' is reserved").arg(name));
         return {};
     }
 
@@ -1035,8 +1036,8 @@ QString LayoutController::saveCurrentLayout(QWidget* dialogParent)
         emit statusMessage(tr("Layout '%1' saved").arg(name));
         return name;
     }
-    QMessageBox::warning(dialogParent, tr("Save Layout"),
-                         tr("Layout '%1' could not be saved").arg(name));
+    showWarningMessage(dialogParent, tr("Save Layout"),
+                       tr("Layout '%1' could not be saved").arg(name));
     return {};
 }
 

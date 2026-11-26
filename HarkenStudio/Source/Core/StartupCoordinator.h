@@ -2,6 +2,7 @@
 
 #include "Core/StartupArguments.h"
 #include "Core/ProjectManager.h"
+#include "Core/ProjectUpgradeMessages.h"
 
 #include <QObject>
 #include <QFutureWatcher>
@@ -41,9 +42,8 @@ private:
     void finish();
     void cancelProjectOpen();
     void finishCancellation();
-    void fail(const QString& message, int exitCode = 3,
-              const QString& errorCode = QStringLiteral("INTERNAL_FAILURE"),
-              const QString& technicalDetails = {});
+    void fail(const ProjectUpgradeMessages::Presentation& message,
+              const QString& errorCode = QStringLiteral("INTERNAL_FAILURE"));
 
     QApplication& application_;
     StartupLoadingWindow& loading_;

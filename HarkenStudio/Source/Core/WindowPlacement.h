@@ -96,6 +96,19 @@ inline QSize screenBoundedWindowSize(const QWidget* window, const QSize& request
     return requested.boundedTo(available);
 }
 
+inline void moveWindowInsideScreen(QWidget* window)
+{
+    const QRect available = window->screen()->availableGeometry();
+    const QRect frame = window->frameGeometry();
+    if (available.contains(frame))
+        return;
+    const QPoint position(qBound(available.left(), frame.left(),
+                                 qMax(available.left(), available.right() - frame.width() + 1)),
+                          qBound(available.top(), frame.top(),
+                                 qMax(available.top(), available.bottom() - frame.height() + 1)));
+    window->move(window->pos() + position - frame.topLeft());
+}
+
 inline void fitWindowToScreen(QWidget* window)
 {
     window->setMinimumSize(screenBoundedWindowSize(window, window->minimumSize()));
@@ -105,13 +118,7 @@ inline void fitWindowToScreen(QWidget* window)
     if (bounded == window->size())
         return;
     window->resize(bounded);
-    const QRect available = window->screen()->availableGeometry();
-    const QRect frame = window->frameGeometry();
-    const QPoint position(qBound(available.left(), frame.left(),
-                                 qMax(available.left(), available.right() - frame.width() + 1)),
-                          qBound(available.top(), frame.top(),
-                                 qMax(available.top(), available.bottom() - frame.height() + 1)));
-    window->move(window->pos() + position - frame.topLeft());
+    moveWindowInsideScreen(window);
 }
 
 inline QSize centerWindowOnScreen(QWidget* window, QScreen* preferred)

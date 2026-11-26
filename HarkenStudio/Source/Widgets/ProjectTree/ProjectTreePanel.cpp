@@ -26,6 +26,7 @@
 
 #include "Widgets/Shared/InlineRenameEdit.h"
 #include <QMessageBox>
+#include "Core/MessageBox.h"
 #include <QStyle>
 #include <QApplication>
 #include <QDebug>
@@ -1776,7 +1777,7 @@ void ProjectTreePanel::batchMove(const QString& targetFolder)
     }
     if (!targetParent || targetParent->parent)
     {
-        QMessageBox::warning(this, tr("Batch Move"),
+        showWarningMessage(this, tr("Batch Move"),
             tr("Target Pack is missing or ambiguous: %1. Select it by GUID.").arg(targetFolder));
         return;
     }
@@ -1956,7 +1957,7 @@ void ProjectTreePanel::importFilesToTarget(const QStringList& files, ProjectItem
         const auto placement = AudioImportGate::resolveImportParent(contextItem);
         if (placement.kind == ImportPlacementKind::Rejected)
         {
-            QMessageBox::warning(this, tr("Import Audio"),
+            showWarningMessage(this, tr("Import Audio"),
                 tr("'%1' cannot contain imported audio.").arg(contextItem->name));
             return;
         }
@@ -1969,7 +1970,7 @@ void ProjectTreePanel::importFilesToTarget(const QStringList& files, ProjectItem
     }
     else
     {
-        QMessageBox::warning(this, tr("Import Audio"),
+        showWarningMessage(this, tr("Import Audio"),
             tr("'%1' cannot contain imported audio.").arg(bucketKey));
         return;
     }
