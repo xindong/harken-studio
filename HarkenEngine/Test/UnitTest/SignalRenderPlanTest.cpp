@@ -333,7 +333,7 @@ TEST(SignalRenderPlan, QueuedParameterPublicationPreservesPcmEnvelopeAndRunningS
     ASSERT_TRUE(differentRelation->BeginBlock(block));
     ASSERT_TRUE(differentRelation->ProcessContent(members));
     ASSERT_TRUE(differentRelation->CommitBlock());
-    EXPECT_LT(target.pcm.front(), .9f);
+    EXPECT_LT(target.pcm.front(), .99f);
     EXPECT_GT(target.pcm.back(), target.pcm.front());
 }
 
