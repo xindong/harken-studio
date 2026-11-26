@@ -80,7 +80,7 @@ bool selectColor(QTreeWidget& colors, const QString& key)
 harken::studio::ColorEditorDialog* openColorEditor(QWidget& page, QTreeWidget& colors)
 {
     if (!colors.currentItem()) return nullptr;
-    colors.itemDoubleClicked(colors.currentItem(), 1);
+    colors.itemActivated(colors.currentItem(), 1);
     return page.findChild<harken::studio::ColorEditorDialog*>(QStringLiteral("appearanceColorDialog"));
 }
 
@@ -524,13 +524,13 @@ TEST_F(SettingsApplyContractTest, ThemePalettesAndRolesKeepEditsIsolatedAcrossSw
     auto* themes = panel.findChild<QComboBox*>(QStringLiteral("appearanceThemeCombo"));
     auto* presets = panel.findChild<QComboBox*>(QStringLiteral("appearanceColorPresets"));
     auto* colors = panel.findChild<QTreeWidget*>(QStringLiteral("appearanceColorTree"));
-    auto* reset = panel.findChild<QPushButton*>(QStringLiteral("appearanceColorReset"));
     auto* resetAll = panel.findChild<QPushButton*>(QStringLiteral("appearanceColorsReset"));
+    auto* resetSelected = panel.findChild<QPushButton*>(QStringLiteral("appearanceColorReset"));
     ASSERT_NE(themes, nullptr);
     ASSERT_NE(presets, nullptr);
     ASSERT_NE(colors, nullptr);
-    ASSERT_NE(reset, nullptr);
     ASSERT_NE(resetAll, nullptr);
+    ASSERT_NE(resetSelected, nullptr);
     const QString builtinId = builtinThemeId();
     const QString darkId = QStringLiteral("dark");
     const QString lightId = QStringLiteral("light");
@@ -577,8 +577,9 @@ TEST_F(SettingsApplyContractTest, ThemePalettesAndRolesKeepEditsIsolatedAcrossSw
     EXPECT_EQ(theme_->snapshot()->ui.colors.textPrimary, editedInk);
     EXPECT_EQ(theme_->snapshot()->domains.curve.colors.grid, editedGrid);
     ASSERT_TRUE(selectColor(*colors, ink));
-    ASSERT_TRUE(reset->isEnabled());
-    reset->click();
+    ASSERT_TRUE(resetSelected->isEnabled());
+    resetSelected->click();
+    EXPECT_FALSE(resetSelected->isEnabled());
     EXPECT_EQ(theme_->snapshot()->ui.colors.textPrimary, defaults->ui.colors.textPrimary);
     EXPECT_EQ(theme_->snapshot()->domains.curve.colors.grid, editedGrid);
     ASSERT_TRUE(resetAll->isEnabled());

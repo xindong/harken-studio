@@ -1,19 +1,21 @@
 
 #pragma once
 
-#include <QWidget>
+#include <QFrame>
 
-class QBoxLayout;
 class QButtonGroup;
+class QHBoxLayout;
 class QStackedWidget;
 
 namespace harken::studio {
 
-class InspectorTabContainer : public QWidget
+class InspectorTabContainer : public QFrame
 {
     Q_OBJECT
 public:
-    explicit InspectorTabContainer(QWidget* parent = nullptr);
+    enum class FramePlacement { Page, Group };
+
+    explicit InspectorTabContainer(QWidget* parent = nullptr, FramePlacement frame = FramePlacement::Page);
     ~InspectorTabContainer() override = default;
 
     void addTab(QWidget* contentWidget, const QString& tabTitle, const QString& objectName);
@@ -21,22 +23,25 @@ public:
     void clearTabs();
 
     void setCurrentTab(int index);
+    void setTabVisible(int index, bool visible);
     int currentTabIndex() const;
     int tabCount() const;
+    QWidget* tabWidget(int index) const;
+    QSize sizeHint() const override;
+
+signals:
+    void currentChanged(int index);
 
 protected:
     void resizeEvent(QResizeEvent* event) override;
 
 private:
-    void applyOrientation(bool sideBar);
-
-    QBoxLayout*     rootLayout_ = nullptr;
+    FramePlacement frame_;
     QWidget*        bar_ = nullptr;
-    QBoxLayout*     barLayout_ = nullptr;
+    QHBoxLayout*    barLayout_ = nullptr;
     QButtonGroup*   buttons_ = nullptr;
     QWidget*        content_ = nullptr;
     QStackedWidget* stack_ = nullptr;
-    bool            sideBar_ = false;
 };
 
 }

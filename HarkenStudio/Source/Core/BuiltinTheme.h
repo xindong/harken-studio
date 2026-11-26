@@ -4,6 +4,7 @@
 
 namespace harken::studio {
 
+const ThemeTypography& builtinThemeTypography();
 ThemeSnapshot createBuiltinDarkTheme();
 ThemeSnapshot createBuiltinLightTheme();
 

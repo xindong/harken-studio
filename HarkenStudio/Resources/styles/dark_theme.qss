@@ -1848,10 +1848,6 @@ QWidget#inspectorTabBar {
     background-color: @bgSecondary@;
     border-bottom: @borderWidth@px solid @borderPrimary@;
 }
-QWidget#inspectorTabBar[sideBar="true"] {
-    border-bottom: none;
-    border-right: @borderWidth@px solid @borderPrimary@;
-}
 QWidget#inspectorTabBar QToolButton {
     background-color: @bgSecondary@;
     border: none;
@@ -1862,25 +1858,12 @@ QWidget#inspectorTabBar QToolButton {
     @bodyFont@
     padding: 0px @textPadding@px;
 }
-QWidget#inspectorTabBar QToolButton[sideBar="true"] {
-    border-top: none;
-    border-bottom: none;
-    border-left: @accentBorderWidth@px solid transparent;
-    border-right: @accentBorderWidth@px solid transparent;
-}
 QWidget#inspectorTabBar QToolButton:hover { background-overlay: @hoverOverlay@; color: @textPrimary@; }
 QWidget#inspectorTabBar QToolButton:pressed { background-color: @bgTertiary@; color: @textPrimary@; }
 QWidget#inspectorTabBar QToolButton:checked {
     background-color: @bgSelected@;
     color: @accent@;
     border-top-color: @accent@;
-}
-QWidget#inspectorTabBar QToolButton[sideBar="true"]:checked {
-    border-top: none;
-    border-left-color: @accent@;
-}
-QWidget#inspectorTabContent[sideBar="true"] {
-    border-top: @borderWidth@px solid @borderPrimary@;
 }
 QScrollArea[inspectorTabPage="true"] { border: @borderWidth@px solid @borderPrimary@; }
 QLabel[bindingUnit="dB"],

@@ -10,6 +10,7 @@
 namespace harken::studio {
 
 class ToastPresenter;
+class InspectorTabContainer;
 
 class SettingsPage : public QWidget
 {
@@ -25,12 +26,17 @@ public:
 protected:
     void showError(const QString& message);
     QVBoxLayout* makePageBody();
-    QWidget* makeSection(const QString& title);
+    QWidget* makeSection(const QString& title, InspectorTabContainer* tabs = nullptr);
+    QWidget* makeTab(InspectorTabContainer* tabs, const QString& title);
     DialogFormLayout* makeForm();
 
 private:
     ToastPresenter* feedback_ = nullptr;
-    QList<QWidget*> sections_;
+    struct Section {
+        QWidget* widget;
+        InspectorTabContainer* tabs;
+    };
+    QList<Section> sections_;
 };
 
 }

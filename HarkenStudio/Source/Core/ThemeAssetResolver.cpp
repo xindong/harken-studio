@@ -133,7 +133,7 @@ public:
     }
 
     std::optional<QByteArray> readSource(
-        const Catalog& catalog,
+        const QMap<QString, QString>& roots,
         const QString& logicalPath,
         bool expectImage,
         QList<ThemePackageDiagnostic>& diagnostics) const
@@ -149,7 +149,7 @@ public:
         }
         const QString packageId = logicalPath.left(separator);
         const QString relative = logicalPath.mid(separator + 1);
-        const QString root = catalog.roots.value(packageId);
+        const QString root = roots.value(packageId);
         const QString rootCanonical = QFileInfo(root).canonicalFilePath();
         const QFileInfo fileInfo(QDir(rootCanonical).filePath(relative));
         const QString fileAbsolute = QDir::cleanPath(fileInfo.absoluteFilePath());
@@ -190,7 +190,9 @@ public:
                 QStringLiteral("Asset file type does not match its declaration.")));
             return std::nullopt;
         }
-        if (fileInfo.size() < 0 || fileInfo.size() > limits.maximumEncodedBytes)
+        const qint64 size = fileInfo.size();
+        const qsizetype byteLimit = expectImage ? limits.maximumEncodedBytes : limits.maximumFontBytes;
+        if (size < 0 || size > byteLimit)
         {
             diagnostics.append(diagnostic(
                 ThemePackageErrorCode::ResourceLimit, logicalPath,
@@ -207,7 +209,14 @@ public:
                 QStringLiteral("Asset source cannot be read.")));
             return std::nullopt;
         }
-        return file.readAll();
+        auto bytes = file.read(size);
+        if (bytes.size() != size || !file.atEnd()) {
+            diagnostics.append(diagnostic(
+                ThemePackageErrorCode::AssetDecodeFailed, logicalPath, QStringLiteral("$"),
+                QStringLiteral("Asset source changed or could not be read completely.")));
+            return std::nullopt;
+        }
+        return bytes;
     }
 
     std::optional<QImage> decodeImage(
@@ -491,7 +500,7 @@ ThemeImageResolution ThemeAssetResolver::resolveImage(
             {
                 const auto& source = asset->sources.at(sourceIndex);
                 const auto bytes = impl_->readSource(
-                    *catalog, source.path, true, result.diagnostics);
+                    catalog->roots, source.path, true, result.diagnostics);
                 if (bytes)
                 {
                     const auto decoded = impl_->decodeImage(
@@ -696,8 +705,8 @@ ThemeFontResolution ThemeAssetResolver::resolveFont(
             QStringLiteral("Font asset has no sources.")));
         return result;
     }
-    const auto bytes = impl_->readSource(
-        *catalog, assetIt->sources.front().path, false, result.diagnostics);
+    const auto bytes = readFontSource(
+        catalog->roots, assetIt->sources.front().path, result.diagnostics);
     if (!bytes)
         return result;
     QRawFont font(*bytes, pixelSize, QFont::PreferDefaultHinting);
@@ -719,6 +728,13 @@ ThemeFontResolution ThemeAssetResolver::resolveFont(
         impl_->fontCache.insert(cacheKey, result.resource);
     }
     return result;
+}
+
+std::optional<QByteArray> ThemeAssetResolver::readFontSource(const QMap<QString, QString>& packageRoots,
+                                                           const QString& path,
+                                                           QList<ThemePackageDiagnostic>& diagnostics) const
+{
+    return impl_->readSource(packageRoots, path, false, diagnostics);
 }
 
 }

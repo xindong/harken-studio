@@ -4,8 +4,10 @@
 #include "BuiltinTheme.h"
 #include "AppSettings.h"
 #include "ThemeScale.h"
+#include "ThemeMetricsDerivation.h"
 #include "ThemeColorResolver.h"
 #include "FontManager.h"
+#include "ThemeFontAssets.h"
 #include "HarkenStyle.h"
 #include "QtAdsThemeAdapter.h"
 #include "QtControlSkin.h"
@@ -13,6 +15,7 @@
 
 #include <QApplication>
 #include <QDir>
+#include <QJsonValue>
 #include <QPainter>
 #include <QRect>
 #include <QStandardPaths>
@@ -21,9 +24,156 @@
 #include <QToolTip>
 #include <QWidget>
 
+#include <algorithm>
 #include <utility>
 
 namespace harken::studio {
+namespace {
+
+void writeStyleOverrides(ISettingsStorage& storage, const ThemeAppearance& appearance)
+{
+    QVariantMap metrics;
+    for (const auto& [owner, values] : appearance.metrics.asKeyValueRange())
+    {
+        QVariantMap entries;
+        for (const auto& [key, value] : values.asKeyValueRange())
+            entries.insert(key, value);
+        if (!entries.isEmpty()) metrics.insert(owner, entries);
+    }
+    QVariantMap fonts;
+    for (const auto& [owner, values] : appearance.fonts.asKeyValueRange())
+    {
+        QVariantMap entries;
+        for (const auto& [key, font] : values.asKeyValueRange())
+        {
+            QVariantMap fields;
+            if (font.family) {
+                fields.insert(QStringLiteral("family"), *font.family);
+                fields.insert(QStringLiteral("source"), font.source == ThemeFontSource::Theme
+                    ? QStringLiteral("theme") : QStringLiteral("system"));
+            }
+            if (font.pointSize) fields.insert(QStringLiteral("pointSize"), *font.pointSize);
+            if (font.weight) fields.insert(QStringLiteral("weight"), *font.weight);
+            if (!fields.isEmpty()) entries.insert(key, fields);
+        }
+        if (!entries.isEmpty()) fonts.insert(owner, entries);
+    }
+    storage.setValue(QStringLiteral("ThemeMetrics"), metrics);
+    storage.setValue(QStringLiteral("ThemeFonts"), fonts);
+}
+
+void readStyleOverrides(ISettingsStorage& storage, ThemeAppearance& appearance)
+{
+    const auto metrics = storage.value(QStringLiteral("ThemeMetrics")).toMap();
+    for (const auto& [owner, values] : metrics.asKeyValueRange())
+    {
+        const auto entries = values.toMap();
+        for (const auto& [key, value] : entries.asKeyValueRange())
+        {
+            const auto* token = findThemeMetricToken(key);
+            const int number = QJsonValue::fromVariant(value).toInt(-1);
+            if (token && token->accepts(number))
+                appearance.metrics[owner].insert(key, number);
+        }
+    }
+    const auto fonts = storage.value(QStringLiteral("ThemeFonts")).toMap();
+    for (const auto& [owner, values] : fonts.asKeyValueRange())
+    {
+        const auto entries = values.toMap();
+        for (const auto& [key, value] : entries.asKeyValueRange())
+        {
+            if (!findThemeFontToken(key))
+                continue;
+            const auto fields = value.toMap();
+            ThemeFontOverride font;
+            const auto family = fields.value(QStringLiteral("family"));
+            const auto source = fields.value(QStringLiteral("source"), QStringLiteral("system")).toString();
+            if (family.metaType().id() == QMetaType::QString && !family.toString().isEmpty()
+                && family.toString().size() <= ThemeFontOverride::maximumFamilyLength
+                && (source == QStringLiteral("system") || source == QStringLiteral("theme"))) {
+                font.family = family.toString();
+                font.source = source == QStringLiteral("theme") ? ThemeFontSource::Theme : ThemeFontSource::System;
+            }
+            const int size = QJsonValue::fromVariant(fields.value(QStringLiteral("pointSize"))).toInt(-1);
+            if (size >= ThemeFontOverride::minimumPointSize && size <= ThemeFontOverride::maximumPointSize)
+                font.pointSize = size;
+            const int weight = QJsonValue::fromVariant(fields.value(QStringLiteral("weight"))).toInt(-1);
+            if (weight >= ThemeFontOverride::minimumWeight && weight <= ThemeFontOverride::maximumWeight)
+                font.weight = weight;
+            if (!font.empty())
+                appearance.fonts[owner].insert(key, std::move(font));
+        }
+    }
+}
+
+bool applyStyleOverrides(ThemeAppearance& appearance, ThemeSnapshot& snapshot,
+                         QList<ThemePackageDiagnostic>& diagnostics)
+{
+    for (const auto& [owner, values] : std::as_const(appearance.metrics).asKeyValueRange())
+    {
+        for (const auto& [key, value] : values.asKeyValueRange())
+        {
+            const auto* token = findThemeMetricToken(key);
+            if (!token || !token->accepts(value))
+            {
+                diagnostics.append({token ? ThemePackageErrorCode::MetricOutOfRange
+                                          : ThemePackageErrorCode::UnknownSemanticKey,
+                    QStringLiteral("settings"), QStringLiteral("Appearance.ThemeMetrics.%1.%2").arg(owner, key),
+                    QStringLiteral("Invalid theme metric override.")});
+                return false;
+            }
+            if (owner == appearance.themeId)
+                token->setValue(snapshot.ui.metrics, value);
+        }
+    }
+    for (auto& values : appearance.fonts) {
+        values.removeIf([](auto it) { return it.value().empty(); });
+        for (auto& fields : values) {
+            if (fields.family && !fields.source)
+                fields.source = ThemeFontSource::System;
+        }
+    }
+    appearance.fonts.removeIf([](auto it) { return it.value().isEmpty(); });
+    appearance.metrics.removeIf([](auto it) { return it.value().isEmpty(); });
+    std::optional<QStringList> installedFamilies;
+    for (const auto& [owner, values] : std::as_const(appearance.fonts).asKeyValueRange())
+    {
+        for (const auto& [key, font] : values.asKeyValueRange())
+        {
+            const auto* token = findThemeFontToken(key);
+            const char* field = font.invalidField();
+            if (!token || field)
+            {
+                QString path = QStringLiteral("Appearance.ThemeFonts.%1.%2").arg(owner, key);
+                if (field) path += QLatin1Char('.') + QLatin1StringView(field);
+                diagnostics.append({token ? ThemePackageErrorCode::InvalidValue
+                                          : ThemePackageErrorCode::UnknownSemanticKey,
+                    QStringLiteral("settings"), path, QStringLiteral("Invalid font override.")});
+                return false;
+            }
+            if (owner == appearance.themeId) {
+                auto effective = font;
+                if (font.family && !font.family->isEmpty()) {
+                    bool available;
+                    if (font.source == ThemeFontSource::Theme) {
+                        available = std::any_of(snapshot.fontAssets.cbegin(), snapshot.fontAssets.cend(),
+                            [&](const auto& asset) { return asset->name.compare(*font.family, Qt::CaseInsensitive) == 0; });
+                    } else {
+                        if (!installedFamilies) installedFamilies = installedSystemFontFamilies();
+                        available = installedFamilies->contains(*font.family, Qt::CaseInsensitive);
+                    }
+                    if (!available) effective.family.reset();
+                }
+                effective.applyTo(snapshot.ui.typography.*token->member);
+            }
+        }
+    }
+    if (appearance.metrics.contains(appearance.themeId))
+        deriveThemeMetrics(snapshot);
+    return true;
+}
+
+}
 
 ThemeManager& ThemeManager::instance()
 {
@@ -48,16 +198,16 @@ ThemeManager::ThemeManager(QString userThemesRoot,
     : QObject(parent)
     , userThemesRoot_(std::move(userThemesRoot))
     , storage_(std::move(storage))
-    , currentThemeId_(builtinThemeId())
 {
     loadOptions_.harkenVersion = QString::fromUtf8(
         Harken::BuildInfo::Version.data(),
         static_cast<int>(Harken::BuildInfo::Version.size()));
     qRegisterMetaType<ThemeSnapshotPtr>();
-    auto initial = loadBaseTheme(currentThemeId_);
+    committedAppearance_.themeId = builtinThemeId();
+    auto initial = loadBaseTheme(committedAppearance_.themeId);
     Q_ASSERT(initial.ok());
     committedCandidate_ = *initial.candidate;
-    currentPaletteId_ = committedCandidate_.defaultPaletteId;
+    committedAppearance_.paletteId = committedCandidate_.defaultPaletteId;
     snapshot_ = committedCandidate_.snapshot;
     refreshThemes();
 
@@ -78,13 +228,14 @@ ThemeManager::ThemeManager(QString userThemesRoot,
             loaded = customizedCandidate(restored);
         }
     }
-    customizations_ = restored.colors;
     if (loaded.ok())
-    {
-        currentThemeId_ = restored.themeId;
-        currentPaletteId_ = restored.paletteId;
         committedCandidate_ = *loaded.candidate;
+    else
+    {
+        restored.themeId = committedAppearance_.themeId;
+        restored.paletteId = committedAppearance_.paletteId;
     }
+    committedAppearance_ = std::move(restored);
     uiScalePercent_ = AppSettings::instance().globalUIScale();
     publishCandidate(committedCandidate_, false);
     connect(&AppSettings::instance(), &AppSettings::globalUIScaleChanged,
@@ -203,6 +354,9 @@ ThemePackageLoadResult ThemeManager::customizedCandidate(
     if (!result.ok())
         return result;
 
+    if (!prepareThemeFonts(*result.candidate, result.diagnostics))
+        return result;
+
     if (appearance.paletteId.isEmpty())
         appearance.paletteId = result.candidate->defaultPaletteId;
     const ColorPalette* selected = nullptr;
@@ -249,10 +403,9 @@ ThemePackageLoadResult ThemeManager::customizedCandidate(
     }
     if (!result.diagnostics.isEmpty())
         return result;
-    if (reusePreviewBase)
-        previewBaseCandidate_ = result.candidate;
-
     ThemeSnapshot customized = *selected->snapshot;
+    if (!applyStyleOverrides(appearance, customized, result.diagnostics))
+        return result;
     auto colors = selected->colors;
     const auto overrides = appearance.colors.value(appearance.themeId).value(appearance.paletteId);
     for (auto color = overrides.cbegin(); color != overrides.cend(); ++color)
@@ -264,6 +417,8 @@ ThemePackageLoadResult ThemeManager::customizedCandidate(
             QStringLiteral("The theme color bindings could not be resolved.")});
         return result;
     }
+    if (reusePreviewBase)
+        previewBaseCandidate_ = result.candidate;
     result.candidate->snapshot = std::make_shared<const ThemeSnapshot>(std::move(customized));
     return result;
 }
@@ -285,7 +440,7 @@ ThemeManagerOperationResult ThemeManager::updateAppearance(
     if (!checkPublicationThread(result))
         return result;
     auto desired = appearance;
-    if (desired.themeId == currentThemeId_ && desired.paletteId.isEmpty())
+    if (desired.themeId == committedAppearance_.themeId && desired.paletteId.isEmpty())
         desired.paletteId = committedCandidate_.defaultPaletteId;
     if (persist && desired == this->appearance())
     {
@@ -307,9 +462,7 @@ ThemeManagerOperationResult ThemeManager::updateAppearance(
     }
     if (persist)
     {
-        currentThemeId_ = desired.themeId;
-        currentPaletteId_ = desired.paletteId;
-        customizations_ = desired.colors;
+        committedAppearance_ = desired;
         committedCandidate_ = *loaded.candidate;
         previewBaseCandidate_.reset();
     }
@@ -428,6 +581,7 @@ bool ThemeManager::persistAppearance(
             customizations.insert(theme.key(), palettes);
     }
     storage_->setValue(QStringLiteral("ThemePaletteColors"), customizations);
+    writeStyleOverrides(*storage_, appearance);
     storage_->remove(QStringLiteral("Colors"));
     storage_->remove(QStringLiteral("PaletteColors"));
     storage_->endGroup();
@@ -437,7 +591,8 @@ bool ThemeManager::persistAppearance(
 
 ThemeAppearance ThemeManager::persistedAppearance() const
 {
-    ThemeAppearance appearance{builtinThemeId(), {}, {}};
+    ThemeAppearance appearance;
+    appearance.themeId = builtinThemeId();
     if (!storage_)
         return appearance;
     const QString oldDefault = QStringLiteral("harken.builtin.dark");
@@ -460,6 +615,7 @@ ThemeAppearance ThemeManager::persistedAppearance() const
     if (!id.isEmpty() && id != oldAmber)
         appearance.themeId = themeId(id);
     appearance.paletteId = storage_->value(QStringLiteral("PaletteId")).toString();
+    readStyleOverrides(*storage_, appearance);
     if (storage_->contains(QStringLiteral("ThemePaletteColors")))
     {
         const auto themes = storage_->value(QStringLiteral("ThemePaletteColors")).toMap();

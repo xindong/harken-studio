@@ -393,9 +393,12 @@ void overlay(SemanticDocuments& destination, const SemanticDocuments& source)
     for (auto it = source.tokens.fonts.constBegin();
          it != source.tokens.fonts.constEnd(); ++it)
     {
-        ThemeTokenDto::FontRole role = destination.tokens.fonts.value(it.key());
-        if (it->family)
+        ThemeFontRoleDto role = destination.tokens.fonts.value(it.key());
+        if (it->family) {
             role.family = it->family;
+            role.source = it->source;
+            role.fallbackFamilies = it->fallbackFamilies;
+        }
         if (it->pointSize)
             role.pointSize = it->pointSize;
         if (it->weight)
@@ -837,52 +840,6 @@ bool applyTokenColor(const QString& key, const QColor& value, ThemeSnapshot& the
         return true;
     }
     return false;
-}
-
-bool applyTokenMetric(const QString& key, double value, ThemeSnapshot& theme)
-{
-    auto& metrics = theme.ui.metrics;
-#define TOKEN_METRIC(name, field)                                               \
-    if (key == QStringLiteral(name))                                            \
-        return value >= 0.0 && assignNumber(metrics.field, value)
-    TOKEN_METRIC("spacing.compact", spacingCompact);
-    TOKEN_METRIC("spacing.xSmall", spacingXSmall);
-    TOKEN_METRIC("spacing.small", spacingSmall);
-    TOKEN_METRIC("spacing.medium", spacingMedium);
-    TOKEN_METRIC("spacing.large", spacingLarge);
-    TOKEN_METRIC("spacing.xLarge", spacingXLarge);
-    TOKEN_METRIC("radius.compact", radiusCompact);
-    TOKEN_METRIC("radius.small", radiusSmall);
-    TOKEN_METRIC("radius.medium", radiusMedium);
-    TOKEN_METRIC("radius.large", radiusLarge);
-    TOKEN_METRIC("border.width", borderWidth);
-    TOKEN_METRIC("border.accentWidth", accentBorderWidth);
-#undef TOKEN_METRIC
-#define EXTENT_METRIC(name, field)                                              \
-    if (key == QStringLiteral(name))                                            \
-        return value >= 1.0 && assignNumber(metrics.field, value)
-    EXTENT_METRIC("control.compactHeight", control.compactHeight);
-    EXTENT_METRIC("control.height", controlHeight);
-    EXTENT_METRIC("control.largeHeight", control.largeHeight);
-    EXTENT_METRIC("icon.small", control.smallIconExtent);
-    EXTENT_METRIC("icon.regular", iconExtent);
-    EXTENT_METRIC("icon.large", control.largeIconExtent);
-#undef EXTENT_METRIC
-    return false;
-}
-
-ThemeFontStyle* fontRole(const QString& key, ThemeSnapshot& theme)
-{
-    auto& typography = theme.ui.typography;
-    if (key == QStringLiteral("title"))
-        return &typography.title;
-    if (key == QStringLiteral("body"))
-        return &typography.body;
-    if (key == QStringLiteral("caption"))
-        return &typography.caption;
-    if (key == QStringLiteral("mono"))
-        return &typography.mono;
-    return nullptr;
 }
 
 template<typename Snapshot>
@@ -1517,22 +1474,22 @@ bool applySemantics(const SemanticDocuments& documents,
          it != documents.tokens.metrics.constEnd(); ++it)
     {
         const QString path = QStringLiteral("$.metrics.") + it.key();
-        ThemeSnapshot probe = theme;
-        if (!applyTokenMetric(it.key(), 1.0, probe))
+        const auto* token = findThemeMetricToken(it.key());
+        if (!token)
         {
             diagnostics.append(diagnostic(
                 ThemePackageErrorCode::UnknownSemanticKey, tokenFile, path,
                 QStringLiteral("Unknown token metric key.")));
             return false;
         }
-        if (!metricValueWithinBounds(it.key(), it.value())
-            || !applyTokenMetric(it.key(), it.value(), theme))
+        if (!token->accepts(it.value()))
         {
             diagnostics.append(diagnostic(
                 ThemePackageErrorCode::MetricOutOfRange, tokenFile, path,
                 QStringLiteral("Token metric value is out of range.")));
             return false;
         }
+        token->setValue(theme.ui.metrics, static_cast<int>(it.value()));
     }
 
     ThemeVisualDto curve = documents.curve;
@@ -1583,51 +1540,24 @@ bool applySemantics(const SemanticDocuments& documents,
     for (auto it = documents.tokens.fonts.constBegin();
          it != documents.tokens.fonts.constEnd(); ++it)
     {
-        ThemeFontStyle* role = fontRole(it.key(), theme);
+        const auto* token = findThemeFontToken(it.key());
         const QString path = QStringLiteral("$.fonts.") + it.key();
-        if (!role)
+        if (!token)
         {
             diagnostics.append(diagnostic(
                 ThemePackageErrorCode::UnknownSemanticKey, tokenFile, path,
                 QStringLiteral("Unknown font role.")));
             return false;
         }
-        if (it->family)
+        if (const char* field = it->invalidField())
         {
-            if (it->family->size() > 128)
-            {
-                diagnostics.append(diagnostic(
-                    ThemePackageErrorCode::InvalidValue, tokenFile,
-                    path + QStringLiteral(".family"),
-                    QStringLiteral("Font family is too long.")));
-                return false;
-            }
-            role->family = *it->family;
+            const auto code = QLatin1StringView(field) == QLatin1StringView("family")
+                ? ThemePackageErrorCode::InvalidValue : ThemePackageErrorCode::MetricOutOfRange;
+            diagnostics.append(diagnostic(code, tokenFile, path + QLatin1Char('.') + QLatin1StringView(field),
+                                          QStringLiteral("Font role field is out of range.")));
+            return false;
         }
-        if (it->pointSize)
-        {
-            if (*it->pointSize < 6 || *it->pointSize > 72)
-            {
-                diagnostics.append(diagnostic(
-                    ThemePackageErrorCode::MetricOutOfRange, tokenFile,
-                    path + QStringLiteral(".pointSize"),
-                    QStringLiteral("Font point size is out of range.")));
-                return false;
-            }
-            role->pointSize = *it->pointSize;
-        }
-        if (it->weight)
-        {
-            if (*it->weight < 1 || *it->weight > 1000)
-            {
-                diagnostics.append(diagnostic(
-                    ThemePackageErrorCode::MetricOutOfRange, tokenFile,
-                    path + QStringLiteral(".weight"),
-                    QStringLiteral("Font weight is out of range.")));
-                return false;
-            }
-            role->weight = *it->weight;
-        }
+        it->applyTo(theme.ui.typography.*token->member, it->fallbackFamilies);
     }
     deriveThemeMetrics(theme);
     return true;

@@ -1,14 +1,14 @@
 #include "ThemeScale.h"
 
 #include "ThemeMetricsDerivation.h"
+#include "ThemeStyleTokens.h"
 
 namespace harken::studio {
 namespace {
 
-template<typename... Values>
-void scalePixels(qreal factor, Values&... values)
+int scalePixels(int value, qreal factor)
 {
-    ((values = values > 0 ? qMax(1, qRound(values * factor)) : qRound(values * factor)), ...);
+    return value > 0 ? qMax(1, qRound(value * factor)) : qRound(value * factor);
 }
 
 }
@@ -19,22 +19,16 @@ ThemeSnapshot scaledThemeSnapshot(const ThemeSnapshot& base, qreal factor)
     ThemeSnapshot scaled = base;
     scaled.uiScale = factor;
     auto& metrics = scaled.ui.metrics;
-    scalePixels(factor,
-        metrics.spacingCompact, metrics.spacingXSmall, metrics.spacingSmall,
-        metrics.spacingMedium, metrics.spacingLarge, metrics.spacingXLarge,
-        metrics.radiusCompact, metrics.radiusSmall, metrics.radiusMedium,
-        metrics.radiusLarge, metrics.borderWidth, metrics.accentBorderWidth,
-        metrics.controlHeight, metrics.iconExtent,
-        metrics.control.compactHeight, metrics.control.largeHeight,
-        metrics.control.smallIconExtent, metrics.control.largeIconExtent);
+    for (const auto& token : themeMetricTokens())
+        token.setValue(metrics, scalePixels(token.value(metrics), factor));
     deriveThemeMetrics(scaled, base.ui.metrics);
     for (auto& recipe : scaled.ui.recipes.entries)
     {
         for (auto& slot : recipe.items)
         {
-            if (slot.minimum >= 0) scalePixels(factor, slot.minimum);
-            if (slot.preferred >= 0) scalePixels(factor, slot.preferred);
-            if (slot.maximum >= 0) scalePixels(factor, slot.maximum);
+            if (slot.minimum >= 0) slot.minimum = scalePixels(slot.minimum, factor);
+            if (slot.preferred >= 0) slot.preferred = scalePixels(slot.preferred, factor);
+            if (slot.maximum >= 0) slot.maximum = scalePixels(slot.maximum, factor);
         }
     }
     return scaled;

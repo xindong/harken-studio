@@ -22,6 +22,9 @@ add_library(harken_editor_dialogs STATIC
     Settings/ProjectSettingsPanel.h
     Settings/Pages/AppearancePage.cpp
     Settings/Pages/AppearancePage.h
+    Settings/Pages/AppearanceTypography.cpp
+    Settings/Pages/AppearanceSystemFont.cpp
+    Settings/Pages/AppearanceMetrics.cpp
     Settings/Pages/ExtensionPage.cpp
     Settings/Pages/ExtensionPage.h
     Settings/Pages/ShortcutsPage.cpp

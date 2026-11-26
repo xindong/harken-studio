@@ -2,7 +2,7 @@
 #include "PropertyEditorEngine.h"
 #include "Tooling/Harkenizer/Core/CanonicalRuntimeProjectAdapterPrivate.h"
 #include "WidgetFactory.h"
-#include "InspectorTabContainer.h"
+#include "Widgets/Common/InspectorTabContainer.h"
 #include "InspectorLayout.h"
 #include "InspectorSlotStrip.h"
 #include "BindingFieldDecorator.h"

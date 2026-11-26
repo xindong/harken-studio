@@ -17,6 +17,7 @@
 #include <QDir>
 #include <QEvent>
 #include <QFile>
+#include <QFontDatabase>
 #include <QFontInfo>
 #include <QLabel>
 #include <QLineEdit>
@@ -297,11 +298,16 @@ TEST(ThemeManager, ReloadDoesNotMutatePreviouslyPublishedSnapshot)
 TEST(ThemeManager, TypographyInheritsSharedFamilyWeightAndBodySize)
 {
     auto theme = harken::studio::createBuiltinDarkTheme();
-    theme.ui.typography.body = {QStringLiteral("Arial"), 13, 450};
+    const auto& fonts = harken::studio::FontManager::instance();
+    const auto installed = fonts.systemFamilies();
+    ASSERT_FALSE(installed.isEmpty());
+    const auto preferred = installed.front();
+    theme.ui.typography.body = {QStringLiteral("Absent Font for Typography Test"), 13, 450,
+                                harken::studio::ThemeFontSource::System, {preferred}};
     theme.ui.typography.title.weight = 650;
     const auto snapshot = std::make_shared<const harken::studio::ThemeSnapshot>(theme);
-    const auto& fonts = harken::studio::FontManager::instance();
     const auto body = fonts.getFont(snapshot, harken::studio::FontRole::Body);
+    EXPECT_EQ(body.family(), preferred);
     for (const auto role : {harken::studio::FontRole::Body, harken::studio::FontRole::Caption, harken::studio::FontRole::Title}) {
         const auto font = fonts.getFont(snapshot, role);
         EXPECT_EQ(font.family(), body.family());
@@ -323,7 +329,7 @@ TEST(ThemeManager, ExistingWidgetsFollowThemeFontsAndKeepExplicitSizes)
     ASSERT_TRUE(writePackage(root.path(), QStringLiteral("typography"),
         QStringLiteral("theme.typography"), QStringLiteral("#ff118899"), QStringLiteral("#ff118899")));
     ASSERT_TRUE(writeFile(QDir(root.path()).filePath(QStringLiteral("typography/tokens.json")),
-        R"json({"fonts":{"body":{"family":"Arial","pointSize":13}}})json"));
+        R"json({"fonts":{"body":{"source":"systemDefault","pointSize":13},"mono":{"source":"systemDefault"}}})json"));
     harken::studio::ThemeManager manager(root.path(), memoryStorage());
     QWidget panel;
     panel.setAttribute(Qt::WA_DontShowOnScreen);
@@ -349,6 +355,11 @@ TEST(ThemeManager, ExistingWidgetsFollowThemeFontsAndKeepExplicitSizes)
         ASSERT_TRUE(manager.selectTheme(id).ok());
         QCoreApplication::processEvents();
         const auto expected = harken::studio::FontManager::instance().getFont(manager.snapshot(), harken::studio::FontRole::Body);
+        if (id == QStringLiteral("theme.typography")) {
+            EXPECT_EQ(expected.family(), QFontDatabase::systemFont(QFontDatabase::GeneralFont).family());
+            EXPECT_EQ(harken::studio::FontManager::instance().getFont(manager.snapshot(), harken::studio::FontRole::Mono).family(),
+                      QFontDatabase::systemFont(QFontDatabase::FixedFont).family());
+        }
         QMenu newMenu(&panel);
         auto widgets = inheritedWidgets;
         widgets.append(&newMenu);
@@ -1021,6 +1032,12 @@ TEST(ThemeManager, InvalidCustomizationsDoNotChangePublishedOrPersistedState)
     invalidColor.colors[invalidColor.themeId][invalidColor.paletteId].insert(
         QStringLiteral("accent.primary"), QColor());
     invalid.append(invalidColor);
+    auto invalidFont = committed;
+    invalidFont.fonts[committed.themeId][QStringLiteral("body")].pointSize = -1;
+    invalid.append(invalidFont);
+    auto invalidMetric = committed;
+    invalidMetric.metrics[committed.themeId][QStringLiteral("icon.small")] = 0;
+    invalid.append(invalidMetric);
     auto missingTheme = committed;
     missingTheme.themeId = QStringLiteral("theme.missing");
     invalid.append(missingTheme);
@@ -1040,6 +1057,57 @@ TEST(ThemeManager, InvalidCustomizationsDoNotChangePublishedOrPersistedState)
         EXPECT_EQ(manager.appearance(), committed);
         EXPECT_EQ(storedValues(*stored), settings);
     }
+}
+
+TEST(ThemeManager, StructuralOverridesFollowTheirThemeAcrossPaletteChangesScaleAndRestart)
+{
+    using namespace harken::studio;
+    QTemporaryDir root;
+    ASSERT_TRUE(root.isValid());
+    const QString file = root.filePath(QStringLiteral("preferences.ini"));
+    const QString first = builtinThemeId();
+    const QString second = QStringLiteral("theme.second");
+    ASSERT_TRUE(writePackage(root.path(), QStringLiteral("second"), second,
+                             QStringLiteral("#ff445566"), QStringLiteral("#ff778899")));
+    const QString spacing = QStringLiteral("spacing.small");
+    const QString body = QStringLiteral("body");
+    {
+        ThemeManager manager(root.path(), std::make_unique<QSettingsStorage>(file));
+        auto desired = manager.appearance();
+        desired.metrics[first][spacing] = 10;
+        desired.fonts[first][body].pointSize = 13;
+        ASSERT_TRUE(manager.applyAppearance(desired).ok());
+        desired.paletteId = QStringLiteral("light");
+        ASSERT_TRUE(manager.applyAppearance(desired).ok());
+        manager.setUIScale(150);
+        EXPECT_EQ(manager.metrics().layout.panelPadding, 15);
+        EXPECT_EQ(FontManager::instance().getFont(FontRole::Mono).pointSizeF(), 19.5);
+        auto preview = desired;
+        preview.fonts[first][body].pointSize = 14;
+        preview.metrics[first][spacing] = 12;
+        ASSERT_TRUE(manager.previewAppearance(preview).ok());
+        EXPECT_EQ(manager.metrics().layout.panelPadding, 18);
+        manager.cancelAppearancePreview();
+        EXPECT_EQ(manager.metrics().layout.panelPadding, 15);
+        EXPECT_EQ(manager.appearance(), desired);
+        ASSERT_TRUE(manager.selectTheme(second).ok());
+        const auto base = manager.loadBaseTheme(second);
+        ASSERT_TRUE(base.ok());
+        EXPECT_EQ(manager.unscaledSnapshot()->ui.metrics, base.candidate->snapshot->ui.metrics);
+        EXPECT_EQ(manager.unscaledSnapshot()->ui.typography, base.candidate->snapshot->ui.typography);
+    }
+    ThemeManager restarted(root.path(), std::make_unique<QSettingsStorage>(file));
+    ASSERT_EQ(restarted.currentThemeId(), second);
+    ASSERT_TRUE(restarted.selectTheme(first).ok());
+    EXPECT_EQ(restarted.unscaledSnapshot()->ui.metrics.layout.panelPadding, 10);
+    EXPECT_EQ(restarted.unscaledSnapshot()->ui.typography.body.pointSize, 13);
+    auto reset = restarted.appearance();
+    reset.metrics.remove(first);
+    ASSERT_TRUE(restarted.applyAppearance(reset).ok());
+    const auto base = restarted.loadBaseTheme(first);
+    ASSERT_TRUE(base.ok());
+    EXPECT_EQ(restarted.unscaledSnapshot()->ui.metrics, base.candidate->snapshot->ui.metrics);
+    EXPECT_EQ(restarted.unscaledSnapshot()->ui.typography.body.pointSize, 13);
 }
 
 TEST(ThemeManager, UnwritableCommitPreservesPreviewAndCommittedSettings)

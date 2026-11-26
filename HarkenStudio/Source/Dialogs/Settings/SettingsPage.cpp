@@ -4,6 +4,7 @@
 
 #include "Core/QtControlSkin.h"
 #include "Core/ContextInfo.h"
+#include "Widgets/Common/InspectorTabContainer.h"
 #include "Widgets/Common/PanelScrollArea.h"
 #include "Widgets/Common/SearchField.h"
 #include "Widgets/Common/ToastPresenter.h"
@@ -21,6 +22,17 @@
 namespace harken::studio {
 
 namespace {
+
+QWidget* makeSectionContent()
+{
+    auto* content = new QWidget();
+    auto* layout = new QVBoxLayout(content);
+    layout->setContentsMargins(0, 0, 0, 0);
+    ThemeManager::instance().bindMetrics(layout, [layout](const ThemeMetrics& metrics) {
+        layout->setSpacing(metrics.form.rowSpacing);
+    });
+    return content;
+}
 
 void appendModelSearchText(const QAbstractItemModel* model, const QModelIndex& parent,
                            QStringList& text)
@@ -81,10 +93,10 @@ SettingsPage::SettingsPage(QWidget* parent)
 bool SettingsPage::applySearchFilter(const QString& query)
 {
     const auto terms = query.split(QRegularExpression(QStringLiteral("\\s+")), Qt::SkipEmptyParts);
-    const auto matches = [&](QWidget* widget) {
+    const auto matches = [&](QWidget* widget, const QString& sectionTitle = {}) {
         if (terms.isEmpty())
             return true;
-        QStringList text{categoryLabel()};
+        QStringList text{categoryLabel(), sectionTitle};
         appendWidgetSearchText(widget, text);
         const QString searchableText = text.join(QLatin1Char(' '));
         return std::all_of(terms.cbegin(), terms.cend(), [&](const QString& term) {
@@ -96,9 +108,18 @@ bool SettingsPage::applySearchFilter(const QString& query)
         return matches(this);
 
     bool anyMatch = false;
-    for (auto* section : sections_) {
-        const bool match = matches(section);
-        section->setVisible(match);
+    for (const auto& section : sections_) {
+        bool match = false;
+        if (section.tabs) {
+            for (int i = 0; i < section.tabs->tabCount(); ++i) {
+                const bool tabMatch = matches(section.tabs->tabWidget(i), section.widget->accessibleName());
+                section.tabs->setTabVisible(i, tabMatch);
+                match = match || tabMatch;
+            }
+        } else {
+            match = matches(section.widget);
+        }
+        section.widget->setVisible(match);
         anyMatch = anyMatch || match;
     }
     return anyMatch;
@@ -128,22 +149,29 @@ QVBoxLayout* SettingsPage::makePageBody()
     return layout;
 }
 
-QWidget* SettingsPage::makeSection(const QString& title)
+QWidget* SettingsPage::makeSection(const QString& title, InspectorTabContainer* tabs)
 {
-    auto* section = new QWidget();
-    auto* inner = new QVBoxLayout(section);
-    inner->setContentsMargins(0, 0, 0, 0);
-    ThemeManager::instance().bindMetrics(inner, [inner](const ThemeMetrics& metrics) {
-        inner->setSpacing(metrics.form.rowSpacing);
-    });
+    auto* section = makeSectionContent();
+    auto* inner = static_cast<QVBoxLayout*>(section->layout());
+    section->setAccessibleName(title);
     if (!title.isEmpty()) {
         auto* label = new QLabel(title, section);
         QtControlSkin::setSemanticProperty(label, "settingsRole",
                                            QStringLiteral("subtitle"));
         inner->addWidget(label);
     }
-    sections_.append(section);
+    if (tabs)
+        inner->addWidget(tabs, 1);
+    sections_.append({section, tabs});
     return section;
+}
+
+QWidget* SettingsPage::makeTab(InspectorTabContainer* tabs, const QString& title)
+{
+    auto* content = makeSectionContent();
+    content->setAccessibleName(title);
+    tabs->addTab(content, title, {});
+    return content;
 }
 
 DialogFormLayout* SettingsPage::makeForm()

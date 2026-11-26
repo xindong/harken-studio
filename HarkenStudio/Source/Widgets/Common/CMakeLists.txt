@@ -19,6 +19,8 @@ add_library(harken_editor_common STATIC
     PaneSectionStack.h
     DialogFormLayout.cpp
     DialogFormLayout.h
+    InspectorTabContainer.cpp
+    InspectorTabContainer.h
     DropZoneWidget.cpp
     DropZoneWidget.h
     FocusFilter.h
@@ -54,6 +56,8 @@ add_library(harken_editor_common STATIC
     MatrixTableWidget.h
     ToolBarComboBox.cpp
     ToolBarComboBox.h
+    MenuComboBox.cpp
+    MenuComboBox.h
     MenuActionButton.cpp
     MenuActionButton.h
     MultiSelectComboBox.cpp

@@ -7,6 +7,7 @@
 #include <QMap>
 #include <QMetaType>
 #include <QString>
+#include <QStringList>
 #include <QVector>
 #include <QtGlobal>
 
@@ -348,11 +349,15 @@ struct ThemeMetrics
     bool operator==(const ThemeMetrics&) const = default;
 };
 
+enum class ThemeFontSource { System, Theme };
+
 struct ThemeFontStyle
 {
     QString family;
     int pointSize = 0;
     int weight = 0;
+    std::optional<ThemeFontSource> source = std::nullopt;
+    QStringList fallbackFamilies = {};
     bool operator==(const ThemeFontStyle&) const = default;
 };
 
@@ -879,6 +884,8 @@ struct DomainColors
     bool operator==(const DomainColors&) const = default;
 };
 
+struct ThemeFontAssetFamily;
+
 struct ThemeSnapshot
 {
     quint64 generation = 0;
@@ -888,6 +895,7 @@ struct ThemeSnapshot
     QtPaletteColors qtPalette;
     ThirdPartyStyles thirdParty;
     DomainColors domains;
+    QList<std::shared_ptr<const ThemeFontAssetFamily>> fontAssets;
     bool operator==(const ThemeSnapshot&) const = default;
 };
 

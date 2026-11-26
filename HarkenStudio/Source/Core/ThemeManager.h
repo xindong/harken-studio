@@ -35,6 +35,8 @@ struct ThemeAppearance
     QString themeId;
     QString paletteId;
     QMap<QString, ColorPaletteCustomizations> colors;
+    QMap<QString, QMap<QString, int>> metrics;
+    QMap<QString, QMap<QString, ThemeFontOverride>> fonts;
 
     bool operator==(const ThemeAppearance&) const = default;
 };
@@ -65,8 +67,8 @@ public:
     ThemeSnapshotPtr snapshot() const { return snapshot_; }
     ThemeSnapshotPtr unscaledSnapshot() const { return publishedCandidate_.snapshot; }
     void setUIScale(qreal percent);
-    QString currentThemeId() const { return currentThemeId_; }
-    QString currentPaletteId() const { return currentPaletteId_; }
+    QString currentThemeId() const { return committedAppearance_.themeId; }
+    QString currentPaletteId() const { return committedAppearance_.paletteId; }
     QString userThemesRoot() const { return userThemesRoot_; }
     const QList<ThemePackageDescriptor>& availableThemes() const { return themes_; }
     QList<ColorPaletteDescriptor> availablePalettes() const;
@@ -102,7 +104,7 @@ public:
     ThemePackageDiscoveryResult refreshThemes();
     ThemeManagerOperationResult selectTheme(const QString& themeId);
     ThemeManagerOperationResult reloadTheme();
-    ThemeAppearance appearance() const { return {currentThemeId_, currentPaletteId_, customizations_}; }
+    ThemeAppearance appearance() const { return committedAppearance_; }
     ThemePackageLoadResult loadBaseTheme(const QString& themeId) const;
     ColorPaletteLoadResult loadPalette(const QString& paletteId) const;
     ThemeManagerOperationResult previewAppearance(const ThemeAppearance& appearance);
@@ -161,9 +163,7 @@ private:
     ThemeAssetResolver assetResolver_;
     WidgetAppearance widgetAppearance_;
     ThemeSnapshotPtr snapshot_;
-    QString currentThemeId_;
-    QString currentPaletteId_;
-    QMap<QString, ColorPaletteCustomizations> customizations_;
+    ThemeAppearance committedAppearance_;
     ThemePackageCandidate committedCandidate_;
     ThemePackageCandidate publishedCandidate_;
     qreal uiScalePercent_ = 100.0;
