@@ -88,11 +88,12 @@ void readStyleOverrides(ISettingsStorage& storage, ThemeAppearance& appearance)
             ThemeFontOverride font;
             const auto family = fields.value(QStringLiteral("family"));
             const auto source = fields.value(QStringLiteral("source"), QStringLiteral("system")).toString();
-            if (family.metaType().id() == QMetaType::QString && !family.toString().isEmpty()
-                && family.toString().size() <= ThemeFontOverride::maximumFamilyLength
-                && (source == QStringLiteral("system") || source == QStringLiteral("theme"))) {
+            const auto fontSource = source == QStringLiteral("theme") ? ThemeFontSource::Theme : ThemeFontSource::System;
+            if (family.metaType().id() == QMetaType::QString
+                && (source == QStringLiteral("system") || source == QStringLiteral("theme"))
+                && ThemeFontOverride::acceptsFamily(family.toString(), fontSource)) {
                 font.family = family.toString();
-                font.source = source == QStringLiteral("theme") ? ThemeFontSource::Theme : ThemeFontSource::System;
+                font.source = fontSource;
             }
             const int size = QJsonValue::fromVariant(fields.value(QStringLiteral("pointSize"))).toInt(-1);
             if (size >= ThemeFontOverride::minimumPointSize && size <= ThemeFontOverride::maximumPointSize)
@@ -343,7 +344,7 @@ bool ThemeManager::checkPublicationThread(ThemeManagerOperationResult& result) c
 }
 
 ThemePackageLoadResult ThemeManager::customizedCandidate(
-    ThemeAppearance& appearance, bool reusePreviewBase)
+    ThemeAppearance& appearance, bool reusePreviewBase, const ThemePackageCandidate* previous)
 {
     ThemePackageLoadResult result;
     if (reusePreviewBase && previewBaseCandidate_
@@ -354,7 +355,7 @@ ThemePackageLoadResult ThemeManager::customizedCandidate(
     if (!result.ok())
         return result;
 
-    if (!prepareThemeFonts(*result.candidate, result.diagnostics))
+    if (!prepareThemeFonts(*result.candidate, result.diagnostics, previous))
         return result;
 
     if (appearance.paletteId.isEmpty())
@@ -448,7 +449,7 @@ ThemeManagerOperationResult ThemeManager::updateAppearance(
         lastDiagnostics_.clear();
         return result;
     }
-    auto loaded = customizedCandidate(desired, !persist);
+    auto loaded = customizedCandidate(desired, !persist, &publishedCandidate_);
     if (!loaded.ok())
     {
         result.diagnostics = loaded.diagnostics;
@@ -488,6 +489,7 @@ void ThemeManager::publishCandidate(const ThemePackageCandidate& candidate,
 {
     const auto previous = snapshot_;
     const bool assetsChanged = reloadAssets || publishedThemeId_ != candidate.manifest.id
+        || publishedCandidate_.preparedFonts != candidate.preparedFonts
         || publishedAssets_ != candidate.assets || publishedAssetRoots_ != candidate.assetRoots;
     ThemeSnapshot published = scaledThemeSnapshot(*candidate.snapshot, uiScalePercent_ / 100.0);
     ThemeSnapshot structure = published;

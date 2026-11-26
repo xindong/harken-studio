@@ -150,7 +150,8 @@ private:
     ThemeManagerOperationResult updateAppearance(const ThemeAppearance& appearance,
                                                   bool persist);
     ThemePackageLoadResult customizedCandidate(ThemeAppearance& appearance,
-                                               bool reusePreviewBase = false);
+                                               bool reusePreviewBase = false,
+                                               const ThemePackageCandidate* previous = nullptr);
     bool checkPublicationThread(ThemeManagerOperationResult& result) const;
     void applyApplicationTheme(bool structureChanged);
     bool persistAppearance(const ThemeAppearance& appearance,

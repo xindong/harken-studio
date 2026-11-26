@@ -167,7 +167,7 @@ void AppearancePage::refreshTypography()
         };
         const QString activeFamily = formatFamily(effective.family, effective.source);
         const auto chosenSource = fields.source.value_or(ThemeFontSource::System);
-        const bool unavailable = fields.family && (chosenSource != effective.source
+        const bool unavailable = fields.family && !fields.family->isEmpty() && (chosenSource != effective.source
             || fields.family->compare(effective.family, Qt::CaseInsensitive) != 0);
         row.family->setDisplayText(unavailable ? tr("%1 (Unavailable)").arg(*fields.family) : effective.family);
         row.family->setToolTip(unavailable ? tr("%1 is unavailable. Using %2.")

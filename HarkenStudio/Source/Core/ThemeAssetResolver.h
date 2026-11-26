@@ -24,6 +24,12 @@ struct ThemeAssetResolverLimits
     qsizetype maximumFontBytes = 32 * 1024 * 1024;
 };
 
+struct ThemeAssetSourceFile
+{
+    QString path;
+    qint64 size;
+};
+
 struct ThemeAssetVariant
 {
     QSize logicalSize;
@@ -118,6 +124,9 @@ public:
     std::optional<QByteArray> readFontSource(const QMap<QString, QString>& packageRoots,
                                             const QString& path,
                                             QList<ThemePackageDiagnostic>& diagnostics) const;
+    std::optional<ThemeAssetSourceFile> fontSourceFile(const QMap<QString, QString>& packageRoots,
+                                                       const QString& path,
+                                                       QList<ThemePackageDiagnostic>& diagnostics) const;
 
 private:
     class Impl;

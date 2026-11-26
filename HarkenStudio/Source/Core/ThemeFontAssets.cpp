@@ -7,6 +7,7 @@
 
 #include <QApplicationStatic>
 #include <QCryptographicHash>
+#include <QFileInfo>
 #include <QFontDatabase>
 #include <QGuiApplication>
 #include <QMutex>
@@ -15,10 +16,26 @@
 #include <QThread>
 
 #include <algorithm>
+#include <filesystem>
 #include <iterator>
 #include <utility>
 
 namespace harken::studio {
+
+struct PreparedThemeFonts
+{
+    struct Source
+    {
+        QString logicalPath;
+        QString canonicalPath;
+        qint64 size;
+        std::filesystem::file_time_type modified;
+        bool operator==(const Source&) const = default;
+    };
+    QList<Source> sources;
+    QList<std::shared_ptr<const ThemeFontAssetFamily>> families;
+};
+
 namespace {
 
 struct FontFiles
@@ -126,15 +143,17 @@ QStringList installedSystemFontFamilies()
     return result;
 }
 
-bool prepareThemeFonts(ThemePackageCandidate& candidate, QList<ThemePackageDiagnostic>& diagnostics)
+bool prepareThemeFonts(ThemePackageCandidate& candidate, QList<ThemePackageDiagnostic>& diagnostics,
+                       const ThemePackageCandidate* previous)
 {
-    if (!candidate.snapshot->fontAssets.isEmpty())
+    if (candidate.preparedFonts)
         return true;
-    constexpr qsizetype maximumPackageFontBytes = 128 * 1024 * 1024;
-    qsizetype totalBytes = 0;
-    QSet<QString> readPaths;
     ThemeAssetResolver resolver;
-    QList<FontFiles> families;
+    constexpr qint64 maximumPackageFontBytes = 128 * 1024 * 1024;
+    qint64 totalBytes = 0;
+    bool canReuseSources = true;
+    QSet<QString> readPaths;
+    QList<PreparedThemeFonts::Source> sources;
     for (const auto& asset : std::as_const(candidate.assets.assets)) {
         if (asset.kind != ThemeAssetKind::Font)
             continue;
@@ -148,24 +167,49 @@ bool prepareThemeFonts(ThemePackageCandidate& candidate, QList<ThemePackageDiagn
             if (readPaths.contains(source.path))
                 continue;
             readPaths.insert(source.path);
-            auto bytes = resolver.readFontSource(candidate.assetRoots, source.path, diagnostics);
-            if (!bytes)
+            const auto file = resolver.fontSourceFile(candidate.assetRoots, source.path, diagnostics);
+            if (!file)
                 return false;
-            if (bytes->size() > maximumPackageFontBytes - totalBytes) {
+            if (file->size > maximumPackageFontBytes - totalBytes) {
                 diagnostics.append({ThemePackageErrorCode::ResourceLimit, source.path, QStringLiteral("$"),
                     QStringLiteral("Theme font assets exceed the package read budget.")});
                 return false;
             }
-            totalBytes += bytes->size();
+            totalBytes += file->size;
+            std::error_code error;
+            const auto modified = std::filesystem::last_write_time(QFileInfo(file->path).filesystemFilePath(), error);
+            if (error)
+                canReuseSources = false;
+            sources.append({source.path, file->path, file->size, modified});
+        }
+    }
+
+    std::shared_ptr<const PreparedThemeFonts> prepared;
+    if (canReuseSources && previous && previous->manifest.id == candidate.manifest.id
+        && previous->preparedFonts && previous->preparedFonts->sources == sources)
+        prepared = previous->preparedFonts;
+    if (!sources.isEmpty() && !prepared) {
+        auto next = std::make_shared<PreparedThemeFonts>();
+        next->sources = std::move(sources);
+        QList<FontFiles> families;
+        for (const auto& source : std::as_const(next->sources)) {
+            auto bytes = resolver.readFontSource(candidate.assetRoots, source.logicalPath, diagnostics);
+            if (!bytes)
+                return false;
+            if (bytes->size() != source.size) {
+                diagnostics.append({ThemePackageErrorCode::AssetDecodeFailed, source.logicalPath, QStringLiteral("$"),
+                    QStringLiteral("The font source changed while preparing the theme.")});
+                return false;
+            }
             QRawFont raw(*bytes, 12, QFont::PreferDefaultHinting);
             const QString name = raw.familyName();
             if (!raw.isValid() || name.isEmpty()) {
-                diagnostics.append({ThemePackageErrorCode::AssetDecodeFailed, source.path, QStringLiteral("$"),
+                diagnostics.append({ThemePackageErrorCode::AssetDecodeFailed, source.logicalPath, QStringLiteral("$"),
                     QStringLiteral("The theme font has no readable family name.")});
                 return false;
             }
             if (name.size() > ThemeFontOverride::maximumFamilyLength) {
-                diagnostics.append({ThemePackageErrorCode::ResourceLimit, source.path, QStringLiteral("$"),
+                diagnostics.append({ThemePackageErrorCode::ResourceLimit, source.logicalPath, QStringLiteral("$"),
                     QStringLiteral("The font family name exceeds the supported length.")});
                 return false;
             }
@@ -179,14 +223,21 @@ bool prepareThemeFonts(ThemePackageCandidate& candidate, QList<ThemePackageDiagn
             const auto digest = QCryptographicHash::hash(*bytes, QCryptographicHash::Sha256);
             family->faces.insert(digest, std::move(*bytes));
         }
+        for (const auto& files : families) {
+            auto family = registerFamily(files, diagnostics);
+            if (!family)
+                return false;
+            next->families.append(std::move(family));
+        }
+        prepared = std::move(next);
     }
+
     for (const auto& token : themeFontTokens()) {
         const auto& style = candidate.snapshot->ui.typography.*token.member;
         if (style.source != ThemeFontSource::Theme)
             continue;
-        const bool supplied = std::any_of(families.cbegin(), families.cend(), [&style](const FontFiles& family) {
-            return family.name.compare(style.family, Qt::CaseInsensitive) == 0;
-        });
+        const bool supplied = prepared && std::any_of(prepared->families.cbegin(), prepared->families.cend(),
+            [&style](const FamilyPtr& family) { return family->name.compare(style.family, Qt::CaseInsensitive) == 0; });
         if (!supplied) {
             diagnostics.append({ThemePackageErrorCode::AssetNotFound, candidate.manifest.id,
                 QStringLiteral("$.fonts.%1.family").arg(QLatin1StringView(token.key)),
@@ -194,18 +245,12 @@ bool prepareThemeFonts(ThemePackageCandidate& candidate, QList<ThemePackageDiagn
             return false;
         }
     }
-    if (families.isEmpty())
+    if (!prepared)
         return true;
-    QList<FamilyPtr> assets;
-    for (const auto& files : families) {
-        auto family = registerFamily(files, diagnostics);
-        if (!family)
-            return false;
-        assets.append(std::move(family));
-    }
+    candidate.preparedFonts = std::move(prepared);
     for (auto& palette : candidate.palettes) {
         auto snapshot = std::make_shared<ThemeSnapshot>(*palette.snapshot);
-        snapshot->fontAssets = assets;
+        snapshot->fontAssets = candidate.preparedFonts->families;
         palette.snapshot = std::move(snapshot);
         if (palette.id == candidate.defaultPaletteId)
             candidate.snapshot = palette.snapshot;

@@ -14,7 +14,8 @@ struct ThemeFontAssetFamily
     QString renderFamily;
 };
 
-bool prepareThemeFonts(ThemePackageCandidate& candidate, QList<ThemePackageDiagnostic>& diagnostics);
+bool prepareThemeFonts(ThemePackageCandidate& candidate, QList<ThemePackageDiagnostic>& diagnostics,
+                       const ThemePackageCandidate* previous = nullptr);
 QStringList installedSystemFontFamilies();
 
 }

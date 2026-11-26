@@ -47,6 +47,7 @@ struct ThemeFontOverride
     static constexpr int minimumWeight = 1;
     static constexpr int maximumWeight = 1000;
 
+    static bool acceptsFamily(const QString& name, ThemeFontSource source);
     bool empty() const { return !family && !pointSize && !weight; }
     const char* invalidField() const;
     void applyTo(ThemeFontStyle& style, const QStringList& fallbackFamilies = {}) const;

@@ -132,7 +132,7 @@ public:
         return *it;
     }
 
-    std::optional<QByteArray> readSource(
+    std::optional<ThemeAssetSourceFile> resolveSourceFile(
         const QMap<QString, QString>& roots,
         const QString& logicalPath,
         bool expectImage,
@@ -200,7 +200,17 @@ public:
                 QStringLiteral("Encoded asset exceeds the read budget.")));
             return std::nullopt;
         }
-        QFile file(fileCanonical);
+        return ThemeAssetSourceFile{fileCanonical, size};
+    }
+
+    std::optional<QByteArray> readSource(const QMap<QString, QString>& roots,
+                                         const QString& logicalPath, bool expectImage,
+                                         QList<ThemePackageDiagnostic>& diagnostics) const
+    {
+        const auto source = resolveSourceFile(roots, logicalPath, expectImage, diagnostics);
+        if (!source)
+            return std::nullopt;
+        QFile file(source->path);
         if (!file.open(QIODevice::ReadOnly))
         {
             diagnostics.append(diagnostic(
@@ -209,8 +219,8 @@ public:
                 QStringLiteral("Asset source cannot be read.")));
             return std::nullopt;
         }
-        auto bytes = file.read(size);
-        if (bytes.size() != size || !file.atEnd()) {
+        auto bytes = file.read(source->size);
+        if (bytes.size() != source->size || !file.atEnd()) {
             diagnostics.append(diagnostic(
                 ThemePackageErrorCode::AssetDecodeFailed, logicalPath, QStringLiteral("$"),
                 QStringLiteral("Asset source changed or could not be read completely.")));
@@ -735,6 +745,13 @@ std::optional<QByteArray> ThemeAssetResolver::readFontSource(const QMap<QString,
                                                            QList<ThemePackageDiagnostic>& diagnostics) const
 {
     return impl_->readSource(packageRoots, path, false, diagnostics);
+}
+
+std::optional<ThemeAssetSourceFile> ThemeAssetResolver::fontSourceFile(const QMap<QString, QString>& packageRoots,
+                                                                       const QString& path,
+                                                                       QList<ThemePackageDiagnostic>& diagnostics) const
+{
+    return impl_->resolveSourceFile(packageRoots, path, false, diagnostics);
 }
 
 }

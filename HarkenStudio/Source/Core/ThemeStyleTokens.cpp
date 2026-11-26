@@ -135,9 +135,14 @@ const ThemeFontToken* findThemeFontToken(const QString& key)
     return nullptr;
 }
 
+bool ThemeFontOverride::acceptsFamily(const QString& name, ThemeFontSource source)
+{
+    return name.size() <= maximumFamilyLength && (source == ThemeFontSource::System || !name.isEmpty());
+}
+
 const char* ThemeFontOverride::invalidField() const
 {
-    if (family && family->size() > maximumFamilyLength)
+    if (family && !acceptsFamily(*family, source.value_or(ThemeFontSource::System)))
         return "family";
     if (pointSize && (*pointSize < minimumPointSize || *pointSize > maximumPointSize))
         return "pointSize";
