@@ -2152,6 +2152,8 @@ bool ProjectManager::saveProjectInternal(bool relocateSources, QString* error)
         return fail(QStringLiteral("Cannot prepare project document references"));
 
     const QDir projectRoot(QFileInfo(m_currentProject->projectPath).absolutePath());
+    if (PathUtils::assetRegistryFilePath(projectRoot.absolutePath()).isEmpty())
+        return fail(QStringLiteral("The asset registry path contains a filesystem link"));
     const QString projectFileName = QFileInfo(m_currentProject->projectPath).fileName();
     const QString registryDirectory = QStringLiteral(".cache/asset_registry");
     const QString registryPath = registryDirectory + QStringLiteral("/assets.json");

@@ -133,10 +133,14 @@ bool prepareConversionMigration(const QString& sourceDirectory,
     if (std::none_of(platforms.begin(), platforms.end(), [](const QJsonValue& platform) {
             return platform.toObject().contains(QStringLiteral("profile"));
         })) return true;
-    const QString registryPath = QDir(sourceDirectory).relativeFilePath(
-        QDir(PathUtils::getAssetRegistryCacheDir(sourceDirectory)).filePath(QStringLiteral("assets.json")));
+    const QString registryFilePath = PathUtils::assetRegistryFilePath(sourceDirectory);
+    if (registryFilePath.isEmpty()) {
+        if (error) *error = QStringLiteral("The asset registry path contains a filesystem link");
+        return false;
+    }
+    const QString registryPath = QDir(sourceDirectory).relativeFilePath(registryFilePath);
     QJsonObject registry;
-    QFile registryFile(QDir(sourceDirectory).filePath(registryPath));
+    QFile registryFile(registryFilePath);
     QByteArray registryFingerprint;
     if (registryFile.exists()) {
         if (!registryFile.open(QIODevice::ReadOnly)) {

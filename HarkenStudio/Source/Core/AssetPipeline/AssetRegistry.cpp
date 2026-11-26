@@ -56,7 +56,8 @@ void AssetRegistry::setProjectRoot(const QString& root)
     QString AudioSourcesDir = PathUtils::getAudioSourcesDir(projectRoot_);
     QString cacheDir = PathUtils::getCacheDir(projectRoot_);
     QString assetRegistryDir = PathUtils::getAssetRegistryCacheDir(projectRoot_);
-    if (!PathUtils::ensureDirectory(AudioSourcesDir)
+    if (PathUtils::assetRegistryFilePath(projectRoot_).isEmpty()
+        || !PathUtils::ensureDirectory(AudioSourcesDir)
         || !PathUtils::ensureDirectory(cacheDir)
         || !PathUtils::ensureDirectory(assetRegistryDir)) {
         qCritical() << "[AssetRegistry] Failed to initialize project directories";
@@ -430,11 +431,6 @@ MediaBuildSnapshot AssetRegistry::buildSnapshot(
     return result;
 }
 
-QString AssetRegistry::assetsFilePath() const
-{
-    return QDir(PathUtils::getAssetRegistryCacheDir(projectRoot_)).absoluteFilePath("assets.json");
-}
-
 QJsonObject AssetRegistry::toJson() const
 {
     QMutexLocker lock(&mutex_);
@@ -458,8 +454,8 @@ QJsonObject AssetRegistry::toJsonLocked() const
 bool AssetRegistry::saveToFile(const QString& path)
 {
     QMutexLocker lock(&mutex_);
-    QString filePath = path.isEmpty() ? assetsFilePath() : path;
-    if (!PathUtils::ensureDirectory(QFileInfo(filePath).absolutePath()))
+    const QString filePath = path.isEmpty() ? PathUtils::assetRegistryFilePath(projectRoot_) : path;
+    if (filePath.isEmpty() || !PathUtils::ensureDirectory(QFileInfo(filePath).absolutePath()))
         return false;
 
     const QByteArray bytes = QJsonDocument(toJsonLocked()).toJson(QJsonDocument::Indented);
@@ -505,9 +501,8 @@ bool AssetRegistry::loadSnapshotFromFile(const QString& projectRoot,
                                          QList<AssetInfo>& assets,
                                          const QString& path)
 {
-    const QString filePath = path.isEmpty()
-        ? QDir(PathUtils::getAssetRegistryCacheDir(projectRoot)).filePath("assets.json")
-        : path;
+    const QString filePath = path.isEmpty() ? PathUtils::assetRegistryFilePath(projectRoot) : path;
+    if (filePath.isEmpty()) return false;
 
     QFile file(filePath);
     if (!file.exists()) {
@@ -660,9 +655,8 @@ void AssetRegistry::replaceSnapshot(const QString& projectRoot,
 bool AssetRegistry::saveSnapshotToFile(const QString& projectRoot,
                                        const QList<AssetInfo>& assets)
 {
-    const QString filePath = QDir(PathUtils::getAssetRegistryCacheDir(projectRoot))
-                                 .filePath(QStringLiteral("assets.json"));
-    if (!PathUtils::ensureDirectory(QFileInfo(filePath).absolutePath()))
+    const QString filePath = PathUtils::assetRegistryFilePath(projectRoot);
+    if (filePath.isEmpty() || !PathUtils::ensureDirectory(QFileInfo(filePath).absolutePath()))
         return false;
     QJsonObject root;
     root[QStringLiteral("version")] = kFormatVersion;

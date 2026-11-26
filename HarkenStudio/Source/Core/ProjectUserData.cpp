@@ -74,10 +74,9 @@ bool prepareCacheReset(const QString& projectRoot)
 {
     const QDir cache(PathUtils::getDotCacheDir(projectRoot));
     const QDir target = directory(projectRoot);
-    for (const auto& path : {cache.absolutePath(), target.absolutePath()}) {
-        const QFileInfo info(path);
-        if (info.isSymLink() || info.isJunction()) return false;
-    }
+    const QFileInfo targetInfo(target.absolutePath());
+    if (PathUtils::assetRegistryFilePath(projectRoot).isEmpty()
+        || targetInfo.isSymLink() || targetInfo.isJunction()) return false;
     load(projectRoot, QLatin1String(kEditorLayout), [](const QJsonObject& data) {
         return !data.isEmpty();
     });

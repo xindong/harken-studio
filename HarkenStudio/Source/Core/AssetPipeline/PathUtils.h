@@ -32,6 +32,7 @@ public:
     static QString getProjectIndexCacheDir(const QString& projectRoot);
 
     static QString getAssetRegistryCacheDir(const QString& projectRoot);
+    static QString assetRegistryFilePath(const QString& projectRoot);
 
     static QString getMediaCacheDir(const QString& projectRoot);
 

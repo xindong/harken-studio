@@ -122,7 +122,6 @@ private:
     AssetRegistry& operator=(const AssetRegistry&) = delete;
 
 
-    QString assetsFilePath() const;
     QJsonObject toJsonLocked() const;
 
     void updatePathIndex(const AssetInfo& info);

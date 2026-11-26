@@ -242,6 +242,18 @@ QString PathUtils::getAssetRegistryCacheDir(const QString& projectRoot)
     return QDir(getDotCacheDir(projectRoot)).absoluteFilePath(ASSET_REGISTRY_SUBDIR);
 }
 
+QString PathUtils::assetRegistryFilePath(const QString& projectRoot)
+{
+    if (projectRoot.isEmpty()) return {};
+    const auto directory = getAssetRegistryCacheDir(projectRoot);
+    const auto file = QDir(directory).filePath(QStringLiteral("assets.json"));
+    for (const auto& path : {projectRoot, getDotCacheDir(projectRoot), directory, file}) {
+        const QFileInfo info(path);
+        if (info.isSymLink() || info.isJunction()) return {};
+    }
+    return file;
+}
+
 QString PathUtils::calculateImportDestination(const QString& externalPath,
                                                const QString& projectRoot)
 {
