@@ -38,6 +38,7 @@
 #include "ProjectSavePlan.h"
 #include "ProjectTransaction.h"
 #include "ProjectUpgradeMessages.h"
+#include "ProjectUserData.h"
 #include "NameValidator.h"
 #include "PlayablePropertyAuthoringV1.h"
 #include "PlaybackReferenceValidation.h"
@@ -288,6 +289,33 @@ void migrateAudioSourceLayout(const QString& projectRoot)
             qWarning() << "[ProjectManager] Failed to remove legacy top-level cache directory:"
                        << legacyCacheDir;
         }
+    }
+}
+
+void resetUpgradedProjectCache(const QString& projectRoot, const QList<AssetInfo>& assets,
+                               bool migratedAssetRegistry, ProjectSaveBaseline* baseline)
+{
+    if (!ProjectUserData::prepareCacheReset(projectRoot)) {
+        qWarning() << "Retaining the project cache because its user settings could not be imported:" << projectRoot;
+        return;
+    }
+    const QDir cache(PathUtils::getDotCacheDir(projectRoot));
+    const auto entries = cache.entryInfoList(QDir::AllEntries | QDir::Hidden | QDir::System | QDir::NoDotAndDotDot);
+    for (const auto& entry : entries) {
+        if (entry.fileName() == QLatin1String(PathUtils::ASSET_REGISTRY_SUBDIR)) continue;
+        const bool removed = entry.isDir() && !entry.isSymLink() && !entry.isJunction()
+            ? QDir(entry.absoluteFilePath()).removeRecursively() : QFile::remove(entry.absoluteFilePath());
+        if (!removed) qWarning() << "Could not clear upgraded project cache entry:" << entry.absoluteFilePath();
+    }
+    if (migratedAssetRegistry) return;
+    if (!AssetRegistry::saveSnapshotToFile(projectRoot, assets)) {
+        qWarning() << "Could not write the rebuilt project asset registry:" << projectRoot;
+        return;
+    }
+    if (baseline) {
+        const QString path = QStringLiteral(".cache/asset_registry/assets.json");
+        baseline->files.remove(path);
+        baseline->hashes.remove(path);
     }
 }
 
@@ -1874,6 +1902,9 @@ bool ProjectManager::commitPreparedProject(PreparedProject&& prepared)
     m_closing = false;
     m_runtimePrepared = false;
     PackExportSelectionStore::instance().openProject(*m_currentProject);
+    if (prepared.upgrade.changed)
+        resetUpgradedProjectCache(projectRoot, prepared.assets, prepared.upgrade.migratedAssetRegistry,
+                                  m_saveBaseline.get());
     PackArtifactCache::instance().openProject(*m_currentProject);
     PackGenerationRecordStore::instance().clear();
 
@@ -2121,6 +2152,8 @@ bool ProjectManager::saveProjectInternal(bool relocateSources, QString* error)
         return fail(QStringLiteral("Cannot prepare project document references"));
 
     const QDir projectRoot(QFileInfo(m_currentProject->projectPath).absolutePath());
+    if (PathUtils::assetRegistryFilePath(projectRoot.absolutePath()).isEmpty())
+        return fail(QStringLiteral("The asset registry path contains a filesystem link"));
     const QString projectFileName = QFileInfo(m_currentProject->projectPath).fileName();
     const QString registryDirectory = QStringLiteral(".cache/asset_registry");
     const QString registryPath = registryDirectory + QStringLiteral("/assets.json");

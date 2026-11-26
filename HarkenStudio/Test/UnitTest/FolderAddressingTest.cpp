@@ -13,6 +13,8 @@
 #include <QFileInfo>
 #include <QTemporaryDir>
 
+#include <filesystem>
+
 using namespace harken::studio;
 
 namespace {
@@ -112,6 +114,26 @@ TEST_F(FolderAddressingTest, FailedSaveRestoresEarlierPackWrites)
     EXPECT_FALSE(QFileInfo::exists(actionFile(first)));
     ASSERT_TRUE(firstFile.open(QIODevice::ReadOnly));
     EXPECT_EQ(firstFile.readAll(), committedPack);
+}
+
+TEST(AssetRegistryPath, RejectsLinkedRegistryDirectories)
+{
+    QTemporaryDir project;
+    ASSERT_TRUE(project.isValid());
+    QDir cache(PathUtils::getDotCacheDir(project.path()));
+    ASSERT_TRUE(cache.mkpath(QStringLiteral("ordinary")));
+    const QString registry = PathUtils::getAssetRegistryCacheDir(project.path());
+    ASSERT_EQ(PathUtils::assetRegistryFilePath(project.path()),
+              QDir(registry).filePath(QStringLiteral("assets.json")));
+
+    std::error_code error;
+    std::filesystem::create_directory_symlink(QFileInfo(cache.filePath(QStringLiteral("ordinary"))).filesystemFilePath(),
+                                              QFileInfo(registry).filesystemFilePath(), error);
+    if (error == std::errc::permission_denied || error == std::errc::operation_not_permitted
+        || error == std::errc::operation_not_supported)
+        GTEST_SKIP() << error.message();
+    ASSERT_FALSE(error) << error.message();
+    EXPECT_TRUE(PathUtils::assetRegistryFilePath(project.path()).isEmpty());
 }
 
 TEST_F(FolderAddressingTest, FailedSaveRestoresAssetRegistry)

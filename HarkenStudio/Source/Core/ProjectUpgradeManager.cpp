@@ -1,5 +1,6 @@
 #include "ProjectUpgradeManager.h"
 
+#include "AssetPipeline/PathUtils.h"
 #include "MigrationManager.h"
 #include "ProjectDataPolicy.h"
 #include "ProjectLocator.h"
@@ -227,6 +228,7 @@ bool isIteratorDotEntry(const QString& relativePath)
 
 bool migrationInputsUnchanged(const ProjectUpgradeAnalysis& analysis)
 {
+    if (PathUtils::assetRegistryFilePath(analysis.projectDirectory).isEmpty()) return false;
     for (auto input = analysis.migrationPlan.inputFingerprints.cbegin();
          input != analysis.migrationPlan.inputFingerprints.cend(); ++input) {
         const QString path = QDir(analysis.projectDirectory).filePath(input.key());
@@ -377,6 +379,12 @@ ProjectUpgradeAnalysis ProjectUpgradeManager::analyze(
     }
     analysis.projectFilePath = location.projectFilePath;
     analysis.projectDirectory = QFileInfo(analysis.projectFilePath).absolutePath();
+    if (PathUtils::assetRegistryFilePath(analysis.projectDirectory).isEmpty()) {
+        analysis.issue = ProjectIssue::ProjectFileDamaged;
+        analysis.detail = QStringLiteral("The asset registry path contains a filesystem link");
+        analysis.blockingErrors.append(analysis.detail);
+        return analysis;
+    }
     analysis.targetSchema = targetSchemaForTesting_ > 0
         ? targetSchemaForTesting_ : MigrationManager::CURRENT_PROJECT_SCHEMA_VERSION;
     analysis.sourceFingerprint = fileFingerprint(analysis.projectFilePath);
@@ -739,6 +747,8 @@ ProjectUpgradeResult ProjectUpgradeManager::execute(
     QDir(stagingDirectory).removeRecursively();
     result.ok = true;
     result.changed = true;
+    result.migratedAssetRegistry = analysis.migrationPlan.writeSet.contains(
+        QStringLiteral(".cache/asset_registry/assets.json"));
     result.backupPath = transaction->backupDirectory();
     result.transactionPath = transaction->transactionPath();
     result.backupFingerprint = transaction->backupFingerprint();

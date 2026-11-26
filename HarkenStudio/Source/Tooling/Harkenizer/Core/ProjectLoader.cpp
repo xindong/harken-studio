@@ -903,7 +903,7 @@ PreparedProject ProjectLoader::prepareProject(const QString& filePath,
         return {};
 
     const QString projectRoot = QFileInfo(prepared.project->projectPath).absolutePath();
-    const bool registryLoaded =
+    const bool registryLoaded = (!prepared.upgradePending || prepared.upgrade.migratedAssetRegistry) &&
         AssetRegistry::loadSnapshotFromFile(projectRoot, prepared.assets);
     prepared.rebuildAssetRegistry = AssetRegistry::reconcileSnapshot(
         projectRoot, prepared.project->sourceAssets, prepared.assets,
@@ -913,7 +913,8 @@ PreparedProject ProjectLoader::prepareProject(const QString& filePath,
 
     if (mode == ProjectSerializer::LoadMode::RecoverTransactions) {
         prepared.index = std::make_unique<ProjectIndex>();
-        prepared.index->loadFromCache(projectRoot);
+        if (!prepared.upgradePending)
+            prepared.index->loadFromCache(projectRoot);
         const auto scanResult = prepared.index->scanProjectRoot(projectRoot);
         if (scanResult != ProjectIndex::ScanResult::Ok) {
             qWarning() << "[ProjectManager] ProjectIndex scan returned non-Ok:"
@@ -1055,7 +1056,7 @@ PreparedProject ProjectLoader::prepareProject(const QString& filePath,
         return {};
     prepared.integrityScanner = std::make_unique<IntegrityScanner>();
     IntegrityScanner::Report cached;
-    const bool hasCached = mode == ProjectSerializer::LoadMode::RecoverTransactions
+    const bool hasCached = !prepared.upgradePending && mode == ProjectSerializer::LoadMode::RecoverTransactions
         && prepared.integrityScanner->loadFromCache(projectRoot, cached);
     const QByteArray indexHash = prepared.index->contentHash();
     if (!prepared.rebuildAssetRegistry && hasCached

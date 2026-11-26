@@ -1,14 +1,13 @@
 
 #include "MigrationManager.h"
 #include "ConversionMigration.h"
-#include "AssetPipeline/PathUtils.h"
 #include "ItemTypeCatalog.h"
+#include "MixingSemantics.h"
 #include "ProjectDataPolicy.h"
 #include "ProjectDocument.h"
 #include "ProjectContract.h"
 #include "ProjectTypes.h"
 
-#include <QCryptographicHash>
 #include <QDebug>
 #include <QFile>
 #include <QJsonDocument>
@@ -18,6 +17,9 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QUuid>
+
+#include <algorithm>
+#include <functional>
 
 namespace harken::studio {
 namespace {
@@ -72,7 +74,185 @@ void expandWriteSetPlaceholders(QStringList* writeSet,
     *writeSet = expanded;
 }
 
-bool migrateLegacyContent(QJsonObject* content, QString* error)
+void editObject(QJsonObject& owner, const QString& key,
+                const std::function<void(QJsonObject&)>& edit)
+{
+    if (!owner.value(key).isObject()) return;
+    auto object = owner.value(key).toObject();
+    edit(object);
+    owner.insert(key, object);
+}
+
+void editObjects(QJsonObject& owner, const QString& key,
+                 const std::function<void(QJsonObject&)>& edit)
+{
+    if (!owner.value(key).isArray()) return;
+    auto array = owner.value(key).toArray();
+    for (qsizetype index = 0; index < array.size(); ++index) {
+        auto object = array[index].toObject();
+        edit(object);
+        array[index] = object;
+    }
+    owner.insert(key, array);
+}
+
+class LabelReferences
+{
+public:
+    explicit LabelReferences(const QMap<QString, QJsonObject>& documents)
+    {
+        for (auto document = documents.cbegin(); document != documents.cend(); ++document) {
+            const auto content = document->value(QStringLiteral("content")).toObject();
+            if (content.value(QStringLiteral("type")) != QStringLiteral("Variable")) continue;
+            variables_.insert(QUuid(content.value(QStringLiteral("guid")).toString()),
+                {document.key(), content.value(QStringLiteral("components")).toObject()
+                    .value(QStringLiteral("variable")).toObject().value(QStringLiteral("labels")).toArray()});
+        }
+    }
+
+    QString resolve(const QUuid& variableId, int anchor)
+    {
+        const auto variable = variables_.find(variableId);
+        if (variable == variables_.end()) return {};
+        auto& labels = variable->labels;
+        qsizetype match = -1;
+        for (qsizetype index = 0; index < labels.size(); ++index) {
+            if (labels[index].toObject().value(QStringLiteral("anchor")).toInt() != anchor) continue;
+            if (match >= 0) return {};
+            match = index;
+        }
+        if (match < 0) {
+            match = labels.size();
+            labels.append(QJsonObject{{QStringLiteral("anchor"), anchor}, {QStringLiteral("name"), QString{}}});
+        }
+        auto label = labels[match].toObject();
+        if (!label.contains(QStringLiteral("id"))) {
+            label.insert(QStringLiteral("id"), QUuid::createUuidV5(variableId,
+                QByteArray("grid-label-") + QByteArray::number(anchor)).toString(QUuid::WithoutBraces));
+            labels[match] = label;
+            variable->changed = true;
+        }
+        return label.value(QStringLiteral("id")).toString();
+    }
+
+    void writeTo(QMap<QString, QJsonObject>& documents) const
+    {
+        for (const auto& variable : variables_) {
+            if (!variable.changed) continue;
+            editObject(documents[variable.document], QStringLiteral("content"), [&](QJsonObject& content) {
+                editObject(content, QStringLiteral("components"), [&](QJsonObject& components) {
+                    editObject(components, QStringLiteral("variable"), [&](QJsonObject& component) {
+                        component.insert(QStringLiteral("labels"), variable.labels);
+                    });
+                });
+            });
+        }
+    }
+
+private:
+    struct Variable
+    {
+        QString document;
+        QJsonArray labels;
+        bool changed = false;
+    };
+    QMap<QUuid, Variable> variables_;
+};
+
+bool migrateBlendRows(QJsonObject& table, const QJsonObject& content, QString* error)
+{
+    QMap<QUuid, QStringList> rowsByVariable;
+    auto rows = table.value(QStringLiteral("blendAxes")).toArray();
+    for (qsizetype index = 0; index < rows.size(); ++index) {
+        if (!rows[index].isObject()) {
+            const QUuid variable(rows[index].toString());
+            rows[index] = QJsonObject{
+                {QStringLiteral("guid"), MixingSemantics::legacyRowGuid(variable)
+                    .toString(QUuid::WithoutBraces)},
+                {QStringLiteral("variable"), rows[index].isNull()
+                    ? QJsonValue(QJsonValue::Null) : QJsonValue(rows[index].toString())}};
+        }
+        const auto row = rows[index].toObject();
+        rowsByVariable[QUuid(row.value(QStringLiteral("variable")).toString())]
+            .append(row.value(QStringLiteral("guid")).toString());
+    }
+    table.insert(QStringLiteral("blendAxes"), rows);
+    bool valid = true;
+    editObjects(table, QStringLiteral("entries"), [&](QJsonObject& entry) {
+        editObjects(entry, QStringLiteral("curves"), [&](QJsonObject& curve) {
+            if (!curve.contains(QStringLiteral("variable"))) return;
+            const auto matches = rowsByVariable.value(QUuid(curve.take(QStringLiteral("variable")).toString()));
+            valid = valid && matches.size() == 1;
+            if (matches.size() == 1) curve.insert(QStringLiteral("blendGuid"), matches.first());
+        });
+    });
+    if (!valid && error)
+        *error = QStringLiteral("Container '%1' has a Blend curve whose Variable row is missing or ambiguous")
+            .arg(content.value(QStringLiteral("name")).toString());
+    return valid;
+}
+
+bool migrateMatchRows(QJsonObject& table, const QJsonObject& content,
+                      LabelReferences& labels, QString* error)
+{
+    auto matchRows = table.value(QStringLiteral("matchRows")).toArray();
+    if (!table.contains(QStringLiteral("matchRows"))) {
+        QVector<QPair<qint64, QJsonObject>> ordered;
+        editObjects(table, QStringLiteral("entries"), [&](QJsonObject& entry) {
+            for (const auto& value : entry.take(QStringLiteral("conditions")).toArray()) {
+                auto row = value.toObject();
+                const qint64 priority = row.take(QStringLiteral("priority")).toInteger();
+                row.insert(QStringLiteral("target"), entry.value(QStringLiteral("childGuid")));
+                ordered.append({priority, row});
+            }
+        });
+        std::stable_sort(ordered.begin(), ordered.end(),
+            [](const auto& left, const auto& right) { return left.first < right.first; });
+        for (const auto& entry : ordered) matchRows.append(entry.second);
+    }
+    const auto axes = table.value(QStringLiteral("matchAxes")).toArray();
+    for (qsizetype index = 0; index < matchRows.size(); ++index) {
+        auto row = matchRows[index].toObject();
+        auto cells = row.value(QStringLiteral("cells")).toArray();
+        for (qsizetype axis = 0; axis < cells.size(); ++axis) {
+            if (!cells[axis].isDouble()) continue;
+            const auto anchor = cells[axis].toInt(-1);
+            const auto label = axis < axes.size() && anchor >= 0
+                ? labels.resolve(QUuid(axes[axis].toString()), anchor) : QString{};
+            if (label.isEmpty()) {
+                if (error)
+                    *error = QStringLiteral("Container '%1' Match rule %2 column %3 value %4 has no unique Label")
+                        .arg(content.value(QStringLiteral("name")).toString())
+                        .arg(index + 1).arg(axis + 1).arg(anchor);
+                return false;
+            }
+            cells[axis] = QJsonObject{{QStringLiteral("labelId"), label}};
+        }
+        row.insert(QStringLiteral("cells"), cells);
+        matchRows[index] = row;
+    }
+    table.insert(QStringLiteral("matchRows"), matchRows);
+    return true;
+}
+
+bool migrateSelection(QJsonObject& selection, const QJsonObject& content,
+                      LabelReferences& labels, QString* error)
+{
+    bool valid = true;
+    const auto migrateTable = [&](QJsonObject& table) {
+        valid = valid && migrateBlendRows(table, content, error)
+            && migrateMatchRows(table, content, labels, error);
+    };
+    editObject(selection, QStringLiteral("selections"), [&](QJsonObject& selections) {
+        editObject(selections, QStringLiteral("shared"), migrateTable);
+        editObject(selections, QStringLiteral("platforms"), [&](QJsonObject& platforms) {
+            for (const auto& id : platforms.keys()) editObject(platforms, id, migrateTable);
+        });
+    });
+    return valid;
+}
+
+bool migrateLegacyContent(QJsonObject* content, LabelReferences& labels, QString* error)
 {
     auto components = content->value(QStringLiteral("components")).toObject();
     auto mix = components.value(QStringLiteral("mixnode")).toObject();
@@ -126,10 +306,15 @@ bool migrateLegacyContent(QJsonObject* content, QString* error)
         }
         content->insert(QStringLiteral("fieldGroups"), groups);
     }
-    if (components.contains(QStringLiteral("mixnode"))) {
+    if (components.contains(QStringLiteral("mixnode")))
         components.insert(QStringLiteral("mixnode"), mix);
-        content->insert(QStringLiteral("components"), components);
+    if (components.contains(QStringLiteral("selection"))) {
+        auto selection = components.value(QStringLiteral("selection")).toObject();
+        if (!migrateSelection(selection, *content, labels, error)) return false;
+        components.insert(QStringLiteral("selection"), selection);
     }
+    if (content->contains(QStringLiteral("components")))
+        content->insert(QStringLiteral("components"), components);
     if (content->value(QStringLiteral("type")) == QStringLiteral("Bus")) {
         auto properties = content->value(QStringLiteral("playableProperties")).toObject();
         const auto migrateReference = [](QJsonObject* values) {
@@ -153,7 +338,7 @@ bool migrateLegacyContent(QJsonObject* content, QString* error)
         auto children = content->value(QStringLiteral("children")).toArray();
         for (qsizetype index = 0; index < children.size(); ++index) {
             auto child = children[index].toObject();
-            if (!migrateLegacyContent(&child, error)) return false;
+            if (!migrateLegacyContent(&child, labels, error)) return false;
             children[index] = child;
         }
         content->insert(QStringLiteral("children"), children);
@@ -165,7 +350,7 @@ bool migrateLegacyContent(QJsonObject* content, QString* error)
 
 MigrationManager::MigrationManager()
 {
-    for (const int sourceSchema : {7, 8}) {
+    for (const int sourceSchema : {7, 8, 9}) {
         const int targetSchema = sourceSchema + 1;
         ProjectMigrationStep step;
         step.id = QStringLiteral("project-schema-%1-to-%2")
@@ -243,7 +428,7 @@ ProjectMigrationPlan MigrationManager::planProject(
     for (ProjectMigrationStep& step : plan.steps)
         expandWriteSetPlaceholders(&step.writeSet, projectDirectory, projectFile);
     for (ProjectMigrationStep& step : plan.steps) {
-        if (step.toSchema != CURRENT_PROJECT_SCHEMA_VERSION) continue;
+        if (step.id != QStringLiteral("project-schema-9-to-10")) continue;
         QMap<QString, QJsonObject> documents;
         for (const auto& relative : step.writeSet) {
             QFile file(QDir(projectDirectory).filePath(relative));
@@ -259,11 +444,15 @@ ProjectMigrationPlan MigrationManager::planProject(
                 plan.error = QStringLiteral("Invalid migration input: %1").arg(relative);
                 return plan;
             }
-            auto document = json.object();
+            documents.insert(relative, json.object());
+        }
+        LabelReferences labels(documents);
+        for (auto& document : documents) {
             auto header = document.value(QStringLiteral("harkenDocument")).toObject();
             header = ProjectDocument::createHeader(header.value(QStringLiteral("type")).toString(),
                 header.value(QStringLiteral("id")).toString(),
                 header.value(QStringLiteral("projectId")).toString(), header);
+            header.insert(QStringLiteral("schemaVersion"), step.toSchema);
             auto content = document.value(QStringLiteral("content")).toObject();
             if (header.value(QStringLiteral("type")) == QStringLiteral("project.root")
                 && !content.contains(QStringLiteral("audio"))) {
@@ -275,28 +464,15 @@ ProjectMigrationPlan MigrationManager::planProject(
                 content.insert(QStringLiteral("deployLanguages"), content.take(QStringLiteral("projectLanguages")));
                 content.insert(QStringLiteral("metadata"), metadata);
             }
-            if (!migrateLegacyContent(&content, &plan.error)
+            if (!migrateLegacyContent(&content, labels, &plan.error)
                 || !ProjectDocument::normalizeContent(&content, &plan.error)) {
                 plan.ok = false;
                 return plan;
             }
             document.insert(QStringLiteral("harkenDocument"), header);
             document.insert(QStringLiteral("content"), content);
-            documents.insert(relative, document);
         }
-        const QString registryPath = QDir::fromNativeSeparators(QDir(projectDirectory).relativeFilePath(
-            QDir(PathUtils::getAssetRegistryCacheDir(projectDirectory)).filePath(QStringLiteral("assets.json"))));
-        QFile registryFile(QDir(projectDirectory).filePath(registryPath));
-        QByteArray fingerprint;
-        if (registryFile.exists()) {
-            if (!registryFile.open(QIODevice::ReadOnly)) {
-                plan.ok = false;
-                plan.error = QStringLiteral("Cannot read the legacy asset registry");
-                return plan;
-            }
-            fingerprint = QCryptographicHash::hash(registryFile.readAll(), QCryptographicHash::Sha256);
-        }
-        plan.inputFingerprints.insert(registryPath, fingerprint);
+        labels.writeTo(documents);
         QStringList migrationWarnings;
         const QString relativeProject = QDir::fromNativeSeparators(QDir(projectDirectory).relativeFilePath(projectFile));
         if (!prepareConversionMigration(projectDirectory, relativeProject, documents,

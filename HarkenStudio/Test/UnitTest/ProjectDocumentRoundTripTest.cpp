@@ -10,6 +10,8 @@
 #include "Core/Components/VBus.h"
 #include "Core/Components/VMixNode.h"
 #include "Core/Components/VSegment.h"
+#include "Core/Components/VSelection.h"
+#include "Core/Components/VVariable.h"
 #include "Core/ProjectManager.h"
 #include "Core/ProjectContract.h"
 #include "Core/ProjectOpenProtocol.h"
@@ -251,12 +253,19 @@ protected:
                                      ProjectItem::Type::Track), nullptr);
         segment->comp<VSegment>()->markers.items.push_back(
             {QUuid::createUuid(), MarkerKind::Custom, QStringLiteral("pieceTime"), 1000000});
+        auto* container = manager.createItem(layer, QStringLiteral("Choice"), ProjectItem::Type::Container);
+        ASSERT_NE(container, nullptr);
+        for (const auto& name : {QStringLiteral("First"), QStringLiteral("Second")})
+            ASSERT_NE(manager.createItem(container, name, ProjectItem::Type::Sound), nullptr);
+        containerGuid_ = container->guid;
         for (const auto& [name, type] : {
                  std::pair{QStringLiteral("Trigger"), ProjectItem::Type::Action},
                  std::pair{QStringLiteral("Space"), ProjectItem::Type::Attenuation},
                  std::pair{QStringLiteral("Intensity"), ProjectItem::Type::Variable},
              }) {
-            ASSERT_NE(manager.createItem(nullptr, name, type), nullptr);
+            auto* item = manager.createItem(nullptr, name, type);
+            ASSERT_NE(item, nullptr);
+            if (type == ProjectItem::Type::Variable) variableGuid_ = item->guid;
         }
         if (includeEffectDocuments_)
             ASSERT_NE(manager.createItem(nullptr, QStringLiteral("Limiter"),
@@ -329,6 +338,8 @@ protected:
     QString projectPath_;
     QString projectDirectory_;
     QUuid segmentGuid_;
+    QUuid containerGuid_;
+    QUuid variableGuid_;
     QMap<QString, QJsonObject> documentsById_;
     QMap<QString, QString> pathsById_;
     bool includeEffectDocuments_ = true;
@@ -428,6 +439,8 @@ TEST_P(ProjectDocumentVersionRoundTripTest, SupportedDocumentVersionsPreserveCon
     auto& manager = ProjectManager::instance();
     const int version = GetParam();
     const bool migratesConversions = version == ProjectSchema::kProjectSchemaVersion - 1;
+    QJsonValue firstTarget;
+    QJsonValue secondTarget;
     SCOPED_TRACE(version);
     QMap<QString, QByteArray> beforeOpen;
     QMap<QString, QJsonObject> expectedProperties;
@@ -705,6 +718,35 @@ TEST_P(ProjectDocumentVersionRoundTripTest, SupportedDocumentVersionsPreserveCon
             content.insert(QStringLiteral("packExportCurrentPlatformId"), platform);
             content.insert(QStringLiteral("packExportSelectedPlatformIds"), QJsonArray{platform});
         }
+        if (version < ProjectSchema::kProjectSchemaVersion && QUuid(it.key()) == containerGuid_) {
+            auto components = content.value(QStringLiteral("components")).toObject();
+            auto selection = components.value(QStringLiteral("selection")).toObject();
+            selection.remove(QStringLiteral("transitions"));
+            auto selections = selection.value(QStringLiteral("selections")).toObject();
+            auto table = selections.value(QStringLiteral("shared")).toObject();
+            table.remove(QStringLiteral("matchRows"));
+            table.insert(QStringLiteral("matchAxes"), QJsonArray{variableGuid_.toString(QUuid::WithoutBraces)});
+            table.insert(QStringLiteral("ruleOrdinalHighWater"), 3);
+            auto entries = table.value(QStringLiteral("entries")).toArray();
+            ASSERT_EQ(entries.size(), 2);
+            auto first = entries[0].toObject();
+            auto second = entries[1].toObject();
+            firstTarget = first.value(QStringLiteral("childGuid"));
+            secondTarget = second.value(QStringLiteral("childGuid"));
+            const auto condition = [](int ordinal, int priority, QJsonValue cell) {
+                return QJsonObject{{QStringLiteral("stableRuleOrdinal"), ordinal},
+                    {QStringLiteral("priority"), priority}, {QStringLiteral("cells"), QJsonArray{cell}}};
+            };
+            first.insert(QStringLiteral("conditions"), QJsonArray{
+                condition(0, 2, QJsonValue::Null), condition(1, 0, 1)});
+            second.insert(QStringLiteral("conditions"), QJsonArray{condition(2, 1, 1)});
+            table.insert(QStringLiteral("entries"), QJsonArray{first, second});
+            selections.insert(QStringLiteral("shared"), table);
+            selections.insert(QStringLiteral("platforms"), QJsonObject{{platformId.toString(), table}});
+            selection.insert(QStringLiteral("selections"), selections);
+            components.insert(QStringLiteral("selection"), selection);
+            content.insert(QStringLiteral("components"), components);
+        }
         if (content.value(QStringLiteral("type")) == QStringLiteral("Segment")) {
             content.insert(QStringLiteral("type"), QStringLiteral("Piece"));
             auto components = content.value(QStringLiteral("components")).toObject();
@@ -760,6 +802,31 @@ TEST_P(ProjectDocumentVersionRoundTripTest, SupportedDocumentVersionsPreserveCon
     }
     UndoRedoManager::instance().clearHistory();
     expectModelMetadata(*manager.currentProject());
+    if (analysis.upgradeRequired) {
+        const auto* variableItem = manager.findItemByGuid(variableGuid_);
+        ASSERT_NE(variableItem, nullptr);
+        const auto* variable = variableItem->comp<VVariable>();
+        ASSERT_NE(variable, nullptr);
+        const auto& labels = variable->labels;
+        const auto label = std::find_if(labels.begin(), labels.end(), [](const VariableLabel& value) {
+            return value.anchor == 1;
+        });
+        ASSERT_NE(label, labels.end());
+        ASSERT_FALSE(label->id.isNull());
+        const QJsonArray cells{QJsonObject{{QStringLiteral("labelId"), label->id.toString(QUuid::WithoutBraces)}}};
+        const auto row = [](int ordinal, QJsonValue target, const QJsonArray& cells) {
+            return QJsonObject{{QStringLiteral("stableRuleOrdinal"), ordinal},
+                {QStringLiteral("target"), target}, {QStringLiteral("cells"), cells}};
+        };
+        const QJsonArray expected{row(1, firstTarget, cells), row(2, secondTarget, cells),
+                                  row(0, firstTarget, {QJsonValue::Null})};
+        const auto* container = manager.findItemByGuid(containerGuid_);
+        ASSERT_NE(container, nullptr);
+        const auto* selection = container->comp<VSelection>();
+        ASSERT_NE(selection, nullptr);
+        for (const auto* table : selection->selections.tables())
+            EXPECT_EQ(table->toJson().value(QStringLiteral("matchRows")).toArray(), expected);
+    }
     if (migratesConversions) {
         const auto snapshot = buildFieldGroupEffectiveSnapshot(*manager.currentProject(),
             toFieldGroupGuid(QUuid(platformId.toString())));
@@ -900,7 +967,7 @@ INSTANTIATE_TEST_SUITE_P(Current, ProjectDocumentVersionRoundTripTest,
                          ::testing::Values(ProjectSchema::kProjectSchemaVersion));
 
 INSTANTIATE_TEST_SUITE_P(Historical, ProjectDocumentVersionRoundTripTest,
-                         ::testing::Values(7, 8));
+                         ::testing::Values(7, 8, 9));
 
 TEST_F(ProjectDocumentRoundTripTest, RenamingAnAncestorDoesNotRewriteDescendantDocuments)
 {

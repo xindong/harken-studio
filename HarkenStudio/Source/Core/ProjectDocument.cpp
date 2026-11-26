@@ -194,14 +194,17 @@ bool ProjectDocument::parse(const QJsonObject& document,
     }
     parsed.schemaVersion = version.toInt();
     const bool projectRoot = parsed.type == QStringLiteral("project.root");
-    if (projectRoot || parsed.schemaVersion < ProjectSchema::kProjectSchemaVersion) {
-        parsed.studioVersion = header.value(parsed.schemaVersion < ProjectSchema::kProjectSchemaVersion
+    const bool legacyHeader = parsed.schemaVersion < 9
+        || (parsed.schemaVersion == 9 && (header.contains(QStringLiteral("savedStudioVersion"))
+            || header.contains(QStringLiteral("propertyModel"))));
+    if (projectRoot || legacyHeader) {
+        parsed.studioVersion = header.value(legacyHeader
             ? QStringLiteral("savedStudioVersion") : QStringLiteral("studioVersion")).toString();
         if (parsed.schemaVersion >= ProjectSchema::kProjectSchemaVersions[0]
             && parsed.studioVersion.isEmpty())
             return fail(QStringLiteral("Project document header is malformed"));
     }
-    if (parsed.schemaVersion == ProjectSchema::kProjectSchemaVersion) {
+    if (!legacyHeader && parsed.schemaVersion <= ProjectSchema::kProjectSchemaVersion) {
         if (header.contains(QStringLiteral("propertyModel"))
             || header.contains(QStringLiteral("savedStudioVersion")))
             return fail(QStringLiteral("Project document header contains retired metadata"));
