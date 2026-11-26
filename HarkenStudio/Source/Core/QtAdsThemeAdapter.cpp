@@ -81,8 +81,8 @@ ads--CDockAreaWidget {
 ads--CDockAreaTitleBar {
     background-color: @BG_SECONDARY@;
     border-bottom: @BORDER_WIDTH@px solid @BORDER_PRIMARY@;
-    min-height: @TAB_ROW_CONTENT_HEIGHT@px;
-    padding: @BORDER_WIDTH@px 0 0 0;
+    min-height: @TITLE_BAR_HEIGHT@px;
+    padding: 0 0 -@BORDER_WIDTH@px 0;
 }
 
 ads--CTitleBarButton,
@@ -116,21 +116,27 @@ ads--CDockAreaTabBar,
 }
 
 ads--CDockWidgetTab {
-    background-color: @BG_PRIMARY@;
+    background-color: @BG_SECONDARY@;
     border: none;
-    border-top: @ACCENT_BORDER_WIDTH@px solid @ACTIVE_TAB_ACCENT@;
-    margin-right: @SPACING_COMPACT@px;
-    padding: 0 @SPACING_XSMALL@px @ACCENT_BORDER_WIDTH@px @SPACING_XSMALL@px;
+    border-top: @ACCENT_BORDER_WIDTH@px solid transparent;
+    border-right: @BORDER_WIDTH@px solid @BORDER_PRIMARY@;
+    border-bottom: @BORDER_WIDTH@px solid @BORDER_PRIMARY@;
+    padding: 0 @SPACING_XSMALL@px @TAB_BOTTOM_PADDING@px @SPACING_XSMALL@px;
     qproperty-iconSize: @ICON_EXTENT@px @ICON_EXTENT@px;
 }
 
-ads--CDockWidgetTab:hover {
+ads--CDockWidgetTab[activeTab="false"]:hover {
     background-overlay: @HOVER_OVERLAY@;
 }
 
-ads--CDockWidgetTab[focused="true"] {
-    background-color: @BG_SELECTED@;
-    border-top: @ACCENT_BORDER_WIDTH@px solid @ACCENT@;
+ads--CDockWidgetTab[activeTab="true"] {
+    background-color: @BG_PRIMARY@;
+    border-top-color: @ACTIVE_TAB_ACCENT@;
+    border-bottom-color: transparent;
+}
+
+ads--CDockWidgetTab[activeTab="true"][focused="true"] {
+    border-top-color: @ACCENT@;
 }
 
 /* --- Tab Label (CElidingLabel) — explicit color per state --------------- */
@@ -141,7 +147,7 @@ ads--CDockWidgetTab QLabel {
     background-color: transparent;
 }
 
-ads--CDockWidgetTab[focused="true"] QLabel {
+ads--CDockWidgetTab[activeTab="true"][focused="true"] QLabel {
     color: @ACCENT@;
 }
 
@@ -247,7 +253,6 @@ ads--CResizeHandle {
     result.replace(QStringLiteral("@BORDER_PRIMARY@"), colorValue(colors.borderPrimary));
     result.replace(QStringLiteral("@HOVER_OVERLAY@"), colorValue(colors.hoverOverlay));
     result.replace(QStringLiteral("@ACTIVE_TAB_ACCENT@"), rgba(colors.accent, style.activeTabAccentOpacity));
-    result.replace(QStringLiteral("@BG_SELECTED@"), colorValue(colors.bgSelected));
     result.replace(QStringLiteral("@ACCENT@"), colorValue(colors.accent));
     result.replace(QStringLiteral("@INACTIVE_TAB_TEXT@"), colorValue(colors.textSecondary));
     result.replace(QStringLiteral("@TEXT_PRIMARY@"), colorValue(colors.textPrimary));
@@ -265,7 +270,8 @@ ads--CResizeHandle {
     number("@SPACING_MEDIUM@", metrics.spacingMedium);
     number("@CONTROL_HEIGHT@", metrics.controlHeight);
     number("@COMPACT_HEIGHT@", metrics.control.compactHeight);
-    number("@TAB_ROW_CONTENT_HEIGHT@", qMax(0, metrics.chrome.titleBarHeight - 2 * metrics.borderWidth));
+    number("@TITLE_BAR_HEIGHT@", metrics.chrome.titleBarHeight);
+    number("@TAB_BOTTOM_PADDING@", metrics.accentBorderWidth - metrics.borderWidth);
     number("@AUTO_HIDE_TAB_ROW_CONTENT_HEIGHT@", qMax(0, metrics.chrome.titleBarHeight - 2 * metrics.accentBorderWidth));
     number("@ICON_EXTENT@", metrics.iconExtent);
     number("@SMALL_ICON_EXTENT@", metrics.control.smallIconExtent);
