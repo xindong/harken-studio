@@ -11,6 +11,8 @@ BLOCK_FRAMES = 256
 TOLERANCE_DB = 0.5
 MUSIC_BUS_VOLUME_DB = -6.0
 SOUND_VOLUME_DB = -3.0
+LOW_SEND_DB = -9.0
+HIGH_SEND_DB = -3.0
 
 
 def to_db(linear: float) -> float:
@@ -101,14 +103,14 @@ def run(ctx) -> None:
     if abs(baseline - expected) > TOLERANCE_DB:
         raise AssertionError(f"Music bus peaked at {baseline:.2f} dB, expected {expected:.2f}")
 
-    sidechain = {"type": "Sidechain", "duckTarget": False, "targetBusID": buses["Music"]["bus_id"], "sendLevel": -30.0}
+    sidechain = {"type": "Sidechain", "duckTarget": False, "targetBusID": buses["Music"]["bus_id"], "sendLevel": LOW_SEND_DB}
     inherited = {"definition_guid": voice_layer, "group": "send", "scope": "Shared"}
     studio.call(project, "replace_field_group_sends", {**inherited, "sends": [sidechain]}, save=True)
     if abs(compare(ctx, studio, project, buses, "sidechain_unchecked") - baseline) > TOLERANCE_DB:
         raise AssertionError("an unchecked sidechain changed the music level")
 
     previous = baseline
-    for gain in (-30.0, -24.0):
+    for gain in (LOW_SEND_DB, HIGH_SEND_DB):
         studio.call(project, "replace_field_group_sends", {
             **inherited, "sends": [{**sidechain, "duckTarget": True, "sendLevel": gain}],
         }, save=True)
@@ -130,7 +132,7 @@ def run(ctx) -> None:
     with studio.session(project) as edit:
         music = next(bus for bus in edit.call("list_buses")["buses"] if bus["name"] == "Music")
         edit.call("set_item_property", {
-            **bus_send, "value": [{"type": "Sidechain", "duckTarget": True, "targetBusID": music["id"], "sendLevel": -24.0}],
+            **bus_send, "value": [{"type": "Sidechain", "duckTarget": True, "targetBusID": music["id"], "sendLevel": HIGH_SEND_DB}],
         })
         edit.call("save_project")
     if compare(ctx, studio, project, buses, "platform_bus_ducking") >= baseline - TOLERANCE_DB:
