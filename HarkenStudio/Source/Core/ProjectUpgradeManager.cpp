@@ -739,6 +739,8 @@ ProjectUpgradeResult ProjectUpgradeManager::execute(
     QDir(stagingDirectory).removeRecursively();
     result.ok = true;
     result.changed = true;
+    result.migratedAssetRegistry = analysis.migrationPlan.writeSet.contains(
+        QStringLiteral(".cache/asset_registry/assets.json"));
     result.backupPath = transaction->backupDirectory();
     result.transactionPath = transaction->transactionPath();
     result.backupFingerprint = transaction->backupFingerprint();

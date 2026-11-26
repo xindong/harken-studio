@@ -658,9 +658,26 @@ QStringList ProjectContractRegistry::validateTreeImpl(
         rootRelativePath = projectFiles.isEmpty()
             ? directory.dirName() + QStringLiteral(".hsp") : projectFiles.first();
     }
+    const auto rootHeader = projectRootDocument.value(QStringLiteral("harkenDocument")).toObject();
+    const bool developmentSchema9 = !requireCurrentSchema
+        && rootHeader.value(QStringLiteral("schemaVersion")).toInt() == 9
+        && rootHeader.contains(QStringLiteral("studioVersion"))
+        && !rootHeader.contains(QStringLiteral("savedStudioVersion"));
+    const auto forValidation = [&](QJsonObject document, const QString& path) {
+        if (!developmentSchema9) return document;
+        auto header = document.value(QStringLiteral("harkenDocument")).toObject();
+        if (header.value(QStringLiteral("schemaVersion")).toInt() != 9) {
+            errors.append(QStringLiteral("Project Schema version does not match in %1").arg(path));
+            return document;
+        }
+        header.insert(QStringLiteral("schemaVersion"), 10);
+        document.insert(QStringLiteral("harkenDocument"), header);
+        return document;
+    };
+    const auto validatedRoot = forValidation(projectRootDocument, rootRelativePath);
     ProjectDocumentData rootDocument;
     QString rootDocumentError;
-    if (!decodeDocument(projectRootDocument, QStringLiteral("project.root"),
+    if (!decodeDocument(validatedRoot, QStringLiteral("project.root"),
                          rootRelativePath, &rootDocument, &rootDocumentError, context)) {
         errors.append(rootDocumentError);
         if (includeVirtualDocuments && context) context->clear();
@@ -671,7 +688,7 @@ QStringList ProjectContractRegistry::validateTreeImpl(
     const int schemaVersion = rootDocument.schemaVersion;
     const QJsonObject projectRoot = rootDocument.content;
     errors.append(validateDocument(
-        schemaVersion, QStringLiteral("project.root"), projectRootDocument,
+        schemaVersion, QStringLiteral("project.root"), validatedRoot,
         rootRelativePath, context));
 
     struct NodeRecord {
@@ -838,6 +855,7 @@ QStringList ProjectContractRegistry::validateTreeImpl(
                 errors.append(readError);
                 continue;
             }
+            packDocument = forValidation(packDocument, path);
             const QString documentType = documentTypeForFolder(folder);
             validatedPaths.insert(path);
             errors.append(validateDocument(

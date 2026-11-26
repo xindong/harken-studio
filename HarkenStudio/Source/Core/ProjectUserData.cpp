@@ -70,4 +70,20 @@ bool write(const QString& projectRoot, const QString& fileName, QJsonObject data
     return file.open(QIODevice::WriteOnly) && file.write(bytes) == bytes.size() && file.commit();
 }
 
+bool prepareCacheReset(const QString& projectRoot)
+{
+    const QDir cache(PathUtils::getDotCacheDir(projectRoot));
+    const QDir target = directory(projectRoot);
+    for (const auto& path : {cache.absolutePath(), target.absolutePath()}) {
+        const QFileInfo info(path);
+        if (info.isSymLink() || info.isJunction()) return false;
+    }
+    load(projectRoot, QLatin1String(kEditorLayout), [](const QJsonObject& data) {
+        return !data.isEmpty();
+    });
+    for (const auto* name : {kEditorLayout, kPackExportSelection})
+        if (cache.exists(QLatin1String(name)) && !target.exists(QLatin1String(name))) return false;
+    return true;
+}
+
 }

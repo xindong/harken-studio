@@ -95,6 +95,7 @@ struct ProjectUpgradeResult
 {
     bool ok = false;
     bool changed = false;
+    bool migratedAssetRegistry = false;
     ProjectIssue issue = ProjectIssue::None;
     QString detail;
     QString projectFilePath;

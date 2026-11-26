@@ -4,7 +4,6 @@
 #include "AssetPipeline/PathUtils.h"
 #include "Components/VConversion.h"
 #include "NameValidator.h"
-#include "ProjectDocument.h"
 #include "ProjectDataPolicy.h"
 
 #include <QCryptographicHash>
@@ -128,26 +127,33 @@ bool prepareConversionMigration(const QString& sourceDirectory,
 {
     auto rootDocument = documents.value(projectFile);
     auto root = rootDocument.value(QStringLiteral("content")).toObject();
-    const auto projectId = rootDocument.value(QStringLiteral("harkenDocument")).toObject()
-        .value(QStringLiteral("projectId")).toString();
+    const auto projectHeader = rootDocument.value(QStringLiteral("harkenDocument")).toObject();
+    const auto projectId = projectHeader.value(QStringLiteral("projectId")).toString();
     const auto platforms = root.value(QStringLiteral("deployPlatforms")).toArray();
+    if (std::none_of(platforms.begin(), platforms.end(), [](const QJsonValue& platform) {
+            return platform.toObject().contains(QStringLiteral("profile"));
+        })) return true;
     const QString registryPath = QDir(sourceDirectory).relativeFilePath(
         QDir(PathUtils::getAssetRegistryCacheDir(sourceDirectory)).filePath(QStringLiteral("assets.json")));
     QJsonObject registry;
     QFile registryFile(QDir(sourceDirectory).filePath(registryPath));
+    QByteArray registryFingerprint;
     if (registryFile.exists()) {
         if (!registryFile.open(QIODevice::ReadOnly)) {
             if (error) *error = QStringLiteral("Cannot read the legacy asset registry");
             return false;
         }
         QJsonParseError parseError;
-        const auto json = QJsonDocument::fromJson(registryFile.readAll(), &parseError);
+        const auto bytes = registryFile.readAll();
+        registryFingerprint = QCryptographicHash::hash(bytes, QCryptographicHash::Sha256);
+        const auto json = QJsonDocument::fromJson(bytes, &parseError);
         if (parseError.error != QJsonParseError::NoError || !json.isObject()) {
             if (error) *error = QStringLiteral("The legacy asset registry is invalid");
             return false;
         }
         registry = json.object();
     }
+    inputFingerprints.insert(registryPath, registryFingerprint);
     const auto assets = registry.value(QStringLiteral("assets")).toObject();
     const auto overrides = registry.value(QStringLiteral("fileOverrides")).toObject();
     QJsonObject sourcePaths = root.value(QStringLiteral("sourceAssets")).toObject();
@@ -197,7 +203,11 @@ bool prepareConversionMigration(const QString& sourceDirectory,
             {QStringLiteral("guid"), id}, {QStringLiteral("name"), name},
             {QStringLiteral("parentRef"), QJsonObject{{QStringLiteral("kind"), QStringLiteral("root")}}},
             {QStringLiteral("components"), QJsonObject{{QStringLiteral("conversion"), normalized->toJson()}}}};
-        documents.insert(path, ProjectDocument::create(QStringLiteral("project.conversion"), id, projectId, content));
+        const QJsonObject header{{QStringLiteral("type"), QStringLiteral("project.conversion")},
+            {QStringLiteral("id"), id}, {QStringLiteral("projectId"), projectId},
+            {QStringLiteral("schemaVersion"), projectHeader.value(QStringLiteral("schemaVersion"))}};
+        documents.insert(path, QJsonObject{{QStringLiteral("harkenDocument"), header},
+                                           {QStringLiteral("content"), content}});
         presets.insert(key, id);
         return id;
     };
