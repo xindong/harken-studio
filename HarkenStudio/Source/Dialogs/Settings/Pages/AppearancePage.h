@@ -6,17 +6,22 @@
 #include <QPointer>
 
 class QComboBox;
+class QDialog;
 class QHideEvent;
 class QLabel;
 class QPushButton;
 class QShowEvent;
+class QSpinBox;
 class QTimer;
+class QTreeWidgetItem;
 
 namespace harken::studio {
 
 class ColorEditorDialog;
+class MenuComboBox;
 class ProportionalTreeWidget;
 class SearchField;
+class TableWidget;
 struct ThemeColorRole;
 
 inline constexpr const char* kSettingsPageAppearance = "appearance";
@@ -49,17 +54,22 @@ private:
     bool loadBasePalette();
     void refreshColors();
     void filterColors();
-    void refreshSelectedColor();
-    const ThemeColorRole* selectedRole() const;
     QColor effectiveColor(const ThemeColorRole& role) const;
     ThemeAppearance appearanceWithColor(const QString& key, const QColor& color) const;
     bool setColor(const QString& key, const QColor& color);
-    void editSelectedColor();
+    void editColor(QTreeWidgetItem* item);
+    void refreshColorActions();
     void publishPreview();
-    void resetSelectedColor();
     void resetColors();
     void cancelPreview();
     void showError(const QList<ThemePackageDiagnostic>& diagnostics);
+    void buildTypography(QWidget* section);
+    void refreshTypography();
+    void chooseSystemFont(FontRole role);
+    void refreshTypographyReset();
+    void buildMetrics(QWidget* section);
+    void refreshMetrics();
+    void refreshMetricActions();
 
     ThemeManager* themeManager_ = nullptr;
     QComboBox* themeCombo_ = nullptr;
@@ -69,11 +79,25 @@ private:
     QComboBox* colorGroup_ = nullptr;
     SearchField* colorSearch_ = nullptr;
     ProportionalTreeWidget* colorTree_ = nullptr;
-    QLabel* colorDescription_ = nullptr;
+    QLabel* colorTableMessage_ = nullptr;
     QLabel* errorLabel_ = nullptr;
     QPushButton* colorReset_ = nullptr;
     QPushButton* colorsReset_ = nullptr;
+    struct TypographyRow {
+        MenuComboBox* family;
+        QSpinBox* size;
+        QSpinBox* weight;
+    };
+    QMap<QString, TypographyRow> fontRows_;
+    TableWidget* typographyTable_ = nullptr;
+    ProportionalTreeWidget* fontTree_ = nullptr;
+    QPushButton* fontRoleReset_ = nullptr;
+    QPushButton* typographyReset_ = nullptr;
+    ProportionalTreeWidget* metricTree_ = nullptr;
+    QPushButton* metricsResetSelected_ = nullptr;
+    QPushButton* metricsReset_ = nullptr;
     QPointer<ColorEditorDialog> colorDialog_;
+    QPointer<QDialog> systemFontDialog_;
     QTimer* previewTimer_ = nullptr;
     QString previewColorKey_;
     QColor pendingPreviewColor_;

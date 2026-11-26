@@ -42,7 +42,7 @@ void deriveUiMetrics(ThemeMetrics& m, const ThemeMetrics& base, const Scale& s)
     auto& control = m.control;
     control.textPaddingX = small;
     control.textPaddingY = compact;
-    control.checkboxMarkExtent = smallIcon - xSmall;
+    control.checkboxMarkExtent = qMax(1, smallIcon - xSmall);
     control.scrollbarExtent = small;
     control.canvasScrollbarExtent = smallIcon;
     control.scrollbarMinimumLength = field;

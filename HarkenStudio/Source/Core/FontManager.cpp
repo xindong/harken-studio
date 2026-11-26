@@ -1,6 +1,9 @@
 #include "FontManager.h"
+#include "BuiltinTheme.h"
+#include "ThemeFontAssets.h"
 
 #include <QFontDatabase>
+#include <QGuiApplication>
 
 #include <utility>
 
@@ -15,37 +18,30 @@ FontManager& FontManager::instance()
 FontManager::FontManager(QObject* parent)
     : QObject(parent)
 {
-    resolveFontFamilies();
+    systemSansFamily_ = QFontDatabase::systemFont(QFontDatabase::GeneralFont).family();
+    systemMonoFamily_ = QFontDatabase::systemFont(QFontDatabase::FixedFont).family();
+    QFont sans;
+    sans.setStyleHint(QFont::SansSerif);
+    defaultSansFamily_ = sans.defaultFamily();
+    refreshSystemFamilies();
+    connect(qGuiApp, &QGuiApplication::fontDatabaseChanged, this, &FontManager::refreshSystemFamilies);
+    sansFamily_ = familyFor({}, FontRole::Body).family;
+    monoFamily_ = familyFor({}, FontRole::Mono).family;
 }
 
-void FontManager::resolveFontFamilies()
+void FontManager::refreshSystemFamilies()
 {
-    const QStringList sansCandidates = { QStringLiteral("Inter"), QStringLiteral("Segoe UI") };
-    const QStringList availableFamilies = QFontDatabase::families();
-    systemSansFamily_.clear();
-    for (const auto& candidate : sansCandidates) {
-        if (availableFamilies.contains(candidate)) {
-            systemSansFamily_ = candidate;
-            break;
-        }
-    }
-    if (systemSansFamily_.isEmpty()) {
-        QFont defaultFont;
-        defaultFont.setStyleHint(QFont::SansSerif);
-        systemSansFamily_ = defaultFont.defaultFamily();
-    }
-#ifdef Q_OS_WIN
-    systemMonoFamily_ = QStringLiteral("Consolas");
-#else
-    systemMonoFamily_ = QFontDatabase::systemFont(QFontDatabase::FixedFont).family();
-#endif
-    sansFamily_ = systemSansFamily_;
-    monoFamily_ = systemMonoFamily_;
+    QHash<QString, QString> names;
+    const auto families = installedSystemFontFamilies();
+    for (const auto& name : families)
+        names.insert(name.toCaseFolded(), name);
+    QWriteLocker lock(&familyLock_);
+    installedNames_.swap(names);
 }
 
 QFont FontManager::getFont(FontRole role, FontEmphasis emphasis) const
 {
-    return getFont(snapshot_, role, emphasis);
+    return getFont(snapshot_.lock(), role, emphasis);
 }
 
 QFont FontManager::getFont(FontRole role, int sizePtOverride) const
@@ -56,27 +52,61 @@ QFont FontManager::getFont(FontRole role, int sizePtOverride) const
     return font;
 }
 
+QStringList FontManager::themeFamilies(const ThemeSnapshotPtr& snapshot) const
+{
+    QStringList names;
+    if (snapshot)
+        for (const auto& asset : snapshot->fontAssets)
+            names.append(asset->name);
+    return names;
+}
+
+QStringList FontManager::systemFamilies() const
+{
+    return installedSystemFontFamilies();
+}
+
+ResolvedFontFamily FontManager::familyFor(const ThemeSnapshotPtr& snapshot, FontRole role) const
+{
+    const auto& typography = snapshot ? snapshot->ui.typography : builtinThemeTypography();
+    const auto& style = typography.*themeFontToken(role).member;
+    if (!style.source && style.family.isEmpty() && (role == FontRole::Title || role == FontRole::Caption))
+        return familyFor(snapshot, FontRole::Body);
+    if (style.source == ThemeFontSource::Theme) {
+        for (const auto& asset : snapshot->fontAssets)
+            if (asset->name.compare(style.family, Qt::CaseInsensitive) == 0)
+                return {asset->name, ThemeFontSource::Theme};
+    } else if (!style.family.isEmpty()) {
+        QReadLocker lock(&familyLock_);
+        auto found = installedNames_.constFind(style.family.toCaseFolded());
+        if (found != installedNames_.cend()) return {found.value(), ThemeFontSource::System};
+        for (const auto& candidate : style.fallbackFamilies) {
+            found = installedNames_.constFind(candidate.toCaseFolded());
+            if (found != installedNames_.cend()) return {found.value(), ThemeFontSource::System};
+        }
+        return {role == FontRole::Mono ? systemMonoFamily_ : defaultSansFamily_, ThemeFontSource::System};
+    }
+    return {role == FontRole::Mono ? systemMonoFamily_ : systemSansFamily_, ThemeFontSource::System};
+}
+
 QFont FontManager::getFont(const ThemeSnapshotPtr& snapshot, FontRole role,
                          FontEmphasis emphasis) const
 {
-    const ThemeTypography defaults;
-    const auto& typography = snapshot ? snapshot->ui.typography : defaults;
-    const ThemeFontStyle* style = &typography.body;
-    switch (role) {
-        case FontRole::Title: style = &typography.title; break;
-        case FontRole::Body: break;
-        case FontRole::Caption: style = &typography.caption; break;
-        case FontRole::Mono: style = &typography.mono; break;
-    }
+    const auto& typography = snapshot ? snapshot->ui.typography : builtinThemeTypography();
+    const auto& style = typography.*themeFontToken(role).member;
     const bool mono = role == FontRole::Mono;
-    const QString family = !style->family.isEmpty() ? style->family
-        : mono ? systemMonoFamily_
-        : !typography.body.family.isEmpty() ? typography.body.family : systemSansFamily_;
-    QFont font(family);
-    const int size = style->pointSize > 0 ? style->pointSize : typography.body.pointSize;
+    auto family = familyFor(snapshot, role);
+    if (family.source == ThemeFontSource::Theme)
+        for (const auto& asset : snapshot->fontAssets)
+            if (asset->name == family.family) {
+                family.family = asset->renderFamily;
+                break;
+            }
+    QFont font(family.family);
+    const int size = style.pointSize > 0 ? style.pointSize : typography.body.pointSize;
     font.setPointSizeF(qMax(6, size) * (snapshot ? snapshot->uiScale : 1.0));
     font.setWeight(static_cast<QFont::Weight>(emphasis == FontEmphasis::Strong
-        ? typography.title.weight : style->weight > 0 ? style->weight : typography.body.weight));
+        ? typography.title.weight : style.weight > 0 ? style.weight : typography.body.weight));
     font.setStyleHint(mono ? QFont::Monospace : QFont::SansSerif);
     font.setStretch(QFont::Unstretched);
     font.setLetterSpacing(QFont::AbsoluteSpacing, 0);
@@ -100,12 +130,14 @@ QString FontManager::styleSheet(const ThemeSnapshotPtr& snapshot, FontRole role,
 
 void FontManager::applyTheme(ThemeSnapshotPtr snapshot)
 {
-    if (snapshot_ == snapshot)
+    const auto previous = snapshot_.lock();
+    if (previous == snapshot)
         return;
-    const bool changed = !snapshot_ || !snapshot
-        || snapshot_->ui.typography != snapshot->ui.typography
-        || snapshot_->uiScale != snapshot->uiScale;
-    snapshot_ = std::move(snapshot);
+    const bool changed = !previous || !snapshot
+        || previous->ui.typography != snapshot->ui.typography
+        || previous->uiScale != snapshot->uiScale
+        || previous->fontAssets != snapshot->fontAssets;
+    snapshot_ = snapshot;
     if (!changed)
         return;
     sansFamily_ = getFont(FontRole::Body).family();

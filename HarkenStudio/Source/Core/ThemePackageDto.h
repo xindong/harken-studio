@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ThemeColorCatalog.h"
+#include "ThemeStyleTokens.h"
 
 #include <QMap>
 #include <QSize>
@@ -125,16 +126,16 @@ struct ThemeColorDefinitionDto
     QString defaultPalette;
 };
 
+struct ThemeFontRoleDto : ThemeFontOverride
+{
+    QStringList fallbackFamilies;
+};
+
 struct ThemeTokenDto
 {
     QMap<QString, QString> colors;
     QMap<QString, double> metrics;
-    struct FontRole {
-        std::optional<QString> family;
-        std::optional<int> pointSize;
-        std::optional<int> weight;
-    };
-    QMap<QString, FontRole> fonts;
+    QMap<QString, ThemeFontRoleDto> fonts;
 };
 
 struct ThemeVisualDto

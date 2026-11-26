@@ -33,6 +33,8 @@ struct ThemePackageLoadOptions
         QStringLiteral("waveform-v1")};
 };
 
+struct PreparedThemeFonts;
+
 struct ThemePackageCandidate
 {
     ThemeManifestDto manifest;
@@ -43,6 +45,7 @@ struct ThemePackageCandidate
     QVector<ThemeColorRole> colorRoles;
     QList<ColorPalette> palettes;
     QString defaultPaletteId;
+    std::shared_ptr<const PreparedThemeFonts> preparedFonts;
 };
 
 struct ThemePackageLoadResult

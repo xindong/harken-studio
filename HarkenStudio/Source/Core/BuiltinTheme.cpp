@@ -7,9 +7,26 @@
 
 namespace harken::studio {
 
+const ThemeTypography& builtinThemeTypography()
+{
+    static const auto typography = [] {
+        ThemeTypography roles;
+        roles.body.source = ThemeFontSource::System;
+        roles.body.family = QStringLiteral("Inter");
+        roles.body.fallbackFamilies = {QStringLiteral("Segoe UI")};
+        roles.mono.source = ThemeFontSource::System;
+#ifdef Q_OS_WIN
+        roles.mono.family = QStringLiteral("Consolas");
+#endif
+        return roles;
+    }();
+    return typography;
+}
+
 ThemeSnapshot createBuiltinDarkTheme()
 {
     ThemeSnapshot theme;
+    theme.ui.typography = builtinThemeTypography();
     auto& colors = theme.ui.colors;
 
     colors.accent = QColor("#00F0FF");

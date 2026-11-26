@@ -219,15 +219,23 @@
     },
     "settings.appearance": {
       "title": "Appearance",
-      "body": "Choose a theme and one of its color palettes, customize that theme's colors, and set the Information language."
+      "body": "The Theme, Editor Scale, and Information Language fields sit above Theme Configuration. Editor Scale adjusts the whole interface across themes, and Information Language sets the language of the Information panel. In Theme Configuration, choose Colors, Typography, or Spacing & Sizing. The tabs stay in a row above their content at every panel size, as in the Inspector."
     },
     "settings.appearance.theme": {
       "title": "Theme",
       "body": "Choose the complete theme, including its fonts, icons, control sizes, and color roles. Switching themes selects that theme's default palette. Studio Default includes Dark and Light palettes. Install additional themes in %1."
     },
     "settings.appearance.colors": {
-      "title": "Theme Colors",
-      "body": "Choose one of the current theme's palettes from Color Palette. Each theme defines its own editable colors. Color edits are saved only for the selected theme and palette. Palette Default shows its original colors; Reset restores those defaults. The color editor combines an SV area and hue strip with H/S/V and R/G/B fields and a shared A (alpha) control. Changes preview immediately; OK saves, while Cancel or Esc restores the saved colors. The eyedropper samples screen colors while preserving A; Esc cancels sampling and restores the color from before sampling."
+      "title": "Colors",
+      "body": "Choose a Color Palette. Hover over any cell to see how Studio uses that color. Double-click a row or focus it and press Enter to edit the color. Palette Default shows its original value. Select a color row and click Reset Selected to restore its palette default. Reset All restores the selected palette of this theme. The color editor previews changes as you adjust hue, saturation, value, RGB, or alpha. OK saves the color. Cancel or Esc restores the saved color. The eyedropper samples a screen color using the current alpha. Press Esc while sampling to return to the color you had before sampling."
+    },
+    "settings.appearance.typography": {
+      "title": "Typography",
+      "body": "Edit the family, size in points, and weight for each text role. The theme can supply a font, use the system default, or request installed families in order of preference. Open Family to choose a font supplied by the theme. To use an installed font, choose Use Font in Current System... at the bottom of the menu. Search by family name, select a match, and click OK. Title weight also applies to emphasized text. Select a role and click Reset Selected to restore its family, size, and weight together. Reset All restores all four roles. These settings apply to every palette of this theme."
+    },
+    "settings.appearance.metrics": {
+      "title": "Spacing & Sizing",
+      "body": "Edit a dimension in the Value column. Hover over any cell to see where Studio uses it. Value and Theme Default are in logical pixels at 100% Editor Scale. Select a dimension and click Reset Selected to restore its theme default. Reset All restores all 18 dimensions. Changes apply to every palette of this theme."
     },
     "settings.appearance.language": {
       "title": "Information Language",
@@ -315,7 +323,7 @@
     },
     "Inspector": {
       "title": "Inspector",
-      "body": "Edit the selected object's properties. Clear a group's Inherit checkbox to edit its local values."
+      "body": "Edit the selected object's properties. The category tabs stay in a row above their content at every panel size. Clear a group's Inherit checkbox to edit its local values."
     },
     "Information": {
       "title": "Information",

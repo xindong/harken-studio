@@ -574,7 +574,7 @@ QString QtControlSkin::applicationStyleSheet() const
     replace(QStringLiteral("@rowInset@"), QString::number(metrics().layout.rowInset));
     replace(QStringLiteral("@controlGap@"), QString::number(metrics().layout.controlGap));
     replace(QStringLiteral("@fieldContentHeight@"), QString::number(fieldHeight() - metrics().borderWidth * 2));
-    replace(QStringLiteral("@singleLineContentHeight@"), QString::number(fieldHeight() - metrics().borderWidth * 3));
+    replace(QStringLiteral("@singleLineContentHeight@"), QString::number(std::max(0, fieldHeight() - metrics().borderWidth * 3)));
     const QMargins fieldMargins = fieldTextMargins();
     replace(QStringLiteral("@fieldTextPaddingX@"), QString::number(fieldMargins.left()));
     replace(QStringLiteral("@fieldTextPaddingY@"), QString::number(fieldMargins.top()));
@@ -652,7 +652,7 @@ QString QtControlSkin::collapsibleHeaderStyle(const QColor& indicator, bool cust
                           : QStringLiteral("border: none;");
     }
     const QString pad = QString("padding: 0px %1px 0px 0px;").arg(metrics().layout.panelPadding);
-    const int contentHeight = metrics().layout.sectionHeaderHeight - verticalBorder;
+    const int contentHeight = std::max(0, metrics().layout.sectionHeaderHeight - verticalBorder);
 
     if (backgroundTint.isValid()) {
         bg = rgba(backgroundTint, level >= 2 ? 16 : 20);

@@ -331,9 +331,65 @@ ParseResult<T> parseSemanticDocument(const QByteArray& json,
     return result;
 }
 
+bool readFontSelection(const QJsonObject& object, const QString& file, const QString& rolePath,
+                       ThemeFontRoleDto& role, QList<ThemePackageDiagnostic>& diagnostics)
+{
+    const auto family = object.value(QStringLiteral("family"));
+    const bool hasSource = object.contains(QStringLiteral("source"));
+    if (!hasSource && family.isUndefined())
+        return true;
+    QString source = QStringLiteral("system");
+    if (hasSource && !readRequiredString(object, QStringLiteral("source"), file, rolePath, source, diagnostics))
+        return false;
+    const QString familyPath = rolePath + QStringLiteral(".family");
+    if (source == QStringLiteral("systemDefault")) {
+        if (!family.isUndefined()) {
+            diagnostics.append(diagnostic(ThemePackageErrorCode::InvalidValue, file, familyPath,
+                QStringLiteral("systemDefault does not take a family.")));
+            return false;
+        }
+        role.source = ThemeFontSource::System;
+        role.family = QString();
+        return true;
+    }
+    if (source != QStringLiteral("theme") && source != QStringLiteral("system")) {
+        diagnostics.append(diagnostic(ThemePackageErrorCode::InvalidValue, file, rolePath + QStringLiteral(".source"),
+            QStringLiteral("Expected theme, systemDefault, or system.")));
+        return false;
+    }
+    role.source = source == QStringLiteral("theme") ? ThemeFontSource::Theme : ThemeFontSource::System;
+    const bool list = family.isArray() && role.source == ThemeFontSource::System;
+    QStringList names;
+    if (list) {
+        if (!readStringList(object, QStringLiteral("family"), file, rolePath, names, diagnostics))
+            return false;
+        if (names.isEmpty()) {
+            diagnostics.append(diagnostic(ThemePackageErrorCode::InvalidValue, file, familyPath,
+                QStringLiteral("A system font list must contain at least one family.")));
+            return false;
+        }
+    } else {
+        QString name;
+        if (!readRequiredString(object, QStringLiteral("family"), file, rolePath, name, diagnostics))
+            return false;
+        names.append(std::move(name));
+    }
+    for (qsizetype i = 0; i < names.size(); ++i) {
+        if (names.at(i).size() > ThemeFontOverride::maximumFamilyLength) {
+            const QString path = list ? familyPath + QStringLiteral("[%1]").arg(i) : familyPath;
+            diagnostics.append(diagnostic(ThemePackageErrorCode::InvalidValue, file, path,
+                QStringLiteral("The font family name exceeds the supported length.")));
+            return false;
+        }
+    }
+    role.family = names.takeFirst();
+    role.fallbackFamilies = std::move(names);
+    return true;
+}
+
 bool readFontRoles(const QJsonObject& root,
                    const QString& file,
-                   QMap<QString, ThemeTokenDto::FontRole>& output,
+                   QMap<QString, ThemeFontRoleDto>& output,
                    QList<ThemePackageDiagnostic>& diagnostics)
 {
     if (!root.contains(QStringLiteral("fonts")))
@@ -363,7 +419,7 @@ bool readFontRoles(const QJsonObject& root,
         const QJsonObject roleObject = it.value().toObject();
         if (!rejectUnknownFields(
                 roleObject,
-                {QStringLiteral("family"), QStringLiteral("pointSize"),
+                {QStringLiteral("source"), QStringLiteral("family"), QStringLiteral("pointSize"),
                  QStringLiteral("weight")},
                 file, rolePath, diagnostics))
             return false;
@@ -374,15 +430,9 @@ bool readFontRoles(const QJsonObject& root,
                 QStringLiteral("At least one font role field is required.")));
             return false;
         }
-        ThemeTokenDto::FontRole role;
-        if (roleObject.contains(QStringLiteral("family")))
-        {
-            QString family;
-            if (!readRequiredString(roleObject, QStringLiteral("family"), file,
-                                    rolePath, family, diagnostics))
-                return false;
-            role.family = std::move(family);
-        }
+        ThemeFontRoleDto role;
+        if (!readFontSelection(roleObject, file, rolePath, role, diagnostics))
+            return false;
         const QStringList integerFields{
             QStringLiteral("pointSize"), QStringLiteral("weight")};
         std::optional<int>* destinations[]{&role.pointSize, &role.weight};

@@ -13,9 +13,6 @@ add_library(harken_editor_inspector STATIC
     InspectorPanel.cpp
     InspectorPanel.h
     InspectorPanel_p.h
-    # Tabbed Inspector page container (generic tabs vocabulary host).
-    InspectorTabContainer.cpp
-    InspectorTabContainer.h
     # Advanced launch-entry row (status count + Open
     # Editor detach button; replaces inline complex sections in the Advanced tab).
     InspectorLaunchEntry.cpp

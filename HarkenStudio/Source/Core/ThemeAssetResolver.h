@@ -21,6 +21,13 @@ struct ThemeAssetResolverLimits
     qsizetype maximumEncodedBytes = 1024 * 1024;
     int maximumDimension = 4096;
     qint64 maximumPixels = 16 * 1024 * 1024;
+    qsizetype maximumFontBytes = 32 * 1024 * 1024;
+};
+
+struct ThemeAssetSourceFile
+{
+    QString path;
+    qint64 size;
 };
 
 struct ThemeAssetVariant
@@ -114,6 +121,12 @@ public:
     ThemeFontResolution resolveFont(const ThemeSnapshotPtr& snapshot,
                                     const QString& logicalId,
                                     qreal pixelSize = 12.0);
+    std::optional<QByteArray> readFontSource(const QMap<QString, QString>& packageRoots,
+                                            const QString& path,
+                                            QList<ThemePackageDiagnostic>& diagnostics) const;
+    std::optional<ThemeAssetSourceFile> fontSourceFile(const QMap<QString, QString>& packageRoots,
+                                                       const QString& path,
+                                                       QList<ThemePackageDiagnostic>& diagnostics) const;
 
 private:
     class Impl;
