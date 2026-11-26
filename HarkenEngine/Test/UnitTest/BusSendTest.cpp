@@ -1771,8 +1771,10 @@ TEST(BusSend, FormalNestedSignalReturnKeepsOrdinarySendWhenOutputIsZero) {
         }
         ASSERT_EQ(Vn_Update(), VN_OK);
         PumpAndCapture(engine, 1800, output[perturb]);
-        EXPECT_NEAR(output[perturb].left.back(), .0140523467663895, 2e-5);
-        EXPECT_NEAR(output[perturb].right.back(), .0935444242871800, 2e-5);
+        const double slope = 1 / (1 / harken::kDuckingBaselineSlope + 2);
+        const double right = (1 - slope) / (1 - 2 * slope * slope);
+        EXPECT_NEAR(output[perturb].left.back(), .1 * (1 - 2 * slope * right), 2e-5);
+        EXPECT_NEAR(output[perturb].right.back(), .1 * right, 2e-5);
     }
     for (std::size_t i = output[0].left.size() - 12000; i < output[0].left.size(); ++i) {
         ASSERT_NEAR(output[0].left[i], output[1].left[i], 1e-5);

@@ -37123,7 +37123,8 @@ TEST(PlayableStart, FormalSignalReceiversShareSoundAndContainerMembersAcrossWork
                 ASSERT_EQ(Vn_Update(), VN_OK);
             }
             ASSERT_FALSE(output.left.empty());
-            const double expected = .01 + .2 * (1 - harken::kDuckingBaselineSlope * .01 / .2);
+            const double expected = .01 + .2 * (1 - harken::kDuckingBaselineSlope *
+                harken::kDuckingSquaredLevelScale * .01 * .01 / .2);
             EXPECT_NEAR(output.left.back(), expected, 1e-5);
             // Isolate the raw voice contribution; aggregate amplitude alone
             // cannot distinguish accidental membership with this ducking law.
@@ -37241,8 +37242,11 @@ TEST(PlayableStart, FormalSignalFeedbackPreservesOpposingMembersWithDifferentOut
             ASSERT_EQ(Vn_Update(), VN_OK);
         }
         const auto& output = captures[perturb];
-        EXPECT_NEAR(output.left.back(), .0412693801589711, 2e-5);
-        EXPECT_NEAR(output.right.back(), .0412693801589711, 2e-5);
+        const double slope = 1 / (1 / harken::kDuckingBaselineSlope + 1);
+        const double image = .1 - .0999 * .5, reference = .1 + .0999;
+        const double expected = image / (1 + slope * image / reference);
+        EXPECT_NEAR(output.left.back(), expected, 2e-5);
+        EXPECT_NEAR(output.right.back(), expected, 2e-5);
         for (const auto* channel : {&output.left, &output.right})
             for (float sample : *channel) ASSERT_TRUE(std::isfinite(sample));
     }

@@ -26,9 +26,10 @@ inline bool SignalPlaneIsSilent(const float* samples, std::uint32_t frames) noex
 }
 
 
-inline constexpr double kDuckingBaselineSlope = 5.6568542494923801952;
+inline constexpr double kDuckingBaselineSlope = 1.4142135623730950488;
 inline constexpr float kDuckingDefaultAttackMs = 4.156241f;
 inline constexpr float kDuckingDefaultReleaseMs = 1.031215f;
+inline constexpr double kDuckingSquaredLevelScale = 4.0;
 
 struct DuckingPreparedParameters {
     std::uint32_t sampleRate = 0;
@@ -259,11 +260,16 @@ public:
                     denominator = std::max(std::max(denominator, preEnvelope), postEnvelope);
                     effectiveSlope = slope;
                 }
+                // One-way ducking follows the squared sidechain level so a decaying
+                // tail lets go early. Cyclic receivers keep the linear law their
+                // slope bound was derived for.
+                const double level = feedback ? std::sqrt(sideEnergy)
+                    : kDuckingSquaredLevelScale * std::min(sideEnergy, 1.0);
                 // A removed input is distinct from a still-connected zero signal.
                 // Consume detector time above, but do not re-attack stale energy
                 // when leaving a feedback component after its last input is gone.
                 const double desired = sidechain == nullptr ? 1.0 : std::max(0.0,
-                    1.0 - effectiveSlope * std::sqrt(sideEnergy) / denominator);
+                    1.0 - effectiveSlope * level / denominator);
                 const double coefficient = desired < gain
                     ? m_parameters.attack : m_parameters.release;
                 gain = desired + coefficient * (gain - desired);
