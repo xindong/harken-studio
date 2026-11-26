@@ -22,6 +22,7 @@ InspectorTabContainer::InspectorTabContainer(QWidget* parent, FramePlacement fra
         setProperty("surfaceRole", QStringLiteral("panel"));
     }
     bar_ = new QWidget(this);
+    bar_->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
     bar_->setObjectName(QStringLiteral("inspectorTabBar"));
     bar_->setAttribute(Qt::WA_StyledBackground, true);
     barLayout_ = new QHBoxLayout(bar_);
@@ -50,7 +51,7 @@ InspectorTabContainer::InspectorTabContainer(QWidget* parent, FramePlacement fra
         const int margin = metrics.inspector.pageMargin;
         stackMargin->setContentsMargins(margin, margin, margin, margin);
         barLayout_->setContentsMargins(0, 0, 0, metrics.borderWidth);
-        bar_->setFixedHeight(metrics.layout.sectionHeaderHeight);
+        bar_->setMinimumHeight(metrics.layout.sectionHeaderHeight);
     });
 }
 

@@ -1175,16 +1175,15 @@ void TableWidget::refreshViewLayout()
     if (options_.bodySizing == TableBodySizing::Content) {
         auto* tree = qobject_cast<QTreeView*>(view_);
         auto* table = qobject_cast<QTableView*>(view_);
+        const int visibleColumn = tree ? tree->header()->logicalIndexAt(0) : 0;
         std::function<int(const QModelIndex&)> contentHeight = [&](const QModelIndex& parent) {
             int height = 0;
             for (int row = 0; row < view_->model()->rowCount(parent); ++row) {
                 if ((tree && tree->isRowHidden(row, parent)) || (table && table->isRowHidden(row))) continue;
                 const auto index = view_->model()->index(row, 0, parent);
-                QStyleOptionViewItem option;
-                option.initFrom(view_);
-                option.widget = view_;
-                height += table ? table->rowHeight(row)
-                    : view_->itemDelegateForIndex(index)->sizeHint(option, index).height();
+                if (table) height += table->rowHeight(row);
+                else if (tree) height += tree->visualRect(index.siblingAtColumn(visibleColumn)).height();
+                else height += view_->sizeHintForRow(row);
                 if (tree && tree->isExpanded(index)) height += contentHeight(index);
             }
             return height;
