@@ -35,11 +35,11 @@ Harken 是一套游戏音频中间件。声音设计师在 Harken Studio 中编�
 
 ## 版本与兼容
 
-- 包版本即 `package.json` 中的 `version` 字段，与 Harken Studio、Harken 引擎的版本相互独立。
+- 包版本即 `package.json` 中的 `version` 字段，跟随 Harken Studio 的版本。
 - 包内带有两个原生库版本：正式版（`HarkenEngine`）与开发版（`HarkenEngineDev`）。在 **Project Settings > Harken > Project > Native Library** 中选择：*Automatic* 在编辑器与 Development Build 中使用开发版，其余情况使用正式版；*Release* 与 *Development* 在所有情况下固定使用对应版本。修改后需重启 Unity。
 - 远程通信只在开发版可用；使用正式版时，相关方法返回 `VN_CAPABILITY_UNAVAILABLE`。
 - 原生库的 ABI 主版本与托管绑定不一致时，拒绝启动。
-- 每个包版本读取一个 Pack 元数据版本（当前为 4），请使用写出该版本的 Harken Studio 导出 Pack。Pack 二进制版本由引擎自行校验。
+- 每个包版本读取一个 Pack 元数据版本（当前为 5），请使用写出该版本的 Harken Studio 导出 Pack。Pack 二进制版本由引擎自行校验。
 
 ## 运行时故障
 

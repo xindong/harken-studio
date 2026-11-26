@@ -201,7 +201,7 @@ GUI、IPC、CLI 会话导出和 CLI 已保存工程构建使用同一个 `Projec
 
 | 字段 | 类型 | 含义 |
 |---|---|---|
-| schemaVersion | 整数 | Pack 合同版本，当前为 4，与包体及伴随 JSON 一致 |
+| schemaVersion | 整数 | Pack 合同版本，当前为 5，与包体及伴随 JSON 一致 |
 | projectGuid | 字符串 | 项目稳定 GUID，规范小写形式 |
 | projectName | 字符串 | 项目名称 |
 | studioVersion | 字符串 | 执行导出的 Studio 软件版本 |
@@ -279,7 +279,7 @@ Pack 的 `.bytes` 布局由 Engine 定义，唯一来源是 `HarkenEngine/Schema
 | 记录与取值域 | 固定宽度、小端、显式填充的 `HkPack*` 结构体；枚举、单位、可接受范围、世界能力位和硬上限与布局写在同一处 |
 | 布局锁 | 每条记录以 `HK_PACK_SIZE`／`HK_PACK_OFFSET` 静态断言锁定，编译期保证两侧读写布局一致 |
 | 读写映射 | Engine 读取端 `harken/media/PackWire.h` 与 Studio 写入端 `harken_studio_build/PackWire.h` 各自手写映射，不使用代码生成器；构建路径不运行 Python |
-| 版本 | 与 Studio 的两棵 Schema 树同一机制：`manifest.json` + `current/` + 冻结版本号目录（3、4 为旧 `HarkenSchema` 原文留档）。`HK_PACK_FORMAT_VERSION` 由构建按 manifest 最后一个已发布版本生成到 `harken_pack/PackVersion.h`，当前为 4；是否换代由发布者经 `.scripts/schema_lock.py stage --pack same|next` 决定，`--pack` 同时冻结 PackMetadata 与 Pack 二进制。Engine 经 `Vn_QueryPackFormatVersion` 声明可读范围 |
+| 版本 | 与 Studio 的两棵 Schema 树同一机制：`manifest.json` + `current/` + 冻结版本号目录（3、4 为旧 `HarkenSchema` 原文留档）。`HK_PACK_FORMAT_VERSION` 由构建按 manifest 最后一个已发布版本生成到 `harken_pack/PackVersion.h`，当前为 5。发布者经 `.scripts/schema_lock.py stage --pack same|next` 决定是否换代，`--pack` 同时冻结 PackMetadata 与 Pack 二进制。Engine 经 `Vn_QueryPackFormatVersion` 声明可读范围 |
 | 伴随 JSON | 由 Studio 定义，Schema 位于 `HarkenStudio/Schema/PackMetadata`；Engine 不读取伴随文件，Pack 激活只接收二进制 |
 
 有效目录 kind 共 16 个。DiscreteVariable(5)、MeterWiring(6)、Action(10)、InitRoutingCatalog(20)、GameplayCatalog(25)、VariableNameCatalog(28) 已退役，读取端不再接纳；Action 的当前生产数据位于分区 body。Engine 只以 ID 识别创作内容，名称与 ID 的换算由 Studio 与 Integration 依据伴随 JSON 完成。
@@ -296,7 +296,7 @@ Bus 发布投影使用 publication vintage 5（`TopologyVolumeSendAndEffectsNeut
 
 当前 Studio Preview 中，Voice／Bus 编辑前后的链均只含 Limiter（含空链）时，参数拖动、Active、链条增删、替换和重排均作用于当前播放，无需停止重播。涉及其他效果类型时，链结构与来源替换仍沿原有生命周期延后生效，已安装槽位的 Active 和来源兼容的参数可即时更新；受在播消费者阻挡的 Bus 事务保留至消费者释放，消费者检查覆盖旧发布代际仍存活的播放。该延后限制用于 Studio Preview，正式 PackSet 的替换与卸载沿用既有生命周期。
 
-Bus publication 5、Preview descriptor V4、分区 body 版本和已发布 Pack Schema 4 属于不同版本空间。此阶段只修改 `Pack/current`。对外发布前仍须按合同审计完成新的 Pack 代际。
+Bus publication 5、Preview descriptor V4、分区 body 版本和 Pack Schema 各自独立编号。这一阶段的 `Pack/current` 变更随 Studio 0.10.0 归档到 Pack 5。
 
 配套 Engine 改动包含合同读入、旁通安装、运行状态镜像、Bus 效果事务与 PackSet 消费；复用既有 DSP、实例池和音频命令。旧 Preview 协议的默认删除校验与无关 Signal 提交规则保持原有行为。
 
@@ -343,6 +343,7 @@ Bus 即时编辑独立读取当前创作值，只对已安装且来源兼容的�
 | 项目 | 当前结果 |
 |---|---|
 | Studio 0.9.1 → 0.9.4 既有发布 | Editor Schema 9、Pack Schema 4 不变；工程可直接打开保存，既有 Pack 可由对应发布的随附运行库读取；本次合同治理的发布边界见上节 |
+| Studio 0.9.4 → 0.10.0 | 7、8、9 代工程升级到 Project 10 后打开。0.9.4 及更早版本无法打开 10 代工程。Pack 与 PackMetadata 从 4 升到 5，须用 0.10.0 重新导出并与配套集成包同批发布。升级工程时先迁移个人设置到 `.user`，再重建 `.cache` |
 | Pack 跨合同代 | 须重新打包，不提供迁移；旧二进制版本号不能证明与当前合同兼容 |
 | Pack 3 | 文件头即拒绝；历史档案保留 |
 | 非当前条目布局 | 有效 kind 的非当前 vintage 返回 `VN_PACK_INCOMPATIBLE`；退役或未知 kind 返回 `VN_BAD_PACK` |

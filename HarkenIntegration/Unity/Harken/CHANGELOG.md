@@ -7,6 +7,14 @@ and this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `HarkenEditorCatalog.RefreshPlatformDirectory(root, platformName, basePlatform, language)` refreshes a directory by platform name. The released `RefreshPlatform` overload still takes a platform ID as its second argument. Code written against the unreleased four-argument, name-based overload should call `RefreshPlatformDirectory` to keep its platform and language selection.
+
+## [0.10.0] - 2026-11-26
+
+Paired with Harken Studio 0.10.0. Export Packs again with Studio 0.10.0 and ship them with this package. Both the Pack binary format and Pack metadata use generation 5.
+
 ### Added
 
 - The package ships two native library editions: Release (`HarkenEngine`) and Development (`HarkenEngineDev`).
@@ -29,7 +37,6 @@ and this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The package declares its Unity built-in module dependencies (Audio, JSONSerialize, UnityWebRequest), so they cannot be disabled while the package is installed.
 - New settings assets are created at `Assets/Resources/HarkenProjectSettings.asset` and `Assets/Editor/HarkenEditorProjectSettings.asset`. Existing settings assets keep working wherever they are.
 - `HarkenAudioSystem.ConfigurePlatformBeforeStartup` has an overload that takes only the platform name.
-- `HarkenEditorCatalog.RefreshPlatformDirectory(root, platformName, basePlatform, language)` refreshes a directory by platform name. The released `RefreshPlatform` overload still takes a platform ID as its second argument. Code written against the unreleased four-argument, name-based overload should call `RefreshPlatformDirectory` to keep its platform and language selection.
 - Renamed to match the current Pack metadata terms. The previous names remain as obsolete forwarding members:
   - `HarkenAudioSystem.ConfigureCompanionSourceBeforeStartup` is now `ConfigurePackSourceBeforeStartup`, and `HarkenPackSource.CaptureCompanion` is now `CapturePackSource`.
   - `HarkenStreamingPackSource` is now `HarkenStreamingAssetsPackSource`.
@@ -122,7 +129,8 @@ First public release, paired with Harken Studio 0.9.2.
 
 - Editor Action browsing, selection and preview are unavailable; enter Action Name and Project Id manually in the Inspector.
 
-[Unreleased]: https://github.com/xindong/harken-studio/compare/HarkenStudio-0.9.4...HEAD
+[Unreleased]: https://github.com/xindong/harken-studio/compare/HarkenStudio-0.10.0...HEAD
+[0.10.0]: https://github.com/xindong/harken-studio/releases/tag/HarkenStudio-0.10.0
 [0.9.4]: https://github.com/xindong/harken-studio/releases/tag/HarkenStudio-0.9.4
 [0.9.3]: https://github.com/xindong/harken-studio/releases/tag/HarkenStudio-0.9.3
 [0.3.7]: https://github.com/xindong/harken-studio/releases/tag/HarkenStudio-0.9.2

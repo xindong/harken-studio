@@ -26,7 +26,7 @@
 | 原生库版本 | 发行构建不含开发能力 | 随包提供正式版 `HarkenEngine` 与开发版 `HarkenEngineDev`；项目设置可选自动、正式或开发，自动时编辑器与 Development Build 使用开发版；ABI 主版本不一致时拒绝启动 | 已实现 |
 | 容量 | 运行期存储按需增长 | Pack、Action、firing、Emitter 与 Variable 不再有可配置上限；Max Voices 默认 0，按需增长至 16384；旧设置属性标记废弃且无效 | 已实现 |
 | Pack 读取形式 | 同一套启动与准备入口覆盖各交付形式 | 支持目录、StreamingAssets（含 Android）、自定义同步与异步 reader、TextAsset；目录来源识别逐包压缩、平台 ZIP 与 Windows 常驻三种发布形式 | 已实现 |
-| Pack 元数据 | 每个包版本只读取一个元数据版本 | 当前为 4；其他版本返回 `VN_BAD_PACK`，Pack 二进制版本由引擎校验 | 一致 |
+| Pack 元数据 | 每个包版本只读取一个元数据版本 | 当前为 5，其他版本返回 `VN_BAD_PACK`，Pack 二进制版本由引擎校验 | 一致 |
 | 语言切换 | 会话内切换且不产生混合状态 | `SetLanguageAsync` 成组替换已装载的 Action，失败不改变任何内容；已在播放的声音保持原语言 | 已实现 |
 | 首关启动 | 启动与首关准备可并行 | `StartLevelAsync` 启动会话并准备首关 Action；Windows 在装载期间后台打开设备，默认组件启动同样提前打开设备 | 已实现 |
 | 故障恢复 | 首次故障可观察，恢复由宿主决定 | `RuntimeRecreationRequired` 与 `QueryRuntimeFault` 提供首次故障；`VN_OUT_OF_MEMORY` 单独出现时会话可继续 | 已实现 |
@@ -44,14 +44,14 @@
 | 项目 | 当前状态 |
 |---|---|
 | 产品范围 | 仅维护 Unity Integration，历史 Unreal 集成产品已移除 |
-| 产品版本 | Unity Integration 的版本以 `package.json` 为准，独立制品与源码清单一致，Studio 随附版本以实际清单为准 |
+| 产品版本 | Unity Integration 0.10.0 随 Studio 0.10.0 发布，版本以 Unity 包的 `package.json` 为准 |
 | 制品名称 | 内部制品为 `harken-integration-bundle`，独立下载为 `HarkenIntegrationBundle` |
 | 发布与门禁 | 集成包由 `Integration Artifact` 工作流组装交付，`PR Gate Integration` 执行质量门禁 |
 | 发布证据 | 新证据使用 `product=integration`，SBOM 组件名与核验记录产品名一致；既有证据保留原身份，不重写或迁移 |
 | Studio 随附布局 | 主目录为 `HarkenIntegration`，同时提供 `HarkenSDK/Unity/Harken` 实体副本供旧 Hub 发现与安装集成包；两份内容逐文件校验一致 |
 | Unity 身份 | 外层分发命名不改变 Unity 包标识、程序集、GUID 或工程安装位置 |
 | 运行库升级 | 游戏工程需更新集成包才能获得原生运行库修正，单独升级 Studio 不会替换游戏工程运行库 |
-| Schema 兼容 | Studio 0.9.2 的 Editor Schema 为 9、Pack Schema 为 4，与 0.9.1 一致；0.9.1 工程无需迁移，既有 Pack 不因升级而强制重打 |
+| Schema 兼容 | Studio 0.10.0 写出 Pack 5 与 PackMetadata 5。升级游戏项目时，用 Studio 0.10.0 重新导出旧 Pack，并与 0.10.0 集成包一起交付 |
 | 发布工具 | 仓内 `HarkenIntegration/Test/PackPublishing` 的 Python 工具调用 StudioCLI 导出后生成逐包压缩、平台 ZIP 或 Windows 常驻发布物。Unity 集成包只分发 `Unity/Harken` 下的内容 |
 
 ## 命名与兼容边界

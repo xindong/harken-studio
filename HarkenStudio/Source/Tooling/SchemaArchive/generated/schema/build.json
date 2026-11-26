@@ -1,6 +1,11 @@
 {
   "files": [
     {
+      "path": "Editor/10/ProjectSerializedSchema.json",
+      "sha256": "ff4fcc2b60c86ff1ac2bbe005673c78a02d8ee7870befcc1ecee5d4d740f70ee",
+      "size": 88429
+    },
+    {
       "path": "Editor/7/ProjectSerializedSchema.json",
       "sha256": "40ca6a6b2cb60269afe4d2c3389117a6fa7ba84ef491ecdf1217c3821e171d91",
       "size": 78325
@@ -12,8 +17,8 @@
     },
     {
       "path": "Editor/9/ProjectSerializedSchema.json",
-      "sha256": "21b08212149cb36d907f727a89bb199a92dc5ceb98a2df69da31b79d1fa48ec3",
-      "size": 88419
+      "sha256": "c3db29fc7df178751e8126a17011adfc2f5a679926324bc22ecc616187ee873d",
+      "size": 78240
     },
     {
       "path": "Pack/3/PackMetadataSchema.json",
@@ -22,20 +27,25 @@
     },
     {
       "path": "Pack/4/PackMetadataSchema.json",
-      "sha256": "29761a7709537c931ccae1b51209f540603b0693a80e668edf1ae3d517df48a5",
+      "sha256": "7fad52bfa2826c13a7eb1989a298ec6817ddad3ca0627e0e9d694ba2f06d4d86",
+      "size": 6783
+    },
+    {
+      "path": "Pack/5/PackMetadataSchema.json",
+      "sha256": "61dbf0d124773fd51a24d570aaa49f97de2d892429d67188001db261eb2db799",
       "size": 6851
     }
   ],
   "generated": [
     {
       "path": "ProjectSchemaGenerated.h",
-      "sha256": "7e29eea25cafd002d4fe8b256bd4898ba6639b0de78cd8598e0cd6813f09c375",
-      "size": 195
+      "sha256": "4960eaaa70df05021f1efcc8f2440b1de1ff302a193187357ba429ff781223da",
+      "size": 199
     },
     {
       "path": "ProjectSchemaValidator.generated.cpp",
-      "sha256": "8a0f3fee1430e58fe063907dec497fc7f9ed836507a2c8b968b68786dbd4e21e",
-      "size": 1050747
+      "sha256": "bf2ed9f1c1c1705d92f655146ec8858073b06bd32367a8e0030b5d6874e9ae3a",
+      "size": 1382196
     },
     {
       "path": "ProjectSchemaValidator.generated.h",
@@ -55,14 +65,19 @@
       "size": 77870
     },
     {
+      "path": "Editor/9/ProjectSerializedSchema.json",
+      "sha256": "c3db29fc7df178751e8126a17011adfc2f5a679926324bc22ecc616187ee873d",
+      "size": 78240
+    },
+    {
       "path": "Editor/current/ProjectSerializedSchema.json",
-      "sha256": "21b08212149cb36d907f727a89bb199a92dc5ceb98a2df69da31b79d1fa48ec3",
-      "size": 88419
+      "sha256": "ff4fcc2b60c86ff1ac2bbe005673c78a02d8ee7870befcc1ecee5d4d740f70ee",
+      "size": 88429
     },
     {
       "path": "Editor/manifest.json",
-      "sha256": "1f632a681570f5d688a095abc1c38ab911e72e4958440d8bbf267b476501e997",
-      "size": 134
+      "sha256": "cc12fafcf5cd719b75cbc91f2c4b546978a8cdccc105c2c18a6e0927e71a8213",
+      "size": 149
     },
     {
       "path": "Pack/3/PackMetadataSchema.json",
@@ -70,31 +85,37 @@
       "size": 14102
     },
     {
+      "path": "Pack/4/PackMetadataSchema.json",
+      "sha256": "7fad52bfa2826c13a7eb1989a298ec6817ddad3ca0627e0e9d694ba2f06d4d86",
+      "size": 6783
+    },
+    {
       "path": "Pack/current/PackMetadataSchema.json",
-      "sha256": "29761a7709537c931ccae1b51209f540603b0693a80e668edf1ae3d517df48a5",
+      "sha256": "61dbf0d124773fd51a24d570aaa49f97de2d892429d67188001db261eb2db799",
       "size": 6851
     },
     {
       "path": "Pack/manifest.json",
-      "sha256": "c936f223f7e86985040d34de4ce10e7559c73061f8b9bafe1373c7a74a7a20c7",
-      "size": 111
+      "sha256": "4a414a0cd140569fb15583b5ce7f72d85dfa582f3b7b90917574c5e94ac56470",
+      "size": 118
     }
   ],
   "manifestVersion": 1,
-  "snapshotHash": "776bec2ec41762ad479ec7b00192a4127a698ed12615341531c11cf2f17a365e",
+  "snapshotHash": "9f834691f99aa2a4b2264a71785cf21171ff7204f37aa79fe6dfbdc36afed31f",
   "trees": {
     "Editor": {
-      "currentVersion": 9,
+      "currentVersion": 10,
       "supportedVersions": [
         7,
         8,
-        9
+        9,
+        10
       ]
     },
     "Pack": {
-      "currentVersion": 4,
+      "currentVersion": 5,
       "supportedVersions": [
-        4
+        5
       ]
     }
   }

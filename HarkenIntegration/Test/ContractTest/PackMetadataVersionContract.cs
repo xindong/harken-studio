@@ -67,7 +67,7 @@ namespace Harken.Test
             try
             {
                 File.WriteAllBytes(binary, badCrc);
-                File.WriteAllText(json, "{\"packMetadataVersion\":4,\"variables\":[]}");
+                File.WriteAllText(json, "{\"packMetadataVersion\":5,\"variables\":[]}");
                 SynchronizationContext.SetSynchronizationContext(new TestControlContext());
                 VnConfig config = default;
                 Assert(PackBootstrap.StartDirectory(root, null, ref config, out _) == VnResult.VN_BAD_PACK,
@@ -103,22 +103,22 @@ namespace Harken.Test
             foreach (bool init in new[] { true, false })
             {
                 string fields = init ? "\"variables\":[]" : action;
-                foreach (string version in new[] { "4", "4.0", "4e0", "40e-1", "0.04E+2", "400e-2", "4e-0000" })
+                foreach (string version in new[] { "5", "5.0", "5e0", "50e-1", "0.05E+2", "500e-2", "5e-0000" })
                     Require(PackMetadata.Parse(Encoding.UTF8.GetBytes("{\"packMetadataVersion\":" + version + "," + fields +
                         ",\"metadata\":false,\"waveforms\":42}"), pack, init ? null : "Play_Head", "", default, out _),
                         "exact Pack metadata version " + version);
-                foreach (string version in new[] { null, "3", "999", "\"4\"", "true", "null", "[]", "{}", "4.5", "-4",
-                    "0", "4.0000000000000001", "3.9999999999999999", "4e999999999999999999999", "4e-999999999999999999999" })
+                foreach (string version in new[] { null, "4", "999", "\"5\"", "true", "null", "[]", "{}", "5.5", "-5",
+                    "0", "5.0000000000000001", "4.9999999999999999", "5e999999999999999999999", "5e-999999999999999999999" })
                 {
                     string field = version == null ? "" : "\"packMetadataVersion\":" + version + ",";
                     Assert(PackMetadata.Parse(Encoding.UTF8.GetBytes("{" + field + fields +
-                        ",\"schema_version\":4,\"schemaVersion\":4,\"metadata\":{\"packMetadataVersion\":4}}"), pack, init ? null : "Play_Head", "", default, out _) ==
+                        ",\"schema_version\":5,\"schemaVersion\":5,\"metadata\":{\"packMetadataVersion\":5}}"), pack, init ? null : "Play_Head", "", default, out _) ==
                         VnResult.VN_BAD_PACK, "reject Pack metadata version " + (version ?? "missing"));
                 }
             }
-            Require(PackMetadata.Parse(Encoding.UTF8.GetBytes("{\"packMetadataVersion\":4,\"variables\":[{\"name\":\"Choice\"," +
+            Require(PackMetadata.Parse(Encoding.UTF8.GetBytes("{\"packMetadataVersion\":5,\"variables\":[{\"name\":\"Choice\"," +
                 "\"guid\":\"11111111-2222-3333-4444-555555555555\",\"labels\":[]}]}"), pack, null, "", default, out _), "empty labels");
-            byte[] json = Encoding.UTF8.GetBytes("{\"packMetadataVersion\":4,\"variables\":[]}");
+            byte[] json = Encoding.UTF8.GetBytes("{\"packMetadataVersion\":5,\"variables\":[]}");
             foreach (byte[] invalid in new[] { null, Array.Empty<byte>(), new byte[7], new byte[8] })
                 Assert(PackMetadata.Parse(json, invalid, null, "", default, out _) == VnResult.VN_BAD_PACK,
                     "missing or invalid Pack header");

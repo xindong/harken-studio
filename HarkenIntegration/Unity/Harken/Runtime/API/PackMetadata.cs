@@ -8,7 +8,7 @@ namespace Harken
 {
     internal sealed class PackMetadata
     {
-        internal const uint SupportedPackMetadataVersion = 4;
+        internal const uint SupportedPackMetadataVersion = 5;
 
         internal readonly struct Variable
         {
