@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Core/SelectionData.h"
+
 #include <QUuid>
 #include <QWidget>
 
@@ -11,8 +13,6 @@ class QToolButton;
 namespace harken::studio {
 
 struct ProjectItem;
-struct SelectionData;
-struct SelectionEntry;
 class TableWidget;
 
 class SelectionListWidget : public QWidget
@@ -47,8 +47,9 @@ private:
     bool addChildren(const QList<uint32_t>& objectIds);
     bool replaceOccurrence(uint32_t stableOccurrenceOrdinal, uint32_t objectId);
     void removeSelected();
-    SelectionData occurrenceCandidate() const;
-    bool commitOccurrences(SelectionData candidate);
+    SelectionTable modeTable() const;
+    PlatformScope displayedPlatform() const;
+    bool commitOccurrences(const std::vector<SelectionEntry>& edited);
     void moveRow(int from, int to);
     void commitWeight(uint32_t stableOccurrenceOrdinal, int value);
     void refreshWeightValues();

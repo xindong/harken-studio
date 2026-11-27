@@ -130,33 +130,86 @@ bool ReadFieldValue(const JsonValue& value, bool& field,
     return true;
 }
 
-bool ReadFieldValue(const JsonValue& value, std::vector<SendFieldGroupRow>& rows,
+bool ReadPlatformKey(const std::string& name, AuthoringGuid& platform,
                      const std::string& path, std::string& error)
+{
+    JsonValue identity;
+    identity.kind = JsonValue::Kind::String;
+    identity.text = name;
+    if (!ReadGuid(identity, platform, path, error)) return false;
+    if (harken::studio::project_schema::IsNull(platform) || WriteGuid(platform) != name)
+        return Fail(error, path, "expected a canonical non-null platform UUID");
+    return true;
+}
+
+template <typename Row, typename ReadCells>
+bool ReadRouteRows(const JsonValue& value, std::vector<Row>& rows, const std::string& path,
+                   std::initializer_list<std::string_view> members, std::string& error,
+                   ReadCells readCells)
 {
     if (value.kind != JsonValue::Kind::Array)
         return Fail(error, path, "expected an array");
     for (std::size_t index = 0; index < value.items.size(); ++index) {
         const auto& entry = value.items[index];
         const auto rowPath = path + "[" + std::to_string(index) + "]";
-        if (!CheckMembers(entry, rowPath, {"targetBusID", "sendLevel", "type", "duckTarget"},
-                          {"targetBusID", "sendLevel"}, error)) return false;
-        SendFieldGroupRow row;
-        if (!ReadGuid(*entry.Find("targetBusID"), row.targetBusID, rowPath + ".targetBusID", error)
-            || !ReadFloat(*entry.Find("sendLevel"), row.sendLevel, rowPath + ".sendLevel", error))
+        if (!CheckMembers(entry, rowPath, members, {"id", "targetBusID", "sendLevel"}, error)) return false;
+        Row row;
+        if (!ReadGuid(*entry.Find("id"), row.id, rowPath + ".id", error)
+            || !ReadGuid(*entry.Find("targetBusID"), row.targetBusID, rowPath + ".targetBusID", error)
+            || !ReadFloat(*entry.Find("sendLevel"), row.sendLevel, rowPath + ".sendLevel", error)
+            || !readCells(entry, row, rowPath))
             return false;
-        using harken::studio::project_schema::SendType;
-        if (const auto* type = entry.Find("type")) {
-            if (type->kind != JsonValue::Kind::String || (type->text != "Send" && type->text != "Sidechain"))
-                return Fail(error, rowPath + ".type", "expected Send or Sidechain");
-            row.type = type->text == "Sidechain" ? SendType::Sidechain : SendType::Send;
+        if (const auto* platforms = entry.Find("platforms")) {
+            if (platforms->kind != JsonValue::Kind::Object)
+                return Fail(error, rowPath + ".platforms", "expected an object");
+            for (const auto& [name, cellsValue] : platforms->members) {
+                const auto cellsPath = rowPath + ".platforms." + name;
+                AuthoringGuid platform;
+                if (!ReadPlatformKey(name, platform, cellsPath, error)) return false;
+                typename decltype(row.platforms)::mapped_type cells;
+                if (cellsValue.kind != JsonValue::Kind::Object || cellsValue.members.empty())
+                    return Fail(error, cellsPath, "expected a nonempty object");
+                for (const auto& [field, cell] : cellsValue.members) {
+                    const auto cellPath = cellsPath + "." + field;
+                    if (field == "targetBusID") {
+                        AuthoringGuid target;
+                        if (!ReadGuid(cell, target, cellPath, error)) return false;
+                        cells.targetBusID = target;
+                    } else if (field == "sendLevel") {
+                        float level = 0.0f;
+                        if (!ReadFloat(cell, level, cellPath, error)) return false;
+                        cells.sendLevel = level;
+                    } else if constexpr (requires { cells.duckTarget; }) {
+                        if (field != "duckTarget" || cell.kind != JsonValue::Kind::Bool)
+                            return Fail(error, cellPath, "unknown member");
+                        cells.duckTarget = cell.boolean;
+                    } else {
+                        return Fail(error, cellPath, "unknown member");
+                    }
+                }
+                row.platforms.emplace(platform, cells);
+            }
         }
-        if (const auto* duckTarget = entry.Find("duckTarget"))
-            if (!ReadFieldValue(*duckTarget, row.duckTarget, rowPath + ".duckTarget", error)) return false;
-        if (!harken::studio::project_schema::IsValidSendRoute(row.type, row.duckTarget))
-            return Fail(error, rowPath + ".duckTarget", "only Sidechain can duck its target");
-        rows.push_back(row);
+        rows.push_back(std::move(row));
     }
     return true;
+}
+
+bool ReadFieldValue(const JsonValue& value, std::vector<SendFieldGroupRow>& rows,
+                     const std::string& path, std::string& error)
+{
+    return ReadRouteRows(value, rows, path, {"id", "targetBusID", "sendLevel", "platforms"}, error,
+        [](const JsonValue&, SendFieldGroupRow&, const std::string&) { return true; });
+}
+
+bool ReadFieldValue(const JsonValue& value, std::vector<SidechainFieldGroupRow>& rows,
+                     const std::string& path, std::string& error)
+{
+    return ReadRouteRows(value, rows, path, {"id", "targetBusID", "sendLevel", "duckTarget", "platforms"}, error,
+        [&error](const JsonValue& entry, SidechainFieldGroupRow& row, const std::string& rowPath) {
+            const auto* duck = entry.Find("duckTarget");
+            return !duck || ReadFieldValue(*duck, row.duckTarget, rowPath + ".duckTarget", error);
+        });
 }
 
 bool ReadEffectJson(const JsonValue& value, QJsonValue& result,
@@ -237,22 +290,60 @@ void WriteFieldValue(JsonWriter& writer, float value) { WriteFloat(writer, value
 void WriteFieldValue(JsonWriter& writer, bool value) { writer.ValueBool(value); }
 void WriteFieldValue(JsonWriter& writer, AuthoringGuid value) { writer.ValueString(WriteGuid(value)); }
 
-void WriteFieldValue(JsonWriter& writer, const std::vector<SendFieldGroupRow>& rows)
+template <typename Row, typename WriteExtra, typename WriteCells>
+void WriteRouteRows(JsonWriter& writer, const std::vector<Row>& rows, WriteExtra writeExtra, WriteCells writeCells)
 {
     writer.BeginArray();
     for (const auto& row : rows) {
         writer.BeginObject();
+        writer.Key("id");
+        writer.ValueString(WriteGuid(row.id));
         writer.Key("targetBusID");
         writer.ValueString(WriteGuid(row.targetBusID));
         writer.Key("sendLevel");
         WriteFloat(writer, row.sendLevel);
-        writer.Key("type");
-        writer.ValueString(row.type == harken::studio::project_schema::SendType::Sidechain ? "Sidechain" : "Send");
-        writer.Key("duckTarget");
-        writer.ValueBool(row.duckTarget);
+        writeExtra(row);
+        if (!row.platforms.empty()) {
+            writer.Key("platforms");
+            writer.BeginObject();
+            for (const auto& [platform, cells] : row.platforms) {
+                writer.Key(WriteGuid(platform).c_str());
+                writer.BeginObject();
+                if (cells.targetBusID) {
+                    writer.Key("targetBusID");
+                    writer.ValueString(WriteGuid(*cells.targetBusID));
+                }
+                if (cells.sendLevel) {
+                    writer.Key("sendLevel");
+                    WriteFloat(writer, *cells.sendLevel);
+                }
+                writeCells(cells);
+                writer.EndObject();
+            }
+            writer.EndObject();
+        }
         writer.EndObject();
     }
     writer.EndArray();
+}
+
+void WriteFieldValue(JsonWriter& writer, const std::vector<SendFieldGroupRow>& rows)
+{
+    WriteRouteRows(writer, rows, [](const SendFieldGroupRow&) {}, [](const SendFieldGroupCells&) {});
+}
+
+void WriteFieldValue(JsonWriter& writer, const std::vector<SidechainFieldGroupRow>& rows)
+{
+    WriteRouteRows(writer, rows,
+        [&writer](const SidechainFieldGroupRow& row) {
+            writer.Key("duckTarget");
+            writer.ValueBool(row.duckTarget);
+        },
+        [&writer](const SidechainFieldGroupCells& cells) {
+            if (!cells.duckTarget) return;
+            writer.Key("duckTarget");
+            writer.ValueBool(*cells.duckTarget);
+        });
 }
 
 void WriteFieldValue(JsonWriter& writer, const EffectChainLedger& effects)
@@ -264,7 +355,8 @@ template <typename Payload>
 bool ReadState(const JsonValue& value, GroupState<Payload>& state,
                const std::string& path, std::string& error, bool shared = false)
 {
-    if (!CheckMembers(value, path, {"inherit", "values"}, {}, error)) return false;
+    if (!(shared ? CheckMembers(value, path, {"inherit", "values"}, {}, error)
+                 : CheckMembers(value, path, {"values"}, {}, error))) return false;
     state.mode = FieldGroupMode::UseShared;
     if (const auto* inherit = value.Find("inherit")) {
         bool enabled = false;
@@ -422,6 +514,7 @@ bool CheckOccurrence(const JsonValue& value, const std::string& path,
     for (const auto& [name, member] : value.members) {
         const std::string memberPath = path + "." + name;
         if (name == "fieldGroups" || name == "sectionGroups" || name == "output" || name == "send"
+            || name == "sidechain" || name == "sidechains"
             || name == "spatialRating" || name == "effect" || name == "effects" || name == "conversion"
             || name == "outputBusId" || name == "outputBusRef"
             || name == "outputBusOverride" || name == "overrideBits"
@@ -458,14 +551,16 @@ bool ReadFieldGroupsJson(const std::string& text,
     if (!CheckMembers(root, "fieldGroups", {"shared", "platforms"}, {"shared"}, error))
         return false;
     const auto& shared = *root.Find("shared");
-    if (!CheckMembers(shared, "fieldGroups.shared", {"output", "send", "spatialRating", "effect", "conversion"},
-                      {"output", "send", "spatialRating", "effect", "conversion"}, error))
+    if (!CheckMembers(shared, "fieldGroups.shared", {"output", "send", "sidechain", "spatialRating", "effect", "conversion"},
+                      {"output", "send", "sidechain", "spatialRating", "effect", "conversion"}, error))
         return false;
     DefinitionFieldGroups parsed;
     if (!ReadState(*shared.Find("output"), parsed.output.shared,
                    "fieldGroups.shared.output", error, true)
         || !ReadState(*shared.Find("send"), parsed.send.shared,
                       "fieldGroups.shared.send", error, true)
+        || !ReadState(*shared.Find("sidechain"), parsed.sidechain.shared,
+                      "fieldGroups.shared.sidechain", error, true)
         || !ReadState(*shared.Find("spatialRating"), parsed.spatialRating.shared,
                       "fieldGroups.shared.spatialRating", error, true)
         || !ReadState(*shared.Find("effect"), parsed.effects.shared,
@@ -478,18 +573,11 @@ bool ReadFieldGroupsJson(const std::string& text,
             return Fail(error, "fieldGroups.platforms", "expected an object");
         for (const auto& [name, value] : platforms->members) {
             const auto path = "fieldGroups.platforms." + name;
-            JsonValue identity;
-            identity.kind = JsonValue::Kind::String;
-            identity.text = name;
             AuthoringGuid platform;
-            if (!ReadGuid(identity, platform, path, error)) return false;
-            if (harken::studio::project_schema::IsNull(platform) || WriteGuid(platform) != name)
-                return Fail(error, path, "expected a canonical non-null platform UUID");
-            if (!CheckMembers(value, path, {"output", "send", "spatialRating", "effect", "conversion"}, {}, error)
+            if (!ReadPlatformKey(name, platform, path, error)) return false;
+            if (!CheckMembers(value, path, {"output", "spatialRating", "conversion"}, {}, error)
                 || !ReadPlatformState(value, "output", platform, parsed.output, path, error)
-                || !ReadPlatformState(value, "send", platform, parsed.send, path, error)
                 || !ReadPlatformState(value, "spatialRating", platform, parsed.spatialRating, path, error)
-                || !ReadPlatformState(value, "effect", platform, parsed.effects, path, error)
                 || !ReadPlatformState(value, "conversion", platform, parsed.conversion, path, error))
                 return false;
         }
@@ -513,6 +601,8 @@ bool WriteFieldGroupsJson(const DefinitionFieldGroups& groups,
     WriteState(writer, groups.output.shared);
     writer.Key("send");
     WriteState(writer, groups.send.shared);
+    writer.Key("sidechain");
+    WriteState(writer, groups.sidechain.shared);
     writer.Key("spatialRating");
     WriteState(writer, groups.spatialRating.shared);
     writer.Key("effect");
@@ -520,24 +610,19 @@ bool WriteFieldGroupsJson(const DefinitionFieldGroups& groups,
     writer.Key("conversion");
     WriteState(writer, groups.conversion.shared);
     writer.EndObject();
-    if (!groups.output.platforms.empty() || !groups.send.platforms.empty()
-        || !groups.spatialRating.platforms.empty() || !groups.effects.platforms.empty()
+    if (!groups.output.platforms.empty() || !groups.spatialRating.platforms.empty()
         || !groups.conversion.platforms.empty()) {
         writer.Key("platforms");
         writer.BeginObject();
         std::set<AuthoringGuid> platforms;
         for (const auto& [platform, state] : groups.output.platforms) platforms.insert(platform);
-        for (const auto& [platform, state] : groups.send.platforms) platforms.insert(platform);
         for (const auto& [platform, state] : groups.spatialRating.platforms) platforms.insert(platform);
-        for (const auto& [platform, state] : groups.effects.platforms) platforms.insert(platform);
         for (const auto& [platform, state] : groups.conversion.platforms) platforms.insert(platform);
         for (const auto platform : platforms) {
             writer.Key(WriteGuid(platform).c_str());
             writer.BeginObject();
             WritePlatformState(writer, "output", platform, groups.output);
-            WritePlatformState(writer, "send", platform, groups.send);
             WritePlatformState(writer, "spatialRating", platform, groups.spatialRating);
-            WritePlatformState(writer, "effect", platform, groups.effects);
             WritePlatformState(writer, "conversion", platform, groups.conversion);
             writer.EndObject();
         }

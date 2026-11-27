@@ -796,7 +796,7 @@ TEST(ProjectSerialization, ReusedSerializerObservesAuthoringChangesAndOwnsReturn
     };
     compare(true);
     item.fieldGroups = harken::studio::MakeRootFieldGroups({1, 2});
-    item.fieldGroups.send.shared.localHistory->sends = {{{3, 4}, -6.0f}, {{5, 6}, -12.0f}};
+    item.fieldGroups.send.shared.localHistory->sends = {{{7, 8}, {3, 4}, -6.0f}, {{9, 10}, {5, 6}, -12.0f}};
     compare(true);
     item.fieldGroups.output.shared.localHistory->outputBusVolume = -0.0f;
     compare(true);
@@ -818,7 +818,8 @@ TEST(ProjectSerialization, ReusedSerializerObservesAuthoringChangesAndOwnsReturn
     item.fieldGroups.output.shared.localHistory->outputBusRef = {9, 10};
     compare(true);
     item.fieldGroups.output.platforms[{7, 8}].mode = harken::studio::FieldGroupMode::Inherit;
-    compare(true);
+    compare(false);
+    item.fieldGroups.output.platforms[{7, 8}].mode = harken::studio::FieldGroupMode::UseShared;
     item.fieldGroups.output.platforms.clear();
     compare(true);
     item.fieldGroups.output.shared.localHistory->outputBusVolume =

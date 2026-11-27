@@ -136,15 +136,13 @@ void remapTree(ProjectItem* item, const TemplateIdentityMap& identities)
     };
     if (auto* mix = item->comp<VMixNode>()) {
         remapEffects(mix->effects, {});
-        for (auto& [platform, effects] : mix->effectPlatforms)
-            remapEffects(effects, {});
     }
     VisitAuthoredEffectChains(item->fieldGroups, remapEffects);
     remapAttenuationReferences(item->platformOverrides, identities);
     if (auto* selection = item->comp<VSelection>()) {
         QHash<QUuid, QUuid> rowGuids;
         for (auto* table : selection->selections.tables()) {
-            for (auto& axis : table->matchAxes) axis = identities.guids.value(axis, axis);
+            table->remapMatchAxes(identities.guids);
             for (auto& row : table->mixingRows) {
                 if (!rowGuids.contains(row.guid)) rowGuids.insert(row.guid, QUuid::createUuid());
                 row.guid = rowGuids.value(row.guid);
@@ -197,8 +195,6 @@ void remintSubentityStableIds(ProjectData& project, ProjectItem* item)
             ledger.replace(std::move(effects));
         };
         remintEffects(mix->effects, {});
-        for (auto& [platform, effects] : mix->effectPlatforms)
-            remintEffects(effects, {});
         VisitAuthoredEffectChains(item->fieldGroups, remintEffects);
     }
     if (auto* timeline = item->comp<VTrack>())
@@ -490,22 +486,27 @@ bool TemplateApplyService::seedTemplateInto(
                 auto* variable = variableItem ? variableItem->comp<VVariable>() : nullptr;
                 if (!variable) return setErr(QStringLiteral("Template Grid axis has no Variable"));
                 for (auto& row : table->matchRows) {
-                    auto& cell = row.cells[axis];
-                    if (!cell) continue;
-                    if (!cell->labelId.isNull()) {
-                        if (!VariableSemantics::labelById(variable->labels, cell->labelId))
-                            return setErr(QStringLiteral("Template Grid Label identity is missing"));
-                        continue;
+                    std::vector<std::optional<DiscreteGridCell>*> cells{&row.cells[axis]};
+                    for (auto& [platform, values] : row.platformCells)
+                        if (const auto value = values.find(table->matchAxes[axis]); value != values.end())
+                            cells.push_back(&value->second);
+                    for (auto* cell : cells) {
+                        if (!*cell) continue;
+                        if (!(*cell)->labelId.isNull()) {
+                            if (!VariableSemantics::labelById(variable->labels, (*cell)->labelId))
+                                return setErr(QStringLiteral("Template Grid Label identity is missing"));
+                            continue;
+                        }
+                        const int index = (*cell)->legacyValue;
+                        if (index < 0 || index > VariableSemantics::kStepExactIntBound)
+                            return setErr(QStringLiteral("Template Grid Label index is invalid"));
+                        const auto* label = VariableSemantics::labelAtIndex(variable->labels, index);
+                        if (!label) {
+                            variable->labels.push_back({index, {}});
+                            label = &variable->labels.back();
+                        }
+                        *cell = DiscreteGridCell(label->id);
                     }
-                    const int index = cell->legacyValue;
-                    if (index < 0 || index > VariableSemantics::kStepExactIntBound)
-                        return setErr(QStringLiteral("Template Grid Label index is invalid"));
-                    const auto* label = VariableSemantics::labelAtIndex(variable->labels, index);
-                    if (!label) {
-                        variable->labels.push_back({index, {}});
-                        label = &variable->labels.back();
-                    }
-                    cell = DiscreteGridCell(label->id);
                 }
             }
         }

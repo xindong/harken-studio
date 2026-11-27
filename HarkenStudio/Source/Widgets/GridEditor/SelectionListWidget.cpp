@@ -17,6 +17,7 @@
 #include "Widgets/Selector/ObjectRefNavigation.h"
 #include "Widgets/Selector/ObjectRefWidget.h"
 #include "Widgets/Selector/SelectorWindow.h"
+#include "Widgets/Shared/PlatformLocalMarker.h"
 #include "Widgets/Shared/ProjectItemMime.h"
 
 #include <QApplication>
@@ -296,7 +297,10 @@ QWidget* SelectionListWidget::buildRow(int index, const SelectionEntry& occurren
         if (generation != generation_) return;
         commitWeight(stableOccurrenceOrdinal, value);
     });
-    weightCell->addWidget(weight);
+    auto* marker = new PlatformLocalMarker(weightCell);
+    marker->bind(boundItem_, PlatformLocalAddress{.kind = PlatformLocalAddress::Kind::SelectionWeight,
+        .ordinal = occurrence.stableOccurrenceOrdinal});
+    weightCell->addWidget(attachPlatformMarker(weight, marker, weightCell));
     weightCell->setVisible(weightVisible_);
     layout->addWidget(weightCell);
 
@@ -377,14 +381,13 @@ bool SelectionListWidget::canAddChildren(const QList<uint32_t>& objectIds) const
 bool SelectionListWidget::addChildren(const QList<uint32_t>& objectIds)
 {
     if (!canAddChildren(objectIds)) return false;
-    SelectionData candidate = occurrenceCandidate();
+    SelectionTable table = modeTable();
     for (uint32_t objectId : objectIds) {
         const auto* child = ProjectManager::instance().findItemByObjectID(objectId);
-        if (!PlayablePropertyAuthoringV1::addContainerChildOccurrence(
-                *boundItem_, candidate.shared, child->guid))
+        if (!PlayablePropertyAuthoringV1::addContainerChildOccurrence(*boundItem_, table, child->guid))
             return false;
     }
-    if (!commitOccurrences(candidate)) return false;
+    if (!commitOccurrences(table.occurrenceRows(displayedPlatform()))) return false;
     rebuildRows();
     return true;
 }
@@ -395,15 +398,14 @@ bool SelectionListWidget::replaceOccurrence(uint32_t stableOccurrenceOrdinal, ui
     ProjectItem* child =
         ProjectManager::instance().findItemByObjectID(objectId);
     if (!child) return false;
-    SelectionData candidate = occurrenceCandidate();
+    SelectionTable table = modeTable();
     if (!PlayablePropertyAuthoringV1::replaceContainerChildOccurrence(
-            *boundItem_, candidate.shared,
-            stableOccurrenceOrdinal, child->guid))
+            *boundItem_, table, stableOccurrenceOrdinal, child->guid))
         return false;
     const bool updateAudition = selected_ >= 0
         && selected_ < static_cast<int>(rowWidgets_.size())
         && rowWidgets_[selected_]->property("stableOccurrenceOrdinal").toUInt() == stableOccurrenceOrdinal;
-    if (!commitOccurrences(candidate)) return false;
+    if (!commitOccurrences(table.occurrenceRows(displayedPlatform()))) return false;
     rebuildRows();
     if (updateAudition) emit auditionTargetRequested(child->guid);
     return true;
@@ -412,81 +414,36 @@ bool SelectionListWidget::replaceOccurrence(uint32_t stableOccurrenceOrdinal, ui
 void SelectionListWidget::removeSelected()
 {
     if (!boundItem_ || selected_ < 0
-        || selected_ >= static_cast<int>(
-            boundItem_->comp<VSelection>()->selections.table(currentWorldPlatformScope(PlatformContextService::instance().context())).occurrenceRows().size()))
+        || selected_ >= static_cast<int>(modeTable().occurrenceRows().size()))
         return;
     box_->removeSelectedRow([this] {
-        SelectionData candidate = occurrenceCandidate();
-        auto rows = candidate.shared.occurrenceRows();
+        auto rows = modeTable().occurrenceRows(displayedPlatform());
         rows.erase(rows.begin() + selected_);
-        if (!candidate.shared.setOccurrenceRows(rows)) return false;
-        if (!commitOccurrences(candidate)) return false;
+        if (!commitOccurrences(rows)) return false;
         rebuildRows();
         return true;
     });
 }
 
-SelectionData SelectionListWidget::occurrenceCandidate() const
+SelectionTable SelectionListWidget::modeTable() const
 {
-    SelectionData candidate = boundItem_->comp<VSelection>()->selections;
-    candidate.shared = candidate.table(currentWorldPlatformScope(
-        PlatformContextService::instance().context()));
-    return candidate;
+    const auto* selection = boundItem_->comp<VSelection>();
+    return selection->selections.table(selection->mode);
 }
 
-bool SelectionListWidget::commitOccurrences(SelectionData candidate)
+PlatformScope SelectionListWidget::displayedPlatform() const
+{
+    return currentWorldPlatformScope(PlatformContextService::instance().context());
+}
+
+bool SelectionListWidget::commitOccurrences(const std::vector<SelectionEntry>& edited)
 {
     if (!boundItem_) return false;
-    const auto& context = PlatformContextService::instance().context();
-    const auto edited = candidate.shared.occurrenceRows();
-    candidate = boundItem_->comp<VSelection>()->selections;
-    const auto original = candidate.table(currentWorldPlatformScope(context)).occurrenceRows();
-    const auto apply = [&](SelectionTable& table) {
-        const auto existing = table.occurrenceRows();
-        auto highWater = table.occurrenceOrdinalHighWater;
-        QSet<uint32_t> used;
-        std::vector<SelectionEntry> rows;
-        const auto corresponding = [&](const SelectionEntry& source,
-                                       const std::vector<SelectionEntry>& sourceRows) -> const SelectionEntry* {
-            for (const auto& row : existing)
-                if (row.stableOccurrenceOrdinal == source.stableOccurrenceOrdinal
-                    && row.childGuid == source.childGuid && !used.contains(row.stableOccurrenceOrdinal))
-                    return &row;
-            int occurrence = 0;
-            for (const auto& row : sourceRows) {
-                if (row.stableOccurrenceOrdinal == source.stableOccurrenceOrdinal) break;
-                if (row.childGuid == source.childGuid) ++occurrence;
-            }
-            for (const auto& row : existing)
-                if (row.childGuid == source.childGuid && occurrence-- == 0)
-                    return used.contains(row.stableOccurrenceOrdinal) ? nullptr : &row;
-            return nullptr;
-        };
-        for (const auto& row : edited) {
-            const auto before = std::find_if(original.begin(), original.end(), [&](const auto& previous) {
-                return previous.stableOccurrenceOrdinal == row.stableOccurrenceOrdinal;
-            });
-            const auto* match = before != original.end() ? corresponding(*before, original) : nullptr;
-            if (!match) match = corresponding(row, edited);
-            if (!match && highWater > std::numeric_limits<uint32_t>::max()) return false;
-            const auto ordinal = match ? match->stableOccurrenceOrdinal : static_cast<uint32_t>(highWater++);
-            used.insert(ordinal);
-            rows.push_back({row.childGuid, ordinal, row.weight});
-        }
-        return table.setOccurrenceRows(rows);
-    };
-    if (context.all || context.selected.isEmpty()) {
-        if (!apply(candidate.shared)) return false;
-        for (auto& table : candidate.platforms)
-            if (!apply(table)) return false;
-    } else {
-        for (const auto& platform : context.selected)
-            if (!apply(candidate.editTable(platform))) return false;
-    }
-    for (auto it = candidate.platforms.begin(); it != candidate.platforms.end();) {
-        if (it.value() == candidate.shared) it = candidate.platforms.erase(it);
-        else ++it;
-    }
+    const auto* selection = boundItem_->comp<VSelection>();
+    auto candidate = selection->selections;
+    if (!candidate.editTable(selection->mode).editOccurrenceRows(edited, displayedPlatform(),
+            platformEditScope(PlatformContextService::instance().context())))
+        return false;
     selfWriting_ = true;
     const ActionResult result = ActionManager::instance().execute(
         QStringLiteral("set_item_property"),
@@ -500,13 +457,11 @@ bool SelectionListWidget::commitOccurrences(SelectionData candidate)
 
 void SelectionListWidget::moveRow(int from, int to)
 {
-    SelectionData candidate = occurrenceCandidate();
-    auto order = candidate.shared.occurrenceRows();
+    auto order = modeTable().occurrenceRows(displayedPlatform());
     auto moved = order[static_cast<size_t>(from)];
     order.erase(order.begin() + from);
     order.insert(order.begin() + to, std::move(moved));
-    if (!candidate.shared.setOccurrenceRows(order)) return;
-    commitOccurrences(candidate);
+    commitOccurrences(order);
     rebuildRows();
     selectRow(to);
 }
@@ -514,11 +469,13 @@ void SelectionListWidget::moveRow(int from, int to)
 void SelectionListWidget::commitWeight(uint32_t stableOccurrenceOrdinal, int value)
 {
     if (refreshingWeights_ || !boundItem_) return;
-    auto candidate = occurrenceCandidate();
-    auto* row = candidate.shared.find(stableOccurrenceOrdinal);
-    if (!row) return;
+    auto rows = modeTable().occurrenceRows(displayedPlatform());
+    const auto row = std::find_if(rows.begin(), rows.end(), [&](const SelectionEntry& entry) {
+        return entry.stableOccurrenceOrdinal == stableOccurrenceOrdinal;
+    });
+    if (row == rows.end()) return;
     row->weight = value;
-    commitOccurrences(std::move(candidate));
+    commitOccurrences(rows);
     refreshWeightValues();
 }
 
@@ -594,8 +551,7 @@ void SelectionListWidget::rebuildRows()
     if (!boundItem_) return;
 
     int index = 0;
-    for (const auto& occurrence :
-         boundItem_->comp<VSelection>()->selections.table(currentWorldPlatformScope(PlatformContextService::instance().context())).occurrenceRows()) {
+    for (const auto& occurrence : modeTable().occurrenceRows(displayedPlatform())) {
         ProjectItem* child = occurrenceTarget(occurrence.childGuid);
         if (!child) continue;
         QWidget* row = buildRow(index, occurrence, child);

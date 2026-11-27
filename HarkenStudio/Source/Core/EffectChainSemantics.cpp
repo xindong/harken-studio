@@ -115,6 +115,12 @@ QJsonValue EffectEntry::toJson() const
     else
         object[QStringLiteral("effectGuid")] = effectGuid.toString(QUuid::WithoutBraces);
     if (bypass) object[QStringLiteral("bypass")] = true;
+    if (!platformBypass.empty()) {
+        QJsonObject platforms;
+        for (const auto& [platform, value] : platformBypass)
+            platforms.insert(platform.toString(QUuid::WithoutBraces), QJsonObject{{QStringLiteral("bypass"), value}});
+        object[QStringLiteral("platforms")] = platforms;
+    }
     return object;
 }
 
@@ -162,6 +168,24 @@ EffectEntry EffectEntry::fromJson(const QJsonValue& value)
     entry.extensions.remove(QStringLiteral("custom"));
     entry.extensions.remove(QStringLiteral("effectGuid"));
     entry.extensions.remove(QStringLiteral("bypass"));
+    entry.extensions.remove(QStringLiteral("platforms"));
+    const QJsonValue platforms = object.value(QStringLiteral("platforms"));
+    if (!platforms.isUndefined()) {
+        bool valid = platforms.isObject();
+        const auto cellsByPlatform = platforms.toObject();
+        for (auto it = cellsByPlatform.begin(); valid && it != cellsByPlatform.end(); ++it) {
+            const QUuid platform(it.key());
+            const auto cells = it.value().toObject();
+            valid = !platform.isNull() && platform.toString(QUuid::WithoutBraces) == it.key()
+                && it.value().isObject() && cells.size() == 1 && cells.value(QStringLiteral("bypass")).isBool();
+            if (valid) entry.platformBypass.emplace(platform, cells.value(QStringLiteral("bypass")).toBool());
+        }
+        if (!valid) {
+            entry.typed = false;
+            entry.opaqueValue = value;
+            return entry;
+        }
+    }
     entry.extensions.remove(QStringLiteral("wetDry"));
     if (!EffectChainSemantics::validate(entry)) {
         entry.typed = false;
@@ -183,6 +207,17 @@ bool EffectChainLedger::replace(std::vector<EffectEntry> entries)
     }
     entries_ = std::move(entries);
     return true;
+}
+
+EffectChainLedger EffectChainLedger::forPlatform(const QUuid& platform) const
+{
+    EffectChainLedger result = *this;
+    for (auto& entry : result.entries_) {
+        const auto found = entry.platformBypass.find(platform);
+        if (found != entry.platformBypass.end()) entry.bypass = found->second;
+        entry.platformBypass.clear();
+    }
+    return result;
 }
 
 QJsonArray EffectChainLedger::toJson() const

@@ -347,10 +347,7 @@ private:
         resumeFromLastRow_->setVisible(visibility.resumeFromLast);
         discipline_->setCurrentIndex(discipline_->findData(static_cast<int>(selection->behavior.discipline)));
         QList<uint32_t> occurrenceOrdinals;
-        occurrenceOrdinals.reserve(static_cast<qsizetype>(
-            boundItem_->comp<VSelection>()->selections.table(currentWorldPlatformScope(PlatformContextService::instance().context())).occurrenceRows().size()));
-        for (const auto& occurrence :
-             boundItem_->comp<VSelection>()->selections.table(currentWorldPlatformScope(PlatformContextService::instance().context())).occurrenceRows())
+        for (const auto& occurrence : selection->selections.table(selection->mode).occurrenceRows())
             occurrenceOrdinals.push_back(occurrence.stableOccurrenceOrdinal);
         avoidRepeat_->setRange(
             0, ContainerBehaviorSemantics::maxAvoidRepeat(

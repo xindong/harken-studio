@@ -6,7 +6,6 @@
 #include <QWidget>
 #include <memory>
 
-class QStackedWidget;
 
 namespace harken::studio {
 
@@ -35,9 +34,9 @@ private:
     PropertyEditorEngine* fields_ = nullptr;
     QWidget* fieldsPage_ = nullptr;
     FilterResponseCanvas* canvas_ = nullptr;
-    QStackedWidget* graph_ = nullptr;
     FilterState gestureStart_;
-    std::array<std::unique_ptr<PropertyEditSession>, 10> gestures_;
+    FilterState gestureBase_;
+    std::unique_ptr<PropertyEditSession> gesture_;
     bool gestureActive_ = false;
 };
 

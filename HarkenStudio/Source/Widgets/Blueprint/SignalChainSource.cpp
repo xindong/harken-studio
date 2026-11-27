@@ -4,6 +4,7 @@
 
 #include "BlueprintConnectCommand.h"
 #include "BlueprintEdgeKind.h"
+#include "Core/BusRouteGraph.h"
 #include "Core/Components/VBus.h"
 #include "Core/Components/VMixNode.h"
 #include "Core/ItemTypeCatalog.h"
@@ -742,13 +743,8 @@ SignalChainSource::doConnect(uint32_t fromId, uint32_t toId,
                 r.error = QStringLiteral("send_cycle");
                 return r;
             }
-            const auto* fromMix = fromBus->comp<VMixNode>();
-            const bool dupSend = fromMix && std::any_of(
-                fromMix->sends.begin(), fromMix->sends.end(),
-                [&](const auto& send) {
-                    return send.targetBusID == toId && send.type == sendType && send.duckTarget == duckTarget;
-                });
-            if (dupSend) {
+            const auto routes = captureBusSendState(*fromBus);
+            if (routes && findBusRoute(*routes, toId, sendType, duckTarget)) {
                 r.error = QStringLiteral("duplicate");
                 r.effectiveType = QStringLiteral("send");
                 return r;
@@ -943,13 +939,8 @@ bool SignalChainSource::doDisconnect(uint32_t fromId, uint32_t toId,
     if (!project_schema::IsValidSendRoute(sendType, duckTarget)) return false;
     if (fromBus != nullptr && fromItem == nullptr) {
         if (kind.isEmpty() || kind == QStringLiteral("send")) {
-            const auto* fromMix = fromBus->comp<VMixNode>();
-            const bool hasSend = fromMix && std::any_of(
-                fromMix->sends.begin(), fromMix->sends.end(),
-                [&](const auto& send) {
-                    return send.targetBusID == toId && send.type == sendType && send.duckTarget == duckTarget;
-                });
-            if (hasSend) {
+            const auto routes = captureBusSendState(*fromBus);
+            if (routes && findBusRoute(*routes, toId, sendType, duckTarget)) {
                 undoMgr.beginMacro(QStringLiteral("Blueprint Disconnect (Send)"));
                 undoMgr.push(new BlueprintSendDisconnectCommand(fromId, toId, sendType, duckTarget));
                 undoMgr.endMacro();

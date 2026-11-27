@@ -7,56 +7,60 @@
 #include <algorithm>
 #include <cmath>
 #include <set>
-#include <tuple>
 
 namespace harken::studio {
 
-std::optional<BusSendState> captureBusSendState(const ProjectItem& bus, PlatformScope scope)
+std::optional<BusSendState> captureBusSendState(const ProjectItem& bus)
 {
     if (bus.type != ProjectItemType::Bus) return {};
-    const auto locator = PlayablePropertyAuthoringV1::definitionLocator(bus);
-    if (!locator) return {};
-    constexpr auto id = static_cast<uint8_t>(harkenplayableproperties::PlayablePropertyIdV1::Sends);
-    const auto state = scope
-        ? PlayablePropertyAuthoringV1::readPlatformOverlay(const_cast<ProjectItem&>(bus), *locator, id, *scope)
-        : PlayablePropertyAuthoringV1::readProperty(const_cast<ProjectItem&>(bus), *locator, id, {});
-    if (!state) return {};
-    return BusSendState{bus.guid, scope, *state};
+    const auto* mix = bus.comp<VMixNode>();
+    if (!mix) return BusSendState{bus.guid, {}, {}};
+    return BusSendState{bus.guid, mix->sends, mix->sidechains};
+}
+
+std::optional<BusRoute> findBusRoute(const BusSendState& state, uint32_t targetBusID, SendType type, bool duckTarget)
+{
+    const auto& rows = type == SendType::Sidechain ? state.sidechains : state.sends;
+    const auto found = std::find_if(rows.begin(), rows.end(), [&](const BusRoute& row) {
+        return row.targetBusID == targetBusID && row.duckTarget == duckTarget;
+    });
+    return found == rows.end() ? std::nullopt : std::optional{*found};
 }
 
 bool restoreBusSendState(ProjectItem& bus, const BusSendState& state)
 {
     if (bus.type != ProjectItemType::Bus || bus.guid != state.bus) return false;
-    const auto locator = PlayablePropertyAuthoringV1::definitionLocator(bus);
-    return locator && PlayablePropertyAuthoringV1::restoreProperty(bus, *locator,
-        static_cast<uint8_t>(harkenplayableproperties::PlayablePropertyIdV1::Sends), state.value, state.scope);
+    auto* mix = bus.compOrCreate<VMixNode>();
+    mix->setHostItem(&bus);
+    mix->sends = state.sends;
+    mix->sidechains = state.sidechains;
+    constexpr auto sends = harkenplayableproperties::PlayablePropertyIdV1::Sends;
+    if (state.sends.empty())
+        bus.playablePropertyPresence.Clear(sends);
+    else
+        bus.playablePropertyPresence.Set(sends);
+    return true;
 }
 
-std::optional<QJsonArray> busSendRows(const ProjectItem& bus, PlatformScope scope)
+BusSendState withoutOutputConflicts(BusSendState state, uint32_t outputBusID)
 {
-    if (bus.type != ProjectItemType::Bus) return {};
-    const auto locator = PlayablePropertyAuthoringV1::definitionLocator(bus);
-    if (!locator) return {};
-    const auto state = PlayablePropertyAuthoringV1::readProperty(const_cast<ProjectItem&>(bus), *locator,
-        static_cast<uint8_t>(harkenplayableproperties::PlayablePropertyIdV1::Sends), scope);
-    if (!state || (state->present && !state->value.isArray())) return {};
-    return state->present ? state->value.toArray() : QJsonArray{};
+    for (const bool sidechain : {false, true}) {
+        const auto conflicts = [&](const BusRoute& route) {
+            return route.targetBusID == outputBusID && (!sidechain || route.duckTarget);
+        };
+        auto& rows = sidechain ? state.sidechains : state.sends;
+        std::erase_if(rows, [&](const BusRoute& row) { return conflicts(row.forPlatform({})); });
+        for (auto& row : rows)
+            std::erase_if(row.platforms, [&](const auto& cell) { return conflicts(row.forPlatform(cell.first)); });
+    }
+    return state;
 }
 
 std::optional<std::vector<Send>> effectiveBusSends(const ProjectItem& bus, PlatformScope scope)
 {
-    const auto rows = busSendRows(bus, scope);
-    if (!rows) return {};
-    std::vector<Send> sends;
-    sends.reserve(static_cast<size_t>(rows->size()));
-    for (const auto& value : *rows) {
-        auto row = value.toObject();
-        row[QStringLiteral("sendLevel")] = VMixNode::dbToLinear(static_cast<float>(row.value(QStringLiteral("sendLevel")).toDouble()));
-        const auto send = Send::fromJson(row);
-        if (!send) return {};
-        sends.push_back(*send);
-    }
-    return sends;
+    if (bus.type != ProjectItemType::Bus) return {};
+    const auto* mix = bus.comp<VMixNode>();
+    return mix ? mix->effectiveSends(scope) : std::vector<Send>{};
 }
 
 std::vector<PlatformScope> busRoutingScopes(const ProjectData& project)
@@ -84,17 +88,29 @@ QString validateBusRouting(const ProjectData& project, const std::vector<BusSend
     collect(project.root.get());
     for (const auto* binding : project.allFileBindings())
         if (binding) collect(binding->rootItem.get());
-    for (const auto& state : replacements) {
-        if (!byGuid.contains(state.bus)
-            || (state.scope && !ProjectPlatformSemantics::find(project.platforms, *state.scope)))
-            return QStringLiteral("Bus Send target or platform is unavailable");
-    }
-    const auto stateFor = [&](const ProjectItem& bus, PlatformScope scope) -> std::optional<BusSendState> {
+    for (const auto& state : replacements)
+        if (!byGuid.contains(state.bus)) return QStringLiteral("Bus Send owner is unavailable");
+    const auto stateFor = [&](const ProjectItem& bus) -> std::optional<BusSendState> {
         const auto found = std::find_if(replacements.begin(), replacements.end(), [&](const auto& state) {
-            return state.bus == bus.guid && state.scope == scope;
+            return state.bus == bus.guid;
         });
-        return found == replacements.end() ? captureBusSendState(bus, scope) : std::optional{*found};
+        return found == replacements.end() ? captureBusSendState(bus) : std::optional{*found};
     };
+    const auto rowsValid = [&](const std::vector<BusRoute>& rows) {
+        QSet<QUuid> ids;
+        for (const auto& row : rows) {
+            if (row.id.isNull() || ids.contains(row.id)) return false;
+            ids.insert(row.id);
+            for (const auto& [platform, cells] : row.platforms)
+                if (!ProjectPlatformSemantics::find(project.platforms, platform)) return false;
+        }
+        return true;
+    };
+    for (const auto* bus : buses) {
+        const auto state = stateFor(*bus);
+        if (!state || !rowsValid(state->sends) || !rowsValid(state->sidechains))
+            return QStringLiteral("Bus Send rows are invalid");
+    }
     for (const auto& scope : busRoutingScopes(project)) {
         BusRouteSnapshot routes;
         for (const auto* bus : buses) {
@@ -103,28 +119,25 @@ QString validateBusRouting(const ProjectData& project, const std::vector<BusSend
                 : byGuid.value(parentOverride.value(), nullptr);
             const uint32_t output = parent && parent->type == ProjectItemType::Bus ? parent->objectID : 0u;
             routes.parentOf.insert(bus->objectID, output);
-            auto state = stateFor(*bus, scope);
-            if (scope && state && !state->value.present) state = stateFor(*bus, {});
-            if (!state || (state->value.present && !state->value.value.isArray()))
-                return QStringLiteral("Bus Send configuration is unavailable");
-            std::set<std::tuple<uint32_t, SendType, bool>> identities;
-            for (const auto& value : state->value.present ? state->value.value.toArray() : QJsonArray{}) {
-                if (!value.isObject()) return QStringLiteral("Bus Send row is invalid");
-                const auto row = value.toObject();
-                const double rawTarget = row.value(QStringLiteral("targetBusID")).toDouble();
-                const auto target = static_cast<uint32_t>(row.value(QStringLiteral("targetBusID")).toInteger());
-                SendType type;
-                bool duckTarget;
-                const auto rawGain = row.value(QStringLiteral("sendLevel"));
-                const double gain = rawGain.toDouble();
-                if (!row.value(QStringLiteral("targetBusID")).isDouble() || rawTarget != target
-                    || !buses.contains(target) || target == bus->objectID
-                    || !readSendRoute(row, type, duckTarget) || !rawGain.isDouble() || !std::isfinite(gain)
-                    || gain < -96.0 || gain > 24.0
-                    || ((type == SendType::Send || duckTarget) && target == output)
-                    || !identities.emplace(target, type, duckTarget).second)
-                    return QStringLiteral("Bus Send has an invalid target, type, Target Ducking setting, volume, or output conflict");
-                routes.sendTargets[bus->objectID].push_back(target);
+            const auto state = stateFor(*bus);
+            const auto routeValid = [&](const BusRoute& route) {
+                return buses.contains(route.targetBusID) && route.targetBusID != bus->objectID
+                    && std::isfinite(route.sendLevelDb) && route.sendLevelDb >= -96.0f && route.sendLevelDb <= 24.0f;
+            };
+            std::set<uint32_t> sendTargets;
+            for (const auto& row : state->sends) {
+                const auto route = row.forPlatform(scope);
+                if (!routeValid(route) || route.targetBusID == output || !sendTargets.insert(route.targetBusID).second)
+                    return QStringLiteral("Bus Send has an invalid target, volume, or output conflict");
+                routes.sendTargets[bus->objectID].push_back(route.targetBusID);
+            }
+            std::set<std::pair<uint32_t, bool>> sidechainTargets;
+            for (const auto& row : state->sidechains) {
+                const auto route = row.forPlatform(scope);
+                if (!routeValid(route) || (route.duckTarget && route.targetBusID == output)
+                    || !sidechainTargets.emplace(route.targetBusID, route.duckTarget).second)
+                    return QStringLiteral("Bus Sidechain has an invalid target, Target Ducking setting, volume, or output conflict");
+                routes.sendTargets[bus->objectID].push_back(route.targetBusID);
             }
         }
         if (!findBusRouteCycle(routes).isEmpty()) return QStringLiteral("Bus routing would create a cycle");

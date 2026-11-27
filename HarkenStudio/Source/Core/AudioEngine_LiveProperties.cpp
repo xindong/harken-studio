@@ -217,7 +217,6 @@ void AudioEngine::applyLivePropertyPreview()
                     entry.bypass, effect->parameters[0], effect->parameters[1]});
             }
             for (const auto& send : groups.send.sends) {
-                if (send.type != SendType::Send) continue;
                 const auto target = snapshot.objects.find(send.targetBusID);
                 if (target != snapshot.objects.end())
                     definition.fields[{static_cast<uint8_t>(LiveProperty::Sends), target->second->runtimeId()}]
@@ -237,7 +236,8 @@ void AudioEngine::applyLivePropertyPreview()
         for (const auto* item : sourceIndex->buses) {
             const auto* mix = item->comp<VMixNode>();
             if (!mix) continue;
-            for (const auto& entry : mix->effectsForPlatform(scope).entries()) {
+            const auto chain = mix->effectsForPlatform(scope);
+            for (const auto& entry : chain.entries()) {
                 const auto* effect = EffectChainSemantics::resolve(entry, *project);
                 if (!effect) continue;
                 const auto definitionId = toFieldGroupGuid(

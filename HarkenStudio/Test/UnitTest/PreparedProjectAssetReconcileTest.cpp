@@ -25,7 +25,7 @@ TEST(PreparedProjectAssetReconcile, WorkerIntegrityScanUsesOnlyTheSuppliedProjec
         bus->parent = master.get();
         master->children.push_back(bus);
     }
-    output->comp<VMixNode>()->sends = {{send->objectID, 1.0f}};
+    output->comp<VMixNode>()->sends = {{QUuid::createUuid(), send->objectID, 0.0f}};
     auto sound = item(ProjectItem::Type::Sound, 800);
     sound->comp<VMixNode>()->outputBusId = output->objectID;
     sound->comp<VSound>()->sources.plain.entries = {{QUuid::createUuid(), 1701, {}}};

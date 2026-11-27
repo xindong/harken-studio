@@ -1386,7 +1386,8 @@ bool ProjectPackExporter::CollectBuses(const ProjectData& project,
                           ? item->parent->runtimeId() : harken::studio::types::kMasterBusObjectId;
         bd.name     = item->name;
         if (const auto* mix = item->comp<VMixNode>()) {
-            for (const auto& effect : mix->effectsForPlatform(scope).entries()) {
+            const auto chain = mix->effectsForPlatform(scope);
+            for (const auto& effect : chain.entries()) {
                 const auto* asset = EffectChainSemantics::resolve(effect, project);
                 QString diagnostic;
                 if (!EffectChainSemantics::validate(effect, &diagnostic)

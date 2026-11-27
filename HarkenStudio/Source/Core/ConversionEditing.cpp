@@ -97,13 +97,6 @@ private:
     const QObject* originator_;
 };
 
-FieldGroupMode currentMode(const AuthoredGroup<ConversionFieldGroup>& group, const PlatformScope& platform)
-{
-    if (!platform) return group.shared.mode;
-    const auto found = group.platforms.find(toFieldGroupGuid(*platform));
-    return found == group.platforms.end() ? FieldGroupMode::UseShared : found->second.mode;
-}
-
 }
 
 bool setConfig(ProjectManager& manager, const QUuid& conversion,
@@ -158,8 +151,7 @@ bool setObjects(ProjectManager& manager, const QVector<QUuid>& objects,
         FieldGroupEditRequest request;
         request.definition = object;
         request.group = FieldGroupId::Conversion;
-        if (platform) request.scopes.platforms.push_back(toFieldGroupGuid(*platform));
-        else request.scopes.shared = true;
+        request.scopes.shared = true;
         request.operation = SetFieldGroupMode{mode};
         if (!expectedBefore.empty()) {
             const auto expected = std::find_if(expectedBefore.begin(), expectedBefore.end(),
@@ -169,16 +161,17 @@ bool setObjects(ProjectManager& manager, const QVector<QUuid>& objects,
             request.expectedBefore = expected->groups;
         }
         const bool root = !item->parent;
-        const auto prepared = currentMode(item->fieldGroups.conversion, platform) == mode
+        const auto prepared = item->fieldGroups.conversion.shared.mode == mode
             || (root && mode == FieldGroupMode::Local)
             ? prepareFieldGroupRestore(*project, object, item->fieldGroups, request.expectedBefore)
             : prepareFieldGroupEdit(*project, request);
         if (!prepared.ok()) return fail(error, prepared.diagnostics.front().message);
         auto replacement = *prepared.after;
         if (settings) {
-            auto& state = platform ? replacement.conversion.platforms[toFieldGroupGuid(*platform)]
-                                   : replacement.conversion.shared;
-            state.mode = FieldGroupMode::Local;
+            auto& state = platform
+                ? replacement.conversion.platforms.try_emplace(toFieldGroupGuid(*platform),
+                    GroupState<ConversionFieldGroup>{FieldGroupMode::UseShared, {}}).first->second
+                : replacement.conversion.shared;
             state.localHistory = ConversionFieldGroup{toFieldGroupGuid(*settings)};
             state.localFields = FieldGroupPropertyMask(FieldGroupId::Conversion);
             if (!platform) replacement.conversion.platforms.clear();

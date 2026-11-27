@@ -509,8 +509,7 @@ void registerMixerActions(ActionManager& mgr,
                 return {false, {}, "INVALID_ARGS", "target_bus_id is required"};
 
             auto* srcBusItem = selected.item;
-            auto* srcMix = srcBusItem->comp<VMixNode>();
-            if (!srcMix)
+            if (!srcBusItem->comp<VMixNode>())
                 return {false, {}, "BUS_NOT_FOUND", QString("Send source '%1' not found").arg(srcBusName)};
             if (PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(srcBusItem->type))
                 return {false, {}, "FIELD_GROUP_COMMAND_REQUIRED",
@@ -522,21 +521,13 @@ void registerMixerActions(ActionManager& mgr,
             if (!readSendRoute(args, type, duckTarget))
                 return {false, {}, "INVALID_ARGS", "Invalid send type or duckTarget"};
 
-            bool foundSend = false;
-            for (const auto& send : srcMix->sends) {
-                if (send.targetBusID == targetBusId && send.type == type && send.duckTarget == duckTarget) {
-                    foundSend = true;
-                    break;
-                }
-            }
-            if (!foundSend)
-                return {false, {}, "SEND_NOT_FOUND",
-                        QString("Send %1 -> %2 not found").arg(srcBusName).arg(targetBusId)};
-
             const uint32_t srcBusId = srcBusItem->objectID;
             const auto before = captureBusSendState(*srcBusItem);
             if (!before)
                 return {false, {}, "INVALID_SEND_STATE", "Unable to read Send configuration"};
+            if (!findBusRoute(*before, targetBusId, type, duckTarget))
+                return {false, {}, "SEND_NOT_FOUND",
+                        QString("Send %1 -> %2 not found").arg(srcBusName).arg(targetBusId)};
             if (!ProjectManager::instance().removeSendInternal(srcBusId, targetBusId, type, duckTarget))
                 return {false, {}, "SEND_REJECTED", "Unable to remove Send"};
 
@@ -574,8 +565,7 @@ void registerMixerActions(ActionManager& mgr,
                 return {false, {}, "INVALID_ARGS", "target_bus_id is required"};
 
             auto* srcBusItem = selected.item;
-            auto* srcMix = srcBusItem->comp<VMixNode>();
-            if (!srcMix)
+            if (!srcBusItem->comp<VMixNode>())
                 return {false, {}, "BUS_NOT_FOUND", QString("Send source '%1' not found").arg(srcBusName)};
             if (PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(srcBusItem->type))
                 return {false, {}, "FIELD_GROUP_COMMAND_REQUIRED",
@@ -590,18 +580,12 @@ void registerMixerActions(ActionManager& mgr,
             if (!level)
                 return {false, {}, "INVALID_ARGS", "level must be a finite, non-negative linear gain"};
 
-            float oldLevel = 1.0f;
-            bool foundSend = false;
-            for (const auto& send : srcMix->sends) {
-                if (send.targetBusID == targetBusId && send.type == type && send.duckTarget == duckTarget) {
-                    foundSend = true;
-                    oldLevel = send.sendLevel;
-                    break;
-                }
-            }
-            if (!foundSend)
+            const auto state = captureBusSendState(*srcBusItem);
+            const auto route = state ? findBusRoute(*state, targetBusId, type, duckTarget) : std::nullopt;
+            if (!route)
                 return {false, {}, "SEND_NOT_FOUND",
                         QString("Send %1 -> %2 not found").arg(srcBusName).arg(targetBusId)};
+            const float oldLevel = VMixNode::dbToLinear(route->sendLevelDb);
 
             const uint32_t srcBusId = srcBusItem->objectID;
             if (!ProjectManager::instance().upsertSendInternal(srcBusId, targetBusId, *level, type, duckTarget))

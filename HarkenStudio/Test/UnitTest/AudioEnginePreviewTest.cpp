@@ -691,8 +691,6 @@ TEST_F(AudioPlaybackRegression, EffectEditorBusDragCannotRestoreADeletedPresetRe
 {
     harken::studio::registerProjectActions(harken::studio::ActionManager::instance(), &projects, nullptr);
     harken::studio::PlatformContextService::instance().setAll(true);
-    for (const bool overlay : {false, true}) {
-    SCOPED_TRACE(overlay);
     auto* preset = projects.createItem(nullptr, QStringLiteral("DeletedPreset"), harken::studio::ProjectItem::Type::Effect);
     auto* bus = projects.createItem(projects.getMasterBusItem(), QStringLiteral("DragBus"), harken::studio::ProjectItem::Type::Bus);
     ASSERT_NE(preset, nullptr);
@@ -705,10 +703,7 @@ TEST_F(AudioPlaybackRegression, EffectEditorBusDragCannotRestoreADeletedPresetRe
     reference.guid = QUuid::createUuid();
     reference.effectGuid = preset->guid;
     auto* mix = bus->comp<harken::studio::VMixNode>();
-    const auto platform = projects.currentProject()->platforms.front().id;
-    ASSERT_TRUE(mix->effects.replace(overlay ? std::vector<harken::studio::EffectEntry>{custom}
-        : std::vector<harken::studio::EffectEntry>{custom, reference}));
-    if (overlay) ASSERT_TRUE(mix->effectPlatforms[platform].replace({custom, reference}));
+    ASSERT_TRUE(mix->effects.replace({custom, reference}));
     harken::studio::EffectEditorPanel panel;
     panel.bindEffect(bus->guid, custom.guid);
     auto* slider = panel.findChild<harken::studio::ParameterSlider*>(QStringLiteral("effectParameter_ceilingDb"));
@@ -721,18 +716,12 @@ TEST_F(AudioPlaybackRegression, EffectEditorBusDragCannotRestoreADeletedPresetRe
     ASSERT_TRUE(projects.deleteItem(preset));
     QCoreApplication::processEvents();
     ASSERT_EQ(1u, mix->effects.entries().size());
-    if (overlay) {
-        ASSERT_TRUE(mix->effectPlatforms.contains(platform));
-        EXPECT_EQ(1u, mix->effectPlatforms.at(platform).entries().size());
-    }
     EXPECT_FLOAT_EQ(0, mix->effects.entries()[0].custom.parameters[0]);
     EXPECT_EQ(1, undo->count());
     undo->undo();
-    const auto& restored = overlay ? mix->effectPlatforms.at(platform) : mix->effects;
-    ASSERT_EQ(2u, restored.entries().size());
-    EXPECT_FLOAT_EQ(0, restored.entries()[0].custom.parameters[0]);
-    EXPECT_EQ(reference.effectGuid, restored.entries()[1].effectGuid);
-    }
+    ASSERT_EQ(2u, mix->effects.entries().size());
+    EXPECT_FLOAT_EQ(0, mix->effects.entries()[0].custom.parameters[0]);
+    EXPECT_EQ(reference.effectGuid, mix->effects.entries()[1].effectGuid);
 }
 
 harken::studio::ProjectItem* bindRootConversion(harken::studio::ProjectManager& projects, harken::studio::ProjectItem* item,

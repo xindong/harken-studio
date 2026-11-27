@@ -149,7 +149,7 @@ public:
         if (hasRowOrder_ && !d.flags.readOnly)
             box_->setRowMoveHandler([this](int from, int to) {
                 finishPreview();
-                if (!desc_.listRowFilter.isEmpty() || (anchored() && anchorCol_ == 0 && hasRowOrder_)) {
+                if (anchored() && anchorCol_ == 0 && hasRowOrder_) {
                     QList<int> positions;
                     QVariantList entries;
                     for (int i = 0; i < value_.size(); ++i)
@@ -177,10 +177,6 @@ public:
             }, [this](int, int) {
                 return canEdit();
             });
-
-        mixedLabel_ = box_->bodyMessage();
-        mixedLabel_->setText(tr("Mixed table\nSelect a single platform to edit"));
-        mixedLabel_->setObjectName(QStringLiteral("listMixedValue"));
 
         if (!d.flags.readOnly) {
             footer_ = buildFooter();
@@ -216,7 +212,7 @@ public:
 
     bool isReadOnly() const
     {
-        return desc_.flags.readOnly || runtimeReadOnly_ || mixed_;
+        return desc_.flags.readOnly || runtimeReadOnly_;
     }
 
     bool canEdit() const
@@ -241,19 +237,6 @@ public:
             cancelRowEdits();
         else
             rebuildRows();
-    }
-
-    void setMixed(bool mixed)
-    {
-        if (mixed_ == mixed)
-            return;
-        mixed_ = mixed;
-        setProperty("mixed", mixed);
-        mixedLabel_->setVisible(mixed);
-        rows_->setVisible(!mixed);
-        if (footer_)
-            footer_->setVisible(!isReadOnly());
-        cancelEdits();
     }
 
     void setValue(const QVariant& v)
@@ -319,6 +302,12 @@ public:
         onPreviewFinished_ = std::move(finished);
     }
 
+    void setCellDecorator(std::function<QWidget*(QWidget*, const QVariantMap&, const QString&)> decorator)
+    {
+        cellDecorator_ = std::move(decorator);
+        rebuildRows();
+    }
+
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override
     {
@@ -348,7 +337,7 @@ protected:
                 return true;
             }
         }
-        if (event->type() == QEvent::MouseButtonPress && isEnabled() && !mixed_
+        if (event->type() == QEvent::MouseButtonPress && isEnabled()
             && watched->isWidgetType())
         {
             auto* w = static_cast<QWidget*>(watched);
@@ -545,8 +534,6 @@ private:
 
     bool inWindow(const QVariantMap& elem) const
     {
-        for (auto it = desc_.listRowFilter.cbegin(); it != desc_.listRowFilter.cend(); ++it)
-            if (elem.value(it.key()) != it.value()) return false;
         if (!anchored())
             return true;
         const double anchor = elem.value(anchorField()).toDouble();
@@ -573,7 +560,7 @@ private:
 
     QVariantMap defaultElement() const
     {
-        QVariantMap elem = desc_.listRowFilter;
+        QVariantMap elem;
         for (const auto& ed : desc_.elementSchema)
             if (!ed.flags.state) elem[ed.field] = ed.def;
         if (const std::optional<int> anchor = freeAnchor())
@@ -859,9 +846,6 @@ private:
         if (addBtn_)
             addBtn_->setEnabled(canEdit() && (!anchored() || freeAnchor().has_value()));
 
-        if (mixed_)
-            return;
-
         for (int i = 0; i < value_.size(); ++i)
         {
             const QVariantMap elem = value_[i].toMap();
@@ -909,21 +893,26 @@ private:
                 QWidget* editor =
                     buildElementEditor(ed, i, elem.value(ed.field, ed.def), cell, stretch);
                 editors.push_back(editor);
+                auto* slider = qobject_cast<ParameterSlider*>(editor);
+                const auto decorate = [&](QWidget* control) {
+                    return cellDecorator_ ? cellDecorator_(control, elem, ed.field) : control;
+                };
+                QWidget* placed = slider ? editor : decorate(editor);
                 // A width-capped editor in the stretch column pins to the right
                 // edge; expanding editors fill the cell instead.
                 DebugTint::tintContainer(cell, columnTintRole(ed, stretch));
                 if (ed.type == PropType::Bool)
-                    cell->addWidget(editor, 0, Qt::AlignCenter);
-                else if (stretch && editor->maximumWidth() < QWIDGETSIZE_MAX)
-                    cell->addWidget(editor, 0, Qt::AlignRight);
+                    cell->addWidget(placed, 0, Qt::AlignCenter);
+                else if (stretch && placed->maximumWidth() < QWIDGETSIZE_MAX)
+                    cell->addWidget(placed, 0, Qt::AlignRight);
                 else
-                    cell->addWidget(editor, 1);
-                if (auto* slider = qobject_cast<ParameterSlider*>(editor)) {
+                    cell->addWidget(placed, 1);
+                if (slider) {
                     auto* valueEditor = new ParameterValueEditor(
                         slider->binding(), &ThemeManager::instance(), cell);
                     valueEditor->setCompact(true);
                     valueEditor->setEnabled(slider->isEnabled());
-                    cell->addWidget(valueEditor);
+                    cell->addWidget(decorate(valueEditor));
                 }
                 if (shares[ci] > 0)
                 {
@@ -962,8 +951,11 @@ private:
         ed.flags.readOnly = ed.flags.readOnly || isReadOnly();
         const uint64_t generation = rowGeneration_;
 
-        if (ed.type == PropType::Float)
-            return buildFloatEditor(ed, row, v, parent, stretch);
+        if (ed.type == PropType::Float) {
+            auto* editor = buildFloatEditor(ed, row, v, parent, stretch, edIn.flags.readOnly || desc_.flags.readOnly);
+            if (ed.flags.readOnly) editor->setEnabled(desc_.flags.readOnly || !runtimeReadOnly_);
+            return editor;
+        }
 
         if (ed.type != PropType::List)
         {
@@ -1071,23 +1063,22 @@ private:
             default:
             {
                 auto* label = new QLabel(v.toString(), parent);
-                label->setEnabled(desc_.flags.readOnly || (!runtimeReadOnly_ && !mixed_));
+                label->setEnabled(desc_.flags.readOnly || !runtimeReadOnly_);
                 return label;
             }
         }
     }
 
     QWidget* buildFloatEditor(const PropertyDescriptor& ed, int row, const QVariant& v,
-                              QWidget* parent, bool stretch)
+                              QWidget* parent, bool stretch, bool staticReadOnly)
     {
         const uint64_t generation = rowGeneration_;
-        if (ed.flags.readOnly)
+        if (staticReadOnly)
         {
             auto* label = new QLabel(formatDecimal(v.toDouble(), ed.decimals), parent);
             label->setToolTip(QStringLiteral("%1 %2").arg(label->text(), ed.unit.trimmed()).trimmed());
             label->setProperty("roValue", true);
             label->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-            label->setEnabled(desc_.flags.readOnly || (!runtimeReadOnly_ && !mixed_));
             return label;
         }
 
@@ -1148,7 +1139,6 @@ private:
     PropertyDescriptor desc_;
     TableWidget* box_ = nullptr;
     QWidget* rows_ = nullptr;
-    QLabel* mixedLabel_ = nullptr;
     QWidget* footer_ = nullptr;
     QToolButton* addBtn_ = nullptr;
     QPointer<QMenu> addMenu_;
@@ -1166,12 +1156,12 @@ private:
     uint64_t selectionGeneration_ = 0;
     uint64_t rowGeneration_ = 0;
     bool runtimeReadOnly_ = false;
-    bool mixed_ = false;
     bool previewActive_ = false;
     std::function<bool()> editGuard_;
     std::function<void(const QVariant&)> onChange_;
     std::function<void(const QVariant&)> onPreview_;
     std::function<void()> onPreviewFinished_;
+    std::function<QWidget*(QWidget*, const QVariantMap&, const QString&)> cellDecorator_;
 };
 
 }
@@ -1223,16 +1213,17 @@ void ListFieldDrawer::setWidgetPreviewCallbacks(QWidget* widget,
         w->setPreviewCallbacks(std::move(preview), std::move(finished));
 }
 
+void ListFieldDrawer::setWidgetCellDecorator(QWidget* widget,
+    std::function<QWidget*(QWidget*, const QVariantMap&, const QString&)> decorator)
+{
+    if (auto* w = dynamic_cast<ListFieldWidget*>(widget))
+        w->setCellDecorator(std::move(decorator));
+}
+
 void ListFieldDrawer::cancelWidgetEdits(QWidget* widget, bool preserveRows)
 {
     if (auto* w = dynamic_cast<ListFieldWidget*>(widget))
         w->cancelEdits(preserveRows);
-}
-
-void ListFieldDrawer::setWidgetMixed(QWidget* widget, bool mixed)
-{
-    if (auto* w = dynamic_cast<ListFieldWidget*>(widget))
-        w->setMixed(mixed);
 }
 
 }

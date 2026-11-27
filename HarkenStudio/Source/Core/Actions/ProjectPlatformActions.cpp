@@ -27,12 +27,21 @@ struct RootState
     QMap<ProjectPlatformId, QUuid> defaultConversions;
 };
 
+struct BusRows
+{
+    EffectChainLedger effects;
+    std::vector<BusRoute> sends;
+    std::vector<BusRoute> sidechains;
+
+    bool operator==(const BusRows&) const = default;
+};
+
 struct OwnerState
 {
     QUuid guid;
     PlatformOverrideLedgerV1 definition;
     DefinitionFieldGroups fieldGroups;
-    std::map<ProjectPlatformId, EffectChainLedger> effectPlatforms;
+    std::optional<BusRows> bus;
     QMap<QUuid, PlatformOverrideLedgerV1> clips;
     std::optional<SelectionData> selections;
     std::optional<SoundSources> sources;
@@ -60,7 +69,8 @@ OwnerState captureOwner(const ProjectItem& item)
     state.guid = item.guid;
     state.definition = item.platformOverrides;
     state.fieldGroups = item.fieldGroups;
-    if (const auto* mix = item.comp<VMixNode>()) state.effectPlatforms = mix->effectPlatforms;
+    if (const auto* mix = item.comp<VMixNode>(); mix && item.type == ProjectItem::Type::Bus)
+        state.bus = BusRows{mix->effects, mix->sends, mix->sidechains};
     if (const auto* selection = item.comp<VSelection>()) state.selections = selection->selections;
     if (const auto* track = item.comp<VTrack>()) {
         for (const auto& clip : track->clips.items)
@@ -70,18 +80,34 @@ OwnerState captureOwner(const ProjectItem& item)
     return state;
 }
 
+void removeEffectCells(EffectChainLedger& ledger, const ProjectPlatformId& id)
+{
+    auto entries = ledger.entries();
+    for (auto& entry : entries) entry.platformBypass.erase(id);
+    ledger.replace(std::move(entries));
+}
+
 void removeReferences(OwnerState& owner, const ProjectPlatformId& id)
 {
     owner.definition.erase(id);
     const auto scope = toFieldGroupGuid(id);
     owner.fieldGroups.output.platforms.erase(scope);
-    owner.fieldGroups.send.platforms.erase(scope);
     owner.fieldGroups.spatialRating.platforms.erase(scope);
-    owner.fieldGroups.effects.platforms.erase(scope);
     owner.fieldGroups.conversion.platforms.erase(scope);
-    owner.effectPlatforms.erase(id);
+    if (auto& history = owner.fieldGroups.send.shared.localHistory)
+        for (auto& row : history->sends) row.platforms.erase(scope);
+    if (auto& history = owner.fieldGroups.sidechain.shared.localHistory)
+        for (auto& row : history->sidechains) row.platforms.erase(scope);
+    if (auto& history = owner.fieldGroups.effects.shared.localHistory)
+        removeEffectCells(history->effects, id);
+    if (owner.bus) {
+        removeEffectCells(owner.bus->effects, id);
+        for (auto& row : owner.bus->sends) row.platforms.erase(id);
+        for (auto& row : owner.bus->sidechains) row.platforms.erase(id);
+    }
     for (auto& ledger : owner.clips) ledger.erase(id);
-    if (owner.selections) owner.selections->platforms.remove(Platforms::idString(id));
+    if (owner.selections)
+        for (auto* table : owner.selections->tables()) table->removePlatform(id);
     if (owner.sources)
         for (auto* set : SoundSourceSemantics::sourceSets(*owner.sources))
             set->platforms.remove(Platforms::idString(id));
@@ -175,7 +201,11 @@ void apply(ProjectManager& manager, const EditState& state, const QStringList& p
         auto* item = manager.findItemByGuid(owner.guid);
         item->platformOverrides = owner.definition;
         item->fieldGroups = owner.fieldGroups;
-        if (auto* mix = item->comp<VMixNode>()) mix->effectPlatforms = owner.effectPlatforms;
+        if (auto* mix = item->comp<VMixNode>(); mix && owner.bus) {
+            mix->effects = owner.bus->effects;
+            mix->sends = owner.bus->sends;
+            mix->sidechains = owner.bus->sidechains;
+        }
         if (owner.selections) item->comp<VSelection>()->selections = *owner.selections;
         if (auto* track = item->comp<VTrack>()) {
             for (auto& clip : track->clips.items) {

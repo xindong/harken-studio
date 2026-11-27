@@ -87,7 +87,7 @@ protected:
     {
         if (name == QStringLiteral("matches")) {
             auto selections = owner->comp<VSelection>()->selections;
-            if (!selections.shared.setMatchGrid(DiscreteGridDef::fromJson(value.toObject()))) return {};
+            if (!selections.match.setMatchGrid(DiscreteGridDef::fromJson(value.toObject()))) return {};
             return setProperty(owner, QStringLiteral("selections"), selections.toJson());
         }
         return ActionManager::instance().execute(

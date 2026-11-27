@@ -379,7 +379,12 @@ SendSlot resolveEffectiveSends(const ResolutionScope& scope)
         applySource(scope, effective->sendSource, result);
         for (const auto& row : effective->send.sends) {
             const auto* target = scope.effectiveGroups->objects.at(row.targetBusID);
-            result.sends.push_back({target->objectID, VMixNode::dbToLinear(row.sendLevel), row.type, row.duckTarget});
+            result.sends.push_back({target->objectID, VMixNode::dbToLinear(row.sendLevel), SendType::Send, false});
+        }
+        for (const auto& row : effective->sidechain.sidechains) {
+            const auto* target = scope.effectiveGroups->objects.at(row.targetBusID);
+            result.sends.push_back({target->objectID, VMixNode::dbToLinear(row.sendLevel),
+                                    SendType::Sidechain, row.duckTarget});
         }
     } else if (const auto* mix = scope.subject ? scope.subject->comp<VMixNode>() : nullptr) {
         result.owner = scope.subject;
@@ -395,11 +400,9 @@ SendSlot resolveEffectiveSends(const ResolutionScope& scope)
                 return result;
             }
             result.sends = *sends;
-            const auto authored = captureBusSendState(*scope.subject, platform);
-            if (platform && authored && authored->value.present)
-                result.authoringScope = toFieldGroupGuid(*platform);
         } else {
-            result.sends = mix->sends;
+            result.sends = mix->effectiveSends(scope.effectiveGroups && scope.effectiveGroups->scope
+                ? PlatformScope{fromFieldGroupGuid(*scope.effectiveGroups->scope)} : PlatformScope{});
         }
     }
     return result;

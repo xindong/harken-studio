@@ -20,6 +20,7 @@ using FieldGroupScope = std::optional<harken::studio::project_schema::AuthoringG
 enum class FieldGroupId : std::uint8_t {
     Output,
     Send,
+    Sidechain,
     SpatialRating,
     Effect,
     Conversion
@@ -48,11 +49,18 @@ struct OutputFieldGroup {
     bool operator==(const OutputFieldGroup&) const = default;
 };
 
+struct SendFieldGroupCells {
+    std::optional<harken::studio::project_schema::AuthoringGuid> targetBusID;
+    std::optional<float> sendLevel;
+
+    bool operator==(const SendFieldGroupCells&) const = default;
+};
+
 struct SendFieldGroupRow {
+    harken::studio::project_schema::AuthoringGuid id{};
     harken::studio::project_schema::AuthoringGuid targetBusID{};
     float sendLevel = 0.0f;
-    harken::studio::project_schema::SendType type = harken::studio::project_schema::SendType::Send;
-    bool duckTarget = false;
+    std::map<harken::studio::project_schema::AuthoringGuid, SendFieldGroupCells> platforms;
 
     bool operator==(const SendFieldGroupRow&) const = default;
 };
@@ -63,6 +71,40 @@ struct SendFieldGroup {
 
     bool operator==(const SendFieldGroup&) const = default;
 };
+
+struct SidechainFieldGroupCells {
+    std::optional<harken::studio::project_schema::AuthoringGuid> targetBusID;
+    std::optional<float> sendLevel;
+    std::optional<bool> duckTarget;
+
+    bool operator==(const SidechainFieldGroupCells&) const = default;
+};
+
+struct SidechainFieldGroupRow {
+    harken::studio::project_schema::AuthoringGuid id{};
+    harken::studio::project_schema::AuthoringGuid targetBusID{};
+    float sendLevel = 0.0f;
+    bool duckTarget = false;
+    std::map<harken::studio::project_schema::AuthoringGuid, SidechainFieldGroupCells> platforms;
+
+    bool operator==(const SidechainFieldGroupRow&) const = default;
+};
+
+struct SidechainFieldGroup {
+    static constexpr auto groupId = FieldGroupId::Sidechain;
+    std::vector<SidechainFieldGroupRow> sidechains;
+
+    bool operator==(const SidechainFieldGroup&) const = default;
+};
+
+enum class SidechainFieldId : std::uint8_t {
+    Rows
+};
+
+constexpr std::uint64_t FieldGroupFieldMask(SidechainFieldId)
+{
+    return UINT64_C(1);
+}
 
 struct SpatialRatingFieldGroup {
     static constexpr auto groupId = FieldGroupId::SpatialRating;
@@ -124,6 +166,8 @@ void VisitFieldGroupFields(Payload& payload, Visitor&& visit)
         visit(Property::OutputBusVolume, "outputBusVolume", payload.outputBusVolume);
     } else if constexpr (std::is_same_v<Type, SendFieldGroup>) {
         visit(Property::Sends, "sends", payload.sends);
+    } else if constexpr (std::is_same_v<Type, SidechainFieldGroup>) {
+        visit(SidechainFieldId::Rows, "sidechains", payload.sidechains);
     } else if constexpr (std::is_same_v<Type, SpatialRatingFieldGroup>) {
         visit(Property::SpatialPanning, "spatialPanning", payload.spatialPanning);
         visit(Property::SpatialIs3DEnabled, "spatialIs3DEnabled", payload.spatialIs3DEnabled);
@@ -186,6 +230,7 @@ GroupState<Payload> ResolveFieldGroupLocal(const AuthoredGroup<Payload>& authore
 struct DefinitionFieldGroups {
     AuthoredGroup<OutputFieldGroup> output;
     AuthoredGroup<SendFieldGroup> send;
+    AuthoredGroup<SidechainFieldGroup> sidechain;
     AuthoredGroup<SpatialRatingFieldGroup> spatialRating;
     AuthoredGroup<EffectFieldGroup> effects;
     AuthoredGroup<ConversionFieldGroup> conversion;
@@ -211,12 +256,19 @@ inline std::uint64_t FieldGroupOverrideMask(const DefinitionFieldGroups& groups,
         return state != group.platforms.end() && state->second.localHistory
             ? state->second.localFields : UINT64_C(0);
     };
-    return mask(groups.output) | mask(groups.send) | mask(groups.spatialRating) | mask(groups.effects);
+    return mask(groups.output) | mask(groups.spatialRating);
 }
 
 using FieldGroupPayload = std::variant<
-    OutputFieldGroup, SendFieldGroup, SpatialRatingFieldGroup, EffectFieldGroup,
+    OutputFieldGroup, SendFieldGroup, SidechainFieldGroup, SpatialRatingFieldGroup, EffectFieldGroup,
     ConversionFieldGroup>;
+
+constexpr bool IsFieldGroupRowList(FieldGroupId group) noexcept
+{
+    return group == FieldGroupId::Send || group == FieldGroupId::Sidechain || group == FieldGroupId::Effect;
+}
+
+void ApplyFieldGroupPlatform(FieldGroupPayload& payload, harken::studio::project_schema::AuthoringGuid platform);
 
 enum class FieldGroupDiagnosticCode : std::uint8_t {
     InvalidDefinitionGuid,

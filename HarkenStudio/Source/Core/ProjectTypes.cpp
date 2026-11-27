@@ -458,8 +458,6 @@ bool validateProjectObjectIdentities(const ProjectData& project, QString* error)
                 }
             };
             claimEffects(mix->effects, {});
-            for (const auto& [platform, effects] : mix->effectPlatforms)
-                claimEffects(effects, {});
             VisitAuthoredEffectChains(item->fieldGroups, claimEffects);
             if (!validEffects) return false;
         }

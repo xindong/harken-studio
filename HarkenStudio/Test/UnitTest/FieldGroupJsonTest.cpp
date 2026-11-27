@@ -15,7 +15,7 @@ using namespace harken::studio::project_schema;
 
 constexpr char kInherit[] = R"({"inherit":true})";
 constexpr char kOutput[] = R"({"outputBusRef":"12345678-9abc-def0-0123-456789abcdef","outputBusVolume":0})";
-constexpr char kSend[] = R"({"sends":[{"targetBusID":"fedcba98-7654-3210-ffff-ffffffffffff","sendLevel":-6}]})";
+constexpr char kSend[] = R"({"sends":[{"id":"a0b1c2d3-e4f5-4638-9876-0000000000a1","targetBusID":"fedcba98-7654-3210-ffff-ffffffffffff","sendLevel":-6}]})";
 constexpr char kRating[] = R"({"spatialPanning":0,"spatialIs3DEnabled":false,"spatialAttenuationRef":"00000000-0000-0000-0000-000000000000","spatialAttenuationDistanceScaling":1})";
 constexpr AuthoringGuid kBus{UINT64_C(0x123456789abcdef0), UINT64_C(0x0123456789abcdef)};
 constexpr AuthoringGuid kSendBus{UINT64_C(0xfedcba9876543210), UINT64_C(0xffffffffffffffff)};
@@ -35,7 +35,8 @@ std::string Block(std::string_view output = kInherit,
                   std::string_view effects = kInherit)
 {
     std::string result = "{\"shared\":{\"output\":" + std::string(output)
-        + ",\"send\":" + std::string(send) + ",\"spatialRating\":" + std::string(rating)
+        + ",\"send\":" + std::string(send) + ",\"sidechain\":" + kInherit
+        + ",\"spatialRating\":" + std::string(rating)
         + ",\"effect\":" + std::string(effects) + ",\"conversion\":" + kInherit + "}";
     if (!platforms.empty()) result += ",\"platforms\":" + std::string(platforms);
     return result + "}";
@@ -113,8 +114,10 @@ TEST(FieldGroupJson, FiniteFloatBitsAndTableRowOrderRoundTripDeterministically)
     DefinitionFieldGroups groups;
     groups.output.shared = {FieldGroupMode::Local, OutputFieldGroup{kBus, -0.0f}};
     groups.send.shared = {FieldGroupMode::Local,
-                         SendFieldGroup{{{kSendBus, 0.1f, SendType::Sidechain, false},
-                                         {kBus, -0.0f, SendType::Sidechain, true}}}};
+                         SendFieldGroup{{{{1, 1}, kSendBus, 0.1f, {{{0, 101}, {kBus, -0.0f}}}},
+                                         {{1, 2}, kBus, -0.0f}}}};
+    groups.sidechain.shared = {FieldGroupMode::Local,
+                              SidechainFieldGroup{{{{1, 3}, kBus, 0.1f, true, {{{0, 101}, {{}, {}, false}}}}}}};
     SpatialRatingFieldGroup rating;
     rating.spatialPanning = std::numeric_limits<float>::denorm_min();
     rating.spatialAttenuationDistanceScaling = 3.333333f;
@@ -130,11 +133,10 @@ TEST(FieldGroupJson, FiniteFloatBitsAndTableRowOrderRoundTripDeterministically)
     preset.guid = QUuid(QStringLiteral("a0b1c2d3-e4f5-4638-9876-123456789abd"));
     preset.effectGuid = QUuid(QStringLiteral("fedcba98-7654-3210-ffff-ffffffffffff"));
     preset.bypass = true;
+    preset.platformBypass[QUuid(QStringLiteral("00000000-0000-0000-0000-000000000065"))] = false;
     EffectFieldGroup effects;
     ASSERT_TRUE(effects.effects.replace({custom, preset}));
     groups.effects.shared = {FieldGroupMode::Local, effects};
-    ASSERT_TRUE(effects.effects.replace({preset, custom}));
-    groups.effects.platforms[{0, 101}] = {FieldGroupMode::UseShared, effects};
     std::string text;
     std::string error;
     ASSERT_TRUE(WriteFieldGroupsJson(groups, text, error)) << error;
@@ -159,11 +161,6 @@ TEST(FieldGroupJson, RejectsInvalidFloatTypesOverflowAndOutOfRangeDormantHistory
             "\"outputBusVolume\":" + std::string(value)))));
         ExpectRejected(Block(kInherit, State("Inherit", Replace(kSend, "\"sendLevel\":-6",
             "\"sendLevel\":" + std::string(value)))));
-    }
-    for (const auto* route : {R"("type":"Unknown")", R"("duckTarget":1)",
-                              R"("type":"Send","duckTarget":true)"}) {
-        ExpectRejected(Block(kInherit, State("Inherit", Replace(kSend, "\"sendLevel\":-6",
-            "\"sendLevel\":-6," + std::string(route)))));
     }
 }
 

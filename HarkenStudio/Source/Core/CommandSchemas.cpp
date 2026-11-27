@@ -405,21 +405,40 @@ const QMap<QString, Contract>& contracts()
             {"value", number()}}, {"property", "value"});
         put({"set_container_property"}, containerProperty);
 
-        const auto scopeProperties = QJsonObject{{"definition_guid", uuid()}, {"group", choice({"output", "send", "spatialRating", "effect", "conversion"})},
+        const auto scopeProperties = QJsonObject{{"definition_guid", uuid()}, {"group", choice({"output", "send", "sidechain", "spatialRating", "effect", "conversion"})},
             {"scope", choice({"Shared"})}, {"platform_ids", array(projectPlatformIdSchema(), 1, true)},
             {"expected_before", described({{"type", "object"}}, "Complete previous fieldGroups state for optimistic concurrency; validated by the field-group domain parser.")}};
         for (const auto* name : {"set_field_group_mode", "set_field_group_field", "clear_field_group_field_override",
-                                "replace_field_group_sends", "replace_field_group_effects", "rebuild_field_group_local"}) {
+                                "replace_field_group_sends", "replace_field_group_sidechains",
+                                "replace_field_group_effects", "rebuild_field_group_local"}) {
             auto fields = scopeProperties;
             QJsonArray required{"definition_guid", "group"};
             const QString command = QLatin1String(name);
-            if (command == "set_field_group_mode") { fields.insert("mode", choice({"Local", "Inherit", "UseShared"})); required.append("mode"); }
+            if (command == "set_field_group_mode") { fields.insert("mode", choice({"Local", "Inherit"})); required.append("mode"); }
             if (command == "set_field_group_field" || command == "clear_field_group_field_override") { fields.insert("field", text()); required.append("field"); }
             if (command == "set_field_group_field") { fields.insert("value", described({}, "Typed value: GUID for outputBusRef/spatial.attenuationRef/settingsRef, boolean for spatial.is3DEnabled, number for scalar fields; null resets outputBusRef to Master or clears settingsRef.")); required.append("value"); }
+            const auto routeRow = [&](bool sidechain) {
+                QJsonObject cells{{"targetBusID", uuid()}, {"sendLevel", number()}};
+                QJsonObject row{{"id", uuid()}, {"targetBusID", uuid()}, {"sendLevel", number()}};
+                if (sidechain) {
+                    cells.insert("duckTarget", boolean());
+                    row.insert("duckTarget", boolean());
+                }
+                auto platformCells = object(cells);
+                platformCells.insert("minProperties", 1);
+                auto platforms = object();
+                platforms.insert("propertyNames", projectPlatformIdSchema());
+                platforms.insert("additionalProperties", platformCells);
+                row.insert("platforms", described(platforms, "Per-platform values for this row's cells; rows themselves are shared by every platform."));
+                return object(row, {"id", "targetBusID", "sendLevel"});
+            };
             if (command == "replace_field_group_sends") {
-                fields.insert("sends", array(sendRoute({{"targetBusID", uuid()}, {"sendLevel", number()}},
-                                                      {"targetBusID", "sendLevel"})));
+                fields.insert("sends", array(routeRow(false)));
                 required.append("sends");
+            }
+            if (command == "replace_field_group_sidechains") {
+                fields.insert("sidechains", array(routeRow(true)));
+                required.append("sidechains");
             }
             if (command == "replace_field_group_effects") {
                 fields.insert("effects", effectChain);

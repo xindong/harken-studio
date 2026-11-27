@@ -121,17 +121,10 @@ TEST(CanonicalRuntimeProjectAdapterTest, EffectiveGroupsShareAuthoringIdentityAc
     EffectEntry shared;
     shared.guid = QUuid::createUuid();
     shared.mode = EffectMode::Custom;
+    shared.platformBypass[HarkenTest::PlatformIds::Windows] = true;
     EffectFieldGroup sharedEffects;
     ASSERT_TRUE(sharedEffects.effects.replace({shared}));
     layer->fieldGroups.effects.shared = {FieldGroupMode::Local, sharedEffects};
-    auto platform = shared;
-    platform.bypass = true;
-    EffectFieldGroup platformEffects;
-    ASSERT_TRUE(platformEffects.effects.replace({platform}));
-    layer->fieldGroups.effects.platforms[toFieldGroupGuid(HarkenTest::PlatformIds::Windows)] =
-        {FieldGroupMode::Local, platformEffects};
-    layer->fieldGroups.effects.platforms[toFieldGroupGuid(HarkenTest::PlatformIds::Android)] =
-        {FieldGroupMode::Local, EffectFieldGroup{}};
     auto dormant = shared;
     dormant.guid = QUuid::createUuid();
     dormant.bypass = true;
@@ -142,9 +135,6 @@ TEST(CanonicalRuntimeProjectAdapterTest, EffectiveGroupsShareAuthoringIdentityAc
     busEffect.guid = QUuid::createUuid();
     auto* busMix = project.busses.front().rootItem->comp<VMixNode>();
     ASSERT_TRUE(busMix->effects.replace({busEffect}));
-    busMix->effectPlatforms[HarkenTest::PlatformIds::Android] = EffectChainLedger{};
-    busEffect.bypass = true;
-    ASSERT_TRUE(busMix->effectPlatforms[HarkenTest::PlatformIds::Windows].replace({busEffect}));
     const auto identity = canonicalRuntimeIdentityIndex(project);
     ASSERT_TRUE(identity);
     const auto* inheritedIdentity = identity->find(shared.runtimeId());
@@ -164,21 +154,15 @@ TEST(CanonicalRuntimeProjectAdapterTest, EffectiveGroupsShareAuthoringIdentityAc
         ASSERT_TRUE(copyStudioDefinitionPayload(*sound, scope, *source, groups, *identity, &node, &error))
             << error.toStdString();
         EXPECT_EQ(node.outputBusRef, project.busses.front().rootItem->runtimeId());
-        EXPECT_EQ(node.signalGraph.nodes.size(), scope == HarkenTest::PlatformIds::Android ? 0u : 1u);
-        if (!node.signalGraph.nodes.empty()) {
-            EXPECT_EQ(node.signalGraph.nodes.front().effectId, shared.runtimeId());
-            EXPECT_EQ(node.signalGraph.nodes.front().flags,
-                      scope == HarkenTest::PlatformIds::Windows ? 1u : 0u);
-        }
+        ASSERT_EQ(node.signalGraph.nodes.size(), 1u);
+        EXPECT_EQ(node.signalGraph.nodes.front().effectId, shared.runtimeId());
+        EXPECT_EQ(node.signalGraph.nodes.front().flags, scope == HarkenTest::PlatformIds::Windows ? 1u : 0u);
         const auto runtime = canonicalRuntimeProjectContext(project, 0, {}, scope, source);
         ASSERT_TRUE(runtime.ok()) << (runtime.diagnostics.empty() ? "No runtime context"
             : runtime.diagnostics.front().message.toStdString());
-        ASSERT_EQ(runtime.busResult->effects.size(), scope == HarkenTest::PlatformIds::Android ? 0u : 1u);
-        if (!runtime.busResult->effects.empty()) {
-            EXPECT_EQ(runtime.busResult->effects.front().effectId, busEffect.runtimeId());
-            EXPECT_EQ(runtime.busResult->effects.front().flags,
-                      scope == HarkenTest::PlatformIds::Windows ? 1u : 0u);
-        }
+        ASSERT_EQ(runtime.busResult->effects.size(), 1u);
+        EXPECT_EQ(runtime.busResult->effects.front().effectId, busEffect.runtimeId());
+        EXPECT_EQ(runtime.busResult->effects.front().flags, scope == HarkenTest::PlatformIds::Windows ? 1u : 0u);
         RuntimeCapabilityContext context;
         context.platform = scope;
         context.deferCurrentWorldCompilation = true;

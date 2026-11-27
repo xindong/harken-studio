@@ -200,7 +200,7 @@
       "additionalProperties": false,
       "properties": {
         "filter": {
-          "$ref": "#/$defs/filterOverlay"
+          "$ref": "#/$defs/filter"
         },
         "loopCount": {
           "maximum": 4294967295,
@@ -222,12 +222,6 @@
         "presence": {
           "pattern": "^000000000000[0-38-b][014589cd][0-9a-f][0-38-b]$",
           "type": "string"
-        },
-        "sends": {
-          "items": {
-            "$ref": "#/$defs/send"
-          },
-          "type": "array"
         },
         "signalGraph": {
           "deprecated": true,
@@ -409,6 +403,24 @@
             "bypass": {
               "type": "boolean"
             },
+            "platforms": {
+              "additionalProperties": {
+                "additionalProperties": false,
+                "properties": {
+                  "bypass": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "bypass"
+                ],
+                "type": "object"
+              },
+              "propertyNames": {
+                "$ref": "#/$defs/projectPlatformId"
+              },
+              "type": "object"
+            },
             "mode": {
               "const": "custom",
               "type": "string"
@@ -438,6 +450,24 @@
             },
             "bypass": {
               "type": "boolean"
+            },
+            "platforms": {
+              "additionalProperties": {
+                "additionalProperties": false,
+                "properties": {
+                  "bypass": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "bypass"
+                ],
+                "type": "object"
+              },
+              "propertyNames": {
+                "$ref": "#/$defs/projectPlatformId"
+              },
+              "type": "object"
             },
             "mode": {
               "const": "preset",
@@ -621,91 +651,6 @@
       ],
       "type": "object"
     },
-    "filterOverlay": {
-      "additionalProperties": false,
-      "minProperties": 1,
-      "properties": {
-        "highPass": {
-          "additionalProperties": false,
-          "properties": {
-            "frequency": {
-              "maximum": 20000,
-              "minimum": 20,
-              "type": "number"
-            },
-            "q": {
-              "maximum": 10,
-              "minimum": 0.1,
-              "type": "number"
-            }
-          },
-          "type": "object",
-          "minProperties": 1
-        },
-        "highShelf": {
-          "additionalProperties": false,
-          "properties": {
-            "frequency": {
-              "maximum": 20000,
-              "minimum": 20,
-              "type": "number"
-            },
-            "gain": {
-              "maximum": 48,
-              "minimum": -48,
-              "type": "number"
-            },
-            "q": {
-              "maximum": 10,
-              "minimum": 0.1,
-              "type": "number"
-            }
-          },
-          "type": "object",
-          "minProperties": 1
-        },
-        "lowPass": {
-          "additionalProperties": false,
-          "properties": {
-            "frequency": {
-              "maximum": 20000,
-              "minimum": 20,
-              "type": "number"
-            },
-            "q": {
-              "maximum": 10,
-              "minimum": 0.1,
-              "type": "number"
-            }
-          },
-          "type": "object",
-          "minProperties": 1
-        },
-        "lowShelf": {
-          "additionalProperties": false,
-          "properties": {
-            "frequency": {
-              "maximum": 20000,
-              "minimum": 20,
-              "type": "number"
-            },
-            "gain": {
-              "maximum": 48,
-              "minimum": -48,
-              "type": "number"
-            },
-            "q": {
-              "maximum": 10,
-              "minimum": 0.1,
-              "type": "number"
-            }
-          },
-          "type": "object",
-          "minProperties": 1
-        }
-      },
-      "type": "object"
-    },
     "filterPassSection": {
       "additionalProperties": false,
       "properties": {
@@ -845,20 +790,14 @@
           },
           "type": "array"
         },
+        "sidechains": {
+          "items": {
+            "$ref": "#/$defs/sidechain"
+          },
+          "type": "array"
+        },
         "volume": {
           "type": "number"
-        },
-        "effectsPlatforms": {
-          "additionalProperties": {
-            "items": {
-              "$ref": "#/$defs/effectEntry"
-            },
-            "type": "array"
-          },
-          "propertyNames": {
-            "$ref": "#/$defs/projectPlatformId"
-          },
-          "type": "object"
         }
       },
       "type": "object"
@@ -994,7 +933,7 @@
       "additionalProperties": false,
       "properties": {
         "filter": {
-          "$ref": "#/$defs/filterOverlay"
+          "$ref": "#/$defs/filter"
         },
         "loopCount": {
           "maximum": 4294967295,
@@ -1258,14 +1197,8 @@
         "output": {
           "$ref": "#/$defs/fieldGroupPlatformOutput"
         },
-        "send": {
-          "$ref": "#/$defs/fieldGroupPlatformSend"
-        },
         "spatialRating": {
           "$ref": "#/$defs/fieldGroupPlatformSpatialRating"
-        },
-        "effect": {
-          "$ref": "#/$defs/fieldGroupPlatformEffect"
         },
         "conversion": {
           "$ref": "#/$defs/fieldGroupPlatformConversion"
@@ -1277,23 +1210,8 @@
     "fieldGroupPlatformOutput": {
       "additionalProperties": false,
       "properties": {
-        "inherit": {
-          "type": "boolean"
-        },
         "values": {
           "$ref": "#/$defs/fieldGroupOutputFields"
-        }
-      },
-      "type": "object"
-    },
-    "fieldGroupPlatformSend": {
-      "additionalProperties": false,
-      "properties": {
-        "inherit": {
-          "type": "boolean"
-        },
-        "values": {
-          "$ref": "#/$defs/fieldGroupSendFields"
         }
       },
       "type": "object"
@@ -1301,9 +1219,6 @@
     "fieldGroupPlatformSpatialRating": {
       "additionalProperties": false,
       "properties": {
-        "inherit": {
-          "type": "boolean"
-        },
         "values": {
           "$ref": "#/$defs/fieldGroupSpatialRatingFields"
         }
@@ -1325,11 +1240,47 @@
       ],
       "type": "object"
     },
+    "fieldGroupSidechainPayload": {
+      "additionalProperties": false,
+      "properties": {
+        "sidechains": {
+          "items": {
+            "$ref": "#/$defs/fieldGroupSidechainRow"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "sidechains"
+      ],
+      "type": "object"
+    },
     "fieldGroupSendRow": {
       "additionalProperties": false,
       "properties": {
-        "duckTarget": {
-          "type": "boolean"
+        "id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "platforms": {
+          "additionalProperties": {
+            "additionalProperties": false,
+            "minProperties": 1,
+            "properties": {
+              "sendLevel": {
+                "maximum": 24,
+                "minimum": -96,
+                "type": "number"
+              },
+              "targetBusID": {
+                "$ref": "#/$defs/uuid"
+              }
+            },
+            "type": "object"
+          },
+          "propertyNames": {
+            "$ref": "#/$defs/projectPlatformId"
+          },
+          "type": "object"
         },
         "sendLevel": {
           "maximum": 24,
@@ -1338,40 +1289,63 @@
         },
         "targetBusID": {
           "$ref": "#/$defs/uuid"
-        },
-        "type": {
-          "enum": [
-            "Send",
-            "Sidechain"
-          ],
-          "type": "string"
         }
       },
       "required": [
+        "id",
         "targetBusID",
         "sendLevel"
       ],
-      "type": "object",
-      "if": {
-        "properties": {
-          "duckTarget": {
-            "const": true
-          }
+      "type": "object"
+    },
+    "fieldGroupSidechainRow": {
+      "additionalProperties": false,
+      "properties": {
+        "duckTarget": {
+          "type": "boolean"
         },
-        "required": [
-          "duckTarget"
-        ]
+        "id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "platforms": {
+          "additionalProperties": {
+            "additionalProperties": false,
+            "minProperties": 1,
+            "properties": {
+              "duckTarget": {
+                "type": "boolean"
+              },
+              "sendLevel": {
+                "maximum": 24,
+                "minimum": -96,
+                "type": "number"
+              },
+              "targetBusID": {
+                "$ref": "#/$defs/uuid"
+              }
+            },
+            "type": "object"
+          },
+          "propertyNames": {
+            "$ref": "#/$defs/projectPlatformId"
+          },
+          "type": "object"
+        },
+        "sendLevel": {
+          "maximum": 24,
+          "minimum": -96,
+          "type": "number"
+        },
+        "targetBusID": {
+          "$ref": "#/$defs/uuid"
+        }
       },
-      "then": {
-        "properties": {
-          "type": {
-            "const": "Sidechain"
-          }
-        },
-        "required": [
-          "type"
-        ]
-      }
+      "required": [
+        "id",
+        "targetBusID",
+        "sendLevel"
+      ],
+      "type": "object"
     },
     "fieldGroupSharedGroups": {
       "additionalProperties": false,
@@ -1381,6 +1355,9 @@
         },
         "send": {
           "$ref": "#/$defs/fieldGroupSharedSend"
+        },
+        "sidechain": {
+          "$ref": "#/$defs/fieldGroupSharedSidechain"
         },
         "spatialRating": {
           "$ref": "#/$defs/fieldGroupSharedSpatialRating"
@@ -1395,6 +1372,7 @@
       "required": [
         "output",
         "send",
+        "sidechain",
         "spatialRating",
         "effect",
         "conversion"
@@ -1439,6 +1417,36 @@
         },
         "values": {
           "$ref": "#/$defs/fieldGroupSendPayload"
+        }
+      },
+      "type": "object",
+      "required": [
+        "inherit"
+      ],
+      "if": {
+        "properties": {
+          "inherit": {
+            "const": false
+          }
+        },
+        "required": [
+          "inherit"
+        ]
+      },
+      "then": {
+        "required": [
+          "values"
+        ]
+      }
+    },
+    "fieldGroupSharedSidechain": {
+      "additionalProperties": false,
+      "properties": {
+        "inherit": {
+          "type": "boolean"
+        },
+        "values": {
+          "$ref": "#/$defs/fieldGroupSidechainPayload"
         }
       },
       "type": "object",
@@ -1597,48 +1605,94 @@
     "send": {
       "additionalProperties": false,
       "properties": {
-        "duckTarget": {
-          "type": "boolean"
+        "id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "platforms": {
+          "additionalProperties": {
+            "additionalProperties": false,
+            "minProperties": 1,
+            "properties": {
+              "sendLevel": {
+                "maximum": 24,
+                "minimum": -96,
+                "type": "number"
+              },
+              "targetBusRef": {
+                "$ref": "#/$defs/objectReference"
+              }
+            },
+            "type": "object"
+          },
+          "propertyNames": {
+            "$ref": "#/$defs/projectPlatformId"
+          },
+          "type": "object"
         },
         "sendLevel": {
+          "maximum": 24,
+          "minimum": -96,
           "type": "number"
         },
         "targetBusRef": {
           "$ref": "#/$defs/objectReference"
-        },
-        "type": {
-          "enum": [
-            "Send",
-            "Sidechain"
-          ],
-          "type": "string"
         }
       },
       "required": [
-        "sendLevel",
-        "targetBusRef"
+        "id",
+        "targetBusRef",
+        "sendLevel"
       ],
-      "type": "object",
-      "if": {
-        "properties": {
-          "duckTarget": {
-            "const": true
-          }
+      "type": "object"
+    },
+    "sidechain": {
+      "additionalProperties": false,
+      "properties": {
+        "duckTarget": {
+          "type": "boolean"
         },
-        "required": [
-          "duckTarget"
-        ]
+        "id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "platforms": {
+          "additionalProperties": {
+            "additionalProperties": false,
+            "minProperties": 1,
+            "properties": {
+              "duckTarget": {
+                "type": "boolean"
+              },
+              "sendLevel": {
+                "maximum": 24,
+                "minimum": -96,
+                "type": "number"
+              },
+              "targetBusRef": {
+                "$ref": "#/$defs/objectReference"
+              }
+            },
+            "type": "object"
+          },
+          "propertyNames": {
+            "$ref": "#/$defs/projectPlatformId"
+          },
+          "type": "object"
+        },
+        "sendLevel": {
+          "maximum": 24,
+          "minimum": -96,
+          "type": "number"
+        },
+        "targetBusRef": {
+          "$ref": "#/$defs/objectReference"
+        }
       },
-      "then": {
-        "properties": {
-          "type": {
-            "const": "Sidechain"
-          }
-        },
-        "required": [
-          "type"
-        ]
-      }
+      "required": [
+        "id",
+        "targetBusRef",
+        "sendLevel"
+      ],
+      "type": "object"
     },
     "soundComponent": {
       "additionalProperties": false,
@@ -2145,19 +2199,6 @@
       "type": "object",
       "minProperties": 1
     },
-    "fieldGroupSendFields": {
-      "additionalProperties": false,
-      "properties": {
-        "sends": {
-          "items": {
-            "$ref": "#/$defs/fieldGroupSendRow"
-          },
-          "type": "array"
-        }
-      },
-      "type": "object",
-      "minProperties": 1
-    },
     "fieldGroupSpatialRatingFields": {
       "additionalProperties": false,
       "properties": {
@@ -2199,12 +2240,46 @@
           "type": "integer",
           "minimum": 0,
           "maximum": 100
+        },
+        "platforms": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": {
+            "$ref": "#/$defs/uuid"
+          },
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100
+          }
         }
       },
       "required": [
         "stableOccurrenceOrdinal",
         "order",
         "weight"
+      ]
+    },
+    "selectionMatchCell": {
+      "oneOf": [
+        {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "labelId": {
+              "$ref": "#/$defs/uuid"
+            }
+          },
+          "required": [
+            "labelId"
+          ]
+        }
       ]
     },
     "selectionMatchRow": {
@@ -2229,26 +2304,24 @@
         "cells": {
           "type": "array",
           "items": {
-            "oneOf": [
-              {
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              },
-              {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                  "labelId": {
-                    "$ref": "#/$defs/uuid"
-                  }
-                },
-                "required": [
-                  "labelId"
-                ]
-              }
-            ]
+            "$ref": "#/$defs/selectionMatchCell"
+          }
+        },
+        "platforms": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": {
+            "$ref": "#/$defs/uuid"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "minProperties": 1,
+            "propertyNames": {
+              "$ref": "#/$defs/uuid"
+            },
+            "additionalProperties": {
+              "$ref": "#/$defs/selectionMatchCell"
+            }
           }
         }
       },
@@ -2256,6 +2329,40 @@
         "stableRuleOrdinal",
         "target",
         "cells"
+      ]
+    },
+    "selectionCurveShape": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "points": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2,
+            "items": {
+              "type": "number"
+            }
+          }
+        },
+        "handles": {
+          "type": "array",
+          "maxItems": 7,
+          "items": {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "items": {
+              "type": "number"
+            }
+          }
+        }
+      },
+      "required": [
+        "points",
+        "handles"
       ]
     },
     "selectionCurve": {
@@ -2401,6 +2508,16 @@
         },
         "blendGuid": {
           "$ref": "#/$defs/uuid"
+        },
+        "platforms": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": {
+            "$ref": "#/$defs/uuid"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/selectionCurveShape"
+          }
         }
       },
       "required": [
@@ -2617,22 +2734,24 @@
     "selections": {
       "additionalProperties": false,
       "properties": {
-        "shared": {
+        "random": {
           "$ref": "#/$defs/selectionTable"
         },
-        "platforms": {
-          "type": "object",
-          "propertyNames": {
-            "$ref": "#/$defs/uuid"
-          },
-          "additionalProperties": {
-            "$ref": "#/$defs/selectionTable"
-          }
+        "sequence": {
+          "$ref": "#/$defs/selectionTable"
+        },
+        "match": {
+          "$ref": "#/$defs/selectionTable"
+        },
+        "blend": {
+          "$ref": "#/$defs/selectionTable"
         }
       },
       "required": [
-        "shared",
-        "platforms"
+        "random",
+        "sequence",
+        "match",
+        "blend"
       ],
       "type": "object"
     },
@@ -2666,18 +2785,6 @@
         ]
       }
     },
-    "fieldGroupPlatformEffect": {
-      "additionalProperties": false,
-      "properties": {
-        "inherit": {
-          "type": "boolean"
-        },
-        "values": {
-          "$ref": "#/$defs/fieldGroupEffectFields"
-        }
-      },
-      "type": "object"
-    },
     "fieldGroupEffectPayload": {
       "additionalProperties": false,
       "properties": {
@@ -2693,25 +2800,9 @@
       ],
       "type": "object"
     },
-    "fieldGroupEffectFields": {
-      "additionalProperties": false,
-      "properties": {
-        "effects": {
-          "items": {
-            "$ref": "#/$defs/effectEntry"
-          },
-          "type": "array"
-        }
-      },
-      "type": "object",
-      "minProperties": 1
-    },
     "fieldGroupPlatformConversion": {
       "additionalProperties": false,
       "properties": {
-        "inherit": {
-          "type": "boolean"
-        },
         "values": {
           "$ref": "#/$defs/fieldGroupConversionPayload"
         }
@@ -3523,12 +3614,14 @@
           "path": [
             "components",
             "mixnode",
-            "effects",
+            "sends",
             "*",
-            "effectRef"
+            "platforms",
+            "*",
+            "targetBusRef"
           ],
           "targetTypes": [
-            "Effect"
+            "Bus"
           ]
         },
         {
@@ -3536,8 +3629,35 @@
           "path": [
             "components",
             "mixnode",
-            "effectsPlatforms",
+            "sidechains",
             "*",
+            "targetBusRef"
+          ],
+          "targetTypes": [
+            "Bus"
+          ]
+        },
+        {
+          "kind": "object",
+          "path": [
+            "components",
+            "mixnode",
+            "sidechains",
+            "*",
+            "platforms",
+            "*",
+            "targetBusRef"
+          ],
+          "targetTypes": [
+            "Bus"
+          ]
+        },
+        {
+          "kind": "object",
+          "path": [
+            "components",
+            "mixnode",
+            "effects",
             "*",
             "effectRef"
           ],
@@ -3550,22 +3670,6 @@
           "path": [
             "fieldGroups",
             "shared",
-            "effect",
-            "values",
-            "effects",
-            "*",
-            "effectRef"
-          ],
-          "targetTypes": [
-            "Effect"
-          ]
-        },
-        {
-          "kind": "object",
-          "path": [
-            "fieldGroups",
-            "platforms",
-            "*",
             "effect",
             "values",
             "effects",
@@ -3611,21 +3715,17 @@
           ]
         },
         {
-          "kind": "guid",
+          "kind": "object",
           "path": [
-            "components",
-            "selection",
-            "selections",
-            "shared",
-            "entries",
+            "playableProperties",
+            "sends",
             "*",
-            "childGuid"
+            "platforms",
+            "*",
+            "targetBusRef"
           ],
           "targetTypes": [
-            "Sound",
-            "Container",
-            "Track",
-            "Segment"
+            "Bus"
           ]
         },
         {
@@ -3634,7 +3734,6 @@
             "components",
             "selection",
             "selections",
-            "platforms",
             "*",
             "entries",
             "*",

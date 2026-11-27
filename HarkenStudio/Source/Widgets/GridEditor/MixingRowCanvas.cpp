@@ -123,23 +123,10 @@ void MixingRowCanvas::paintEvent(QPaintEvent*)
         painter.setClipRect(QRectF(data.graphRect.left(), title.top(), data.graphRect.width(),
             data.graphRect.bottom() - title.top()).intersected(rect()));
         if (!path.isEmpty()) {
-            const auto first = path.pointAtPercent(0.0);
-            const auto last = path.currentPosition();
-            auto fill = path;
-            fill.lineTo(last.x(), data.graphRect.bottom());
-            fill.lineTo(first.x(), data.graphRect.bottom());
-            fill.closeSubpath();
-            QLinearGradient gradient(0.0, data.graphRect.top(), 0.0, data.graphRect.bottom());
-            QColor top = color;
-            top.setAlphaF(top.alphaF() * (selected ? 85 : 55) / 255.0);
-            QColor bottom = color;
-            bottom.setAlpha(0);
-            gradient.setColorAt(0.0, top);
-            gradient.setColorAt(1.0, bottom);
-            painter.fillPath(fill, gradient);
+            paintClipFill(painter, path, data.graphRect.top(), data.graphRect.bottom(), color, selected);
             painter.setRenderHint(QPainter::Antialiasing, false);
             painter.setPen(QPen(color, 1.0, Qt::DashLine, Qt::FlatCap));
-            for (const auto& endpoint : {first, last})
+            for (const auto& endpoint : {path.pointAtPercent(0.0), path.currentPosition()})
                 painter.drawLine(endpoint, QPointF(endpoint.x(), data.graphRect.bottom()));
         }
         QColor header = color;
@@ -171,6 +158,23 @@ void MixingRowCanvas::paintEvent(QPaintEvent*)
         style.colors.pointSelectedFill = data.curveColor;
     }
     CurveRenderer::renderForeground(painter, style, CurveColorRole::GridFade, data);
+}
+
+void MixingRowCanvas::paintClipFill(QPainter& painter, const QPainterPath& path, qreal top, qreal bottom,
+                                    const QColor& color, bool selected)
+{
+    auto fill = path;
+    fill.lineTo(path.currentPosition().x(), bottom);
+    fill.lineTo(path.pointAtPercent(0.0).x(), bottom);
+    fill.closeSubpath();
+    QLinearGradient gradient(0.0, top, 0.0, bottom);
+    QColor upper = color;
+    upper.setAlphaF(upper.alphaF() * (selected ? 85 : 55) / 255.0);
+    QColor lower = color;
+    lower.setAlpha(0);
+    gradient.setColorAt(0.0, upper);
+    gradient.setColorAt(1.0, lower);
+    painter.fillPath(fill, gradient);
 }
 
 void MixingRowCanvas::mousePressEvent(QMouseEvent* event)

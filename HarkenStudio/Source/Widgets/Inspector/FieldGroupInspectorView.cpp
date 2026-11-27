@@ -14,39 +14,25 @@
 namespace harken::studio {
 namespace {
 
-using Property = harkenplayableproperties::PlayablePropertyIdV1;
-
-QVariant payloadField(const FieldGroupPayload& payload, Property field)
+QVariant payloadField(const FieldGroupPayload& payload, const QString& field)
 {
-    switch (field) {
-    case Property::OutputBusRef:
-        return fromFieldGroupGuid(std::get<OutputFieldGroup>(payload).outputBusRef);
-    case Property::OutputBusVolume:
-        return std::get<OutputFieldGroup>(payload).outputBusVolume;
-    case Property::Sends: {
-        QVariantList rows;
-        for (const auto& row : std::get<SendFieldGroup>(payload).sends) {
-            QVariantMap entry{
-                {QStringLiteral("targetBusID"), fromFieldGroupGuid(row.targetBusID)},
-                {QStringLiteral("sendLevel"), row.sendLevel},
-                {QStringLiteral("type"), sendTypeName(row.type)}, {QStringLiteral("duckTarget"), row.duckTarget}};
-            rows.append(entry);
-        }
-        return rows;
-    }
-    case Property::SignalGraph:
-        return std::get<EffectFieldGroup>(payload).effects.toJson().toVariantList();
-    case Property::SpatialPanning:
-        return std::get<SpatialRatingFieldGroup>(payload).spatialPanning;
-    case Property::SpatialIs3DEnabled:
-        return std::get<SpatialRatingFieldGroup>(payload).spatialIs3DEnabled;
-    case Property::SpatialAttenuationRef:
-        return fromFieldGroupGuid(std::get<SpatialRatingFieldGroup>(payload).spatialAttenuationRef);
-    case Property::SpatialAttenuationDistanceScaling:
-        return std::get<SpatialRatingFieldGroup>(payload).spatialAttenuationDistanceScaling;
-    default:
-        return {};
-    }
+    QVariant result;
+    std::visit([&](const auto& group) {
+        VisitFieldGroupFields(group, [&](auto, const char* name, const auto& value) {
+            if (field != QLatin1String(name)) return;
+            using Value = std::remove_cvref_t<decltype(value)>;
+            if constexpr (std::is_same_v<Value, harken::studio::project_schema::AuthoringGuid>)
+                result = fromFieldGroupGuid(value);
+            else if constexpr (std::is_same_v<Value, EffectChainLedger>)
+                result = value.toJson().toVariantList();
+            else if constexpr (std::is_same_v<Value, std::vector<SendFieldGroupRow>>
+                               || std::is_same_v<Value, std::vector<SidechainFieldGroupRow>>)
+                result = fieldGroupRouteRowsToJson(value).toVariantList();
+            else
+                result = value;
+        });
+    }, payload);
+    return result;
 }
 
 QString scopeName(const ProjectData& project, FieldGroupScope scope)
@@ -73,43 +59,31 @@ bool resolveEditScopes(const ProjectData& project, const PlatformContext& contex
 
 }
 
+const FieldGroupInspectorScopeView* FieldGroupInspectorView::displayed() const
+{
+    const auto current = std::find_if(perScope.begin(), perScope.end(), [this](const auto& target) {
+        return target.scope && fromFieldGroupGuid(*target.scope) == context.primary;
+    });
+    if (current != perScope.end()) return &*current;
+    return perScope.empty() ? nullptr : &perScope.front();
+}
+
 FieldGroupInspectorFieldView FieldGroupInspectorView::field(const QString& fieldName) const
 {
     FieldGroupInspectorFieldView result;
-    if (!valid || perScope.empty()) return result;
-    if (group == FieldGroupId::Conversion) {
-        if (fieldName != QLatin1String("settingsRef")) return result;
-        result.uniform = true;
-        for (const auto& target : perScope) {
-            const QVariant value = fromFieldGroupGuid(
-                std::get<ConversionFieldGroup>(target.resolved.payload).settingsRef);
-            if (result.perScope.isEmpty())
-                result.value = value;
-            else if (result.value != value)
-                result.uniform = false;
-            result.perScope.append({target.scope, value});
-        }
-        return result;
-    }
-    const auto* descriptor = PlayablePropertyAuthoringV1::fieldByName(fieldName);
-    if (!descriptor && fieldName != QLatin1String("effects")) return result;
-    const auto property = fieldName == QLatin1String("effects")
-        ? Property::SignalGraph : static_cast<Property>(descriptor->id);
-    if (FieldGroupForProperty(property) != group) return result;
-    result.uniform = true;
+    if (!valid || perScope.empty() || FieldGroupForField(fieldName.toStdString()) != group) return result;
+    result.valid = true;
     result.perScope.reserve(static_cast<qsizetype>(perScope.size()));
     for (const auto& target : perScope) {
-        const auto value = payloadField(target.resolved.payload, property);
-        if (result.perScope.isEmpty())
-            result.value = value;
-        else if (result.value != value)
-            result.uniform = false;
+        const auto value = payloadField(target.resolved.payload, fieldName);
+        if (&target == displayed()) result.value = value;
         result.perScope.append({target.scope, value});
     }
+    if (shared) result.shared = payloadField(shared->payload, fieldName);
     return result;
 }
 
-QJsonObject FieldGroupInspectorView::actionArgs() const
+QJsonObject FieldGroupInspectorView::actionArgs(bool sharedScope) const
 {
     if (!valid) return {};
     std::string json;
@@ -119,7 +93,7 @@ QJsonObject FieldGroupInspectorView::actionArgs() const
         {QStringLiteral("definition_guid"), definition.toString(QUuid::WithoutBraces)},
         {QStringLiteral("group"), QString::fromLatin1(FieldGroupName(group).data())},
         {QStringLiteral("expected_before"), QJsonDocument::fromJson(QByteArray::fromStdString(json)).object()}};
-    if (editScopes.shared) {
+    if (sharedScope || editScopes.shared) {
         result.insert(QStringLiteral("scope"), QStringLiteral("Shared"));
     } else {
         QJsonArray platforms;
@@ -130,15 +104,11 @@ QJsonObject FieldGroupInspectorView::actionArgs() const
     return result;
 }
 
-std::optional<EffectChainLedger> FieldGroupInspectorView::effectChain() const
+std::optional<EffectChainLedger> FieldGroupInspectorView::effectChain(bool shared) const
 {
     if (!valid || group != FieldGroupId::Effect) return {};
-    if (editScopes.shared && fieldsEditable)
-        return expectedBefore.effects.shared.localHistory
-            ? expectedBefore.effects.shared.localHistory->effects : EffectChainLedger{};
     const auto value = field(QStringLiteral("effects"));
-    if (!value.uniform) return {};
-    return EffectChainLedger::fromJson(QJsonArray::fromVariantList(value.value.toList()));
+    return EffectChainLedger::fromJson(QJsonArray::fromVariantList((shared ? value.shared : value.value).toList()));
 }
 
 QString FieldGroupInspectorView::sourceTooltip(const ProjectData& project, const QString& fieldName) const
@@ -232,23 +202,17 @@ FieldGroupInspectorView buildFieldGroupInspectorView(
         result.diagnostics.append(QStringLiteral("The project has no target platforms"));
         return result;
     }
-    const auto& first = result.perScope.front().resolved;
-    result.effectiveInherit = first.effectiveInherit;
-    result.fieldsEditable = !result.canInherit || !result.effectiveInherit;
-    result.allExplicitLocal = true;
-    result.allUseShared = true;
-    result.sendsUniform = true;
-    for (const auto& target : result.perScope) {
-        const auto& resolved = target.resolved;
-        result.inheritanceMixed |= resolved.effectiveInherit != first.effectiveInherit;
-        result.fieldsEditable &= !result.canInherit || !resolved.effectiveInherit;
-        result.modesMixed |= resolved.requestedMode != first.requestedMode;
-        result.allExplicitLocal &= resolved.requestedMode == FieldGroupMode::Local;
-        result.anyUseShared |= resolved.requestedMode == FieldGroupMode::UseShared;
-        result.allUseShared &= resolved.requestedMode == FieldGroupMode::UseShared;
-        if (group == FieldGroupId::Send)
-            result.sendsUniform &= resolved.payload == first.payload;
+    if (IsFieldGroupRowList(group)) {
+        const auto resolved = resolver.Resolve(guid, std::nullopt, group);
+        if (!resolved.ok()) {
+            result.diagnostics.append(QStringLiteral("The field group cannot be resolved"));
+            result.perScope.clear();
+            return result;
+        }
+        result.shared = *resolved.value;
     }
+    result.effectiveInherit = result.displayed()->resolved.effectiveInherit;
+    result.fieldsEditable = !result.canInherit || !result.effectiveInherit;
     result.valid = true;
     return result;
 }

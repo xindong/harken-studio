@@ -71,13 +71,13 @@ std::unique_ptr<EffectEditorPanel::Selection> EffectEditorPanel::resolveSelectio
     const auto* project = ProjectManager::instance().currentProject();
     if (!mix || !project) return {};
     const auto& context = selection->context;
-    selection->chain = mix->effectsForPlatform(context.all ? std::nullopt : currentWorldPlatformScope(context));
+    selection->chain = mix->effects;
     selection->editable = context.all || context.selected.size() == 1;
     if (PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(item->type)) {
         selection->grouped = true;
         selection->groupView = buildFieldGroupInspectorView(*project, item->guid,
             FieldGroupId::Effect, context);
-        const auto effective = selection->groupView.effectChain();
+        const auto effective = selection->groupView.effectChain(true);
         if (!effective) return {};
         selection->chain = *effective;
         selection->editable = selection->groupView.fieldsEditable;
@@ -386,18 +386,12 @@ void EffectEditorPanel::commitParameter(size_t index, double value)
         if (!chain.replace(std::move(effects))) return;
         if (current->grouped) {
             command = QStringLiteral("replace_field_group_effects");
-            args = current->groupView.actionArgs();
+            args = current->groupView.actionArgs(true);
             args.insert(QStringLiteral("effects"), chain.toJson());
         } else {
             args = {{QStringLiteral("authoring_handle"), static_cast<qint64>(boundItem()->objectID)},
                     {QStringLiteral("property"), QStringLiteral("effects")},
                     {QStringLiteral("value"), chain.toJson()}};
-            if (!current->context.all && !current->context.selected.isEmpty()) {
-                QJsonArray platforms;
-                for (const auto& platform : current->context.selected)
-                    platforms.append(ProjectPlatformSemantics::idString(platform));
-                args.insert(QStringLiteral("platform_ids"), platforms);
-            }
         }
     }
     const auto result = ActionManager::instance().execute(command, args, ActionSource::GUI, this);

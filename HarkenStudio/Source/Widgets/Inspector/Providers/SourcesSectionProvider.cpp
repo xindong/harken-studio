@@ -29,6 +29,7 @@
 #include "Widgets/Common/SourceRangeThumb.h"
 #include "Widgets/Selector/ObjectRefWidget.h"
 #include "Widgets/Selector/SelectorWindow.h"
+#include "Widgets/Shared/PlatformLocalMarker.h"
 #include "Widgets/Shared/InspectorFormRow.h"
 #include "Widgets/Inspector/InspectorPanel.h"
 
@@ -64,6 +65,7 @@ namespace {
 
 
 constexpr int kActiveShare = 120;
+constexpr int kActiveColumn = 4;
 constexpr int kNameShare = 250;
 constexpr int kWaveformShare = 300;
 constexpr int kOriginalShare = 1000 - kActiveShare - kNameShare - kWaveformShare;
@@ -95,6 +97,9 @@ public:
         });
         v->addWidget(box_);
         buildHeader();
+        marker_ = new PlatformLocalMarker(this);
+        marker_->setEdges(Qt::LeftEdge);
+        box_->setHeaderTrailingWidget(kActiveColumn, marker_);
         rows_ = box_->rowsWidget();
         groupDropIndicator_ = new QFrame(rows_);
         groupDropIndicator_->setObjectName(QStringLiteral("sourceLanguageDropIndicator"));
@@ -692,61 +697,21 @@ private:
         return languages.contains(bar) ? bar : QString();
     }
 
-    QString mixedActiveTooltip(const QString& language) const
-    {
-        const auto* sound = boundItem_ ? boundItem_->comp<VSound>() : nullptr;
-        if (!sound)
-            return {};
-        const PlatformContext& context = PlatformContextService::instance().context();
-        if (!context.all)
-            return {};
-        QStringList lines;
-        QSet<QUuid> distinct;
-        const auto* project = ProjectManager::instance().currentProject();
-        if (!project) return {};
-        for (ProjectPlatformId platform : context.selected) {
-            const auto* definition = ProjectPlatformSemantics::find(project->platforms, platform);
-            if (!definition) continue;
-            const auto resolved = SoundSourceSemantics::resolveSourceSelection(
-                *sound, ProjectPlatformSemantics::idString(platform), language);
-            if (resolved.source) {
-                distinct.insert(resolved.source->entryId);
-                lines.append(QStringLiteral("%1: %2")
-                                 .arg(definition->name, resolved.source->name));
-            } else {
-                distinct.insert(QUuid());
-                lines.append(QStringLiteral("%1: %2")
-                                 .arg(definition->name, QObject::tr("None")));
-            }
-        }
-        if (distinct.size() <= 1)
-            return {};
-        return lines.join(QLatin1Char('\n'));
-    }
-
     QUuid resolvedActiveEntry(const QString& language) const
     {
         const auto* sound = boundItem_ ? boundItem_->comp<VSound>() : nullptr;
         if (!sound)
             return {};
-        const PlatformContext& context = PlatformContextService::instance().context();
-        if (!context.all) {
-            const auto resolved = SoundSourceSemantics::resolveSourceSelection(
-                *sound, ProjectPlatformSemantics::idString(context.primary), language);
-            return resolved.source ? resolved.source->entryId : QUuid{};
-        }
-        QUuid shared;
-        for (ProjectPlatformId platform : context.selected) {
-            const auto resolved = SoundSourceSemantics::resolveSourceSelection(
-                *sound, ProjectPlatformSemantics::idString(platform), language);
-            if (!resolved.source)
-                return {};
-            if (shared.isNull())
-                shared = resolved.source->entryId;
-            else if (shared != resolved.source->entryId)
-                return {};
-        }
-        return shared;
+        const auto resolved = SoundSourceSemantics::resolveSourceSelection(*sound,
+            ProjectPlatformSemantics::idString(PlatformContextService::instance().context().primary), language);
+        return resolved.source ? resolved.source->entryId : QUuid{};
+    }
+
+    void bindMarker(PlatformLocalMarker* marker, const QString& language)
+    {
+        marker->bind(boundItem_, boundItem_ ? std::optional(PlatformLocalAddress{
+            PlatformLocalAddress::Kind::SourceActive, language}) : std::nullopt);
+        marker->setEditable(missingLanguageEntries().isEmpty() && resolvedActiveEntry(language) != QUuid{});
     }
 
     void renameSource(const QUuid& entryId, QLineEdit* edit)
@@ -848,19 +813,19 @@ private:
             const QSignalBlocker blocker(check);
             check->setEnabled(canEdit);
             if (ungrouped) {
-                check->setTristate(false);
-                check->setCheckState(Qt::Unchecked);
+                check->setChecked(false);
                 check->setToolTip(missingLanguagesHint());
                 continue;
             }
             const QUuid active = resolvedActiveEntry(language);
-            const QString mixed = mixedActiveTooltip(language);
             const QUuid entryId = QUuid::fromString(row->property("entryId").toString());
-            check->setTristate(!mixed.isEmpty());
-            check->setCheckState(!mixed.isEmpty() ? Qt::PartiallyChecked
-                : (!active.isNull() && entryId == active ? Qt::Checked : Qt::Unchecked));
-            check->setToolTip(canEdit ? mixed : missingLanguagesHint());
+            check->setChecked(!active.isNull() && entryId == active);
+            check->setToolTip(canEdit ? QString() : missingLanguagesHint());
         }
+        if (!distinguishLanguage())
+            bindMarker(marker_, {});
+        for (auto it = groupMarkers_.cbegin(); it != groupMarkers_.cend(); ++it)
+            bindMarker(it.value(), it.key());
     }
 
     void reloadFromItem()
@@ -1055,6 +1020,8 @@ private:
         }
         rowWidgets_.clear();
         groupFooters_.clear();
+        groupMarkers_.clear();
+        marker_->setVisible(!distinguishLanguage());
         footer_->setVisible(!distinguishLanguage());
         box_->bodyMessage()->setVisible(!missingLanguageEntries().isEmpty());
 
@@ -1075,6 +1042,10 @@ private:
             auto* header = box_->createGroupHeader(language);
             header->setObjectName(QStringLiteral("sourceLanguageGroup"));
             header->setProperty("groupLanguage", language);
+            auto* marker = new PlatformLocalMarker(header);
+            marker->setEdges(Qt::LeftEdge);
+            header->setTrailingWidget(marker);
+            groupMarkers_.insert(language, marker);
             int displayNumber = 1;
             for (int i = 0; i < static_cast<int>(sources_.size()); ++i) {
                 if (sources_[i].language != language)
@@ -1105,6 +1076,8 @@ private:
     QFrame* groupDropIndicator_ = nullptr;
     ListFooter* footer_ = nullptr;
     QMap<QString, ListFooter*> groupFooters_;
+    QMap<QString, PlatformLocalMarker*> groupMarkers_;
+    PlatformLocalMarker* marker_ = nullptr;
     std::vector<QWidget*> rowWidgets_;
     std::vector<SourceRow> sources_;
     int selected_ = -1;

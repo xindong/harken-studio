@@ -15,12 +15,10 @@ FilterState effectiveState(const ProjectItem& item, PlatformScope scope)
 {
     const auto* mix = item.comp<VMixNode>();
     if (!mix) return {};
-    if (scope) {
-        if (const auto* overlay = item.platformOverrides.find(*scope)) {
-            const auto state = FilterSemantics::applyOverlay(mix->filter, overlay->filter);
-            Q_ASSERT(state);
-            return *state;
-        }
+    if (const auto* overlay = scope ? item.platformOverrides.find(*scope) : nullptr; overlay && !overlay->filter.isEmpty()) {
+        const auto state = FilterSemantics::fromJson(overlay->filter);
+        Q_ASSERT(state);
+        return *state;
     }
     return mix->filter;
 }
@@ -68,28 +66,25 @@ bool restoreProperty(ProjectItem& item, const QString& field,
         mix->filter = *parsed;
         return true;
     }
-    if (state.present) {
-        if (descriptor) {
-            auto candidate = mix->filter;
-            if (!state.value.isDouble()
-                || !FilterSemantics::setValue(candidate, *descriptor, state.value.toDouble())) return false;
-        } else if (!state.value.isObject()
-                   || !FilterSemantics::applyOverlay(mix->filter, state.value.toObject())) return false;
+    if (!state.present) {
+        if (descriptor) return false;
+        if (auto* overlay = item.platformOverrides.find(*scope)) {
+            overlay->filter = {};
+            item.platformOverrides.eraseEmpty(*scope);
+        }
+        return true;
     }
-    auto* overlay = state.present ? item.platformOverrides.ensure(*scope) : item.platformOverrides.find(*scope);
-    if (!overlay) return true;
-    if (!descriptor) {
-        overlay->filter = state.present ? state.value.toObject() : QJsonObject{};
+    FilterState next;
+    if (descriptor) {
+        next = effectiveState(item, scope);
+        if (!state.value.isDouble() || !FilterSemantics::setValue(next, *descriptor, state.value.toDouble()))
+            return false;
     } else {
-        const QLatin1String sectionKey(FilterSemantics::sectionKey(descriptor->kind));
-        const QLatin1String parameterKey(FilterSemantics::parameterKey(descriptor->parameter));
-        auto section = overlay->filter.value(sectionKey).toObject();
-        if (state.present) section.insert(parameterKey, state.value);
-        else section.remove(parameterKey);
-        if (section.isEmpty()) overlay->filter.remove(sectionKey);
-        else overlay->filter.insert(sectionKey, section);
+        const auto parsed = state.value.isObject() ? FilterSemantics::fromJson(state.value.toObject()) : std::nullopt;
+        if (!parsed) return false;
+        next = *parsed;
     }
-    item.platformOverrides.eraseEmpty(*scope);
+    item.platformOverrides.ensure(*scope)->filter = FilterSemantics::toJson(next);
     return true;
 }
 

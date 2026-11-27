@@ -20,6 +20,8 @@ public:
     void setClips(const QVector<MixingCurveClip>& clips, int selected);
     QRectF clipTitleRect(int clip) const;
     void cancelDrag() override;
+    static void paintClipFill(QPainter& painter, const QPainterPath& path, qreal top, qreal bottom,
+                              const QColor& color, bool selected);
 
 signals:
     void clipSelected(int clip);

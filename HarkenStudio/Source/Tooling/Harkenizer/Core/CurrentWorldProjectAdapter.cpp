@@ -1746,7 +1746,7 @@ buildCurrentWorldSyncRequestForContext(ProjectData& project, PlatformScope scope
         const auto* item = index.byGuid.at(sound.stableId);
         const auto effective = groups.definitions.find(sound.stableId);
         if (effective == groups.definitions.end()) continue;
-        for (const auto& send : effective->second.send.sends) {
+        for (const auto& send : effective->second.sidechain.sidechains) {
             if (!send.duckTarget) continue;
             const auto* target = request->identityIndex->find(send.targetBusID);
             if (!target || target->kind != harken::studio::project_schema::RuntimeIdentityKindV1::Bus) {
@@ -1758,18 +1758,12 @@ buildCurrentWorldSyncRequestForContext(ProjectData& project, PlatformScope scope
         }
     }
     for (const auto* bus : index.buses) {
-        const auto locator = PlayablePropertyAuthoringV1::definitionLocator(*bus);
-        const auto state = locator ? PlayablePropertyAuthoringV1::readProperty(
-            const_cast<ProjectItem&>(*bus), *locator,
-            static_cast<std::uint8_t>(harkenplayableproperties::PlayablePropertyIdV1::Sends), scope) : std::nullopt;
-        if (!state || !state->value.isArray()) {
-            setError(error, QStringLiteral("Bus Ducking sends are invalid"));
-            return {};
-        }
-        for (const auto& value : state->value.toArray()) {
-            const auto row = value.toObject();
-            if (!row.value(QStringLiteral("duckTarget")).toBool()) continue;
-            const auto handle = static_cast<std::uint32_t>(row.value(QStringLiteral("targetBusID")).toDouble());
+        const auto* mix = bus->comp<VMixNode>();
+        if (!mix) continue;
+        for (const auto& authored : mix->sidechains) {
+            const auto route = authored.forPlatform(scope);
+            if (!route.duckTarget) continue;
+            const auto handle = route.targetBusID;
             const auto* target = request->identityIndex->findBySourceHandle(
                 harken::studio::project_schema::RuntimeIdentityKindV1::Bus,
                 handle == kMasterBusID ? project.busses.front().rootItem->objectID : static_cast<std::uint32_t>(handle));
@@ -1778,7 +1772,7 @@ buildCurrentWorldSyncRequestForContext(ProjectData& project, PlatformScope scope
                 return {};
             }
             appendDucking(*bus, harken::studio::build::SignalEndpointKindV1::Bus,
-                          target->stableId, static_cast<float>(row.value(QStringLiteral("sendLevel")).toDouble()));
+                          target->stableId, route.sendLevelDb);
         }
     }
     setStatus(status, CurrentWorldBuildStatus::Ready);

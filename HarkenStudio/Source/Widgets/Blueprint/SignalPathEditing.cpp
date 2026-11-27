@@ -44,25 +44,28 @@ std::vector<FieldGroupScope> editScopes(const ProjectData& project)
 }
 
 template <typename Payload>
-void writeLocal(AuthoredGroup<Payload>& group, FieldGroupScope scope, const Payload& payload)
+bool writeLocal(AuthoredGroup<Payload>& group, FieldGroupScope scope, const Payload& payload,
+                const FieldGroupResolver& resolver, harken::studio::project_schema::AuthoringGuid definition)
 {
-    GroupState<Payload> state{FieldGroupMode::Local, payload};
     if (!scope) {
-        group.shared = std::move(state);
-        return;
+        group.shared = {FieldGroupMode::Local, payload};
+        return true;
     }
-    if (group.shared.mode == FieldGroupMode::Local && group.shared.localHistory) {
-        state.mode = FieldGroupMode::UseShared;
-        state.localFields = FieldGroupDifferenceMask(payload, *group.shared.localHistory);
-        if (state.localFields == 0) {
-            group.platforms.erase(*scope);
-            return;
-        }
-        Payload fields;
-        CopyFieldGroupFields(fields, payload, state.localFields);
-        state.localHistory = std::move(fields);
+    const auto shared = resolver.Resolve(definition, {}, Payload::groupId);
+    if (!shared.ok()) return false;
+    if (shared.value->source.isDefault || shared.value->source.definition != definition)
+        group.shared = {FieldGroupMode::Local, std::get<Payload>(shared.value->payload)};
+    GroupState<Payload> state{FieldGroupMode::UseShared, {}};
+    state.localFields = FieldGroupDifferenceMask(payload, *group.shared.localHistory);
+    if (state.localFields == 0) {
+        group.platforms.erase(*scope);
+        return true;
     }
+    Payload fields;
+    CopyFieldGroupFields(fields, payload, state.localFields);
+    state.localHistory = std::move(fields);
     group.platforms[*scope] = std::move(state);
+    return true;
 }
 
 bool pathsStillCurrent(const ProjectData& project, const SignalPathGraph& graph,
@@ -107,68 +110,37 @@ bool validBusRouting(const SignalPathConnectPlan& plan, bool redo)
     return validateBusRouting(*project, redo ? plan.busSendsAfter : plan.busSendsBefore, parents).isEmpty();
 }
 
-bool stageBusSends(SignalPathConnectPlan& plan, const ProjectItem& bus, PlatformScope scope,
-                   const std::function<void(QJsonArray&)>& edit)
+bool stageBusSends(SignalPathConnectPlan& plan, const ProjectItem& bus,
+                   const std::function<void(BusSendState&)>& edit)
 {
-    auto existing = std::find_if(plan.busSendsAfter.begin(), plan.busSendsAfter.end(), [&](const auto& state) {
-        return state.bus == bus.guid && state.scope == scope;
-    });
-    const auto before = captureBusSendState(bus, scope);
+    const auto existing = std::find_if(plan.busSendsAfter.begin(), plan.busSendsAfter.end(),
+        [&](const auto& state) { return state.bus == bus.guid; });
+    if (existing != plan.busSendsAfter.end()) {
+        edit(*existing);
+        return true;
+    }
+    const auto before = captureBusSendState(bus);
     if (!before) return false;
-    const auto& context = PlatformContextService::instance().context();
-    if (scope && (context.all || context.selected.isEmpty()) && !before->value.present) return true;
-    auto rows = existing == plan.busSendsAfter.end() ? busSendRows(bus, scope)
-        : std::optional<QJsonArray>{existing->value.value.toArray()};
-    if (!rows) return false;
-    const auto previous = *rows;
-    edit(*rows);
-    if (*rows == previous) return true;
-    if (scope && !before->value.present) {
-        const auto shared = captureBusSendState(bus);
-        if (!shared) return false;
-        if (std::none_of(plan.observedBusSends.begin(), plan.observedBusSends.end(), [&](const auto& state) {
-                return state.bus == bus.guid && !state.scope;
-            })) plan.observedBusSends.push_back(*shared);
-    }
-    if (existing != plan.busSendsAfter.end()) existing->value.value = *rows;
-    else {
-        plan.busSendsBefore.push_back(*before);
-        plan.busSendsAfter.push_back({bus.guid, scope, {true, *rows}});
-    }
+    auto after = *before;
+    edit(after);
+    if (after == *before) return true;
+    plan.busSendsBefore.push_back(*before);
+    plan.busSendsAfter.push_back(std::move(after));
     return true;
 }
 
-bool stageBusOutput(SignalPathConnectPlan& plan, const ProjectData& project,
-                        const ProjectItem& bus, uint32_t output)
+bool stageBusOutput(SignalPathConnectPlan& plan, const ProjectItem& bus, uint32_t output)
 {
-    for (const auto& scope : busRoutingScopes(project)) {
-        const auto state = captureBusSendState(bus, scope);
-        if (!state) return false;
-        if (!state->value.present
-            && std::none_of(plan.busSendsAfter.begin(), plan.busSendsAfter.end(), [&](const auto& staged) {
-                return staged.bus == bus.guid && staged.scope == scope;
-            })) continue;
-        if (!stageBusSends(plan, bus, scope, [&](QJsonArray& rows) {
-                for (qsizetype index = rows.size(); index > 0; --index) {
-                    const auto send = Send::fromJson(rows[index - 1].toObject());
-                    if (send && send->targetBusID == output && (send->type == SendType::Send || send->duckTarget))
-                        rows.removeAt(index - 1);
-                }
-            })) return false;
-    }
-    return true;
+    return stageBusSends(plan, bus, [&](BusSendState& state) {
+        state = withoutOutputConflicts(std::move(state), output);
+    });
 }
 
-bool busSendStatesMatch(const std::vector<BusSendState>& states,
-                        const std::vector<BusSendState>& changes = {})
+bool busSendStatesMatch(const std::vector<BusSendState>& states)
 {
     for (const auto& expected : states) {
-        const auto changed = std::find_if(changes.begin(), changes.end(), [&](const auto& state) {
-            return state.bus == expected.bus && state.scope == expected.scope;
-        });
-        if (changed != changes.end()) continue;
         const auto* item = ProjectManager::instance().findItemByGuid(expected.bus);
-        const auto current = item ? captureBusSendState(*item, expected.scope) : std::nullopt;
+        const auto current = item ? captureBusSendState(*item) : std::nullopt;
         if (!current || *current != expected) return false;
     }
     return true;
@@ -183,7 +155,7 @@ bool applyBusSendStates(const std::vector<BusSendState>& states)
         item->markDirty();
         ProjectManager::syncPlayablePropertyToRuntime(item,
             static_cast<uint8_t>(harkenplayableproperties::PlayablePropertyIdV1::Sends));
-        emit manager.busChanged(item->objectID, QStringLiteral("sends"));
+        emit manager.busChanged(item->objectID, QStringLiteral("send"));
     }
     return true;
 }
@@ -251,7 +223,7 @@ protected:
         }
         const auto& expectedSends = redo ? plan_.busSendsBefore : plan_.busSendsAfter;
         const auto& replacementSends = redo ? plan_.busSendsAfter : plan_.busSendsBefore;
-        if (!busSendStatesMatch(expectedSends) || !busSendStatesMatch(plan_.observedBusSends, expectedSends)) return false;
+        if (!busSendStatesMatch(expectedSends)) return false;
         if (!validateFieldGroupProject(*project, replacement, parents).ok()
             || !validBusRouting(plan_, redo)) return false;
 
@@ -301,7 +273,7 @@ protected:
         if (!refreshFieldGroupDerivedViews(*project)) return false;
         std::vector<BusSendState> sendsBeforeApply;
         for (const auto& state : replacementSends) {
-            const auto current = captureBusSendState(*manager.findItemByGuid(state.bus), state.scope);
+            const auto current = captureBusSendState(*manager.findItemByGuid(state.bus));
             if (!current) return false;
             sendsBeforeApply.push_back(*current);
         }
@@ -412,7 +384,7 @@ protected:
         }
         const auto& expectedSends = redo ? plan_.busSendsBefore : plan_.busSendsAfter;
         const auto& replacementSends = redo ? plan_.busSendsAfter : plan_.busSendsBefore;
-        if (!busSendStatesMatch(expectedSends) || !busSendStatesMatch(plan_.observedBusSends, expectedSends)) return false;
+        if (!busSendStatesMatch(expectedSends)) return false;
         if (!validateFieldGroupProject(*project, replacement, parents).ok()
             || !validBusRouting(plan_, redo)) return false;
 
@@ -574,19 +546,14 @@ SignalPathConnectPlan prepareObjectConnections(const SignalPathGraph& graph,
         if (fromBus && addSend) {
             if (from->parent == to)
                 return fail(QObject::tr("Send rejected: output conflict"));
-            for (const auto& scope : scopes) {
-                const auto platform = scope ? PlatformScope{fromFieldGroupGuid(*scope)} : PlatformScope{};
-                bool duplicate = false;
-                if (!stageBusSends(plan, *from, platform, [&](QJsonArray& rows) {
-                        for (const auto& value : rows) {
-                            const auto row = value.toObject();
-                            if (matchesSignalPathSendRow(row, to->objectID, SendType::Send, false))
-                                duplicate = true;
-                        }
-                        if (!duplicate) rows.append(Send{to->objectID, 0.0f}.toJson());
-                    })) return fail(QObject::tr("The Bus routing is unavailable"));
-                if (duplicate) return fail(QObject::tr("Send already exists on this object"));
-            }
+            bool duplicate = false;
+            if (!stageBusSends(plan, *from, [&](BusSendState& state) {
+                    for (const auto& scope : busRoutingScopes(*project))
+                        for (const auto& row : state.sends)
+                            duplicate |= row.forPlatform(scope).targetBusID == to->objectID;
+                    if (!duplicate) state.sends.push_back({QUuid::createUuid(), to->objectID, 0.0f, false, {}});
+                })) return fail(QObject::tr("The Bus routing is unavailable"));
+            if (duplicate) return fail(QObject::tr("Send already exists on this object"));
             plan.busSend = true;
             continue;
         }
@@ -608,29 +575,33 @@ SignalPathConnectPlan prepareObjectConnections(const SignalPathGraph& graph,
                 groups = *change.rootGroups;
             } else if (!manager.validateMoveConstraints(from, destination, &plan.error)) return plan;
             plan.moves.push_back(std::move(change));
-            if (fromBus && !stageBusOutput(plan, *project, *from, destination->objectID))
+            if (fromBus && !stageBusOutput(plan, *from, destination->objectID))
                 return fail(QObject::tr("The Bus routing is unavailable"));
         }
         if (fromBus || !toBus) continue;
         const auto guid = toFieldGroupGuid(from->guid);
         const auto bus = toFieldGroupGuid(to->guid);
+        if (addSend) {
+            const auto resolved = resolver.Resolve(guid, {}, FieldGroupId::Send);
+            if (!resolved.ok()) return fail(QObject::tr("The inherited Send configuration cannot be resolved"));
+            auto sends = std::get<SendFieldGroup>(resolved.value->payload);
+            if (std::any_of(sends.sends.begin(), sends.sends.end(), [&](const auto& send) {
+                    return send.targetBusID == bus || std::any_of(send.platforms.begin(), send.platforms.end(),
+                        [&](const auto& cell) { return cell.second.targetBusID == bus; });
+                }))
+                return fail(QObject::tr("Send already exists on this object"));
+            sends.sends.push_back({toFieldGroupGuid(QUuid::createUuid()), bus, 0.0f, {}});
+            groups.send.shared = {FieldGroupMode::Local, std::move(sends)};
+        }
         for (const auto scope : scopes) {
-            if (addSend) {
-                const auto resolved = resolver.Resolve(guid, scope, FieldGroupId::Send);
-                if (!resolved.ok()) return fail(QObject::tr("The inherited Send configuration cannot be resolved"));
-                auto sends = std::get<SendFieldGroup>(resolved.value->payload);
-                if (std::any_of(sends.sends.begin(), sends.sends.end(),
-                        [&](const auto& send) { return send.targetBusID == bus && send.type == SendType::Send; }))
-                    return fail(QObject::tr("Send already exists on this object"));
-                sends.sends.push_back({bus, 0.0f});
-                writeLocal(groups.send, scope, sends);
-            } else {
+            if (!addSend) {
                 const auto resolved = resolver.Resolve(guid, scope, FieldGroupId::Output);
                 if (!resolved.ok()) return fail(QObject::tr("The inherited Output configuration cannot be resolved"));
                 auto output = std::get<OutputFieldGroup>(resolved.value->payload);
                 if (output.outputBusRef != bus) {
                     output.outputBusRef = bus;
-                    writeLocal(groups.output, scope, output);
+                    if (!writeLocal(groups.output, scope, output, resolver, guid))
+                        return fail(QObject::tr("The inherited Output configuration cannot be resolved"));
                 }
             }
         }
@@ -712,7 +683,7 @@ SignalPathConnectPlan prepareSignalPathDisconnect(const SignalPathGraph& graph,
     const FieldGroupResolver resolver(view.definitions, toFieldGroupGuid(master->guid));
     const auto scopes = editScopes(*project);
     using ProviderScope = std::pair<QUuid, FieldGroupScope>;
-    std::map<ProviderScope, std::set<std::tuple<QUuid, SendType, bool>>> removedSends;
+    std::map<QUuid, std::set<std::tuple<QUuid, SendType, bool>>> removedSends;
     std::map<ProviderScope, OutputFieldGroup> resetOutputs;
     std::set<QUuid> playbackOwners;
     std::set<QUuid> detachments;
@@ -771,23 +742,20 @@ SignalPathConnectPlan prepareSignalPathDisconnect(const SignalPathGraph& graph,
                     });
                 if (send == sends->end() || !qFuzzyCompare(send->sendLevel, edge.sendLevel))
                     return fail(QObject::tr("The Send connection has changed"));
-                for (const auto& scope : scopes) {
-                    const auto platform = scope ? PlatformScope{fromFieldGroupGuid(*scope)} : PlatformScope{};
-                    if (!stageBusSends(plan, *from, platform, [&](QJsonArray& rows) {
-                            for (qsizetype rowIndex = rows.size(); rowIndex > 0; --rowIndex) {
-                                const auto row = rows[rowIndex - 1].toObject();
-                                if (matchesSignalPathSendRow(row, to->objectID, edge.type, edge.duckTarget))
-                                    rows.removeAt(rowIndex - 1);
-                            }
-                        })) return fail(QObject::tr("The Bus routing is unavailable"));
-                }
+                if (!stageBusSends(plan, *from, [&](BusSendState& state) {
+                        std::erase_if(edge.type == SendType::Sidechain ? state.sidechains : state.sends,
+                            [&](const BusRoute& row) {
+                                const auto route = row.forPlatform(plan.occurrenceScope);
+                                return route.targetBusID == to->objectID && route.duckTarget == edge.duckTarget;
+                            });
+                    })) return fail(QObject::tr("The Bus routing is unavailable"));
             }
             continue;
         }
         if (edge.pathIndices.empty() || !edge.routingSource)
             return fail(QObject::tr("The routing connection has no configuration source"));
-        const auto group = edge.kind == SignalPathEdgeKind::Output
-            ? FieldGroupId::Output : FieldGroupId::Send;
+        const auto group = edge.kind == SignalPathEdgeKind::Output ? FieldGroupId::Output
+            : edge.type == SendType::Sidechain ? FieldGroupId::Sidechain : FieldGroupId::Send;
         for (const auto pathIndex : edge.pathIndices) {
             if (pathIndex >= graph.paths.size())
                 return fail(QObject::tr("The signal path has changed"));
@@ -797,32 +765,28 @@ SignalPathConnectPlan prepareSignalPathDisconnect(const SignalPathGraph& graph,
                 || fromFieldGroupGuid(current.value->source.definition) != edge.routingSource->objectGuid
                 || current.value->source.scope != edge.routingSource->scope)
                 return fail(QObject::tr("The routing configuration source has changed"));
+            if (edge.kind != SignalPathEdgeKind::Output) {
+                const auto provider = fromFieldGroupGuid(current.value->source.definition);
+                observed.insert(provider);
+                removedSends[provider].emplace(toGuid, edge.type, edge.duckTarget);
+                continue;
+            }
             for (const auto scope : scopes) {
                 const auto resolved = resolver.Resolve(origin, scope, group);
                 if (!resolved.ok()) return fail(QObject::tr("The routing configuration cannot be resolved"));
                 if (resolved.value->source.isDefault) continue;
                 const auto provider = fromFieldGroupGuid(resolved.value->source.definition);
                 observed.insert(provider);
-                if (edge.kind == SignalPathEdgeKind::Output) {
-                    auto output = std::get<OutputFieldGroup>(resolved.value->payload);
-                    output.outputBusRef = toFieldGroupGuid(master->guid);
-                    resetOutputs[{provider, scope}] = output;
-                } else {
-                    const auto& sends = std::get<SendFieldGroup>(resolved.value->payload).sends;
-                    if (std::any_of(sends.begin(), sends.end(),
-                            [&](const auto& send) {
-                                return send.targetBusID == toFieldGroupGuid(toGuid) && send.type == edge.type
-                                    && send.duckTarget == edge.duckTarget;
-                            }))
-                        removedSends[{provider, scope}].emplace(toGuid, edge.type, edge.duckTarget);
-                }
+                auto output = std::get<OutputFieldGroup>(resolved.value->payload);
+                output.outputBusRef = toFieldGroupGuid(master->guid);
+                resetOutputs[{provider, scope}] = output;
             }
         }
     }
     if (!pathsStillCurrent(*project, graph, affectedPaths, {}))
         return fail(QObject::tr("The signal path changed; select the connection again"));
     for (const auto& reset : plan.busOutputResets)
-        if (!stageBusOutput(plan, *project, *manager.findItemByGuid(reset.definition), master->objectID))
+        if (!stageBusOutput(plan, *manager.findItemByGuid(reset.definition), master->objectID))
             return fail(QObject::tr("The Bus routing is unavailable"));
     for (const auto index : affectedPaths.pathIndices) {
         for (const auto& endpoint : graph.paths[index].computation)
@@ -837,20 +801,42 @@ SignalPathConnectPlan prepareSignalPathDisconnect(const SignalPathGraph& graph,
         const auto* provider = manager.findItemByGuid(guid);
         if (!provider) return fail(QObject::tr("The routing configuration source no longer exists"));
         auto& groups = candidates.try_emplace(guid, provider->fieldGroups).first->second;
-        writeLocal(groups.output, scope, output);
+        if (!writeLocal(groups.output, scope, output, resolver, toFieldGroupGuid(guid)))
+            return fail(QObject::tr("The routing configuration cannot be resolved"));
     }
-    for (const auto& [source, targets] : removedSends) {
-        const auto& [guid, scope] = source;
+    for (const auto& [guid, targets] : removedSends) {
         const auto* provider = manager.findItemByGuid(guid);
         if (!provider) return fail(QObject::tr("The routing configuration source no longer exists"));
-        const auto resolved = resolver.Resolve(toFieldGroupGuid(guid), scope, FieldGroupId::Send);
-        if (!resolved.ok()) return fail(QObject::tr("The Send configuration cannot be resolved"));
-        auto sends = std::get<SendFieldGroup>(resolved.value->payload);
-        std::erase_if(sends.sends, [&](const auto& send) {
-            return targets.contains({fromFieldGroupGuid(send.targetBusID), send.type, send.duckTarget});
-        });
         auto& groups = candidates.try_emplace(guid, provider->fieldGroups).first->second;
-        writeLocal(groups.send, scope, sends);
+        const auto removeRows = [&]<typename Payload>(AuthoredGroup<Payload>& authored, SendType type) {
+            const auto resolved = resolver.Resolve(toFieldGroupGuid(guid), {}, Payload::groupId);
+            if (!resolved.ok()) return false;
+            auto payload = std::get<Payload>(resolved.value->payload);
+            FieldGroupPayload effective = payload;
+            if (graph.platform) ApplyFieldGroupPlatform(effective, *graph.platform);
+            const auto& shown = std::get<Payload>(effective);
+            auto& rows = [&]() -> auto& {
+                if constexpr (std::is_same_v<Payload, SendFieldGroup>) return payload.sends;
+                else return payload.sidechains;
+            }();
+            const auto& shownRows = [&]() -> const auto& {
+                if constexpr (std::is_same_v<Payload, SendFieldGroup>) return shown.sends;
+                else return shown.sidechains;
+            }();
+            std::remove_cvref_t<decltype(rows)> kept;
+            for (size_t index = 0; index < rows.size(); ++index) {
+                bool duck = false;
+                if constexpr (std::is_same_v<Payload, SidechainFieldGroup>) duck = shownRows[index].duckTarget;
+                if (!targets.contains({fromFieldGroupGuid(shownRows[index].targetBusID), type, duck}))
+                    kept.push_back(rows[index]);
+            }
+            if (kept.size() == rows.size()) return true;
+            rows = std::move(kept);
+            authored.shared = {FieldGroupMode::Local, std::move(payload)};
+            return true;
+        };
+        if (!removeRows(groups.send, SendType::Send) || !removeRows(groups.sidechain, SendType::Sidechain))
+            return fail(QObject::tr("The Send configuration cannot be resolved"));
     }
     std::vector<FieldGroupDefinitionSnapshot> routedGroups;
     for (const auto& [guid, groups] : candidates) routedGroups.push_back({guid, groups});

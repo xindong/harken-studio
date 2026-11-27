@@ -356,8 +356,6 @@ buildRuntimeIdentityIndex(const ProjectData& project,
                 });
             } else {
                 addEffects(mix->effects);
-                for (const auto& [platform, effects] : mix->effectPlatforms)
-                    addEffects(effects);
             }
             for (const auto& binding : mix->bindings.entries()) {
                 const auto owner = toAuthoringGuid(item->guid);
@@ -558,10 +556,9 @@ compileBusResult(
         bus.source = {toAuthoringGuid(item->guid), documentPath, "/volume"};
         const uint32_t effectFirst = static_cast<uint32_t>(input.effects.size());
         if (mix) {
-            const auto& effects = mix->effectsForPlatform(scope).entries();
-            const auto effectsPath = scope && mix->effectPlatforms.contains(*scope)
-                ? "/effectsPlatforms/" + scope->toString(QUuid::WithoutBraces).toStdString() + "/"
-                : std::string("/effects/");
+            const auto chain = mix->effectsForPlatform(scope);
+            const auto& effects = chain.entries();
+            const std::string effectsPath("/effects/");
             for (uint32_t slot = 0; slot < effects.size(); ++slot) {
                 const auto& effect = effects[slot];
                 const auto* asset = EffectChainSemantics::resolve(effect, project);
@@ -857,7 +854,6 @@ bool copyStudioDefinitionPayload(
     node.outputBusVolume = effective.output.outputBusVolume;
     node.sends.clear();
     for (const auto& send : effective.send.sends) {
-        if (send.type != SendType::Send) continue;
         const auto* target = identity.find(send.targetBusID);
         if (!target || target->kind != RuntimeIdentityKindV1::Bus)
             return fail(QStringLiteral("Send Bus identity is missing"));

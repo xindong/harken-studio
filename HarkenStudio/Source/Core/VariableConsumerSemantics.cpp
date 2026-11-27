@@ -59,24 +59,20 @@ void visitItem(const ProjectItem* item, const QUuid& variableId,
     }
 
     if (const auto* selection = item->comp<VSelection>()) {
-        const auto collect = [&](const SelectionTable& table, PlatformScope platform) {
-            const auto axis = [&](const QUuid& variable, size_t index, VariableConsumerKind kind) {
-                if (variable != variableId) return;
-                VariableConsumerRef ref;
-                ref.kind = kind;
-                ref.hostGuid = item->guid;
-                ref.axisIndex = static_cast<int>(index);
-                ref.platform = platform;
-                out.push_back(ref);
-            };
-            for (size_t i = 0; i < table.matchAxes.size(); ++i)
-                axis(table.matchAxes[i], i, VariableConsumerKind::DiscreteGridAxis);
-            for (size_t i = 0; i < table.mixingRows.size(); ++i)
-                axis(table.mixingRows[i].variable, i, VariableConsumerKind::ContinuousGridAxis);
+        const auto axis = [&](const QUuid& variable, size_t index, VariableConsumerKind kind) {
+            if (variable != variableId) return;
+            VariableConsumerRef ref;
+            ref.kind = kind;
+            ref.hostGuid = item->guid;
+            ref.axisIndex = static_cast<int>(index);
+            out.push_back(ref);
         };
-        collect(selection->selections.shared, std::nullopt);
-        for (auto it = selection->selections.platforms.cbegin(); it != selection->selections.platforms.cend(); ++it)
-            collect(it.value(), QUuid(it.key()));
+        const auto& match = selection->selections.match.matchAxes;
+        for (size_t i = 0; i < match.size(); ++i)
+            axis(match[i], i, VariableConsumerKind::DiscreteGridAxis);
+        const auto& blend = selection->selections.blend.mixingRows;
+        for (size_t i = 0; i < blend.size(); ++i)
+            axis(blend[i].variable, i, VariableConsumerKind::ContinuousGridAxis);
     }
 
     for (const auto& child : item->children)
@@ -263,7 +259,7 @@ AuditionVariableDependencies dependenciesForAudition(
                     }
                 };
                 if (selection->mode == SelectionMode::Match) {
-                    collectAxes(selection->selections.table(selectionScope).matchAxes, VariableConsumerKind::DiscreteGridAxis);
+                    collectAxes(selection->selections.match.matchAxes, VariableConsumerKind::DiscreteGridAxis);
                     for (const auto& row : selection->matchGrid(selectionScope).rows)
                         self(byGuid.value(row.target), self);
                 } else {

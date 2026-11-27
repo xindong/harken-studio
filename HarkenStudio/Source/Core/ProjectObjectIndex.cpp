@@ -85,8 +85,6 @@ ProjectObjectIndex ProjectObjectIndex::fromProject(const ProjectData* project,
                 }
             };
             addEffects(mix->effects, {});
-            for (const auto& [platform, effects] : mix->effectPlatforms)
-                addEffects(effects, {});
             VisitAuthoredEffectChains(item->fieldGroups, addEffects);
         }
         if (const auto* timeline = item->comp<VTrack>()) {

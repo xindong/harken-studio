@@ -69,10 +69,6 @@ void cleanEffects(QJsonObject& object, const QSet<QUuid>& guids)
     };
     if (object.contains(QStringLiteral("effects")))
         object.insert(QStringLiteral("effects"), clean(object.value(QStringLiteral("effects")).toArray()));
-    editObject(object, QStringLiteral("effectsPlatforms"), [&](QJsonObject& platforms) {
-        for (const auto& key : platforms.keys())
-            platforms.insert(key, clean(platforms.value(key).toArray()));
-    });
 }
 
 void cleanPlayable(QJsonObject& properties, const QSet<QUuid>& guids)
@@ -110,6 +106,16 @@ void cleanSelectionTable(QJsonObject& table, const QSet<QUuid>& guids)
         for (auto it = removedAxes.crbegin(); it != removedAxes.crend(); ++it)
             if (*it < cells.size()) cells.removeAt(*it);
         row.insert(QStringLiteral("cells"), cells);
+        auto platforms = row.value(QStringLiteral("platforms")).toObject();
+        for (const auto& platform : platforms.keys()) {
+            auto values = platforms.value(platform).toObject();
+            for (const auto& axis : values.keys())
+                if (deleted(axis, guids)) values.remove(axis);
+            if (values.isEmpty()) platforms.remove(platform);
+            else platforms.insert(platform, values);
+        }
+        if (platforms.isEmpty()) row.remove(QStringLiteral("platforms"));
+        else row.insert(QStringLiteral("platforms"), platforms);
     });
     if (table.contains(QStringLiteral("entries")))
         table.insert(QStringLiteral("entries"), entries);
@@ -332,11 +338,8 @@ QJsonObject PhysicalFolderReferenceEdits::removeReferences(QJsonObject content,
         });
         editObject(components, QStringLiteral("selection"), [&](QJsonObject& selection) {
             editObject(selection, QStringLiteral("selections"), [&](QJsonObject& selections) {
-                editObject(selections, QStringLiteral("shared"), [&](auto& table) { cleanSelectionTable(table, guids); });
-                editObject(selections, QStringLiteral("platforms"), [&](QJsonObject& platforms) {
-                    for (const auto& key : platforms.keys())
-                        editObject(platforms, key, [&](auto& table) { cleanSelectionTable(table, guids); });
-                });
+                for (const auto& mode : selections.keys())
+                    editObject(selections, mode, [&](auto& table) { cleanSelectionTable(table, guids); });
             });
             editObject(selection, QStringLiteral("transitions"), [&](QJsonObject& transitions) {
                 transitions.insert(QStringLiteral("rules"), filtered(transitions.value(QStringLiteral("rules")).toArray(), [&](const auto& row) {

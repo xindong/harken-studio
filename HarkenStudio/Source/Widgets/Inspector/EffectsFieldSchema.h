@@ -37,7 +37,7 @@ inline PropertyDescriptor effectsInspectorDescriptor()
         QVariantList rows;
         if (!mix) return rows;
         const auto& context = PlatformContextService::instance().context();
-        auto chain = mix->effectsForPlatform(context.all ? std::nullopt : currentWorldPlatformScope(context));
+        auto chain = mix->effectsForPlatform(currentWorldPlatformScope(context));
         if (PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(item->type)) {
             const auto* project = ProjectManager::instance().currentProject();
             if (!project) return rows;

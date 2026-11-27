@@ -223,4 +223,69 @@ CurvePlotData CurvePlotGeometry::renderData() const
     return result;
 }
 
+QPainterPath curveSampledPath(const QVector<CurvePointDef>& points, const QVector<CurveHandlePairDef>& handles,
+                              CurveAxisScale scale, float xMin, float xMax, bool followDomain, qreal pixelRatio,
+                              const CurveScreenMapping& toScreen)
+{
+    QPainterPath path;
+    path.moveTo(toScreen({followDomain ? std::min(xMin, points.front().x) : points.front().x, points.front().value}));
+    path.lineTo(toScreen(points.front()));
+    for (int i = 0; i + 1 < points.size(); ++i) {
+        const CurvePointDef& left = points.at(i);
+        const CurvePointDef& right = points.at(i + 1);
+        const double screenWidth = std::abs(toScreen(right).x() - toScreen(left).x()) * pixelRatio;
+        const int samples = std::clamp(static_cast<int>(std::ceil(screenWidth)), 16, 512);
+        for (int step = 1; step < samples; ++step) {
+            const float t = static_cast<float>(step) / samples;
+            const float x = left.x + (right.x - left.x) * t;
+            path.lineTo(toScreen({x, curveBezierValueAt(points, handles, x, scale)}));
+        }
+        path.lineTo(toScreen(right));
+    }
+    if (followDomain)
+        path.lineTo(toScreen({std::max(xMax, points.back().x), points.back().value}));
+    return path;
+}
+
+QPainterPath curveStepPath(const QVector<CurvePointDef>& points, const QVector<CurveHandlePairDef>& handles,
+                           CurveAxisScale scale, float xMin, float xMax, bool followDomain, qreal plotWidth,
+                           const CurveScreenMapping& toScreen)
+{
+    const auto valueAt = [&](float x) {
+        if (!followDomain && (x < points.front().x || x > points.back().x))
+            return 0.0f;
+        return curveBezierValueAt(points, handles, x, scale);
+    };
+    QPainterPath steps;
+    const float start = followDomain ? xMin : std::max(xMin, points.front().x);
+    const float end = followDomain ? xMax : std::min(xMax, points.back().x);
+    if (start >= end) return steps;
+    int sample = VariableSemantics::discreteRead(start);
+    steps.moveTo(toScreen({start, valueAt(static_cast<float>(sample))}));
+    const double firstBoundary = static_cast<double>(sample) + 0.5;
+    const double boundaryCount = std::max(0.0, std::ceil(static_cast<double>(end) - firstBoundary));
+    if (boundaryCount <= plotWidth * 2.0) {
+        for (int index = 0; index < static_cast<int>(boundaryCount); ++index) {
+            const float boundary = static_cast<float>(firstBoundary + index);
+            const float before = valueAt(static_cast<float>(sample));
+            const float after = valueAt(static_cast<float>(sample + 1));
+            steps.lineTo(toScreen({boundary, before}));
+            steps.lineTo(toScreen({boundary, after}));
+            ++sample;
+        }
+        steps.lineTo(toScreen({end, valueAt(static_cast<float>(sample))}));
+    } else {
+        const int samples = std::max(1, static_cast<int>(plotWidth));
+        float previousValue = valueAt(static_cast<float>(sample));
+        for (int i = 1; i <= samples; ++i) {
+            const float x = start + (end - start) * static_cast<float>(i) / static_cast<float>(samples);
+            const float value = valueAt(static_cast<float>(VariableSemantics::discreteRead(x)));
+            steps.lineTo(toScreen({x, previousValue}));
+            steps.lineTo(toScreen({x, value}));
+            previousValue = value;
+        }
+    }
+    return steps;
+}
+
 }

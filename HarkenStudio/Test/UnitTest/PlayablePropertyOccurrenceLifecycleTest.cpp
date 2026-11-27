@@ -30,7 +30,7 @@ std::optional<SelectionEntry> occurrenceFor(const ProjectItem* container,
                                                  const QUuid& childGuid)
 {
     if (!container) return std::nullopt;
-    const auto& rows = container->comp<harken::studio::VSelection>()->selections.shared.occurrenceRows();
+    const auto& rows = container->comp<harken::studio::VSelection>()->selections.random.occurrenceRows();
     const auto it = std::find_if(rows.begin(), rows.end(), [&](const auto& row) {
         return row.childGuid == childGuid;
     });
@@ -84,7 +84,7 @@ TEST_F(PlayablePropertyOccurrenceLifecycleTest,
         firstContainer_, QStringLiteral("SecondSound"), ProjectItem::Type::Sound);
     ASSERT_NE(first, nullptr);
     ASSERT_NE(second, nullptr);
-    ASSERT_EQ(firstContainer_->comp<harken::studio::VSelection>()->selections.shared.occurrenceRows().size(), 2u);
+    ASSERT_EQ(firstContainer_->comp<harken::studio::VSelection>()->selections.random.occurrenceRows().size(), 2u);
     auto firstRow = occurrenceFor(firstContainer_, first->guid);
     auto secondRow = occurrenceFor(firstContainer_, second->guid);
     ASSERT_NE(firstRow, std::nullopt);
@@ -119,22 +119,22 @@ TEST_F(PlayablePropertyOccurrenceLifecycleTest,
     ASSERT_NE(moving, nullptr);
     ASSERT_TRUE(PlayablePropertyAuthoringV1::addContainerChildOccurrence(
         *firstContainer_, moving->guid));
-    ASSERT_EQ(firstContainer_->comp<harken::studio::VSelection>()->selections.shared.occurrenceRows().size(), 2u);
+    ASSERT_EQ(firstContainer_->comp<harken::studio::VSelection>()->selections.random.occurrenceRows().size(), 2u);
 
     UndoRedoManager::instance().clear();
     ASSERT_TRUE(manager.moveItem(moving, secondContainer_));
     EXPECT_EQ(occurrenceFor(firstContainer_, moving->guid), std::nullopt);
-    EXPECT_EQ(firstContainer_->comp<harken::studio::VSelection>()->selections.shared.occurrenceRows().size(), 0u);
+    EXPECT_EQ(firstContainer_->comp<harken::studio::VSelection>()->selections.random.occurrenceRows().size(), 0u);
     EXPECT_EQ(moving->parent, secondContainer_);
     ASSERT_NE(occurrenceFor(secondContainer_, moving->guid), std::nullopt);
     EXPECT_EQ(occurrenceFor(secondContainer_, moving->guid)->childGuid, moving->guid);
 
     UndoRedoManager::instance().undoStack()->undo();
     EXPECT_EQ(moving->parent, firstContainer_);
-    EXPECT_EQ(secondContainer_->comp<harken::studio::VSelection>()->selections.shared.occurrenceRows().size(), 0u);
-    ASSERT_EQ(firstContainer_->comp<harken::studio::VSelection>()->selections.shared.occurrenceRows().size(), 2u);
-    EXPECT_EQ(firstContainer_->comp<harken::studio::VSelection>()->selections.shared.occurrenceRows()[0].childGuid, moving->guid);
-    EXPECT_EQ(firstContainer_->comp<harken::studio::VSelection>()->selections.shared.occurrenceRows()[1].childGuid, moving->guid);
+    EXPECT_EQ(secondContainer_->comp<harken::studio::VSelection>()->selections.random.occurrenceRows().size(), 0u);
+    ASSERT_EQ(firstContainer_->comp<harken::studio::VSelection>()->selections.random.occurrenceRows().size(), 2u);
+    EXPECT_EQ(firstContainer_->comp<harken::studio::VSelection>()->selections.random.occurrenceRows()[0].childGuid, moving->guid);
+    EXPECT_EQ(firstContainer_->comp<harken::studio::VSelection>()->selections.random.occurrenceRows()[1].childGuid, moving->guid);
 
     UndoRedoManager::instance().undoStack()->redo();
     EXPECT_EQ(moving->parent, secondContainer_);
@@ -175,7 +175,7 @@ TEST_F(PlayablePropertyOccurrenceLifecycleTest,
     ProjectItem* clone = manager.duplicateItem(firstContainer_);
     ASSERT_NE(clone, nullptr);
     ASSERT_EQ(clone->children.size(), 2u);
-    ASSERT_EQ(clone->comp<harken::studio::VSelection>()->selections.shared.occurrenceRows().size(), 2u);
+    ASSERT_EQ(clone->comp<harken::studio::VSelection>()->selections.random.occurrenceRows().size(), 2u);
     for (const auto& child : clone->children) {
         ASSERT_NE(occurrenceFor(clone, child->guid), std::nullopt);
     }
@@ -194,14 +194,14 @@ TEST_F(PlayablePropertyOccurrenceLifecycleTest,
         EXPECT_EQ(firstContainer_->comp<harken::studio::VSelection>()->selections, before);
     };
     auto malformed = before;
-    malformed.shared.entries.push_back(malformed.shared.entries.front());
+    malformed.random.entries.push_back(malformed.random.entries.front());
     reject(malformed);
     malformed = before;
-    malformed.shared.entries.front().occurrences.front().stableOccurrenceOrdinal =
-        malformed.shared.occurrenceOrdinalHighWater;
+    malformed.random.entries.front().occurrences.front().stableOccurrenceOrdinal =
+        malformed.random.occurrenceOrdinalHighWater;
     reject(malformed);
     malformed = before;
-    malformed.shared.entries.front().childGuid = QUuid{};
+    malformed.random.entries.front().childGuid = QUuid{};
     reject(malformed);
 }
 

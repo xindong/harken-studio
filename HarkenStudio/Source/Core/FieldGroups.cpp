@@ -37,6 +37,44 @@ bool IsContentKindValid(ContentKind kind)
     return false;
 }
 
+template <typename Row>
+void ValidateRouteRows(const std::vector<Row>& rows, FieldGroupId group, Diagnostics& diagnostics)
+{
+    std::set<AuthoringGuid> ids;
+    for (std::size_t i = 0; i < rows.size(); ++i) {
+        const auto& row = rows[i];
+        if (harken::studio::types::IsNull(row.id) || !ids.insert(row.id).second)
+            AddDiagnostic(diagnostics, DiagnosticCode::InvalidValue, group, "id", i);
+        if (harken::studio::types::IsNull(row.targetBusID))
+            AddDiagnostic(diagnostics, DiagnosticCode::EmptyRequiredReference,
+                          group, "targetBusID", i);
+        if (!(std::isfinite(row.sendLevel) && row.sendLevel >= -96.0f && row.sendLevel <= 24.0f))
+            AddDiagnostic(diagnostics, DiagnosticCode::InvalidValue, group, "sendLevel", i);
+        for (const auto& [platform, cells] : row.platforms) {
+            if (harken::studio::types::IsNull(platform))
+                AddDiagnostic(diagnostics, DiagnosticCode::InvalidPlatform, group, "platforms", i);
+            if (cells == decltype(cells){})
+                AddDiagnostic(diagnostics, DiagnosticCode::InvalidValue, group, "platforms", i);
+            if (cells.targetBusID && harken::studio::types::IsNull(*cells.targetBusID))
+                AddDiagnostic(diagnostics, DiagnosticCode::EmptyRequiredReference,
+                              group, "targetBusID", i);
+            if (cells.sendLevel && !(std::isfinite(*cells.sendLevel)
+                    && *cells.sendLevel >= -96.0f && *cells.sendLevel <= 24.0f))
+                AddDiagnostic(diagnostics, DiagnosticCode::InvalidValue, group, "sendLevel", i);
+        }
+    }
+}
+
+template <typename Row, typename Apply>
+void ApplyRows(std::vector<Row>& rows, AuthoringGuid platform, Apply apply)
+{
+    for (auto& row : rows) {
+        const auto found = row.platforms.find(platform);
+        if (found != row.platforms.end()) apply(row, found->second);
+        row.platforms.clear();
+    }
+}
+
 bool IsModeValid(FieldGroupMode mode)
 {
     switch (mode) {
@@ -61,6 +99,8 @@ void ValidateState(const GroupState<Payload>& state, FieldGroupId group,
     const auto first = diagnostics.size();
     if (!IsModeValid(state.mode)) {
         AddDiagnostic(diagnostics, DiagnosticCode::InvalidMode, group, "mode");
+    } else if (scope && state.mode != FieldGroupMode::UseShared) {
+        AddDiagnostic(diagnostics, DiagnosticCode::InvalidMode, group, "mode");
     } else if (!scope && state.mode == FieldGroupMode::UseShared) {
         AddDiagnostic(diagnostics, DiagnosticCode::SharedUseShared, group, "mode");
     } else if (!scope && state.mode == FieldGroupMode::Local && !state.localHistory) {
@@ -75,7 +115,7 @@ void ValidateState(const GroupState<Payload>& state, FieldGroupId group,
         for (const auto& diagnostic : payloadDiagnostics) {
             bool present = false;
             VisitFieldGroupFields(*state.localHistory, [&](auto property, const char* field, const auto&) {
-                if (diagnostic.field == field || group == FieldGroupId::Send || group == FieldGroupId::Effect)
+                if (diagnostic.field == field || IsFieldGroupRowList(group))
                     present = (state.localFields & (FieldGroupFieldMask(property))) != 0;
             });
             if (present) diagnostics.push_back(diagnostic);
@@ -93,6 +133,9 @@ void ValidateAuthoredGroup(const AuthoredGroup<Payload>& authored,
                           Diagnostics& diagnostics)
 {
     ValidateState(authored.shared, group, {}, definition, diagnostics);
+    if (IsFieldGroupRowList(group) && !authored.platforms.empty())
+        diagnostics.push_back({DiagnosticCode::InvalidPlatform, definition,
+                               group, {}, "platforms", {}, {}});
     for (const auto& [platform, state] : authored.platforms) {
         if (harken::studio::types::IsNull(platform)) {
             diagnostics.push_back({DiagnosticCode::InvalidPlatform, definition,
@@ -155,6 +198,7 @@ FieldGroupResolutionResult ResolveGroup(
                 return {{}, std::move(diagnostics)};
             }
             result.payload = *selected.localHistory;
+            if (scope) ApplyFieldGroupPlatform(result.payload, *scope);
             result.source = {definition->guid, platform != authored.platforms.end()
                 && platform->second.localHistory ? scope : FieldGroupScope{}, false};
             return {std::move(result), {}};
@@ -163,6 +207,30 @@ FieldGroupResolutionResult ResolveGroup(
     }
 }
 
+}
+
+void ApplyFieldGroupPlatform(FieldGroupPayload& payload, AuthoringGuid platform)
+{
+    if (auto* send = std::get_if<SendFieldGroup>(&payload)) {
+        ApplyRows(send->sends, platform, [](SendFieldGroupRow& row, const SendFieldGroupCells& cells) {
+            if (cells.targetBusID) row.targetBusID = *cells.targetBusID;
+            if (cells.sendLevel) row.sendLevel = *cells.sendLevel;
+        });
+    } else if (auto* sidechain = std::get_if<SidechainFieldGroup>(&payload)) {
+        ApplyRows(sidechain->sidechains, platform,
+            [](SidechainFieldGroupRow& row, const SidechainFieldGroupCells& cells) {
+                if (cells.targetBusID) row.targetBusID = *cells.targetBusID;
+                if (cells.sendLevel) row.sendLevel = *cells.sendLevel;
+                if (cells.duckTarget) row.duckTarget = *cells.duckTarget;
+            });
+    } else if (auto* effects = std::get_if<EffectFieldGroup>(&payload)) {
+        QByteArray bytes(16, Qt::Uninitialized);
+        for (int index = 0; index < 8; ++index) {
+            bytes[index] = static_cast<char>((platform.high >> (56 - index * 8)) & 0xff);
+            bytes[8 + index] = static_cast<char>((platform.low >> (56 - index * 8)) & 0xff);
+        }
+        effects->effects = effects->effects.forPlatform(QUuid::fromRfc4122(bytes));
+    }
 }
 
 bool IsFieldGroupScopeValid(FieldGroupScope scope) noexcept
@@ -176,6 +244,7 @@ DefinitionFieldGroups MakeRootFieldGroups(AuthoringGuid masterBusGuid)
     groups.output.shared = {
         FieldGroupMode::Inherit, OutputFieldGroup{masterBusGuid, 0.0f}};
     groups.send.shared = {FieldGroupMode::Inherit, SendFieldGroup{}};
+    groups.sidechain.shared = {FieldGroupMode::Inherit, SidechainFieldGroup{}};
     groups.spatialRating.shared = {
         FieldGroupMode::Inherit, SpatialRatingFieldGroup{}};
     groups.effects.shared = {FieldGroupMode::Inherit, EffectFieldGroup{}};
@@ -188,6 +257,7 @@ std::string_view FieldGroupName(FieldGroupId group) noexcept
     switch (group) {
     case FieldGroupId::Output: return "output";
     case FieldGroupId::Send: return "send";
+    case FieldGroupId::Sidechain: return "sidechain";
     case FieldGroupId::SpatialRating: return "spatialRating";
     case FieldGroupId::Effect: return "effect";
     case FieldGroupId::Conversion: return "conversion";
@@ -200,6 +270,7 @@ std::optional<FieldGroupId> FieldGroupForField(std::string_view field) noexcept
     if (field == "outputBusRef" || field == "outputBusVolume")
         return FieldGroupId::Output;
     if (field == "sends") return FieldGroupId::Send;
+    if (field == "sidechains") return FieldGroupId::Sidechain;
     if (field == "effects") return FieldGroupId::Effect;
     if (field == "settingsRef") return FieldGroupId::Conversion;
     if (field == "spatialPanning" || field == "spatialIs3DEnabled" ||
@@ -234,6 +305,7 @@ std::uint64_t FieldGroupPropertyMask(FieldGroupId group) noexcept
     switch (group) {
     case FieldGroupId::Output: return UINT64_C(0x60);
     case FieldGroupId::Send: return UINT64_C(0x80);
+    case FieldGroupId::Sidechain: return FieldGroupFieldMask(SidechainFieldId::Rows);
     case FieldGroupId::SpatialRating: return UINT64_C(0x2d00);
     case FieldGroupId::Effect: return FieldGroupFieldMask(PropertyId::SignalGraph);
     case FieldGroupId::Conversion: return FieldGroupFieldMask(ConversionFieldId::Settings);
@@ -266,18 +338,16 @@ std::vector<FieldGroupDiagnostic> ValidateFieldGroupPayload(
             AddDiagnostic(diagnostics, DiagnosticCode::PayloadGroupMismatch, group);
             break;
         }
-        for (std::size_t i = 0; i < send->sends.size(); ++i) {
-            const auto& row = send->sends[i];
-            if (!harken::studio::project_schema::IsValidSendRoute(row.type, row.duckTarget))
-                AddDiagnostic(diagnostics, DiagnosticCode::InvalidValue,
-                              group, "type", i);
-            if (harken::studio::types::IsNull(row.targetBusID))
-                AddDiagnostic(diagnostics, DiagnosticCode::EmptyRequiredReference,
-                              group, "targetBusID", i);
-            if (!InRange(row.sendLevel, -96.0f, 24.0f))
-                AddDiagnostic(diagnostics, DiagnosticCode::InvalidValue,
-                              group, "sendLevel", i);
+        ValidateRouteRows(send->sends, group, diagnostics);
+        break;
+    }
+    case FieldGroupId::Sidechain: {
+        const auto* sidechain = std::get_if<SidechainFieldGroup>(&payload);
+        if (!sidechain) {
+            AddDiagnostic(diagnostics, DiagnosticCode::PayloadGroupMismatch, group);
+            break;
         }
+        ValidateRouteRows(sidechain->sidechains, group, diagnostics);
         break;
     }
     case FieldGroupId::SpatialRating: {
@@ -332,6 +402,7 @@ std::vector<FieldGroupDiagnostic> ValidateDefinitionFieldGroups(
     ValidateAuthoredGroup(groups.output, FieldGroupId::Output,
                           definition, diagnostics);
     ValidateAuthoredGroup(groups.send, FieldGroupId::Send, definition, diagnostics);
+    ValidateAuthoredGroup(groups.sidechain, FieldGroupId::Sidechain, definition, diagnostics);
     ValidateAuthoredGroup(groups.spatialRating, FieldGroupId::SpatialRating,
                           definition, diagnostics);
     ValidateAuthoredGroup(groups.effects, FieldGroupId::Effect, definition, diagnostics);
@@ -389,14 +460,32 @@ std::vector<FieldGroupDiagnostic> FieldGroupReferenceCatalog::Validate(
                           FieldGroupReferenceKind::Bus, "outputBusRef");
         break;
     case FieldGroupId::Send: {
-        std::set<std::tuple<AuthoringGuid, harken::studio::project_schema::SendType, bool>> seen;
+        std::set<AuthoringGuid> seen;
         const auto& sends = std::get<SendFieldGroup>(payload).sends;
         for (std::size_t i = 0; i < sends.size(); ++i) {
             const auto guid = sends[i].targetBusID;
-            if (!seen.emplace(guid, sends[i].type, sends[i].duckTarget).second)
+            if (!seen.insert(guid).second)
                 AddDiagnostic(diagnostics, DiagnosticCode::DuplicateSendTarget,
                               group, "targetBusID", i, guid);
             validateReference(guid, FieldGroupReferenceKind::Bus, "targetBusID", i);
+            for (const auto& [platform, cells] : sends[i].platforms)
+                if (cells.targetBusID)
+                    validateReference(*cells.targetBusID, FieldGroupReferenceKind::Bus, "targetBusID", i);
+        }
+        break;
+    }
+    case FieldGroupId::Sidechain: {
+        std::set<std::pair<AuthoringGuid, bool>> seen;
+        const auto& sidechains = std::get<SidechainFieldGroup>(payload).sidechains;
+        for (std::size_t i = 0; i < sidechains.size(); ++i) {
+            const auto guid = sidechains[i].targetBusID;
+            if (!seen.emplace(guid, sidechains[i].duckTarget).second)
+                AddDiagnostic(diagnostics, DiagnosticCode::DuplicateSendTarget,
+                              group, "targetBusID", i, guid);
+            validateReference(guid, FieldGroupReferenceKind::Bus, "targetBusID", i);
+            for (const auto& [platform, cells] : sidechains[i].platforms)
+                if (cells.targetBusID)
+                    validateReference(*cells.targetBusID, FieldGroupReferenceKind::Bus, "targetBusID", i);
         }
         break;
     }
@@ -455,6 +544,8 @@ FieldGroupResolver::FieldGroupResolver(
                     FieldGroupId::Output, definition.guid, diagnostics_);
                 ValidateRootGroup(definition.groups->send,
                     FieldGroupId::Send, definition.guid, diagnostics_);
+                ValidateRootGroup(definition.groups->sidechain,
+                    FieldGroupId::Sidechain, definition.guid, diagnostics_);
                 ValidateRootGroup(definition.groups->spatialRating,
                     FieldGroupId::SpatialRating, definition.guid, diagnostics_);
                 ValidateRootGroup(definition.groups->effects,
@@ -526,6 +617,9 @@ FieldGroupResolutionResult FieldGroupResolver::Resolve(
     case FieldGroupId::Send:
         return ResolveGroup(definitions_, found->second, scope, group,
                             &DefinitionFieldGroups::send);
+    case FieldGroupId::Sidechain:
+        return ResolveGroup(definitions_, found->second, scope, group,
+                            &DefinitionFieldGroups::sidechain);
     case FieldGroupId::SpatialRating:
         return ResolveGroup(definitions_, found->second, scope, group,
                             &DefinitionFieldGroups::spatialRating);

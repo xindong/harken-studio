@@ -1,5 +1,6 @@
 #include "Core/Components/VSelection.h"
 #include "PlayablePropertyAuthoringV1.h"
+#include "Components/VMixNode.h"
 
 #include "ComponentCatalog.h"
 #include "FilterSemantics.h"
@@ -647,7 +648,8 @@ uint32_t PlayablePropertyAuthoringV1::containerChildOccurrenceCount(
     if (container.type != ProjectItemType::Container || childGuid.isNull())
         return 0;
     uint32_t count = 0;
-    for (const auto& row : container.comp<VSelection>()->selections.table(scope).occurrenceRows()) {
+    const auto* selection = container.comp<VSelection>();
+    for (const auto& row : selection->selections.table(selection->mode).occurrenceRows(scope)) {
         if (row.childGuid == childGuid)
             ++count;
     }
@@ -714,7 +716,13 @@ PlayablePropertyAuthoringV1::readProperty(
         return PlayablePropertyStateV1{
             spatial->spatializationMixPresent, spatial->spatializationMix};
     }
-    if (scope && !(isFieldGroupDefinitionType(owner.type)
+    if (scope && field->wire == PlayablePropertyWireV1::RowSpan) {
+        if (const auto* mix = owner.comp<VMixNode>(); mix && !isFieldGroupDefinitionType(owner.type)) {
+            QJsonArray rows;
+            for (const auto& route : mix->sends) rows.append(route.forPlatform(scope).toJson(false));
+            return PlayablePropertyStateV1{(owner.playablePropertyPresence.bits & field->presentBit) != 0, rows};
+        }
+    } else if (scope && !(isFieldGroupDefinitionType(owner.type)
         && FieldGroupForProperty(static_cast<harkenplayableproperties::PlayablePropertyIdV1>(propertyId)))) {
         if (!locus.ledger) return std::nullopt;
         if (const auto overlay = overlayStateIfPresent(
@@ -741,7 +749,8 @@ PlayablePropertyAuthoringV1::readPlatformOverlay(
         return std::nullopt;
     if (platform == ProjectPlatformId{})
         return std::nullopt;
-    if (isComponentStored(propertyId)) return PlayablePropertyStateV1{false, {}};
+    if (isComponentStored(propertyId) || field->wire == PlayablePropertyWireV1::RowSpan)
+        return PlayablePropertyStateV1{false, {}};
     if (locator.kind != PlayablePropertyTargetKindV1::Definition) {
         if (!locusFor(owner, locator, platform).valid) return std::nullopt;
         return PlayablePropertyStateV1{false, {}};
@@ -773,7 +782,7 @@ bool PlayablePropertyAuthoringV1::setOverride(
     const Field* field = fieldById(propertyId);
     if (!field || owner.guid.isNull() || owner.guid != locator.ownerGuid)
         return false;
-    if (scope && *scope == ProjectPlatformId{})
+    if (scope && (*scope == ProjectPlatformId{} || field->wire == PlayablePropertyWireV1::RowSpan))
         return false;
     const auto parsed = valueFromJson(value, *field);
     if (!parsed) return false;
@@ -1216,8 +1225,7 @@ bool PlayablePropertyAuthoringV1::platformOverridesFromJson(
         propertiesJson.remove(QLatin1String(kPlatformJsonKey));
         const auto filter = propertiesJson.take(QStringLiteral("filter"));
         if (!filter.isUndefined()
-            && (!allowFilter || !filter.isObject() || filter.toObject().isEmpty()
-                || !FilterSemantics::applyOverlay(FilterState{}, filter.toObject()))) {
+            && (!allowFilter || !filter.isObject() || !FilterSemantics::fromJson(filter.toObject()))) {
             setError(error, QStringLiteral("platformOverrides filter is invalid"));
             return false;
         }
@@ -1271,12 +1279,17 @@ bool PlayablePropertyAuthoringV1::addContainerChildOccurrence(
     auto* selection = container.comp<VSelection>();
     if (!selection) return false;
     auto next = selection->selections;
-    if (!addContainerChildOccurrence(container, next.shared, childGuid, restored, installed))
+    const auto row = restored.value_or(SelectionEntry{childGuid, static_cast<uint32_t>(
+        std::max(next.random.occurrenceOrdinalHighWater, next.sequence.occurrenceOrdinalHighWater)), 50});
+    if (!restored && std::max(next.random.occurrenceOrdinalHighWater, next.sequence.occurrenceOrdinalHighWater)
+            > std::numeric_limits<uint32_t>::max())
         return false;
-    if (!restored)
-        for (auto& table : next.platforms)
-            if (!addContainerChildOccurrence(container, table, childGuid)) return false;
+    for (auto* table : {&next.random, &next.sequence})
+        if (!table->find(row.stableOccurrenceOrdinal)
+            && !addContainerChildOccurrence(container, *table, childGuid, row))
+            return false;
     selection->selections = std::move(next);
+    if (installed) *installed = row;
     return true;
 }
 
@@ -1317,24 +1330,6 @@ bool PlayablePropertyAuthoringV1::addContainerChildOccurrence(
     return true;
 }
 
-std::optional<SelectionEntry>
-PlayablePropertyAuthoringV1::removeContainerChildOccurrence(
-    ProjectItem& container,
-    const QUuid& childGuid)
-{
-    if (container.type != ProjectItemType::Container) return std::nullopt;
-    auto& table = container.comp<VSelection>()->selections.shared;
-    auto rows = table.occurrenceRows();
-    const auto it = std::find_if(rows.begin(), rows.end(), [&](const auto& row) {
-        return row.childGuid == childGuid;
-    });
-    if (it == rows.end()) return std::nullopt;
-    SelectionEntry removed = *it;
-    rows.erase(it);
-    if (!table.setOccurrenceRows(rows)) return std::nullopt;
-    return removed;
-}
-
 std::vector<SelectionEntry>
 PlayablePropertyAuthoringV1::removeContainerChildOccurrences(
     ProjectItem& container, const QUuid& childGuid)
@@ -1342,39 +1337,16 @@ PlayablePropertyAuthoringV1::removeContainerChildOccurrences(
     std::vector<SelectionEntry> removed;
     auto* selection = container.comp<VSelection>();
     if (!selection) return removed;
-    for (const auto& row : selection->selections.shared.occurrenceRows())
-        if (row.childGuid == childGuid) removed.push_back(row);
+    for (const auto* table : {&selection->selections.random, &selection->selections.sequence})
+        for (const auto& row : table->occurrenceRows())
+            if (row.childGuid == childGuid
+                && std::none_of(removed.begin(), removed.end(), [&](const SelectionEntry& entry) {
+                       return entry.stableOccurrenceOrdinal == row.stableOccurrenceOrdinal;
+                   }))
+                removed.push_back(row);
     for (auto* table : selection->selections.tables())
         table->removeMembers([&](const auto& member) { return member.childGuid == childGuid; });
     return removed;
-}
-
-std::optional<SelectionEntry>
-PlayablePropertyAuthoringV1::removeContainerChildOccurrence(
-    ProjectItem& container,
-    uint32_t stableOccurrenceOrdinal)
-{
-    if (container.type != ProjectItemType::Container) return std::nullopt;
-    auto& table = container.comp<VSelection>()->selections.shared;
-    auto rows = table.occurrenceRows();
-    const auto it = std::find_if(rows.begin(), rows.end(), [&](const auto& row) {
-        return row.stableOccurrenceOrdinal == stableOccurrenceOrdinal;
-    });
-    if (it == rows.end()) return std::nullopt;
-    SelectionEntry removed = *it;
-    rows.erase(it);
-    if (!table.setOccurrenceRows(rows)) return std::nullopt;
-    return removed;
-}
-
-bool PlayablePropertyAuthoringV1::replaceContainerChildOccurrence(
-    ProjectItem& container,
-    uint32_t stableOccurrenceOrdinal,
-    const QUuid& childGuid,
-    SelectionEntry* previous)
-{
-    return replaceContainerChildOccurrence(container, container.comp<VSelection>()->selections.shared,
-                                           stableOccurrenceOrdinal, childGuid, previous);
 }
 
 bool PlayablePropertyAuthoringV1::replaceContainerChildOccurrence(

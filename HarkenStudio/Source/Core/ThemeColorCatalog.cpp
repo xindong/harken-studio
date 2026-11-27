@@ -48,7 +48,7 @@ const QVector<ThemeColorRole>& studioDefaultColorRoles()
          }},
         {QStringLiteral("text.disabled"), QStringLiteral("Text"),
          QStringLiteral("Disabled text"),
-         QStringLiteral("Text in unavailable controls, including disabled values and labels."),
+         QStringLiteral("Text in unavailable controls, including disabled values and labels, and read-only platform marks whose value has a platform override."),
          {
              {QStringLiteral("text.disabled"), std::nullopt},
              {QStringLiteral("qtPalette.disabledText"), std::nullopt},
@@ -89,7 +89,7 @@ const QVector<ThemeColorRole>& studioDefaultColorRoles()
          }},
         {QStringLiteral("panel.background"), QStringLiteral("Surfaces"),
          QStringLiteral("Panel background"),
-         QStringLiteral("Panel surfaces, the outer canvas of curve editors and the startup logo backdrop."),
+         QStringLiteral("Panel surfaces, the outer canvas of curve editors, the startup logo backdrop and platform marks without a platform override."),
          {
              {QStringLiteral("panel.background"), std::nullopt},
              {QStringLiteral("curve.canvasBackground"), std::nullopt},

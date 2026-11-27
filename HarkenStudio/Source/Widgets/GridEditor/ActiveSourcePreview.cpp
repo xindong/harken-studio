@@ -75,16 +75,6 @@ void ActiveSourcePreview::refresh()
     const auto language = SoundSourceEditing::previewLanguage(
         *item, LanguageContextService::instance().language());
     const auto* source = SoundSourceEditing::activeSource(*item, context.primary, language);
-    if (context.all) {
-        for (const auto platform : context.selected) {
-            const auto* other = SoundSourceEditing::activeSource(*item, platform, language);
-            if ((source ? source->entryId : QUuid{}) != (other ? other->entryId : QUuid{})) {
-                clearSource(tr("Mixed"));
-                setToolTip(tr("The selected platforms use different sources. Select one platform to view its active source."));
-                return;
-            }
-        }
-    }
     if (!source) {
         clearSource();
         return;

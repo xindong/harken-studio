@@ -59,7 +59,7 @@ void applyRootDefaults(const ProjectData& project, AuthoredGroup<ConversionField
     conversion.platforms.clear();
     for (auto it = project.defaultConversionRefs.cbegin(); it != project.defaultConversionRefs.cend(); ++it)
         if (ProjectPlatformSemantics::find(project.platforms, it.key()))
-            conversion.platforms[toFieldGroupGuid(it.key())] = {FieldGroupMode::Local,
+            conversion.platforms[toFieldGroupGuid(it.key())] = {FieldGroupMode::UseShared,
                 ConversionFieldGroup{toFieldGroupGuid(it.value())}, FieldGroupPropertyMask(FieldGroupId::Conversion)};
 }
 

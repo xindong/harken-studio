@@ -50,9 +50,11 @@ protected:
         output(c1, b1);
         output(s5, b3);
         output(l2, b1);
-        send(c1, {{toFieldGroupGuid(b2->guid), -6.0f, SendType::Send, false},
-                  {toFieldGroupGuid(b2->guid), 3.0f, SendType::Sidechain, true},
-                  {toFieldGroupGuid(b2->guid), -12.0f, SendType::Sidechain, false}});
+        const auto row = [] { return toFieldGroupGuid(QUuid::createUuid()); };
+        const auto bus = toFieldGroupGuid(b2->guid);
+        c1->fieldGroups.send.shared = {FieldGroupMode::Local, SendFieldGroup{{{row(), bus, -6.0f}}}};
+        c1->fieldGroups.sidechain.shared = {FieldGroupMode::Local,
+            SidechainFieldGroup{{{row(), bus, 3.0f, true}, {row(), bus, -12.0f, false}}}};
     }
 
     ProjectItem* create(const char* name, T type, ProjectItem* parent = nullptr)
@@ -81,11 +83,6 @@ protected:
     {
         item->fieldGroups.output.shared = {FieldGroupMode::Local,
             OutputFieldGroup{toFieldGroupGuid(bus->guid), 0.0f}};
-    }
-
-    void send(ProjectItem* item, std::vector<SendFieldGroupRow> rows)
-    {
-        item->fieldGroups.send.shared = {FieldGroupMode::Local, SendFieldGroup{std::move(rows)}};
     }
 
     std::vector<SignalPathIdentity> inputs() const
@@ -178,83 +175,6 @@ TEST_F(SignalPathGraphTest, IncrementalContentsMatchReloadAcrossScopesAndGraphRe
         incremental.loadGraph(project, buildSignalPathGraph(project, replacement, fieldScope));
         incremental.refreshNodeContents(*s1, QStringLiteral("volume"));
         expectReloadEquivalent(replacement);
-    }
-}
-
-TEST_F(SignalPathGraphTest, BusRoutingProjectionsAgreeAcrossScopesWithoutChangingSharedState)
-{
-    const auto locator = PlayablePropertyAuthoringV1::definitionLocator(*b1);
-    const auto* field = PlayablePropertyAuthoringV1::fieldByName(QStringLiteral("sends"));
-    ASSERT_TRUE(locator);
-    ASSERT_NE(field, nullptr);
-    const QJsonArray sharedRows{Send{b2->objectID, -6.0f, SendType::Send, false}.toJson()};
-    const QJsonArray windowsRows{
-        Send{b3->objectID, 3.0f, SendType::Sidechain, true}.toJson(),
-        Send{b3->objectID, -12.0f, SendType::Sidechain, false}.toJson()};
-    ASSERT_TRUE(PlayablePropertyAuthoringV1::setOverride(
-        *b1, *locator, field->id, sharedRows, std::nullopt));
-    const auto shared = captureBusSendState(*b1);
-    ASSERT_TRUE(shared);
-    ASSERT_TRUE(PlayablePropertyAuthoringV1::setOverride(
-        *b1, *locator, field->id, windowsRows, HarkenTest::PlatformIds::Windows));
-
-    struct Expected {
-        PlatformScope scope;
-        ProjectItem* target;
-        SendType type;
-        bool duckTarget;
-        float gain;
-    };
-    const Expected cases[] = {
-        {std::nullopt, b2, SendType::Send, false, -6.0f},
-        {HarkenTest::PlatformIds::Windows, b3, SendType::Sidechain, true, 3.0f},
-        {HarkenTest::PlatformIds::Windows, b3, SendType::Sidechain, false, -12.0f},
-        {HarkenTest::PlatformIds::Android, b2, SendType::Send, false, -6.0f},
-        {std::nullopt, b2, SendType::Send, false, -6.0f},
-    };
-    for (const auto& expected : cases) {
-        const auto scope = toFieldGroupScope(expected.scope);
-        const float linear = VMixNode::dbToLinear(expected.gain);
-        const auto resolved = ReferenceSlotResolution::resolveEffectiveSends(
-            ReferenceSlotResolution::buildResolutionScope(project, b1, scope));
-        ASSERT_TRUE(resolved.valid);
-        ASSERT_EQ(resolved.sends.size(), expected.type == SendType::Sidechain ? 2u : 1u);
-        const auto found = std::find_if(resolved.sends.begin(), resolved.sends.end(), [&](const auto& send) {
-            return send.targetBusID == expected.target->objectID && send.type == expected.type
-                && send.duckTarget == expected.duckTarget;
-        });
-        ASSERT_NE(found, resolved.sends.end());
-        EXPECT_FLOAT_EQ(found->sendLevel, linear);
-        EXPECT_EQ(resolved.authoringScope,
-            expected.scope == PlatformScope{HarkenTest::PlatformIds::Windows} ? scope : FieldGroupScope{});
-
-        const auto graph = build(scope);
-        ASSERT_TRUE(graph.ok());
-        SignalPathSource source;
-        source.loadGraph(project, graph);
-        const auto described = source.buildEdges();
-        size_t matching = 0;
-        for (size_t index = 0; index < graph.edges.size(); ++index) {
-            const auto& edge = graph.edges[index];
-            if (edge.kind != SignalPathEdgeKind::Send
-                || graph.nodes[edge.from.occurrenceIndex].key.objectGuid != b1->guid
-                || edge.type != expected.type || edge.duckTarget != expected.duckTarget) continue;
-            ++matching;
-            EXPECT_EQ(graph.nodes[edge.to.occurrenceIndex].key.objectGuid, expected.target->guid);
-            EXPECT_FLOAT_EQ(edge.sendLevel, linear);
-            const auto gain = signalPathGainValue(project, graph, index);
-            ASSERT_TRUE(gain);
-            EXPECT_FLOAT_EQ(*gain, linear);
-            ASSERT_LT(index, described.size());
-            EXPECT_EQ(described[index].sendType, expected.type);
-            EXPECT_EQ(described[index].duckTarget, expected.duckTarget);
-            ASSERT_TRUE(described[index].gainContent.sendVolume);
-            EXPECT_FLOAT_EQ(*described[index].gainContent.sendVolume, linear);
-        }
-        EXPECT_EQ(matching, 1);
-        const auto unchanged = captureBusSendState(*b1);
-        ASSERT_TRUE(unchanged);
-        EXPECT_EQ(unchanged->value, shared->value);
     }
 }
 

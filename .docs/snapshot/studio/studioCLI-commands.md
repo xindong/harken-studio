@@ -41,7 +41,7 @@
 
 ### Effect 创作与验收（2026-11-12）
 
-`create_item(type=Effect)` 创建预设，`set_item_property` 的 `ceilingDb`／`releaseMs` 修改参数，`rename_item` 重命名。Bus 使用 `set_item_property(property=effects,value=[...])`；Sound、Container、Track、Segment、Layer 使用 `replace_field_group_effects`。两种入口共用效果行合同，完整数组表示处理顺序，增删、重排、替换和 Active 均通过该数组提交；替换或转换保留行的 `guid` 与 `bypass`。预设行使用 `effectGuid`，Custom 行使用 `custom.type` 与 `custom.parameters`。
+`create_item(type=Effect)` 创建预设，`set_item_property` 的 `ceilingDb`／`releaseMs` 修改参数，`rename_item` 重命名。Bus 使用 `set_item_property(property=effects,value=[...])`；Sound、Container、Track、Segment、Layer 使用 `scope:"Shared"` 的 `replace_field_group_effects`。两种入口共用效果行合同，完整数组表示处理顺序，增删、重排、替换和 Active 均通过该数组提交，行由所有平台共享；替换或转换保留行的 `guid`、`bypass` 与 `platforms`。预设行使用 `effectGuid`，Custom 行使用 `custom.type` 与 `custom.parameters`，按平台不同的 Active 写在 `platforms.<平台 ID>.bypass`。
 
 `get_item_info` 对可播放定义返回 `fieldGroups`，包含本地值、继承模式及平台覆盖，可区分未配置与显式空链；Bus FX 和预设参数在 `components` 中读取。
 
@@ -146,11 +146,11 @@ harken> help exit
 | 属性定义 | `get_inspector_schema` 使用 `schema_id`，无需 Inspector 面板 |
 | Variable | `create_item` 按 `Step` 或 `Smooth` 创建变量。`set_item_property` 支持 `kind`（0 为 Step，1 为 Smooth）、`range`、`defaultValue` 和 `labels`。修改范围时以 `range_policy` 指定 `stretch` 或 `fix`。标签使用 `anchor` 和 `name`，可从 `get_item_info` 读回并保留标签的 `id` |
 | 变量绑定 | `get_inspector_schema` 的可绑定属性行提供 `binding`，包含地址、默认输出范围、过渡时长和曲线点及手柄。填入 `variable` 的 GUID 后可直接交给 `set_binding`。用 `get_modulator_binding` 读回，用 `reorder_bindings`、`remove_binding` 或 `clear_bindings` 调整顺序或移除绑定 |
-| 效果链 | Studio 当前提供 Limiter。内联行使用 `custom.type="limiter"` 和 `custom.parameters=[ceilingDb,releaseMs]`，预设行使用 `effectGuid`。Bus 通过 `set_item_property` 写入 `effects`，可播放定义通过 `replace_field_group_effects` 写入 Shared 或平台效果链 |
+| 效果链 | Studio 当前提供 Limiter。内联行使用 `custom.type="limiter"` 和 `custom.parameters=[ceilingDb,releaseMs]`，预设行使用 `effectGuid`。Bus 通过 `set_item_property` 写入 `effects`，可播放定义通过 `scope:"Shared"` 的 `replace_field_group_effects` 写入；行跨平台共享，平台 Active 写在行内 `platforms` |
 | 衰减 | `set_attenuation_curve` 编辑 `volume` 或 `pitch` 的 `points` 与贝塞尔 `handles`，`get_attenuation` 读回完整定义。对象通过空间字段组的 `spatial.attenuationRef` 引用衰减预设 |
 | 字段组 | `definition_guid` 加 `scope:"Shared"` 或 `platform_ids`；根定义直接编辑字段，继承模式使用共享字段组命令 |
 | 总线 | `set_bus_volume_db/get_bus_volume_db` 使用创作 dB。`set_output_bus_gain/get_output_bus_gain` 读写 Bus 的 Shared 输出增益。用 `set_item_property` 设置 `outputBusVolume` 时，传入 `platform_ids` 可按平台写入 dB，传入同一组 ID 和 `override_operation="clear_platform_override"` 可恢复 Shared 值。父 Bus 的 `get_bus_properties.inputs[].level_db` 返回当前试听平台的有效增益。路由目的地使用 Bus 层级或可播放定义字段组。 |
-| Send / Sidechain | `set_send`、`set_send_level` 和 `remove_send` 通过目标、`type`（`Send` 或 `Sidechain`）及布尔值 `duckTarget` 定位路由。默认操作 Send。Bus 命令的 `level` 是非负线性增益，1 为单位增益。路由行中的 `sendLevel` 使用 dB |
+| Send / Sidechain | `set_send`、`set_send_level` 和 `remove_send` 通过共享目标、`type`（`Send` 或 `Sidechain`）及布尔值 `duckTarget` 定位 Bus 的路由行，并修改共享值。默认操作 Send。Bus 命令的 `level` 是非负线性增益，1 为单位增益。完整路由行通过 Bus 的 `set_item_property(property=sends|sidechains)` 或可播放定义的 `replace_field_group_sends`／`replace_field_group_sidechains`（`scope:"Shared"`）提交；每行带 `id`、`targetBusID`、dB 单位的 `sendLevel`，Sidechain 另有 `duckTarget`，按平台不同的单元格写在 `platforms.<平台 ID>` |
 | Input / Receive 来源 | 在目标 Bus 上调用 `get_bus_properties {"bus_id":"<Bus GUID>"}`。`inputs` 列出子 Bus 和向该 Bus 主输出的可播放定义，`receives` 列出有效的 Send 和 Sidechain 来源。两组均使用当前试听平台，每行包含 `source_guid`、`source_name`、`source_authoring_handle` 和 `level_db`。`receives` 还包含 `type` 和 `duckTarget`。工程重开后可用 `source_guid` 定位同一来源 |
 | 试听上下文 | `set_preview_context` 接受 `platform_id`、`all_platforms`、`language` 和 `media_mode` 中的一项或多项，`get_preview_context` 读回完整选择。`all_platforms` 控制工具栏的 All 编辑范围，`platform_id` 选择主试听平台。平台 ID 和语言取自 `list_project_platforms` 和 `list_project_languages`。媒体模式使用 `Original` 或 `Converted`。选择按工程保存在本机，无需 `--save` |
 | 播放 | 在同一会话调用 `init_engine`、所需输出启动及 `post_action/audition_play`；播放前等待当前工程运行时同步。`device_mode` 默认为 `real`；无物理设备的自动化会话可使用 `null`（只在显式推进时前进）或 `null_realtime`（输出启动后按真实时间推进，电平与预览可观测） |
@@ -241,7 +241,7 @@ harken> save_project
 
 | 编辑内容 | CLI 写入与读回 |
 |---|---|
-| 容器 | `set_item_property` 的 `mode` 可设为 0 Random、2 Sequence、4 Match、5 Blend。Match 和 Blend 分别保存自己的 `variableResponse`，0 为 Fixed，1 为 Live。在 `get_item_info.components.selection` 读取 `matchResponse`、`blendResponse`、`selections` 和转换规则。用 `selections` 编辑 Shared 或平台的子项、权重、Match 条件及 Blend 曲线；Match 条件行位于各表的 `matchRows`，按数组顺序排列，`target` 可为 null，无目标的行保留在工程中但不参与播放，用 `transitions` 编辑规则表。Queue 容器还可设置 `spliceByMarker`。 |
+| 容器 | `set_item_property` 的 `mode` 可设为 0 Random、2 Sequence、4 Match、5 Blend。Match 和 Blend 分别保存自己的 `variableResponse`，0 为 Fixed，1 为 Live。在 `get_item_info.components.selection` 读取 `matchResponse`、`blendResponse`、`selections` 和转换规则。`selections` 含 `random`、`sequence`、`match`、`blend` 四个独立列表，行由所有平台共享；平台值写在单元格的 `platforms` 中：Random 出现项为 `{平台: 权重}`，Match 行为 `{平台: {Variable 标识: 条件}}`，Blend 曲线为 `{平台: {points, handles}}`；Match 条件行位于各表的 `matchRows`，按数组顺序排列，`target` 可为 null，无目标的行保留在工程中但不参与播放，用 `transitions` 编辑规则表。Queue 容器还可设置 `spliceByMarker`。 |
 | Segment | `segmentTime` 设置时钟，`markers` 写入 Entry、Exit 标记。每种标记最多一个，Entry 的位置须早于或等于 Exit。两者在 `components.segmenttimeline` 读回。Absolute 的时间单位为纳秒，Musical 的时间单位为 tick，每四分音符 960 tick。 |
 | Track | `components.tracktimeline.clips` 列出片段的 `clipGuid`、`targetGuid`、起点、时长及出现序号。`set_item_property(property=clips)` 接受 `{rows,occurrenceOrdinalHighWater}`，可增删片段或调整时长。保留既有行的身份，新行使用新 GUID 和新的出现序号。 |
 

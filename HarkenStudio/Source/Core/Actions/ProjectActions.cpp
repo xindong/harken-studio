@@ -332,38 +332,10 @@ bool validatePlayableReference(
     return target && itemMatchesReferenceRole(*target, field.referenceRole);
 }
 
-bool validatePlayableSends(ProjectManager& manager,
-                           const ProjectItem& owner,
-                           const QJsonValue& value)
+bool claimsBusRoutesItemProperty(ProjectItem* item, const QString& propertyName)
 {
-    if (!value.isArray()) return false;
-    std::set<std::tuple<uint32_t, SendType, bool>> targets;
-    for (const QJsonValue& rowValue : value.toArray()) {
-        if (!rowValue.isObject()) return false;
-        const QJsonObject row = rowValue.toObject();
-        const QJsonValue targetValue = row.value(QStringLiteral("targetBusID"));
-        const QJsonValue levelValue = row.value(QStringLiteral("sendLevel"));
-        SendType type;
-        bool duckTarget;
-        if (!readSendRoute(row, type, duckTarget)) return false;
-        if (!targetValue.isDouble() || !levelValue.isDouble()) return false;
-        const double targetNumber = targetValue.toDouble(-1.0);
-        const double level = levelValue.toDouble();
-        if (!std::isfinite(targetNumber) || std::trunc(targetNumber) != targetNumber
-            || targetNumber <= 0.0
-            || targetNumber > static_cast<double>(std::numeric_limits<uint32_t>::max())
-            || !std::isfinite(level) || level < -96.0 || level > 24.0)
-            return false;
-        const uint32_t target = static_cast<uint32_t>(targetNumber);
-        const auto key = std::tuple(target, type, duckTarget);
-        const auto* targetBus = manager.findBusItem(target);
-        if (targets.contains(key)
-            || !targetBus || targetBus->type != ProjectItem::Type::Bus || targetBus == &owner
-            || ((type == SendType::Send || duckTarget) && targetBus == owner.parent))
-            return false;
-        targets.insert(key);
-    }
-    return true;
+    return item && item->type == ProjectItem::Type::Bus
+        && (propertyName == QLatin1String("sends") || propertyName == QLatin1String("sidechains"));
 }
 
 bool claimsStepsItemProperty(ProjectItem* item, const QString& propertyName)
@@ -382,6 +354,45 @@ TimelineValidation validateAuthoredReference(ProjectManager* manager,
 }
 
 
+}
+
+ActionResult handleBusRoutesItemProperty(ProjectManager* projectManager, ProjectItem* item,
+                                         const QString& propertyName, const QJsonObject& args,
+                                         const QObject* originator)
+{
+    if (args.contains(QStringLiteral("platform_ids")) || (args.contains(QStringLiteral("override_operation"))
+            && args.value(QStringLiteral("override_operation")) != QJsonValue(QStringLiteral("set_override"))))
+        return {false, {}, "INVALID_ARGS", "Rows are shared by every platform; platform values live inside each row"};
+    const bool sidechain = propertyName == QLatin1String("sidechains");
+    const auto before = captureBusSendState(*item);
+    auto after = *before;
+    if (!args.value(QStringLiteral("value")).isArray()
+        || !VMixNode::routesFromVariant(args.value(QStringLiteral("value")).toVariant(), sidechain,
+                                        sidechain ? after.sidechains : after.sends))
+        return {false, {}, "INVALID_ARGS", QStringLiteral("'value' must be a complete array of %1 rows").arg(propertyName)};
+    if (const auto error = validateBusRouting(*projectManager->currentProject(), {after}); !error.isEmpty())
+        return {false, {}, "INVALID_ARGS", error};
+    PropertyEditSession::cancelActiveFor(item, propertyName);
+    ActionResult result;
+    result.success = true;
+    result.data = QJsonObject{{QStringLiteral("property"), propertyName},
+                              {QStringLiteral("value"), VMixNode::routesToVariant(
+                                   sidechain ? after.sidechains : after.sends, sidechain).toJsonArray()}};
+    if (after == *before) return result;
+    auto apply = [propertyName](const BusSendState& state, const QObject* origin) {
+        auto& manager = ProjectManager::instance();
+        auto* target = manager.findItemByGuid(state.bus);
+        if (!target || !restoreBusSendState(*target, state)) return;
+        target->markDirty();
+        manager.applyBusRuntimeState(target);
+        emit manager.busChanged(target->objectID, propertyName, origin);
+    };
+    apply(after, originator);
+    result.undoFn = [apply, state = *before]() { apply(state, nullptr); };
+    result.redoFn = [apply, after]() { apply(after, nullptr); };
+    result.undoText = sidechain ? QObject::tr("Edit Sidechains") : QObject::tr("Edit Sends");
+    result.authoringWriteSet = QSet<QUuid>{item->guid};
+    return result;
 }
 
 void applyStepsList(uint32_t objectID, const std::vector<VActionStep>& target)
@@ -615,9 +626,6 @@ ActionResult handlePlayableItemProperty(ProjectManager* projectManager,
         value = args.value(QStringLiteral("value"));
         if (!validatePlayableReference(*projectManager, *field, value))
             return {false, {}, "INVALID_ARGS", "Playable property reference is invalid"};
-        if (field->wire == harkenplayableproperties::PlayablePropertyWireV1::RowSpan
-            && !validatePlayableSends(*projectManager, *item, value))
-            return {false, {}, "INVALID_ARGS", "Playable sends are invalid"};
     }
 
     const QVector<PlatformScope> scopes = sharedComponent
@@ -664,15 +672,6 @@ ActionResult handlePlayableItemProperty(ProjectManager* projectManager,
         snap.newState = *newState;
     }
 
-    if (item->type == ProjectItem::Type::Bus
-        && field->wire == harkenplayableproperties::PlayablePropertyWireV1::RowSpan) {
-        const QString error = validateBusRouting(*projectManager->currentProject());
-        if (!error.isEmpty()) {
-            restoreSnapshots(snapshots);
-            return {false, {}, "INVALID_ARGS", error};
-        }
-    }
-
     bool changed = false;
     for (const ScopeSnapshot& snap : snapshots) {
         if (snap.oldState != snap.newState) {
@@ -698,10 +697,7 @@ ActionResult handlePlayableItemProperty(ProjectManager* projectManager,
         target->markDirty();
         if (target->type == ProjectItem::Type::Bus) {
             auto& pm = ProjectManager::instance();
-            if (fieldName == QStringLiteral("sends"))
-                pm.applyBusRuntimeState(target);
-            else
-                pm.pushBusPropertyLive(target, fieldName);
+            pm.pushBusPropertyLive(target, fieldName);
             emit pm.busChanged(target->objectID, fieldName, originator);
         } else {
             ProjectManager::syncPlayablePropertyToRuntime(target, propertyId);
@@ -731,10 +727,7 @@ ActionResult handlePlayableItemProperty(ProjectManager* projectManager,
             ? QString::fromLatin1(restoredField->fieldName) : QString();
         if (owner->type == ProjectItem::Type::Bus) {
             auto& pm = ProjectManager::instance();
-            if (fieldName == QStringLiteral("sends"))
-                pm.applyBusRuntimeState(owner);
-            else
-                pm.pushBusPropertyLive(owner, fieldName);
+            pm.pushBusPropertyLive(owner, fieldName);
             emit pm.busChanged(owner->objectID, fieldName);
         } else {
             ProjectManager::syncPlayablePropertyToRuntime(owner, propertyId);
@@ -911,40 +904,47 @@ ActionResult handleFilterItemProperty(ProjectManager* projectManager, ProjectIte
         return {false, {}, "INVALID_ARGS", "clear_platform_override requires platform_ids"};
     if (operation != QLatin1String("set_override"))
         PropertyEditSession::cancelActiveFor(item, propertyName);
+    if (FilterSemantics::fieldInfo(propertyName) && plan.kind == PlayableLandingKind::Overlay
+        && operation != QLatin1String("set_override"))
+        return {false, {}, "INVALID_ARGS",
+                "Filter platform overrides cover the whole filter; clear the platform override of 'filter' instead"};
     const auto scopes = playableLandingScopes(plan, operation);
     if (scopes.isEmpty()) return {false, {}, "INVALID_ARGS", "Filter property landing is empty"};
     struct Snapshot {
         PlatformScope scope;
+        QString field;
         PlayablePropertyStateV1 before;
         PlayablePropertyStateV1 after;
     };
     std::vector<Snapshot> snapshots;
     for (const auto& scope : scopes) {
-        const auto before = FilterAuthoring::readProperty(*item, propertyName, scope, true);
+        const QString field = scope ? QStringLiteral("filter") : propertyName;
+        const auto before = FilterAuthoring::readProperty(*item, field, scope, true);
         if (!before) return {false, {}, "INVALID_ARGS", "Filter property target is unavailable"};
-        snapshots.push_back({scope, *before, {}});
+        snapshots.push_back({scope, field, *before, {}});
     }
     for (auto& snapshot : snapshots) {
         const bool write = operation == QLatin1String("set_override")
             && (!snapshot.scope || plan.kind == PlayableLandingKind::Overlay);
         const bool applied = write
             ? FilterAuthoring::setOverride(*item, propertyName, args.value(QStringLiteral("value")), snapshot.scope)
-            : FilterAuthoring::clearOverride(*item, propertyName, snapshot.scope);
+            : FilterAuthoring::clearOverride(*item, snapshot.field, snapshot.scope);
         if (!applied) {
             for (auto it = snapshots.rbegin(); it != snapshots.rend(); ++it)
-                FilterAuthoring::restoreProperty(*item, propertyName, it->before, it->scope);
+                FilterAuthoring::restoreProperty(*item, it->field, it->before, it->scope);
             return {false, {}, "INVALID_ARGS", "Filter value has an invalid type or range"};
         }
-        snapshot.after = *FilterAuthoring::readProperty(*item, propertyName, snapshot.scope, true);
+        snapshot.after = *FilterAuthoring::readProperty(*item, snapshot.field, snapshot.scope, true);
     }
+    const auto reported = *FilterAuthoring::readProperty(*item, propertyName, scopes.front(), true);
     ActionResult result;
     result.success = true;
     result.data = QJsonObject{
         {QStringLiteral("authoring_handle"), static_cast<qint64>(item->objectID)},
         {QStringLiteral("property"), propertyName},
         {QStringLiteral("override_operation"), operation},
-        {QStringLiteral("value"), snapshots.front().after.value},
-        {QStringLiteral("present"), snapshots.front().after.present}};
+        {QStringLiteral("value"), reported.value},
+        {QStringLiteral("present"), reported.present}};
     if (std::all_of(snapshots.begin(), snapshots.end(), [](const Snapshot& snapshot) {
             return snapshot.before == snapshot.after;
         })) return result;
@@ -955,7 +955,7 @@ ActionResult handleFilterItemProperty(ProjectManager* projectManager, ProjectIte
         auto* target = manager.findItemByGuid(guid);
         if (!target) return;
         for (auto it = snapshots.rbegin(); it != snapshots.rend(); ++it)
-            FilterAuthoring::restoreProperty(*target, propertyName, before ? it->before : it->after, it->scope);
+            FilterAuthoring::restoreProperty(*target, it->field, before ? it->before : it->after, it->scope);
         target->markDirty();
         emit manager.itemPropertyChanged(target, propertyName);
     };
@@ -1621,17 +1621,7 @@ bool validGridTableJson(ProjectManager* projectManager, ProjectItem* owner,
 
 TimelineValidation validateSelectionActivation(const ProjectItem& item, const VSelection& candidate)
 {
-    auto result = AuthoringPolicy::validateTransitionActivation(item, candidate);
-    if (!result) return result;
-    QSet<QString> platforms;
-    for (const auto& key : candidate.selections.platforms.keys()) platforms.insert(key);
-    if (const auto* previous = item.comp<VSelection>())
-        for (const auto& key : previous->selections.platforms.keys()) platforms.insert(key);
-    for (const auto& key : platforms) {
-        result = AuthoringPolicy::validateTransitionActivation(item, candidate, QUuid(key));
-        if (!result) return result;
-    }
-    return TimelineValidation::success();
+    return AuthoringPolicy::validateTransitionActivation(item, candidate);
 }
 
 void applySelectionTransitions(uint32_t objectID,
@@ -1793,8 +1783,9 @@ ActionResult handleSelectionsProperty(ProjectManager* manager, ProjectItem* item
     QString error;
     auto parsed = SelectionData::fromJson(args.value(QStringLiteral("value")).toObject(), &error);
     if (!parsed) return {false, {}, "INVALID_SELECTIONS", error};
-    if (!ProjectPlatformSemantics::validateIds(parsed->platforms.keys(),
-            manager->currentProject()->platforms, &error))
+    QStringList platformIds;
+    for (const auto& platform : parsed->platformIds()) platformIds.append(ProjectPlatformSemantics::idString(platform));
+    if (!ProjectPlatformSemantics::validateIds(platformIds, manager->currentProject()->platforms, &error))
         return {false, {}, "INVALID_SELECTIONS", error};
     const auto* selection = item->comp<VSelection>();
     const auto previousTables = selection->selections.tables();
@@ -1812,23 +1803,28 @@ ActionResult handleSelectionsProperty(ProjectManager* manager, ProjectItem* item
             auto* variable = variableItem ? variableItem->comp<VVariable>() : nullptr;
             if (!variable) return {false, {}, "INVALID_TARGET", "Selection axis has no Variable"};
             auto labels = newLabels.value(variableGuid, variable->labels);
-            for (auto& row : table->matchRows) {
-                auto& cell = row.cells[axis];
-                if (!cell) continue;
-                if (!cell->labelId.isNull()) {
-                    if (!VariableSemantics::labelById(labels, cell->labelId))
-                        return {false, {}, "INVALID_VARIABLE_LABEL", "Selection Label does not belong to its Variable"};
-                    continue;
-                }
+            const auto resolveCell = [&](std::optional<DiscreteGridCell>& cell) -> QString {
+                if (!cell) return {};
+                if (!cell->labelId.isNull())
+                    return VariableSemantics::labelById(labels, cell->labelId)
+                        ? QString{} : QStringLiteral("Selection Label does not belong to its Variable");
                 const int value = cell->legacyValue;
                 if (value < variable->rangeMin || value > variable->rangeMax)
-                    return {false, {}, "INVALID_VARIABLE_LABEL", "Selection value is outside its Variable range"};
+                    return QStringLiteral("Selection value is outside its Variable range");
                 const auto* label = VariableSemantics::labelAtIndex(labels, value);
                 if (!label) {
                     labels.push_back({value, {}});
                     label = &labels.back();
                 }
                 cell = DiscreteGridCell(label->id);
+                return {};
+            };
+            for (auto& row : table->matchRows) {
+                QString cellError = resolveCell(row.cells[axis]);
+                for (auto& [platform, cells] : row.platformCells)
+                    if (const auto found = cells.find(variableGuid); found != cells.end() && cellError.isEmpty())
+                        cellError = resolveCell(found->second);
+                if (!cellError.isEmpty()) return {false, {}, "INVALID_VARIABLE_LABEL", cellError};
             }
             if (!variableLabelsEqual(labels, variable->labels)) {
                 std::sort(labels.begin(), labels.end(), [](const auto& a, const auto& b) { return a.anchor < b.anchor; });
@@ -2024,11 +2020,11 @@ ActionResult handleEffectsItemProperty(ProjectManager* projectManager, ProjectIt
 {
     if (PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(item->type))
         return {false, {}, "AUTHORING_RESTRICTED", "Use replace_field_group_effects for definition FX"};
-    const auto operation = args.value(QStringLiteral("override_operation")).toString(QStringLiteral("set_override"));
-    const bool reset = operation == QStringLiteral("clear_platform_override");
-    if (!reset && operation != QStringLiteral("set_override"))
-        return {false, {}, "INVALID_ARGS", "Unsupported effect override operation"};
-    if (!reset && !args.value(QStringLiteral("value")).isArray())
+    if (args.contains(QStringLiteral("platform_ids")) || args.contains(QStringLiteral("override_operation"))
+            && args.value(QStringLiteral("override_operation")) != QJsonValue(QStringLiteral("set_override")))
+        return {false, {}, "INVALID_ARGS",
+                "Effect rows are shared by every platform; platform Active values live inside each row"};
+    if (!args.value(QStringLiteral("value")).isArray())
         return {false, {}, "INVALID_ARGS", "'value' must be an effects array"};
     EffectChainLedger parsed = EffectChainLedger::fromJson(
         args.value(QStringLiteral("value")).toArray());
@@ -2039,60 +2035,42 @@ ActionResult handleEffectsItemProperty(ProjectManager* projectManager, ProjectIt
             effect.guid = QUuid::createUuid();
         if (!project || !EffectChainSemantics::resolve(effect, *project))
             return {false, {}, "INVALID_ARGS", "Effect reference does not resolve"};
+        for (const auto& [platform, bypass] : effect.platformBypass)
+            if (!ProjectPlatformSemantics::find(project->platforms, platform))
+                return {false, {}, "INVALID_ARGS", "Effect platform value does not belong to the project"};
     }
     EffectChainLedger checked;
     if (!checked.replace(std::move(entries)))
         return {false, {}, "INVALID_ARGS", "Invalid typed effect chain"};
-    const auto plan = parsePlayableLandingPlan(args, ProjectPlatformSemantics::ids(project->platforms));
-    if (!plan.error.isEmpty()) return {false, {}, "INVALID_ARGS", plan.error};
-    if (reset && plan.kind != PlayableLandingKind::Overlay)
-        return {false, {}, "INVALID_ARGS", "clear_platform_override requires platform_ids"};
     PropertyEditSession::cancelActiveFor(item, QStringLiteral("effects"));
     auto* mix = item->comp<VMixNode>();
     const auto oldChain = mix->effects;
-    const auto oldPlatforms = mix->effectPlatforms;
-    auto newChain = oldChain;
-    auto newPlatforms = oldPlatforms;
-    if (plan.kind == PlayableLandingKind::Shared) {
-        newChain = checked;
-        newPlatforms.clear();
-    } else {
-        for (const auto& platform : plan.selected) {
-            if (reset || checked == newChain) newPlatforms.erase(platform);
-            else newPlatforms[platform] = checked;
-        }
-    }
-    const QJsonArray newValue = checked.toJson();
+    const auto newChain = checked;
     ActionResult result;
     result.success = true;
     result.data = QJsonObject{{"property", QStringLiteral("effects")},
-                              {"value", newValue}};
-    if (oldChain == newChain && oldPlatforms == newPlatforms) return result;
+                              {"value", newChain.toJson()}};
+    if (oldChain == newChain) return result;
     mix->effects = newChain;
-    mix->effectPlatforms = newPlatforms;
     QString identityError;
     const bool valid = validateProjectObjectIdentities(*project, &identityError);
     mix->effects = oldChain;
-    mix->effectPlatforms = oldPlatforms;
     if (!valid) return {false, {}, "INVALID_ARGS", identityError};
     const QUuid guid = item->guid;
-    auto apply = [guid](const EffectChainLedger& chain,
-                        const std::map<ProjectPlatformId, EffectChainLedger>& platforms,
-                        const QObject* origin) {
+    auto apply = [guid](const EffectChainLedger& chain, const QObject* origin) {
         ProjectItem* target = ProjectManager::instance().findItemByGuid(guid);
         auto* targetMix = target ? target->comp<VMixNode>() : nullptr;
         if (!targetMix) return;
         PropertyEditSession::cancelActiveFor(target, QStringLiteral("effects"));
         targetMix->effects = chain;
-        targetMix->effectPlatforms = platforms;
         target->markDirty();
         emit ProjectManager::instance().itemPropertyChanged(
             target, QStringLiteral("effects"), origin);
         ProjectManager::instance().requestResync(target);
     };
-    apply(newChain, newPlatforms, originator);
-    result.undoFn = [apply, oldChain, oldPlatforms]() { apply(oldChain, oldPlatforms, nullptr); };
-    result.redoFn = [apply, newChain, newPlatforms]() { apply(newChain, newPlatforms, nullptr); };
+    apply(newChain, originator);
+    result.undoFn = [apply, oldChain]() { apply(oldChain, nullptr); };
+    result.redoFn = [apply, newChain]() { apply(newChain, nullptr); };
     result.undoText = QStringLiteral("Set effects");
     result.authoringWriteSet = QSet<QUuid>{item->guid};
     return result;
@@ -2127,6 +2105,7 @@ struct ItemPropertyRoute {
 };
 
 const ItemPropertyRoute kItemPropertyRoutes[] = {
+    {claimsBusRoutesItemProperty,     handleBusRoutesItemProperty},
     {claimsPlayableItemProperty,      handlePlayableItemProperty},
     {claimsFilterItemProperty,        handleFilterItemProperty},
     {claimsSoundItemProperty,       handleSoundItemProperty},

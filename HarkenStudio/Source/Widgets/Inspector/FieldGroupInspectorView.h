@@ -22,8 +22,9 @@ struct FieldGroupInspectorScopeView {
 };
 
 struct FieldGroupInspectorFieldView {
-    bool uniform = false;
+    bool valid = false;
     QVariant value;
+    QVariant shared;
     QVector<QPair<FieldGroupScope, QVariant>> perScope;
 };
 
@@ -34,21 +35,18 @@ struct FieldGroupInspectorView {
     DefinitionFieldGroups expectedBefore;
     FieldGroupEditScopes editScopes;
     std::vector<FieldGroupInspectorScopeView> perScope;
+    std::optional<ResolvedFieldGroup> shared;
     QStringList diagnostics;
     bool valid = false;
     bool canInherit = false;
     bool fieldsEditable = false;
     bool effectiveInherit = true;
     bool inheritanceMixed = false;
-    bool modesMixed = false;
-    bool allExplicitLocal = false;
-    bool anyUseShared = false;
-    bool allUseShared = false;
-    bool sendsUniform = false;
 
+    const FieldGroupInspectorScopeView* displayed() const;
     FieldGroupInspectorFieldView field(const QString& fieldName) const;
-    std::optional<EffectChainLedger> effectChain() const;
-    QJsonObject actionArgs() const;
+    std::optional<EffectChainLedger> effectChain(bool shared = false) const;
+    QJsonObject actionArgs(bool sharedScope = false) const;
     QString sourceTooltip(const ProjectData& project, const QString& fieldName = {}) const;
 };
 

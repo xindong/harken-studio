@@ -310,9 +310,7 @@ QSet<QString> referencedDocumentPaths(const QJsonObject& document, int schemaVer
                 addReference(curve.toObject().value(QStringLiteral("variable")));
         }
     };
-    addSelectionReferences(selections.value(QStringLiteral("shared")).toObject());
-    const QJsonObject selectionPlatforms = selections.value(QStringLiteral("platforms")).toObject();
-    for (auto table = selectionPlatforms.constBegin(); table != selectionPlatforms.constEnd(); ++table)
+    for (auto table = selections.constBegin(); table != selections.constEnd(); ++table)
         addSelectionReferences(table.value().toObject());
     for (const auto& rule : selection.value(QStringLiteral("transitions")).toObject()
              .value(QStringLiteral("rules")).toArray()) {

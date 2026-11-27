@@ -1,5 +1,6 @@
 import math
 import time
+import uuid
 
 from scenarios.authoring import SAMPLE_RATE, export_all, exported_actions, write_tone
 
@@ -103,40 +104,41 @@ def run(ctx) -> None:
     if abs(baseline - expected) > TOLERANCE_DB:
         raise AssertionError(f"Music bus peaked at {baseline:.2f} dB, expected {expected:.2f}")
 
-    sidechain = {"type": "Sidechain", "duckTarget": False, "targetBusID": buses["Music"]["bus_id"], "sendLevel": LOW_SEND_DB}
-    inherited = {"definition_guid": voice_layer, "group": "send", "scope": "Shared"}
-    studio.call(project, "replace_field_group_sends", {**inherited, "sends": [sidechain]}, save=True)
+    sidechain = {"id": str(uuid.uuid4()), "duckTarget": False, "targetBusID": buses["Music"]["bus_id"],
+                 "sendLevel": LOW_SEND_DB}
+    inherited = {"definition_guid": voice_layer, "group": "sidechain", "scope": "Shared"}
+    studio.call(project, "replace_field_group_sidechains", {**inherited, "sidechains": [sidechain]}, save=True)
     if abs(compare(ctx, studio, project, buses, "sidechain_unchecked") - baseline) > TOLERANCE_DB:
         raise AssertionError("an unchecked sidechain changed the music level")
 
     previous = baseline
     for gain in (LOW_SEND_DB, HIGH_SEND_DB):
-        studio.call(project, "replace_field_group_sends", {
-            **inherited, "sends": [{**sidechain, "duckTarget": True, "sendLevel": gain}],
+        studio.call(project, "replace_field_group_sidechains", {
+            **inherited, "sidechains": [{**sidechain, "duckTarget": True, "sendLevel": gain}],
         }, save=True)
         level = compare(ctx, studio, project, buses, f"inherited_{gain:g}dB")
         if level >= previous - TOLERANCE_DB:
             raise AssertionError(f"raising the inherited send to {gain:g} dB left music at {level:.2f} dB")
         previous = level
 
-    local = {"definition_guid": voice, "group": "send", "scope": "Shared"}
+    local = {"definition_guid": voice, "group": "sidechain", "scope": "Shared"}
     studio.run(project, [
         {"cmd": "set_field_group_mode", "args": {**local, "mode": "Local"}},
-        {"cmd": "replace_field_group_sends", "args": {**local, "sends": []}},
+        {"cmd": "replace_field_group_sidechains", "args": {**local, "sidechains": []}},
     ], save=True)
     if abs(compare(ctx, studio, project, buses, "local_empty") - baseline) > TOLERANCE_DB:
         raise AssertionError("empty local sends did not restore the music level")
 
     platform = studio.call(project, "list_project_platforms")["platforms"][0]["id"]
-    bus_send = {"path": buses["Dialogue"]["bus_id"], "property": "sends", "platform_ids": [platform]}
+    bus_sidechains = {"path": buses["Dialogue"]["bus_id"], "property": "sidechains"}
     with studio.session(project) as edit:
         music = next(bus for bus in edit.call("list_buses")["buses"] if bus["name"] == "Music")
-        edit.call("set_item_property", {
-            **bus_send, "value": [{"type": "Sidechain", "duckTarget": True, "targetBusID": music["id"], "sendLevel": HIGH_SEND_DB}],
-        })
+        bus_route = {"id": str(uuid.uuid4()), "targetBusID": music["id"], "sendLevel": HIGH_SEND_DB,
+                     "duckTarget": False, "platforms": {platform: {"duckTarget": True}}}
+        edit.call("set_item_property", {**bus_sidechains, "value": [bus_route]})
         edit.call("save_project")
     if compare(ctx, studio, project, buses, "platform_bus_ducking") >= baseline - TOLERANCE_DB:
         raise AssertionError("the dialogue bus did not duck the music bus")
-    studio.call(project, "set_item_property", {**bus_send, "value": []}, save=True)
+    studio.call(project, "set_item_property", {**bus_sidechains, "value": []}, save=True)
     if abs(compare(ctx, studio, project, buses, "bus_removed") - baseline) > TOLERANCE_DB:
         raise AssertionError("removing the final bus send did not restore the music level")

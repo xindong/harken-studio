@@ -79,6 +79,11 @@ inline PlatformScope currentWorldPlatformScope(const PlatformContext& context)
     return context.primary;
 }
 
+inline PlatformScope platformEditScope(const PlatformContext& context)
+{
+    return context.all || context.selected.isEmpty() ? PlatformScope{} : PlatformScope{context.primary};
+}
+
 inline PlatformContext resolvePlatformContext(const QStringList& persistedSelected,
                                               const QString&     persistedPrimary,
                                               const QStringList& targetPlatforms,

@@ -120,24 +120,6 @@ std::optional<FilterState> fromJson(const QJsonObject& json)
     return state;
 }
 
-std::optional<FilterState> applyOverlay(const FilterState& base, const QJsonObject& json)
-{
-    auto state = base;
-    for (auto section = json.begin(); section != json.end(); ++section) {
-        if (!section.value().isObject() || section.value().toObject().isEmpty()) return std::nullopt;
-        const auto values = section.value().toObject();
-        for (auto entry = values.begin(); entry != values.end(); ++entry) {
-            const auto found = std::find_if(filterFields.begin(), filterFields.end(), [&](const FilterField& field) {
-                return section.key() == QLatin1String(sectionKey(field.kind))
-                    && entry.key() == QLatin1String(parameterKey(field.parameter));
-            });
-            if (found == filterFields.end() || !entry.value().isDouble()
-                || !setValue(state, *found, entry.value().toDouble())) return std::nullopt;
-        }
-    }
-    return state;
-}
-
 double sectionResponseDb(FilterKind kind, const FilterSection& section,
                          double frequency, double sampleRate)
 {

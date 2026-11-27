@@ -19,6 +19,7 @@
 #include "Widgets/Selector/ObjectRefWidget.h"
 #include "Widgets/Selector/SelectorWindow.h"
 #include "Widgets/Shared/InspectorFormRow.h"
+#include "Widgets/Shared/PlatformLocalMarker.h"
 
 #include <QApplication>
 #include <QCheckBox>
@@ -125,14 +126,10 @@ public:
         const auto view = grouped && project ? buildFieldGroupInspectorView(*project, guid,
             FieldGroupId::Effect, PlatformContextService::instance().context()) : FieldGroupInspectorView{};
         const auto& context = PlatformContextService::instance().context();
-        auto effects = mix ? mix->effectsForPlatform(context.all ? std::nullopt
-            : currentWorldPlatformScope(context)) : EffectChainLedger{};
-        bool mixed = false;
+        auto effects = mix ? mix->effects : EffectChainLedger{};
         QString tooltip;
         if (grouped) {
-            const auto effective = view.effectChain();
-            effects = effective.value_or(EffectChainLedger{});
-            mixed = view.valid && !effective;
+            effects = view.effectChain(true).value_or(EffectChainLedger{});
             tooltip = project ? view.sourceTooltip(*project) : QString{};
         }
         if (!inspector_) {
@@ -148,7 +145,7 @@ public:
             }
         }
         if (boundGuid_ == guid && effects_ == effects && initialized_
-            && grouped_ == grouped && mixed_ == mixed && toolTip() == tooltip
+            && grouped_ == grouped && toolTip() == tooltip
             && groupView_.context == view.context && groupView_.expectedBefore == view.expectedBefore
             && context_ == context
             && groupView_.valid == view.valid && groupView_.fieldsEditable == view.fieldsEditable) return;
@@ -157,7 +154,6 @@ public:
         effects_ = std::move(effects);
         grouped_ = grouped;
         groupView_ = view;
-        mixed_ = mixed;
         context_ = context;
         setToolTip(tooltip);
         initialized_ = true;
@@ -222,7 +218,7 @@ private:
         const auto* item = boundItem();
         if (!item || !isEnabled()) return false;
         if (context_ != PlatformContextService::instance().context()) return false;
-        if (grouped_ && (!groupView_.valid || !groupView_.fieldsEditable || mixed_
+        if (grouped_ && (!groupView_.valid || !groupView_.fieldsEditable
             || groupView_.expectedBefore != item->fieldGroups
             || groupView_.context != PlatformContextService::instance().context())) return false;
         const auto& effects = effects_.entries();
@@ -242,16 +238,10 @@ private:
         EffectChainLedger ledger;
         if (!ledger.replace(std::move(effects))) return false;
         auto* item = boundItem();
-        auto args = grouped_ ? groupView_.actionArgs() : QJsonObject{
+        auto args = grouped_ ? groupView_.actionArgs(true) : QJsonObject{
             {QStringLiteral("authoring_handle"), static_cast<qint64>(item->objectID)},
             {QStringLiteral("property"), QStringLiteral("effects")}};
         args.insert(grouped_ ? QStringLiteral("effects") : QStringLiteral("value"), ledger.toJson());
-        if (!grouped_ && !context_.all && !context_.selected.isEmpty()) {
-            QJsonArray platforms;
-            for (const auto& platform : context_.selected)
-                platforms.append(ProjectPlatformSemantics::idString(platform));
-            args.insert(QStringLiteral("platform_ids"), platforms);
-        }
         const auto result = ActionManager::instance().execute(grouped_
             ? QStringLiteral("replace_field_group_effects") : QStringLiteral("set_item_property"),
             args, ActionSource::GUI, this, undoParent);
@@ -410,7 +400,12 @@ private:
         const auto found = std::find_if(effects.begin(), effects.end(),
             [&guid](const EffectEntry& effect) { return effect.guid == guid; });
         if (found == effects.end()) return;
-        found->bypass = !active;
+        if (context_.all || context_.selected.isEmpty()) {
+            found->bypass = !active;
+            found->platformBypass.clear();
+        } else {
+            found->platformBypass[context_.primary] = !active;
+        }
         if (!commit(std::move(effects))) rebuild();
     }
 
@@ -444,12 +439,13 @@ private:
         const bool editable = canEdit();
         add_->setEnabled(editable && effects_.size() < EffectChainLedger::kCapacity);
         table_->footer()->setVisible(editable);
-        table_->bodyMessage()->setText(mixed_ ? tr("Mixed table\nSelect a single platform to edit")
-            : groupView_.diagnostics.join(QLatin1Char('\n')));
-        table_->bodyMessage()->setVisible(mixed_ || (grouped_ && !groupView_.valid));
+        table_->bodyMessage()->setText(groupView_.diagnostics.join(QLatin1Char('\n')));
+        table_->bodyMessage()->setVisible(grouped_ && !groupView_.valid);
         auto* item = boundItem();
         if (item) {
             const auto& effects = effects_.entries();
+            const auto platform = currentWorldPlatformScope(context_);
+            const auto shown = platform ? effects_.forPlatform(*platform) : effects_;
             for (size_t index = 0; index < effects.size(); ++index) {
                 const auto& effect = effects[index];
                 const QUuid guid = effect.guid;
@@ -568,13 +564,18 @@ private:
                 auto* activeCell = table_->createCell(row);
                 auto* active = new QCheckBox(activeCell);
                 active->setObjectName(QStringLiteral("effectActive"));
-                active->setChecked(!effect.bypass);
+                active->setChecked(!shown.entries()[index].bypass);
                 active->setEnabled(editable);
                 active->setToolTip(tr("Active"));
                 connect(active, &QCheckBox::toggled, this, [this, generation, guid](bool checked) {
                     if (generation == generation_ && canEdit()) setActive(guid, checked);
                 });
-                activeCell->addWidget(active, 0, Qt::AlignCenter);
+                auto* marker = new PlatformLocalMarker(activeCell);
+                marker->setValueFormatter([](const QVariant& bypass) { return bypass.toBool() ? tr("Off") : tr("On"); });
+                marker->bind(item, PlatformLocalAddress{PlatformLocalAddress::Kind::RowCell, QStringLiteral("effects"),
+                    FieldGroupId::Effect, grouped_ && groupView_.canInherit, guid, QStringLiteral("bypass")});
+                marker->setEditable(editable);
+                activeCell->addWidget(attachPlatformMarker(active, marker, activeCell), 0, Qt::AlignCenter);
                 rowLayout->addWidget(activeCell);
                 layout->addWidget(row);
                 table_->registerRow(row, {number, effectCell, activeCell});
@@ -614,7 +615,6 @@ private:
     FieldGroupInspectorView groupView_;
     PlatformContext context_;
     bool grouped_ = false;
-    bool mixed_ = false;
     QString search_;
     QPointer<InspectorPanel> inspector_;
     TableWidget* table_ = nullptr;

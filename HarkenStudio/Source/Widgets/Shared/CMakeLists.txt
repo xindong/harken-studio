@@ -37,8 +37,8 @@ add_library(harken_editor_shared STATIC
     ProjectObjectLabels.h
     InspectorFormRow.cpp
     InspectorFormRow.h
-    PlatformFieldMerge.cpp
-    PlatformFieldMerge.h
+    PlatformLocalMarker.cpp
+    PlatformLocalMarker.h
 )
 
 set_target_properties(harken_editor_shared PROPERTIES

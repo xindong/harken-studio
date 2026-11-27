@@ -251,8 +251,6 @@ Diagnostics validateView(const EditingContext& context,
         const auto* mix = item->comp<VMixNode>();
         if (!mix) continue;
         claimEffects(mix->effects, guid, {});
-        for (const auto& [platform, effects] : mix->effectPlatforms)
-            claimEffects(effects, guid, toFieldGroupGuid(platform));
     }
     for (const auto& definition : definitions)
         if (definition.groups)
@@ -270,14 +268,37 @@ Diagnostics validateView(const EditingContext& context,
     std::vector<FieldGroupScope> scopes{std::nullopt};
     for (const auto platform : context.platforms)
         scopes.push_back(platform);
+    const auto knownPlatform = [&](Guid platform) {
+        return std::find(context.platforms.begin(), context.platforms.end(), platform) != context.platforms.end();
+    };
     for (const auto& definition : definitions) {
+        const auto& groups = *definition.groups;
+        const auto checkRows = [&](FieldGroupId group, const auto& rows) {
+            for (const auto& row : rows)
+                for (const auto& [platform, cells] : row.platforms)
+                    if (!knownPlatform(platform))
+                        addDiagnostic(diagnostics, EditCode::InvalidScopes,
+                            QStringLiteral("A row platform value does not belong to the project"),
+                            fromFieldGroupGuid(definition.guid), group, platform);
+        };
+        if (groups.send.shared.localHistory) checkRows(FieldGroupId::Send, groups.send.shared.localHistory->sends);
+        if (groups.sidechain.shared.localHistory)
+            checkRows(FieldGroupId::Sidechain, groups.sidechain.shared.localHistory->sidechains);
+        if (groups.effects.shared.localHistory)
+            for (const auto& row : groups.effects.shared.localHistory->effects.entries())
+                for (const auto& [platform, bypass] : row.platformBypass)
+                    if (!knownPlatform(toFieldGroupGuid(platform)))
+                        addDiagnostic(diagnostics, EditCode::InvalidScopes,
+                            QStringLiteral("A row platform value does not belong to the project"),
+                            fromFieldGroupGuid(definition.guid), FieldGroupId::Effect, toFieldGroupGuid(platform));
         for (const auto scope : scopes) {
             const auto output = resolver.Resolve(definition.guid, scope, FieldGroupId::Output);
             const auto send = resolver.Resolve(definition.guid, scope, FieldGroupId::Send);
+            const auto sidechain = resolver.Resolve(definition.guid, scope, FieldGroupId::Sidechain);
             const auto spatial = resolver.Resolve(definition.guid, scope, FieldGroupId::SpatialRating);
             const auto effects = resolver.Resolve(definition.guid, scope, FieldGroupId::Effect);
             const auto conversion = resolver.Resolve(definition.guid, scope, FieldGroupId::Conversion);
-            for (const auto* result : {&output, &send, &spatial, &effects, &conversion}) {
+            for (const auto* result : {&output, &send, &sidechain, &spatial, &effects, &conversion}) {
                 appendGroupDiagnostics(diagnostics, context, result->diagnostics);
                 if (result->value)
                     appendGroupDiagnostics(diagnostics, context,
@@ -285,17 +306,22 @@ Diagnostics validateView(const EditingContext& context,
                             result->value->payload),
                         definition.guid, scope);
             }
-            if (!output.ok() || !send.ok()) continue;
+            if (!output.ok() || !send.ok() || !sidechain.ok()) continue;
             const auto outputBus = std::get<OutputFieldGroup>(output.value->payload).outputBusRef;
             const auto& sends = std::get<SendFieldGroup>(send.value->payload).sends;
-            for (std::size_t row = 0; row < sends.size(); ++row) {
-                if ((sends[row].type == harken::studio::project_schema::SendType::Send || sends[row].duckTarget)
-                    && sends[row].targetBusID == outputBus)
+            for (std::size_t row = 0; row < sends.size(); ++row)
+                if (sends[row].targetBusID == outputBus)
+                    addDiagnostic(diagnostics, EditCode::OutputSendConflict,
+                        QStringLiteral("A Send cannot target the effective Output"),
+                        fromFieldGroupGuid(definition.guid),
+                        FieldGroupId::Send, scope, QStringLiteral("targetBusID"), row, outputBus);
+            const auto& sidechains = std::get<SidechainFieldGroup>(sidechain.value->payload).sidechains;
+            for (std::size_t row = 0; row < sidechains.size(); ++row)
+                if (sidechains[row].duckTarget && sidechains[row].targetBusID == outputBus)
                     addDiagnostic(diagnostics, EditCode::OutputSendConflict,
                         QStringLiteral("Only a Sidechain with Target Ducking off can target the effective Output"),
                         fromFieldGroupGuid(definition.guid),
-                        FieldGroupId::Send, scope, QStringLiteral("targetBusID"), row, outputBus);
-            }
+                        FieldGroupId::Sidechain, scope, QStringLiteral("targetBusID"), row, outputBus);
         }
     }
     return diagnostics;
@@ -389,6 +415,11 @@ bool setField(SendFieldGroup&, const SetFieldGroupField&, Guid)
     return false;
 }
 
+bool setField(SidechainFieldGroup&, const SetFieldGroupField&, Guid)
+{
+    return false;
+}
+
 bool setField(EffectFieldGroup&, const SetFieldGroupField&, Guid)
 {
     return false;
@@ -423,9 +454,6 @@ void normalizeGroup(AuthoredGroup<Payload>& group)
 {
     for (auto it = group.platforms.begin(); it != group.platforms.end();) {
         auto& state = it->second;
-        if (state.mode == group.shared.mode) state.mode = FieldGroupMode::UseShared;
-        if (state.localHistory && group.shared.localHistory)
-            state.localFields &= FieldGroupDifferenceMask(*state.localHistory, *group.shared.localHistory);
         if (state.localFields == 0) {
             state.localHistory.reset();
             state.localFields = FieldGroupPropertyMask(Payload::groupId);
@@ -450,28 +478,41 @@ void editGroup(const EditingContext& context, const FieldGroupResolver& resolver
 {
     const auto* field = std::get_if<SetFieldGroupField>(&request.operation);
     const auto* clear = std::get_if<ClearFieldGroupFieldOverride>(&request.operation);
-    const bool sendsEdit = std::holds_alternative<ReplaceFieldGroupSends>(request.operation);
+    const bool sendsEdit = std::holds_alternative<ReplaceFieldGroupSends>(request.operation)
+        || std::holds_alternative<ReplaceFieldGroupSidechains>(request.operation);
     const bool effectsEdit = std::holds_alternative<ReplaceFieldGroupEffects>(request.operation);
     const bool conversionEdit = std::holds_alternative<SetConversionFieldGroup>(request.operation);
-    if (field || sendsEdit || effectsEdit || conversionEdit || clear) {
+    const bool conversionClear = std::holds_alternative<ClearConversionFieldGroupOverride>(request.operation);
+    if (field || sendsEdit || effectsEdit || conversionEdit || clear || conversionClear) {
         auto inspected = scopes;
         if (request.scopes.shared) {
             inspected.clear();
             for (const auto platform : context.platforms) inspected.push_back(platform);
         }
+        std::vector<FieldGroupScope> inherited;
         for (const auto scope : inspected) {
             const auto current = resolver.Resolve(definition, scope, request.group);
             appendGroupDiagnostics(diagnostics, context, current.diagnostics);
             if (current.ok() && canInherit && current.value->effectiveInherit)
+                inherited.push_back(scope);
+        }
+        if (!request.scopes.shared || inherited.size() == inspected.size())
+            for (const auto scope : inherited)
                 addDiagnostic(diagnostics, EditCode::ReadOnly,
                               QStringLiteral("Inherited field group fields cannot be edited"),
                               request.definition, request.group, scope, QStringLiteral("inherit"));
-        }
     }
     if (!diagnostics.empty()) return;
     std::map<QUuid, QUuid> copiedIdentities;
     for (const auto scope : scopes) {
         auto& next = writableState(after, scope);
+        const auto replaceLocal = [&](Payload payload) {
+            const auto authored = next.localHistory ? next.localFields : 0;
+            next.localFields = FieldGroupPropertyMask(request.group);
+            if (scope && after.shared.localHistory)
+                next.localFields = authored | FieldGroupDifferenceMask(payload, *after.shared.localHistory);
+            next.localHistory = std::move(payload);
+        };
         const auto initializeLocal = [&]() {
             const auto local = ResolveFieldGroupLocal(after, scope);
             if (local.localHistory && local.localFields == FieldGroupPropertyMask(request.group))
@@ -482,12 +523,11 @@ void editGroup(const EditingContext& context, const FieldGroupResolver& resolver
             auto payload = localPayload<Payload>(*current.value, definition, copiedIdentities);
             if (next.localHistory)
                 CopyFieldGroupFields(payload, *next.localHistory, next.localFields);
-            next.localHistory = std::move(payload);
-            next.localFields = FieldGroupPropertyMask(request.group);
+            replaceLocal(std::move(payload));
             return true;
         };
         if (const auto* mode = std::get_if<SetFieldGroupMode>(&request.operation)) {
-            if (!scope && mode->mode == FieldGroupMode::UseShared) {
+            if (mode->mode == FieldGroupMode::UseShared) {
                 addDiagnostic(diagnostics, EditCode::InvalidOperation,
                               QStringLiteral("Shared inheritance must be enabled or disabled"),
                               request.definition, request.group, scope, QStringLiteral("inherit"));
@@ -495,19 +535,17 @@ void editGroup(const EditingContext& context, const FieldGroupResolver& resolver
             }
             if (mode->mode == FieldGroupMode::Local && !initializeLocal()) continue;
             next.mode = mode->mode;
-            if (!scope)
-                for (auto& [platform, state] : after.platforms) state.mode = FieldGroupMode::UseShared;
         } else if (std::holds_alternative<RebuildLocalFieldGroup>(request.operation)) {
             const auto current = resolver.Resolve(definition, scope, request.group);
             appendGroupDiagnostics(diagnostics, context, current.diagnostics);
             if (!current.ok()) continue;
-            next.localHistory = localPayload<Payload>(*current.value, definition, copiedIdentities);
-            next.localFields = FieldGroupPropertyMask(request.group);
+            replaceLocal(localPayload<Payload>(*current.value, definition, copiedIdentities));
             next.mode = FieldGroupMode::Local;
             if (!scope) after.platforms.clear();
-        } else if (clear) {
+        } else if (clear || conversionClear) {
             if (next.localHistory)
-                next.localFields &= ~(FieldGroupFieldMask(clear->property));
+                next.localFields &= ~(clear ? FieldGroupFieldMask(clear->property)
+                                            : FieldGroupPropertyMask(FieldGroupId::Conversion));
         } else {
             if (!scope && !initializeLocal()) continue;
             if (!next.localHistory) {
@@ -516,8 +554,8 @@ void editGroup(const EditingContext& context, const FieldGroupResolver& resolver
             }
             const auto property = field ? field->property
                 : effectsEdit ? Property::SignalGraph : Property::Sends;
-            const auto bit = conversionEdit ? FieldGroupPropertyMask(FieldGroupId::Conversion)
-                                            : FieldGroupFieldMask(property);
+            const auto bit = conversionEdit || request.group == FieldGroupId::Sidechain
+                ? FieldGroupPropertyMask(request.group) : FieldGroupFieldMask(property);
             if (field) {
                 if (!setField(*next.localHistory, *field, context.masterBus)) {
                     addDiagnostic(diagnostics, EditCode::InvalidOperation,
@@ -527,6 +565,8 @@ void editGroup(const EditingContext& context, const FieldGroupResolver& resolver
                 }
             } else if constexpr (std::is_same_v<Payload, SendFieldGroup>) {
                 *next.localHistory = std::get<ReplaceFieldGroupSends>(request.operation).value;
+            } else if constexpr (std::is_same_v<Payload, SidechainFieldGroup>) {
+                *next.localHistory = std::get<ReplaceFieldGroupSidechains>(request.operation).value;
             } else if constexpr (std::is_same_v<Payload, EffectFieldGroup>) {
                 *next.localHistory = std::get<ReplaceFieldGroupEffects>(request.operation).value;
             } else if constexpr (std::is_same_v<Payload, ConversionFieldGroup>) {
@@ -588,6 +628,16 @@ FieldGroupEditResult prepareFieldGroupEdit(
                           QStringLiteral("Field does not belong to this editable field group"),
                           request.definition, request.group, {}, fieldName(field->property));
     }
+    if (IsFieldGroupRowList(request.group) && !request.scopes.shared
+        && !std::holds_alternative<SetFieldGroupMode>(request.operation))
+        addDiagnostic(result.diagnostics, EditCode::InvalidOperation,
+                      QStringLiteral("Rows are shared by every platform; platform values live inside each row"),
+                      request.definition, request.group, {}, QString::fromLatin1(FieldGroupName(request.group).data()));
+    if (std::holds_alternative<ReplaceFieldGroupSidechains>(request.operation) &&
+        request.group != FieldGroupId::Sidechain)
+        addDiagnostic(result.diagnostics, EditCode::InvalidOperation,
+                      QStringLiteral("A Sidechain replacement requires the Sidechain group"),
+                      request.definition, request.group, {}, QStringLiteral("sidechains"));
     if (std::holds_alternative<ReplaceFieldGroupSends>(request.operation) &&
         request.group != FieldGroupId::Send)
         addDiagnostic(result.diagnostics, EditCode::InvalidOperation,
@@ -598,7 +648,17 @@ FieldGroupEditResult prepareFieldGroupEdit(
         addDiagnostic(result.diagnostics, EditCode::InvalidOperation,
                       QStringLiteral("An Effect replacement requires the Effect group"),
                       request.definition, request.group, {}, QStringLiteral("effects"));
-    if (std::holds_alternative<SetConversionFieldGroup>(request.operation)
+    if (!request.scopes.shared && (std::holds_alternative<SetFieldGroupMode>(request.operation)
+        || std::holds_alternative<RebuildLocalFieldGroup>(request.operation)))
+        addDiagnostic(result.diagnostics, EditCode::InvalidOperation,
+                      QStringLiteral("Inheritance is shared across platforms"),
+                      request.definition, request.group, {}, QStringLiteral("inherit"));
+    const bool conversionClear = std::holds_alternative<ClearConversionFieldGroupOverride>(request.operation);
+    if (conversionClear && request.scopes.shared)
+        addDiagnostic(result.diagnostics, EditCode::InvalidOperation,
+                      QStringLiteral("Select platforms to reset a field in this field group"),
+                      request.definition, request.group, {}, QStringLiteral("settingsRef"));
+    if ((conversionClear || std::holds_alternative<SetConversionFieldGroup>(request.operation))
         && request.group != FieldGroupId::Conversion)
         addDiagnostic(result.diagnostics, EditCode::InvalidOperation,
                       QStringLiteral("Conversion settings require the Conversion group"),
@@ -639,6 +699,10 @@ FieldGroupEditResult prepareFieldGroupEdit(
     case FieldGroupId::Send:
         editGroup(context, resolver, definition, canInherit, request, scopes,
                   result.before->send, candidate.send, result.diagnostics);
+        break;
+    case FieldGroupId::Sidechain:
+        editGroup(context, resolver, definition, canInherit, request, scopes,
+                  result.before->sidechain, candidate.sidechain, result.diagnostics);
         break;
     case FieldGroupId::SpatialRating:
         editGroup(context, resolver, definition, canInherit, request, scopes,
@@ -717,6 +781,7 @@ FieldGroupProjectValidation validateFieldGroupProject(
             };
             validatePlatforms(definition.groups->output);
             validatePlatforms(definition.groups->send);
+            validatePlatforms(definition.groups->sidechain);
             validatePlatforms(definition.groups->spatialRating);
             validatePlatforms(definition.groups->effects);
             definitions.push_back(definition);

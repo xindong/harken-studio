@@ -34,7 +34,7 @@
 | 配置表排序 | # 列拖动、右键上下移动、Alt+上／下方向键；支持撤销与重做 |
 | 排序约束 | Sources 仅同语言组排序且保留 Active；Clips 保留时间位置与片段身份；Labels 在原索引位置间移动身份与名称，隐藏项不变 |
 | 只读展示表 | Inputs 无 #；Receives 的 # 仅显示行号；两表均无行移动或增删表尾，视觉列换位不改写路由 |
-| 编辑限制 | 只读继承值、混合平台值及其他禁止编辑状态不能修改 |
+| 编辑限制 | 只读继承值及其他禁止编辑状态不能修改；平台差异不再显示混合值，始终显示当前平台的值 |
 
 ## 专项字段行为
 
@@ -51,25 +51,26 @@
 | Effects / 独立编辑器跟随 | 所有未 Pin 实例只跟随有效的 Effect 预设选择和 FX 行单选；单选只更新已开窗口，不新建。选择 Bus 等所属对象（无论是否有 FX）、其他对象或取消选择均保留当前效果器，不自动选择其他槽位。Pin 保留绑定，解除 Pin 时若最近一次效果器选择仍有效则立即同步，否则保留自身绑定；当前效果器失效时隐藏参数，槽位删除后撤销可恢复，关闭工程清空绑定和选择记录 |
 | Effects / 继承 | Sound、Container、Layer、Track、Segment 沿归属父级继承整条链，包括 Custom／Preset、顺序、Active，不与父链叠加；根对象直接编辑自身配置，Bus 不继承 |
 | Effects / 本地历史 | 首次关闭 Inherit 复制当前有效链并分配本对象槽位身份；已有本地历史时恢复历史；开启继承保留历史；Rebuild Local from Current Effective Values 使用当前有效链重建本地配置 |
-| Effects / 平台 | 沿用 Shared 与平台覆盖规则；All Platforms 编辑共享链并清除该链的平台覆盖，单平台只改当前平台，配置与 Shared 相同时自动消除该覆盖；继承开关按平台独立保存，沿用标题菜单 Reset Inherit 恢复共享继承模式；Bus 也支持平台链，但没有 Inherit |
-| Effects / 有效值 | 继承状态展示当前平台的有效链并禁止增删、排序和修改；继承 Custom 仍可打开编辑器查看，Preset 保留 ObjectRef 导航；平台有效链不同且不能编辑共享本地链时显示混合状态 |
+| Effects / 平台 | 行由所有平台共享，增删、排序、替换和 Custom 参数作用于全部平台；Active 可按平台不同，All Platforms 修改共享值并清除各平台的 Active，单平台只改当前平台，与共享相同的平台值予以保留；Inherit 跨平台共享；Bus 同样适用，但没有 Inherit |
+| Effects / 有效值 | 继承状态展示当前平台的有效链并禁止增删、排序和修改；继承 Custom 仍可打开编辑器查看，Preset 保留 ObjectRef 导航；All Platforms 同样显示当前平台的 Active |
 | Effects / 资产 | Assets 的 Effect 桶通过 New Effect > Limiter 新建；创建后插件类型固定，Inspector 常规属性区仅显示 Notes，无 Status section |
 | Effects / 内嵌编辑区 | 双击 Effect 对象在 Inspector 下半区显示 Effect Editor，标题暂用居中的 Details，上半区保留常规属性；初始上下比例 1:1，分隔边框可拖动；每个 Inspector 首次展开后，选择其他 Effect 直接更新内容并保留比例，切换到非 Effect、清空选择、删除当前资产或关闭工程时清空并隐藏，再选择 Effect 自动恢复；每次单击右上 detach 均为当前资产新建独立浮动 Effect Editor，已有同类型实例及内嵌编辑区保留；新窗沿当前屏幕已有浮窗向右下错开，遇屏幕边缘回绕，已有窗口及已记忆位置不重排；固定 Inspector 保持自身对象 |
-| Effects / Effect Editor | Limiter 使用两行标准表单：Ceiling 范围 −24～0 dB、默认 0 dB，Release 范围 1～1000 ms、默认 100 ms，提供标准滑条、数值输入与复位；Preset 与 Custom 参数支持编辑、撤销重做及保存，Preset 参数跨平台共享，Custom 参数编辑遵循当前平台作用域，继承 Custom 只读；独立编辑器支持多实例、固定和布局恢复，槽位编辑器随该槽位的替换、模式切换及当前平台有效配置更新 |
-| Effects / 删除资产 | 删除 Effect 移除共享配置、各平台覆盖及未生效本地历史中的对应 Preset 引用行，保留 Custom；撤销一并恢复引用行及其原顺序、Active |
+| Effects / Effect Editor | Limiter 使用两行标准表单：Ceiling 范围 −24～0 dB、默认 0 dB，Release 范围 1～1000 ms、默认 100 ms，提供标准滑条、数值输入与复位；Preset 与 Custom 参数支持编辑、撤销重做及保存，两者均跨平台共享，继承 Custom 只读；独立编辑器支持多实例、固定和布局恢复，槽位编辑器随该槽位的替换、模式切换及当前平台有效配置更新 |
+| Effects / 删除资产 | 删除 Effect 移除共享链及未生效本地历史中的对应 Preset 引用行，保留 Custom；撤销一并恢复引用行及其原顺序、Active |
 | Send / 新增 | 直接选择目标 Bus，Volume 控制发送到目标混音的增益 |
 | Sidechain / 新增 | `Sidechain to...` 新行默认关闭 Target Ducking，`Sidechain to... (Ducking Enabled)` 默认开启 |
 | Sidechain / Target Ducking | 开启后，源信号触发目标 Bus 的内建 Ducking。Volume 控制检测输入增益，切换勾选保留当前值。关闭时侧链配置随工程保存，供插件辅助输入使用 |
-| 路由 / 目标与增益 | 增益范围为 −96 至 +24 dB。同一来源和目标可各有一条 Send、未勾选的 Sidechain、勾选的 Sidechain。与 Output 同目标时只允许未勾选的 Sidechain。冲突的选择和切换禁用 |
-| 路由 / 继承与平台 | Send、Sidechain 共用一组继承和平台覆盖。编辑、重排行或清空一张表时保留另一张表的数据。继承的 Ducking 在最终 Sound 上生效，Bus 也可以触发目标 Bus 的 Ducking |
+| 路由 / 目标与增益 | 增益范围为 −96 至 +24 dB。每个平台上，同一来源和目标可各有一条 Send、未勾选的 Sidechain、勾选的 Sidechain。与 Output 同目标时只允许未勾选的 Sidechain。冲突的选择和切换禁用，任一平台冲突或成环时整次编辑被拒绝 |
+| 路由 / 继承与平台 | 继承时行只读，Volume 显示为禁用的滑条与带框数值，与 Target 一致，标记照常附着。Send、Sidechain 是两份独立数据，各有一个跨平台共享的 Inherit。行由所有平台共享，增删和排序作用于全部平台；Target、Volume 及 Sidechain 的 Target Ducking 可按平台不同。All Platforms 修改共享值并清除各平台的对应单元格，单平台只改当前平台，与共享相同的平台值予以保留。继承的 Ducking 在最终 Sound 上生效，Bus 也可以触发目标 Bus 的 Ducking |
 | 路由 / 反查 | Receives 列出当前平台有效路由。Type 为 Send 或 Sidechain，Ducking 在 Send 行留空，在 Sidechain 行显示居中的只读勾选框。可拖动 Type 与 Ducking 之间的分隔线调整列宽。信号图中的发送连线仅标注 Send 或 Sidechain。编辑和撤销作用于所选路由及平台 |
+| 平台标记 | 可按平台覆盖的控件右侧贴合 8 个逻辑像素宽的标记；Sources 的 Active 标记在表头右侧，Send、Sidechain 的 Target、Volume、Target Ducking 单元格和 Effects 的 Active 勾选框各带一个标记。标记独立于所附控件，与控件共用边框，不受控件悬停、选中或编辑影响；表头标记不参与列的拖动与调宽。无平台值时使用面板背景色，各处表现一致；可编辑时，仅其他平台有平台值使用 Dock 非焦点标签的强调线颜色，当前平台有平台值使用强调色；只读（含继承）时按所示值的来源判断，任一平台有覆写即以禁用文字色填充，不区分当前平台与其他平台。悬停提示统一为 Platform Mark；仅在可单击或可右键操作时显示悬停反馈，只读且无平台值的标记无悬停反馈。着色时单击列出各平台的值，平台名左对齐、值右对齐，当前平台标注 (current)；继承时列出来源的值。右键菜单为 Override on Current Platform 或 Remove Platform Override；All Platforms 下覆盖后自动切换为单平台编辑。字段组继承时不显示未生效的本地历史。蓝图暂未提供标记 |
 | Sources / Language | 关闭时显示普通组，开启时显示全部项目语言组（含空组）；Toolbar 当前语言置顶，其余按项目语言顺序；两类数据分别保留 |
 | Sources / 拖入 | 组内导入边框限定目标语言组；Original 引用框独立处理引用替换与高光，拒绝的拖入不转为组内导入 |
-| Sources / Active | 同一平台与语言只选一个来源；多平台不一致时显示半勾选 |
+| Sources / Active | 同一平台与语言只选一个来源；始终显示当前平台的选择，平台标记在表头右侧，区分语言时在各语言分组右侧 |
 | Sources / Name | 音源名称，创建时取源文件名，之后不随文件改名或 Original 更换变化；允许重名，空白或非法输入标红并提示，结束编辑时恢复旧值；改名可撤销，不打断试听 |
 | Sources / Waveform | 展示音频裁剪与循环范围，可打开范围编辑；文件缺失时留空且不可编辑 |
 | Sources / 缺失引用 | 保留引用及 Active；Original 标红，仅当前平台与语言的 Active 来源缺失使 Sound 标红 |
-| Playback / Filter | Sound、Container、Layer、Track、Segment、Bus 的 MixNode 属性；标签加共享预览窗，点击进入 External Editor；全默认时淡化，有非默认值时激活，均可编辑 |
+| Playback / Filter | Sound、Container、Layer、Track、Segment、Bus 的 MixNode 属性；标签加共享预览窗，点击进入 External Editor；全默认时淡化，有非默认值时激活，均可编辑。Filter 整体是一个平台覆写单元，平台标志只在预览窗上；单击标志以标准表格列出各平台之间实际不同的参数（每行一个参数、每列一个平台，当前平台标注 (current)），全部相同时提示无差异 |
 | Steps / Set Variable | 详情含 Value 与 Scope；Scope 为 Global／Emitter，默认 Emitter，随步骤保存，更换 Target 不重置 |
 | Steps / PostAction | 拒绝直接或间接循环；候选显示循环路径，拒绝不产生修改或撤销记录；重复引用和无环菱形依赖允许 |
 | Labels / 索引编辑 | 双击 # 编辑；仅接受当前范围内未占用的整数，空名称行也占用索引 |
@@ -85,7 +86,7 @@
 
 Filter 编辑器上方使用共享曲线画布和刻度，下方沿用 Inspector 的 Low Pass、High Pass、Low Shelf、High Shelf 折叠分节、参数 Slider 和右侧变量绑定插槽。图表与字段共用面板外框，中间 1px 分隔边界可拖动调整高度，悬停只将边界颜色切为主题 accent，拖动命中范围另行扩展。四节依次使用 categorical 0–3 的标题背景、曲线和点。没有 Enable 字段；只有非默认分节显示控制点。大小预览均按工程输出采样率计算频响，横轴固定为 Frequency 的 20–20000 Hz。
 
-Frequency 范围为 20–20000 Hz，四节默认值依次为 20000、20、200、6000 Hz；Q Value 范围为 0.1–10，默认 0.70710678；两个 Shelf 的 Gain 范围为 −48–48 dB，默认 0。预览显示编写值，不跟随 Variable Rehearsal 或叠加绑定贡献。保存及平台覆盖跟随对象定义的 Volume/Pitch 编辑范围，图上多参数拖动合为一次撤销。当前仅实现 Studio 编写、保存和可视预览；Engine 的 CurrentWorld、实时播放和 Pack Filter 合同尚未接入。
+Frequency 范围为 20–20000 Hz，四节默认值依次为 20000、20、200、6000 Hz；Q Value 范围为 0.1–10，默认 0.70710678；两个 Shelf 的 Gain 范围为 −48–48 dB，默认 0。预览显示编写值，不跟随 Variable Rehearsal 或叠加绑定贡献。平台覆写以整个 Filter 为单位：单平台下修改任一参数时，先把当前生效的全部参数复制为该平台的覆写再修改；All Platforms 下修改写入共享值并清除各平台的整份覆写；移除覆写也只能整份移除，单独移除某个参数的平台覆写会被拒绝。编辑器内的参数不带平台标志。图上多参数拖动合为一次撤销。当前仅实现 Studio 编写、保存和可视预览；Engine 的 CurrentWorld、实时播放和 Pack Filter 合同尚未接入。
 
 ## 新建变量绑定
 
@@ -106,6 +107,7 @@ Frequency 范围为 20–20000 Hz，四节默认值依次为 20000、20、200、
 |---|---|---|
 | 输出 | Target（目标 Bus）、Volume（输出音量） | Route > Output |
 | 发送 | Sends | Route > Send |
+| 侧链 | Sidechains | Route > Sidechain |
 | 空间属性 | 声像、3D 开关、衰减引用、衰减距离缩放 | Spatial > Rating |
 | 效果器 | 整条 Effects 链，含 Custom／Preset、顺序、Active | Basic > Effect |
 | 转换 | Settings（Conversion 预设引用，可清空） | Performance > Conversion，位于 Playback Priority 之后 |
