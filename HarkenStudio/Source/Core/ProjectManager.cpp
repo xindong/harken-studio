@@ -1842,7 +1842,7 @@ bool ProjectManager::commitPreparedProject(PreparedProject&& prepared)
     } else {
         QString baselineError;
         saveBaseline = captureSaveBaseline(*prepared.project, *itemSaveState,
-                                           prepared.loadedDocuments, &baselineError);
+            prepared.loadedDocuments, std::move(prepared.validationContext), &baselineError);
         if (!saveBaseline) {
             emit errorOccurred(baselineError);
             return false;
@@ -1916,6 +1916,7 @@ bool ProjectManager::commitPreparedProject(PreparedProject&& prepared)
 
     for (const QString& diagnostic : prepared.diagnostics)
         emit warningOccurred(ProjectUpgradeMessages::userMessage(diagnostic));
+    emit projectSessionOpened();
     return true;
 }
 
@@ -1978,9 +1979,11 @@ bool ProjectManager::loadProject(const QString& filePath, bool allowUpgrade,
 
 std::unique_ptr<ProjectSaveBaseline> ProjectManager::captureSaveBaseline(
     ProjectData& project, ProjectItemSaveState& itemSaveState,
-    const QHash<QString, QByteArray>& loadedDocuments, QString* error)
+    const QHash<QString, QByteArray>& loadedDocuments,
+    ProjectContractReadContext validationContext, QString* error)
 {
     auto baseline = std::make_unique<ProjectSaveBaseline>();
+    baseline->context = std::move(validationContext);
     baseline->projectPath = project.projectPath;
     const QDir root(QFileInfo(baseline->projectPath).absolutePath());
     const auto captureBytes = [&](const QString& path, const QByteArray& bytes) {
@@ -2052,7 +2055,8 @@ std::unique_ptr<ProjectSaveBaseline> ProjectManager::captureSaveBaseline(
     bool missingDocument = false;
     const auto checkItem = [&](auto&& self, ProjectItem& item, int order) -> bool {
         const QString path = root.relativeFilePath(project.objectFilePath(&item));
-        const auto document = serializer.itemDocument(item, project.projectId, order);
+        const auto document = serializer.itemDocument(item, project.projectId, order,
+                                                       itemSaveState.savedItem(item.guid));
         if (document.isEmpty()) {
             if (error) *error = serializer.lastError();
             return {};
@@ -2265,7 +2269,8 @@ bool ProjectManager::saveProjectInternal(bool relocateSources, QString* error)
             const auto previous = baseline->validation.documents().value(path);
             const int order = previous.value(QStringLiteral("content")).toObject()
                 .value(QStringLiteral("order")).toInt();
-            const auto document = serializer.itemDocument(*item, stagedProject.projectId, order);
+            const auto document = serializer.itemDocument(*item, stagedProject.projectId, order,
+                                                          plan.serializedItems.value(guid));
             if (document.isEmpty()) return fail(serializer.lastError());
             plan.addDocument(path, document, baseline, m_externalSavePaths.contains(path));
         }

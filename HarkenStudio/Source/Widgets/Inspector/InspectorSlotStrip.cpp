@@ -77,8 +77,19 @@ QWidget* InspectorSlotStrip::slotWidget(InspectorSlotKind kind) const
 
 void InspectorSlotStrip::bind(ProjectItem* item)
 {
+    bindGroups(item, {});
+}
+
+void InspectorSlotStrip::bindGroups(ProjectItem* item, const InspectorGroupLookup& groups)
+{
     for (const Slot& slot : slots_)
-        if (slot.decorator) slot.decorator->bind(item);
+        if (slot.decorator) slot.decorator->bindGroups(item, groups);
+}
+
+void InspectorSlotStrip::refreshGroups(ProjectItem* item, const InspectorGroupLookup& groups)
+{
+    for (const Slot& slot : slots_)
+        if (slot.decorator) slot.decorator->refreshGroups(item, groups);
 }
 
 QWidget* InspectorSlotStrip::detailWidget() const

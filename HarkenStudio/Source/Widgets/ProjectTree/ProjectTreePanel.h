@@ -117,7 +117,6 @@ protected:
     QTreeWidgetItem* findTreeItem(ProjectItem* item) const;
     QTreeWidgetItem* createTreeItem(ProjectItem* item);
     void updateTreeItem(QTreeWidgetItem* treeItem, ProjectItem* projectItem);
-    QString typeToString(ProjectItem::Type type) const;
 
     ProjectItem* projectItemForTreeItem(QTreeWidgetItem* treeItem) const;
     QTreeWidgetItem* treeItemForProjectItem(ProjectItem* item) const;
@@ -212,6 +211,7 @@ private:
     QTreeWidgetItem* ensureCategoryFolder(const QString& folderName);
     QTreeWidgetItem* ensureFolderRow(const PhysicalFolder* folder);
     void updateFolderRow(QTreeWidgetItem* row, PhysicalFolder* folder);
+    void updateItemLabel(QTreeWidgetItem* row, const ProjectItem& item) const;
     void updateBucketRows();
     void setFolderExpanded(PhysicalFolder* folder, bool expanded);
     void saveItemExpansion() const;

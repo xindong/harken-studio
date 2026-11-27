@@ -49,6 +49,9 @@ protected:
     void focusInEvent(QFocusEvent* event) override;
 
 private:
+    void ensureCurveEditor();
+    void ensureBindingEditor();
+    void ensureSourceEditor();
     void installFocusFilterRecursively(QObject* root);
     void showContent(QWidget* content);
     void refreshSource();
@@ -59,7 +62,6 @@ private:
     int panelId_ = 0;
     bool pinned_ = false;
     ExternalEditorSelection selection_;
-    QWidget* curves_ = nullptr;
     QScrollArea* curvesScroll_ = nullptr;
     BindingFieldEditor* bindings_ = nullptr;
     CurveEditorWidget* curve_ = nullptr;

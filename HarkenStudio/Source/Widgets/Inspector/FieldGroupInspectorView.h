@@ -2,6 +2,7 @@
 
 #include "Core/PlatformContext.h"
 #include "Core/FieldGroupEditing.h"
+#include "Core/FieldGroupProjectAdapter.h"
 
 #include <QJsonObject>
 #include <QPair>
@@ -33,6 +34,7 @@ struct FieldGroupInspectorView {
     PlatformContext context;
     DefinitionFieldGroups expectedBefore;
     FieldGroupEditScopes editScopes;
+    QVector<QUuid> ancestry;
     std::vector<FieldGroupInspectorScopeView> perScope;
     QStringList diagnostics;
     bool valid = false;
@@ -50,6 +52,21 @@ struct FieldGroupInspectorView {
     std::optional<EffectChainLedger> effectChain() const;
     QJsonObject actionArgs() const;
     QString sourceTooltip(const ProjectData& project, const QString& fieldName = {}) const;
+};
+
+class FieldGroupInspectorRead {
+public:
+    explicit FieldGroupInspectorRead(const ProjectData& project);
+    FieldGroupInspectorView read(const QUuid& definition, FieldGroupId group,
+                                 const PlatformContext& context);
+    QString sourceTooltip(const FieldGroupInspectorView& view, const QString& fieldName = {}) const;
+
+private:
+    const ProjectData& project_;
+    std::shared_ptr<const bridge::CanonicalRuntimeProjectSourceIndexV1> source_;
+    FieldGroupProjectView view_;
+    FieldGroupResolver resolver_;
+    std::map<FieldGroupScope, QStringList> scopeDiagnostics_;
 };
 
 FieldGroupInspectorView buildFieldGroupInspectorView(

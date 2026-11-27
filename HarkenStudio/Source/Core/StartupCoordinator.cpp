@@ -1,10 +1,12 @@
 #include "StartupCoordinator.h"
 
+#include "Core/AudioEngine.h"
 #include "Core/ProjectTemplateLoader.h"
 #include "Core/ProjectInstance.h"
 #include "Core/ProjectOpenApproval.h"
 #include "Core/ProjectUpgradeManager.h"
 #include "Core/ProjectUpgradeMessages.h"
+#include "Core/RuntimeSyncCoordinator.h"
 #include "Dialogs/StartupLoadingWindow.h"
 #include "MainWindow.h"
 #include "Core/IPC/StudioInstanceTransport.h"
@@ -16,6 +18,7 @@
 #include <QFileInfo>
 #include <QMessageBox>
 #include <QPointer>
+#include <QScopeGuard>
 #include <QTimer>
 #include <QtConcurrent>
 
@@ -260,13 +263,16 @@ void StartupCoordinator::tryCommit()
 
     loading_.setPhase(StartupPhase::LoadingProjectContent);
     ProjectManager& manager = ProjectManager::instance();
+    auto& runtime = AudioEngine::instance().runtimeSyncCoordinator();
+    runtime.beginSubmissionBatch();
+    auto submissionBatch = qScopeGuard([&runtime] { runtime.endSubmissionBatch(); });
     prepared_->instance = std::move(projectInstance_);
     if (!manager.commitPreparedProject(std::move(*prepared_))) {
         fail(tr("Harken Studio could not open the project"));
         return;
     }
 
-    QTimer::singleShot(0, this, [this]() {
+    QTimer::singleShot(0, this, [this, submissionBatch = std::move(submissionBatch)]() {
         if (terminal_)
             return;
         ProjectManager& manager = ProjectManager::instance();
