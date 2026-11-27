@@ -141,27 +141,27 @@ std::optional<EffectChainLedger> FieldGroupInspectorView::effectChain() const
     return EffectChainLedger::fromJson(QJsonArray::fromVariantList(value.value.toList()));
 }
 
-QString FieldGroupInspectorView::sourceTooltip(const ProjectData& project, const QString& fieldName) const
+static QString formatSourceTooltip(const ProjectData& project, const FieldGroupInspectorView& view,
+                                   const QString& fieldName,
+                                   const bridge::CanonicalRuntimeProjectSourceIndexV1& index)
 {
-    if (!valid) return diagnostics.join(QLatin1Char('\n'));
-    const auto index = harken::studio::bridge::canonicalRuntimeProjectSourceIndex(project);
+    if (!view.valid) return view.diagnostics.join(QLatin1Char('\n'));
+    const auto* field = PlayablePropertyAuthoringV1::fieldByName(fieldName);
     QStringList lines;
-    for (const auto& target : perScope) {
+    for (const auto& target : view.perScope) {
         const auto& source = target.resolved.source;
         QString provider;
         if (source.isDefault) {
             provider = QStringLiteral("Default");
         } else {
-            const auto item = index->byGuid.find(source.definition);
-            const auto name = item == index->byGuid.end()
-                ? fromFieldGroupGuid(source.definition).toString(QUuid::WithoutBraces)
-                : item->second->name;
+            const auto item = index.byGuid.find(source.definition);
+            const auto name = item == index.byGuid.end()
+                ? fromFieldGroupGuid(source.definition).toString(QUuid::WithoutBraces) : item->second->name;
             auto scope = source.scope;
-            if (scope && item != index->byGuid.end()) {
-                if (const auto* field = PlayablePropertyAuthoringV1::fieldByName(fieldName))
-                    if ((FieldGroupOverrideMask(item->second->fieldGroups, *scope)
-                        & (FieldGroupFieldMask(static_cast<harkenplayableproperties::PlayablePropertyIdV1>(field->id)))) == 0) scope.reset();
-            }
+            if (scope && item != index.byGuid.end() && field
+                && !(FieldGroupOverrideMask(item->second->fieldGroups, *scope) & FieldGroupFieldMask(
+                    static_cast<harkenplayableproperties::PlayablePropertyIdV1>(field->id))))
+                scope.reset();
             provider = QStringLiteral("%1 / %2").arg(name, scopeName(project, scope));
         }
         lines.append(QStringLiteral("%1: %2").arg(scopeName(project, target.scope), provider));
@@ -169,10 +169,36 @@ QString FieldGroupInspectorView::sourceTooltip(const ProjectData& project, const
     return lines.join(QLatin1Char('\n'));
 }
 
+QString FieldGroupInspectorView::sourceTooltip(const ProjectData& project, const QString& fieldName) const
+{
+    if (!valid) return diagnostics.join(QLatin1Char('\n'));
+    return formatSourceTooltip(project, *this, fieldName, *bridge::canonicalRuntimeProjectSourceIndex(project));
+}
+
+QString FieldGroupInspectorRead::sourceTooltip(const FieldGroupInspectorView& view, const QString& fieldName) const
+{
+    return formatSourceTooltip(project_, view, fieldName, *source_);
+}
+
 FieldGroupInspectorView buildFieldGroupInspectorView(
     const ProjectData& project, const QUuid& definition,
     FieldGroupId group, const PlatformContext& context)
 {
+    return FieldGroupInspectorRead(project).read(definition, group, context);
+}
+
+FieldGroupInspectorRead::FieldGroupInspectorRead(const ProjectData& project)
+    : project_(project)
+    , source_(bridge::canonicalRuntimeProjectSourceIndex(project))
+    , view_(buildFieldGroupProjectView(project, *source_))
+    , resolver_(view_.definitions, project.busses.empty() || !project.busses.front().rootItem
+        ? project_schema::AuthoringGuid{} : toFieldGroupGuid(project.busses.front().rootItem->guid))
+{}
+
+FieldGroupInspectorView FieldGroupInspectorRead::read(
+    const QUuid& definition, FieldGroupId group, const PlatformContext& context)
+{
+    const auto& project = project_;
     FieldGroupInspectorView result;
     result.definition = definition;
     result.group = group;
@@ -185,7 +211,7 @@ FieldGroupInspectorView buildFieldGroupInspectorView(
         result.diagnostics.append(QStringLiteral("Select a valid project target platform"));
         return result;
     }
-    const auto view = buildFieldGroupProjectView(project);
+    const auto& view = view_;
     for (const auto& diagnostic : view.diagnostics)
         result.diagnostics.append(diagnostic.message);
     if (!view.ok()) return result;
@@ -198,12 +224,13 @@ FieldGroupInspectorView buildFieldGroupInspectorView(
     }
     result.expectedBefore = *authored->groups;
     result.canInherit = !harken::studio::project_schema::IsNull(authored->parentGuid);
+    for (auto* item = source_->byQtGuid.at(definition); item; item = source_->parentDefinition.at(item))
+        result.ancestry.append(item->guid);
     const auto* master = project.busses.empty() ? nullptr : project.busses.front().rootItem.get();
     if (!master || master->type != ProjectItem::Type::Bus || master->guid.isNull()) {
         result.diagnostics.append(QStringLiteral("Project Master Bus must have a valid persistent GUID"));
         return result;
     }
-    const FieldGroupResolver resolver(view.definitions, toFieldGroupGuid(master->guid));
     std::vector<FieldGroupScope> scopes;
     if (result.editScopes.shared) {
         for (const auto& platform : project.platforms)
@@ -213,14 +240,18 @@ FieldGroupInspectorView buildFieldGroupInspectorView(
         for (const auto platform : result.editScopes.platforms)
             scopes.push_back(platform);
     for (const auto scope : scopes) {
-        const auto snapshot = buildFieldGroupEffectiveSnapshot(project, scope);
-        for (const auto& diagnostic : snapshot.diagnostics)
-            result.diagnostics.append(QStringLiteral("%1: %2").arg(scopeName(project, scope), diagnostic.message));
-        if (!snapshot.ok()) {
+        const auto [diagnostics, inserted] = scopeDiagnostics_.try_emplace(scope);
+        if (inserted) {
+            const auto snapshot = buildFieldGroupEffectiveSnapshot(project, scope, *source_);
+            for (const auto& diagnostic : snapshot.diagnostics)
+                diagnostics->second.append(QStringLiteral("%1: %2").arg(scopeName(project, scope), diagnostic.message));
+        }
+        if (!diagnostics->second.empty()) {
+            result.diagnostics.append(diagnostics->second);
             result.perScope.clear();
             return result;
         }
-        const auto resolved = resolver.Resolve(guid, scope, group);
+        const auto resolved = resolver_.Resolve(guid, scope, group);
         if (!resolved.ok()) {
             result.diagnostics.append(QStringLiteral("The field group cannot be resolved"));
             result.perScope.clear();

@@ -573,6 +573,7 @@ signals:
     void folderMoved(PhysicalFolder* folder);
     void activePropertyEditsFinishing(bool commitChanges);
     void projectPlatformEdited(const QString& platformId);
+    void projectSessionOpened();
     void projectOpened(ProjectData* project);
     void projectClosed();
     void projectSaved();
@@ -628,7 +629,8 @@ private:
                                 VariableKind variableKind = VariableKind::Smooth);
     static std::unique_ptr<ProjectSaveBaseline> captureSaveBaseline(
         ProjectData& project, ProjectItemSaveState& itemSaveState,
-        const QHash<QString, QByteArray>& loadedDocuments, QString* error);
+        const QHash<QString, QByteArray>& loadedDocuments,
+        ProjectContractReadContext validationContext, bool upgraded, QString* error);
 
     std::shared_ptr<ProjectInstance> m_projectInstance;
     std::shared_ptr<ProjectData> m_currentProject;

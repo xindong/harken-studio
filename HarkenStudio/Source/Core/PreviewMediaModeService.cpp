@@ -22,7 +22,7 @@ PreviewMediaModeService::PreviewMediaModeService(
     : QObject(parent), storage_(std::move(storage))
 {
     auto& manager = ProjectManager::instance();
-    connect(&manager, &ProjectManager::projectOpened, this, &PreviewMediaModeService::restore);
+    connect(&manager, &ProjectManager::projectSessionOpened, this, &PreviewMediaModeService::restore);
     connect(&manager, &ProjectManager::projectClosed, this, &PreviewMediaModeService::restore);
     restore();
 }

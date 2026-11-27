@@ -41,7 +41,8 @@ public:
     bool prepareReferenceWrite(const ProjectData& project);
     QJsonObject projectDocument(const QString& filePath, const ProjectData& project);
     QJsonObject itemDocument(const ProjectItem& item, const QString& projectId,
-                              int order = 0) const;
+                              int order = 0, const QJsonObject& serializedItem = {}) const;
+    static QJsonObject preserveOmittedDefaults(QJsonObject document, const QJsonObject& previous);
     bool prepareProjectSave(const QString& filePath, ProjectData& project,
                             const QString& stagingFilePath = {});
     bool commitProjectSave(QJsonObject* savedHeader = nullptr);
@@ -67,7 +68,7 @@ public:
     QJsonObject audioItemToJson(const ProjectItem& layer) const;
     bool        audioItemFromJson(const QJsonObject& json, ProjectItem& layer) const;
     bool        audioPackItemFromJson(const QJsonObject& json, ProjectItem& layer) const;
-    QJsonObject audioBranchToJson(const ProjectItem& node) const;
+    QJsonObject audioBranchToJson(const ProjectItem& node, QJsonObject serializedItem = {}) const;
     bool        audioBranchFromJson(const QJsonObject& json,
                                     ProjectItem& node) const;
 

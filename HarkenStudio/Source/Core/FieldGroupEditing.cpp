@@ -83,7 +83,8 @@ void appendGroupDiagnostics(Diagnostics& diagnostics, const EditingContext& cont
 {
     for (const auto& error : errors) {
         const auto identity = definition.value_or(error.definition);
-        const auto item = context.source->byGuid.find(identity);
+        const auto itemGuid = !context.source || context.source->byGuid.contains(identity)
+            ? fromFieldGroupGuid(identity) : QUuid{};
         const bool referenceError = error.code == FieldGroupDiagnosticCode::MissingReference ||
                                     error.code == FieldGroupDiagnosticCode::WrongReferenceKind ||
                                     error.code == FieldGroupDiagnosticCode::DuplicateSendTarget ||
@@ -91,7 +92,7 @@ void appendGroupDiagnostics(Diagnostics& diagnostics, const EditingContext& cont
         diagnostics.push_back({
             referenceError ? EditCode::InvalidReference : EditCode::InvalidGroups,
             groupMessage(error.code),
-            item == context.source->byGuid.end() ? QUuid{} : item->second->guid,
+            itemGuid,
             error.group, definition ? scope : error.scope,
             QString::fromUtf8(error.field.data(), static_cast<qsizetype>(error.field.size())),
             error.row, error.relatedGuid, error.code});
@@ -565,6 +566,35 @@ void finishCandidate(const EditingContext& context, Guid definition,
     result.after = std::move(candidate);
 }
 
+}
+
+std::optional<DefinitionFieldGroups> previewFieldGroupNumber(
+    const ProjectData& project, const ProjectItem& item, const FieldGroupEditScopes& editScopes,
+    Property property, float value, std::span<const FieldGroupDefinitionView> ancestry)
+{
+    const auto group = FieldGroupForProperty(property);
+    if (!group || (*group != FieldGroupId::Output && *group != FieldGroupId::SpatialRating)
+        || ancestry.empty() || ancestry.front().guid != toFieldGroupGuid(item.guid)
+        || project.busses.empty() || !project.busses.front().rootItem) return {};
+    FieldGroupEditRequest request{item.guid, *group, editScopes, SetFieldGroupField{property, value}, {}};
+    Diagnostics diagnostics;
+    const auto scopes = targetScopes(project, request, diagnostics);
+    if (!diagnostics.empty()) return {};
+    EditingContext context;
+    context.masterBus = toFieldGroupGuid(project.busses.front().rootItem->guid);
+    for (const auto& platform : project.platforms)
+        context.platforms.push_back(toFieldGroupGuid(platform.id));
+    const FieldGroupResolver resolver(ancestry, context.masterBus);
+    if (!resolver.ok()) return {};
+    auto candidate = item.fieldGroups;
+    const auto edit = [&](auto member) {
+        editGroup(context, resolver, ancestry.front().guid, !project_schema::IsNull(ancestry.front().parentGuid),
+                  request, scopes, item.fieldGroups.*member, candidate.*member, diagnostics);
+    };
+    if (*group == FieldGroupId::Output) edit(&DefinitionFieldGroups::output);
+    else edit(&DefinitionFieldGroups::spatialRating);
+    if (!diagnostics.empty() || !ValidateDefinitionFieldGroups(candidate).empty()) return {};
+    return candidate;
 }
 
 FieldGroupEditResult prepareFieldGroupEdit(

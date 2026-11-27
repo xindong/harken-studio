@@ -1846,7 +1846,8 @@ bool ProjectManager::commitPreparedProject(PreparedProject&& prepared)
     } else {
         QString baselineError;
         saveBaseline = captureSaveBaseline(*prepared.project, *itemSaveState,
-                                           prepared.loadedDocuments, &baselineError);
+            prepared.loadedDocuments, std::move(prepared.validationContext),
+            prepared.upgrade.changed, &baselineError);
         if (!saveBaseline) {
             emit errorOccurred(baselineError);
             return false;
@@ -1922,6 +1923,7 @@ bool ProjectManager::commitPreparedProject(PreparedProject&& prepared)
 
     for (const QString& diagnostic : prepared.diagnostics)
         emit warningOccurred(ProjectUpgradeMessages::userMessage(diagnostic));
+    emit projectSessionOpened();
     return true;
 }
 
@@ -1984,9 +1986,11 @@ bool ProjectManager::loadProject(const QString& filePath, bool allowUpgrade,
 
 std::unique_ptr<ProjectSaveBaseline> ProjectManager::captureSaveBaseline(
     ProjectData& project, ProjectItemSaveState& itemSaveState,
-    const QHash<QString, QByteArray>& loadedDocuments, QString* error)
+    const QHash<QString, QByteArray>& loadedDocuments,
+    ProjectContractReadContext validationContext, bool upgraded, QString* error)
 {
     auto baseline = std::make_unique<ProjectSaveBaseline>();
+    baseline->context = std::move(validationContext);
     baseline->projectPath = project.projectPath;
     const QDir root(QFileInfo(baseline->projectPath).absolutePath());
     const auto captureBytes = [&](const QString& path, const QByteArray& bytes) {
@@ -2054,14 +2058,25 @@ std::unique_ptr<ProjectSaveBaseline> ProjectManager::captureSaveBaseline(
         return {};
     }
     if (!itemSaveState.ensurePrepared(project)) return {};
+    if (!upgraded) baseline->omissionSources.insert(project.projectId, projectDocument);
     auto& serializer = itemSaveState.serializer();
     bool missingDocument = false;
     const auto checkItem = [&](auto&& self, ProjectItem& item, int order) -> bool {
         const QString path = root.relativeFilePath(project.objectFilePath(&item));
-        const auto document = serializer.itemDocument(item, project.projectId, order);
+        auto document = serializer.itemDocument(item, project.projectId, order,
+                                                itemSaveState.savedItem(item.guid));
         if (document.isEmpty()) {
             if (error) *error = serializer.lastError();
             return {};
+        }
+        if (!upgraded) {
+            const auto id = item.guid.toString(QUuid::WithoutBraces);
+            const auto source = baseline->validation.documentById(id);
+            const auto preserved = ProjectSerializer::preserveOmittedDefaults(document, source);
+            if (preserved != document) {
+                baseline->omissionSources.insert(id, source);
+                document = preserved;
+            }
         }
         if (!documents.contains(path)) missingDocument = true;
         else if (documents.value(path) != document) baseline->normalizedDocuments.insert(item.guid);
@@ -2169,6 +2184,12 @@ bool ProjectManager::saveProjectInternal(bool relocateSources, QString* error)
         stagedProject.sourceAssets.insert(asset.sourceID, asset.relativePath);
     plan.projectDocument = serializer.projectDocument(m_currentProject->projectPath, stagedProject);
     if (plan.projectDocument.isEmpty()) return fail(serializer.lastError());
+    if (m_saveBaseline) plan.projectDocument = m_saveBaseline->preserveDocument(plan.projectDocument);
+
+    const auto addDocument = [&](const QString& path, const QJsonObject& document) {
+        plan.addDocument(path, m_saveBaseline ? m_saveBaseline->preserveDocument(document) : document,
+                         baseline, m_externalSavePaths.contains(path));
+    };
 
     std::unique_ptr<QTemporaryDir> stagedDirectory;
     QHash<QString, QByteArray> completeFiles;
@@ -2207,14 +2228,15 @@ bool ProjectManager::saveProjectInternal(bool relocateSources, QString* error)
                     return fail(QStringLiteral("Cannot read staged file: %1").arg(relative));
                 const auto bytes = file.readAll();
                 completeFiles.insert(relative, bytes);
-                plan.addFile(relative, bytes, baseline, m_externalSavePaths.contains(relative));
                 if (relative.endsWith(QStringLiteral(".vp")))
-                    plan.documents.insert(relative, QJsonDocument::fromJson(bytes).object());
+                    addDocument(relative, QJsonDocument::fromJson(bytes).object());
+                else
+                    plan.addFile(relative, bytes, baseline, m_externalSavePaths.contains(relative));
                 plan.permissions.insert(relative, file.permissions());
             }
         }
         for (auto it = snapshot.documents().cbegin(); it != snapshot.documents().cend(); ++it) {
-            plan.addDocument(it.key(), it.value(), baseline, m_externalSavePaths.contains(it.key()));
+            addDocument(it.key(), it.value());
             completeFiles.insert(it.key(), snapshot.files().value(it.key()));
             plan.permissions.insert(it.key(), snapshot.permissions(it.key()));
         }
@@ -2273,9 +2295,10 @@ bool ProjectManager::saveProjectInternal(bool relocateSources, QString* error)
             const auto previous = baseline->validation.documents().value(path);
             const int order = previous.value(QStringLiteral("content")).toObject()
                 .value(QStringLiteral("order")).toInt();
-            const auto document = serializer.itemDocument(*item, stagedProject.projectId, order);
+            const auto document = serializer.itemDocument(*item, stagedProject.projectId, order,
+                                                          plan.serializedItems.value(guid));
             if (document.isEmpty()) return fail(serializer.lastError());
-            plan.addDocument(path, document, baseline, m_externalSavePaths.contains(path));
+            addDocument(path, document);
         }
     }
     const QJsonObject assetRegistry = AssetRegistry::instance().toJson();
@@ -2421,7 +2444,11 @@ bool ProjectManager::saveProjectInternal(bool relocateSources, QString* error)
         for (const auto& guid : plan.acceptedItems)
             if (auto* item = m_itemSaveState->findItem(guid)) item->dirtyBit = false;
     }
-    if (!sameProject) m_saveBaseline = std::make_unique<ProjectSaveBaseline>();
+    if (!sameProject) {
+        auto next = std::make_unique<ProjectSaveBaseline>();
+        if (m_saveBaseline) next->omissionSources = std::move(m_saveBaseline->omissionSources);
+        m_saveBaseline = std::move(next);
+    }
     m_saveBaseline->projectPath = m_currentProject->projectPath;
     for (const auto& path : plan.removed) {
         m_saveBaseline->files.remove(path);
@@ -2661,7 +2688,8 @@ bool ProjectManager::hasUnsavedChanges()
     project.sourceAssets.clear();
     for (const auto& asset : AssetRegistry::instance().snapshot())
         project.sourceAssets.insert(asset.sourceID, asset.relativePath);
-    return m_itemSaveState->serializer().projectDocument(project.projectPath, project)
+    const auto document = m_itemSaveState->serializer().projectDocument(project.projectPath, project);
+    return m_saveBaseline->preserveDocument(document)
             != m_saveBaseline->validation.projectRoot()
         || AssetRegistry::instance().toJson() != m_saveBaseline->assetRegistry;
 }

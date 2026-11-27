@@ -116,13 +116,13 @@ public:
                 this, [this] { bind(nullptr); });
     }
 
-    void bind(ProjectItem* item)
+    void bind(ProjectItem* item, const FieldGroupInspectorView* supplied = nullptr)
     {
         const QUuid guid = item ? item->guid : QUuid{};
         const auto* mix = item ? item->comp<VMixNode>() : nullptr;
         const auto* project = ProjectManager::instance().currentProject();
         const bool grouped = item && PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(item->type);
-        const auto view = grouped && project ? buildFieldGroupInspectorView(*project, guid,
+        const auto view = supplied ? *supplied : grouped && project ? buildFieldGroupInspectorView(*project, guid,
             FieldGroupId::Effect, PlatformContextService::instance().context()) : FieldGroupInspectorView{};
         const auto& context = PlatformContextService::instance().context();
         auto effects = mix ? mix->effectsForPlatform(context.all ? std::nullopt
@@ -636,6 +636,16 @@ QWidget* EffectsSectionProvider::build(QWidget* parent)
 void EffectsSectionProvider::bind(QWidget* widget, ProjectItem* item)
 {
     static_cast<EffectsListWidget*>(widget)->bind(item);
+}
+
+void EffectsSectionProvider::bindGroups(QWidget* widget, ProjectItem* item, const InspectorGroupLookup& groups)
+{
+    static_cast<EffectsListWidget*>(widget)->bind(item, groups(FieldGroupId::Effect));
+}
+
+void EffectsSectionProvider::refreshGroups(QWidget* widget, ProjectItem* item, const InspectorGroupLookup& groups)
+{
+    bindGroups(widget, item, groups);
 }
 
 bool EffectsSectionProvider::refresh(QWidget* widget, ProjectItem* item, const QString& field)

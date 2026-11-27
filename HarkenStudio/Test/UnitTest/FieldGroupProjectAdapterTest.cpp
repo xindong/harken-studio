@@ -1,4 +1,5 @@
 #include "Support/ProjectPlatformTestUtils.h"
+#include "FieldGroupEditing.h"
 #include "FieldGroupProjectAdapter.h"
 #include "ConversionDefaults.h"
 #include "ProjectSerializer.h"
@@ -10,6 +11,8 @@
 
 #include <gtest/gtest.h>
 
+#include <array>
+#include <limits>
 #include <map>
 #include <memory>
 
@@ -77,6 +80,55 @@ TEST(FieldGroupProjectAdapter, RefusesDetachedParentReferences)
     EXPECT_FALSE(view.ok());
     EXPECT_TRUE(view.definitions.empty());
     ASSERT_FALSE(view.diagnostics.empty());
+}
+
+TEST(FieldGroupProjectAdapter, NumericPreviewMatchesPreparedEditsAcrossScopesAndInheritance)
+{
+    using Property = harkenplayableproperties::PlayablePropertyIdV1;
+    auto project = HarkenTest::projectWithPlatforms({"Windows", "Android"});
+    const auto bus = item(1, ProjectItem::Type::Bus);
+    const auto layer = item(2, ProjectItem::Type::Layer);
+    const auto sound = item(3, ProjectItem::Type::Sound);
+    own(layer, sound);
+    project.busses.push_back({bus, {}});
+    project.layers.push_back({layer, {}});
+    layer->fieldGroups = MakeRootFieldGroups(toFieldGroupGuid(bus->guid));
+    const std::array ancestry{fieldGroupDefinitionView(*sound), fieldGroupDefinitionView(*layer)};
+    const auto windows = toFieldGroupGuid(project.platforms[0].id);
+    const auto android = toFieldGroupGuid(project.platforms[1].id);
+    const FieldGroupEditScopes shared{true, {}};
+    const FieldGroupEditScopes platforms{false, {windows, android}};
+
+    const auto check = [&](Property field, const FieldGroupEditScopes& scopes, float value, bool editable) {
+        SCOPED_TRACE(::testing::Message() << "field=" << static_cast<int>(field)
+                     << " shared=" << scopes.shared << " value=" << value);
+        const auto before = sound->fieldGroups;
+        const auto prepared = prepareFieldGroupEdit(project, {sound->guid, *FieldGroupForProperty(field),
+            scopes, SetFieldGroupField{field, value}, before});
+        const auto preview = previewFieldGroupNumber(project, *sound, scopes, field, value, ancestry);
+        EXPECT_EQ(prepared.after.has_value(), editable);
+        EXPECT_EQ(preview, prepared.after);
+        EXPECT_EQ(sound->fieldGroups, before);
+    };
+    const auto fields = {Property::OutputBusVolume, Property::SpatialPanning,
+                         Property::SpatialAttenuationDistanceScaling};
+    for (const auto field : fields) {
+        check(field, shared, 0.5f, false);
+        check(field, platforms, 0.5f, false);
+    }
+
+    sound->fieldGroups = layer->fieldGroups;
+    sound->fieldGroups.output.shared.mode = FieldGroupMode::Local;
+    sound->fieldGroups.spatialRating.shared.mode = FieldGroupMode::Local;
+    auto output = *sound->fieldGroups.output.shared.localHistory;
+    output.outputBusVolume = -12.0f;
+    sound->fieldGroups.output.platforms[windows] = {FieldGroupMode::UseShared, output,
+        FieldGroupFieldMask(Property::OutputBusVolume)};
+    for (const auto field : fields) {
+        check(field, shared, 0.5f, true);
+        check(field, platforms, 0.5f, true);
+        check(field, platforms, std::numeric_limits<float>::quiet_NaN(), false);
+    }
 }
 
 TEST(FieldGroupProjectAdapter, RefusesMultipleOwnersAndDuplicateEdges)

@@ -211,17 +211,14 @@ QVector<SourceResult> query(const ProjectData& project, const QUuid& presetGuid,
     return results;
 }
 
-bool hasCachedSource(const ProjectData& project, const ProjectItem& sound,
-    const SoundSourceDef& source, const AssetInfo& asset, ProjectPlatformId platform,
-    double scheduleOffsetSec)
+bool hasCachedSource(const ProjectData& project, const ResolvedConversion& conversion,
+    const SoundSourceDef& source, const AssetInfo& asset, double scheduleOffsetSec)
 {
-    const auto conversion = resolveConversion(project, sound, platform, asset);
-    if (!conversion) return false;
     const auto key = SoundSourceDerivative::cacheKey(asset.contentHash,
         SoundSourceSemantics::authoredView(source, &asset), scheduleOffsetSec, conversion, asset.metadata);
     if (key.isEmpty()) return false;
     return QFileInfo::exists(QDir(cacheDirectory(project)).filePath(key
-        + (conversion->format == ConversionFormat::Vorbis ? QStringLiteral(".vcm") : QStringLiteral(".pcm"))));
+        + (conversion.format == ConversionFormat::Vorbis ? QStringLiteral(".vcm") : QStringLiteral(".pcm"))));
 }
 
 QJsonArray toJson(const QVector<SourceResult>& results)

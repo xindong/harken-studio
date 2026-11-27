@@ -124,7 +124,7 @@ GUI、IPC、CLI 会话导出和 CLI 已保存工程构建使用同一个 `Projec
 | 文件／字段 | 生产者 → 消费者 | 内容与目的 |
 |---|---|---|
 | `asset_registry/assets.json` | AssetRegistry／BuildSourceInputs → 编辑器、媒体准备 | 既有资产登记：sourceID、relativePath、contentHash、lastModified、metadata、ownerObjectGuid、isOrphaned。打包在同一条目补充 sourceState、waveformState，不复制一张源表；absolutePath 从工程目录推导，不保存 |
-| `sourceState` | 源识别 → 下次源识别 | 文件身份、大小及写入／变更时间的原生状态，十六进制保存；相同即可复用既有 contentHash 和 metadata |
+| `sourceState` | 源识别 → 下次源识别 | 以十六进制保存文件身份、大小和写入／变更时间。Windows 本地 NTFS、ReFS 还需同时匹配卷变更日志 ID 和文件 USN 才能复用 contentHash 与 metadata。旧标记首次遇到时重新识别，无法取得可靠标记时从音频内容重新计算 SHA-256 |
 | `waveformState` | 波形生成 → 波形读取 | 共享 .vkd 的文件身份、大小和修改时间；源内容变化时清空，用于判断已生成波形是否变化 |
 | `builds.json.version` | PackBuildState → 后续构建、Publisher | 缓存格式版本，当前 3 |
 | `targets[绝对平台输出目录].platform` | 同上 | 当前目标所属平台 UUID；同一输出目录一份当前记录 |

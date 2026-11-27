@@ -189,13 +189,15 @@ void PropertyEditorEngine::previewGroupField(FieldBinding& binding, double value
     auto& project = ProjectManager::instance();
     if (!group || !property || !project.currentProject()) return;
     const auto& view = groupBindings_.at(*group).view;
-    const auto prepared = prepareFieldGroupEdit(*project.currentProject(), {
-        currentItem_->guid, *group, view.editScopes,
-        SetFieldGroupField{static_cast<harkenplayableproperties::PlayablePropertyIdV1>(property->id),
-            static_cast<float>(value)}, view.expectedBefore});
-    if (!prepared.ok()) return;
+    const auto id = static_cast<harkenplayableproperties::PlayablePropertyIdV1>(property->id);
+    const auto preview = binding.groupPreviewActive
+        ? previewFieldGroupNumber(*project.currentProject(), *currentItem_, view.editScopes,
+              id, static_cast<float>(value), previewAncestry(view, false))
+        : prepareFieldGroupEdit(*project.currentProject(), {currentItem_->guid, *group, view.editScopes,
+              SetFieldGroupField{id, static_cast<float>(value)}, view.expectedBefore}).after;
+    if (!preview) return;
     binding.groupPreviewActive = true;
-    emit project.fieldGroupsPreviewed(currentItem_, *prepared.after);
+    emit project.fieldGroupsPreviewed(currentItem_, *preview);
 }
 
 void PropertyEditorEngine::finishGroupPreview(FieldBinding& binding)
@@ -244,6 +246,14 @@ void PropertyEditorEngine::previewBusSends(FieldBinding& binding, const QVariant
     binding.editSession->preview(value);
 }
 
+InspectorGroupLookup PropertyEditorEngine::groupLookup() const
+{
+    return [this](FieldGroupId group) -> const FieldGroupInspectorView* {
+        const auto it = groupBindings_.find(group);
+        return it == groupBindings_.end() ? nullptr : &it->second.view;
+    };
+}
+
 void PropertyEditorEngine::refreshFieldGroups()
 {
     groupPreviews_.clear();
@@ -258,15 +268,17 @@ void PropertyEditorEngine::refreshFieldGroups()
     updating_ = true;
     const auto* project = ProjectManager::instance().currentProject();
     conversionViews_.clear();
+    std::optional<FieldGroupInspectorRead> reader;
+    if (project && currentItem_ && !groupBindings_.empty()) reader.emplace(*project);
     for (auto& [group, binding] : groupBindings_) {
-        binding.view = project && currentItem_
-            ? buildFieldGroupInspectorView(*project, currentItem_->guid, group, context)
+        binding.view = reader
+            ? reader->read(currentItem_->guid, group, context)
             : FieldGroupInspectorView{};
         if (group == FieldGroupId::Conversion && project && currentItem_
             && conversionSelection_.size() > 1) {
             auto& aggregate = binding.view;
             for (const auto& guid : conversionSelection_) {
-                auto selected = buildFieldGroupInspectorView(*project, guid, group, context);
+                auto selected = reader->read(guid, group, context);
                 aggregate.valid &= selected.valid;
                 aggregate.canInherit &= selected.canInherit;
                 aggregate.fieldsEditable &= selected.fieldsEditable;
@@ -277,7 +289,7 @@ void PropertyEditorEngine::refreshFieldGroups()
             }
         }
         const auto& view = binding.view;
-        QString tooltip = project ? view.sourceTooltip(*project) : QString();
+        QString tooltip = reader ? reader->sourceTooltip(view) : QString();
         if (!view.diagnostics.isEmpty()) tooltip = view.diagnostics.join(QLatin1Char('\n'));
         if (!binding.error.isEmpty()) tooltip.prepend(binding.error + QLatin1Char('\n'));
         for (const auto& inherit : binding.inheritControls) {
@@ -291,13 +303,39 @@ void PropertyEditorEngine::refreshFieldGroups()
             inherit->setToolTip(tooltip);
         }
     }
-    for (auto& binding : bindings_)
-        if (fieldGroup(binding.field)) applyGroupFieldView(binding);
+    const auto groups = groupLookup();
+    for (auto& binding : bindings_) {
+        if (fieldGroup(binding.field)) applyGroupFieldView(binding, reader ? &*reader : nullptr);
+        else if (binding.decorator) binding.decorator->refreshGroups(currentItem_, groups);
+        else for (auto* decorator : binding.decorators) decorator->refreshGroups(currentItem_, groups);
+    }
     for (const auto& section : sectionBindings_)
         if (section.provider && section.widget)
-            section.provider->refresh(section.widget, currentItem_, QStringLiteral("fieldGroups"));
+            section.provider->refreshGroups(section.widget, currentItem_, groups);
     updating_ = wasUpdating;
     evalEditConditions();
+}
+
+std::vector<FieldGroupDefinitionView> PropertyEditorEngine::previewAncestry(
+    const FieldGroupInspectorView& view, bool includePreviews) const
+{
+    std::vector<FieldGroupDefinitionView> definitions;
+    auto* item = currentItem_;
+    for (qsizetype i = 0; i < view.ancestry.size(); ++i) {
+        if (!item || item->guid != view.ancestry[i])
+            item = ProjectManager::instance().findItemByGuid(view.ancestry[i]);
+        if (!item) return {};
+        auto definition = fieldGroupDefinitionView(*item);
+        definition.parentGuid = i + 1 < view.ancestry.size() ? toFieldGroupGuid(view.ancestry[i + 1])
+            : project_schema::AuthoringGuid{};
+        if (includePreviews) {
+            const auto found = groupPreviews_.find(item->guid);
+            if (found != groupPreviews_.end()) definition.groups = &found->second;
+        }
+        definitions.push_back(definition);
+        item = item->parent;
+    }
+    return definitions;
 }
 
 void PropertyEditorEngine::refreshFieldGroupPreview(
@@ -305,24 +343,18 @@ void PropertyEditorEngine::refreshFieldGroupPreview(
 {
     const auto* project = ProjectManager::instance().currentProject();
     if (!currentItem_ || !provider || !project || groupBindings_.empty()) return;
+    const auto route = std::find_if(groupBindings_.begin(), groupBindings_.end(),
+        [](const auto& entry) { return entry.second.view.valid; });
+    if (route == groupBindings_.end() || !route->second.view.ancestry.contains(provider->guid)) return;
     if (groups == provider->fieldGroups) groupPreviews_.erase(provider->guid);
     else groupPreviews_[provider->guid] = groups;
     if (updating_) return;
-    std::map<FieldGroupScope, FieldGroupEffectiveSnapshot> snapshots;
-    for (const auto& [group, binding] : groupBindings_) {
-        if (group != FieldGroupId::Output && group != FieldGroupId::Send) continue;
-        if (!binding.view.valid) continue;
-        for (const auto& entry : binding.view.perScope) {
-            if (snapshots.contains(entry.scope)) continue;
-            auto snapshot = buildFieldGroupEffectiveSnapshot(*project, entry.scope,
-                [this](const ProjectItem& item) {
-                    const auto preview = groupPreviews_.find(item.guid);
-                    return preview == groupPreviews_.end() ? &item.fieldGroups : &preview->second;
-                });
-            if (!snapshot.ok()) return;
-            snapshots.emplace(entry.scope, std::move(snapshot));
-        }
-    }
+    const auto* master = ProjectManager::instance().getMasterBusItem();
+    if (!master) return;
+    const auto ancestors = previewAncestry(route->second.view, true);
+    if (ancestors.empty()) return;
+    const FieldGroupResolver resolver(ancestors, toFieldGroupGuid(master->guid));
+    if (!resolver.ok()) return;
     for (auto& binding : bindings_) {
         if ((binding.field != QLatin1String("outputBusVolume") && binding.field != QLatin1String("sends"))
             || !binding.widget || binding.groupPreviewActive
@@ -339,11 +371,9 @@ void PropertyEditorEngine::refreshFieldGroupPreview(
         const auto preview = groupPreviews_.find(currentItem_->guid);
         if (preview != groupPreviews_.end()) view.expectedBefore = preview->second;
         for (auto& entry : view.perScope) {
-            const auto& definitions = snapshots.at(entry.scope).definitions;
-            const auto effective = definitions.find(toFieldGroupGuid(currentItem_->guid));
-            if (effective == definitions.end()) return;
-            entry.resolved.payload = *group == FieldGroupId::Output
-                ? FieldGroupPayload(effective->second.output) : FieldGroupPayload(effective->second.send);
+            const auto effective = resolver.Resolve(ancestors.front().guid, entry.scope, *group);
+            if (!effective.ok()) return;
+            entry.resolved = *effective.value;
         }
         const auto value = groupFieldValue(binding.field, &view);
         const bool mixed = !value.isValid();
@@ -435,7 +465,7 @@ void PropertyEditorEngine::setGroupFieldWidgetValue(const FieldBinding& binding,
     setWidgetValue(binding.widget, binding.widgetType, value);
 }
 
-bool PropertyEditorEngine::applyGroupFieldView(FieldBinding& binding)
+bool PropertyEditorEngine::applyGroupFieldView(FieldBinding& binding, const FieldGroupInspectorRead* reader)
 {
     const auto group = fieldGroup(binding.field);
     if (!group || !binding.widget) return false;
@@ -483,15 +513,15 @@ bool PropertyEditorEngine::applyGroupFieldView(FieldBinding& binding)
     } else {
         setGroupFieldWidgetValue(binding, value);
     }
-    if (const auto* project = ProjectManager::instance().currentProject()) {
-        QString tooltip = view.sourceTooltip(*project, binding.field);
+    if (ProjectManager::instance().currentProject()) {
+        QString tooltip = reader ? reader->sourceTooltip(view, binding.field) : QString();
         if (mixed) tooltip.prepend(*group == FieldGroupId::Conversion && conversionViews_.size() > 1
             ? tr("Mixed values across selected objects.\n") : *group == FieldGroupId::Send
             ? tr("Mixed table. Select a single platform to edit.\n") : tr("Mixed values across platforms.\n"));
         binding.mixedTooltip = tooltip;
         binding.widget->setToolTip(tooltip);
     }
-    if (binding.decorator) binding.decorator->bind(currentItem_);
+    if (binding.decorator) binding.decorator->bindGroups(currentItem_, groupLookup());
     return true;
 }
 

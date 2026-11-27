@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ProjectContract.h"
+#include "ProjectSerializer.h"
 #include <QFileDevice>
 #include <QJsonDocument>
 #include <QSet>
@@ -18,6 +19,16 @@ struct ProjectSaveBaseline
     QJsonObject assetRegistry;
     ProjectContractValidationBaseline validation;
     ProjectContractReadContext context;
+    QHash<QString, QJsonObject> omissionSources;
+
+    QJsonObject preserveDocument(const QJsonObject& document) const
+    {
+        const auto id = document.value(QStringLiteral("harkenDocument")).toObject()
+            .value(QStringLiteral("id")).toString();
+        const auto source = omissionSources.constFind(id);
+        return source == omissionSources.cend() ? document
+            : ProjectSerializer::preserveOmittedDefaults(document, source.value());
+    }
 };
 
 struct ProjectSavePlan
@@ -45,9 +56,11 @@ struct ProjectSavePlan
     void addDocument(const QString& path, const QJsonObject& document,
                      const ProjectSaveBaseline* baseline, bool overwrite = false)
     {
-        if (!overwrite && baseline
-            && baseline->validation.documents().value(path) == document)
-            return;
+        if (!overwrite && baseline) {
+            const auto saved = baseline->validation.documents().constFind(path);
+            if (saved != baseline->validation.documents().cend() && saved.value() == document)
+                return;
+        }
         documents.insert(path, document);
         files.insert(path, encode(document));
     }
