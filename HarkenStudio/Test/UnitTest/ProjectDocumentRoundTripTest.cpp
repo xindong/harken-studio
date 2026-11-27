@@ -850,6 +850,13 @@ TEST_F(ProjectDocumentRoundTripTest, UnchangedDocumentsPreserveBytesAndModificat
     QMap<QString, QByteArray> committed;
     QMap<QString, QDateTime> modificationTimes;
     const auto paths = documentPathsById(projectDirectory_);
+    auto projectDocument = readObject(projectPath_);
+    auto projectContent = HarkenTest::projectContent(projectDocument);
+    auto audio = projectContent.value(QStringLiteral("audio")).toObject();
+    ASSERT_TRUE(audio.take(QStringLiteral("defaultConversions")).isObject());
+    projectContent.insert(QStringLiteral("audio"), audio);
+    projectDocument.insert(QStringLiteral("content"), projectContent);
+    writeObject(projectPath_, projectDocument);
     for (const auto& path : paths) {
         QFile file(path);
         ASSERT_TRUE(file.open(QIODevice::ReadWrite)) << path.toStdString();
@@ -862,6 +869,7 @@ TEST_F(ProjectDocumentRoundTripTest, UnchangedDocumentsPreserveBytesAndModificat
 
     ASSERT_TRUE(manager.loadProject(projectPath_));
     undo.clearHistory();
+    EXPECT_FALSE(manager.hasUnsavedChanges());
     ASSERT_TRUE(manager.saveProject());
     for (auto it = committed.cbegin(); it != committed.cend(); ++it) {
         EXPECT_EQ(readFile(it.key()), it.value()) << it.key().toStdString();
@@ -902,6 +910,26 @@ TEST_F(ProjectDocumentRoundTripTest, UnchangedDocumentsPreserveBytesAndModificat
         EXPECT_EQ(QFileInfo(it.key()).lastModified(), modificationTimes.value(it.key()))
             << it.key().toStdString();
     }
+    auto* conversion = manager.createItem(nullptr, QStringLiteral("Assigned conversion"),
+                                          ProjectItem::Type::Conversion);
+    ASSERT_NE(conversion, nullptr);
+    ASSERT_TRUE(manager.saveProject());
+    EXPECT_EQ(HarkenTest::projectContent(readObject(projectPath_)).value(QStringLiteral("audio")), audio);
+    ASSERT_FALSE(manager.currentProject()->platforms.empty());
+    const auto platform = manager.currentProject()->platforms.front().id;
+    ASSERT_TRUE(manager.setDefaultConversion(platform, conversion->guid));
+    ASSERT_TRUE(manager.saveProject());
+    const auto assignedAudio = HarkenTest::projectContent(readObject(projectPath_))
+        .value(QStringLiteral("audio")).toObject();
+    const auto conversions = assignedAudio.value(QStringLiteral("defaultConversions")).toObject();
+    EXPECT_EQ(QUuid(conversions.value(ProjectPlatformSemantics::idString(platform)).toObject()
+                        .value(QStringLiteral("id")).toString()), conversion->guid);
+    ASSERT_TRUE(undo.undo());
+    ASSERT_TRUE(manager.saveProject());
+    EXPECT_EQ(HarkenTest::projectContent(readObject(projectPath_)).value(QStringLiteral("audio")), audio);
+    ASSERT_TRUE(undo.redo());
+    ASSERT_TRUE(manager.saveProject());
+    EXPECT_EQ(HarkenTest::projectContent(readObject(projectPath_)).value(QStringLiteral("audio")), assignedAudio);
 }
 
 TEST_F(ProjectDocumentRoundTripTest, OrdinaryEditsAndUndoPreserveTheSameDocumentsAcrossSavePaths)

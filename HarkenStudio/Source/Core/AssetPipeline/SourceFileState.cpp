@@ -5,6 +5,8 @@
 
 #if defined(Q_OS_WIN)
 #include <QtCore/qt_windows.h>
+#include <winioctl.h>
+#include <cstddef>
 #include <fcntl.h>
 #include <io.h>
 #elif defined(Q_OS_MACOS)
@@ -22,6 +24,38 @@ struct FileState
     QByteArray identity;
     bool reusable = false;
 };
+
+#ifdef Q_OS_WIN
+static bool appendSourceJournalState(HANDLE handle, QDataStream& stream)
+{
+    USN_JOURNAL_DATA_V0 journal{};
+    DWORD bytes = 0;
+    if (!DeviceIoControl(handle, FSCTL_QUERY_USN_JOURNAL, nullptr, 0,
+                         &journal, sizeof(journal), &bytes, nullptr)
+        || bytes < sizeof(journal) || journal.UsnJournalID == 0)
+        return false;
+
+    READ_FILE_USN_DATA versions{2, 3};
+    struct {
+        USN_RECORD_UNION record;
+        WCHAR name[MAX_PATH];
+    } result{};
+    if (!DeviceIoControl(handle, FSCTL_READ_FILE_USN_DATA, &versions, sizeof(versions),
+                         &result, sizeof(result), &bytes, nullptr)
+        || bytes < sizeof(USN_RECORD_COMMON_HEADER))
+        return false;
+    const auto& header = result.record.Header;
+    if (header.RecordLength > bytes) return false;
+    USN sequence = 0;
+    if (header.MajorVersion == 2 && header.RecordLength >= offsetof(USN_RECORD_V2, FileName))
+        sequence = result.record.V2.Usn;
+    else if (header.MajorVersion == 3 && header.RecordLength >= offsetof(USN_RECORD_V3, FileName))
+        sequence = result.record.V3.Usn;
+    if (sequence <= 0) return false;
+    stream << quint64(journal.UsnJournalID) << qint64(sequence);
+    return true;
+}
+#endif
 
 bool openSourceFile(QFile& file, bool attributesOnly)
 {
@@ -76,7 +110,8 @@ FileState fileState(const QFile& file, bool source)
                                               fileSystem, 32)) {
         const auto type = QString::fromWCharArray(fileSystem);
         result.reusable = basic.ChangeTime.QuadPart != 0
-            && (type == QStringLiteral("NTFS") || type == QStringLiteral("ReFS"));
+            && (type == QStringLiteral("NTFS") || type == QStringLiteral("ReFS"))
+            && appendSourceJournalState(handle, stream);
     }
 #elif defined(Q_OS_MACOS) || defined(Q_OS_LINUX)
     struct stat info{};

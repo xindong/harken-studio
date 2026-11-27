@@ -30,8 +30,7 @@ LanguageContextService::LanguageContextService(
     , storage_(std::move(storage))
 {
     auto& pm = ProjectManager::instance();
-    connect(&pm, &ProjectManager::projectOpened, this,
-            [this](ProjectData*) { recompute(); });
+    connect(&pm, &ProjectManager::projectSessionOpened, this, &LanguageContextService::recompute);
     connect(&pm, &ProjectManager::projectClosed, this, &LanguageContextService::recompute);
     connect(&pm, &ProjectManager::projectLanguagesChanged, this,
             [this](QStringList) { recompute(); });

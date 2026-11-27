@@ -670,9 +670,9 @@ void ProjectManager::refreshPreviewConversions()
     bindPreviewMediaContext();
     const bool converted = PreviewMediaModeService::instance().mode() == PreviewMediaMode::Converted;
     const auto platform = PlatformContextService::instance().context().primary;
-    const auto snapshot = std::make_shared<const FieldGroupEffectiveSnapshot>(
+    const auto snapshot = converted ? std::make_shared<const FieldGroupEffectiveSnapshot>(
         buildFieldGroupEffectiveSnapshot(*m_currentProject,
-            toFieldGroupScope(currentWorldPlatformScope(PlatformContextService::instance().context()))));
+            toFieldGroupScope(currentWorldPlatformScope(PlatformContextService::instance().context())))) : nullptr;
     QVector<ProjectItem*> changed;
     for (auto* item : ProjectPlatformSemantics::referenceOwners(*m_currentProject)) {
         if (item->type != ProjectItem::Type::Sound) continue;

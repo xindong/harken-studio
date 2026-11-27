@@ -1154,7 +1154,8 @@ QJsonObject ProjectSerializer::projectDocument(const QString& filePath,
         defaultConversions[ProjectPlatformSemantics::idString(it.key())] = reference;
     }
     auto audio = root["audio"].toObject();
-    audio["defaultConversions"] = defaultConversions;
+    if (project.defaultConversionsPresent || !defaultConversions.isEmpty())
+        audio["defaultConversions"] = defaultConversions;
     root["audio"] = audio;
     root["deployPlatforms"] = ProjectPlatformSemantics::platformsToJson(project.platforms);
 
@@ -1440,13 +1441,12 @@ bool ProjectSerializer::loadProject(const QString& filePath, ProjectData& destin
         }
         upgradeResult_ = upgrade;
         warnings_.append(upgrade.warnings);
-    }
-
-    const PreflightReport preflight = ProjectPreflight::run(resolvedProjectFilePath, 0, context);
-    if (!preflight.blockingErrors.isEmpty()) {
-        lastError_ = preflight.blockingErrors.first();
-        emit errorOccurred(ProjectUpgradeMessages::userMessage(lastError_, true));
-        return false;
+        const PreflightReport preflight = ProjectPreflight::run(resolvedProjectFilePath, 0, context);
+        if (!preflight.blockingErrors.isEmpty()) {
+            lastError_ = preflight.blockingErrors.first();
+            emit errorOccurred(ProjectUpgradeMessages::userMessage(lastError_, true));
+            return false;
+        }
     }
     if (!prepareReferenceRead(resolvedProjectFilePath)) {
         emit errorOccurred(ProjectUpgradeMessages::userMessage(lastError_, true));
@@ -1507,6 +1507,7 @@ bool ProjectSerializer::loadProject(const QString& filePath, ProjectData& destin
     if (!ProjectPlatformSemantics::platformsFromJson(root["deployPlatforms"], &project.platforms, &lastError_))
         return false;
     const QJsonObject audio = root["audio"].toObject();
+    project.defaultConversionsPresent = upgradeResult_.changed || audio.contains(QStringLiteral("defaultConversions"));
     project.defaultConversionRefs.clear();
     const auto defaultConversions = audio.value(QStringLiteral("defaultConversions")).toObject();
     for (auto it = defaultConversions.begin(); it != defaultConversions.end(); ++it) {
@@ -1734,13 +1735,14 @@ bool ProjectSerializer::projectItemFromJson(const QJsonObject& json, ProjectItem
 
 
 QJsonObject ProjectSerializer::itemDocument(const ProjectItem& item,
-                                           const QString& projectId, int order) const
+                                           const QString& projectId, int order,
+                                           const QJsonObject& serializedItem) const
 {
     QJsonObject content;
     QString type;
     switch (ItemTypeCatalog::bucketOf(item.type)) {
     case ItemTypeCatalog::Bucket::Layers:
-        content = audioItemToJson(item);
+        content = audioBranchToJson(item, serializedItem);
         type = QStringLiteral("project.layer");
         if (!content.isEmpty()) content.insert(QStringLiteral("order"), order);
         break;
@@ -1801,9 +1803,9 @@ bool ProjectSerializer::audioPackItemFromJson(
     return audioBranchFromJson(json, layer);
 }
 
-QJsonObject ProjectSerializer::audioBranchToJson(const ProjectItem& node) const
+QJsonObject ProjectSerializer::audioBranchToJson(const ProjectItem& node, QJsonObject json) const
 {
-    auto json = projectItemToJson(node, false);
+    if (json.isEmpty()) json = projectItemToJson(node, false);
     if (json.isEmpty()) return {};
 
     QJsonArray children;

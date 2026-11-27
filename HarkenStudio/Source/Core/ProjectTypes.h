@@ -859,6 +859,7 @@ struct ProjectData
     QStringList platformIds() const { return ProjectPlatformSemantics::ids(platforms); }
     int                sampleRate         = 48000;
     AudioChannelConfig channelConfig      = AudioChannelConfig::Stereo_2_0;
+    bool defaultConversionsPresent = true;
     QMap<ProjectPlatformId, QUuid> defaultConversionRefs;
     QUuid defaultConversionFor(const ProjectPlatformId& platform) const { return defaultConversionRefs.value(platform); }
 
