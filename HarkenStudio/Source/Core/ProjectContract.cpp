@@ -211,7 +211,7 @@ QJsonArray documentSemanticProjection(const QJsonObject& document, int schemaVer
     const QJsonObject components = content.value(QStringLiteral("components")).toObject();
     QJsonArray result{header, content.value(QStringLiteral("guid")),
         content.value(QStringLiteral("type")), content.value(QStringLiteral("name")),
-        content.value(QStringLiteral("children")), content.value(QStringLiteral("fieldGroups")),
+        content.value(QStringLiteral("children")),
         components.value(QStringLiteral("selection")),
         components.value(QStringLiteral("tracktimeline")),
         components.value(QStringLiteral("action")),
@@ -259,7 +259,8 @@ QJsonArray documentSemanticProjection(const QJsonObject& document, int schemaVer
     return result;
 }
 
-QSet<QString> referencedDocumentPaths(const QJsonObject& document, int schemaVersion,
+QSet<QString> referencedDocumentPaths(const QJsonObject& document,
+                                     const QList<ProjectSchemaReferenceRule>& referenceRules,
                                      const QHash<QString, QString>& pathsByGuid,
                                      const QString& rootBusPath)
 {
@@ -272,8 +273,6 @@ QSet<QString> referencedDocumentPaths(const QJsonObject& document, int schemaVer
         if (path != pathsByGuid.cend()) result.insert(path.value());
     };
     const QJsonObject content = document.value(QStringLiteral("content")).toObject();
-    QList<ProjectSchemaReferenceRule> referenceRules;
-    documentSemanticProjection(document, schemaVersion, &referenceRules);
     for (const auto& rule : referenceRules)
         for (const auto& value : locatedValues(content, rule.path, {}))
             addReference(value.value);
@@ -349,6 +348,18 @@ QSet<QString> inheritedDocumentPaths(const QSet<QString>& references)
 void ProjectContractValidationBaseline::clear()
 {
     *this = {};
+}
+
+void ProjectContractValidationBaseline::indexDocument(const QString& path, const QJsonObject& document)
+{
+    QList<ProjectSchemaReferenceRule> rules;
+    semanticProjections_.insert(path, documentSemanticProjection(document, schemaVersion_, &rules));
+    const auto dependencies = referencedDocumentPaths(document, rules, pathsByGuid_, rootBusPath_);
+    dependencies_.insert(path, dependencies);
+    inheritedDependencies_.insert(path, inheritedDocumentPaths(dependencies));
+    const auto parent = QUuid::fromString(valueAt(document,
+        {QStringLiteral("content"), QStringLiteral("parentRef"), QStringLiteral("id")}).toString());
+    parentPaths_.insert(path, pathsByGuid_.value(parent.toString(QUuid::WithoutBraces)));
 }
 
 QStringList ProjectContractValidationBaseline::dependencyPaths(
@@ -548,7 +559,7 @@ QStringList ProjectContractRegistry::validateTree(
     const QString& rootRelativePath) const
 {
     return validateTreeImpl(projectDirectory, projectRootDocument, requireCurrentSchema,
-                            overrides, context, false, baseline, true, false, rootRelativePath);
+                            overrides, context, false, baseline, true, ValidationScope::Project, rootRelativePath);
 }
 
 QStringList ProjectContractRegistry::validateSnapshot(
@@ -560,7 +571,7 @@ QStringList ProjectContractRegistry::validateSnapshot(
 {
     return validateTreeImpl(projectDirectory, projectRootDocument, requireCurrentSchema,
                             documents, context, true, baseline, includePhysicalDocuments,
-                            false, rootRelativePath);
+                            ValidationScope::Project, rootRelativePath);
 }
 
 QStringList ProjectContractRegistry::validateIncrementalSnapshot(
@@ -593,6 +604,7 @@ QStringList ProjectContractRegistry::validateIncrementalSnapshot(
     bool reuseGlobalValidation = removedPaths.isEmpty()
         && baseline.requireCurrentSchema_ == requireCurrentSchema
         && projectRootDocument == baseline.rootDocument_;
+    QSet<QString> changedFieldGroups;
     for (auto document = changedDocuments.cbegin(); document != changedDocuments.cend(); ++document) {
         validatePath(document.key());
         if (!reuseGlobalValidation) continue;
@@ -601,6 +613,10 @@ QStringList ProjectContractRegistry::validateIncrementalSnapshot(
         if (previous == baseline.semanticProjections_.cend()
             || projection.isEmpty() || previous.value() != projection)
             reuseGlobalValidation = false;
+        else if (document->value(QStringLiteral("content")).toObject().value(QStringLiteral("fieldGroups"))
+            != baseline.documents_.value(document.key()).value(QStringLiteral("content")).toObject()
+                .value(QStringLiteral("fieldGroups")))
+            changedFieldGroups.insert(document.key());
     }
     if (!errors.isEmpty()) {
         if (validatedBaseline) validatedBaseline->clear();
@@ -610,15 +626,20 @@ QStringList ProjectContractRegistry::validateIncrementalSnapshot(
     ProjectContractValidationBaseline candidate;
     if (reuseGlobalValidation) {
         errors = validateTreeImpl(projectDirectory, projectRootDocument, requireCurrentSchema,
-            changedDocuments, context, true, nullptr, false, true, baseline.rootRelativePath_);
+            changedDocuments, context, true, nullptr, false, changedFieldGroups.isEmpty()
+                ? ValidationScope::ChangedDocuments : ValidationScope::ChangedDocumentsAndLayout,
+            baseline.rootRelativePath_);
         if (errors.isEmpty() && validatedBaseline) {
             candidate = baseline;
             candidate.rootDocument_ = projectRootDocument;
             for (auto document = changedDocuments.cbegin(); document != changedDocuments.cend(); ++document) {
                 candidate.documents_.insert(document.key(), document.value());
+                if (changedFieldGroups.contains(document.key()))
+                    candidate.indexDocument(document.key(), document.value());
             }
         }
-        if (details) details->readPaths = baseline.dependencyPaths(changedDocuments.keys());
+        if (details && changedFieldGroups.isEmpty())
+            details->readPaths = baseline.dependencyPaths(changedDocuments.keys());
     } else {
         QHash<QString, QJsonObject> documents = baseline.documents_;
         for (const QString& path : removedPaths) documents.remove(path);
@@ -626,17 +647,17 @@ QStringList ProjectContractRegistry::validateIncrementalSnapshot(
             documents.insert(document.key(), document.value());
         errors = validateTreeImpl(projectDirectory, projectRootDocument, requireCurrentSchema,
             documents, context, true, validatedBaseline ? &candidate : nullptr,
-            false, false, baseline.rootRelativePath_);
-        if (details) {
-            details->fullValidation = true;
-            QSet<QString> paths{baseline.rootRelativePath_};
-            for (auto document = baseline.documents_.cbegin(); document != baseline.documents_.cend(); ++document)
-                paths.insert(document.key());
-            for (auto document = documents.cbegin(); document != documents.cend(); ++document)
-                paths.insert(document.key());
-            details->readPaths = paths.values();
-            details->readPaths.sort();
-        }
+            false, ValidationScope::Project, baseline.rootRelativePath_, &baseline);
+    }
+    if (details && (!reuseGlobalValidation || !changedFieldGroups.isEmpty())) {
+        details->fullValidation = true;
+        QSet<QString> paths{baseline.rootRelativePath_};
+        for (auto document = baseline.documents_.cbegin(); document != baseline.documents_.cend(); ++document)
+            paths.insert(document.key());
+        for (auto document = changedDocuments.cbegin(); document != changedDocuments.cend(); ++document)
+            paths.insert(document.key());
+        details->readPaths = paths.values();
+        details->readPaths.sort();
     }
     if (validatedBaseline) *validatedBaseline = std::move(candidate);
     return errors;
@@ -647,7 +668,8 @@ QStringList ProjectContractRegistry::validateTreeImpl(
     bool requireCurrentSchema, const QHash<QString, QJsonObject>& overrides,
     ProjectContractReadContext* context, bool includeVirtualDocuments,
     ProjectContractValidationBaseline* baseline, bool includePhysicalDocuments,
-    bool reuseGlobalValidation, const QString& knownRootRelativePath) const
+    ValidationScope scope, const QString& knownRootRelativePath,
+    const ProjectContractValidationBaseline* previous) const
 {
     QStringList errors;
     const QDir directory(projectDirectory);
@@ -1194,40 +1216,37 @@ QStringList ProjectContractRegistry::validateTreeImpl(
             errors.append(message);
     };
 
-    if (!reuseGlobalValidation) {
+    if (scope == ValidationScope::Project) {
         QStringList ruleDispatchErrors;
         GeneratedSchemaRegistry::validateProjectRules(schemaVersion, executor,
                                                       ruleDispatchErrors);
         errors.append(ruleDispatchErrors);
-
+    }
+    if (scope != ValidationScope::ChangedDocuments) {
+        QStringList unmanagedFiles;
         QDirIterator allEntries(projectDirectory,
                                 QDir::AllEntries | QDir::Hidden | QDir::System,
                                 QDirIterator::Subdirectories);
         while (allEntries.hasNext()) {
-            const QFileInfo fileInfo(allEntries.next());
+            allEntries.next();
+            const QFileInfo fileInfo = allEntries.fileInfo();
+            const bool link = fileInfo.isSymLink();
+            if (!link && (fileInfo.isDir()
+                || fileInfo.suffix().compare(QStringLiteral("vp"), Qt::CaseInsensitive) != 0)) continue;
             const QString relative = QDir::fromNativeSeparators(directory.relativeFilePath(fileInfo.absoluteFilePath()));
             if (relative.startsWith(QStringLiteral(".cache/folder-operations/"))) continue;
-            if (fileInfo.isSymLink())
+            if (link) {
                 errors.append(QStringLiteral("Project contains an unsupported symbolic link: %1")
                                   .arg(fileInfo.absoluteFilePath()));
-        }
-
-        QDirIterator allFiles(projectDirectory,
-                              QDir::Files | QDir::Hidden | QDir::System,
-                              QDirIterator::Subdirectories);
-        while (allFiles.hasNext()) {
-            const QFileInfo fileInfo(allFiles.next());
-            if (fileInfo.isSymLink()) continue;
-            if (fileInfo.suffix().compare(QStringLiteral("vp"), Qt::CaseInsensitive) != 0)
                 continue;
-            const QString relative = QDir::fromNativeSeparators(directory.relativeFilePath(fileInfo.absoluteFilePath()));
-            if (relative.startsWith(QStringLiteral(".cache/folder-operations/"))) continue;
+            }
             const QString topLevel = relative.section(QChar('/'), 0, 0)
                                           .section(QChar('\\'), 0, 0);
             if (domainForFolder(topLevel).isEmpty())
-                errors.append(QStringLiteral("Pack file is outside a managed domain: %1")
+                unmanagedFiles.append(QStringLiteral("Pack file is outside a managed domain: %1")
                                   .arg(relative));
         }
+        errors.append(unmanagedFiles);
     }
 
     QMap<QString, QJsonObject> platformDocuments;
@@ -1236,7 +1255,7 @@ QStringList ProjectContractRegistry::validateTreeImpl(
     if (schemaVersion == ProjectSchema::kProjectSchemaVersion)
         errors.append(ProjectPlatformSemantics::validateDocuments(projectRoot, platformDocuments));
 
-    if (includeVirtualDocuments && context && !reuseGlobalValidation) {
+    if (includeVirtualDocuments && context && scope == ValidationScope::Project) {
         context->parsed_.clear();
         context->validated_.removeIf([&](const auto& entry) { return !validatedPaths.contains(entry.key()); });
         context->decoded_.removeIf([&](const auto& entry) { return !validatedPaths.contains(entry.key()); });
@@ -1254,24 +1273,25 @@ QStringList ProjectContractRegistry::validateTreeImpl(
             const QString guid = QUuid::fromString(content.value(QStringLiteral("guid")).toString())
                 .toString(QUuid::WithoutBraces);
             nextBaseline.pathsByGuid_.insert(guid, document.key());
-            nextBaseline.semanticProjections_.insert(document.key(),
-                documentSemanticProjection(document.value(), schemaVersion));
         }
-        QString rootBusPath;
         for (const auto& pack : packs)
             if (pack.domain == QLatin1String("pack.bus")
                 && pack.object.value(QStringLiteral("parentRef")).toObject()
                     .value(QStringLiteral("kind")).toString() == QLatin1String("root"))
-                rootBusPath = pack.path;
+                nextBaseline.rootBusPath_ = pack.path;
+        const bool sameLocations = previous && schemaVersion == previous->schemaVersion_
+            && requireCurrentSchema == previous->requireCurrentSchema_
+            && nextBaseline.rootBusPath_ == previous->rootBusPath_
+            && nextBaseline.pathsByGuid_ == previous->pathsByGuid_;
+        if (sameLocations) {
+            nextBaseline.semanticProjections_ = previous->semanticProjections_;
+            nextBaseline.dependencies_ = previous->dependencies_;
+            nextBaseline.inheritedDependencies_ = previous->inheritedDependencies_;
+            nextBaseline.parentPaths_ = previous->parentPaths_;
+        }
         for (auto document = nextBaseline.documents_.cbegin(); document != nextBaseline.documents_.cend(); ++document) {
-            const auto dependencies = referencedDocumentPaths(document.value(), schemaVersion,
-                nextBaseline.pathsByGuid_, rootBusPath);
-            nextBaseline.dependencies_.insert(document.key(), dependencies);
-            nextBaseline.inheritedDependencies_.insert(document.key(), inheritedDocumentPaths(dependencies));
-            const QString parentGuid = QUuid::fromString(valueAt(document.value(),
-                {QStringLiteral("content"), QStringLiteral("parentRef"), QStringLiteral("id")}).toString())
-                .toString(QUuid::WithoutBraces);
-            nextBaseline.parentPaths_.insert(document.key(), nextBaseline.pathsByGuid_.value(parentGuid));
+            if (sameLocations && document.value() == previous->documents_.value(document.key())) continue;
+            nextBaseline.indexDocument(document.key(), document.value());
         }
     }
     if (baseline) *baseline = std::move(nextBaseline);

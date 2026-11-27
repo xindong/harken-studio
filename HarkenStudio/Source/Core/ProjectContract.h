@@ -64,14 +64,17 @@ public:
     void clear();
     const QJsonObject& projectRoot() const { return rootDocument_; }
     const QHash<QString, QJsonObject>& documents() const { return documents_; }
+    QJsonObject documentById(const QString& id) const { return documents_.value(pathsByGuid_.value(id)); }
     QStringList dependencyPaths(const QStringList& changedPaths) const;
 
 private:
     friend class ProjectContractRegistry;
+    void indexDocument(const QString& path, const QJsonObject& document);
     bool valid_ = false;
     bool requireCurrentSchema_ = false;
     int schemaVersion_ = 0;
     QString rootRelativePath_;
+    QString rootBusPath_;
     QJsonObject rootDocument_;
     QHash<QString, QJsonObject> documents_;
     QHash<QString, QJsonArray> semanticProjections_;
@@ -120,6 +123,7 @@ public:
 
 private:
     ProjectContractRegistry() = default;
+    enum class ValidationScope { ChangedDocuments, ChangedDocumentsAndLayout, Project };
     static bool readJsonObject(const QString& path, QJsonObject* object, QString* error,
                                ProjectContractReadContext* context);
     static QStringList validateDocument(int schemaVersion, const QString& documentType,
@@ -137,8 +141,9 @@ private:
                                  bool includeVirtualDocuments,
                                  ProjectContractValidationBaseline* baseline,
                                  bool includePhysicalDocuments = true,
-                                 bool reuseGlobalValidation = false,
-                                 const QString& knownRootRelativePath = {}) const;
+                                 ValidationScope scope = ValidationScope::Project,
+                                 const QString& knownRootRelativePath = {},
+                                 const ProjectContractValidationBaseline* previous = nullptr) const;
 };
 
 }

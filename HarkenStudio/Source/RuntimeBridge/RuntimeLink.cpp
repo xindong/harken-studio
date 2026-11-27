@@ -621,16 +621,18 @@ VnResult registerDecodedSound(harken::studio::types::ObjectId soundId, const std
                                 uint64_t loopStartFrame, uint64_t loopEndFrame,
                                 uint64_t expectedRevision = 0)
 {
-    uint64_t revision = soundPcmContentRevision(samples, channels, sampleRate,
-                                                loopStartFrame, loopEndFrame);
-    if (harken::studio::types::IsNull(soundId) || revision == 0)
+    if (harken::studio::types::IsNull(soundId) || channels == 0 || channels > 8
+        || sampleRate == 0 || samples.empty() || samples.size() % channels != 0)
         return VN_INVALID_ARG;
-    if (expectedRevision != 0 && expectedRevision != revision)
-        return VN_REVISION_CONFLICT;
     const auto cached = g_runtime.registeredSoundRevisions.find(soundId);
-    if (cached != g_runtime.registeredSoundRevisions.end()
-        && cached->second == revision)
-        return VN_OK;
+    if (cached != g_runtime.registeredSoundRevisions.end() || expectedRevision != 0) {
+        const auto revision = soundPcmContentRevision(samples, channels, sampleRate,
+                                                      loopStartFrame, loopEndFrame);
+        if (revision == 0) return VN_INVALID_ARG;
+        if (expectedRevision != 0 && expectedRevision != revision) return VN_REVISION_CONFLICT;
+        if (cached != g_runtime.registeredSoundRevisions.end() && cached->second == revision)
+            return VN_OK;
+    }
 
     VnPCMDesc desc{};
     desc.structSize = sizeof(desc);
@@ -640,6 +642,7 @@ VnResult registerDecodedSound(harken::studio::types::ObjectId soundId, const std
     desc.policy = VN_PCM_POLICY_COPY;
     desc.frames = samples.size() / channels;
     desc.samplesInterleaved = samples.data();
+    uint64_t revision = 0;
     const auto result = VnPreview_RegisterPcm(
         toNative(soundId), &desc, loopStartFrame, loopEndFrame, &revision);
     if (result != VN_OK) {

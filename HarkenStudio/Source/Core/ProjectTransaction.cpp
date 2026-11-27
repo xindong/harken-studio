@@ -992,17 +992,21 @@ std::unique_ptr<ProjectTransaction> ProjectTransaction::beginDelta(
     const QString& projectFilePath, const DeltaPlan& plan, QString* error)
 {
     const QString projectDirectory = projectDirectoryFor(projectFilePath);
-    const auto validPath = [&](const QString& path) {
+    const QDir projectRoot(projectDirectory);
+    QSet<QString> parents;
+    const auto validLocation = [&](const QString& path) {
         if (ProjectDataPolicy::normalizeRelativePath(path) != path
             || !ProjectDataPolicy::isSafeRelativePath(path))
             return false;
-        QString ancestor = path;
-        while (ancestor != QStringLiteral(".")) {
-            if (isFileSystemLink(QFileInfo(QDir(projectDirectory).filePath(ancestor))))
-                return false;
+        QString ancestor = QFileInfo(path).path();
+        while (ancestor != QStringLiteral(".") && !parents.contains(ancestor)) {
+            parents.insert(ancestor);
             ancestor = QFileInfo(ancestor).path();
         }
         return true;
+    };
+    const auto validPath = [&](const QString& path) {
+        return validLocation(path) && !isFileSystemLink(QFileInfo(projectRoot.filePath(path)));
     };
     QStringList writeSet;
     QSet<QString> mutationKeys;
@@ -1027,15 +1031,28 @@ std::unique_ptr<ProjectTransaction> ProjectTransaction::beginDelta(
     QSet<QString> readKeys;
     for (const ReadDependency& read : plan.readSet) {
         const QString key = retainedFileKey(read.path);
-        valid = validPath(read.path) && !readKeys.contains(key)
-            && !mutationKeys.contains(key)
-            && (read.exists ? read.hash.size() == 32 : read.hash.isEmpty()) && valid;
+        valid = validLocation(read.path) && (read.exists ? read.hash.size() == 32 : read.hash.isEmpty())
+            && !readKeys.contains(key)
+            && !mutationKeys.contains(key) && valid;
         readKeys.insert(key);
     }
     QSet<QString> directoryPaths;
     for (const DirectoryChange& directory : plan.directories) {
         valid = validPath(directory.path) && !directoryPaths.contains(directory.path) && valid;
         directoryPaths.insert(directory.path);
+    }
+    for (const QString& parent : std::as_const(parents))
+        if (isFileSystemLink(QFileInfo(projectRoot.filePath(parent)))) valid = false;
+    if (valid) {
+        const auto linked = [&](const ReadDependency& read) {
+            return isFileSystemLink(QFileInfo(projectRoot.filePath(read.path)));
+        };
+        if (plan.readSet.size() >= kParallelVerificationMinimum) {
+            valid = !QtConcurrent::blockingMapped<QList<bool>>(
+                transactionVerificationPool(), plan.readSet, linked).contains(true);
+        } else {
+            valid = std::none_of(plan.readSet.cbegin(), plan.readSet.cend(), linked);
+        }
     }
     if (!valid) {
         if (error) *error = QStringLiteral("Project transaction delta plan is invalid");
@@ -1049,6 +1066,7 @@ std::unique_ptr<ProjectTransaction> ProjectTransaction::beginDelta(
         if (directory.present && removedDirectories.contains(retainedFileKey(directory.path)))
             renamedDirectories.insert(directory.path);
     DirectorySpellingSnapshot parentSpellings;
+    QHash<QString, QString> physicalParents;
     const auto preserveParents = [&](const QString& path, bool directory) {
         QString result;
         QString requested;
@@ -1060,8 +1078,14 @@ std::unique_ptr<ProjectTransaction> ProjectTransaction::beginDelta(
             QString segment = segments.at(index);
             if ((directory || index + 1 < segments.size())
                 && !renamedDirectories.contains(requested)) {
-                const QString spelling = physicalPathSpelling(projectDirectory, result + segment, &parentSpellings);
-                if (!spelling.isEmpty()) segment = QFileInfo(spelling).fileName();
+                auto found = physicalParents.constFind(requested);
+                if (found == physicalParents.cend()) {
+                    const QString spelling = physicalPathSpelling(projectDirectory, result + segment, &parentSpellings);
+                    if (!spelling.isEmpty()) segment = QFileInfo(spelling).fileName();
+                    physicalParents.insert(requested, segment);
+                } else {
+                    segment = found.value();
+                }
             }
             result += segment;
         }
@@ -1464,36 +1488,40 @@ bool ProjectTransaction::verifyReadSet(const QString& projectFilePath,
 {
     if (readSet.isEmpty()) return true;
     const QDir root(projectDirectoryFor(projectFilePath));
-    QList<FileReadRequest> requests;
-    requests.reserve(readSet.size());
-    for (const ReadDependency& read : readSet) {
+    struct CheckedRead {
+        QString pathError;
+        QString contentError;
+    };
+    const auto verify = [&root](const ReadDependency& read) -> CheckedRead {
         if (!ProjectDataPolicy::isSafeRelativePath(read.path)
             || ProjectDataPolicy::normalizeRelativePath(read.path) != read.path
             || (read.exists ? read.hash.size() != 32 : !read.hash.isEmpty())) {
-            if (error) *error = QStringLiteral("Project transaction read set is invalid");
-            return false;
+            return {QStringLiteral("Project transaction read set is invalid"), {}};
         }
         const QString path = root.filePath(read.path);
         const QFileInfo info(path);
-        if (isFileSystemLink(info) || (read.exists ? !info.isFile() : info.exists())) {
-            if (error) *error = QStringLiteral("Project transaction dependency changed: %1").arg(path);
-            return false;
+        if (isFileSystemLink(info) || (read.exists ? !info.isFile() : info.exists()))
+            return {QStringLiteral("Project transaction dependency changed: %1").arg(path), {}};
+        if (read.exists) {
+            QString detail;
+            if (fileHash(path, &detail) != read.hash)
+                return {{}, detail.isEmpty()
+                    ? QStringLiteral("Project transaction dependency changed: %1").arg(path) : detail};
         }
-        requests.append(FileReadRequest{path, QJsonObject{
-            {QStringLiteral("existed"), read.exists},
-            {QStringLiteral("oldHash"), QString::fromLatin1(read.hash.toHex())}},
-            FileReadMode::OldState});
-    }
-    const auto results = readTransactionFiles(transactionVerificationPool(), requests);
-    for (qsizetype index = 0; index < results.size(); ++index) {
-        if (!results.at(index).matches) {
-            if (error) *error = results.at(index).error.isEmpty()
-                ? QStringLiteral("Project transaction dependency changed: %1").arg(requests.at(index).path)
-                : results.at(index).error;
-            return false;
+        return {};
+    };
+    const auto results = QtConcurrent::blockingMapped<QList<CheckedRead>>(
+        transactionVerificationPool(), readSet, verify);
+    QString failure;
+    for (const auto& result : results) {
+        if (!result.pathError.isEmpty()) {
+            failure = result.pathError;
+            break;
         }
+        if (failure.isEmpty()) failure = result.contentError;
     }
-    return true;
+    if (error && !failure.isEmpty()) *error = failure;
+    return failure.isEmpty();
 }
 
 bool ProjectTransaction::applyDelta(QString* error, ProjectTransactionProgressCallback progress)

@@ -28,6 +28,8 @@ public:
 
     InspectorSlotKind slotKind() const override { return InspectorSlotKind::Binding; }
     void bind(ProjectItem* item) override;
+    void bindGroups(ProjectItem* item, const InspectorGroupLookup& groups) override;
+    void refreshGroups(ProjectItem* item, const InspectorGroupLookup& groups) override;
     QWidget* detailWidget() const override;
     std::vector<QWidget*> detailWidgets() const;
     QString hoverSummary() const override;
