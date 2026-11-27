@@ -157,6 +157,7 @@ private:
     bool persistAppearance(const ThemeAppearance& appearance,
                            QList<ThemePackageDiagnostic>& diagnostics);
     ThemeAppearance persistedAppearance() const;
+    QVariantMap storedPaletteColors(const ThemeAppearance& appearance) const;
 
     QString userThemesRoot_;
     std::unique_ptr<ISettingsStorage> storage_;

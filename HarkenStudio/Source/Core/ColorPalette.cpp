@@ -28,6 +28,7 @@ void copyThemeColors(ThemeSnapshot& target, const ThemeSnapshot& source)
     target.ui.colors = source.ui.colors;
     target.qtPalette = source.qtPalette;
     target.thirdParty.qtAds.chromeBackground = source.thirdParty.qtAds.chromeBackground;
+    target.thirdParty.qtAds.activeTabAccent = source.thirdParty.qtAds.activeTabAccent;
     target.thirdParty.qtAds.activeTabAccentOpacity = source.thirdParty.qtAds.activeTabAccentOpacity;
     target.thirdParty.qtAds.dropOverlayOpacity = source.thirdParty.qtAds.dropOverlayOpacity;
 
@@ -69,6 +70,7 @@ void copyThemeColors(ThemeSnapshot& target, const ThemeSnapshot& source)
     target.domains.timeline = source.domains.timeline;
     target.domains.music = source.domains.music;
     target.domains.log = source.domains.log;
+    target.inheritedColorSources = source.inheritedColorSources;
     target.domains.ai = source.domains.ai;
 }
 

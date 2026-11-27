@@ -798,7 +798,9 @@ auto tokenColorSlot(const QString& key, Snapshot& theme)
     COLOR_SLOT("qtPalette.disabledButtonText", qtPalette.disabledButtonText);
     COLOR_SLOT("qtPalette.disabledHighlight", qtPalette.disabledHighlight);
     COLOR_SLOT("qtAds.chromeBackground", thirdParty.qtAds.chromeBackground);
+    COLOR_SLOT("qtAds.activeTabAccent", thirdParty.qtAds.activeTabAccent);
     COLOR_SLOT("accent.primary", ui.colors.accent);
+    COLOR_SLOT("accent.secondary", ui.colors.accentSecondary);
     COLOR_SLOT("accent.hover", ui.colors.accentHover);
     COLOR_SLOT("accent.text", ui.colors.accentText);
     COLOR_SLOT("text.primary", ui.colors.textPrimary);
@@ -821,6 +823,12 @@ auto tokenColorSlot(const QString& key, Snapshot& theme)
     COLOR_SLOT("status.warning", ui.colors.warning);
     COLOR_SLOT("status.error", ui.colors.error);
     COLOR_SLOT("status.info", ui.colors.info);
+    COLOR_SLOT("tool.play", ui.colors.toolPlay);
+    COLOR_SLOT("tool.stop", ui.colors.toolStop);
+    COLOR_SLOT("tool.reset", ui.colors.toolReset);
+    COLOR_SLOT("tool.all", ui.colors.toolAll);
+    COLOR_SLOT("tool.remote", ui.colors.toolRemote);
+    COLOR_SLOT("tool.capture", ui.colors.toolCapture);
     COLOR_SLOT("track.background", ui.colors.trackBackground);
     COLOR_SLOT("track.backgroundAlternate", ui.colors.trackBackgroundAlt);
     COLOR_SLOT("slider.track", ui.colors.sliderTrack);
@@ -1091,6 +1099,7 @@ auto domainColorSlot(const QString& key, Snapshot& theme)
     COLOR_SLOT("music.beatGridMajor", domains.music.beatGridMajor);
     COLOR_SLOT("music.beatGridMinor", domains.music.beatGridMinor);
     COLOR_SLOT("music.cursor", domains.music.cursor);
+    COLOR_SLOT("log.category", domains.log.category);
     COLOR_SLOT("log.debug", domains.log.debug);
     COLOR_SLOT("log.info", domains.log.info);
     COLOR_SLOT("log.warning", domains.log.warning);
@@ -1596,6 +1605,36 @@ bool validateColorBindings(const QVector<ThemeColorRole>& roles,
     return true;
 }
 
+QMap<QString, QString> inheritedColorSources(const SemanticDocuments& documents,
+                                            const QVector<ThemeColorRole>& roles)
+{
+    QSet<QString> bound;
+    for (const auto& role : roles)
+        for (const auto& binding : role.bindings)
+            bound.insert(binding.target);
+    const auto declared = [&](const QString& key) {
+        return bound.contains(key) || documents.tokens.colors.contains(key)
+            || documents.log.colors.contains(key);
+    };
+    QMap<QString, QString> sources;
+    const auto inherit = [&](const QString& target, const QString& source) {
+        if (!declared(target) && !sources.contains(target) && declared(source))
+            sources.insert(target, source);
+    };
+    inherit(QStringLiteral("accent.secondary"), QStringLiteral("status.info"));
+    inherit(QStringLiteral("qtAds.activeTabAccent"), QStringLiteral("accent.secondary"));
+    inherit(QStringLiteral("qtAds.activeTabAccent"), QStringLiteral("accent.primary"));
+    inherit(QStringLiteral("log.category"), QStringLiteral("status.info"));
+    inherit(QStringLiteral("log.category"), QStringLiteral("text.secondary"));
+    inherit(QStringLiteral("tool.play"), QStringLiteral("status.success"));
+    inherit(QStringLiteral("tool.all"), QStringLiteral("status.success"));
+    inherit(QStringLiteral("tool.stop"), QStringLiteral("status.error"));
+    inherit(QStringLiteral("tool.capture"), QStringLiteral("status.error"));
+    inherit(QStringLiteral("tool.reset"), QStringLiteral("status.warning"));
+    inherit(QStringLiteral("tool.remote"), QStringLiteral("status.warning"));
+    return sources;
+}
+
 bool collectRoleOverrides(const SemanticDocuments& documents,
                           const DiscoveredPackage& package,
                           const QVector<ThemeColorRole>& roles,
@@ -1978,6 +2017,7 @@ ThemePackageLoadResult loadThemePackageCandidate(
         totalBytes += package->manifestBytes;
     }
     SemanticDocuments merged;
+    ThemePackageCandidate candidate;
     QVector<ThemeColorRole> colorRoles = studioDefaultColorRoles();
     QList<ColorPalette> palettes = createStudioDefaultPalettes();
     QString defaultPaletteId = QStringLiteral("dark");
@@ -1994,6 +2034,7 @@ ThemePackageLoadResult loadThemePackageCandidate(
         overlay(effective, *documents);
         if (documents->colors)
         {
+            candidate.usesStudioDefaultColorRoles = false;
             colorRoles = documents->colors->roles;
             if (!validateColorBindings(colorRoles, snapshot,
                     package->displayRoot + QLatin1Char('/') + *package->manifest.entries.colors,
@@ -2004,6 +2045,12 @@ ThemePackageLoadResult loadThemePackageCandidate(
         if (!collectRoleOverrides(*documents, *package, colorRoles, snapshot,
                                   roleOverrides, result.diagnostics))
             return result;
+        const auto legacyInfo = documents->tokens.colors.constFind(QStringLiteral("status.info"));
+        if (candidate.usesStudioDefaultColorRoles && legacyInfo != documents->tokens.colors.cend()
+            && !roleOverrides.contains(QStringLiteral("accent.secondary")))
+            roleOverrides.insert(QStringLiteral("accent.secondary"), QColor(*legacyInfo));
+        const auto sources = candidate.usesStudioDefaultColorRoles
+            ? QMap<QString, QString>() : inheritedColorSources(effective, colorRoles);
         if (documents->colors)
         {
             if (!applySemantics(*documents, *package, effective.assets, snapshot,
@@ -2014,6 +2061,7 @@ ThemePackageLoadResult loadThemePackageCandidate(
             for (const auto& definition : documents->colors->palettes)
             {
                 ThemeSnapshot paletteSnapshot = snapshot;
+                paletteSnapshot.inheritedColorSources = sources;
                 paletteSnapshot.colorScheme = definition.colorScheme;
                 if (!resolveThemeColors(paletteSnapshot, colorRoles, definition.colors))
                 {
@@ -2031,10 +2079,12 @@ ThemePackageLoadResult loadThemePackageCandidate(
             for (auto& palette : palettes)
             {
                 ThemeSnapshot paletteSnapshot = *palette.snapshot;
+                paletteSnapshot.inheritedColorSources = sources;
                 if (!applySemantics(*documents, *package, effective.assets,
                                     paletteSnapshot, result.diagnostics))
                     return result;
                 overlayMap(palette.colors, roleOverrides);
+                normalizeOpaqueThemeColors(colorRoles, palette.colors, palette.snapshot->ui.colors.bgPrimary);
                 if (!resolveThemeColors(paletteSnapshot, colorRoles, palette.colors))
                 {
                     result.diagnostics.append(diagnostic(ThemePackageErrorCode::InvalidColor,
@@ -2051,7 +2101,6 @@ ThemePackageLoadResult loadThemePackageCandidate(
         merged = std::move(effective);
     }
 
-    ThemePackageCandidate candidate;
     if (packages.value(themeId).manifest.previewAssetId
         && !merged.assets.assets.contains(
             *packages.value(themeId).manifest.previewAssetId))

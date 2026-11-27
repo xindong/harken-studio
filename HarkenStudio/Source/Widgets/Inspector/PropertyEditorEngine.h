@@ -157,7 +157,10 @@ private:
     bool groupReferenceSelectable(const QString& field, uint32_t candidate,
                                   harken::studio::project_schema::SendType type = harken::studio::project_schema::SendType::Send,
                                   bool duckTarget = false) const;
-    bool canEditField(const FieldBinding& binding) const;
+    enum class FieldAccess { Disabled, Inherited, Editable };
+    FieldAccess fieldAccess(const FieldBinding& binding) const;
+    void updateInheritedNumber(const FieldBinding& binding, FieldAccess access, const QVariant& value);
+    bool canEditField(const FieldBinding& binding) const { return fieldAccess(binding) == FieldAccess::Editable; }
     bool groupContextMatches(const FieldGroupInspectorView& view, quint64 revision) const;
     void commitFieldChange(const QString& field, const QVariant& value,
                            const std::optional<QJsonObject>& groupArgs = {}, QWidget* source = nullptr);

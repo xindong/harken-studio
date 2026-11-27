@@ -347,6 +347,8 @@ void PropertyEditorEngine::refreshFieldGroupPreview(
         }
         const auto value = groupFieldValue(binding.field, &view);
         const bool mixed = !value.isValid();
+        if (binding.type == PropType::Float)
+            updateInheritedNumber(binding, fieldAccess(binding), value);
         if (binding.drawer) {
             binding.drawer->bind(binding.widget, mixed ? QVariant(QVariantList{}) : value, currentItem_);
             ListFieldDrawer::setWidgetMixed(binding.widget, mixed);
@@ -495,29 +497,33 @@ bool PropertyEditorEngine::applyGroupFieldView(FieldBinding& binding)
     return true;
 }
 
-bool PropertyEditorEngine::canEditField(const FieldBinding& binding) const
+PropertyEditorEngine::FieldAccess PropertyEditorEngine::fieldAccess(const FieldBinding& binding) const
 {
-    if (!currentItem_ || binding.readOnly || !binding.widget) return false;
+    if (!currentItem_ || binding.readOnly || !binding.widget) return FieldAccess::Disabled;
     if ((binding.field == QLatin1String("outputBusId")
          || binding.field == QLatin1String("outputBusVolume"))
         && currentItem_ == ProjectManager::instance().getMasterBusItem())
-        return false;
+        return FieldAccess::Disabled;
     if (!binding.editCondition.isEmpty()
         && !evalCondition(binding.editCondition, [this](const QString& field) { return readField(field); }))
-        return false;
+        return FieldAccess::Disabled;
     const auto group = fieldGroup(binding.field);
     if (!group) {
         const auto* property = PlayablePropertyAuthoringV1::fieldByName(binding.field);
         const auto& context = PlatformContextService::instance().context();
-        return !property || context.selected.isEmpty()
-            || context.all
-            || (binding.type != PropType::ObjectRef && binding.type != PropType::List);
+        if (property && !context.selected.isEmpty() && !context.all
+            && (binding.type == PropType::ObjectRef || binding.type == PropType::List))
+            return FieldAccess::Disabled;
+        return FieldAccess::Editable;
     }
     const auto found = groupBindings_.find(*group);
-    if (found == groupBindings_.end()) return false;
+    if (found == groupBindings_.end()) return FieldAccess::Disabled;
     const auto& view = found->second.view;
-    return groupContextMatches(view, groupEditRevision_) && view.fieldsEditable
-        && (*group != FieldGroupId::Send || view.editScopes.shared || view.sendsUniform);
+    if (!groupContextMatches(view, groupEditRevision_)
+        || (*group == FieldGroupId::Send && !view.editScopes.shared && !view.sendsUniform))
+        return FieldAccess::Disabled;
+    if (view.fieldsEditable) return FieldAccess::Editable;
+    return view.effectiveInherit && !view.inheritanceMixed ? FieldAccess::Inherited : FieldAccess::Disabled;
 }
 
 void PropertyEditorEngine::commitFieldChange(

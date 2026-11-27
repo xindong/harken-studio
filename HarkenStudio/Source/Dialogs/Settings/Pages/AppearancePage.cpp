@@ -135,7 +135,7 @@ QPixmap presetSwatch(const ColorPalette& palette, const QVector<ThemeColorRole>&
     const auto& colors = snapshot.ui.colors;
     const QColor samples[]{colors.bgPrimary, colors.bgSecondary, colors.bgSelected,
         colors.accent, colors.textPrimary, colors.textSecondary, colors.success,
-        colors.warning, colors.error, colors.info};
+        colors.warning, colors.error, colors.accentSecondary};
     QPixmap swatch(metrics.colorPreview.paletteWidth, metrics.colorPreview.paletteHeight);
     QColor background = colors.bgPrimary;
     background.setAlpha(255);
@@ -585,7 +585,7 @@ void AppearancePage::refreshPresets()
         colorPresets_->setItemData(i, available ? presetSwatch(*base, colorRoles_, overrides, themeManager_->metrics()) : QPixmap(), Qt::UserRole + 1);
         model->item(i)->setEnabled(available);
         colorPresets_->setItemData(i, available
-            ? tr("Use the %1 palette of this theme. Edits are saved for this theme and palette.\nMain background · Controls · Selection · Accent · Primary text\nSecondary text · Success · Warning · Error · Information").arg(name)
+            ? tr("Use the %1 palette of this theme. Edits are saved for this theme and palette.\nMain background · Controls · Selection · Accent · Primary foreground\nSecondary foreground · Success · Warning · Error · Secondary accent").arg(name)
             : tr("Unavailable"), Qt::ToolTipRole);
     }
     colorPresets_->setCurrentIndex(colorPresets_->findData(appearance_.paletteId));
@@ -682,7 +682,7 @@ void AppearancePage::editColor(QTreeWidgetItem* item)
     if (!role) return;
     const QString key = role->key;
     previewColorKey_ = key;
-    auto* dialog = new ColorEditorDialog(effectiveColor(*role), this);
+    auto* dialog = new ColorEditorDialog(effectiveColor(*role), this, role->opaque);
     colorDialog_ = dialog;
     dialog->setAttribute(Qt::WA_DeleteOnClose);
     dialog->setObjectName(QStringLiteral("appearanceColorDialog"));

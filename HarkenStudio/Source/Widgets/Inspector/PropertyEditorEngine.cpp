@@ -69,6 +69,7 @@
 #include <QJsonArray>
 #include <QSignalBlocker>
 #include <array>
+#include <cmath>
 #include <limits>
 #include <set>
 #include <stdexcept>
@@ -1854,17 +1855,30 @@ bool PropertyEditorEngine::playablePropertyEventRelated(
     return locator && editableOwner == owner;
 }
 
+void PropertyEditorEngine::updateInheritedNumber(const FieldBinding& binding, FieldAccess access,
+                                                const QVariant& value)
+{
+    bool converted = false;
+    const double number = value.toDouble(&converted);
+    QtControlSkin::setSemanticProperty(binding.widget->parentWidget(), "readOnlyNumbers",
+        access == FieldAccess::Inherited && !value.isNull() && converted && std::isfinite(number));
+}
+
 void PropertyEditorEngine::evalEditConditions()
 {
     for (const auto& b : bindings_)
     {
         if (!b.widget) continue;
-        const bool editable = canEditField(b);
+        const auto access = fieldAccess(b);
+        const bool editable = access == FieldAccess::Editable;
+        if (b.type == PropType::Float && fieldGroup(b.field))
+            updateInheritedNumber(b, access, access == FieldAccess::Inherited ? groupFieldValue(b.field) : QVariant{});
         if (auto* ref = qobject_cast<ObjectRefWidget*>(b.widget.data()))
             ref->setReadOnly(!editable);
-        else if (b.type == PropType::List)
+        else if (b.type == PropType::List) {
+            QtControlSkin::setSemanticProperty(b.widget, "readOnlyNumbers", access == FieldAccess::Inherited);
             ListFieldDrawer::setWidgetReadOnly(b.widget, !editable);
-        else
+        } else
             b.widget->setEnabled(editable);
         if (auto* strip = dynamic_cast<InspectorSlotStrip*>(b.decorator))
             strip->setEnabled(editable);

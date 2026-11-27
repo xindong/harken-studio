@@ -30,6 +30,7 @@ ThemeSnapshot createBuiltinDarkTheme()
     auto& colors = theme.ui.colors;
 
     colors.accent = QColor("#00F0FF");
+    colors.accentSecondary = QColor("#085F6A");
     colors.accentHover = QColor("#33F5FF");
     colors.accentText = QColor("#000000");
 
@@ -64,6 +65,13 @@ ThemeSnapshot createBuiltinDarkTheme()
     colors.warning = QColor("#FF9800");
     colors.error = QColor("#F44336");
     colors.info = QColor("#2196F3");
+
+    colors.toolPlay = colors.success;
+    colors.toolStop = colors.error;
+    colors.toolReset = colors.warning;
+    colors.toolAll = colors.success;
+    colors.toolRemote = colors.warning;
+    colors.toolCapture = colors.error;
 
     colors.trackBackground = QColor("#0F1318");
     colors.trackBackgroundAlt = QColor("#131820");
@@ -184,8 +192,7 @@ ThemeSnapshot createBuiltinDarkTheme()
     auto& spectrumColors = domains.meter.spectrumMeter.colors;
     spectrumColors.fillTop = colors.accent;
     spectrumColors.fillTop.setAlpha(160);
-    spectrumColors.fillUpperMiddle = colors.info;
-    spectrumColors.fillUpperMiddle.setAlpha(120);
+    spectrumColors.fillUpperMiddle = QColor("#782196F3");
     spectrumColors.fillLowerMiddle = colors.accent;
     spectrumColors.fillLowerMiddle.setAlpha(80);
     spectrumColors.fillBottom = colors.accent;
@@ -307,6 +314,7 @@ ThemeSnapshot createBuiltinLightTheme()
     theme.colorScheme = ThemeColorScheme::Light;
     auto& colors = theme.ui.colors;
     colors.accent = QColor("#007B8B");
+    colors.accentSecondary = QColor("#CEE2E8");
     colors.accentHover = QColor("#006674");
     colors.accentText = QColor("#FFFFFF");
     colors.categoricalPalette = {{
@@ -331,6 +339,13 @@ ThemeSnapshot createBuiltinLightTheme()
     colors.warning = QColor("#A76400");
     colors.error = QColor("#C53642");
     colors.info = QColor("#176DB0");
+
+    colors.toolPlay = colors.success;
+    colors.toolStop = colors.error;
+    colors.toolReset = colors.warning;
+    colors.toolAll = colors.success;
+    colors.toolRemote = colors.warning;
+    colors.toolCapture = colors.error;
     colors.trackBackground = QColor("#F8FAFC");
     colors.trackBackgroundAlt = QColor("#EEF3F7");
     colors.sliderTrack = QColor("#B7C5D3");

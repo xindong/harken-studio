@@ -340,25 +340,25 @@ QToolBar#platformBar QToolButton[segmentedControl="true"]:disabled {
     color: @textDisabled@;
 }
 QToolBar#platformBar QToolButton#remoteConnectButton:checked:enabled {
-    background: @warning@;
+    background: @toolRemote@;
     color: @accentText@;
 }
 QToolBar#platformBar QToolButton#remoteConnectButton:checked:hover:enabled {
-    background: @warningHover@;
+    background: @toolRemoteHover@;
 }
 QToolBar#platformBar QToolButton#captureButton:checked:enabled {
-    background: @error@;
+    background: @toolCapture@;
     color: @accentText@;
 }
 QToolBar#platformBar QToolButton#captureButton:checked:hover:enabled {
-    background: @errorHover@;
+    background: @toolCaptureHover@;
 }
 QToolBar#platformBar QToolButton#platformBarAll:checked:enabled {
-    background: @success@;
+    background: @toolAll@;
     color: @accentText@;
 }
 QToolBar#platformBar QToolButton#platformBarAll:checked:hover:enabled {
-    background: @successHover@;
+    background: @toolAllHover@;
 }
 QWidget#playbackControls {
     background-color: @bgTertiary@;
@@ -378,7 +378,7 @@ QWidget#playbackControls QToolButton#playBtn[layoutDirection="RightToLeft"] {
     border-bottom-right-radius: @radiusMedium@px;
 }
 QToolBar#platformBar #playbackControls QToolButton#playBtn[playing="true"] {
-    background: @successSoft@;
+    background: @toolPlaySoft@;
 }
 
 /* Inline editor of a numeric segment: it sits inside the segment button, so it
@@ -1759,6 +1759,11 @@ QLabel[settingsRole="subtitle"]:disabled,
 QLabel[nodeContentRole="label"]:disabled,
 QLabel[nodeContentRole="value"]:disabled,
 QLabel[roValue="true"]:disabled { color: @textDisabled@; }
+QWidget[readOnlyNumbers="true"]:enabled harken--studio--TableCell:enabled > QLabel[readableNumber="true"]:disabled,
+QWidget[readOnlyNumbers="true"]:enabled > harken--studio--ParameterSlider QDoubleSpinBox:disabled,
+QWidget[readOnlyNumbers="true"]:enabled > harken--studio--ParameterSlider QDoubleSpinBox QLineEdit:disabled {
+    color: @textPrimary@;
+}
 QWidget[fieldRole="preview"],
 harken--studio--ObjectRefWidget {
     background-color: @bgSecondary@;
@@ -1796,6 +1801,7 @@ harken--studio--ObjectRefWidget QLabel#refName[inherited="true"] { color: @textS
 harken--studio--ObjectRefWidget QLabel#refName[emptyValue="true"] { color: @textSecondary@; }
 harken--studio--ObjectRefWidget QLabel#refName[inputInvalid="true"] { color: @error@; }
 harken--studio--ObjectRefWidget QLabel#refName:disabled { color: @textDisabled@; }
+harken--studio--ObjectRefWidget:enabled QLabel#refName[readableReference="true"]:disabled { color: @textPrimary@; }
 
 QLineEdit[inputInvalid="true"]:enabled,
 QPlainTextEdit[inputInvalid="true"]:enabled,

@@ -1,6 +1,6 @@
 # Studio 主题配色、排版与尺寸
 
-2026-11-26 核对了 Preferences 中的配色、排版与尺寸设置。主题参数与界面缩放的核对日期为 2026-11-07，默认字体与尺寸为 2026-11-06，颜色职责为 2026-11-04。
+2026-11-26 核对了 Preferences 中的配色、排版与尺寸设置。主题参数与界面缩放的核对日期为 2026-11-07，默认字体与尺寸为 2026-11-06。2026-11-27 更新了默认主题的颜色职责。
 
 主题拥有自己的颜色职责、职责到绘制位置的绑定和一个或多个色卡。色卡提供该主题各职责的颜色值及明暗模式，用户修改按主题和色卡隔离。不同主题可以使用不同的职责清单；一个主题可以让网格复用边界色，另一个主题可以提供独立网格色。Renderer 继续消费完整、不可变的样式快照。
 
@@ -71,7 +71,7 @@ Studio Default 的比例字体优先采用系统已安装的 Inter，其次是 S
 
 Explorer 的 Assets / Resources 与 Selection Editor 的 Content / Transition 共用面板分区（`PaneSection` / `PaneSectionStack`）：带首要边界外框，标题居中，分区间 1px 边界可拖动调高，收起后让出空间并记住尺寸；标题只有底边线，首个分区上方由外框、其余由分隔边界提供上边线，切换按钮铺满标题栏，悬停底色 `background.tertiary` 上下贴边，鼠标为手形。Inspector 与设置表单按“块”排列：字段行高等于字段高，行与行之间、分节内容的上下边距都是控件间距，因此字段行与表格等块状内容离分节标题的距离一致，行距与树和表格的行高同为 24。蓝图节点行、标题栏窗口按钮宽、Fader 最小高度和 Timeline 标尺高度不随字段高收缩，分别取行高或较大控件高度推导。重命名编辑框高度为字段高并在行内居中，横向起点退回边框与 `QLineEdit` 固有文字边距，编辑时文字位置不变。
 
-Dock 标签栏以 `chrome.titleBarHeight` 为行高基准，默认总高 30 个逻辑像素，字体较大时可随内容增高。每个 Dock 组只在当前展示的页签顶部画线，紧贴外框内沿。焦点所在组的顶线和页签文字使用强调色，其他组的展示页签使用低不透明度的强调色顶线。页签之间的竖线和标签栏底线均使用 `border.primary`，默认宽 1 个逻辑像素。底线贯穿未展示页签、空白区和按钮下方，仅在各组展示页签下方断开，让页签与 Dock 内容区的 `background.primary` 底色连成一片。未展示页签使用标签栏的 `background.secondary`，悬停时叠加 `background.hoverOverlay`。标签图标、关闭、固定和标签菜单按钮在整行内垂直居中。标签图标与蓝图工具栏共用 `iconExtent`，同行按钮使用 `controlHeight` 方形背景，默认均为 20 × 20 个逻辑像素，上下各留 5 像素。标签文字统一使用底部紧凑内距校正基线。
+Dock 标签栏以 `chrome.titleBarHeight` 为行高基准，默认总高 30 个逻辑像素，字体较大时可随内容增高。每个 Dock 组只在当前展示的页签顶部画线，紧贴外框内沿。焦点所在组的顶线和页签文字使用强调色，其他组当前页签的顶线直接使用次级强调的 RGB 实色。失焦页签文字使用主要前景。页签之间的竖线和标签栏底线均使用 `border.primary`，默认宽 1 个逻辑像素。底线贯穿未展示页签、空白区和按钮下方，仅在各组展示页签下方断开，让页签与 Dock 内容区的 `background.primary` 底色连成一片。未展示页签使用标签栏的 `background.secondary`，悬停时叠加 `background.hoverOverlay`。标签图标、关闭、固定和标签菜单按钮在整行内垂直居中。标签图标与蓝图工具栏共用 `iconExtent`，同行按钮使用 `controlHeight` 方形背景，默认均为 20 × 20 个逻辑像素，上下各留 5 像素。标签文字统一使用底部紧凑内距校正基线。
 
 主窗口、浮动窗口与对话框标题栏共用 `TitleBarBase`，由它负责背景绘制、标题栏与窗口按钮尺寸，以及主题、字体、屏幕和最大化状态变化。窗口按钮基于 `QAbstractButton`，尺寸只由标题栏根据主题壳层尺寸和内容高度设置，不继承表单 `QPushButton` 的字段高度限制；QSS 只声明其视觉状态。各类标题栏按菜单、项目名或对话框名称计算所需的内容高度。
 
@@ -79,7 +79,7 @@ Dock 标签栏以 `chrome.titleBarHeight` 为行高基准，默认总高 30 个�
 
 主窗口工具栏的平台、语言和布局选择器共用 `ToolBarComboBox`。选择器与 Remote、Capture、ALL 按钮共用工具栏控件高度，基准是 `fieldHeight + controlGap`，默认 24 个逻辑像素，并至少容纳字体和图标。Remote 和 Capture 按钮为正方形，图标使用 `iconExtent`，默认 20 个逻辑像素。ALL 按钮的宽度随文字和左右留白确定。选择器使用直角且无描边。选择器与普通按钮共用常态底色 `background.tertiary`，文字和箭头取 `text.primary`。悬停时两者都在各自底色上叠加 `background.hoverOverlay`。工具栏选择器展开或获得键盘导航焦点时也显示该叠加色。鼠标操作收起弹窗后，指针移开即恢复常态底色。平台和语言弹出选项列表，布局弹出操作菜单。
 
-工具栏中央按阅读方向依次排列 Play、Stop、Reset，三者共用普通按钮底色 `background.tertiary` 和 24 个逻辑像素的工具栏控件高度。`background.hoverOverlay` 只叠加在指针所在的可用按钮上，播放中的 Play 保留成功色提示。Play 和 Reset 的外侧使用 `radius.medium` 圆角，默认 6 个逻辑像素。Stop 为直角，两侧各留 1 个逻辑像素的空隙，露出工具栏背景。
+工具栏中央按阅读方向依次排列 Play、Stop、Reset，三者共用普通按钮底色 `background.tertiary` 和 24 个逻辑像素的工具栏控件高度。`background.hoverOverlay` 只叠加在指针所在的可用按钮上，播放中的 Play 使用 `tool.play` 提示。Play 和 Reset 的外侧使用 `radius.medium` 圆角，默认 6 个逻辑像素。Stop 为直角，两侧各留 1 个逻辑像素的空隙，露出工具栏背景。
 
 组件层字段（如 `timeAxis.labelPadding`、`table.footerHeight`）保留各自语义名称，值由档位推导，不再是主题键。跨组件语义相同的字段已合并：分节标题高度、Inspector 行高和表头高度统一使用 `controlHeight`；表格按钮与 Inspector 槽位高度使用紧凑控件高度；复选框尺寸使用小图标；对象图标与导航 chevron 合并为 `iconExtent`；弹出项文字边距与控件文字边距合并；Inspector 与表单的列比例合并为 `form` 的 3 : 7；参数与通用 Slider 槽厚合并；Timeline 与时间轴的刻度长度（4 / 8）和标记手柄带高合并。Qt-ADS 不再有独立尺寸结构，适配器直接读取档位，Dock 分隔条与通用分隔条同宽。
 
@@ -137,17 +137,17 @@ PR 审查后补充修复：Assistant 在原消息和待确认控件上更新字�
 
 ## Studio Default 颜色职责
 
-以下职责与共享关系属于 Studio Default 的设计，不要求其他主题采用相同目录。
+Studio Default 在 Colors 中提供 Foreground、Semantic Colors 和 Tool 三个相关分组。Foreground 统一文字、单色图标的可读层级，Semantic Colors 定义强调、次级强调、成功、警告、错误和禁用，Tool 管理播放及工具栏动作的专用颜色。现有主题自行定义职责目录。
 
 | 职责 | 主题键 | 使用边界 |
 |---|---|---|
-| 首要文字 | `text.primary` | 字段名与字段值、只读有效值、普通正文、菜单文字、顶部项目名称、蓝图对象名称、AI 空状态气泡与提示文字，以及常态操作图标；节点字段名与值一致 |
-| 次要文字 | `text.secondary` | 注释说明、表格列头、输入占位提示、其他空状态、坐标刻度、单位、状态栏摘要、继承引用和面包屑 |
-| 标题文字 | `text.title` | 已加粗的分节与分组标题，包括 Inspector section、Explorer 的 Assets / Resources、设置与偏好标题、GroupBox、模板标题和表格内部的分组条目 |
-| 禁用文字 | `text.disabled` | 控件不可用时的文字，独立于只读状态 |
+| 主要前景 | `text.primary` | 字段名与字段值、只读有效值、普通正文、菜单文字、顶部项目名称、蓝图对象名称、AI 空状态气泡与提示文字，以及常态操作图标；节点字段名与值一致 |
+| 次要前景 | `text.secondary` | 注释说明、表格列头、输入占位提示、其他空状态、坐标刻度、单位、状态栏摘要、日志类别、继承引用和面包屑 |
+| 标题前景 | `text.title` | 已加粗的分节与分组标题，包括 Inspector section、Explorer 的 Assets / Resources、设置与偏好标题、GroupBox、模板标题和表格内部的分组条目 |
+| 禁用 | `text.disabled` | 不可用控件的文字和单色图标 |
 | 强调 | `accent.primary` | 控件激活、焦点与强调边框、滑条填充、曲线编辑点与手柄激活 |
 | 强调悬停 | `accent.hover` | 强调元素自身的悬停变化 |
-| 强调底上的文字 | `accent.text` | 高亮菜单和选择背景上的文字，不能直接用普通字段文字替代 |
+| 强调底上的前景 | `accent.text` | 高亮菜单和实色强调按钮上的文字与单色图标 |
 | 基础表面 | `background.primary/secondary/tertiary` | 节点主体在选中前后均使用 tertiary，选中时只高亮边框 |
 | 悬浮叠加 | `background.hoverOverlay` | Explorer 的 Assets / Resources 标题与树行、普通按钮、工具栏选择器、播放按钮和标签页共用。Alpha 为零时完整显示原底色 |
 | 交互表面 | `background.hover/selected` | 菜单栏活动项使用 hover 底色，列表行和标签的选中状态使用 selected 底色 |
@@ -156,10 +156,17 @@ PR 审查后补充修复：Assistant 在原消息和待确认控件上更新字�
 | 次要边界 | `border.secondary` | 控件与按钮描边、表格完整外框、网格及行列分隔、控件内滚动条；禁用态控件描边仍属此类 |
 | 刻度线 | `border.tick` | 时间轴、曲线、波形与 Meter 的刻度短线和坐标网格；刻度文字仍使用次要文字 |
 | 面板与轨道表面 | `panel.background`、`header.background`、`track.background`、`track.backgroundAlternate`、`bus.background` | 保留既有较暗的工作区层次，不因 RGB 接近而合并为一个背景 |
-| 反馈 | `status.success/warning/error/info` | 操作反馈；时间序列图的状态标记、阈值线与 Monitor 游标精度也直接使用这些职责 |
+| 次级强调 | `accent.secondary` | 失焦 Dock 组当前页签的顶线、自定义快捷键和已自定义的外观值。文字与顶线使用同一 RGB 实色 |
+| 结果与诊断 | `status.success/warning/error` | 发布成功、带警告完成、失败、无效引用等状态，以及时间序列状态标记、阈值线与 Monitor 游标精度 |
+| 播放工具 | `tool.play/stop/reset` | 播放、停止及复位控件 |
+| 工具栏 | `tool.all/remote/capture` | ALL、Remote、Capture 分别配置开启时的颜色 |
 | 分类色板 | `palette.categorical0` 至 `palette.categorical6` | 区分多个条目，不承担固定对象类型或强度数值语义 |
 
-字段名统一声明 `textRole=formLabel`，使用首要文字。普通文本标签可声明 `textRole=primary/secondary/title`；节点内容保留 `nodeContentRole=label/value`，两个绘制位置均绑定首要文字，节点辅助副标题使用次要文字。`roValue` 静态展示值使用首要文字；继承等运行时只读状态下，列表标签与数值随编辑状态禁用。公共禁用文字规则覆盖普通 QLabel、表格序号与列头、单位及上述文字角色，原生 palette 同步设置 Disabled WindowText。仍需支持查看导航的文字可通过 `dimmed=true` 使用同一禁用色；FX Custom 名称采用此方式，保留双击打开 Effect Editor 的能力。
+次级强调保留原失焦组当前页签顶线的实际显示颜色，Dark 为 `#085F6A`，Light 为 `#CEE2E8`。两张色卡都将该颜色保存为不透明的 RGB，调整 Dock 底色后顶线仍显示配置的颜色。Tool 的六项职责沿用对应控件原有颜色，各项可独立调整。默认目录移除了 Information，旧色卡中为此职责保存的自定义颜色迁入次级强调，已有次级强调设置优先。旧配置中的半透明次级强调按所在色卡的主要背景合成为 RGB，保留原来的顶线颜色。
+
+自带职责目录的旧主题可继续用原配色控制自定义值、日志类别、Dock 顶线和工具按钮。主题作者为其中一项显式指定新绘制位置后，该位置采用新配置。
+
+字段名统一声明 `textRole=formLabel`，使用首要文字。普通文本标签可声明 `textRole=primary/secondary/title`；节点内容保留 `nodeContentRole=label/value`，两个绘制位置均绑定首要文字，节点辅助副标题使用次要文字。`roValue` 静态展示值使用首要文字；运行时继承的有效只读数值也使用主要前景，混合或缺失的数值以及整表禁用时按原有状态显示。公共禁用文字规则覆盖普通 QLabel、表格序号与列头、单位及上述文字角色，原生 palette 同步设置 Disabled WindowText。仍需支持查看导航的文字可通过 `dimmed=true` 使用同一禁用色；FX Custom 名称采用此方式，保留双击打开 Effect Editor 的能力。
 
 Sources 语言分组、Inspector 各级 section 与 Explorer 的 Assets / Resources 标题统一使用主题 Body 字号（默认 10 pt）、600 字重、无额外字距。字号统一以 pt 表达，Inspector 标题不再单独使用 11 px 或按嵌套层级改变字重和字距。
 
@@ -207,7 +214,7 @@ Track 与 Segment 的拖动、拉伸吸附对齐线统一使用现有 Track 样�
 
 表格列头使用次要文字；表格内部加粗的分组条目使用标题文字。蓝图对象名称使用常规字重和首要色，绘制、宽度测量与重命名输入框保持一致。蓝图底部栏目的文字，包括 Reset Layout 和缩放比例，使用首要色。Inspector 分类 Tab 的常态文字使用首要色，选中时保留强调色。面包屑当前项与可点击祖先项均使用次要色。
 
-对象引用进入只读或关闭选择入口时，名称与对象图标使用禁用色，保留可用的导航入口。可编辑状态下，继承引用保留次要文字，失效引用保留错误色；整个控件禁用时统一使用禁用文字。分段控件进入数值编辑时使用主要文字，普通分段选项保持原有层次。
+对象引用进入只读或关闭选择入口时，有效对象的名称和图标使用主要前景，可继续导航。可编辑状态下，继承引用保留次要文字，失效引用保留错误色。整个控件禁用时使用禁用文字。分段控件进入数值编辑时使用主要文字，普通分段选项保持原有层次。
 
 菜单栏常态与悬停文字的绘制位置 `shell.menuText`、`shell.menuHoverText` 均绑定首要文字；下拉菜单普通文字同样使用首要文字。菜单栏与下拉菜单不可用时使用禁用文字，强调背景上的文字使用 `accent.text`。
 
@@ -275,17 +282,17 @@ Studio Default 提供 71 个可编辑源颜色角色，共 11 类。每项包含
 | Blueprint | 9 | 画布、网格点、三类端口、三类关系连线、节点波形 |
 | Startup | 4 | 启动波浪的暗部、低色阶、高色阶和高光 |
 
-入口为可停靠的 **Preferences → Appearance** 面板。页签上方可选择 `Theme`、`Editor Scale` 与 `Information Language`。`Theme` 切换完整主题，包括字体、图标及控件尺寸。下方的 **Theme Configuration** 分组沿用 Inspector 的分类页签，在 **Colors**、**Typography** 和 **Spacing & Sizing** 之间切换。两个面板的分类页签在各种宽高下都横排在内容顶部。Colors 包含 Color Palette、分类与搜索、详细颜色表格及重置操作。切换主题时选中目标主题的默认色卡，Color Palette 仅列出该主题提供的色卡。字段沿用标准表单列比例；色卡选择不改变主题身份或非颜色属性。下拉框左侧显示色卡名称，右侧色条按顺序展示主背景、控件背景、选中背景、强调色、主要文字、次要文字、成功、警告、错误、信息十种渲染颜色。色条通过当前主题绑定生成，不依赖主题使用固定的职责名称。
+入口为可停靠的 **Preferences → Appearance** 面板。页签上方可选择 `Theme`、`Editor Scale` 与 `Information Language`。`Theme` 切换完整主题，包括字体、图标及控件尺寸。下方的 **Theme Configuration** 分组沿用 Inspector 的分类页签，在 **Colors**、**Typography** 和 **Spacing & Sizing** 之间切换。两个面板的分类页签在各种宽高下都横排在内容顶部。Colors 包含 Color Palette、分类与搜索、详细颜色表格及重置操作。切换主题时选中目标主题的默认色卡，Color Palette 仅列出该主题提供的色卡。字段沿用标准表单列比例；色卡选择不改变主题身份或非颜色属性。下拉框左侧显示色卡名称，右侧色条按顺序展示主背景、控件背景、选中背景、强调色、主要前景、次要前景、成功、警告、错误、次级强调十种渲染颜色。色条通过当前主题绑定生成，不依赖主题使用固定的职责名称。
 
-Colors 编辑当前主题的当前色卡。即使另一个主题使用相同色卡 ID，颜色修改也彼此隔离。分类和搜索共同过滤颜色列表，搜索覆盖职责名称、分类、用途说明及颜色键。列表并列展示当前颜色与 `Palette Default`，两列默认使用 48 个逻辑像素宽的色块，下方等宽的 4 个逻辑像素细条与色块紧贴、共用外边框，中间仅以一条边框线分隔。色块外框与内部横线使用次要边界 `border.secondary`，两列均随实时预览刷新。细条按 Alpha 值显示不透明度：0 为空条，255 为满条；填充固定白色、背景固定黑色，不参与色卡管理。悬停在任一单元格可查看该颜色的用途。双击该行，或将焦点移至该行后按 Enter，可打开 `ColorEditorDialog`。上方是 SV 二维选色区域和窄 H 色相条，下方分别排列 H/S/V、R/G/B 数值，底部通过公有 `LinearSliderPresenter` 提供共用的 A 透明度滑条与数值。H 为 0–359，S/V 为 0–100，R/G/B/A 为 0–255，数值不显示单位后缀；A 独立于两种色彩坐标，修改透明度不重算 RGB。底部操作行左侧的 20×20 吸管图标用于屏幕拾色；拾色保留当前 A 值；拾色时按 Esc 取消此次拾取并恢复拾色前的颜色。
+Colors 编辑当前主题的当前色卡。即使另一个主题使用相同色卡 ID，颜色修改也彼此隔离。分类和搜索共同过滤颜色列表，搜索覆盖职责名称、分类、用途说明及颜色键。列表并列展示当前颜色与 `Palette Default`，两列默认使用 48 个逻辑像素宽的色块，下方等宽的 4 个逻辑像素细条与色块紧贴、共用外边框，中间仅以一条边框线分隔。色块外框与内部横线使用次要边界 `border.secondary`，两列均随实时预览刷新。细条按 Alpha 值显示不透明度：0 为空条，255 为满条；填充固定白色、背景固定黑色，不参与色卡管理。悬停在任一单元格可查看该颜色的用途。双击该行，或将焦点移至该行后按 Enter，可打开 `ColorEditorDialog`。上方是 SV 二维选色区域和窄 H 色相条，下方分别排列 H/S/V、R/G/B 数值，支持透明度的职责另显示 A 滑条与数值，使用公有 `LinearSliderPresenter`。次级强调只编辑颜色，其表格色块下方的不透明度细条始终为满条。H 为 0–359，S/V 为 0–100，R/G/B/A 为 0–255，数值不显示单位后缀；A 独立于两种色彩坐标，修改透明度不重算 RGB。底部操作行左侧的 20×20 吸管图标用于屏幕拾色；拾色保留当前 A 值；拾色时按 Esc 取消此次拾取并恢复拾色前的颜色。
 
-吸管右侧的 HEX 输入框与选色区域、通道数值和屏幕拾色同步。它支持输入或粘贴 `#RRGGBB`（不透明）和 `#AARRGGBB`（前两位为透明度），输入时可省略 `#`。完整色值会实时预览，未写完或无效的输入在结束编辑时恢复为最近的有效色值。
+吸管右侧的 HEX 输入框与选色区域、通道数值和屏幕拾色同步。次级强调接受六位 `#RRGGBB`。支持透明度的职责还接受八位 `#AARRGGBB`，前两位为透明度。输入或粘贴时均可省略 `#`。完整色值会实时预览，未写完或无效的输入在结束编辑时恢复为最近的有效色值。
 
 选中颜色行并点击 `Reset Selected` 可恢复该颜色的色卡默认值。表格下方的 `Reset All` 恢复当前主题所选色卡的全部颜色。恢复操作立即保存，其他主题及色卡保留各自的修改。
 
 选色器的 SV 二维颜色区域与 H 色相条都是输入控件，两者外框统一使用次要边界 `border.secondary`，每次绘制读取当前主题颜色，并随主题统一发布实时重绘。
 
-主题选择、色卡选择、完成颜色编辑、恢复默认及 Information Language 均即时保存。切换主题选择目标主题的默认色卡，重新加载主题和程序重启则保留已保存的主题与所选色卡。颜色对话框支持 Alpha 与实时预览：预览只发布临时快照，OK 后保存，Cancel、Esc 或关闭选色器恢复已提交外观。关闭或停靠 Preferences 不撤销已保存设置；AI 连接配置仍使用独立的 Save Connection 事务。
+主题选择、色卡选择、完成颜色编辑、恢复默认及 Information Language 均即时保存。切换主题选择目标主题的默认色卡，重新加载主题和程序重启则保留已保存的主题与所选色卡。颜色对话框实时预览编辑结果。OK 保存当前颜色，Cancel、Esc 或关闭选色器恢复已提交外观。关闭或停靠 Preferences 不撤销已保存设置；AI 连接配置仍使用独立的 Save Connection 事务。
 
 主题选择保存在 `Appearance/ThemeId`，色卡选择保存在 `Appearance/PaletteId`。颜色覆盖以主题 ID、色卡 ID、职责键分层保存在 `Appearance/ThemePaletteColors`，不修改主题包或项目。旧设置在读取时迁移到所属主题的默认色卡；测试 Amber 不再作为可选配色保留。暂不可用主题的旧默认覆盖以空色卡键暂存，主题恢复后再迁入其声明的默认色卡；已有明确色卡覆盖优先。活动职责失效导致恢复失败时，仍保留其他主题与色卡的覆盖，避免随后保存时丢失。
 
@@ -352,13 +359,13 @@ Studio Default 已保存的 `text.muted` 覆盖迁入同一色卡的 `text.secon
 
 ## 主题参数收束（2026-11-07）
 
-**颜色。** `ThemeColors` 不再保留同义槽位：`textMuted` 并入 `text.secondary`，`viewBorder` 与 `sectionSeparator` 并入 `border.primary`，菜单栏文字并入首要文字，窗口按钮文字使用次要文字、悬停使用首要文字，关闭按钮按下时的文字按背景计算对比色；Control Panel 背景使用 `panel.background`，播放与停止图标使用成功与错误色，拖放目标在 2026-11-08 改由独立的 `background.dropTarget` 职责承担（见上文职责表）。Qt-ADS 的关闭按钮色复用窗口关闭按钮色，未激活标签文字使用次要文字；Dock 外框底色 `chromeBackground` 暂无对应职责，仍为色卡值。`bus.background`、`timeline.clipBorder`、`timeline.clipSelectedBorder` 没有绘制消费者，连同可编辑职责一起删除，已保存的覆盖在恢复设置时移除。
+**颜色。** `ThemeColors` 不再保留同义槽位：`textMuted` 并入 `text.secondary`，`viewBorder` 与 `sectionSeparator` 并入 `border.primary`，菜单栏文字并入首要文字，窗口按钮文字使用次要文字、悬停使用首要文字，关闭按钮按下时的文字按背景计算对比色；Control Panel 背景使用 `panel.background`，播放与停止图标使用各自的 Tool 颜色，拖放目标在 2026-11-08 改由独立的 `background.dropTarget` 职责承担（见上文职责表）。Qt-ADS 的关闭按钮色复用窗口关闭按钮色，未激活标签文字使用次要文字；Dock 外框底色 `chromeBackground` 暂无对应职责，仍为色卡值。`bus.background`、`timeline.clipBorder`、`timeline.clipSelectedBorder` 没有绘制消费者，连同可编辑职责一起删除，已保存的覆盖在恢复设置时移除。
 
 无消费者的渲染槽位一并删除：Scene3D、Spatial、Monitor、Feedback 整组，Meter 的基础色、Stereo、Layout、示波器色、clipBackground 与 Spectrogram timeText，Waveform 的 line / fill / cursor / regionMarker / selectionHighlight，Music 的 trackColors / loopRegion，以及若干节点、蓝图与 Timeline 的未用色。时间序列图的多条曲线改用分类色板区分。主题包中这些键，以及同义别名 `curve.line`、`meter.peakMeter.gradientGreen`、`meter.peakMeter.gradientGreenStop`，均按未知键拒绝。
 
 **状态层。** 普通交互表面的悬浮叠加由 `background.hoverOverlay` 单独配置 RGB 和 Alpha。Dark 默认 `#14E0E0E0`，Light 默认 `#14202B38`，格式为 `#AARRGGBB`。带状态含义的颜色通过 `ThemeColors::stateColor` 向首要文字色混合 8%（悬停）、12%（按下）、16%（强调），保留源 Alpha。画布图形标记（Timeline marker、编辑游标、Source 波形视图手柄）的悬停与选中使用 `Highlight`，按首要文字相对底色的明暗方向调亮或调暗 35%。未选中的 Mixing 曲线使用源 Alpha 的 50%。QSS 的柔和底色统一使用 `ThemeSoftTintAlpha`（36 / 255）。
 
-**QSS 令牌。** 颜色令牌与 QSS 一一对应，删除了没有使用者的令牌，工具栏状态按钮改用 `@success@ / @warning@ / @error@` 及其 `Hover` 状态层令牌；尺寸令牌随布局收束合并为 `@iconExtent@`、`@smallIconExtent@` 等档位名称。未匹配任何控件的 `.TrackHeader`、`.ClipBlock`、`.NodeHeader`、`.NodeBody` 规则已删除。
+**QSS 令牌。** 颜色令牌与 QSS 一一对应，删除了没有使用者的令牌，工具栏状态按钮使用各自的 Tool 颜色及其悬停状态；尺寸令牌随布局收束合并为 `@iconExtent@`、`@smallIconExtent@` 等档位名称。未匹配任何控件的 `.TrackHeader`、`.ClipBlock`、`.NodeHeader`、`.NodeBody` 规则已删除。
 
 2026-11-07 在 Windows、Qt 6.11.0、`build-nc` RelWithDebInfo 下，`harken_studio` 与 `harken_studio_tests` 构建通过；主题、样式、颜色、设置、表格、Timeline、Meter、曲线、蓝图、Inspector、缩放与字体相关的 231 项测试中 230 项通过、1 项符号链接用例跳过。完整编辑器测试 687 项中 684 项通过、1 项跳过，2 项失败：`EditorDockLayoutTest.ColorRefreshPreservesBlueprintEditorsAndStructureRefreshReplacesThem` 单独运行通过，属于前文记录的跨套件隔离问题；`EditorProjectPackExporterManifest.PartialPublicationCombinesScheduleAndEffectCapacity` 在运行时 `ActivateCanonicalMembersV1` 返回 -415，位于 Pack 导出与引擎激活路径，本次未改动相关代码。QSS 归属检查及其 6 项脚本测试通过，`--self-test` 返回 `ok: true`。2026-11-08 的布局职责收束使用离屏真实窗口探针，在 Dark / Light 下截取主窗口、Explorer、Inspector、Preferences、Project Settings、Log、Information、Blueprint 与 Timeline（Segment / Track），并导出各面板边距、控件高度与行高；与 main 基线对照确认 Explorer 搜索栏上边距、分区标题、行高与表格行高的统一，以及 Inspector Playback 分节在离屏截图中需等待展开动画结束才显示内容（main 同样存在）。
 

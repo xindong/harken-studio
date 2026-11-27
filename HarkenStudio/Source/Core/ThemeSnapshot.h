@@ -46,6 +46,7 @@ inline QColor themeStateColor(const QColor& base, const QColor& overlay, ThemeSt
 struct ThemeColors
 {
     QColor accent;
+    QColor accentSecondary;
     QColor accentHover;
     QColor accentText;
 
@@ -72,6 +73,13 @@ struct ThemeColors
     QColor warning;
     QColor error;
     QColor info;
+
+    QColor toolPlay;
+    QColor toolStop;
+    QColor toolReset;
+    QColor toolAll;
+    QColor toolRemote;
+    QColor toolCapture;
 
     QColor trackBackground;
     QColor trackBackgroundAlt;
@@ -467,6 +475,7 @@ struct QtPaletteColors
 struct QtAdsStyle
 {
     QColor chromeBackground;
+    QColor activeTabAccent;
 
     qreal activeTabAccentOpacity = 0.0;
     qreal dropOverlayOpacity = 0.0;
@@ -868,6 +877,7 @@ struct DomainColors
     } music;
 
     struct Log {
+        QColor category;
         QColor debug;
         QColor info;
         QColor warning;
@@ -895,6 +905,7 @@ struct ThemeSnapshot
     QtPaletteColors qtPalette;
     ThirdPartyStyles thirdParty;
     DomainColors domains;
+    QMap<QString, QString> inheritedColorSources;
     QList<std::shared_ptr<const ThemeFontAssetFamily>> fontAssets;
     bool operator==(const ThemeSnapshot&) const = default;
 };

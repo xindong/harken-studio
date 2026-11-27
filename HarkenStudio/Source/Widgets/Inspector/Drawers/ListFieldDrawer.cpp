@@ -808,10 +808,12 @@ private:
                         edit->setText(v.toString());
                     if (desc_.validateElement)
                         refreshInputValidation(edit, visibleRows[i], ed.field);
-                } else if (auto* label = qobject_cast<QLabel*>(editor))
-                    label->setText(ed.type == PropType::Float
-                        ? formatDecimal(v.toDouble(), ed.decimals)
-                        : v.toString());
+                } else if (auto* label = qobject_cast<QLabel*>(editor)) {
+                    if (ed.type == PropType::Float)
+                        updateReadOnlyNumber(label, ed, v);
+                    else
+                        label->setText(v.toString());
+                }
             }
         }
         if (addBtn_)
@@ -1077,13 +1079,23 @@ private:
         }
     }
 
+    void updateReadOnlyNumber(QLabel* label, const PropertyDescriptor& field, const QVariant& value)
+    {
+        bool numeric = false;
+        const double number = value.toDouble(&numeric);
+        label->setText(formatDecimal(number, field.decimals));
+        QtControlSkin::setSemanticProperty(label, "readableNumber",
+            runtimeReadOnly_ && !mixed_ && numeric && !value.isNull() && std::isfinite(number));
+    }
+
     QWidget* buildFloatEditor(const PropertyDescriptor& ed, int row, const QVariant& v,
                               QWidget* parent, bool stretch)
     {
         const uint64_t generation = rowGeneration_;
         if (ed.flags.readOnly)
         {
-            auto* label = new QLabel(formatDecimal(v.toDouble(), ed.decimals), parent);
+            auto* label = new QLabel(parent);
+            updateReadOnlyNumber(label, ed, v);
             label->setToolTip(QStringLiteral("%1 %2").arg(label->text(), ed.unit.trimmed()).trimmed());
             label->setProperty("roValue", true);
             label->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);

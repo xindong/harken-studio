@@ -741,13 +741,16 @@ TEST(ThemeManager, RetiredAndMalformedStoredColorsDoNotBlockValidEditsAcrossThem
     const QString secondaryKey = QStringLiteral("text.secondary");
     const QString viewKey = QStringLiteral("border.view");
     const QString tickKey = QStringLiteral("border.tick");
+    const QString infoKey = QStringLiteral("status.info");
+    const QString secondaryAccentKey = QStringLiteral("accent.secondary");
+    const QString backgroundKey = QStringLiteral("background.primary");
     const QStringList retiredKeys{QStringLiteral("meter.lufsMomentary"),
         QStringLiteral("meter.lufsShortTerm"), QStringLiteral("meter.lufsIntegrated"),
         QStringLiteral("knob.indicator"), QStringLiteral("bus.background"),
         QStringLiteral("timeline.clipBorder"), QStringLiteral("timeline.clipSelectedBorder")};
     const QColor packageColor(QStringLiteral("#80123456"));
-    const QColor builtinColor(QStringLiteral("#906789ab"));
-    const QColor privateColor(QStringLiteral("#a0abcdef"));
+    const QColor builtinColor(QStringLiteral("#9000ffff"));
+    const QColor privateColor(QStringLiteral("#a0ff00ff"));
     const QColor mutedColor(QStringLiteral("#b07890ab"));
     const QColor secondaryColor(QStringLiteral("#c0456789"));
     for (const auto& format : {QStringLiteral("ThemePaletteColors"),
@@ -763,10 +766,13 @@ TEST(ThemeManager, RetiredAndMalformedStoredColorsDoNotBlockValidEditsAcrossThem
             {packageId, QVariantMap{{key, packageColor.name(QColor::HexArgb)},
                                    {QStringLiteral("text.primary"), QStringLiteral("invalid")}}},
             {builtinId, QVariantMap{{key, builtinColor.name(QColor::HexArgb)},
+                                   {infoKey, privateColor.name(QColor::HexArgb)},
+                                   {backgroundKey, QStringLiteral("#00ff00")},
                                    {mutedKey, mutedColor.name(QColor::HexArgb)},
                                    {viewKey, mutedColor.name(QColor::HexArgb)},
                                    {QStringLiteral("text.primary"), QStringLiteral("#xyz")}}},
             {missingId, QVariantMap{{privateKey, privateColor.name(QColor::HexArgb)},
+                                   {infoKey, privateColor.name(QColor::HexArgb)},
                                    {mutedKey, privateColor.name(QColor::HexArgb)},
                                    {viewKey, privateColor.name(QColor::HexArgb)},
                                    {QStringLiteral("private.invalid"), QString()}}}
@@ -777,6 +783,10 @@ TEST(ThemeManager, RetiredAndMalformedStoredColorsDoNotBlockValidEditsAcrossThem
         expected[builtinId][dark].insert(key, builtinColor);
         expected[builtinId][dark].insert(secondaryKey, mutedColor);
         expected[builtinId][dark].insert(tickKey, mutedColor);
+        expected[builtinId][dark].insert(backgroundKey, QColor(Qt::green));
+        expected[builtinId][dark].insert(secondaryAccentKey, QColor(160, 95, 160));
+        expected[missingId][format == QStringLiteral("ThemePaletteColors") ? dark : QString()]
+            .insert(infoKey, privateColor);
         expected[missingId][format == QStringLiteral("ThemePaletteColors") ? dark : QString()]
             .insert(privateKey, privateColor);
         expected[missingId][format == QStringLiteral("ThemePaletteColors") ? dark : QString()]
@@ -809,6 +819,9 @@ TEST(ThemeManager, RetiredAndMalformedStoredColorsDoNotBlockValidEditsAcrossThem
             expected[packageId][light].insert(key, builtinColor);
             auto builtinPalettes = storedColors.value(builtinId).toMap();
             builtinPalettes.insert(light, QVariantMap{
+                {infoKey, privateColor.name(QColor::HexArgb)},
+                {secondaryAccentKey, builtinColor.name(QColor::HexArgb)},
+                {backgroundKey, QStringLiteral("#ff0000")},
                 {mutedKey, mutedColor.name(QColor::HexArgb)},
                 {viewKey, mutedColor.name(QColor::HexArgb)},
                 {tickKey, secondaryColor.name(QColor::HexArgb)},
@@ -817,6 +830,8 @@ TEST(ThemeManager, RetiredAndMalformedStoredColorsDoNotBlockValidEditsAcrossThem
             storedColors.insert(builtinId, builtinPalettes);
             expected[builtinId][light].insert(secondaryKey, secondaryColor);
             expected[builtinId][light].insert(tickKey, secondaryColor);
+            expected[builtinId][light].insert(backgroundKey, QColor(Qt::red));
+            expected[builtinId][light].insert(secondaryAccentKey, QColor(111, 144, 144));
         }
         {
             harken::studio::QSettingsStorage storage(storagePath);
@@ -1206,7 +1221,7 @@ TEST(ThemeManager, ThemeColorEditsAndPaletteSwitchesPreserveStructureAndFonts)
     EXPECT_EQ(fonts, 0);
 }
 
-TEST(ThemeManager, PaletteAlphaScalesEveryBoundColorWithoutChangingRgb)
+TEST(ThemeManager, PaletteRolesRespectAlphaAcrossColorBindings)
 {
     QTemporaryDir root;
     ASSERT_TRUE(root.isValid());
@@ -1217,6 +1232,7 @@ TEST(ThemeManager, PaletteAlphaScalesEveryBoundColorWithoutChangingRgb)
         preview.paletteId = palette.id;
         for (const auto& role : manager.colorRoles())
             preview.colors[preview.themeId][preview.paletteId][role.key] = QColor(48, 112, 160);
+        preview.colors[preview.themeId][preview.paletteId][QStringLiteral("background.primary")] = QColor(12, 34, 56);
         ASSERT_TRUE(manager.previewAppearance(preview).ok());
         const auto opaque = manager.snapshot();
         for (int alpha : {0, 64, 128, 255}) {
@@ -1229,7 +1245,8 @@ TEST(ThemeManager, PaletteAlphaScalesEveryBoundColorWithoutChangingRgb)
                     const auto before = harken::studio::readThemeColor(*opaque, binding.target);
                     const auto after = harken::studio::readThemeColor(*manager.snapshot(), binding.target);
                     EXPECT_EQ(after.rgb(), before.rgb());
-                    EXPECT_NEAR(after.alphaF(), before.alphaF() * alpha / 255.0, 1.0 / 65535.0);
+                    const auto roleAlpha = role.opaque ? 255 : alpha;
+                    EXPECT_NEAR(after.alphaF(), before.alphaF() * roleAlpha / 255.0, 1.0 / 65535.0);
                 }
             }
         }

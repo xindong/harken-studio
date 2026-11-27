@@ -18,6 +18,7 @@
 #include <QMouseEvent>
 #include <QMessageBox>
 #include <QPainter>
+#include <QRegularExpressionValidator>
 #include <QSignalBlocker>
 #include <QScreen>
 #include <QSpinBox>
@@ -190,7 +191,7 @@ private:
     bool dragging_ = false;
 };
 
-ColorEditorDialog::ColorEditorDialog(const QColor& color, QWidget* parent)
+ColorEditorDialog::ColorEditorDialog(const QColor& color, QWidget* parent, bool opaque)
     : BaseDialog(parent)
 {
     const auto& metrics = ThemeManager::instance().metrics().dialog;
@@ -254,28 +255,35 @@ ColorEditorDialog::ColorEditorDialog(const QColor& color, QWidget* parent)
             }
         });
     }
-    alpha_ = new ParameterBinding(this);
-    alpha_->setObjectName(QStringLiteral("colorAlphaBinding"));
-    alpha_->setName(QStringLiteral("A"));
-    alpha_->setRange(0, 255);
-    alpha_->setDecimals(0);
-    alpha_->setQuantum(1);
-    auto* alpha = new LinearSliderPresenter(alpha_, true, &ThemeManager::instance(), this);
-    alpha->setObjectName(QStringLiteral("colorAlphaControl"));
-    alpha->setToolTip(tr("Alpha"));
-    ThemeManager::instance().bindMetrics(alpha, [alpha](const ThemeMetrics& metrics) {
-        alpha->setCompactValueColumn(metrics.parameter.compactValueMinimumWidth);
-    });
-    auto* alphaLabel = new QLabel(QStringLiteral("A"), this);
-    alphaLabel->setBuddy(alpha->valueEditor());
-    values->addWidget(alphaLabel, 2, 0);
-    values->addWidget(alpha, 2, 1, 1, 5);
-    connect(alpha_, &ParameterBinding::valueUpdated, this, [this](double value) {
-        if (color_.alpha() == qRound(value)) return;
-        QColor next = color_;
-        next.setAlpha(qRound(value));
-        publishColor(next);
-    });
+    setDialogTabOrder({picker_, channels_[0], channels_[1], channels_[2], channels_[3],
+                       channels_[4], channels_[5]});
+    QWidget* lastChannel = channels_[5];
+    if (!opaque) {
+        alpha_ = new ParameterBinding(this);
+        alpha_->setObjectName(QStringLiteral("colorAlphaBinding"));
+        alpha_->setName(QStringLiteral("A"));
+        alpha_->setRange(0, 255);
+        alpha_->setDecimals(0);
+        alpha_->setQuantum(1);
+        auto* alpha = new LinearSliderPresenter(alpha_, true, &ThemeManager::instance(), this);
+        alpha->setObjectName(QStringLiteral("colorAlphaControl"));
+        alpha->setToolTip(tr("Alpha"));
+        ThemeManager::instance().bindMetrics(alpha, [alpha](const ThemeMetrics& metrics) {
+            alpha->setCompactValueColumn(metrics.parameter.compactValueMinimumWidth);
+        });
+        auto* alphaLabel = new QLabel(QStringLiteral("A"), this);
+        alphaLabel->setBuddy(alpha->valueEditor());
+        values->addWidget(alphaLabel, 2, 0);
+        values->addWidget(alpha, 2, 1, 1, 5);
+        connect(alpha_, &ParameterBinding::valueUpdated, this, [this](double value) {
+            if (color_.alpha() == qRound(value)) return;
+            QColor next = color_;
+            next.setAlpha(qRound(value));
+            publishColor(next);
+        });
+        setDialogTabOrder({lastChannel, alpha->primaryEditor(), alpha->valueEditor()});
+        lastChannel = alpha->valueEditor();
+    }
     layout->addLayout(values);
     auto* screenPick = new QToolButton(this);
     screenPick->setObjectName(QStringLiteral("colorScreenPick"));
@@ -304,7 +312,13 @@ ColorEditorDialog::ColorEditorDialog(const QColor& color, QWidget* parent)
     hexEdit_->setObjectName(QStringLiteral("colorHex"));
     hexEdit_->setAccessibleName(tr("Hex color"));
     hexEdit_->setPlaceholderText(QStringLiteral("#RRGGBB"));
-    hexEdit_->setToolTip(tr("Hex color (#RRGGBB or #AARRGGBB)"));
+    if (opaque) {
+        hexEdit_->setToolTip(QStringLiteral("#RRGGBB"));
+        hexEdit_->setValidator(new QRegularExpressionValidator(
+            QRegularExpression(QStringLiteral("#?[0-9A-Fa-f]{0,6}")), hexEdit_));
+    } else {
+        hexEdit_->setToolTip(tr("Hex color (#RRGGBB or #AARRGGBB)"));
+    }
     connect(hexEdit_, &QLineEdit::textEdited, this, [this](const QString& text) {
         setCurrentColor(parseHexColor(text));
     });
@@ -318,8 +332,7 @@ ColorEditorDialog::ColorEditorDialog(const QColor& color, QWidget* parent)
     actions->addStretch();
     actions->addWidget(buttonBox());
     layout->addLayout(actions);
-    setDialogTabOrder({picker_, channels_[0], channels_[1], channels_[2], channels_[3],
-                       channels_[4], channels_[5], alpha->primaryEditor(), alpha->valueEditor(), screenPick, hexEdit_});
+    setDialogTabOrder({lastChannel, screenPick, hexEdit_});
     setCurrentColor(color);
 }
 
@@ -417,8 +430,9 @@ void ColorEditorDialog::publishHsv()
     publishColor(QColor::fromHsvF(hue_, saturation_, value_, color_.alphaF()).toRgb());
 }
 
-void ColorEditorDialog::publishColor(const QColor& color)
+void ColorEditorDialog::publishColor(QColor color)
 {
+    if (!alpha_) color.setAlpha(255);
     const bool changed = color_ != color;
     color_ = color;
     const std::array<int, 6> values{qMin(359, qRound(hue_ * 360)), qRound(saturation_ * 100),
@@ -427,7 +441,7 @@ void ColorEditorDialog::publishColor(const QColor& color)
         const QSignalBlocker blocker(channels_[i]);
         channels_[i]->setValue(values[i]);
     }
-    if (alpha_->value() != color.alpha()) alpha_->setValue(color.alpha());
+    if (alpha_ && alpha_->value() != color.alpha()) alpha_->setValue(color.alpha());
     if (parseHexColor(hexEdit_->text()) != color) hexEdit_->setText(hexText(color));
     picker_->setHsv(hue_, saturation_, value_);
     if (changed) emit currentColorChanged(color_);
