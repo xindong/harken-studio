@@ -69,7 +69,8 @@ const ProjectItem* valueSource(const ProjectData& project, const ProjectItem& it
                                const PlatformLocalAddress& address)
 {
     if (!address.canInherit || item.type == ProjectItemType::Bus
-        || (address.kind != Kind::GroupField && address.kind != Kind::RowCell)) return &item;
+        || (address.kind != Kind::GroupField && address.kind != Kind::RowCell && address.kind != Kind::EffectChain))
+        return &item;
     bool inherited = false;
     visitGroup(item.fieldGroups, address.group, [&](const auto& group) {
         inherited = group.shared.mode != FieldGroupMode::Local;
@@ -148,17 +149,11 @@ const Payload* ownedRows(const AuthoredGroup<Payload>& group, bool canInherit)
 
 std::optional<QJsonArray> rowList(const ProjectItem& item, const PlatformLocalAddress& address)
 {
-    const bool effects = address.field == QLatin1String("effects");
     const bool sidechains = address.field == QLatin1String("sidechains");
     if (item.type == ProjectItemType::Bus) {
         const auto* mix = item.comp<VMixNode>();
         if (!mix) return {};
-        if (effects) return mix->effects.toJson();
         return VMixNode::routesToVariant(sidechains ? mix->sidechains : mix->sends, sidechains).toJsonArray();
-    }
-    if (effects) {
-        const auto* payload = ownedRows(item.fieldGroups.effects, address.canInherit);
-        return payload ? std::optional(payload->effects.toJson()) : std::nullopt;
     }
     if (sidechains) {
         const auto* payload = ownedRows(item.fieldGroups.sidechain, address.canInherit);
@@ -170,9 +165,8 @@ std::optional<QJsonArray> rowList(const ProjectItem& item, const PlatformLocalAd
 
 qsizetype rowIndex(const QJsonArray& rows, const PlatformLocalAddress& address)
 {
-    const auto key = address.field == QLatin1String("effects") ? QStringLiteral("guid") : QStringLiteral("id");
     for (qsizetype index = 0; index < rows.size(); ++index)
-        if (QUuid(rows[index].toObject().value(key).toString()) == address.row) return index;
+        if (QUuid(rows[index].toObject().value(QStringLiteral("id")).toString()) == address.row) return index;
     return -1;
 }
 
@@ -181,7 +175,6 @@ QJsonValue rowCellValue(const QJsonObject& row, const QString& cell, const Proje
     const auto values = row.value(QStringLiteral("platforms")).toObject()
         .value(ProjectPlatformSemantics::idString(platform)).toObject();
     if (values.contains(cell)) return values.value(cell);
-    if (cell == QLatin1String("bypass")) return row.value(cell).toBool();
     return row.value(cell);
 }
 
@@ -193,8 +186,7 @@ ActionResult commitRows(const ProjectItem& item, const PlatformLocalAddress& add
         args.insert(QStringLiteral("value"), rows);
         return execute(QStringLiteral("set_item_property"), args, originator);
     }
-    const auto action = address.field == QLatin1String("effects") ? QStringLiteral("replace_field_group_effects")
-        : address.field == QLatin1String("sidechains") ? QStringLiteral("replace_field_group_sidechains")
+    const auto action = address.field == QLatin1String("sidechains") ? QStringLiteral("replace_field_group_sidechains")
         : QStringLiteral("replace_field_group_sends");
     return execute(action, {{QStringLiteral("definition_guid"), item.guid.toString(QUuid::WithoutBraces)},
                             {QStringLiteral("group"), QString::fromLatin1(FieldGroupName(address.group).data())},
@@ -349,6 +341,17 @@ QSet<ProjectPlatformId> localPlatforms(const ProjectData& project, const Project
             if (it.value().toObject().contains(address.cell)) result.insert(QUuid(it.key()));
         break;
     }
+    case Kind::EffectChain:
+        if (item.type == ProjectItemType::Bus) {
+            if (const auto* mix = item.comp<VMixNode>())
+                for (const auto& [platform, chain] : mix->effectPlatforms) result.insert(platform);
+            break;
+        }
+        for (const auto& [platform, state] : item.fieldGroups.effects.platforms)
+            if (state.localHistory && (state.localFields & FieldGroupPropertyMask(FieldGroupId::Effect)) != 0
+                && (!address.canInherit || item.fieldGroups.effects.shared.mode == FieldGroupMode::Local))
+                result.insert(fromFieldGroupGuid(platform));
+        break;
     case Kind::SelectionWeight:
         if (const auto* selection = item.comp<VSelection>())
             if (const auto* occurrence = selection->selections.random.find(address.ordinal))
@@ -379,6 +382,7 @@ bool hasScalarValue(const PlatformLocalAddress& address)
     case Kind::SelectionWeight:
     case Kind::SelectionCondition: return true;
     case Kind::Filter:
+    case Kind::EffectChain:
     case Kind::SelectionCurve: return false;
     }
     return false;
@@ -416,6 +420,15 @@ QVariant effectiveValue(const ProjectData& project, ProjectItem& item,
         const auto rows = rowList(*source, sourceAddress(item, *source, address));
         const auto index = rows ? rowIndex(*rows, address) : -1;
         return index < 0 ? QVariant{} : rowCellValue((*rows)[index].toObject(), address.cell, platform).toVariant();
+    }
+    case Kind::EffectChain: {
+        if (item.type == ProjectItemType::Bus) {
+            const auto* mix = item.comp<VMixNode>();
+            return mix ? QVariant(mix->effectsForPlatform(platform).toJson().toVariantList()) : QVariant{};
+        }
+        const auto resolved = resolveGroup(project, item, FieldGroupId::Effect, platform);
+        const auto* group = resolved ? std::get_if<EffectFieldGroup>(&resolved->payload) : nullptr;
+        return group ? QVariant(group->effects.toJson().toVariantList()) : QVariant{};
     }
     case Kind::SelectionWeight: {
         const auto* selection = item.comp<VSelection>();
@@ -472,6 +485,18 @@ ActionResult setLocal(const ProjectData& project, ProjectItem& item,
     }
     case Kind::RowCell:
         return editRowCell(item, address, platform, true, originator);
+    case Kind::EffectChain: {
+        if (!value.isValid()) return unavailable();
+        const auto chain = QJsonArray::fromVariantList(value.toList());
+        if (item.type == ProjectItemType::Bus) {
+            auto args = overrideArgs(item, QStringLiteral("effects"), platform, QStringLiteral("set_override"));
+            args.insert(QStringLiteral("value"), chain);
+            return execute(QStringLiteral("set_item_property"), args, originator);
+        }
+        auto args = groupArgs(item, FieldGroupId::Effect, platform);
+        args.insert(QStringLiteral("effects"), chain);
+        return execute(QStringLiteral("replace_field_group_effects"), args, originator);
+    }
     case Kind::SelectionWeight:
     case Kind::SelectionCondition:
     case Kind::SelectionCurve:
@@ -503,6 +528,15 @@ ActionResult clearLocal(ProjectItem& item, const PlatformLocalAddress& address,
     }
     case Kind::RowCell:
         return editRowCell(item, address, platform, false, originator);
+    case Kind::EffectChain: {
+        if (item.type == ProjectItemType::Bus)
+            return execute(QStringLiteral("set_item_property"),
+                overrideArgs(item, QStringLiteral("effects"), platform, QStringLiteral("clear_platform_override")),
+                originator);
+        auto args = groupArgs(item, FieldGroupId::Effect, platform);
+        args.insert(QStringLiteral("field"), QStringLiteral("effects"));
+        return execute(QStringLiteral("clear_field_group_field_override"), args, originator);
+    }
     case Kind::SelectionWeight:
     case Kind::SelectionCondition:
     case Kind::SelectionCurve:

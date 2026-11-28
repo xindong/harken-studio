@@ -10,7 +10,6 @@
 #include <cstdint>
 #include <optional>
 #include <utility>
-#include <map>
 #include <vector>
 
 namespace harken::studio {
@@ -47,7 +46,6 @@ struct EffectEntry
     EffectDefinition custom;
     QUuid effectGuid;
     bool bypass = false;
-    std::map<QUuid, bool> platformBypass;
     QJsonObject extensions;
     QJsonValue opaqueValue;
     bool typed = true;
@@ -85,7 +83,6 @@ public:
     }
 
     bool replace(std::vector<EffectEntry> entries);
-    EffectChainLedger forPlatform(const QUuid& platform) const;
     QJsonArray toJson() const;
     static EffectChainLedger fromJson(const QJsonArray& array);
 

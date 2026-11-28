@@ -592,8 +592,7 @@ RuntimeCapabilityEntry evaluateForContext(const ProjectItem& item,
                 return refuse(S::InvalidAuthoring, QStringLiteral("Build platform ID is invalid"));
             scope = *platform;
         }
-        const auto busEffects = mix->effectsForPlatform(scope);
-        const EffectChainLedger* effects = &busEffects;
+        const EffectChainLedger* effects = &mix->effectsForPlatform(scope);
         if (PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(item.type)) {
             const auto* effectiveGroups = context.fieldGroups;
             if (!effectiveGroups || effectiveGroups->scope != toFieldGroupScope(scope)) {

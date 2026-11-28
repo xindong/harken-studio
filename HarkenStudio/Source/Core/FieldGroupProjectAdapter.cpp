@@ -93,11 +93,7 @@ bool routeRowsFromJson(const QJsonValue& value, std::vector<Row>& rows)
             typename decltype(row.platforms)::mapped_type cells;
             const auto values = it.value().toObject();
             for (auto cell = values.begin(); cell != values.end(); ++cell) {
-                if (cell.key() == QLatin1String("targetBusID")) {
-                    Guid target;
-                    if (!parseFieldGroupGuid(cell.value(), target)) return false;
-                    cells.targetBusID = target;
-                } else if (cell.key() == QLatin1String("sendLevel") && cell.value().isDouble()) {
+                if (cell.key() == QLatin1String("sendLevel") && cell.value().isDouble()) {
                     cells.sendLevel = static_cast<float>(cell.value().toDouble());
                 } else if constexpr (sidechain) {
                     if (cell.key() != QLatin1String("duckTarget") || !cell.value().isBool()) return false;
@@ -128,7 +124,6 @@ QJsonArray routeRowsToJson(const std::vector<Row>& rows)
         QJsonObject platforms;
         for (const auto& [platform, cells] : row.platforms) {
             QJsonObject values;
-            if (cells.targetBusID) values.insert(QStringLiteral("targetBusID"), guidText(*cells.targetBusID));
             if (cells.sendLevel) values.insert(QStringLiteral("sendLevel"), *cells.sendLevel);
             if constexpr (requires { cells.duckTarget; })
                 if (cells.duckTarget) values.insert(QStringLiteral("duckTarget"), *cells.duckTarget);

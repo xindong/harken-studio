@@ -24,7 +24,7 @@ inline QJsonObject setItemPropertySchema()
         QStringLiteral("kind"), QStringLiteral("range"), QStringLiteral("rangeMin"),
         QStringLiteral("rangeMax"), QStringLiteral("defaultValue"), QStringLiteral("labels"),
         QStringLiteral("transitions"), QStringLiteral("steps"), QStringLiteral("filter"),
-        QStringLiteral("effects")};
+        QStringLiteral("effects"), QStringLiteral("sidechains")};
     for (const auto& field : FilterSemantics::fields())
         propertyNames.append(QLatin1String(field.field));
     for (const auto& field : VEffect::schema())

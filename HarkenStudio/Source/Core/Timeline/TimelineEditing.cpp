@@ -98,6 +98,8 @@ TimelineValidation validateEntityIdentities(ProjectData* project,
                 }
             };
             claimEffects(mix->effects, {});
+            for (const auto& [platform, effects] : mix->effectPlatforms)
+                claimEffects(effects, {});
             VisitAuthoredEffectChains(item->fieldGroups, claimEffects);
             if (!validity) return validity;
         }

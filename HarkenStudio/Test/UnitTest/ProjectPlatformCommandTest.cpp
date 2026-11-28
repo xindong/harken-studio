@@ -263,7 +263,7 @@ TEST_F(ProjectPlatformCommand, PlatformMembershipEditsRoundTripAllAuthoredOwners
     layer->fieldGroups.conversion.shared.localHistory = ConversionFieldGroup{toFieldGroupGuid(preset->guid)};
     layer->fieldGroups.output.platforms[toFieldGroupGuid(project().platforms.front().id)] = {
         FieldGroupMode::UseShared, OutputFieldGroup{toFieldGroupGuid(manager().getMasterBusItem()->guid), -6.0f},
-        FieldGroupPropertyMask(FieldGroupId::Output)};
+        FieldGroupPlatformMask(FieldGroupId::Output)};
     undo().clear();
     const auto initial = authoredState();
     const auto create = ActionManager::instance().execute("create_project_platform",

@@ -136,6 +136,8 @@ void PackBuildState::deriveInputs(const QSet<QString>* successfulPaths)
                 });
             } else {
                 addEffects(mix->effects);
+                for (const auto& [platform, chain] : mix->effectPlatforms)
+                    addEffects(chain);
             }
             if (!valid) return QString();
             if (!effects.isEmpty()) json.insert(QStringLiteral("effectAssets"), effects);

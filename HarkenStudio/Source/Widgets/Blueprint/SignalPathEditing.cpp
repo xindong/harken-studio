@@ -28,46 +28,6 @@ const SignalPathPortPair* port(const SignalPathGraph& graph, SignalPathEndpoint 
     return endpoint.portPairIndex < pairs.size() ? &pairs[endpoint.portPairIndex] : nullptr;
 }
 
-std::vector<FieldGroupScope> editScopes(const ProjectData& project)
-{
-    const auto& context = PlatformContextService::instance().context();
-    std::vector<FieldGroupScope> result;
-    if (context.all || context.selected.isEmpty()) {
-        result.push_back({});
-        for (const auto& platform : project.platforms)
-            result.push_back(toFieldGroupGuid(platform.id));
-    } else {
-        for (const auto platform : context.selected)
-            result.push_back(toFieldGroupGuid(platform));
-    }
-    return result;
-}
-
-template <typename Payload>
-bool writeLocal(AuthoredGroup<Payload>& group, FieldGroupScope scope, const Payload& payload,
-                const FieldGroupResolver& resolver, harken::studio::project_schema::AuthoringGuid definition)
-{
-    if (!scope) {
-        group.shared = {FieldGroupMode::Local, payload};
-        return true;
-    }
-    const auto shared = resolver.Resolve(definition, {}, Payload::groupId);
-    if (!shared.ok()) return false;
-    if (shared.value->source.isDefault || shared.value->source.definition != definition)
-        group.shared = {FieldGroupMode::Local, std::get<Payload>(shared.value->payload)};
-    GroupState<Payload> state{FieldGroupMode::UseShared, {}};
-    state.localFields = FieldGroupDifferenceMask(payload, *group.shared.localHistory);
-    if (state.localFields == 0) {
-        group.platforms.erase(*scope);
-        return true;
-    }
-    Payload fields;
-    CopyFieldGroupFields(fields, payload, state.localFields);
-    state.localHistory = std::move(fields);
-    group.platforms[*scope] = std::move(state);
-    return true;
-}
-
 bool pathsStillCurrent(const ProjectData& project, const SignalPathGraph& graph,
                        const SignalPathPortPair& from, const SignalPathPortPair& to)
 {
@@ -522,7 +482,6 @@ SignalPathConnectPlan prepareObjectConnections(const SignalPathGraph& graph,
     const auto view = buildFieldGroupProjectView(*project);
     if (!view.ok()) return fail(view.diagnostics.front().message);
     const FieldGroupResolver resolver(view.definitions, toFieldGroupGuid(master->guid));
-    const auto scopes = editScopes(*project);
     std::set<QUuid> observed;
     const auto observe = [&](const ProjectItem* item) {
         for (; item; item = item->parent) {
@@ -586,23 +545,19 @@ SignalPathConnectPlan prepareObjectConnections(const SignalPathGraph& graph,
             if (!resolved.ok()) return fail(QObject::tr("The inherited Send configuration cannot be resolved"));
             auto sends = std::get<SendFieldGroup>(resolved.value->payload);
             if (std::any_of(sends.sends.begin(), sends.sends.end(), [&](const auto& send) {
-                    return send.targetBusID == bus || std::any_of(send.platforms.begin(), send.platforms.end(),
-                        [&](const auto& cell) { return cell.second.targetBusID == bus; });
+                    return send.targetBusID == bus;
                 }))
                 return fail(QObject::tr("Send already exists on this object"));
             sends.sends.push_back({toFieldGroupGuid(QUuid::createUuid()), bus, 0.0f, {}});
             groups.send.shared = {FieldGroupMode::Local, std::move(sends)};
         }
-        for (const auto scope : scopes) {
-            if (!addSend) {
-                const auto resolved = resolver.Resolve(guid, scope, FieldGroupId::Output);
-                if (!resolved.ok()) return fail(QObject::tr("The inherited Output configuration cannot be resolved"));
-                auto output = std::get<OutputFieldGroup>(resolved.value->payload);
-                if (output.outputBusRef != bus) {
-                    output.outputBusRef = bus;
-                    if (!writeLocal(groups.output, scope, output, resolver, guid))
-                        return fail(QObject::tr("The inherited Output configuration cannot be resolved"));
-                }
+        if (!addSend) {
+            const auto resolved = resolver.Resolve(guid, {}, FieldGroupId::Output);
+            if (!resolved.ok()) return fail(QObject::tr("The inherited Output configuration cannot be resolved"));
+            auto output = std::get<OutputFieldGroup>(resolved.value->payload);
+            if (output.outputBusRef != bus) {
+                output.outputBusRef = bus;
+                groups.output.shared = {FieldGroupMode::Local, output};
             }
         }
         if (groups != from->fieldGroups) {
@@ -681,10 +636,8 @@ SignalPathConnectPlan prepareSignalPathDisconnect(const SignalPathGraph& graph,
     const auto view = buildFieldGroupProjectView(*project);
     if (!view.ok()) return fail(view.diagnostics.front().message);
     const FieldGroupResolver resolver(view.definitions, toFieldGroupGuid(master->guid));
-    const auto scopes = editScopes(*project);
-    using ProviderScope = std::pair<QUuid, FieldGroupScope>;
     std::map<QUuid, std::set<std::tuple<QUuid, SendType, bool>>> removedSends;
-    std::map<ProviderScope, OutputFieldGroup> resetOutputs;
+    std::map<QUuid, OutputFieldGroup> resetOutputs;
     std::set<QUuid> playbackOwners;
     std::set<QUuid> detachments;
     std::set<QUuid> resetBuses;
@@ -771,16 +724,14 @@ SignalPathConnectPlan prepareSignalPathDisconnect(const SignalPathGraph& graph,
                 removedSends[provider].emplace(toGuid, edge.type, edge.duckTarget);
                 continue;
             }
-            for (const auto scope : scopes) {
-                const auto resolved = resolver.Resolve(origin, scope, group);
-                if (!resolved.ok()) return fail(QObject::tr("The routing configuration cannot be resolved"));
-                if (resolved.value->source.isDefault) continue;
-                const auto provider = fromFieldGroupGuid(resolved.value->source.definition);
-                observed.insert(provider);
-                auto output = std::get<OutputFieldGroup>(resolved.value->payload);
-                output.outputBusRef = toFieldGroupGuid(master->guid);
-                resetOutputs[{provider, scope}] = output;
-            }
+            const auto resolved = resolver.Resolve(origin, {}, group);
+            if (!resolved.ok()) return fail(QObject::tr("The routing configuration cannot be resolved"));
+            if (resolved.value->source.isDefault) continue;
+            const auto provider = fromFieldGroupGuid(resolved.value->source.definition);
+            observed.insert(provider);
+            auto output = std::get<OutputFieldGroup>(resolved.value->payload);
+            output.outputBusRef = toFieldGroupGuid(master->guid);
+            resetOutputs[provider] = output;
         }
     }
     if (!pathsStillCurrent(*project, graph, affectedPaths, {}))
@@ -796,13 +747,10 @@ SignalPathConnectPlan prepareSignalPathDisconnect(const SignalPathGraph& graph,
                 == plan.observedOccurrences.end()) plan.observedOccurrences.push_back(occurrence);
     }
     std::map<QUuid, DefinitionFieldGroups> candidates;
-    for (const auto& [source, output] : resetOutputs) {
-        const auto& [guid, scope] = source;
+    for (const auto& [guid, output] : resetOutputs) {
         const auto* provider = manager.findItemByGuid(guid);
         if (!provider) return fail(QObject::tr("The routing configuration source no longer exists"));
-        auto& groups = candidates.try_emplace(guid, provider->fieldGroups).first->second;
-        if (!writeLocal(groups.output, scope, output, resolver, toFieldGroupGuid(guid)))
-            return fail(QObject::tr("The routing configuration cannot be resolved"));
+        candidates.try_emplace(guid, provider->fieldGroups).first->second.output.shared = {FieldGroupMode::Local, output};
     }
     for (const auto& [guid, targets] : removedSends) {
         const auto* provider = manager.findItemByGuid(guid);

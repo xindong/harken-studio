@@ -198,23 +198,48 @@ void PropertyEditSession::captureEffectStart()
 {
     const auto* mix = item_->comp<VMixNode>();
     if (!mix) return;
-    platforms_.reset();
     PlayableStartSnapshot snapshot;
-    snapshot.writesSharedBase = true;
+    snapshot.writesSharedBase = !platforms_;
     snapshot.base = {true, mix->effects.toJson()};
+    if (platforms_) {
+        for (const auto& platform : *platforms_) {
+            const auto found = mix->effectPlatforms.find(platform);
+            snapshot.overlays.append({platform, found == mix->effectPlatforms.end()
+                ? PlayablePropertyStateV1{false, {}}
+                : PlayablePropertyStateV1{true, found->second.toJson()}});
+        }
+    } else {
+        for (const auto& [platform, chain] : mix->effectPlatforms)
+            snapshot.overlays.append({platform, {true, chain.toJson()}});
+    }
     effectStartState_ = std::move(snapshot);
 }
 
 void PropertyEditSession::restoreEffectStart()
 {
-    item_->comp<VMixNode>()->effects = EffectChainLedger::fromJson(effectStartState_->base.value.toArray());
+    auto* mix = item_->comp<VMixNode>();
+    if (effectStartState_->writesSharedBase) {
+        mix->effects = EffectChainLedger::fromJson(effectStartState_->base.value.toArray());
+        mix->effectPlatforms.clear();
+    }
+    for (const auto& [platform, value] : effectStartState_->overlays) {
+        if (value.present) mix->effectPlatforms[platform] = EffectChainLedger::fromJson(value.value.toArray());
+        else mix->effectPlatforms.erase(platform);
+    }
 }
 
 bool PropertyEditSession::previewEffects(const QVariant& value)
 {
     const auto json = QJsonValue::fromVariant(value);
     if (!json.isArray()) return false;
-    item_->comp<VMixNode>()->effects = EffectChainLedger::fromJson(json.toArray());
+    const auto chain = EffectChainLedger::fromJson(json.toArray());
+    auto* mix = item_->comp<VMixNode>();
+    if (effectStartState_->writesSharedBase) {
+        mix->effects = chain;
+        mix->effectPlatforms.clear();
+    } else {
+        for (const auto& [platform, unused] : effectStartState_->overlays) mix->effectPlatforms[platform] = chain;
+    }
     return true;
 }
 

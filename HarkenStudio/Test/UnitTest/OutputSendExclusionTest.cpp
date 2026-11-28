@@ -16,6 +16,8 @@
 #include <QApplication>
 #include <QTemporaryDir>
 
+#include <cmath>
+
 namespace {
 
 void ensureApp()
@@ -204,7 +206,7 @@ TEST_F(OutputSendExclusionTest, RoutingEditsRejectCyclesAtomicallyAcrossLandingS
     const auto android = manager.currentProject()->platforms[1].id;
     ASSERT_TRUE(restoreBusSendState(*source, {source->guid, {route(other->objectID, -6.0f)}, {}}));
     ASSERT_TRUE(restoreBusSendState(*target, {target->guid,
-        {route(other->objectID, -9.0f, {{windows, {.targetBusID = source->objectID}}})}, {}}));
+        {route(source->objectID, -9.0f)}, {}}));
     ASSERT_TRUE(validateBusRouting(*manager.currentProject()).isEmpty());
     const auto snapshot = [&] {
         std::vector<BusSendState> states;
@@ -236,13 +238,13 @@ TEST_F(OutputSendExclusionTest, RoutingEditsRejectCyclesAtomicallyAcrossLandingS
     const QJsonArray accepted{QJsonObject{{"id", rowId},
         {"targetBusID", static_cast<qint64>(other->objectID)}, {"sendLevel", -6.0},
         {"platforms", QJsonObject{{android.toString(QUuid::WithoutBraces),
-            QJsonObject{{"targetBusID", static_cast<qint64>(target->objectID)}}}}}}};
+            QJsonObject{{"sendLevel", -12.0}}}}}}};
     request.insert(QStringLiteral("value"), accepted);
     const auto result = actions.execute(QStringLiteral("set_item_property"), request);
     ASSERT_TRUE(result.success) << result.errorMessage.toStdString();
-    EXPECT_EQ(effectiveBusSends(*source, android)->front().targetBusID, target->objectID);
-    EXPECT_EQ(effectiveBusSends(*source, windows)->front().targetBusID, other->objectID);
-    EXPECT_EQ(effectiveBusSends(*source)->front().targetBusID, other->objectID);
+    EXPECT_EQ(effectiveBusSends(*source, android)->front().targetBusID, other->objectID);
+    EXPECT_FLOAT_EQ(effectiveBusSends(*source, android)->front().sendLevel, std::pow(10.0f, -12.0f / 20.0f));
+    EXPECT_FLOAT_EQ(effectiveBusSends(*source, windows)->front().sendLevel, std::pow(10.0f, -6.0f / 20.0f));
     EXPECT_TRUE(validateBusRouting(*manager.currentProject()).isEmpty());
     const auto after = snapshot();
     ASSERT_EQ(undo.undoStack()->count(), 1);

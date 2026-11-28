@@ -7,8 +7,6 @@
 #include "InspectorSlotStrip.h"
 #include "BindingFieldDecorator.h"
 #include "Widgets/Shared/InspectorFormRow.h"
-#include "Widgets/Common/ProportionalTreeWidget.h"
-#include "Widgets/Common/TableWidget.h"
 #include "Widgets/Shared/PlatformLocalMarker.h"
 #include "Drawers/ListFieldDrawer.h"
 #include "Core/PlatformContextService.h"
@@ -45,13 +43,8 @@
 #include "Core/QtControlSkin.h"
 
 #include <QVBoxLayout>
-#include <QGridLayout>
 #include <QHBoxLayout>
-#include <QHeaderView>
-#include <QTreeWidget>
-#include <QtMath>
 
-#include <numeric>
 #include <QAbstractButton>
 #include <QToolButton>
 #include <QStackedWidget>
@@ -117,45 +110,8 @@ void showFilterDifferences(QGridLayout* layout, QWidget* popup, const QList<Plat
         for (const auto& state : states) cells.append(format(FilterSemantics::value(state, *field)));
         rows.push_back(cells);
     }
-    if (rows.empty()) {
-        auto* label = new QLabel(PropertyEditorEngine::tr("All platforms use the same filter"), popup);
-        label->setTextFormat(Qt::PlainText);
-        layout->addWidget(label, 0, 0);
-        return;
-    }
-    QStringList headers{PropertyEditorEngine::tr("Parameter")};
-    for (const auto& entry : values) headers.append(entry.platform);
-    auto* table = new TableWidget(TableOptions::display(TableBodySizing::Content), popup);
-    const QFontMetrics metrics(table->font());
-    const int padding = ThemeManager::instance().metrics().table.cellPaddingX * 2;
-    QList<int> widths;
-    for (int column = 0; column < headers.size(); ++column) {
-        int width = metrics.horizontalAdvance(headers[column]);
-        for (const auto& cells : rows) width = std::max(width, metrics.horizontalAdvance(cells[column]));
-        widths.append(width + padding);
-    }
-    auto* view = table->createItemView(QStringLiteral("platformFilterValues"), headers, widths);
-    view->setRootIsDecorated(false);
-    view->setSelectionMode(QAbstractItemView::NoSelection);
-    view->setFocusPolicy(Qt::NoFocus);
-    for (int column = 1; column < headers.size(); ++column)
-        view->headerItem()->setTextAlignment(column, Qt::AlignRight | Qt::AlignVCenter);
-    for (const auto& cells : rows) {
-        auto* item = new QTreeWidgetItem(view, cells);
-        for (int column = 1; column < cells.size(); ++column)
-            item->setTextAlignment(column, Qt::AlignRight | Qt::AlignVCenter);
-    }
-    view->ensurePolished();
-    const double total = std::accumulate(widths.begin(), widths.end(), 0);
-    double width = 0.0;
-    for (int column = 0; column < headers.size(); ++column) {
-        const int needed = std::max(static_cast<QAbstractItemView*>(view)->sizeHintForColumn(column),
-                                    view->header()->sectionSizeHint(column));
-        width = std::max(width, needed * total / widths[column]);
-    }
-    table->setMinimumWidth(qCeil(width) + view->frameWidth() * 2 + table->frameWidth() * 2);
-    table->refreshLayout();
-    layout->addWidget(table, 0, 0);
+    showPlatformComparison(layout, popup, PropertyEditorEngine::tr("Parameter"), values, rows,
+                           PropertyEditorEngine::tr("All platforms use the same filter"), Qt::AlignRight);
 }
 
 class ResizablePlainTextEdit final : public QPlainTextEdit

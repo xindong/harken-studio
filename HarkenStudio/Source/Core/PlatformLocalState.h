@@ -15,8 +15,8 @@ struct ProjectItem;
 
 struct PlatformLocalAddress
 {
-    enum class Kind { Property, Filter, GroupField, SourceActive, RowCell, SelectionWeight, SelectionCondition,
-                      SelectionCurve };
+    enum class Kind { Property, Filter, GroupField, SourceActive, RowCell, EffectChain, SelectionWeight,
+                      SelectionCondition, SelectionCurve };
 
     Kind kind = Kind::Property;
     QString field;

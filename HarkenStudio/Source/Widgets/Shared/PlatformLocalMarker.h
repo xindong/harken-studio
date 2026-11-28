@@ -9,6 +9,7 @@ class QGridLayout;
 
 #include <functional>
 #include <optional>
+#include <vector>
 
 namespace harken::studio {
 
@@ -71,5 +72,9 @@ enum class PlatformMarkerHeight { Control, Field };
 
 QWidget* attachPlatformMarker(QWidget* control, PlatformLocalMarker* marker, QWidget* parent,
                               PlatformMarkerHeight height = PlatformMarkerHeight::Control);
+
+void showPlatformComparison(QGridLayout* layout, QWidget* popup, const QString& rowTitle,
+                            const QList<PlatformMarkValue>& platforms, const std::vector<QStringList>& rows,
+                            const QString& identical, Qt::Alignment valueAlignment);
 
 }

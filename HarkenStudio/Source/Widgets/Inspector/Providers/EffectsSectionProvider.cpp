@@ -24,6 +24,9 @@
 #include <QApplication>
 #include <QCheckBox>
 #include <QHBoxLayout>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QSet>
 #include <QLabel>
 #include <QMenu>
 #include <QMouseEvent>
@@ -76,7 +79,9 @@ public:
             return canEdit() && isCurrentContext()
                 && from >= 0 && from < count && to >= 0 && to < count;
         });
-        layout->addWidget(table_);
+        mark_ = new PlatformLocalMarker(this);
+        mark_->setValuesView(showChainDifferences);
+        layout->addWidget(attachPlatformMarker(table_, mark_, this));
         auto* footer = table_->footer();
         add_ = footer->addButton();
         add_->setObjectName(QStringLiteral("listAdd_effects"));
@@ -126,10 +131,10 @@ public:
         const auto view = grouped && project ? buildFieldGroupInspectorView(*project, guid,
             FieldGroupId::Effect, PlatformContextService::instance().context()) : FieldGroupInspectorView{};
         const auto& context = PlatformContextService::instance().context();
-        auto effects = mix ? mix->effects : EffectChainLedger{};
+        auto effects = mix ? mix->effectsForPlatform(currentWorldPlatformScope(context)) : EffectChainLedger{};
         QString tooltip;
         if (grouped) {
-            effects = view.effectChain(true).value_or(EffectChainLedger{});
+            effects = view.effectChain().value_or(EffectChainLedger{});
             tooltip = project ? view.sourceTooltip(*project) : QString{};
         }
         if (!inspector_) {
@@ -238,10 +243,12 @@ private:
         EffectChainLedger ledger;
         if (!ledger.replace(std::move(effects))) return false;
         auto* item = boundItem();
-        auto args = grouped_ ? groupView_.actionArgs(true) : QJsonObject{
+        auto args = grouped_ ? groupView_.actionArgs() : QJsonObject{
             {QStringLiteral("authoring_handle"), static_cast<qint64>(item->objectID)},
             {QStringLiteral("property"), QStringLiteral("effects")}};
         args.insert(grouped_ ? QStringLiteral("effects") : QStringLiteral("value"), ledger.toJson());
+        if (const auto platform = platformEditScope(context_); !grouped_ && platform)
+            args.insert(QStringLiteral("platform_ids"), QJsonArray{ProjectPlatformSemantics::idString(*platform)});
         const auto result = ActionManager::instance().execute(grouped_
             ? QStringLiteral("replace_field_group_effects") : QStringLiteral("set_item_property"),
             args, ActionSource::GUI, this, undoParent);
@@ -400,13 +407,67 @@ private:
         const auto found = std::find_if(effects.begin(), effects.end(),
             [&guid](const EffectEntry& effect) { return effect.guid == guid; });
         if (found == effects.end()) return;
-        if (context_.all || context_.selected.isEmpty()) {
-            found->bypass = !active;
-            found->platformBypass.clear();
-        } else {
-            found->platformBypass[context_.primary] = !active;
-        }
+        found->bypass = !active;
         if (!commit(std::move(effects))) rebuild();
+    }
+
+    static const ProjectItem* presetTarget(const EffectEntry& effect)
+    {
+        const auto* target = effect.mode == EffectMode::Custom
+            ? nullptr : ProjectManager::instance().findItemByGuid(effect.effectGuid);
+        return target && target->type == ProjectItem::Type::Effect ? target : nullptr;
+    }
+
+    static QString slotName(const EffectEntry& effect)
+    {
+        if (effect.mode == EffectMode::Custom)
+            return tr("%1 (Local)").arg(EffectChainSemantics::displayName(effect.custom.type));
+        const auto* target = presetTarget(effect);
+        return target ? target->name : tr("Missing");
+    }
+
+    static QString parameterText(const EffectDefinition& definition)
+    {
+        QStringList parts;
+        const auto& schema = VEffect::schema();
+        for (size_t index = 0; index < std::min(schema.size(), definition.parameters.size()); ++index)
+            parts.append(QStringLiteral("%1 %2").arg(schema[index].label,
+                PlatformLocalMarker::formatterFor(schema[index])(definition.parameters[index])));
+        return parts.join(QStringLiteral(", "));
+    }
+
+    static void showChainDifferences(QGridLayout* layout, QWidget* popup, const QList<PlatformMarkValue>& values)
+    {
+        std::vector<EffectChainLedger> chains;
+        for (const auto& entry : values)
+            chains.push_back(EffectChainLedger::fromJson(QJsonArray::fromVariantList(entry.value.toList())));
+        const bool identical = std::all_of(chains.begin(), chains.end(),
+            [&chains](const EffectChainLedger& chain) { return chain == chains.front(); });
+        size_t count = 0;
+        for (const auto& chain : chains) count = std::max(count, chain.size());
+        std::vector<QStringList> rows;
+        for (size_t index = 0; !identical && index < count; ++index) {
+            QStringList cells;
+            QSet<QByteArray> entries;
+            for (const auto& chain : chains) {
+                if (index >= chain.size()) {
+                    cells.append(QString{});
+                    entries.insert({});
+                    continue;
+                }
+                const auto& effect = chain.entries()[index];
+                cells.append(effect.bypass ? tr("%1 (Off)").arg(slotName(effect)) : slotName(effect));
+                entries.insert(QJsonDocument(QJsonArray{effect.toJson()}).toJson(QJsonDocument::Compact));
+            }
+            if (entries.size() > 1 && QSet<QString>(cells.begin(), cells.end()).size() == 1)
+                for (size_t column = 0; column < chains.size(); ++column)
+                    if (const auto& effect = chains[column].entries()[index]; effect.mode == EffectMode::Custom)
+                        cells[column] = tr("%1: %2").arg(cells[column], parameterText(effect.custom));
+            cells.prepend(QString::number(index + 1));
+            rows.push_back(cells);
+        }
+        showPlatformComparison(layout, popup, tr("Slot"), values, rows,
+                               tr("All platforms use the same effects"), Qt::AlignLeft);
     }
 
     void cancelPendingEdits()
@@ -442,19 +503,19 @@ private:
         table_->bodyMessage()->setText(groupView_.diagnostics.join(QLatin1Char('\n')));
         table_->bodyMessage()->setVisible(grouped_ && !groupView_.valid);
         auto* item = boundItem();
+        mark_->bind(item, PlatformLocalAddress{.kind = PlatformLocalAddress::Kind::EffectChain,
+            .field = QStringLiteral("effects"), .group = FieldGroupId::Effect,
+            .canInherit = grouped_ && groupView_.canInherit});
+        mark_->setEditable(editable);
         if (item) {
             const auto& effects = effects_.entries();
-            const auto platform = currentWorldPlatformScope(context_);
-            const auto shown = platform ? effects_.forPlatform(*platform) : effects_;
             for (size_t index = 0; index < effects.size(); ++index) {
                 const auto& effect = effects[index];
                 const QUuid guid = effect.guid;
                 const uint64_t generation = generation_;
                 const bool custom = effect.mode == EffectMode::Custom;
-                auto* target = custom ? nullptr : ProjectManager::instance().findItemByGuid(effect.effectGuid);
-                if (target && target->type != ProjectItem::Type::Effect) target = nullptr;
-                const QString name = custom ? tr("%1 (Local)").arg(EffectChainSemantics::displayName(effect.custom.type))
-                    : target ? target->name : tr("Missing");
+                const auto* target = presetTarget(effect);
+                const QString name = slotName(effect);
                 auto* row = new QWidget(table_->rowsWidget());
                 row->setObjectName(QStringLiteral("effectRow"));
                 row->setProperty("effectGuid", guid);
@@ -564,18 +625,13 @@ private:
                 auto* activeCell = table_->createCell(row);
                 auto* active = new QCheckBox(activeCell);
                 active->setObjectName(QStringLiteral("effectActive"));
-                active->setChecked(!shown.entries()[index].bypass);
+                active->setChecked(!effect.bypass);
                 active->setEnabled(editable);
                 active->setToolTip(tr("Active"));
                 connect(active, &QCheckBox::toggled, this, [this, generation, guid](bool checked) {
                     if (generation == generation_ && canEdit()) setActive(guid, checked);
                 });
-                auto* marker = new PlatformLocalMarker(activeCell);
-                marker->setValueFormatter([](const QVariant& bypass) { return bypass.toBool() ? tr("Off") : tr("On"); });
-                marker->bind(item, PlatformLocalAddress{PlatformLocalAddress::Kind::RowCell, QStringLiteral("effects"),
-                    FieldGroupId::Effect, grouped_ && groupView_.canInherit, guid, QStringLiteral("bypass")});
-                marker->setEditable(editable);
-                activeCell->addWidget(attachPlatformMarker(active, marker, activeCell), 0, Qt::AlignCenter);
+                activeCell->addWidget(active, 0, Qt::AlignCenter);
                 rowLayout->addWidget(activeCell);
                 layout->addWidget(row);
                 table_->registerRow(row, {number, effectCell, activeCell});
@@ -618,6 +674,7 @@ private:
     QString search_;
     QPointer<InspectorPanel> inspector_;
     TableWidget* table_ = nullptr;
+    PlatformLocalMarker* mark_ = nullptr;
     QToolButton* add_ = nullptr;
     QMenu* addMenu_ = nullptr;
     QToolButton* remove_ = nullptr;

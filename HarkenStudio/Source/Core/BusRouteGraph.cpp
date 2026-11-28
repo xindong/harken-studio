@@ -50,8 +50,11 @@ BusSendState withoutOutputConflicts(BusSendState state, uint32_t outputBusID)
         };
         auto& rows = sidechain ? state.sidechains : state.sends;
         std::erase_if(rows, [&](const BusRoute& row) { return conflicts(row.forPlatform({})); });
-        for (auto& row : rows)
-            std::erase_if(row.platforms, [&](const auto& cell) { return conflicts(row.forPlatform(cell.first)); });
+        for (auto& row : rows) {
+            for (auto& [platform, cells] : row.platforms)
+                if (conflicts(row.forPlatform(platform))) cells.duckTarget.reset();
+            std::erase_if(row.platforms, [](const auto& cell) { return cell.second == BusRouteCells{}; });
+        }
     }
     return state;
 }

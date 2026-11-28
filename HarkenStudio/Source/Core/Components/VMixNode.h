@@ -97,10 +97,12 @@ public:
 
     BindingLedger bindings;
     EffectChainLedger effects;
+    std::map<ProjectPlatformId, EffectChainLedger> effectPlatforms;
 
-    EffectChainLedger effectsForPlatform(PlatformScope platform) const
+    const EffectChainLedger& effectsForPlatform(PlatformScope platform) const
     {
-        return platform ? effects.forPlatform(*platform) : effects;
+        const auto found = platform ? effectPlatforms.find(*platform) : effectPlatforms.end();
+        return found == effectPlatforms.end() ? effects : found->second;
     }
 
     void toJsonExtra(QJsonObject& j) const override
@@ -109,6 +111,12 @@ public:
         if (!sidechains.empty()) j[QStringLiteral("sidechains")] = QJsonArray::fromVariantList(getField(QStringLiteral("sidechains")).toList());
         if (!bindings.isEmpty()) j[QStringLiteral("bindings")] = bindings.toJson();
         if (!effects.isEmpty())  j[QStringLiteral("effects")]  = effects.toJson();
+        if (!effectPlatforms.empty()) {
+            QJsonObject platforms;
+            for (const auto& [platform, chain] : effectPlatforms)
+                platforms.insert(ProjectPlatformSemantics::idString(platform), chain.toJson());
+            j.insert(QStringLiteral("effectsPlatforms"), platforms);
+        }
     }
 
     bool fromJson(const QJsonObject& j) override
@@ -129,6 +137,10 @@ public:
     {
         bindings = BindingLedger::fromJson(j[QStringLiteral("bindings")].toArray());
         effects  = EffectChainLedger::fromJson(j[QStringLiteral("effects")].toArray());
+        effectPlatforms.clear();
+        const auto platforms = j.value(QStringLiteral("effectsPlatforms")).toObject();
+        for (auto it = platforms.begin(); it != platforms.end(); ++it)
+            effectPlatforms.emplace(QUuid(it.key()), EffectChainLedger::fromJson(it.value().toArray()));
     }
 };
 

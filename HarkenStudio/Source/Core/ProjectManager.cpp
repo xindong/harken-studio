@@ -2583,6 +2583,8 @@ void remintEffectIdentities(ProjectItem& item)
     };
     if (auto* mix = item.comp<VMixNode>()) {
         remintEffects(mix->effects, {});
+        for (auto& [platform, effects] : mix->effectPlatforms)
+            remintEffects(effects, {});
     }
     VisitAuthoredEffectChains(item.fieldGroups, remintEffects);
 }
@@ -5163,9 +5165,13 @@ QJsonObject folderComponentReferences(const ProjectItem& item)
 {
     QJsonObject components;
     if (const auto* mix = item.comp<VMixNode>()) {
+        QJsonObject platforms;
+        for (const auto& [platform, effects] : mix->effectPlatforms)
+            platforms.insert(ProjectPlatformSemantics::idString(platform), effects.toJson());
         components.insert(QStringLiteral("mixnode"), QJsonObject{
             {QStringLiteral("bindings"), mix->bindings.toJson()},
-            {QStringLiteral("effects"), mix->effects.toJson()}});
+            {QStringLiteral("effects"), mix->effects.toJson()},
+            {QStringLiteral("effectsPlatforms"), platforms}});
     }
     if (const auto* selection = item.comp<VSelection>())
         components.insert(QStringLiteral("selection"), QJsonObject{
@@ -5189,6 +5195,15 @@ void applyFolderComponentReferences(ProjectItem& item, const QJsonObject& state)
         if (mix->effects.toJson() != effects) {
             mix->effects = EffectChainLedger::fromJson(effects);
             changedProperties.append(QStringLiteral("effects"));
+        }
+        std::map<ProjectPlatformId, EffectChainLedger> effectPlatforms;
+        const auto platforms = value.value(QStringLiteral("effectsPlatforms")).toObject();
+        for (auto it = platforms.begin(); it != platforms.end(); ++it)
+            effectPlatforms.emplace(QUuid(it.key()), EffectChainLedger::fromJson(it.value().toArray()));
+        if (mix->effectPlatforms != effectPlatforms) {
+            mix->effectPlatforms = std::move(effectPlatforms);
+            if (!changedProperties.contains(QStringLiteral("effects")))
+                changedProperties.append(QStringLiteral("effects"));
         }
     }
     if (auto* selection = item.comp<VSelection>()) {
@@ -5381,11 +5396,6 @@ DeletedSubtreeRefLog ProjectManager::cleanupReferencesToDeletedSubtree(ProjectIt
         if (!before) return;
         const auto keep = [&](std::vector<BusRoute> rows) {
             std::erase_if(rows, [&](const BusRoute& row) { return deletedObjects.contains(row.targetBusID); });
-            for (auto& row : rows) {
-                for (auto& [platform, cells] : row.platforms)
-                    if (cells.targetBusID && deletedObjects.contains(*cells.targetBusID)) cells.targetBusID.reset();
-                std::erase_if(row.platforms, [](const auto& cell) { return cell.second == BusRouteCells{}; });
-            }
             return rows;
         };
         const BusSendState after{owner->guid, keep(before->sends), keep(before->sidechains)};

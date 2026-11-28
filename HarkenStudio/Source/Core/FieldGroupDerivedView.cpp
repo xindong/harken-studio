@@ -75,10 +75,6 @@ bool refreshFieldGroupDerivedViews(ProjectData& project)
                 if constexpr (requires { authored.duckTarget; }) route.duckTarget = authored.duckTarget;
                 for (const auto& [platform, cells] : authored.platforms) {
                     BusRouteCells derived;
-                    if (cells.targetBusID) {
-                        derived.targetBusID = busId(*cells.targetBusID);
-                        if (!derived.targetBusID) return false;
-                    }
                     derived.sendLevelDb = cells.sendLevel;
                     if constexpr (requires { cells.duckTarget; }) derived.duckTarget = cells.duckTarget;
                     route.platforms.emplace(fromFieldGroupGuid(platform), derived);

@@ -2020,11 +2020,11 @@ ActionResult handleEffectsItemProperty(ProjectManager* projectManager, ProjectIt
 {
     if (PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(item->type))
         return {false, {}, "AUTHORING_RESTRICTED", "Use replace_field_group_effects for definition FX"};
-    if (args.contains(QStringLiteral("platform_ids")) || args.contains(QStringLiteral("override_operation"))
-            && args.value(QStringLiteral("override_operation")) != QJsonValue(QStringLiteral("set_override")))
-        return {false, {}, "INVALID_ARGS",
-                "Effect rows are shared by every platform; platform Active values live inside each row"};
-    if (!args.value(QStringLiteral("value")).isArray())
+    const auto operation = args.value(QStringLiteral("override_operation")).toString(QStringLiteral("set_override"));
+    const bool reset = operation == QStringLiteral("clear_platform_override");
+    if (!reset && operation != QStringLiteral("set_override"))
+        return {false, {}, "INVALID_ARGS", "Unsupported effect override operation"};
+    if (!reset && !args.value(QStringLiteral("value")).isArray())
         return {false, {}, "INVALID_ARGS", "'value' must be an effects array"};
     EffectChainLedger parsed = EffectChainLedger::fromJson(
         args.value(QStringLiteral("value")).toArray());
@@ -2035,42 +2035,60 @@ ActionResult handleEffectsItemProperty(ProjectManager* projectManager, ProjectIt
             effect.guid = QUuid::createUuid();
         if (!project || !EffectChainSemantics::resolve(effect, *project))
             return {false, {}, "INVALID_ARGS", "Effect reference does not resolve"};
-        for (const auto& [platform, bypass] : effect.platformBypass)
-            if (!ProjectPlatformSemantics::find(project->platforms, platform))
-                return {false, {}, "INVALID_ARGS", "Effect platform value does not belong to the project"};
     }
     EffectChainLedger checked;
     if (!checked.replace(std::move(entries)))
         return {false, {}, "INVALID_ARGS", "Invalid typed effect chain"};
+    const auto plan = parsePlayableLandingPlan(args, ProjectPlatformSemantics::ids(project->platforms));
+    if (!plan.error.isEmpty()) return {false, {}, "INVALID_ARGS", plan.error};
+    if (reset && plan.kind != PlayableLandingKind::Overlay)
+        return {false, {}, "INVALID_ARGS", "clear_platform_override requires platform_ids"};
     PropertyEditSession::cancelActiveFor(item, QStringLiteral("effects"));
     auto* mix = item->comp<VMixNode>();
     const auto oldChain = mix->effects;
-    const auto newChain = checked;
+    const auto oldPlatforms = mix->effectPlatforms;
+    auto newChain = oldChain;
+    auto newPlatforms = oldPlatforms;
+    if (plan.kind == PlayableLandingKind::Shared) {
+        newChain = checked;
+        newPlatforms.clear();
+    } else {
+        for (const auto& platform : plan.selected) {
+            if (reset) newPlatforms.erase(platform);
+            else newPlatforms[platform] = checked;
+        }
+    }
+    const QJsonArray newValue = checked.toJson();
     ActionResult result;
     result.success = true;
     result.data = QJsonObject{{"property", QStringLiteral("effects")},
-                              {"value", newChain.toJson()}};
-    if (oldChain == newChain) return result;
+                              {"value", newValue}};
+    if (oldChain == newChain && oldPlatforms == newPlatforms) return result;
     mix->effects = newChain;
+    mix->effectPlatforms = newPlatforms;
     QString identityError;
     const bool valid = validateProjectObjectIdentities(*project, &identityError);
     mix->effects = oldChain;
+    mix->effectPlatforms = oldPlatforms;
     if (!valid) return {false, {}, "INVALID_ARGS", identityError};
     const QUuid guid = item->guid;
-    auto apply = [guid](const EffectChainLedger& chain, const QObject* origin) {
+    auto apply = [guid](const EffectChainLedger& chain,
+                        const std::map<ProjectPlatformId, EffectChainLedger>& platforms,
+                        const QObject* origin) {
         ProjectItem* target = ProjectManager::instance().findItemByGuid(guid);
         auto* targetMix = target ? target->comp<VMixNode>() : nullptr;
         if (!targetMix) return;
         PropertyEditSession::cancelActiveFor(target, QStringLiteral("effects"));
         targetMix->effects = chain;
+        targetMix->effectPlatforms = platforms;
         target->markDirty();
         emit ProjectManager::instance().itemPropertyChanged(
             target, QStringLiteral("effects"), origin);
         ProjectManager::instance().requestResync(target);
     };
-    apply(newChain, originator);
-    result.undoFn = [apply, oldChain]() { apply(oldChain, nullptr); };
-    result.redoFn = [apply, newChain]() { apply(newChain, nullptr); };
+    apply(newChain, newPlatforms, originator);
+    result.undoFn = [apply, oldChain, oldPlatforms]() { apply(oldChain, oldPlatforms, nullptr); };
+    result.redoFn = [apply, newChain, newPlatforms]() { apply(newChain, newPlatforms, nullptr); };
     result.undoText = QStringLiteral("Set effects");
     result.authoringWriteSet = QSet<QUuid>{item->guid};
     return result;

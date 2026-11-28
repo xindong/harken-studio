@@ -55,9 +55,6 @@ void ValidateRouteRows(const std::vector<Row>& rows, FieldGroupId group, Diagnos
                 AddDiagnostic(diagnostics, DiagnosticCode::InvalidPlatform, group, "platforms", i);
             if (cells == decltype(cells){})
                 AddDiagnostic(diagnostics, DiagnosticCode::InvalidValue, group, "platforms", i);
-            if (cells.targetBusID && harken::studio::types::IsNull(*cells.targetBusID))
-                AddDiagnostic(diagnostics, DiagnosticCode::EmptyRequiredReference,
-                              group, "targetBusID", i);
             if (cells.sendLevel && !(std::isfinite(*cells.sendLevel)
                     && *cells.sendLevel >= -96.0f && *cells.sendLevel <= 24.0f))
                 AddDiagnostic(diagnostics, DiagnosticCode::InvalidValue, group, "sendLevel", i);
@@ -108,14 +105,15 @@ void ValidateState(const GroupState<Payload>& state, FieldGroupId group,
                       group, "localHistory");
     }
     if (state.localHistory) {
-        if (state.localFields == 0 || (state.localFields & ~FieldGroupPropertyMask(group)) != 0
+        if (state.localFields == 0
+            || (state.localFields & ~(scope ? FieldGroupPlatformMask(group) : FieldGroupPropertyMask(group))) != 0
             || (!scope && state.localFields != FieldGroupPropertyMask(group)))
             AddDiagnostic(diagnostics, DiagnosticCode::InvalidValue, group, "values");
         auto payloadDiagnostics = ValidateFieldGroupPayload(group, *state.localHistory);
         for (const auto& diagnostic : payloadDiagnostics) {
             bool present = false;
             VisitFieldGroupFields(*state.localHistory, [&](auto property, const char* field, const auto&) {
-                if (diagnostic.field == field || IsFieldGroupRowList(group))
+                if (diagnostic.field == field || IsFieldGroupRowList(group) || group == FieldGroupId::Effect)
                     present = (state.localFields & (FieldGroupFieldMask(property))) != 0;
             });
             if (present) diagnostics.push_back(diagnostic);
@@ -213,23 +211,14 @@ void ApplyFieldGroupPlatform(FieldGroupPayload& payload, AuthoringGuid platform)
 {
     if (auto* send = std::get_if<SendFieldGroup>(&payload)) {
         ApplyRows(send->sends, platform, [](SendFieldGroupRow& row, const SendFieldGroupCells& cells) {
-            if (cells.targetBusID) row.targetBusID = *cells.targetBusID;
             if (cells.sendLevel) row.sendLevel = *cells.sendLevel;
         });
     } else if (auto* sidechain = std::get_if<SidechainFieldGroup>(&payload)) {
         ApplyRows(sidechain->sidechains, platform,
             [](SidechainFieldGroupRow& row, const SidechainFieldGroupCells& cells) {
-                if (cells.targetBusID) row.targetBusID = *cells.targetBusID;
                 if (cells.sendLevel) row.sendLevel = *cells.sendLevel;
                 if (cells.duckTarget) row.duckTarget = *cells.duckTarget;
             });
-    } else if (auto* effects = std::get_if<EffectFieldGroup>(&payload)) {
-        QByteArray bytes(16, Qt::Uninitialized);
-        for (int index = 0; index < 8; ++index) {
-            bytes[index] = static_cast<char>((platform.high >> (56 - index * 8)) & 0xff);
-            bytes[8 + index] = static_cast<char>((platform.low >> (56 - index * 8)) & 0xff);
-        }
-        effects->effects = effects->effects.forPlatform(QUuid::fromRfc4122(bytes));
     }
 }
 
@@ -311,6 +300,12 @@ std::uint64_t FieldGroupPropertyMask(FieldGroupId group) noexcept
     case FieldGroupId::Conversion: return FieldGroupFieldMask(ConversionFieldId::Settings);
     }
     return 0;
+}
+
+std::uint64_t FieldGroupPlatformMask(FieldGroupId group) noexcept
+{
+    const auto mask = FieldGroupPropertyMask(group);
+    return group == FieldGroupId::Output ? mask & ~FieldGroupFieldMask(PropertyId::OutputBusRef) : mask;
 }
 
 std::vector<FieldGroupDiagnostic> ValidateFieldGroupPayload(
@@ -468,9 +463,6 @@ std::vector<FieldGroupDiagnostic> FieldGroupReferenceCatalog::Validate(
                 AddDiagnostic(diagnostics, DiagnosticCode::DuplicateSendTarget,
                               group, "targetBusID", i, guid);
             validateReference(guid, FieldGroupReferenceKind::Bus, "targetBusID", i);
-            for (const auto& [platform, cells] : sends[i].platforms)
-                if (cells.targetBusID)
-                    validateReference(*cells.targetBusID, FieldGroupReferenceKind::Bus, "targetBusID", i);
         }
         break;
     }
@@ -483,9 +475,6 @@ std::vector<FieldGroupDiagnostic> FieldGroupReferenceCatalog::Validate(
                 AddDiagnostic(diagnostics, DiagnosticCode::DuplicateSendTarget,
                               group, "targetBusID", i, guid);
             validateReference(guid, FieldGroupReferenceKind::Bus, "targetBusID", i);
-            for (const auto& [platform, cells] : sidechains[i].platforms)
-                if (cells.targetBusID)
-                    validateReference(*cells.targetBusID, FieldGroupReferenceKind::Bus, "targetBusID", i);
         }
         break;
     }

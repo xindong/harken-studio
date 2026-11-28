@@ -418,7 +418,7 @@ const QMap<QString, Contract>& contracts()
             if (command == "set_field_group_field" || command == "clear_field_group_field_override") { fields.insert("field", text()); required.append("field"); }
             if (command == "set_field_group_field") { fields.insert("value", described({}, "Typed value: GUID for outputBusRef/spatial.attenuationRef/settingsRef, boolean for spatial.is3DEnabled, number for scalar fields; null resets outputBusRef to Master or clears settingsRef.")); required.append("value"); }
             const auto routeRow = [&](bool sidechain) {
-                QJsonObject cells{{"targetBusID", uuid()}, {"sendLevel", number()}};
+                QJsonObject cells{{"sendLevel", number()}};
                 QJsonObject row{{"id", uuid()}, {"targetBusID", uuid()}, {"sendLevel", number()}};
                 if (sidechain) {
                     cells.insert("duckTarget", boolean());
@@ -429,7 +429,7 @@ const QMap<QString, Contract>& contracts()
                 auto platforms = object();
                 platforms.insert("propertyNames", projectPlatformIdSchema());
                 platforms.insert("additionalProperties", platformCells);
-                row.insert("platforms", described(platforms, "Per-platform values for this row's cells; rows themselves are shared by every platform."));
+                row.insert("platforms", described(platforms, "Per-platform values for this row's cells; rows and targets are shared by every platform."));
                 return object(row, {"id", "targetBusID", "sendLevel"});
             };
             if (command == "replace_field_group_sends") {

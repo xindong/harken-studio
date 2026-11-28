@@ -51,8 +51,8 @@
 | Effects / 独立编辑器跟随 | 所有未 Pin 实例只跟随有效的 Effect 预设选择和 FX 行单选；单选只更新已开窗口，不新建。选择 Bus 等所属对象（无论是否有 FX）、其他对象或取消选择均保留当前效果器，不自动选择其他槽位。Pin 保留绑定，解除 Pin 时若最近一次效果器选择仍有效则立即同步，否则保留自身绑定；当前效果器失效时隐藏参数，槽位删除后撤销可恢复，关闭工程清空绑定和选择记录 |
 | Effects / 继承 | Sound、Container、Layer、Track、Segment 沿归属父级继承整条链，包括 Custom／Preset、顺序、Active，不与父链叠加；根对象直接编辑自身配置，Bus 不继承 |
 | Effects / 本地历史 | 首次关闭 Inherit 复制当前有效链并分配本对象槽位身份；已有本地历史时恢复历史；开启继承保留历史；Rebuild Local from Current Effective Values 使用当前有效链重建本地配置 |
-| Effects / 平台 | 行由所有平台共享，增删、排序、替换和 Custom 参数作用于全部平台；Active 可按平台不同，All Platforms 修改共享值并清除各平台的 Active，单平台只改当前平台，与共享相同的平台值予以保留；Inherit 跨平台共享；Bus 同样适用，但没有 Inherit |
-| Effects / 有效值 | 继承状态展示当前平台的有效链并禁止增删、排序和修改；继承 Custom 仍可打开编辑器查看，Preset 保留 ObjectRef 导航；All Platforms 同样显示当前平台的 Active |
+| Effects / 平台 | 整条链是一个平台覆写单元，含槽位、顺序、Custom／Preset、参数与 Active；单平台下的任何修改先把当前生效的整条链复制为该平台的链再修改，All Platforms 修改写入共享链并清除各平台的链，与共享相同的平台链予以保留，移除覆写只能整条移除；Inherit 跨平台共享；Bus 同样适用，但没有 Inherit。平台标记贴在 Effects 表格右侧并与表格等高，单击以标准表格对比各平台的链：每行一个槽位、每列一个平台，当前平台标注 (current)，单元格为效果名，旁通时标注 (Off)；各平台的链完全相同时提示无差异 |
+| Effects / 有效值 | 继承状态展示当前平台的有效链并禁止增删、排序和修改；继承 Custom 仍可打开编辑器查看，Preset 保留 ObjectRef 导航；All Platforms 同样显示当前平台的有效链 |
 | Effects / 资产 | Assets 的 Effect 桶通过 New Effect > Limiter 新建；创建后插件类型固定，Inspector 常规属性区仅显示 Notes，无 Status section |
 | Effects / 内嵌编辑区 | 双击 Effect 对象在 Inspector 下半区显示 Effect Editor，标题暂用居中的 Details，上半区保留常规属性；初始上下比例 1:1，分隔边框可拖动；每个 Inspector 首次展开后，选择其他 Effect 直接更新内容并保留比例，切换到非 Effect、清空选择、删除当前资产或关闭工程时清空并隐藏，再选择 Effect 自动恢复；每次单击右上 detach 均为当前资产新建独立浮动 Effect Editor，已有同类型实例及内嵌编辑区保留；新窗沿当前屏幕已有浮窗向右下错开，遇屏幕边缘回绕，已有窗口及已记忆位置不重排；固定 Inspector 保持自身对象 |
 | Effects / Effect Editor | Limiter 使用两行标准表单：Ceiling 范围 −24～0 dB、默认 0 dB，Release 范围 1～1000 ms、默认 100 ms，提供标准滑条、数值输入与复位；Preset 与 Custom 参数支持编辑、撤销重做及保存，两者均跨平台共享，继承 Custom 只读；独立编辑器支持多实例、固定和布局恢复，槽位编辑器随该槽位的替换、模式切换及当前平台有效配置更新 |
@@ -60,10 +60,10 @@
 | Send / 新增 | 直接选择目标 Bus，Volume 控制发送到目标混音的增益 |
 | Sidechain / 新增 | `Sidechain to...` 新行默认关闭 Target Ducking，`Sidechain to... (Ducking Enabled)` 默认开启 |
 | Sidechain / Target Ducking | 开启后，源信号触发目标 Bus 的内建 Ducking。Volume 控制检测输入增益，切换勾选保留当前值。关闭时侧链配置随工程保存，供插件辅助输入使用 |
-| 路由 / 目标与增益 | 增益范围为 −96 至 +24 dB。每个平台上，同一来源和目标可各有一条 Send、未勾选的 Sidechain、勾选的 Sidechain。与 Output 同目标时只允许未勾选的 Sidechain。冲突的选择和切换禁用，任一平台冲突或成环时整次编辑被拒绝 |
-| 路由 / 继承与平台 | 继承时行只读，Volume 显示为禁用的滑条与带框数值，与 Target 一致，标记照常附着。Send、Sidechain 是两份独立数据，各有一个跨平台共享的 Inherit。行由所有平台共享，增删和排序作用于全部平台；Target、Volume 及 Sidechain 的 Target Ducking 可按平台不同。All Platforms 修改共享值并清除各平台的对应单元格，单平台只改当前平台，与共享相同的平台值予以保留。继承的 Ducking 在最终 Sound 上生效，Bus 也可以触发目标 Bus 的 Ducking |
+| 路由 / 目标与增益 | 增益范围为 −96 至 +24 dB。同一来源和目标可各有一条 Send、未勾选的 Sidechain、勾选的 Sidechain。与 Output 同目标时只允许未勾选的 Sidechain，按平台不同的 Target Ducking 也须满足这一点。冲突的选择和切换禁用，任一平台冲突或成环时整次编辑被拒绝 |
+| 路由 / 继承与平台 | 继承时行只读，Volume 显示为禁用的滑条与带框数值，与 Target 一致，标记照常附着。Send、Sidechain 是两份独立数据，各有一个跨平台共享的 Inherit。所有平台的混音链路相同：行、行序与 Target 由所有平台共享，没有平台标记，任何平台下修改 Target 都写入共享值，并保留该行的 Volume 和各平台值；只有 Volume 及 Sidechain 的 Target Ducking 可按平台不同。All Platforms 修改共享值并清除各平台的对应单元格，单平台只改当前平台，与共享相同的平台值予以保留。Bus 改变输出时，只清除与新输出冲突的平台 Target Ducking，Volume 保留。继承的 Ducking 在最终 Sound 上生效，Bus 也可以触发目标 Bus 的 Ducking |
 | 路由 / 反查 | Receives 列出当前平台有效路由。Type 为 Send 或 Sidechain，Ducking 在 Send 行留空，在 Sidechain 行显示居中的只读勾选框。可拖动 Type 与 Ducking 之间的分隔线调整列宽。信号图中的发送连线仅标注 Send 或 Sidechain。编辑和撤销作用于所选路由及平台 |
-| 平台标记 | 可按平台覆盖的控件右侧贴合 8 个逻辑像素宽的标记；Sources 的 Active 标记在表头右侧，Send、Sidechain 的 Target、Volume、Target Ducking 单元格和 Effects 的 Active 勾选框各带一个标记。标记独立于所附控件，与控件共用边框，不受控件悬停、选中或编辑影响；表头标记不参与列的拖动与调宽。无平台值时使用面板背景色，各处表现一致；可编辑时，仅其他平台有平台值使用 Dock 非焦点标签的强调线颜色，当前平台有平台值使用强调色；只读（含继承）时按所示值的来源判断，任一平台有覆写即以禁用文字色填充，不区分当前平台与其他平台。悬停提示统一为 Platform Mark；仅在可单击或可右键操作时显示悬停反馈，只读且无平台值的标记无悬停反馈。着色时单击列出各平台的值，平台名左对齐、值右对齐，当前平台标注 (current)；继承时列出来源的值。右键菜单为 Override on Current Platform 或 Remove Platform Override；All Platforms 下覆盖后自动切换为单平台编辑。字段组继承时不显示未生效的本地历史。蓝图暂未提供标记 |
+| 平台标记 | 可按平台覆盖的控件右侧贴合 8 个逻辑像素宽的标记；Sources 的 Active 标记在表头右侧，Send、Sidechain 的 Volume、Target Ducking 单元格各带一个标记，Effects 表格右侧带一个整链标记；Output、Send、Sidechain 的 Target 跨平台共享，不带标记。标记附着在具体参数上，没有行的表格（如空的 Send）不显示单元格标记。标记独立于所附控件，与控件共用边框，不受控件悬停、选中或编辑影响；表头标记不参与列的拖动与调宽。无平台值时使用面板背景色，各处表现一致；可编辑时，仅其他平台有平台值使用 Dock 非焦点标签的强调线颜色，当前平台有平台值使用强调色；只读（含继承）时按所示值的来源判断，任一平台有覆写即以禁用文字色填充，不区分当前平台与其他平台。悬停提示统一为 Platform Mark；仅在可单击或可右键操作时显示悬停反馈，只读且无平台值的标记无悬停反馈。着色时单击列出各平台的值，平台名左对齐、值右对齐，当前平台标注 (current)；继承时列出来源的值。右键菜单为 Override on Current Platform 或 Remove Platform Override；All Platforms 下覆盖后自动切换为单平台编辑。字段组继承时不显示未生效的本地历史。蓝图暂未提供标记 |
 | Sources / Language | 关闭时显示普通组，开启时显示全部项目语言组（含空组）；Toolbar 当前语言置顶，其余按项目语言顺序；两类数据分别保留 |
 | Sources / 拖入 | 组内导入边框限定目标语言组；Original 引用框独立处理引用替换与高光，拒绝的拖入不转为组内导入 |
 | Sources / Active | 同一平台与语言只选一个来源；始终显示当前平台的选择，平台标记在表头右侧，区分语言时在各语言分组右侧 |
@@ -105,7 +105,7 @@ Frequency 范围为 20–20000 Hz，四节默认值依次为 20000、20、200、
 
 | 范围 | 包含内容 | Inherit 位置 |
 |---|---|---|
-| 输出 | Target（目标 Bus）、Volume（输出音量） | Route > Output |
+| 输出 | Target（目标 Bus，跨平台共享）、Volume（输出音量，可按平台不同） | Route > Output |
 | 发送 | Sends | Route > Send |
 | 侧链 | Sidechains | Route > Sidechain |
 | 空间属性 | 声像、3D 开关、衰减引用、衰减距离缩放 | Spatial > Rating |

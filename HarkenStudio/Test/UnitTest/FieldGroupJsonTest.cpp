@@ -114,10 +114,10 @@ TEST(FieldGroupJson, FiniteFloatBitsAndTableRowOrderRoundTripDeterministically)
     DefinitionFieldGroups groups;
     groups.output.shared = {FieldGroupMode::Local, OutputFieldGroup{kBus, -0.0f}};
     groups.send.shared = {FieldGroupMode::Local,
-                         SendFieldGroup{{{{1, 1}, kSendBus, 0.1f, {{{0, 101}, {kBus, -0.0f}}}},
+                         SendFieldGroup{{{{1, 1}, kSendBus, 0.1f, {{{0, 101}, {-0.0f}}}},
                                          {{1, 2}, kBus, -0.0f}}}};
     groups.sidechain.shared = {FieldGroupMode::Local,
-                              SidechainFieldGroup{{{{1, 3}, kBus, 0.1f, true, {{{0, 101}, {{}, {}, false}}}}}}};
+                              SidechainFieldGroup{{{{1, 3}, kBus, 0.1f, true, {{{0, 101}, {{}, false}}}}}}};
     SpatialRatingFieldGroup rating;
     rating.spatialPanning = std::numeric_limits<float>::denorm_min();
     rating.spatialAttenuationDistanceScaling = 3.333333f;
@@ -133,10 +133,11 @@ TEST(FieldGroupJson, FiniteFloatBitsAndTableRowOrderRoundTripDeterministically)
     preset.guid = QUuid(QStringLiteral("a0b1c2d3-e4f5-4638-9876-123456789abd"));
     preset.effectGuid = QUuid(QStringLiteral("fedcba98-7654-3210-ffff-ffffffffffff"));
     preset.bypass = true;
-    preset.platformBypass[QUuid(QStringLiteral("00000000-0000-0000-0000-000000000065"))] = false;
     EffectFieldGroup effects;
     ASSERT_TRUE(effects.effects.replace({custom, preset}));
     groups.effects.shared = {FieldGroupMode::Local, effects};
+    ASSERT_TRUE(effects.effects.replace({preset, custom}));
+    groups.effects.platforms[{0, 101}] = {FieldGroupMode::UseShared, effects};
     std::string text;
     std::string error;
     ASSERT_TRUE(WriteFieldGroupsJson(groups, text, error)) << error;

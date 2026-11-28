@@ -45,7 +45,7 @@ struct FieldGroupInspectorView {
 
     const FieldGroupInspectorScopeView* displayed() const;
     FieldGroupInspectorFieldView field(const QString& fieldName) const;
-    std::optional<EffectChainLedger> effectChain(bool shared = false) const;
+    std::optional<EffectChainLedger> effectChain() const;
     QJsonObject actionArgs(bool sharedScope = false) const;
     QString sourceTooltip(const ProjectData& project, const QString& fieldName = {}) const;
 };

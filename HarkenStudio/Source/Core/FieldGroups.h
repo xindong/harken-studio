@@ -50,7 +50,6 @@ struct OutputFieldGroup {
 };
 
 struct SendFieldGroupCells {
-    std::optional<harken::studio::project_schema::AuthoringGuid> targetBusID;
     std::optional<float> sendLevel;
 
     bool operator==(const SendFieldGroupCells&) const = default;
@@ -73,7 +72,6 @@ struct SendFieldGroup {
 };
 
 struct SidechainFieldGroupCells {
-    std::optional<harken::studio::project_schema::AuthoringGuid> targetBusID;
     std::optional<float> sendLevel;
     std::optional<bool> duckTarget;
 
@@ -256,7 +254,7 @@ inline std::uint64_t FieldGroupOverrideMask(const DefinitionFieldGroups& groups,
         return state != group.platforms.end() && state->second.localHistory
             ? state->second.localFields : UINT64_C(0);
     };
-    return mask(groups.output) | mask(groups.spatialRating);
+    return mask(groups.output) | mask(groups.spatialRating) | mask(groups.effects);
 }
 
 using FieldGroupPayload = std::variant<
@@ -265,7 +263,7 @@ using FieldGroupPayload = std::variant<
 
 constexpr bool IsFieldGroupRowList(FieldGroupId group) noexcept
 {
-    return group == FieldGroupId::Send || group == FieldGroupId::Sidechain || group == FieldGroupId::Effect;
+    return group == FieldGroupId::Send || group == FieldGroupId::Sidechain;
 }
 
 void ApplyFieldGroupPlatform(FieldGroupPayload& payload, harken::studio::project_schema::AuthoringGuid platform);
@@ -365,6 +363,7 @@ std::optional<FieldGroupId> FieldGroupForField(std::string_view field) noexcept;
 std::optional<FieldGroupId> FieldGroupForProperty(
     harkenplayableproperties::PlayablePropertyIdV1 property) noexcept;
 std::uint64_t FieldGroupPropertyMask(FieldGroupId group) noexcept;
+std::uint64_t FieldGroupPlatformMask(FieldGroupId group) noexcept;
 inline constexpr std::uint64_t kFieldGroupPropertyMask = UINT64_C(0x2de0)
     | FieldGroupFieldMask(harkenplayableproperties::PlayablePropertyIdV1::SignalGraph);
 

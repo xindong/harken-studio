@@ -69,6 +69,10 @@ void cleanEffects(QJsonObject& object, const QSet<QUuid>& guids)
     };
     if (object.contains(QStringLiteral("effects")))
         object.insert(QStringLiteral("effects"), clean(object.value(QStringLiteral("effects")).toArray()));
+    editObject(object, QStringLiteral("effectsPlatforms"), [&](QJsonObject& platforms) {
+        for (const auto& key : platforms.keys())
+            platforms.insert(key, clean(platforms.value(key).toArray()));
+    });
 }
 
 void cleanPlayable(QJsonObject& properties, const QSet<QUuid>& guids)

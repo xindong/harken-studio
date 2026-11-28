@@ -136,6 +136,8 @@ void remapTree(ProjectItem* item, const TemplateIdentityMap& identities)
     };
     if (auto* mix = item->comp<VMixNode>()) {
         remapEffects(mix->effects, {});
+        for (auto& [platform, effects] : mix->effectPlatforms)
+            remapEffects(effects, {});
     }
     VisitAuthoredEffectChains(item->fieldGroups, remapEffects);
     remapAttenuationReferences(item->platformOverrides, identities);
@@ -195,6 +197,8 @@ void remintSubentityStableIds(ProjectData& project, ProjectItem* item)
             ledger.replace(std::move(effects));
         };
         remintEffects(mix->effects, {});
+        for (auto& [platform, effects] : mix->effectPlatforms)
+            remintEffects(effects, {});
         VisitAuthoredEffectChains(item->fieldGroups, remintEffects);
     }
     if (auto* timeline = item->comp<VTrack>())

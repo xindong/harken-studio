@@ -29,7 +29,7 @@ struct RootState
 
 struct BusRows
 {
-    EffectChainLedger effects;
+    std::map<ProjectPlatformId, EffectChainLedger> effectPlatforms;
     std::vector<BusRoute> sends;
     std::vector<BusRoute> sidechains;
 
@@ -70,7 +70,7 @@ OwnerState captureOwner(const ProjectItem& item)
     state.definition = item.platformOverrides;
     state.fieldGroups = item.fieldGroups;
     if (const auto* mix = item.comp<VMixNode>(); mix && item.type == ProjectItem::Type::Bus)
-        state.bus = BusRows{mix->effects, mix->sends, mix->sidechains};
+        state.bus = BusRows{mix->effectPlatforms, mix->sends, mix->sidechains};
     if (const auto* selection = item.comp<VSelection>()) state.selections = selection->selections;
     if (const auto* track = item.comp<VTrack>()) {
         for (const auto& clip : track->clips.items)
@@ -80,28 +80,20 @@ OwnerState captureOwner(const ProjectItem& item)
     return state;
 }
 
-void removeEffectCells(EffectChainLedger& ledger, const ProjectPlatformId& id)
-{
-    auto entries = ledger.entries();
-    for (auto& entry : entries) entry.platformBypass.erase(id);
-    ledger.replace(std::move(entries));
-}
-
 void removeReferences(OwnerState& owner, const ProjectPlatformId& id)
 {
     owner.definition.erase(id);
     const auto scope = toFieldGroupGuid(id);
     owner.fieldGroups.output.platforms.erase(scope);
     owner.fieldGroups.spatialRating.platforms.erase(scope);
+    owner.fieldGroups.effects.platforms.erase(scope);
     owner.fieldGroups.conversion.platforms.erase(scope);
     if (auto& history = owner.fieldGroups.send.shared.localHistory)
         for (auto& row : history->sends) row.platforms.erase(scope);
     if (auto& history = owner.fieldGroups.sidechain.shared.localHistory)
         for (auto& row : history->sidechains) row.platforms.erase(scope);
-    if (auto& history = owner.fieldGroups.effects.shared.localHistory)
-        removeEffectCells(history->effects, id);
     if (owner.bus) {
-        removeEffectCells(owner.bus->effects, id);
+        owner.bus->effectPlatforms.erase(id);
         for (auto& row : owner.bus->sends) row.platforms.erase(id);
         for (auto& row : owner.bus->sidechains) row.platforms.erase(id);
     }
@@ -202,7 +194,7 @@ void apply(ProjectManager& manager, const EditState& state, const QStringList& p
         item->platformOverrides = owner.definition;
         item->fieldGroups = owner.fieldGroups;
         if (auto* mix = item->comp<VMixNode>(); mix && owner.bus) {
-            mix->effects = owner.bus->effects;
+            mix->effectPlatforms = owner.bus->effectPlatforms;
             mix->sends = owner.bus->sends;
             mix->sidechains = owner.bus->sidechains;
         }

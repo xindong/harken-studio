@@ -137,8 +137,15 @@ public:
                 }
                 for (const auto& platform : selections->platformIds())
                     reference(idString(platform), childPath + QChar('/') + idString(platform));
-            } else if (it.key() == QStringLiteral("sends") || it.key() == QStringLiteral("sidechains")
-                       || it.key() == QStringLiteral("effects")) {
+            } else if (it.key() == QStringLiteral("effectsPlatforms")) {
+                if (!it.value().isObject()) {
+                    errors.append(QStringLiteral("Effect platforms must be an object at %1").arg(childPath));
+                    continue;
+                }
+                const auto rows = it.value().toObject();
+                for (auto row = rows.begin(); row != rows.end(); ++row)
+                    reference(row.key(), childPath + QChar('/') + row.key());
+            } else if (it.key() == QStringLiteral("sends") || it.key() == QStringLiteral("sidechains")) {
                 rowPlatforms(it.value(), childPath);
                 object(it.value(), childPath);
             } else if (it.key() == QStringLiteral("fieldGroups")) {
@@ -150,8 +157,7 @@ public:
                 for (auto row = rows.begin(); row != rows.end(); ++row)
                     reference(row.key(), childPath + QChar('/') + row.key());
                 const auto shared = groups.value(QStringLiteral("shared")).toObject();
-                for (const auto& [group, field] : {std::pair{"send", "sends"}, std::pair{"sidechain", "sidechains"},
-                                                   std::pair{"effect", "effects"}})
+                for (const auto& [group, field] : {std::pair{"send", "sends"}, std::pair{"sidechain", "sidechains"}})
                     rowPlatforms(shared.value(QLatin1String(group)).toObject().value(QStringLiteral("values"))
                                      .toObject().value(QLatin1String(field)),
                                  childPath + QStringLiteral("/shared/%1/values/%2").arg(group, field));
@@ -363,6 +369,12 @@ bool validateProject(const ProjectData& project, QString* error)
         addGroups(item->fieldGroups.effects);
         addGroups(item->fieldGroups.conversion);
         json.insert(QStringLiteral("fieldGroups"), QJsonObject{{QStringLiteral("platforms"), fieldGroupPlatforms}});
+        if (const auto* mix = item->comp<VMixNode>()) {
+            QJsonObject platforms;
+            for (const auto& [platform, effects] : mix->effectPlatforms)
+                platforms.insert(idString(platform), QJsonArray{});
+            json.insert(QStringLiteral("effectsPlatforms"), platforms);
+        }
         QJsonArray occurrences;
         if (const auto* selection = item->comp<VSelection>())
             json.insert(QStringLiteral("selections"), selection->selections.toJson());

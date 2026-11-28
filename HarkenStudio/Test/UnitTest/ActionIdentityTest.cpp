@@ -166,6 +166,9 @@ TEST_F(ActionIdentityTest, DuplicateMintsNestedUuidsAndSaveReloadKeepsThem)
     custom.guid = QUuid::createUuid();
     custom.mode = EffectMode::Custom;
     ASSERT_TRUE(sound->fieldGroups.effects.shared.localHistory->effects.replace({effect, custom}));
+    const auto platform = toFieldGroupGuid(manager.currentProject()->platforms.front().id);
+    sound->fieldGroups.effects.platforms[platform] = {FieldGroupMode::UseShared,
+        sound->fieldGroups.effects.shared.localHistory};
     ASSERT_TRUE(sound->comp<VMixNode>()->bindings.upsert(binding));
     auto* copy = manager.duplicateItem(sound);
     ASSERT_NE(copy, nullptr);
@@ -178,6 +181,7 @@ TEST_F(ActionIdentityTest, DuplicateMintsNestedUuidsAndSaveReloadKeepsThem)
     const auto copiedGuid = copy->guid;
     EXPECT_NE(copy->guid, sound->guid);
     EXPECT_NE(copiedEffect, effect.runtimeId());
+    EXPECT_EQ(copy->fieldGroups.effects.platforms.at(platform).localHistory->effects.entries().front().runtimeId(), copiedEffect);
     EXPECT_TRUE(validateProjectObjectIdentities(*manager.currentProject()));
     EXPECT_EQ(copy->fieldGroups.effects.shared.localHistory->effects.entries().front().effectGuid, effect.effectGuid);
     EXPECT_NE(copiedCustom.guid, custom.guid);
@@ -193,6 +197,7 @@ TEST_F(ActionIdentityTest, DuplicateMintsNestedUuidsAndSaveReloadKeepsThem)
     EXPECT_EQ(copy->fieldGroups.effects.shared.localHistory->effects.entries().front().runtimeId(), copiedEffect);
     EXPECT_EQ(copy->fieldGroups.effects.shared.localHistory->effects.entries().front().effectGuid, effect.effectGuid);
     EXPECT_EQ(copy->fieldGroups.effects.shared.localHistory->effects.entries().back().toJson(), copiedCustom.toJson());
+    EXPECT_EQ(copy->fieldGroups.effects.platforms.at(platform).localHistory->effects.entries().front().runtimeId(), copiedEffect);
     EXPECT_TRUE(validateProjectObjectIdentities(*manager.currentProject()));
     EXPECT_EQ(copiedMix->bindings.entries().front().runtimeId(), copiedBinding);
 }

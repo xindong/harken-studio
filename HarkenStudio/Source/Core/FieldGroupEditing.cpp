@@ -251,6 +251,8 @@ Diagnostics validateView(const EditingContext& context,
         const auto* mix = item->comp<VMixNode>();
         if (!mix) continue;
         claimEffects(mix->effects, guid, {});
+        for (const auto& [platform, effects] : mix->effectPlatforms)
+            claimEffects(effects, guid, toFieldGroupGuid(platform));
     }
     for (const auto& definition : definitions)
         if (definition.groups)
@@ -284,13 +286,6 @@ Diagnostics validateView(const EditingContext& context,
         if (groups.send.shared.localHistory) checkRows(FieldGroupId::Send, groups.send.shared.localHistory->sends);
         if (groups.sidechain.shared.localHistory)
             checkRows(FieldGroupId::Sidechain, groups.sidechain.shared.localHistory->sidechains);
-        if (groups.effects.shared.localHistory)
-            for (const auto& row : groups.effects.shared.localHistory->effects.entries())
-                for (const auto& [platform, bypass] : row.platformBypass)
-                    if (!knownPlatform(toFieldGroupGuid(platform)))
-                        addDiagnostic(diagnostics, EditCode::InvalidScopes,
-                            QStringLiteral("A row platform value does not belong to the project"),
-                            fromFieldGroupGuid(definition.guid), FieldGroupId::Effect, toFieldGroupGuid(platform));
         for (const auto scope : scopes) {
             const auto output = resolver.Resolve(definition.guid, scope, FieldGroupId::Output);
             const auto send = resolver.Resolve(definition.guid, scope, FieldGroupId::Send);
@@ -510,7 +505,8 @@ void editGroup(const EditingContext& context, const FieldGroupResolver& resolver
             const auto authored = next.localHistory ? next.localFields : 0;
             next.localFields = FieldGroupPropertyMask(request.group);
             if (scope && after.shared.localHistory)
-                next.localFields = authored | FieldGroupDifferenceMask(payload, *after.shared.localHistory);
+                next.localFields = (authored | FieldGroupDifferenceMask(payload, *after.shared.localHistory))
+                    & FieldGroupPlatformMask(request.group);
             next.localHistory = std::move(payload);
         };
         const auto initializeLocal = [&]() {
@@ -547,6 +543,12 @@ void editGroup(const EditingContext& context, const FieldGroupResolver& resolver
                 next.localFields &= ~(clear ? FieldGroupFieldMask(clear->property)
                                             : FieldGroupPropertyMask(FieldGroupId::Conversion));
         } else {
+            if (scope && field && (FieldGroupFieldMask(field->property) & ~FieldGroupPlatformMask(request.group))) {
+                addDiagnostic(diagnostics, EditCode::InvalidOperation,
+                              QStringLiteral("This field is shared by all platforms"),
+                              request.definition, request.group, scope, fieldName(field->property));
+                continue;
+            }
             if (!scope && !initializeLocal()) continue;
             if (!next.localHistory) {
                 next.localHistory.emplace();

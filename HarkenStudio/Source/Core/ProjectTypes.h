@@ -153,7 +153,6 @@ struct Send
 
 struct BusRouteCells
 {
-    std::optional<uint32_t> targetBusID;
     std::optional<float> sendLevelDb;
     std::optional<bool> duckTarget;
 
@@ -177,7 +176,6 @@ struct BusRoute
         if (!scope) return result;
         const auto found = platforms.find(*scope);
         if (found == platforms.end()) return result;
-        if (found->second.targetBusID) result.targetBusID = *found->second.targetBusID;
         if (found->second.sendLevelDb) result.sendLevelDb = *found->second.sendLevelDb;
         if (found->second.duckTarget) result.duckTarget = *found->second.duckTarget;
         return result;
@@ -193,7 +191,6 @@ struct BusRoute
         QJsonObject cellsByPlatform;
         for (const auto& [platform, cells] : platforms) {
             QJsonObject values;
-            if (cells.targetBusID) values[QStringLiteral("targetBusID")] = static_cast<qint64>(*cells.targetBusID);
             if (cells.sendLevelDb) values[QStringLiteral("sendLevel")] = *cells.sendLevelDb;
             if (cells.duckTarget) values[QStringLiteral("duckTarget")] = *cells.duckTarget;
             cellsByPlatform.insert(platform.toString(QUuid::WithoutBraces), values);
@@ -237,9 +234,7 @@ struct BusRoute
             if (platform.isNull() || !it.value().isObject() || values.isEmpty()) return std::nullopt;
             BusRouteCells cells;
             for (auto cell = values.begin(); cell != values.end(); ++cell) {
-                if (cell.key() == QLatin1String("targetBusID")) {
-                    if (!(cells.targetBusID = readTarget(cell.value()))) return std::nullopt;
-                } else if (cell.key() == QLatin1String("sendLevel")) {
+                if (cell.key() == QLatin1String("sendLevel")) {
                     if (!(cells.sendLevelDb = readLevel(cell.value()))) return std::nullopt;
                 } else if (sidechain && cell.key() == QLatin1String("duckTarget") && cell.value().isBool()) {
                     cells.duckTarget = cell.value().toBool();

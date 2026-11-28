@@ -104,11 +104,10 @@ QJsonObject FieldGroupInspectorView::actionArgs(bool sharedScope) const
     return result;
 }
 
-std::optional<EffectChainLedger> FieldGroupInspectorView::effectChain(bool shared) const
+std::optional<EffectChainLedger> FieldGroupInspectorView::effectChain() const
 {
     if (!valid || group != FieldGroupId::Effect) return {};
-    const auto value = field(QStringLiteral("effects"));
-    return EffectChainLedger::fromJson(QJsonArray::fromVariantList((shared ? value.shared : value.value).toList()));
+    return EffectChainLedger::fromJson(QJsonArray::fromVariantList(field(QStringLiteral("effects")).value.toList()));
 }
 
 QString FieldGroupInspectorView::sourceTooltip(const ProjectData& project, const QString& fieldName) const

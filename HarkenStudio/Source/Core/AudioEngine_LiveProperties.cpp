@@ -236,8 +236,7 @@ void AudioEngine::applyLivePropertyPreview()
         for (const auto* item : sourceIndex->buses) {
             const auto* mix = item->comp<VMixNode>();
             if (!mix) continue;
-            const auto chain = mix->effectsForPlatform(scope);
-            for (const auto& entry : chain.entries()) {
+            for (const auto& entry : mix->effectsForPlatform(scope).entries()) {
                 const auto* effect = EffectChainSemantics::resolve(entry, *project);
                 if (!effect) continue;
                 const auto definitionId = toFieldGroupGuid(

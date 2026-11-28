@@ -67,33 +67,24 @@ std::optional<QJsonValue> referenceActionValue(const QVariant& value)
     return QJsonValue(item->guid.toString(QUuid::WithoutBraces));
 }
 
+const QString kRouteTarget = QStringLiteral("targetBusID");
+
 QStringList routeCells(const QString& field)
 {
     if (field == QLatin1String("sidechains"))
-        return {QStringLiteral("targetBusID"), QStringLiteral("sendLevel"), QStringLiteral("duckTarget")};
-    return {QStringLiteral("targetBusID"), QStringLiteral("sendLevel")};
+        return {kRouteTarget, QStringLiteral("sendLevel"), QStringLiteral("duckTarget")};
+    return {kRouteTarget, QStringLiteral("sendLevel")};
 }
 
 template <typename Convert>
 std::optional<QVariantList> convertRouteTargets(const QVariantList& rows, Convert&& convert)
 {
-    const QString target = QStringLiteral("targetBusID");
     QVariantList result;
     for (const auto& entry : rows) {
         auto row = entry.toMap();
-        const auto shared = convert(row.value(target));
+        const auto shared = convert(row.value(kRouteTarget));
         if (!shared) return {};
-        row[target] = *shared;
-        auto platforms = row.value(QStringLiteral("platforms")).toMap();
-        for (auto it = platforms.begin(); it != platforms.end(); ++it) {
-            auto cells = it.value().toMap();
-            if (!cells.contains(target)) continue;
-            const auto cell = convert(cells.value(target));
-            if (!cell) return {};
-            cells[target] = *cell;
-            it.value() = cells;
-        }
-        if (!platforms.isEmpty()) row[QStringLiteral("platforms")] = platforms;
+        row[kRouteTarget] = *shared;
         result.append(row);
     }
     return result;
@@ -139,7 +130,7 @@ QVariantList mergeRouteRows(const QVariantList& raw, const QVariantList& display
         auto platforms = merged.value(platformsKey).toMap();
         for (const auto& cell : cells) {
             if (row.value(cell) == shown.value(cell)) continue;
-            if (platform) {
+            if (platform && cell != kRouteTarget) {
                 auto values = platforms.value(*platform).toMap();
                 values.insert(cell, row.value(cell));
                 platforms.insert(*platform, values);
@@ -183,7 +174,12 @@ std::optional<FieldGroupId> PropertyEditorEngine::fieldGroup(const QString& fiel
 
 bool PropertyEditorEngine::supportsPlatformLocal(const QString& field) const
 {
-    if (fieldGroup(field) || field == QLatin1String("filter")) return true;
+    if (const auto group = fieldGroup(field)) {
+        const auto* property = PlayablePropertyAuthoringV1::fieldByName(field);
+        return !property || (FieldGroupFieldMask(static_cast<harkenplayableproperties::PlayablePropertyIdV1>(property->id))
+            & FieldGroupPlatformMask(*group)) != 0;
+    }
+    if (field == QLatin1String("filter")) return true;
     const auto* property = PlayablePropertyAuthoringV1::fieldByName(field);
     return property && !PlayablePropertyAuthoringV1::isComponentStored(property->id)
         && PlayablePropertyAuthoringV1::isEditorExposed(property->id)
@@ -208,7 +204,7 @@ std::optional<PlatformLocalAddress> PropertyEditorEngine::routeCellAddress(
     const QString& field, const QUuid& row, const QString& cell) const
 {
     using Kind = PlatformLocalAddress::Kind;
-    if (!currentItem_) return {};
+    if (!currentItem_ || cell == kRouteTarget) return {};
     if (currentItem_->type == ProjectItem::Type::Bus)
         return PlatformLocalAddress{Kind::RowCell, field, FieldGroupId::Send, false, row, cell};
     const auto group = fieldGroup(field);
@@ -708,7 +704,7 @@ void PropertyEditorEngine::commitFieldChange(
             ? QStringLiteral("replace_field_group_sends") : QStringLiteral("replace_field_group_sidechains"), std::move(args));
         return;
     }
-    auto args = groupArgs.value_or(groupBindings_.at(*group).view.actionArgs());
+    auto args = groupArgs.value_or(groupBindings_.at(*group).view.actionArgs(!supportsPlatformLocal(field)));
     if (*group == FieldGroupId::Conversion) {
         const auto ref = referenceActionValue(value);
         if (!ref) return;

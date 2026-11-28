@@ -171,11 +171,7 @@ bool ReadRouteRows(const JsonValue& value, std::vector<Row>& rows, const std::st
                     return Fail(error, cellsPath, "expected a nonempty object");
                 for (const auto& [field, cell] : cellsValue.members) {
                     const auto cellPath = cellsPath + "." + field;
-                    if (field == "targetBusID") {
-                        AuthoringGuid target;
-                        if (!ReadGuid(cell, target, cellPath, error)) return false;
-                        cells.targetBusID = target;
-                    } else if (field == "sendLevel") {
+                    if (field == "sendLevel") {
                         float level = 0.0f;
                         if (!ReadFloat(cell, level, cellPath, error)) return false;
                         cells.sendLevel = level;
@@ -309,10 +305,6 @@ void WriteRouteRows(JsonWriter& writer, const std::vector<Row>& rows, WriteExtra
             for (const auto& [platform, cells] : row.platforms) {
                 writer.Key(WriteGuid(platform).c_str());
                 writer.BeginObject();
-                if (cells.targetBusID) {
-                    writer.Key("targetBusID");
-                    writer.ValueString(WriteGuid(*cells.targetBusID));
-                }
                 if (cells.sendLevel) {
                     writer.Key("sendLevel");
                     WriteFloat(writer, *cells.sendLevel);
@@ -575,9 +567,10 @@ bool ReadFieldGroupsJson(const std::string& text,
             const auto path = "fieldGroups.platforms." + name;
             AuthoringGuid platform;
             if (!ReadPlatformKey(name, platform, path, error)) return false;
-            if (!CheckMembers(value, path, {"output", "spatialRating", "conversion"}, {}, error)
+            if (!CheckMembers(value, path, {"output", "spatialRating", "effect", "conversion"}, {}, error)
                 || !ReadPlatformState(value, "output", platform, parsed.output, path, error)
                 || !ReadPlatformState(value, "spatialRating", platform, parsed.spatialRating, path, error)
+                || !ReadPlatformState(value, "effect", platform, parsed.effects, path, error)
                 || !ReadPlatformState(value, "conversion", platform, parsed.conversion, path, error))
                 return false;
         }
@@ -611,18 +604,20 @@ bool WriteFieldGroupsJson(const DefinitionFieldGroups& groups,
     WriteState(writer, groups.conversion.shared);
     writer.EndObject();
     if (!groups.output.platforms.empty() || !groups.spatialRating.platforms.empty()
-        || !groups.conversion.platforms.empty()) {
+        || !groups.effects.platforms.empty() || !groups.conversion.platforms.empty()) {
         writer.Key("platforms");
         writer.BeginObject();
         std::set<AuthoringGuid> platforms;
         for (const auto& [platform, state] : groups.output.platforms) platforms.insert(platform);
         for (const auto& [platform, state] : groups.spatialRating.platforms) platforms.insert(platform);
+        for (const auto& [platform, state] : groups.effects.platforms) platforms.insert(platform);
         for (const auto& [platform, state] : groups.conversion.platforms) platforms.insert(platform);
         for (const auto platform : platforms) {
             writer.Key(WriteGuid(platform).c_str());
             writer.BeginObject();
             WritePlatformState(writer, "output", platform, groups.output);
             WritePlatformState(writer, "spatialRating", platform, groups.spatialRating);
+            WritePlatformState(writer, "effect", platform, groups.effects);
             WritePlatformState(writer, "conversion", platform, groups.conversion);
             writer.EndObject();
         }

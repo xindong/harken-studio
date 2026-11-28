@@ -403,24 +403,6 @@
             "bypass": {
               "type": "boolean"
             },
-            "platforms": {
-              "additionalProperties": {
-                "additionalProperties": false,
-                "properties": {
-                  "bypass": {
-                    "type": "boolean"
-                  }
-                },
-                "required": [
-                  "bypass"
-                ],
-                "type": "object"
-              },
-              "propertyNames": {
-                "$ref": "#/$defs/projectPlatformId"
-              },
-              "type": "object"
-            },
             "mode": {
               "const": "custom",
               "type": "string"
@@ -450,24 +432,6 @@
             },
             "bypass": {
               "type": "boolean"
-            },
-            "platforms": {
-              "additionalProperties": {
-                "additionalProperties": false,
-                "properties": {
-                  "bypass": {
-                    "type": "boolean"
-                  }
-                },
-                "required": [
-                  "bypass"
-                ],
-                "type": "object"
-              },
-              "propertyNames": {
-                "$ref": "#/$defs/projectPlatformId"
-              },
-              "type": "object"
             },
             "mode": {
               "const": "preset",
@@ -798,6 +762,18 @@
         },
         "volume": {
           "type": "number"
+        },
+        "effectsPlatforms": {
+          "additionalProperties": {
+            "items": {
+              "$ref": "#/$defs/effectEntry"
+            },
+            "type": "array"
+          },
+          "propertyNames": {
+            "$ref": "#/$defs/projectPlatformId"
+          },
+          "type": "object"
         }
       },
       "type": "object"
@@ -1200,6 +1176,9 @@
         "spatialRating": {
           "$ref": "#/$defs/fieldGroupPlatformSpatialRating"
         },
+        "effect": {
+          "$ref": "#/$defs/fieldGroupPlatformEffect"
+        },
         "conversion": {
           "$ref": "#/$defs/fieldGroupPlatformConversion"
         }
@@ -1270,9 +1249,6 @@
                 "maximum": 24,
                 "minimum": -96,
                 "type": "number"
-              },
-              "targetBusID": {
-                "$ref": "#/$defs/uuid"
               }
             },
             "type": "object"
@@ -1319,9 +1295,6 @@
                 "maximum": 24,
                 "minimum": -96,
                 "type": "number"
-              },
-              "targetBusID": {
-                "$ref": "#/$defs/uuid"
               }
             },
             "type": "object"
@@ -1617,9 +1590,6 @@
                 "maximum": 24,
                 "minimum": -96,
                 "type": "number"
-              },
-              "targetBusRef": {
-                "$ref": "#/$defs/objectReference"
               }
             },
             "type": "object"
@@ -1666,9 +1636,6 @@
                 "maximum": 24,
                 "minimum": -96,
                 "type": "number"
-              },
-              "targetBusRef": {
-                "$ref": "#/$defs/objectReference"
               }
             },
             "type": "object"
@@ -2189,9 +2156,6 @@
     "fieldGroupOutputFields": {
       "additionalProperties": false,
       "properties": {
-        "outputBusRef": {
-          "$ref": "#/$defs/uuid"
-        },
         "outputBusVolume": {
           "type": "number"
         }
@@ -2785,6 +2749,15 @@
         ]
       }
     },
+    "fieldGroupPlatformEffect": {
+      "additionalProperties": false,
+      "properties": {
+        "values": {
+          "$ref": "#/$defs/fieldGroupEffectFields"
+        }
+      },
+      "type": "object"
+    },
     "fieldGroupEffectPayload": {
       "additionalProperties": false,
       "properties": {
@@ -2799,6 +2772,19 @@
         "effects"
       ],
       "type": "object"
+    },
+    "fieldGroupEffectFields": {
+      "additionalProperties": false,
+      "properties": {
+        "effects": {
+          "items": {
+            "$ref": "#/$defs/effectEntry"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object",
+      "minProperties": 1
     },
     "fieldGroupPlatformConversion": {
       "additionalProperties": false,
@@ -3614,37 +3600,7 @@
           "path": [
             "components",
             "mixnode",
-            "sends",
-            "*",
-            "platforms",
-            "*",
-            "targetBusRef"
-          ],
-          "targetTypes": [
-            "Bus"
-          ]
-        },
-        {
-          "kind": "object",
-          "path": [
-            "components",
-            "mixnode",
             "sidechains",
-            "*",
-            "targetBusRef"
-          ],
-          "targetTypes": [
-            "Bus"
-          ]
-        },
-        {
-          "kind": "object",
-          "path": [
-            "components",
-            "mixnode",
-            "sidechains",
-            "*",
-            "platforms",
             "*",
             "targetBusRef"
           ],
@@ -3668,8 +3624,38 @@
         {
           "kind": "object",
           "path": [
+            "components",
+            "mixnode",
+            "effectsPlatforms",
+            "*",
+            "*",
+            "effectRef"
+          ],
+          "targetTypes": [
+            "Effect"
+          ]
+        },
+        {
+          "kind": "object",
+          "path": [
             "fieldGroups",
             "shared",
+            "effect",
+            "values",
+            "effects",
+            "*",
+            "effectRef"
+          ],
+          "targetTypes": [
+            "Effect"
+          ]
+        },
+        {
+          "kind": "object",
+          "path": [
+            "fieldGroups",
+            "platforms",
+            "*",
             "effect",
             "values",
             "effects",
@@ -3707,20 +3693,6 @@
           "path": [
             "playableProperties",
             "sends",
-            "*",
-            "targetBusRef"
-          ],
-          "targetTypes": [
-            "Bus"
-          ]
-        },
-        {
-          "kind": "object",
-          "path": [
-            "playableProperties",
-            "sends",
-            "*",
-            "platforms",
             "*",
             "targetBusRef"
           ],

@@ -812,9 +812,6 @@ TEST(ProjectSerialization, ReusedSerializerObservesAuthoringChangesAndOwnsReturn
     overlay.localHistory->outputBusVolume = -3.0f;
     item.fieldGroups.output.platforms[{7, 8}] = overlay;
     compare(true);
-    item.fieldGroups.output.platforms[{7, 8}].localFields =
-        harken::studio::FieldGroupPropertyMask(harken::studio::FieldGroupId::Output);
-    compare(true);
     item.fieldGroups.output.shared.localHistory->outputBusRef = {9, 10};
     compare(true);
     item.fieldGroups.output.platforms[{7, 8}].mode = harken::studio::FieldGroupMode::Inherit;

@@ -7,19 +7,24 @@
 #include "Core/QtControlSkin.h"
 #include "Core/ThemeLayout.h"
 #include "Core/ThemeManager.h"
+#include "Widgets/Common/ProportionalTreeWidget.h"
+#include "Widgets/Common/TableWidget.h"
 
 #include <QCheckBox>
 #include <QContextMenuEvent>
 #include <QGridLayout>
 #include <QGuiApplication>
 #include <QHBoxLayout>
+#include <QHeaderView>
 #include <QLabel>
 #include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QScreen>
+#include <QtMath>
 
 #include <algorithm>
+#include <numeric>
 
 namespace harken::studio {
 
@@ -251,6 +256,51 @@ std::function<QString(const QVariant&)> PlatformLocalMarker::formatterFor(const 
         const int decimals = descriptor.type == PropType::Int ? 0 : descriptor.decimals;
         return QString::number(value.toDouble() * descriptor.displayScale, 'f', decimals) + descriptor.unit;
     };
+}
+
+void showPlatformComparison(QGridLayout* layout, QWidget* popup, const QString& rowTitle,
+                            const QList<PlatformMarkValue>& platforms, const std::vector<QStringList>& rows,
+                            const QString& identical, Qt::Alignment valueAlignment)
+{
+    if (rows.empty()) {
+        auto* label = new QLabel(identical, popup);
+        label->setTextFormat(Qt::PlainText);
+        layout->addWidget(label, 0, 0);
+        return;
+    }
+    QStringList headers{rowTitle};
+    for (const auto& entry : platforms) headers.append(entry.platform);
+    auto* table = new TableWidget(TableOptions::display(TableBodySizing::Content), popup);
+    const QFontMetrics metrics(table->font());
+    const int padding = ThemeManager::instance().metrics().table.cellPaddingX * 2;
+    QList<int> widths;
+    for (int column = 0; column < headers.size(); ++column) {
+        int width = metrics.horizontalAdvance(headers[column]);
+        for (const auto& cells : rows) width = std::max(width, metrics.horizontalAdvance(cells[column]));
+        widths.append(width + padding);
+    }
+    auto* view = table->createItemView(QStringLiteral("platformComparison"), headers, widths);
+    view->setRootIsDecorated(false);
+    view->setSelectionMode(QAbstractItemView::NoSelection);
+    view->setFocusPolicy(Qt::NoFocus);
+    for (int column = 1; column < headers.size(); ++column)
+        view->headerItem()->setTextAlignment(column, valueAlignment | Qt::AlignVCenter);
+    for (const auto& cells : rows) {
+        auto* item = new QTreeWidgetItem(view, cells);
+        for (int column = 1; column < cells.size(); ++column)
+            item->setTextAlignment(column, valueAlignment | Qt::AlignVCenter);
+    }
+    view->ensurePolished();
+    const double total = std::accumulate(widths.begin(), widths.end(), 0);
+    double width = 0.0;
+    for (int column = 0; column < headers.size(); ++column) {
+        const int needed = std::max(static_cast<QAbstractItemView*>(view)->sizeHintForColumn(column),
+                                    view->header()->sectionSizeHint(column));
+        width = std::max(width, needed * total / widths[column]);
+    }
+    table->setMinimumWidth(qCeil(width) + view->frameWidth() * 2 + table->frameWidth() * 2);
+    table->refreshLayout();
+    layout->addWidget(table, 0, 0);
 }
 
 QWidget* attachPlatformMarker(QWidget* control, PlatformLocalMarker* marker, QWidget* parent,
