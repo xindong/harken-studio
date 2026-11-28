@@ -95,6 +95,7 @@ const QHash<QString, ComponentFields>& componentAuthorityFields()
         for (const auto& entry : {std::pair{"mixnode", "outputBusId"},
                                   std::pair{"mixnode", "outputBusRef"},
                                   std::pair{"mixnode", "effects"},
+                                  std::pair{"mixnode", "effectsPlatforms"},
                                   std::pair{"mixnode", "sidechains"},
                                   std::pair{"audio", "outputBusOverride"},
                                   std::pair{"audio", "overrideBits"},
@@ -814,6 +815,20 @@ bool ProjectSerializer::encodeComponentReferences(QJsonObject* components) const
             if (!rewriteEffectReferences(&effects, true)) return false;
             mix[QStringLiteral("effects")] = effects;
         }
+
+        if (mix.contains(QStringLiteral("effectsPlatforms"))) {
+            if (!mix.value(QStringLiteral("effectsPlatforms")).isObject()) return false;
+            auto platforms = mix.value(QStringLiteral("effectsPlatforms")).toObject();
+            for (const auto& key : platforms.keys()) {
+                if (!platforms.value(key).isArray()) return false;
+                const QUuid platform(key);
+                if (platform.isNull() || platform.toString(QUuid::WithoutBraces) != key) return false;
+                auto effects = platforms.value(key).toArray();
+                if (!rewriteEffectReferences(&effects, true)) return false;
+                platforms[key] = effects;
+            }
+            mix[QStringLiteral("effectsPlatforms")] = platforms;
+        }
         (*components)[mixKey] = mix;
     }
 
@@ -881,6 +896,20 @@ bool ProjectSerializer::decodeComponentReferences(QJsonObject* components) const
             auto effects = mix.value(QStringLiteral("effects")).toArray();
             if (!rewriteEffectReferences(&effects, false)) return false;
             mix[QStringLiteral("effects")] = effects;
+        }
+
+        if (mix.contains(QStringLiteral("effectsPlatforms"))) {
+            if (!mix.value(QStringLiteral("effectsPlatforms")).isObject()) return false;
+            auto platforms = mix.value(QStringLiteral("effectsPlatforms")).toObject();
+            for (const auto& key : platforms.keys()) {
+                if (!platforms.value(key).isArray()) return false;
+                const QUuid platform(key);
+                if (platform.isNull() || platform.toString(QUuid::WithoutBraces) != key) return false;
+                auto effects = platforms.value(key).toArray();
+                if (!rewriteEffectReferences(&effects, false)) return false;
+                platforms[key] = effects;
+            }
+            mix[QStringLiteral("effectsPlatforms")] = platforms;
         }
         (*components)[mixKey] = mix;
     }

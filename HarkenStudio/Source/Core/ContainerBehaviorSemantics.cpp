@@ -147,11 +147,8 @@ QString childWeightLabel(const VSelection& selection)
 int effectiveChildWeight(const VSelection& selection,
                          uint32_t stableOccurrenceOrdinal, PlatformScope scope)
 {
-    const auto rows = selection.selections.table(SelectionMode::Random, scope).occurrenceRows();
-    const auto row = std::find_if(rows.begin(), rows.end(), [&](const SelectionEntry& entry) {
-        return entry.stableOccurrenceOrdinal == stableOccurrenceOrdinal;
-    });
-    return std::clamp(row != rows.end() ? row->weight : kDefaultChildWeight,
+    const auto* row = selection.selections.table(SelectionMode::Random, scope).find(stableOccurrenceOrdinal);
+    return std::clamp(row ? row->weight : kDefaultChildWeight,
                       minimumChildWeight(selection),
                       kMaxChildWeight);
 }

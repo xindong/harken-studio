@@ -4769,6 +4769,7 @@ std::optional<DefinitionFieldGroups> ProjectManager::captureRootFieldGroups(
         after.shared.localHistory = values[0];
         after.shared.localFields = FieldGroupPropertyMask(Payload::groupId);
         after.platforms.clear();
+        if (IsFieldGroupRowList(group)) return true;
         for (std::size_t i = 1; i < scopes.size(); ++i) {
             const auto platform = *scopes[i];
             const auto original = before.platforms.find(platform);
@@ -4785,6 +4786,7 @@ std::optional<DefinitionFieldGroups> ProjectManager::captureRootFieldGroups(
     };
     if (!capture(authored.output, result.output, FieldGroupId::Output)
         || !capture(authored.send, result.send, FieldGroupId::Send)
+        || !capture(authored.sidechain, result.sidechain, FieldGroupId::Sidechain)
         || !capture(authored.spatialRating, result.spatialRating, FieldGroupId::SpatialRating)
         || !capture(authored.effects, result.effects, FieldGroupId::Effect)
         || !capture(authored.conversion, result.conversion, FieldGroupId::Conversion))

@@ -22,7 +22,7 @@
 | Bus | Inputs | Route > Input | Source / Volume | 输出路由的反向查询，只读 |
 | Bus | Receives | Route > Receive | # / Source / Volume / Type / Ducking | Send、Sidechain 的反向查询，只读 |
 
-表注：Volume 以 dB 显示。Container 的选择列表在独立 Selection Editor 中编辑；Inspector 的 Selection 分区在 Mode 下方提供 Selections 预览窗，显示当前平台、当前模式的列表：Random 为按 Weight 分段的比例条，Sequence 为按顺序等宽排列的带序号步骤格，Match 为按规则顺序等宽排列的“条件 → Child”格，三者各段按分类色填充并写入名称，放不下时截断；Blend 每个 Mixing 行占一行，绘制该行各 Child 的曲线叠加，画法与 Selection Editor 的 Mixing 画布一致（Step 变量只画生效的阶梯，不画画布中用于判断透明度的连续参考线；带渐变填充，曲线范围外不绘制，首尾竖线为实线），颜色按 Child 在该行的顺序取分类色；预览窗单行高与其他预览窗相同，Blend 有多行时按行数增高，行间以 1 像素次要边界分隔；没有内容时留空。单击打开 Selection Editor，平台标记贴在预览窗右侧，代表当前模式的整张列表，单击以标准表格对比各平台的列表，右键覆盖或移除当前平台的列表；其余保留 Play Type 及对应行为字段；独立表格见[表格快照](tables.md)。
+表注：Volume 以 dB 显示。Container 的选择列表在独立 Selection Editor 中编辑；Inspector 的 Selection 分区在 Mode 下方提供 Selections 预览窗，显示当前平台、当前模式的列表：Random 为按 Weight 分段的比例条，Sequence 为按顺序等宽排列的带序号步骤格，Match 为按规则顺序等宽排列的“条件 → Child”格，三者各段按分类色填充并写入名称，放不下时截断；Blend 每个 Mixing 行占一行，绘制该行各 Child 的曲线叠加，画法与 Selection Editor 的 Mixing 画布一致（Step 变量只画生效的阶梯，不画画布中用于判断透明度的连续参考线；带渐变填充，曲线范围外不绘制，首尾竖线为实线），颜色按 Child 在该行的顺序取分类色；预览窗单行高与其他预览窗相同，Blend 有多行时按行数增高，行间以 1 像素次要边界分隔；没有内容时留空。单击打开 Selection Editor，平台标记贴在预览窗右侧，代表当前模式的整张列表，单击以标准表格对比各平台的列表（Sequence 与 Match 按列表位置逐行对照，顺序不同即显示差异），右键覆盖或移除当前平台的列表；其余保留 Play Type 及对应行为字段；独立表格见[表格快照](tables.md)。
 
 ## 公共展示与操作
 

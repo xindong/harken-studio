@@ -226,18 +226,12 @@ std::vector<QStringList> selectionRows(SelectionMode mode, const std::vector<Sel
         return rows;
     }
     if (mode == SelectionMode::Match) {
-        std::vector<uint32_t> ordinals;
-        for (const auto& table : tables)
-            for (const auto& row : table.matchRows)
-                if (std::find(ordinals.begin(), ordinals.end(), row.stableRuleOrdinal) == ordinals.end())
-                    ordinals.push_back(row.stableRuleOrdinal);
-        for (size_t index = 0; index < ordinals.size(); ++index) {
+        size_t count = 0;
+        for (const auto& table : tables) count = std::max(count, table.matchRows.size());
+        for (size_t index = 0; index < count; ++index) {
             QStringList cells{QString::number(index + 1)};
-            for (const auto& table : tables) {
-                const auto row = std::find_if(table.matchRows.begin(), table.matchRows.end(),
-                    [&](const SelectionMatchRow& rule) { return rule.stableRuleOrdinal == ordinals[index]; });
-                cells.append(row == table.matchRows.end() ? absent : conditionText(*row, data));
-            }
+            for (const auto& table : tables)
+                cells.append(index < table.matchRows.size() ? conditionText(table.matchRows[index], data) : absent);
             rows.push_back(cells);
         }
         return rows;
