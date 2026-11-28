@@ -115,11 +115,9 @@ public:
     QMetaObject::Connection bindMetrics(QObject* context, std::function<void(const ThemeMetrics&)> apply);
 
     QString accent() const { return colors().accent.name(QColor::HexArgb); }
-    QString accentHover() const { return colors().accentHover.name(QColor::HexArgb); }
     QString bgPrimary() const { return colors().bgPrimary.name(QColor::HexArgb); }
     QString bgSecondary() const { return colors().bgSecondary.name(QColor::HexArgb); }
     QString bgTertiary() const { return colors().bgTertiary.name(QColor::HexArgb); }
-    QString bgHover() const { return colors().bgHover.name(QColor::HexArgb); }
     QString bgSelected() const
     {
         const QColor& color = colors().bgSelected;

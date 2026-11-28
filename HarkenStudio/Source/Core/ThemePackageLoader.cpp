@@ -801,7 +801,7 @@ auto tokenColorSlot(const QString& key, Snapshot& theme)
     COLOR_SLOT("qtAds.activeTabAccent", thirdParty.qtAds.activeTabAccent);
     COLOR_SLOT("accent.primary", ui.colors.accent);
     COLOR_SLOT("accent.secondary", ui.colors.accentSecondary);
-    COLOR_SLOT("accent.hover", ui.colors.accentHover);
+    COLOR_SLOT("accent.hover", ui.colors.legacyAccentHover);
     COLOR_SLOT("accent.text", ui.colors.accentText);
     COLOR_SLOT("text.primary", ui.colors.textPrimary);
     COLOR_SLOT("text.disabled", ui.colors.textDisabled);
@@ -812,7 +812,7 @@ auto tokenColorSlot(const QString& key, Snapshot& theme)
     COLOR_SLOT("palette.categorical4", ui.colors.categoricalPalette[4]);
     COLOR_SLOT("palette.categorical5", ui.colors.categoricalPalette[5]);
     COLOR_SLOT("palette.categorical6", ui.colors.categoricalPalette[6]);
-    COLOR_SLOT("background.hover", ui.colors.bgHover);
+    COLOR_SLOT("background.hover", ui.colors.legacyBgHover);
     COLOR_SLOT("background.hoverOverlay", ui.colors.hoverOverlay);
     COLOR_SLOT("background.selected", ui.colors.bgSelected);
     COLOR_SLOT("background.dropTarget", ui.colors.bgDropTarget);

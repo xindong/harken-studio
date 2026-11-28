@@ -72,11 +72,9 @@ private:
     const ThemeMetrics& metrics() const { return snapshot_->ui.metrics; }
 
     QString accent() const { return colors().accent.name(QColor::HexArgb); }
-    QString accentHover() const { return colors().accentHover.name(QColor::HexArgb); }
     QString bgPrimary() const { return colors().bgPrimary.name(QColor::HexArgb); }
     QString bgSecondary() const { return colors().bgSecondary.name(QColor::HexArgb); }
     QString bgTertiary() const { return colors().bgTertiary.name(QColor::HexArgb); }
-    QString bgHover() const { return colors().bgHover.name(QColor::HexArgb); }
     QString borderPrimary() const { return colors().borderPrimary.name(QColor::HexArgb); }
     QString borderSecondary() const { return colors().borderSecondary.name(QColor::HexArgb); }
     QString textPrimary() const { return colors().textPrimary.name(QColor::HexArgb); }

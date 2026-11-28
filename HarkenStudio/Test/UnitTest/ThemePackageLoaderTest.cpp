@@ -350,6 +350,8 @@ TEST(ThemePackageLoader, ColorDefinitionsAreScopedToThemesAndReplaceInheritedRol
     ASSERT_TRUE(writeColorDefinition(root.path(), parentId, colorDefinition(
         QStringLiteral("surface"), QJsonArray{
             QJsonObject{{QStringLiteral("target"), QStringLiteral("panel.background")}},
+            QJsonObject{{QStringLiteral("target"), QStringLiteral("accent.hover")}},
+            QJsonObject{{QStringLiteral("target"), QStringLiteral("background.hover")}},
             QJsonObject{{QStringLiteral("target"), QStringLiteral("curve.canvasBackground")}}})));
     ASSERT_TRUE(writeColorPackage(root.path(), childId, parentId, {}));
     ASSERT_TRUE(writeColorDefinition(root.path(), childId, colorDefinition(

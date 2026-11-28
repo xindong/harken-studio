@@ -436,7 +436,6 @@ void QtControlSkin::paintDragHandle(QPainter& painter, const QRect& rect, bool e
 void QtControlSkin::paintTableCellSelection(QPainter& painter, const QRect& rect) const
 {
     painter.fillRect(rect, colors().bgSelected);
-    painter.fillRect(QRect(rect.left(), rect.top(), 2, rect.height()), colors().accent);
 }
 
 void QtControlSkin::paintFieldFrame(QPainter& painter, const QWidget* widget)
@@ -488,17 +487,12 @@ QString QtControlSkin::applicationStyleSheet() const
     };
 
     const auto soft = [](const QColor& value) { return rgba(value, ThemeSoftTintAlpha); };
-    const auto hover = [&](const QColor& value) {
-        return color(colors().stateColor(value, ThemeStateLayer::Hover));
-    };
 
     replace(QStringLiteral("@accent@"), color(colors().accent));
-    replace(QStringLiteral("@accentHover@"), color(colors().accentHover));
     replace(QStringLiteral("@accentText@"), color(colors().accentText));
     replace(QStringLiteral("@bgPrimary@"), color(colors().bgPrimary));
     replace(QStringLiteral("@bgSecondary@"), color(colors().bgSecondary));
     replace(QStringLiteral("@bgTertiary@"), color(colors().bgTertiary));
-    replace(QStringLiteral("@bgHover@"), color(colors().bgHover));
     replace(QStringLiteral("@hoverOverlay@"), color(colors().hoverOverlay));
     replace(QStringLiteral("@bgSelected@"), color(colors().bgSelected));
     replace(QStringLiteral("@bgDropTarget@"), color(colors().bgDropTarget));
@@ -513,15 +507,12 @@ QString QtControlSkin::applicationStyleSheet() const
     replace(QStringLiteral("@sliderTrack@"), color(colors().sliderTrack));
     replace(QStringLiteral("@success@"), color(colors().success));
     replace(QStringLiteral("@toolAll@"), color(colors().toolAll));
-    replace(QStringLiteral("@toolAllHover@"), hover(colors().toolAll));
     replace(QStringLiteral("@toolPlaySoft@"), soft(colors().toolPlay));
     replace(QStringLiteral("@warning@"), color(colors().warning));
     replace(QStringLiteral("@toolRemote@"), color(colors().toolRemote));
-    replace(QStringLiteral("@toolRemoteHover@"), hover(colors().toolRemote));
     replace(QStringLiteral("@warningSoft@"), soft(colors().warning));
     replace(QStringLiteral("@error@"), color(colors().error));
     replace(QStringLiteral("@toolCapture@"), color(colors().toolCapture));
-    replace(QStringLiteral("@toolCaptureHover@"), hover(colors().toolCapture));
     replace(QStringLiteral("@errorText@"), color(contrastTextColor(colors().error)));
     replace(QStringLiteral("@info@"), color(colors().info));
     replace(QStringLiteral("@compactSliderFill@"), rgba(colors().accent, 85));
@@ -533,7 +524,6 @@ QString QtControlSkin::applicationStyleSheet() const
     replace(QStringLiteral("@base@"), color(palette.base));
     replace(QStringLiteral("@alternateBase@"), color(palette.alternateBase));
     replace(QStringLiteral("@button@"), color(palette.button));
-    replace(QStringLiteral("@brightText@"), color(palette.brightText));
     replace(QStringLiteral("@nodeContentLabel@"), color(snapshot_->domains.nodeGraphNode.contentLabel));
     replace(QStringLiteral("@nodeContentValue@"), color(snapshot_->domains.nodeGraphNode.contentValue));
     replace(QStringLiteral("@logDebug@"), color(snapshot_->domains.log.debug));

@@ -31,7 +31,7 @@ ThemeSnapshot createBuiltinDarkTheme()
 
     colors.accent = QColor("#00F0FF");
     colors.accentSecondary = QColor("#085F6A");
-    colors.accentHover = QColor("#33F5FF");
+    colors.legacyAccentHover = QColor("#33F5FF");
     colors.accentText = QColor("#000000");
 
     colors.categoricalPalette = {{
@@ -47,7 +47,7 @@ ThemeSnapshot createBuiltinDarkTheme()
     colors.bgPrimary = QColor("#0D111A");
     colors.bgSecondary = QColor("#171C28");
     colors.bgTertiary = QColor("#222836");
-    colors.bgHover = QColor("#212838");
+    colors.legacyBgHover = QColor("#212838");
     colors.hoverOverlay = QColor("#14E0E0E0");
     colors.bgSelected = QColor("#143C48");
     colors.bgDropTarget = QColor("#2400F0FF");
@@ -203,8 +203,7 @@ ThemeSnapshot createBuiltinDarkTheme()
     spectrumColors.lineGlowMedium.setAlpha(40);
     spectrumColors.lineGlowNarrow = colors.accent;
     spectrumColors.lineGlowNarrow.setAlpha(120);
-    spectrumColors.lineHighlight = colors.accentHover;
-    spectrumColors.lineHighlight.setAlpha(220);
+    spectrumColors.lineHighlight = QColor("#DC33F5FF");
     spectrumColors.peakLine = QColor(0xFF, 0xFF, 0xFF);
     spectrumColors.peakLine.setAlpha(128);
 
@@ -257,6 +256,7 @@ ThemeSnapshot createBuiltinDarkTheme()
     domains.pinDomain.targetOk = QColor(0x3D, 0xBA, 0x6E);
     domains.pinDomain.targetBad = QColor(0xDC, 0x3C, 0x3C);
 
+    domains.nodeGraphNode.bodySelected = colors.legacyBgHover;
     domains.nodeGraphNode.borderNormal = QColor(0x10, 0x11, 0x14);
     domains.nodeGraphNode.borderHoverMix = QColor(0xFF, 0xFF, 0xFF);
     domains.nodeGraphNode.shadow = QColor(0x00, 0x00, 0x00, 0x3C);
@@ -315,7 +315,7 @@ ThemeSnapshot createBuiltinLightTheme()
     auto& colors = theme.ui.colors;
     colors.accent = QColor("#007B8B");
     colors.accentSecondary = QColor("#CEE2E8");
-    colors.accentHover = QColor("#006674");
+    colors.legacyAccentHover = QColor("#006674");
     colors.accentText = QColor("#FFFFFF");
     colors.categoricalPalette = {{
         colors.accent, QColor("#7753B8"), QColor("#A87312"), QColor("#326EB4"),
@@ -324,9 +324,9 @@ ThemeSnapshot createBuiltinLightTheme()
     colors.bgPrimary = QColor("#F4F6F9");
     colors.bgSecondary = QColor("#FFFFFF");
     colors.bgTertiary = QColor("#E8EDF3");
-    colors.bgHover = QColor("#DCE5EE");
+    colors.legacyBgHover = QColor("#DCE5EE");
     colors.hoverOverlay = QColor("#14202B38");
-    colors.bgSelected = QColor("#D0E8EE");
+    colors.bgSelected = QColor("#ACD6E0");
     colors.bgDropTarget = QColor("#24007B8B");
     colors.borderPrimary = QColor("#BCC7D3");
     colors.borderSecondary = QColor("#8D9EAF");
@@ -438,6 +438,7 @@ ThemeSnapshot createBuiltinLightTheme()
     domains.pinDomain.targetBad = colors.error;
 
     auto& node = domains.nodeGraphNode;
+    node.bodySelected = colors.legacyBgHover;
     node.borderNormal = QColor("#A9B7C6");
     node.borderHoverMix = QColor("#34485C");
     node.shadow = QColor("#22304458");

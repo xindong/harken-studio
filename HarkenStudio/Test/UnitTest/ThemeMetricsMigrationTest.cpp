@@ -809,25 +809,31 @@ TEST(ThemeMetricsMigration, MenuStateColorsCoverPaddingWithoutChangingGeometry)
     const QSize sizeHint = bar.sizeHint();
     ASSERT_FALSE(actionRect.isEmpty());
     const auto checkStates = [&] {
+        bar.itemState = QStyle::State_None;
+        const QImage normal = renderWidget(bar);
         for (const bool pressed : {false, true}) {
             bar.itemState = QStyle::State_Selected;
             if (pressed) bar.itemState |= QStyle::State_Sunken;
             const auto image = renderWidget(bar);
-            const auto expected = pressed ? manager->colors().accent : manager->colors().bgHover;
-            EXPECT_EQ(image.pixelColor(actionRect.left() + 1, actionRect.center().y()), expected);
-            EXPECT_EQ(image.pixelColor(actionRect.center().x(), actionRect.top() + 1), expected);
-            EXPECT_EQ(image.pixelColor(actionRect.center().x(), actionRect.bottom() - 1), expected);
+            QImage expected = normal;
+            QPainter painter(&expected);
+            painter.fillRect(actionRect, pressed ? manager->colors().accent : manager->colors().hoverOverlay);
+            painter.end();
+            for (const QPoint point : {QPoint(actionRect.left() + 1, actionRect.center().y()),
+                                       QPoint(actionRect.center().x(), actionRect.top() + 1),
+                                       QPoint(actionRect.center().x(), actionRect.bottom() - 1)})
+                EXPECT_EQ(image.pixelColor(point), expected.pixelColor(point));
         }
     };
     checkStates();
     auto preview = manager->appearance();
-    const QColor hover(QStringLiteral("#ff6d3a91"));
+    const QColor hover(QStringLiteral("#806d3a91"));
     const QColor accent(QStringLiteral("#ff217d9b"));
-    preview.colors[preview.themeId][preview.paletteId].insert(QStringLiteral("background.hover"), hover);
+    preview.colors[preview.themeId][preview.paletteId].insert(QStringLiteral("background.hoverOverlay"), hover);
     preview.colors[preview.themeId][preview.paletteId].insert(QStringLiteral("accent.primary"), accent);
     ASSERT_TRUE(manager->previewAppearance(preview).ok());
     QCoreApplication::processEvents();
-    EXPECT_EQ(manager->colors().bgHover, hover);
+    EXPECT_EQ(manager->colors().hoverOverlay, hover);
     EXPECT_EQ(manager->colors().accent, accent);
     EXPECT_EQ(bar.actionGeometry(action), actionRect);
     EXPECT_EQ(bar.sizeHint(), sizeHint);

@@ -142,23 +142,16 @@ void ToggleSwitch::paintEvent(QPaintEvent*)
     
     QRectF thumb(thumbX, thumbY, thumbSize, thumbSize);
     
-    QRadialGradient gradient(thumb.center(), thumbSize / 2);
-    QColor thumbTop = theme.colors().textPrimary;
-    QColor thumbMid = theme.colors().stateColor(theme.colors().bgTertiary, ThemeStateLayer::Emphasis);
-    QColor thumbBottom = theme.colors().stateColor(theme.colors().bgSecondary, ThemeStateLayer::Emphasis);
-    const QColor thumbBorder = theme.colors().borderSecondary;
-    if (!isEnabled()) {
-        thumbTop = theme.colors().textDisabled;
-        thumbMid = theme.colors().textDisabled;
-        thumbBottom = theme.colors().bgHover;
+    if (isEnabled()) {
+        QRadialGradient gradient(thumb.center(), thumbSize / 2);
+        gradient.setColorAt(0.0, theme.colors().textPrimary);
+        gradient.setColorAt(0.8, theme.colors().stateColor(theme.colors().bgTertiary, ThemeStateLayer::Emphasis));
+        gradient.setColorAt(1.0, theme.colors().stateColor(theme.colors().bgSecondary, ThemeStateLayer::Emphasis));
+        painter.setBrush(gradient);
+    } else {
+        painter.setBrush(theme.colors().textDisabled);
     }
-
-    gradient.setColorAt(0.0, thumbTop);
-    gradient.setColorAt(0.8, thumbMid);
-    gradient.setColorAt(1.0, thumbBottom);
-    
-    painter.setBrush(gradient);
-    painter.setPen(QPen(thumbBorder, metrics.borderWidth));
+    painter.setPen(QPen(theme.colors().borderSecondary, metrics.borderWidth));
     painter.drawEllipse(thumb);
 }
 

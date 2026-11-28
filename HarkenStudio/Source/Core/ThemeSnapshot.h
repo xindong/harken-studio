@@ -47,7 +47,7 @@ struct ThemeColors
 {
     QColor accent;
     QColor accentSecondary;
-    QColor accentHover;
+    QColor legacyAccentHover;
     QColor accentText;
 
     std::array<QColor, 7> categoricalPalette;
@@ -55,7 +55,7 @@ struct ThemeColors
     QColor bgPrimary;
     QColor bgSecondary;
     QColor bgTertiary;
-    QColor bgHover;
+    QColor legacyBgHover;
     QColor hoverOverlay;
     QColor bgSelected;
     QColor bgDropTarget;

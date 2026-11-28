@@ -1,5 +1,7 @@
 # Studio Default 颜色职责调整方案原文
 
+2026-11-28 已落实 Interaction 的悬停与选中调整。菜单栏当前项、普通及强调控件共用 `background.hoverOverlay`。树、列表、表格和普通页签用 `background.selected` 表示选中，Dock 焦点与拖放位置各自保留指示线。[当前职责与绘制范围](colors.md#studio-default-颜色职责)
+
 ## 方案原文
 
 建议 Studio Default 把 `Text` 改为 **前景（Foreground）**，让文字和单色图标共享职责。与前景相配的背景分组命名为 **背景（Background）**。再把目前散落在 `Text`、`Interaction`、`Feedback` 里的特殊含义集中到 **状态（States）**，提供六项可调颜色：**强调、次级强调、成功、警告、错误、禁用**。`Information` 可以删除。你列出的例子里，我建议把**只读**和**禁用**分开处理。

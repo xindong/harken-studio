@@ -30,6 +30,8 @@
 namespace harken::studio {
 namespace {
 
+const QStringList retiredHoverRoles{QStringLiteral("accent.hover"), QStringLiteral("background.hover")};
+
 void writeStyleOverrides(ISettingsStorage& storage, const ThemeAppearance& appearance)
 {
     QVariantMap metrics;
@@ -410,6 +412,9 @@ ThemePackageLoadResult ThemeManager::customizedCandidate(
                 auto saved = palette.id == base->defaultPaletteId ? committed.value(QString())
                                                                  : ThemeColorOverrides{};
                 saved.insert(committed.value(palette.id));
+                for (const auto& key : retiredHoverRoles)
+                    if (saved.contains(key) && overrides->value(key) == saved.value(key))
+                        overrides->remove(key);
                 const auto oldInfo = saved.constFind(info);
                 if (oldInfo != saved.cend() && overrides->value(info) == *oldInfo)
                 {
@@ -714,7 +719,9 @@ ThemeAppearance ThemeManager::persistedAppearance() const
     for (auto [owner, palettes] : appearance.colors.asKeyValueRange())
     {
         if (std::none_of(palettes.cbegin(), palettes.cend(), [&](const auto& colors) {
-                return colors.contains(retiredInfo) || colors.contains(secondary);
+                return colors.contains(retiredInfo) || colors.contains(secondary)
+                    || std::any_of(retiredHoverRoles.cbegin(), retiredHoverRoles.cend(),
+                                   [&](const QString& key) { return colors.contains(key); });
             }))
             continue;
         const auto base = loadBaseTheme(owner);
@@ -722,6 +729,9 @@ ThemeAppearance ThemeManager::persistedAppearance() const
             continue;
         for (auto& colors : palettes)
         {
+            for (const auto& key : retiredHoverRoles)
+                if (colors.remove(key))
+                    normalized = true;
             auto info = colors.find(retiredInfo);
             if (info == colors.end())
                 continue;
@@ -787,16 +797,12 @@ void ThemeManager::paintBindAffordance(QPainter& p, const QRect& rect, BindGlyph
 
     const auto& themeColors = colors();
     const auto& geometry = metrics();
-    QColor fg = !enabled ? themeColors.textDisabled
-                         : (active ? themeColors.accent : themeColors.textPrimary);
-    if (hover && enabled)
-        fg = active ? themeColors.accentHover : themeColors.textPrimary;
+    const QColor fg = !enabled ? themeColors.textDisabled
+                               : (active ? themeColors.accent : themeColors.textPrimary);
 
     if (hover && enabled) {
-        QColor bg = themeColors.accent;
-        bg.setAlphaF(bg.alphaF() * (active ? 46 : 30) / 255.0);
         p.setPen(Qt::NoPen);
-        p.setBrush(bg);
+        p.setBrush(themeColors.hoverOverlay);
         const qreal inset = geometry.borderWidth;
         p.drawRoundedRect(QRectF(rect).adjusted(inset, inset, -inset, -inset),
                           geometry.radiusSmall, geometry.radiusSmall);
@@ -821,7 +827,7 @@ void ThemeManager::paintBindAffordance(QPainter& p, const QRect& rect, BindGlyph
     p.drawRoundedRect(front, radius, radius);
     if (active) {
         QColor fill = themeColors.accent;
-        fill.setAlphaF(fill.alphaF() * (hover ? 235 : 200) / 255.0);
+        fill.setAlphaF(fill.alphaF() * 200 / 255.0);
         p.setBrush(fill);
         p.drawRoundedRect(front, radius, radius);
     }

@@ -1,6 +1,6 @@
 # Studio 主题配色、排版与尺寸
 
-2026-11-26 核对了 Preferences 中的配色、排版与尺寸设置。主题参数与界面缩放的核对日期为 2026-11-07，默认字体与尺寸为 2026-11-06。2026-11-27 更新了默认主题的颜色职责。
+2026-11-26 核对了 Preferences 中的配色、排版与尺寸设置。主题参数与界面缩放的核对日期为 2026-11-07，默认字体与尺寸为 2026-11-06。2026-11-28 更新了默认主题的悬停和选中职责。
 
 主题拥有自己的颜色职责、职责到绘制位置的绑定和一个或多个色卡。色卡提供该主题各职责的颜色值及明暗模式，用户修改按主题和色卡隔离。不同主题可以使用不同的职责清单；一个主题可以让网格复用边界色，另一个主题可以提供独立网格色。Renderer 继续消费完整、不可变的样式快照。
 
@@ -146,17 +146,16 @@ Studio Default 在 Colors 中用 Foreground 调整文字和单色图标，用 Ba
 | 标题前景 | `text.title` | 已加粗的分节与分组标题，包括 Inspector section、Explorer 的 Assets / Resources、设置与偏好标题、GroupBox、模板标题和表格内部的分组条目 |
 | 禁用 | `text.disabled` | 不可用控件的文字和单色图标 |
 | 强调 | `accent.primary` | 控件激活、焦点与强调边框、滑条填充、曲线编辑点与手柄激活 |
-| 强调悬停 | `accent.hover` | 强调元素自身的悬停变化 |
 | 强调底上的前景 | `accent.text` | 高亮菜单和实色强调按钮上的文字与单色图标 |
 | 基础表面 | `background.primary/secondary/tertiary` | 节点主体在选中前后均使用 tertiary，选中时只高亮边框 |
-| 悬浮叠加 | `background.hoverOverlay` | Explorer 的 Assets / Resources 标题与树行、普通按钮、工具栏选择器、播放按钮和标签页共用。Alpha 为零时完整显示原底色 |
-| 交互表面 | `background.hover/selected` | 菜单栏活动项使用 hover 底色，列表行和标签的选中状态使用 selected 底色 |
+| 悬停叠色 | `background.hoverOverlay` | 菜单栏当前项、普通和强调按钮、工具栏选择器、参数滑块手柄、Explorer 分组标题、树行和页签共用。叠色的 Alpha 决定原底色的可见程度。滑块手柄按住拖动期间继续显示叠色 |
+| 选中背景 | `background.selected` | 树、列表、表格单元格、普通页签和 Inspector 页签使用选中底色，Dark 默认为 `#143C48`，Light 默认为 `#ACD6E0`。Dock 页签顶线另外表示面板焦点，表格拖放线表示插入位置 |
 | 拖放目标 | `background.dropTarget` | 可接收拖放的树行、Resources 分节标题和蓝图节点上叠加的半透明底色；行内文字与图标保持可见，不画左侧强调条 |
 | 首要边界 | `border.primary` | 界面框架排布分割、面板边界和内容分隔线；包括 Dock 面板、画布外框、声道分隔及面板滚动条 |
 | 次要边界 | `border.secondary` | 控件与按钮描边、表格完整外框、网格及行列分隔、控件内滚动条；禁用态控件描边仍属此类 |
 | 刻度线 | `border.tick` | 时间轴、曲线、波形与 Meter 的刻度短线和坐标网格；刻度文字仍使用次要文字 |
 | 面板与轨道表面 | `panel.background`、`header.background`、`track.background`、`track.backgroundAlternate`、`bus.background` | 保留既有较暗的工作区层次，不因 RGB 接近而合并为一个背景 |
-| 次级强调 | `accent.secondary` | 失焦 Dock 组当前页签的顶线、自定义快捷键和已自定义的外观值。文字与顶线使用同一 RGB 实色 |
+| 次级强调 | `accent.secondary` | 失焦 Dock 组当前页签的顶线、自定义快捷键、已自定义的外观值，以及离散网格预演命中行的轴单元格 |
 | 结果与诊断 | `status.success/warning/error` | 发布成功、带警告完成、失败、无效引用等状态，以及时间序列状态标记、阈值线与 Monitor 游标精度 |
 | 播放工具 | `tool.play/stop/reset` | 播放、停止及复位控件 |
 | 工具栏 | `tool.all/remote/capture` | Link Platforms、Remote Connection、Data Capture 分别配置平台联动、远程连接和数据采集开启时的按钮底色 |
@@ -165,6 +164,8 @@ Studio Default 在 Colors 中用 Foreground 调整文字和单色图标，用 Ba
 次级强调保留原失焦组当前页签顶线的实际显示颜色，Dark 为 `#085F6A`，Light 为 `#CEE2E8`。两张色卡都将该颜色保存为不透明的 RGB，调整 Dock 底色后顶线仍显示配置的颜色。Tools 的六项职责沿用对应控件原有颜色，各项可独立调整。默认目录移除了 Information，旧色卡中为此职责保存的自定义颜色迁入次级强调，已有次级强调设置优先。旧配置中的半透明次级强调按所在色卡的主要背景合成为 RGB，保留原来的顶线颜色。
 
 自带职责目录的旧主题可继续用原配色控制自定义值、日志类别、Dock 顶线和工具按钮。主题作者为其中一项显式指定新绘制位置后，该位置采用新配置。
+
+升级时，使用 Studio Default 职责目录的色卡会清理 `accent.hover` 和 `background.hover` 的旧覆盖，并采用该色卡的 `background.hoverOverlay`。独立主题目录仍可加载这两个旧绑定键。
 
 字段名统一声明 `textRole=formLabel`，使用首要文字。普通文本标签可声明 `textRole=primary/secondary/title`；节点内容保留 `nodeContentRole=label/value`，两个绘制位置均绑定首要文字，节点辅助副标题使用次要文字。`roValue` 静态展示值使用首要文字；运行时继承的有效只读数值也使用主要前景，混合或缺失的数值以及整表禁用时按原有状态显示。公共禁用文字规则覆盖普通 QLabel、表格序号与列头、单位及上述文字角色，原生 palette 同步设置 Disabled WindowText。仍需支持查看导航的文字可通过 `dimmed=true` 使用同一禁用色；FX Custom 名称采用此方式，保留双击打开 Effect Editor 的能力。
 
@@ -266,19 +267,20 @@ PR 集成复验基于已含 #194 的主线 `9235952a`：编辑器与测试目标
 
 ## 用户颜色定制
 
-Studio Default 提供 71 个可编辑源颜色角色，共 11 类。每项包含职责名称、用途说明、主题职责键和绘制绑定。外部主题可声明自己的目录，Appearance 按当前主题生成分类与颜色行。窗口壳层按钮细节、Logo 扫光和声谱图固定热力色阶未加入 Studio Default 的用户定制目录；启动波浪的四档色阶单独表达动画配色，Logo 底板复用 `panel.background`。
+Studio Default 提供 76 个可编辑源颜色角色，共 12 类。每项包含职责名称、用途说明、主题职责键和绘制绑定。外部主题可声明自己的目录，Appearance 按当前主题生成分类与颜色行。窗口壳层按钮细节、Logo 扫光和声谱图固定热力色阶未加入 Studio Default 的用户定制目录；启动波浪的四档色阶单独表达动画配色，Logo 底板复用 `panel.background`。
 
 | 分类 | 数量 | 开放范围 |
 |---|---|---|
-| Text | 4 | 首要文字、次要文字、标题文字、禁用文字 |
+| Foreground | 4 | 主要前景、次要前景、标题前景、强调底上的前景 |
+| States | 6 | 强调、次级强调、成功、警告、错误、禁用 |
+| Tools | 6 | 播放、停止、复位、平台联动、远程连接、数据采集 |
 | Background | 7 | 主背景、控件背景、抬升背景、面板、标题、轨道、交替轨道 |
-| Interaction | 10 | 强调及悬停、强调底文字、悬停/选中背景、拖放目标、三类边界、滑条底轨 |
-| Feedback | 4 | 成功、警告、错误、信息 |
+| Interaction | 7 | 悬停叠色、选中背景、拖放目标、三类边界、滑块底轨 |
 | Categorical palette | 7 | 区分多个条目的七个分类色 |
 | Waveform | 7 | 静态波形低/高幅度、三段频率贡献、裁剪及循环标记 |
 | Curves | 4 | 音量衰减、音高衰减、参数绑定、Grid 淡变 |
 | Meters | 8 | Peak 四段渐变、RMS、峰值保持、频谱主线/峰值线 |
-| Timeline | 6 | Clip 背景、上下文范围高亮、Clip 文字、进入/退出/过渡标记 |
+| Timeline | 7 | Clip 背景、上下文范围高亮、Clip 文字、播放游标、进入/退出/过渡标记 |
 | Blueprint | 9 | 画布、网格点、三类端口、三类关系连线、节点波形 |
 | Startup | 4 | 启动波浪的暗部、低色阶、高色阶和高光 |
 
@@ -351,7 +353,7 @@ Studio Default 已保存的 `text.muted` 覆盖迁入同一色卡的 `text.secon
 | `border.accent`、`slider.fill`、`knob.arc`、`shell.menuPressed` | `accent.primary` |
 | `panel.border` | `border.primary` |
 | `knob.face`、`shell.buttonPressed` | `background.tertiary` |
-| `shell.menuHover` | `background.hover` |
+| `shell.menuHover` | `background.hoverOverlay` |
 | `shell.buttonHover` | `background.hoverOverlay` |
 | `shell.menuPressedText` | `accent.text` |
 

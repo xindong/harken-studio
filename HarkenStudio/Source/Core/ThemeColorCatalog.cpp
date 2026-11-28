@@ -68,7 +68,7 @@ const QVector<ThemeColorRole>& studioDefaultColorRoles()
          }},
         {QStringLiteral("accent.secondary"), QStringLiteral("States"),
          QStringLiteral("Secondary accent"),
-         QStringLiteral("Customized settings and shortcuts, and the top border of the current tab in an unfocused dock group."),
+         QStringLiteral("Customized settings and shortcuts, matching rows in the discrete grid preview, and the top border of the current tab in an unfocused dock group."),
          {
              {QStringLiteral("accent.secondary"), std::nullopt},
              {QStringLiteral("qtAds.activeTabAccent"), std::nullopt},
@@ -193,28 +193,15 @@ const QVector<ThemeColorRole>& studioDefaultColorRoles()
          {
              {QStringLiteral("track.backgroundAlternate"), std::nullopt},
          }},
-        {QStringLiteral("accent.hover"), QStringLiteral("Interaction"),
-         QStringLiteral("Accent hover"),
-         QStringLiteral("Hovered accent controls."),
-         {
-             {QStringLiteral("accent.hover"), std::nullopt},
-         }},
-        {QStringLiteral("background.hover"), QStringLiteral("Interaction"),
-         QStringLiteral("Hover background"),
-         QStringLiteral("Solid background for active menu bar items."),
-         {
-             {QStringLiteral("background.hover"), std::nullopt},
-             {QStringLiteral("nodeGraph.node.bodySelected"), std::nullopt},
-         }},
         {QStringLiteral("background.hoverOverlay"), QStringLiteral("Interaction"),
          QStringLiteral("Hover overlay"),
-         QStringLiteral("Tint over buttons, toolbar selectors, section headers, tabs and rows on hover. Alpha controls the strength."),
+         QStringLiteral("Tint over controls, including accent-filled buttons, menu bar items, section headers, tabs and rows on hover. Alpha controls the strength."),
          {
              {QStringLiteral("background.hoverOverlay"), std::nullopt},
          }},
         {QStringLiteral("background.selected"), QStringLiteral("Interaction"),
          QStringLiteral("Selected background"),
-         QStringLiteral("Selected rows, tabs and segmented options."),
+         QStringLiteral("Selected rows, cells, tabs and segmented options."),
          {
              {QStringLiteral("background.selected"), std::nullopt},
          }},

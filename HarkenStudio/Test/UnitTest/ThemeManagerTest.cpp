@@ -747,7 +747,8 @@ TEST(ThemeManager, RetiredAndMalformedStoredColorsDoNotBlockValidEditsAcrossThem
     const QStringList retiredKeys{QStringLiteral("meter.lufsMomentary"),
         QStringLiteral("meter.lufsShortTerm"), QStringLiteral("meter.lufsIntegrated"),
         QStringLiteral("knob.indicator"), QStringLiteral("bus.background"),
-        QStringLiteral("timeline.clipBorder"), QStringLiteral("timeline.clipSelectedBorder")};
+        QStringLiteral("timeline.clipBorder"), QStringLiteral("timeline.clipSelectedBorder"),
+        QStringLiteral("accent.hover"), QStringLiteral("background.hover")};
     const QColor packageColor(QStringLiteral("#80123456"));
     const QColor builtinColor(QStringLiteral("#9000ffff"));
     const QColor privateColor(QStringLiteral("#a0ff00ff"));
@@ -764,6 +765,8 @@ TEST(ThemeManager, RetiredAndMalformedStoredColorsDoNotBlockValidEditsAcrossThem
         const QString storagePath = root.filePath(QStringLiteral("settings.ini"));
         QVariantMap owners{
             {packageId, QVariantMap{{key, packageColor.name(QColor::HexArgb)},
+                                   {QStringLiteral("accent.hover"), privateColor.name(QColor::HexArgb)},
+                                   {QStringLiteral("background.hover"), privateColor.name(QColor::HexArgb)},
                                    {QStringLiteral("text.primary"), QStringLiteral("invalid")}}},
             {builtinId, QVariantMap{{key, builtinColor.name(QColor::HexArgb)},
                                    {infoKey, privateColor.name(QColor::HexArgb)},

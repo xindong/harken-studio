@@ -127,14 +127,6 @@ protected:
         QTreeWidget::keyPressEvent(event);
     }
 
-    void drawRow(QPainter* painter, const QStyleOptionViewItem& option,
-                 const QModelIndex& index) const override
-    {
-        QTreeWidget::drawRow(painter, option, index);
-        if (selectionModel()->isSelected(index))
-            TreeRowStyle::paintRowAccent(painter, option.rect);
-    }
-
     void drawBranches(QPainter* painter, const QRect& rect,
                       const QModelIndex& index) const override
     {
