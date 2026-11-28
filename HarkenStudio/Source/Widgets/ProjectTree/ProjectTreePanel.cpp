@@ -11,7 +11,6 @@
 #include "Core/ActionStepUtils.h"
 #include "Core/AuthoringPolicy.h"
 #include "Core/ConversionResults.h"
-#include "Tooling/Harkenizer/Core/SoundSourceDerivative.h"
 #include "Core/ItemTypeCatalog.h"
 #include "Core/ItemTypeIcons.h"
 #include "Core/NameValidator.h"
@@ -84,12 +83,103 @@ struct TreeRowIconKey
     bool operator==(const TreeRowIconKey&) const = default;
 };
 
+QColor soundRowColor(const ProjectItem& item)
+{
+    const auto language = SoundSourceEditing::previewLanguage(
+        item, LanguageContextService::instance().language());
+    const auto source = SoundSourceEditing::activeSourceId(
+        item, PlatformContextService::instance().context().primary, language);
+    return source ? mediaStatusColor(MediaPool::instance().cachedStatus(source)) : QColor{};
+}
+
+QString itemToolTip(const ProjectItem& item)
+{
+    QString tooltip = QString("%1 - %2").arg(ItemTypeCatalog::displayName(item.type), item.name);
+    const QString language = SoundSourceEditing::previewLanguage(
+        item, LanguageContextService::instance().language());
+    const uint32_t activeSourceID = item.type == ProjectItem::Type::Sound
+        ? SoundSourceEditing::activeSourceId(
+              item, PlatformContextService::instance().context().primary, language)
+        : 0;
+    const AssetInfo* asset = activeSourceID != 0
+        ? AssetRegistry::instance().getAsset(activeSourceID) : nullptr;
+    const QString activePath = asset ? asset->relativePath : QString{};
+    if (!activePath.isEmpty())
+    {
+        tooltip = ProjectTreePanel::tr("Sound: %1\nSource: %2").arg(item.name, activePath);
+    }
+
+    if (activeSourceID != 0)
+    {
+        const MediaStatus mediaStatus = MediaPool::instance().cachedStatus(activeSourceID);
+        QString statusLabel;
+
+        switch (mediaStatus) {
+            case MediaStatus::Available:
+                statusLabel = ProjectTreePanel::tr("Available");
+                if (const auto* project = ProjectManager::instance().currentProject(); project && asset) {
+                    const auto platform = PlatformContextService::instance().context().primary;
+                    const auto* source = SoundSourceEditing::activeSource(item, platform, language);
+                    const auto* sound = item.comp<VSound>();
+                    if (source && sound) {
+                        const auto conversion = resolveConversion(*project, item, platform, *asset);
+                        if (conversion)
+                            statusLabel = ConversionResults::hasCachedSource(*project, *conversion,
+                                *source, *asset, sound->scheduleOffsetSec)
+                                ? ProjectTreePanel::tr("Converted") : ProjectTreePanel::tr("Not Converted");
+                    }
+                }
+                break;
+            case MediaStatus::Missing:
+                statusLabel = ProjectTreePanel::tr("Missing");
+                break;
+            case MediaStatus::Orphaned:
+                statusLabel = ProjectTreePanel::tr("Orphaned");
+                break;
+            case MediaStatus::Error:
+                statusLabel = ProjectTreePanel::tr("Error");
+                break;
+        }
+
+        tooltip += QStringLiteral("\nMedia Status: ") + statusLabel;
+
+        if (asset) {
+            tooltip += QStringLiteral("\nFormat: ") + asset->metadata.originalFormat;
+            tooltip += QStringLiteral("\nDuration: ") +
+                       QString::number(asset->metadata.durationSec, 'f', 2) + QStringLiteral("s");
+            tooltip += QStringLiteral("\nSample Rate: ") +
+                       QString::number(asset->metadata.sampleRate) + QStringLiteral(" Hz");
+            tooltip += QStringLiteral("\nChannels: ") +
+                       QString::number(asset->metadata.channels);
+        }
+    }
+
+    if (const auto* project = ProjectManager::instance().currentProject())
+        tooltip += QStringLiteral("\nPath: ") + project->itemPath(&item);
+    tooltip += QStringLiteral("\nGUID: ") + item.guid.toString(QUuid::WithoutBraces);
+    return tooltip;
+}
+
 class ProjectTreeRow final : public QTreeWidgetItem
 {
 public:
     using QTreeWidgetItem::QTreeWidgetItem;
+    explicit ProjectTreeRow(const QUuid& guid) : guid_(guid) {}
+
+    QVariant data(int column, int role) const override
+    {
+        if (column == 0 && role == Qt::ToolTipRole && !guid_.isNull()) {
+            if (const auto* item = ProjectManager::instance().findItemByGuid(guid_))
+                return itemToolTip(*item);
+            return {};
+        }
+        return QTreeWidgetItem::data(column, role);
+    }
 
     std::optional<TreeRowIconKey> iconKey;
+
+private:
+    QUuid guid_;
 };
 
 TreeRowIconKey treeRowIconKey(const QWidget& widget)
@@ -191,24 +281,11 @@ void ProjectTreePanel::initPanel()
                 updateTreeItem(it.key(), it.value());
     }, Qt::QueuedConnection);
 
-    const auto refreshConversionStatus = [this]() {
+    connect(&PlatformContextService::instance(), &PlatformContextService::contextChanged,
+            this, [this]() {
         for (auto it = itemMap_.cbegin(); it != itemMap_.cend(); ++it)
             if (it.value()->type == ProjectItem::Type::Sound)
                 updateTreeItem(it.key(), it.value());
-    };
-    connect(&SoundSourceDerivative::MaterializationEvents::instance(),
-            &SoundSourceDerivative::MaterializationEvents::artifactReady,
-            this, refreshConversionStatus, Qt::QueuedConnection);
-    connect(&PlatformContextService::instance(), &PlatformContextService::contextChanged,
-            this, refreshConversionStatus);
-    connect(&ProjectManager::instance(), &ProjectManager::defaultConversionChanged,
-            this, refreshConversionStatus);
-    connect(&ProjectManager::instance(), &ProjectManager::itemMoved,
-            this, refreshConversionStatus);
-    connect(&ProjectManager::instance(), &ProjectManager::itemPropertyChanged,
-            this, [refreshConversionStatus](ProjectItem*, const QString& property) {
-        if (property == QStringLiteral("conversion") || property == QStringLiteral("fieldGroups"))
-            refreshConversionStatus();
     });
 
     connect(&ProjectManager::instance(), &ProjectManager::busChanged,
@@ -233,11 +310,7 @@ void ProjectTreePanel::initPanel()
                     QColor color;
                     const auto* item = it.value();
                     if (item->type == ProjectItem::Type::Sound) {
-                        const auto language = SoundSourceEditing::previewLanguage(
-                            *item, LanguageContextService::instance().language());
-                        const auto source = SoundSourceEditing::activeSourceId(
-                            *item, PlatformContextService::instance().context().primary, language);
-                        if (source != 0) color = mediaStatusColor(MediaPool::instance().cachedStatus(source));
+                        color = soundRowColor(*item);
                         it.key()->setData(0, Qt::ForegroundRole,
                             color.isValid() ? QVariant::fromValue(QBrush(color)) : QVariant());
                     }
@@ -1792,10 +1865,11 @@ void ProjectTreePanel::batchMove(const QString& targetFolder)
 void ProjectTreePanel::updateSearchLabels()
 {
     const auto* project = ProjectManager::instance().currentProject();
-    objectLabels_ = project ? std::make_unique<ProjectObjectLabels>(*project) : nullptr;
+    const bool searching = searchBox_ && !searchBox_->text().isEmpty();
+    objectLabels_ = project && searching ? std::make_unique<ProjectObjectLabels>(*project) : nullptr;
     if (!project) return;
     for (auto it = itemMap_.cbegin(); it != itemMap_.cend(); ++it)
-        updateTreeItem(it.key(), it.value());
+        updateItemLabel(it.key(), *it.value());
     for (auto it = folderMap_.cbegin(); it != folderMap_.cend(); ++it)
         updateFolderRow(it.key(), it.value());
 }
@@ -2236,75 +2310,24 @@ void ProjectTreePanel::onInternalMoveRequested(ProjectItem* projectItem,
     ProjectManager::instance().moveItems({projectItem}, targetParent);
 }
 
+void ProjectTreePanel::updateItemLabel(QTreeWidgetItem* row, const ProjectItem& item) const
+{
+    const bool dirty = item.isDirtyObject();
+    const QString name = objectLabels_ ? objectLabels_->label(item) : item.name;
+    row->setText(0, dirty ? name + QStringLiteral(" *") : name);
+    QFont font = row->font(0);
+    font.setItalic(dirty);
+    row->setFont(0, font);
+}
+
 void ProjectTreePanel::updateTreeItem(QTreeWidgetItem* treeItem, ProjectItem* projectItem)
 {
     if (!treeItem || !projectItem) return;
-
-    const bool dirty = projectItem->isDirtyObject();
-    const QString name = objectLabels_ && searchBox_ && !searchBox_->text().isEmpty()
-        ? objectLabels_->label(*projectItem) : projectItem->name;
-    treeItem->setText(0, dirty ? name + QStringLiteral(" *") : name);
-
-    QString tooltip = QString("%1 - %2").arg(typeToString(projectItem->type), projectItem->name);
-    const QString language = SoundSourceEditing::previewLanguage(
-        *projectItem, LanguageContextService::instance().language());
-    const uint32_t activeSourceID = projectItem->type == ProjectItem::Type::Sound
-        ? SoundSourceEditing::activeSourceId(
-              *projectItem, PlatformContextService::instance().context().primary, language)
-        : 0;
-    const AssetInfo* asset = activeSourceID != 0
-        ? AssetRegistry::instance().getAsset(activeSourceID) : nullptr;
-    const QString activePath = asset ? asset->relativePath : QString{};
-    if (!activePath.isEmpty())
-    {
-        tooltip = tr("Sound: %1\nSource: %2").arg(projectItem->name, activePath);
-    }
+    updateItemLabel(treeItem, *projectItem);
 
     QColor statusColor;
-    if (activeSourceID != 0)
-    {
-        MediaStatus mediaStatus = MediaPool::instance().cachedStatus(activeSourceID);
-        statusColor = mediaStatusColor(mediaStatus);
-        QString statusLabel;
-
-        switch (mediaStatus) {
-            case MediaStatus::Available:
-                statusLabel = tr("Available");
-                if (const auto* project = ProjectManager::instance().currentProject(); project && asset) {
-                    const auto platform = PlatformContextService::instance().context().primary;
-                    const auto* source = SoundSourceEditing::activeSource(*projectItem, platform, language);
-                    const auto* sound = projectItem->comp<VSound>();
-                    if (source && sound && resolveConversion(*project, *projectItem, platform, *asset))
-                        statusLabel = ConversionResults::hasCachedSource(*project, *projectItem,
-                            *source, *asset, platform, sound->scheduleOffsetSec)
-                            ? tr("Converted") : tr("Not Converted");
-                }
-                break;
-            case MediaStatus::Missing:
-                statusLabel = tr("Missing");
-                break;
-            case MediaStatus::Orphaned:
-                statusLabel = tr("Orphaned");
-                break;
-            case MediaStatus::Error:
-                statusLabel = tr("Error");
-                break;
-        }
-
-        tooltip += QStringLiteral("\nMedia Status: ") + statusLabel;
-
-        if (asset) {
-            tooltip += QStringLiteral("\nFormat: ") + asset->metadata.originalFormat;
-            tooltip += QStringLiteral("\nDuration: ") +
-                       QString::number(asset->metadata.durationSec, 'f', 2) + QStringLiteral("s");
-            tooltip += QStringLiteral("\nSample Rate: ") +
-                       QString::number(asset->metadata.sampleRate) + QStringLiteral(" Hz");
-            tooltip += QStringLiteral("\nChannels: ") +
-                       QString::number(asset->metadata.channels);
-        }
-    }
-
     if (projectItem->type == ProjectItem::Type::Sound) {
+        statusColor = soundRowColor(*projectItem);
         if (statusColor.isValid())
             treeItem->setForeground(0, statusColor);
         else
@@ -2329,34 +2352,18 @@ void ProjectTreePanel::updateTreeItem(QTreeWidgetItem* treeItem, ProjectItem* pr
         }
     }
 
-    if (const auto* project = ProjectManager::instance().currentProject()) {
-        QString path = objectLabels_ ? objectLabels_->path(*projectItem) : QString{};
-        if (path.isEmpty()) path = project->itemPath(projectItem);
-        tooltip += QStringLiteral("\nPath: ") + path;
-    }
-    tooltip += QStringLiteral("\nGUID: ") + projectItem->guid.toString(QUuid::WithoutBraces);
-    treeItem->setToolTip(0, tooltip);
-
-    QFont font = treeItem->font(0);
-
-    font.setItalic(dirty);
-
-    treeItem->setFont(0, font);
+    if (!cachedRow)
+        treeItem->setToolTip(0, itemToolTip(*projectItem));
 }
 
 QTreeWidgetItem* ProjectTreePanel::createTreeItem(ProjectItem* item)
 {
-    QTreeWidgetItem* treeItem = new ProjectTreeRow();
+    QTreeWidgetItem* treeItem = new ProjectTreeRow(item->guid);
     treeItem->setFlags(treeItem->flags() | Qt::ItemIsEditable);
 
     updateTreeItem(treeItem, item);
 
     return treeItem;
-}
-
-QString ProjectTreePanel::typeToString(ProjectItem::Type type) const
-{
-    return ItemTypeCatalog::displayName(type);
 }
 
 void ProjectTreePanel::onFontSettingsChanged(PanelId panelId, int size)

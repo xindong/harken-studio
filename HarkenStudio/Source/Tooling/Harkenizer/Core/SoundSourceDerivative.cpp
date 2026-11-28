@@ -394,7 +394,8 @@ std::optional<PreparedMedia> prepare(const QString& inputPath,
         + static_cast<std::ptrdiff_t>(range->start * static_cast<uint64_t>(channels));
     const auto end = samples.begin()
         + static_cast<std::ptrdiff_t>(range->end * static_cast<uint64_t>(channels));
-    std::vector<float> trimmed(begin, end);
+    std::vector<float> trimmed = range->start == 0 && range->end == totalFrames
+        ? std::move(samples) : std::vector<float>(begin, end);
     SoundSourceSemantics::applyFadeEnvelope(trimmed, static_cast<uint32_t>(channels),
                                            source, totalFrames, range->start);
     LoopInfo loop;

@@ -34,6 +34,7 @@ public:
     bool ensurePrepared(const ProjectData& project);
     ProjectSerializer& serializer();
     ProjectItem* findItem(const QUuid& guid) const;
+    QJsonObject savedItem(const QUuid& guid) const { return saved_.value(guid); }
     const QSet<QUuid>& candidates() const { return candidates_; }
     bool requiresFullSave() const { return requiresFullSave_; }
     quint64 revision() const { return revision_; }

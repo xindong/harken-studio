@@ -196,7 +196,7 @@ InspectorPanel::~InspectorPanel()
 
 void InspectorPanelPrivate::refreshBoundPages(ProjectItem* item, const QString& prop)
 {
-    if (prop == QLatin1String("sourceName")) return;
+    if (prop == QLatin1String("sourceName") || prop == QLatin1String("dirty")) return;
     if (busEngine_ && currentBusItem_) {
         if (prop == QLatin1String("fieldGroups") || prop == QLatin1String("outputBusId")
             || prop == QLatin1String("outputBusVolume"))

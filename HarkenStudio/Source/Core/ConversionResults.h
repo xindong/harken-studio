@@ -43,9 +43,8 @@ std::optional<SourceResult> inspectSource(const ProjectData& project,
     const ProjectItem& sound, const SoundSourceDef& source, const AssetInfo& asset,
     ProjectPlatformId platform, const QString& language = {},
     double scheduleOffsetSec = 0.0, QString* error = nullptr);
-bool hasCachedSource(const ProjectData& project, const ProjectItem& sound,
-    const SoundSourceDef& source, const AssetInfo& asset, ProjectPlatformId platform,
-    double scheduleOffsetSec = 0.0);
+bool hasCachedSource(const ProjectData& project, const ResolvedConversion& conversion,
+    const SoundSourceDef& source, const AssetInfo& asset, double scheduleOffsetSec = 0.0);
 QVector<SourceResult> query(const ProjectData& project, const QUuid& presetGuid,
     ProjectPlatformId platform, QString* error = nullptr);
 QJsonArray toJson(const QVector<SourceResult>& results);

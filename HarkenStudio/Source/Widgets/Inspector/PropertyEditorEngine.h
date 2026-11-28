@@ -154,6 +154,9 @@ private:
     void refreshPlatformMarkers();
     void buildGroupHeader(FieldGroupId group, class CollapsibleSection* section, bool showRangeName);
     void refreshFieldGroups();
+    InspectorGroupLookup groupLookup() const;
+    std::vector<FieldGroupDefinitionView> previewAncestry(
+        const FieldGroupInspectorView& view, bool includePreviews) const;
     void refreshFieldGroupPreview(ProjectItem* provider, const DefinitionFieldGroups& groups);
     void cancelGroupEdits(bool preserveListRows = false);
     void previewGroupField(FieldBinding& binding, double value);
@@ -161,7 +164,7 @@ private:
     void previewGroupRoutes(FieldBinding& binding, const QVariant& value);
     void previewBusRoutes(FieldBinding& binding, const QVariant& value);
     void finishGroupPreview(FieldBinding& binding);
-    bool applyGroupFieldView(FieldBinding& binding);
+    bool applyGroupFieldView(FieldBinding& binding, const FieldGroupInspectorRead* reader);
     void setGroupFieldWidgetValue(const FieldBinding& binding, const QVariant& value);
     QVariant groupFieldValue(const QString& field, const FieldGroupInspectorView* preview = nullptr) const;
     bool groupReferenceSelectable(const QString& field, uint32_t candidate,

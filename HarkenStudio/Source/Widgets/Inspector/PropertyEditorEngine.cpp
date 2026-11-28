@@ -360,7 +360,7 @@ PropertyEditorEngine::PropertyEditorEngine(QObject* parent)
         refreshFieldGroups();
         for (const auto& section : sectionBindings_) {
             if (section.provider && section.widget)
-                section.provider->bind(section.widget, currentItem_);
+                section.provider->bindGroups(section.widget, currentItem_, groupLookup());
         }
     });
 }
@@ -1023,10 +1023,11 @@ void PropertyEditorEngine::connectWidgetSignal(QWidget* widget, const QString& w
                 if (entry.parameterBinding == binding && fieldGroup(field)) {
                     auto args = std::move(entry.groupEditArgs);
                     entry.groupEditArgs.reset();
+                    const auto revision = groupEditRevision_;
                     if (committed && args && entry.groupEditRevision == groupEditRevision_)
                         commitFieldChange(field, QVariant(value), args);
                     finishGroupPreview(entry);
-                    if (!updating_) refreshFieldGroups();
+                    if (!updating_ && groupEditRevision_ == revision) refreshFieldGroups();
                     return;
                 }
                 if (entry.parameterBinding != binding || !entry.editSession) continue;
@@ -1489,17 +1490,17 @@ void PropertyEditorEngine::bindItem(ProjectItem* item)
                 setWidgetValue(b.widget, b.widgetType, v);
         }
         if (b.decorator)
-            b.decorator->bind(item);
+            b.decorator->bindGroups(item, groupLookup());
         else
             for (IFieldDecorator* decorator : b.decorators)
-                decorator->bind(item);
+                decorator->bindGroups(item, groupLookup());
     }
     updating_ = false;
     refreshPlatformMarkers();
 
     for (const auto& s : sectionBindings_)
         if (s.provider && s.widget)
-            s.provider->bind(s.widget, item);
+            s.provider->bindGroups(s.widget, item, groupLookup());
 
     tagCustomFields(item);
 
@@ -1581,10 +1582,10 @@ bool PropertyEditorEngine::refreshField(const QString& field)
                 setWidgetValue(b.widget, b.widgetType, v);
         }
         if (b.decorator)
-            b.decorator->bind(currentItem_);
+            b.decorator->bindGroups(currentItem_, groupLookup());
         else
             for (IFieldDecorator* decorator : b.decorators)
-                decorator->bind(currentItem_);
+                decorator->bindGroups(currentItem_, groupLookup());
         updating_ = false;
         handled = true;
         if (!addressFilter && !coarseBindings && !FilterAuthoring::isField(field)) break;

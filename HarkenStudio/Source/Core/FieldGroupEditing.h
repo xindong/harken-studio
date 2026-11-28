@@ -131,6 +131,11 @@ struct FieldGroupProjectValidation {
 FieldGroupEditResult prepareFieldGroupEdit(
     ProjectData& project, const FieldGroupEditRequest& request);
 
+std::optional<DefinitionFieldGroups> previewFieldGroupNumber(
+    const ProjectData& project, const ProjectItem& item, const FieldGroupEditScopes& scopes,
+    harkenplayableproperties::PlayablePropertyIdV1 property, float value,
+    std::span<const FieldGroupDefinitionView> ancestry);
+
 FieldGroupEditResult prepareFieldGroupRestore(
     ProjectData& project, const QUuid& definition,
     const DefinitionFieldGroups& replacement,

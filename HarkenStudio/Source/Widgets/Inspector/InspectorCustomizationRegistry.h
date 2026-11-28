@@ -19,6 +19,8 @@ class QMenu;
 namespace harken::studio {
 
 struct ProjectItem;
+struct FieldGroupInspectorView;
+using InspectorGroupLookup = std::function<const FieldGroupInspectorView*(FieldGroupId)>;
 
 class IFieldDrawer
 {
@@ -50,8 +52,12 @@ public:
     virtual QWidget* buildHeader(QWidget*, QWidget*) { return nullptr; }
 
     virtual void bind(QWidget* widget, ProjectItem* item) = 0;
+    virtual void bindGroups(QWidget* widget, ProjectItem* item, const InspectorGroupLookup&)
+        { bind(widget, item); }
 
     virtual bool refresh(QWidget*, ProjectItem*, const QString&) { return false; }
+    virtual void refreshGroups(QWidget* widget, ProjectItem* item, const InspectorGroupLookup&)
+        { refresh(widget, item, QStringLiteral("fieldGroups")); }
 
     virtual QString summary(ProjectItem* ) const { return {}; }
 };
@@ -63,6 +69,8 @@ public:
 
     virtual InspectorSlotKind slotKind() const = 0;
     virtual void bind(ProjectItem* item) = 0;
+    virtual void bindGroups(ProjectItem* item, const InspectorGroupLookup&) { bind(item); }
+    virtual void refreshGroups(ProjectItem*, const InspectorGroupLookup&) {}
     virtual QWidget* detailWidget() const { return nullptr; }
     virtual QString hoverSummary() const { return {}; }
     virtual bool isReadOnly() const { return false; }

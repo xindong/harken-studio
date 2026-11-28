@@ -828,6 +828,7 @@ PreparedProject::PreparedProject(PreparedProject&& other) noexcept
       integrityReport(std::move(other.integrityReport)),
       assets(std::move(other.assets)),
       loadedDocuments(std::move(other.loadedDocuments)),
+      validationContext(std::move(other.validationContext)),
       diagnostics(std::move(other.diagnostics)),
       error(std::move(other.error)),
       rebuildAssetRegistry(other.rebuildAssetRegistry),
@@ -850,6 +851,7 @@ PreparedProject& PreparedProject::operator=(PreparedProject&& other) noexcept
     integrityReport = std::move(other.integrityReport);
     assets = std::move(other.assets);
     loadedDocuments = std::move(other.loadedDocuments);
+    validationContext = std::move(other.validationContext);
     diagnostics = std::move(other.diagnostics);
     error = std::move(other.error);
     rebuildAssetRegistry = other.rebuildAssetRegistry;
@@ -888,6 +890,8 @@ PreparedProject ProjectLoader::prepareProject(const QString& filePath,
     if (cancelled && cancelled())
         return {};
     PreparedProject prepared;
+    if (!context && mode == ProjectSerializer::LoadMode::RecoverTransactions)
+        context = &prepared.validationContext;
     prepared.project = std::make_unique<ProjectData>();
     ProjectSerializer serializer;
     if (!serializer.loadProject(filePath, *prepared.project, allowUpgrade,
@@ -1002,6 +1006,7 @@ PreparedProject ProjectLoader::prepareProject(const QString& filePath,
         return prepared;
     }
     prepared.loadedDocuments = serializer.loadedDocuments();
+    if (context != &prepared.validationContext) prepared.validationContext = *context;
     prepared.folderSaveState = FolderSaveState::capture(*prepared.project, &prepared.error);
     if (!prepared.folderSaveState) {
         prepared.project.reset();
