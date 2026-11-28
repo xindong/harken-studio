@@ -16,14 +16,6 @@
 
 namespace harken::studio {
 
-enum class SelectionMode : uint8_t
-{
-    Random = 0,
-    Sequence = 2,
-    Match = 4,
-    Blend = 5
-};
-
 enum class SelectionPlayType : uint8_t { Single = 0, Queue = 1 };
 enum class RandomDiscipline : uint8_t { Draw = 0, Shuffle = 1 };
 enum class SelectionMemoryScope : uint8_t { PerEmitter = 0, Global = 1 };
@@ -63,12 +55,12 @@ public:
 
     DiscreteGridDef matchGrid(PlatformScope scope = std::nullopt) const
     {
-        return selections.table(scope).matchGrid();
+        return selections.matchGrid(scope);
     }
 
     MixingDef mixing(PlatformScope scope = std::nullopt) const
     {
-        return selections.table(scope).mixing();
+        return selections.mixing(scope);
     }
 
     std::vector<SelectionEntry> activeRows(PlatformScope scope = std::nullopt) const;

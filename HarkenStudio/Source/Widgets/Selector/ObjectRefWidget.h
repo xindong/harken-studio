@@ -52,7 +52,6 @@ public:
 
     void setCurrentObjectID(uint32_t objectID);
     void setUnresolvedReference(QString stableId);
-    void setMixedValue();
     uint32_t currentObjectID() const noexcept { return objectID_; }
 
     bool canAcceptObject(uint32_t objectID) const;
@@ -103,7 +102,6 @@ private:
     QString validationError_;
     QString supplementalToolTip_;
     QString emptyText_;
-    bool mixedValue_ = false;
     uint32_t objectID_ = 0;
     bool readOnly_ = false;
     bool required_ = true;

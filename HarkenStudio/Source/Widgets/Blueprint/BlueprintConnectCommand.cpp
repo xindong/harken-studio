@@ -83,20 +83,39 @@ FieldGroupEditResult prepareSendEdit(ProjectItem& item, uint32_t targetBusId, bo
                                       QStringLiteral("Target Bus does not exist")});
         return result;
     }
-    auto sends = item.fieldGroups.send.shared.localHistory.value_or(SendFieldGroup{});
     const auto target = authoringGuid(bus->guid);
-    const auto existing = std::find_if(sends.sends.begin(), sends.sends.end(),
-        [&](const auto& row) { return row.targetBusID == target && row.type == type && row.duckTarget == duckTarget; });
-    if (connect && existing == sends.sends.end())
-        sends.sends.push_back({target, 0.0f, type, duckTarget});
-    else if (!connect && existing != sends.sends.end())
-        sends.sends.erase(existing);
+    const auto edit = [&](auto rows) {
+        using Row = typename decltype(rows)::value_type;
+        const auto existing = std::find_if(rows.begin(), rows.end(), [&](const Row& row) {
+            if constexpr (requires { row.duckTarget; }) return row.targetBusID == target && row.duckTarget == duckTarget;
+            else return row.targetBusID == target;
+        });
+        if (connect && existing == rows.end()) {
+            Row row;
+            row.id = authoringGuid(QUuid::createUuid());
+            row.targetBusID = target;
+            if constexpr (requires { row.duckTarget; }) row.duckTarget = duckTarget;
+            rows.push_back(std::move(row));
+        } else if (!connect && existing != rows.end()) {
+            rows.erase(existing);
+        }
+        return rows;
+    };
     FieldGroupEditRequest request;
     request.definition = item.guid;
-    request.group = FieldGroupId::Send;
     request.scopes.shared = true;
     request.expectedBefore = item.fieldGroups;
-    request.operation = ReplaceFieldGroupSends{std::move(sends)};
+    if (type == SendType::Sidechain) {
+        auto sidechains = item.fieldGroups.sidechain.shared.localHistory.value_or(SidechainFieldGroup{});
+        sidechains.sidechains = edit(std::move(sidechains.sidechains));
+        request.group = FieldGroupId::Sidechain;
+        request.operation = ReplaceFieldGroupSidechains{std::move(sidechains)};
+    } else {
+        auto sends = item.fieldGroups.send.shared.localHistory.value_or(SendFieldGroup{});
+        sends.sends = edit(std::move(sends.sends));
+        request.group = FieldGroupId::Send;
+        request.operation = ReplaceFieldGroupSends{std::move(sends)};
+    }
     return prepareFieldGroupEdit(*ProjectManager::instance().currentProject(), request);
 }
 

@@ -159,6 +159,7 @@ void deriveUiMetrics(ThemeMetrics& m, const ThemeMetrics& base, const Scale& s)
     inspector.valueColumnWidth = s.px(80);
     inspector.linkSlotWidth = m.iconExtent;
     inspector.bindingSlotWidth = smallIcon;
+    inspector.platformMarkerWidth = s.px(8);
     inspector.slotSpacing = compact;
     inspector.separatorHeight = m.borderWidth;
     inspector.rangeSeparatorWidth = medium;

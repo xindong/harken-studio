@@ -35,6 +35,7 @@ struct PreparedProject
     IntegrityScanner::Report integrityReport;
     QList<AssetInfo> assets;
     QHash<QString, QByteArray> loadedDocuments;
+    ProjectContractReadContext validationContext;
     QStringList diagnostics;
     QString error;
     bool rebuildAssetRegistry = false;

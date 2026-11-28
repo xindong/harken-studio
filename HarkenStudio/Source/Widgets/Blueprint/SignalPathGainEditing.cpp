@@ -1,6 +1,8 @@
 #include "SignalPathGainEditing.h"
 
+#include "Core/ActionManager.h"
 #include "Core/AudioEngine.h"
+#include "Core/BusRouteGraph.h"
 #include "Core/Components/VMixNode.h"
 #include "Core/PlatformContextService.h"
 #include "Core/ProjectManager.h"
@@ -56,22 +58,64 @@ const EffectiveDefinitionFieldGroups* effectiveGroups(
 }
 
 const FieldGroupSource& routingSource(
-    const EffectiveDefinitionFieldGroups& groups, SignalPathEdgeKind kind)
+    const EffectiveDefinitionFieldGroups& groups, SignalPathEdgeKind kind, SendType type)
 {
-    return kind == SignalPathEdgeKind::Output ? groups.outputSource : groups.sendSource;
+    if (kind == SignalPathEdgeKind::Output) return groups.outputSource;
+    return type == SendType::Sidechain ? groups.sidechainSource : groups.sendSource;
+}
+
+std::optional<std::pair<harken::studio::project_schema::AuthoringGuid, float>> contentRoute(
+    const EffectiveDefinitionFieldGroups& groups, const QUuid& target, SendType type, bool duckTarget)
+{
+    const auto targetGuid = toFieldGroupGuid(target);
+    if (type == SendType::Send) {
+        for (const auto& row : groups.send.sends)
+            if (row.targetBusID == targetGuid) return std::pair{row.id, row.sendLevel};
+        return {};
+    }
+    for (const auto& row : groups.sidechain.sidechains)
+        if (row.targetBusID == targetGuid && row.duckTarget == duckTarget) return std::pair{row.id, row.sendLevel};
+    return {};
 }
 
 std::optional<float> contentGain(const EffectiveDefinitionFieldGroups& groups,
                                 SignalPathEdgeKind kind, const QUuid& target, SendType type, bool duckTarget)
 {
-    const auto targetGuid = toFieldGroupGuid(target);
     if (kind == SignalPathEdgeKind::Output)
-        return groups.output.outputBusRef == targetGuid
+        return groups.output.outputBusRef == toFieldGroupGuid(target)
             ? std::optional(groups.output.outputBusVolume) : std::nullopt;
-    for (const auto& send : groups.send.sends)
-        if (send.targetBusID == targetGuid && send.type == type && send.duckTarget == duckTarget)
-            return VMixNode::dbToLinear(send.sendLevel);
-    return {};
+    const auto route = contentRoute(groups, target, type, duckTarget);
+    return route ? std::optional(VMixNode::dbToLinear(route->second)) : std::nullopt;
+}
+
+bool sharedEdit(const PlatformContext& context)
+{
+    return context.all || context.selected.isEmpty();
+}
+
+void setBusRouteLevel(BusRoute& row, float db, const PlatformContext& context)
+{
+    if (!sharedEdit(context)) {
+        for (const auto& platform : context.selected) row.platforms[platform].sendLevelDb = db;
+        return;
+    }
+    row.sendLevelDb = db;
+    for (auto& [platform, cells] : row.platforms) cells.sendLevelDb.reset();
+    std::erase_if(row.platforms, [](const auto& cell) { return cell.second == BusRouteCells{}; });
+}
+
+template <typename Row>
+void setGroupRouteLevel(Row& row, float db, const PlatformContext& context)
+{
+    if (!sharedEdit(context)) {
+        for (const auto& platform : context.selected) row.platforms[toFieldGroupGuid(platform)].sendLevel = db;
+        return;
+    }
+    row.sendLevel = db;
+    for (auto& [platform, cells] : row.platforms) cells.sendLevel.reset();
+    std::erase_if(row.platforms, [](const auto& cell) {
+        return cell.second == typename decltype(Row::platforms)::mapped_type{};
+    });
 }
 
 std::optional<PropertySnapshot> readBusProperty(
@@ -85,20 +129,6 @@ std::optional<PropertySnapshot> readBusProperty(
         : effective;
     if (!effective || !stored) return {};
     return PropertySnapshot{scope, *stored, effective->value};
-}
-
-std::optional<QJsonArray> replaceSendGain(const QJsonValue& value, uint32_t target,
-                                          SendType type, bool duckTarget, float db)
-{
-    auto rows = value.toArray();
-    for (qsizetype index = 0; index < rows.size(); ++index) {
-        auto row = rows[index].toObject();
-        if (!matchesSignalPathSendRow(row, target, type, duckTarget)) continue;
-        row[QStringLiteral("sendLevel")] = db;
-        rows[index] = row;
-        return rows;
-    }
-    return {};
 }
 
 std::vector<FieldGroupScope> selectedScopes(const ProjectData& project, const PlatformContext& context)
@@ -226,11 +256,9 @@ bool restoreBusState(ProjectItem& item, uint8_t property, const std::vector<Prop
     return true;
 }
 
-void notifyBusGain(ProjectItem& item, uint8_t property, const QObject* originator, bool preview)
+void notifyBusGain(ProjectItem& item, const QString& name, const QObject* originator, bool preview)
 {
     auto& manager = ProjectManager::instance();
-    const auto name = property == static_cast<uint8_t>(Property::Sends)
-        ? QStringLiteral("sends") : QStringLiteral("outputBusVolume");
     auto& engine = AudioEngine::instance();
     engine.runtimeSyncCoordinator().markCurrentWorldMutation();
     if (preview) emit manager.itemPropertyPreviewed(&item, name, originator);
@@ -266,7 +294,7 @@ protected:
             restoreBusState(*item, property_, expected);
             return false;
         }
-        notifyBusGain(*item, property_, originator_, false);
+        notifyBusGain(*item, QStringLiteral("outputBusVolume"), originator_, false);
         originator_.clear();
         return true;
     }
@@ -309,18 +337,19 @@ std::optional<float> signalPathGainValue(
     const auto* bus = snapshotItem(snapshot, target);
     if (!provider || !bus || bus->type != ProjectItemType::Bus) return {};
     if (provider->type == ProjectItemType::Bus) {
-        if (edge.kind == SignalPathEdgeKind::Output && provider->parent != bus) return {};
-        const auto property = edge.kind == SignalPathEdgeKind::Output ? Property::OutputBusVolume : Property::Sends;
         const PlatformScope scope = graph.platform
             ? PlatformScope(fromFieldGroupGuid(*graph.platform)) : std::nullopt;
-        const auto value = readBusProperty(*const_cast<ProjectItem*>(provider), static_cast<uint8_t>(property), scope);
-        if (!value) return {};
-        if (edge.kind == SignalPathEdgeKind::Output) return static_cast<float>(value->effective.toDouble());
-        for (const auto& entry : value->effective.toArray()) {
-            const auto row = entry.toObject();
-            if (matchesSignalPathSendRow(row, bus->objectID, edge.type, edge.duckTarget))
-                return VMixNode::dbToLinear(static_cast<float>(row.value(QStringLiteral("sendLevel")).toDouble()));
+        if (edge.kind == SignalPathEdgeKind::Output) {
+            if (provider->parent != bus) return {};
+            const auto value = readBusProperty(*const_cast<ProjectItem*>(provider),
+                static_cast<uint8_t>(Property::OutputBusVolume), scope);
+            return value ? std::optional(static_cast<float>(value->effective.toDouble())) : std::nullopt;
         }
+        const auto sends = effectiveBusSends(*provider, scope);
+        if (!sends) return {};
+        for (const auto& send : *sends)
+            if (send.targetBusID == bus->objectID && send.type == edge.type && send.duckTarget == edge.duckTarget)
+                return send.sendLevel;
         return {};
     }
     if (edge.pathIndices.empty()) return {};
@@ -329,7 +358,7 @@ std::optional<float> signalPathGainValue(
         if (index >= graph.paths.size()) return {};
         const auto* groups = effectiveGroups(snapshot, graph.paths[index].identity.sourceGuid);
         if (!groups) return {};
-        const auto& source = routingSource(*groups, edge.kind);
+        const auto& source = routingSource(*groups, edge.kind, edge.type);
         if (source.isDefault || fromFieldGroupGuid(source.definition) != edge.routingSource->objectGuid
             || (!previewing && source.scope != edge.routingSource->scope)) return {};
         const auto current = contentGain(*groups, edge.kind, target, edge.type, edge.duckTarget);
@@ -353,6 +382,10 @@ struct SignalPathGainEditSession::State {
     uint32_t targetBusID = 0;
     uint8_t property = 0;
     std::vector<GroupTarget> targets;
+    std::vector<std::pair<QUuid, harken::studio::project_schema::AuthoringGuid>> routes;
+    std::optional<BusSendState> routesBefore;
+    std::optional<BusSendState> routesAfter;
+    QUuid busRow;
     std::vector<Observation> observed;
     std::vector<FieldGroupDefinitionSnapshot> before;
     std::vector<FieldGroupDefinitionSnapshot> after;
@@ -372,7 +405,8 @@ struct SignalPathGainEditSession::State {
         }
         if (!bus.isNull()) {
             auto* item = manager.findItemByGuid(bus);
-            if (!item || !busStateMatches(*item, property, busAfter)) return false;
+            if (!item || (routesAfter ? captureBusSendState(*item) != routesAfter
+                                      : !busStateMatches(*item, property, busAfter))) return false;
         }
         return true;
     }
@@ -406,10 +440,24 @@ SignalPathGainEditSession::SignalPathGainEditSession(
                 state.observed.push_back({item->guid, item->parent ? item->parent->guid : QUuid{}, item->fieldGroups});
     };
     observe(target);
-    if (provider->type == ProjectItemType::Bus) {
+    if (provider->type == ProjectItemType::Bus && state.kind == SignalPathEdgeKind::Send) {
         state.bus = provider->guid;
-        state.property = static_cast<uint8_t>(state.kind == SignalPathEdgeKind::Output
-            ? Property::OutputBusVolume : Property::Sends);
+        observe(provider);
+        const auto routes = captureBusSendState(*provider);
+        const PlatformScope platform = graph.platform
+            ? PlatformScope(fromFieldGroupGuid(*graph.platform)) : std::nullopt;
+        const auto& rows = state.type == SendType::Sidechain ? routes->sidechains : routes->sends;
+        const auto row = std::find_if(rows.begin(), rows.end(), [&](const BusRoute& entry) {
+            const auto route = entry.forPlatform(platform);
+            return route.targetBusID == target->objectID && route.duckTarget == state.duckTarget;
+        });
+        if (row == rows.end()) return;
+        state.busRow = row->id;
+        state.routesBefore = routes;
+        state.routesAfter = routes;
+    } else if (provider->type == ProjectItemType::Bus) {
+        state.bus = provider->guid;
+        state.property = static_cast<uint8_t>(Property::OutputBusVolume);
         observe(provider);
         for (const auto scope : scopes) {
             const auto value = readBusProperty(*provider, state.property,
@@ -418,6 +466,29 @@ SignalPathGainEditSession::SignalPathGainEditSession(
             state.busBefore.push_back(*value);
         }
         state.busAfter = state.busBefore;
+    } else if (state.kind == SignalPathEdgeKind::Send) {
+        const auto snapshot = buildFieldGroupEffectiveSnapshot(*project, graph.platform);
+        if (!snapshot.ok()) return;
+        for (const auto index : edge.pathIndices) {
+            const auto origin = graph.paths[index].identity.sourceGuid;
+            const auto* groups = effectiveGroups(snapshot, origin);
+            const auto* item = snapshotItem(snapshot, origin);
+            if (!groups || !item) return;
+            observe(item);
+            const auto& source = routingSource(*groups, state.kind, state.type);
+            const auto route = contentRoute(*groups, state.target, state.type, state.duckTarget);
+            if (source.isDefault || !route) continue;
+            const auto guid = fromFieldGroupGuid(source.definition);
+            observe(snapshotItem(snapshot, guid));
+            const std::pair entry{guid, route->first};
+            if (std::find(state.routes.begin(), state.routes.end(), entry) != state.routes.end()) continue;
+            state.routes.push_back(entry);
+            if (std::none_of(state.before.begin(), state.before.end(),
+                    [&](const auto& snapshotEntry) { return snapshotEntry.definition == guid; }))
+                state.before.push_back({guid, manager.findItemByGuid(guid)->fieldGroups});
+        }
+        if (state.routes.empty()) return;
+        state.after = state.before;
     } else {
         std::set<std::pair<QUuid, FieldGroupScope>> targets;
         for (const auto scope : scopes) {
@@ -429,15 +500,14 @@ SignalPathGainEditSession::SignalPathGainEditSession(
                 const auto* item = snapshotItem(snapshot, origin);
                 if (!groups || !item) return;
                 observe(item);
-                const auto& source = routingSource(*groups, state.kind);
+                const auto& source = routingSource(*groups, state.kind, state.type);
                 if (source.isDefault) continue;
                 const bool editsGain = contentGain(*groups, state.kind, state.target, state.type, state.duckTarget).has_value();
                 if (!editsGain && ((!state.context.all && !state.context.selected.isEmpty()) || !scope)) continue;
                 const auto guid = fromFieldGroupGuid(source.definition);
                 observe(snapshotItem(snapshot, guid));
                 if (!targets.emplace(guid, scope).second) continue;
-                state.targets.push_back({guid, scope, state.kind == SignalPathEdgeKind::Output
-                    ? FieldGroupPayload(groups->output) : FieldGroupPayload(groups->send), editsGain});
+                state.targets.push_back({guid, scope, FieldGroupPayload(groups->output), editsGain});
             }
         }
         std::set<QUuid> sharedProviders;
@@ -482,17 +552,44 @@ void SignalPathGainEditSession::preview(double value)
     const auto db = state.kind == SignalPathEdgeKind::Output
         ? static_cast<float>(value) : std::clamp(VMixNode::linearToDb(static_cast<float>(value)), -96.0f, 24.0f);
     auto& manager = ProjectManager::instance();
+    if (state.routesBefore) {
+        auto next = *state.routesBefore;
+        for (auto& row : state.type == SendType::Sidechain ? next.sidechains : next.sends)
+            if (row.id == state.busRow) setBusRouteLevel(row, db, state.context);
+        auto* item = manager.findItemByGuid(state.bus);
+        if (!restoreBusSendState(*item, next)) return;
+        state.routesAfter = std::move(next);
+        state.previewed = true;
+        notifyBusGain(*item, state.type == SendType::Sidechain ? QStringLiteral("sidechains") : QStringLiteral("sends"),
+                      state.originator, true);
+        return;
+    }
+    if (!state.routes.empty()) {
+        auto next = state.before;
+        for (const auto& [provider, rowId] : state.routes) {
+            auto& groups = std::find_if(next.begin(), next.end(), [&](const auto& item) {
+                return item.definition == provider;
+            })->groups;
+            if (state.type == SendType::Send && groups.send.shared.localHistory)
+                for (auto& row : groups.send.shared.localHistory->sends)
+                    if (row.id == rowId) setGroupRouteLevel(row, db, state.context);
+            if (state.type == SendType::Sidechain && groups.sidechain.shared.localHistory)
+                for (auto& row : groups.sidechain.shared.localHistory->sidechains)
+                    if (row.id == rowId) setGroupRouteLevel(row, db, state.context);
+        }
+        if (!validateFieldGroupProject(*manager.currentProject(), next).ok()) return;
+        state.after = std::move(next);
+        state.previewed = true;
+        for (const auto& entry : state.after)
+            emit manager.fieldGroupsPreviewed(manager.findItemByGuid(entry.definition), entry.groups);
+        return;
+    }
     if (!state.bus.isNull()) {
         auto next = state.busBefore;
         QJsonValue shared;
         bool writesShared = false;
         for (auto& entry : next) {
-            QJsonValue replacement = db;
-            if (state.kind == SignalPathEdgeKind::Send) {
-                const auto sends = replaceSendGain(entry.effective, state.targetBusID, state.type, state.duckTarget, db);
-                if (!sends) continue;
-                replacement = *sends;
-            }
+            const QJsonValue replacement = db;
             if (!entry.scope) { shared = replacement; writesShared = true; }
             if (entry.scope && writesShared && replacement == shared)
                 entry.state = {false, {}};
@@ -514,7 +611,7 @@ void SignalPathGainEditSession::preview(double value)
         }
         state.busAfter = std::move(next);
         state.previewed = true;
-        notifyBusGain(*item, state.property, state.originator, true);
+        notifyBusGain(*item, QStringLiteral("outputBusVolume"), state.originator, true);
         return;
     }
     auto next = state.before;
@@ -522,26 +619,15 @@ void SignalPathGainEditSession::preview(double value)
         auto& groups = std::find_if(next.begin(), next.end(), [&](const auto& item) {
             return item.definition == entry.provider;
         })->groups;
-        if (state.kind == SignalPathEdgeKind::Output) {
-            auto output = std::get<OutputFieldGroup>(entry.payload);
-            if (entry.editGain) output.outputBusVolume = db;
-            writeGainField(groups.output, entry.scope, output, Property::OutputBusVolume);
-        } else {
-            auto sends = std::get<SendFieldGroup>(entry.payload);
-            for (auto& send : sends.sends)
-                if (entry.editGain && send.targetBusID == toFieldGroupGuid(state.target)
-                    && send.type == state.type && send.duckTarget == state.duckTarget) send.sendLevel = db;
-            writeGainField(groups.send, entry.scope, sends, Property::Sends);
-        }
+        auto output = std::get<OutputFieldGroup>(entry.payload);
+        if (entry.editGain) output.outputBusVolume = db;
+        writeGainField(groups.output, entry.scope, output, Property::OutputBusVolume);
     }
     for (auto& entry : next) {
         std::set<FieldGroupScope> editedScopes;
         for (const auto& target : state.targets)
             if (target.provider == entry.definition) editedScopes.insert(target.scope);
-        if (state.kind == SignalPathEdgeKind::Output)
-            normalizeGainField(entry.groups.output, Property::OutputBusVolume, editedScopes);
-        else
-            normalizeGainField(entry.groups.send, Property::Sends, editedScopes);
+        normalizeGainField(entry.groups.output, Property::OutputBusVolume, editedScopes);
     }
     if (!validateFieldGroupProject(*manager.currentProject(), next).ok()) return;
     state.after = std::move(next);
@@ -557,6 +643,18 @@ void SignalPathGainEditSession::commit()
     if (!state.current()) { cancel(); return; }
     state.active = false;
     auto& manager = ProjectManager::instance();
+    if (state.routesBefore) {
+        auto* item = manager.findItemByGuid(state.bus);
+        if (*state.routesAfter == *state.routesBefore || !restoreBusSendState(*item, *state.routesBefore)) return;
+        const bool sidechain = state.type == SendType::Sidechain;
+        ActionManager::instance().execute(QStringLiteral("set_item_property"),
+            QJsonObject{{QStringLiteral("authoring_handle"), static_cast<qint64>(item->objectID)},
+                        {QStringLiteral("property"), sidechain ? QStringLiteral("sidechains") : QStringLiteral("sends")},
+                        {QStringLiteral("value"), VMixNode::routesToVariant(
+                             sidechain ? state.routesAfter->sidechains : state.routesAfter->sends, sidechain).toJsonArray()}},
+            ActionSource::Internal, state.originator);
+        return;
+    }
     if (!state.bus.isNull()) {
         auto* item = manager.findItemByGuid(state.bus);
         const auto changed = !busStateMatches(*item, state.property, state.busBefore);
@@ -565,7 +663,7 @@ void SignalPathGainEditSession::commit()
         auto command = std::make_unique<BusGainCommand>(state.projectId, state.bus, state.property,
             state.busBefore, state.busAfter, state.originator);
         if (command->execute()) UndoRedoManager::instance().push(command.release());
-        else notifyBusGain(*item, state.property, state.originator, true);
+        else notifyBusGain(*item, QStringLiteral("outputBusVolume"), state.originator, true);
         return;
     }
     std::vector<FieldGroupDefinitionSnapshot> before, after;
@@ -593,11 +691,18 @@ void SignalPathGainEditSession::cancel()
     auto& manager = ProjectManager::instance();
     const auto* project = manager.currentProject();
     if (!project || project->projectId != state.projectId || !state.previewed) return;
+    if (state.routesBefore) {
+        auto* item = manager.findItemByGuid(state.bus);
+        if (item && captureBusSendState(*item) == state.routesAfter && restoreBusSendState(*item, *state.routesBefore))
+            notifyBusGain(*item, state.type == SendType::Sidechain ? QStringLiteral("sidechains") : QStringLiteral("sends"),
+                          state.originator, true);
+        return;
+    }
     if (!state.bus.isNull()) {
         auto* item = manager.findItemByGuid(state.bus);
         if (item && busStateMatches(*item, state.property, state.busAfter)
             && restoreBusState(*item, state.property, state.busBefore))
-            notifyBusGain(*item, state.property, state.originator, true);
+            notifyBusGain(*item, QStringLiteral("outputBusVolume"), state.originator, true);
         return;
     }
     for (const auto& entry : state.before) {

@@ -12,7 +12,6 @@ class FilterPreviewField final : public PreviewField
 public:
     explicit FilterPreviewField(QWidget* parent = nullptr);
     void setFilter(const FilterState& filter, double sampleRate = 48000.0);
-    void setMixed(bool mixed);
     const FilterState& filter() const { return filter_; }
 
 protected:
@@ -21,7 +20,6 @@ protected:
 private:
     FilterState filter_;
     double sampleRate_ = 48000.0;
-    bool mixed_ = false;
 };
 
 }

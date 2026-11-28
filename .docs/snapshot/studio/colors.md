@@ -144,7 +144,7 @@ Studio Default 在 Colors 中用 Lines 调整布局边界、控件边框和坐�
 | 主要前景 | `text.primary` | 字段名与字段值、只读有效值、普通正文、菜单文字、顶部项目名称、蓝图对象名称、AI 空状态气泡与提示文字，以及常态操作图标；节点字段名与值一致 |
 | 次要前景 | `text.secondary` | 注释说明、表格列头、输入占位提示、其他空状态、坐标刻度、单位、状态栏摘要、日志类别、继承引用和面包屑 |
 | 标题前景 | `text.title` | 已加粗的分节与分组标题，包括 Inspector section、Explorer 的 Assets / Resources、设置与偏好标题、GroupBox、模板标题和表格内部的分组条目 |
-| 禁用 | `text.disabled` | 不可用控件的文字和单色图标 |
+| 禁用 | `text.disabled` | 不可用控件的文字和单色图标，以及所示值有平台覆写时的只读平台标记 |
 | 主要强调 | `accent.primary` | 控件激活、焦点与强调边框、滑条填充、曲线编辑点与手柄激活 |
 | 强调底上的前景 | `accent.text` | 实色强调控件和强调底色选区内的文字与单色图标 |
 | 基础表面 | `background.primary/secondary/tertiary` | 参数滑轨与节点主体共用 tertiary。节点主体在选中前后均使用该底色，选中时只高亮边框 |
@@ -154,8 +154,8 @@ Studio Default 在 Colors 中用 Lines 调整布局边界、控件边框和坐�
 | 布局边界（Layout borders） | `border.primary` | 界面框架排布分割、面板边界和内容分隔线；包括 Dock 面板、画布外框、声道分隔及面板滚动条 |
 | 控件边框（Control borders） | `border.secondary` | 控件与按钮描边、表格完整外框、网格及行列分隔、控件内滚动条；禁用态控件描边仍属此类 |
 | 网格与刻度（Grid and ticks） | `border.tick` | 时间轴、曲线、波形与 Meter 的刻度短线和坐标网格；刻度文字仍使用次要文字 |
-| 面板与轨道表面 | `panel.background`、`header.background`、`track.background`、`track.backgroundAlternate`、`bus.background` | 保留既有较暗的工作区层次，不因 RGB 接近而合并为一个背景 |
-| 次级强调 | `accent.secondary` | 失焦 Dock 组当前页签的顶线、自定义快捷键、已自定义的外观值，以及离散网格预演命中行的轴单元格 |
+| 面板与轨道表面 | `panel.background`、`header.background`、`track.background`、`track.backgroundAlternate`、`bus.background` | 保留既有较暗的工作区层次，不因 RGB 接近而合并为一个背景；无平台覆写的平台标记使用 `panel.background` 填充 |
+| 次级强调 | `accent.secondary` | 失焦 Dock 组当前页签的顶线、仅其他平台有覆写的可编辑平台标记、自定义快捷键、已自定义的外观值，以及离散网格预演命中行的轴单元格 |
 | 结果与诊断 | `status.success/warning/error` | 发布成功、带警告完成、失败、无效引用等状态，以及时间序列状态标记、阈值线与 Monitor 游标精度 |
 | 播放工具 | `tool.play/stop/reset` | 播放、停止及复位控件 |
 | 工具栏 | `tool.all/remote/capture` | Link Platforms、Remote Connection、Data Capture 分别配置平台联动、远程连接和数据采集开启时的按钮底色 |
@@ -185,7 +185,7 @@ Studio Default 不再开放 `text.muted` 作为独立编辑职责。`textRole=mu
 
 Filter 图表与字段共用首要边界外框；两者之间及面板分区之间保留 1px 分隔边界，常态使用首要边界色，启用时悬停使用强调色。拖动命中范围向两侧扩展，不增加可见线宽或布局间距。面板分区任一相邻分节收起后边界不可拖动，也不显示悬停强调色。
 
-Blueprint 内嵌 Meter 的宽度边界及通用表格的列宽边界在悬停时使用强调色，沿用原有 1px 线宽和拖动命中范围；表格覆盖组合表头、原生表头、树表和矩阵表头，固定列和禁用状态不高亮。Notes 右下角调节柄在悬停及拖动时使用强调色，保持原有形状、尺寸和线宽，移开后恢复原色。
+Blueprint 内嵌 Meter 的宽度边界及通用表格的列宽边界在悬停时使用强调色，沿用原有 1px 线宽和拖动命中范围；表格覆盖组合表头、原生表头、树表和矩阵表头，固定列和禁用状态不高亮。Notes 通过拖动下边界调整高度，悬停时光标变为上下调整，不绘制角标，下边界颜色不变；右侧滚动条区不画左边框，避免与平台标记混淆。
 
 本次补正按用户决定只重新归类表格描边。GroupBox、菜单、弹出层和独立列表/树视图的边界保持现有绑定，语义归属留待后续确认。
 

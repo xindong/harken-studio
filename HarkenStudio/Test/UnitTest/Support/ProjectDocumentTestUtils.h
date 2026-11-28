@@ -40,6 +40,7 @@ inline QJsonObject projectDocument(const QString& type,
                 {QStringLiteral("shared"), QJsonObject{
                     {QStringLiteral("output"), inherit},
                     {QStringLiteral("send"), inherit},
+                    {QStringLiteral("sidechain"), inherit},
                     {QStringLiteral("spatialRating"), inherit},
                     {QStringLiteral("effect"), inherit},
                     {QStringLiteral("conversion"), inherit},

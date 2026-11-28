@@ -53,6 +53,7 @@ public:
 private:
     bool isBusEdit() const;
     bool applyValue(const QVariant& value, bool live);
+    bool isRouteEdit() const;
     QJsonObject playableActionArgs(const QString& operation,
                                    const QJsonValue& value) const;
     void capturePlayableStart();

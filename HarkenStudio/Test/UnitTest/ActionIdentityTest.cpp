@@ -167,7 +167,8 @@ TEST_F(ActionIdentityTest, DuplicateMintsNestedUuidsAndSaveReloadKeepsThem)
     custom.mode = EffectMode::Custom;
     ASSERT_TRUE(sound->fieldGroups.effects.shared.localHistory->effects.replace({effect, custom}));
     const auto platform = toFieldGroupGuid(manager.currentProject()->platforms.front().id);
-    sound->fieldGroups.effects.platforms[platform] = sound->fieldGroups.effects.shared;
+    sound->fieldGroups.effects.platforms[platform] = {FieldGroupMode::UseShared,
+        sound->fieldGroups.effects.shared.localHistory};
     ASSERT_TRUE(sound->comp<VMixNode>()->bindings.upsert(binding));
     auto* copy = manager.duplicateItem(sound);
     ASSERT_NE(copy, nullptr);

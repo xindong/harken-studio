@@ -165,27 +165,28 @@ VariableRangeEditPlan prepare(const ProjectData& project, const ProjectItem& var
                 plan.before.selections.insert(host->guid, selection->selections);
                 plan.after.selections.insert(host->guid, selection->selections);
             }
-            auto& table = plan.after.selections[host->guid].editTable(consumer.platform);
-            const auto rowGuid = table.mixingRows[consumer.axisIndex].guid;
-            for (auto& member : table.entries) {
-                for (auto& curve : member.curves) {
-                    if (curve.rowGuid != rowGuid) continue;
-                    if (!validCurve(curve.points, curve.handles)) {
-                        curveError(*host, curve.points.size());
-                        continue;
-                    }
-                    if (stretch) {
-                        remapCurve(curve.points, curve.handles, map);
-                    } else {
-                        curveClipX(proposed.rangeMin, proposed.rangeMax, curve.points, curve.handles);
-                        if (curve.points.isEmpty()) {
-                            curve.points = {{proposed.rangeMin, 0.0f}, {proposed.rangeMax, 0.0f}};
-                            curve.handles = {{proposed.rangeMin, 0.0f, proposed.rangeMax, 0.0f}};
-                        }
-                    }
-                    if (!validCurve(curve.points, curve.handles)) curveError(*host, curve.points.size());
+            auto& data = plan.after.selections[host->guid];
+            const auto rowGuid = data.blendAxes[consumer.axisIndex].guid;
+            const auto adjust = [&](QVector<CurvePointDef>& points, QVector<CurveHandlePairDef>& handles) {
+                if (!validCurve(points, handles)) {
+                    curveError(*host, points.size());
+                    return;
                 }
-            }
+                if (stretch) {
+                    remapCurve(points, handles, map);
+                } else {
+                    curveClipX(proposed.rangeMin, proposed.rangeMax, points, handles);
+                    if (points.isEmpty()) {
+                        points = {{proposed.rangeMin, 0.0f}, {proposed.rangeMax, 0.0f}};
+                        handles = {{proposed.rangeMin, 0.0f, proposed.rangeMax, 0.0f}};
+                    }
+                }
+                if (!validCurve(points, handles)) curveError(*host, points.size());
+            };
+            for (auto* table : data.blend.tables())
+                for (auto& member : table->entries)
+                    for (auto& curve : member.curves)
+                        if (curve.rowGuid == rowGuid) adjust(curve.points, curve.handles);
         } else if (consumer.kind == VariableConsumerKind::ActionSetVariable
                    && !seenActions.contains(host->guid)) {
             seenActions.insert(host->guid);

@@ -151,6 +151,103 @@ struct Send
     }
 };
 
+struct BusRouteCells
+{
+    std::optional<float> sendLevelDb;
+    std::optional<bool> duckTarget;
+
+    bool operator==(const BusRouteCells&) const = default;
+};
+
+struct BusRoute
+{
+    QUuid id;
+    uint32_t targetBusID = 0;
+    float sendLevelDb = 0.0f;
+    bool duckTarget = false;
+    std::map<QUuid, BusRouteCells> platforms;
+
+    bool operator==(const BusRoute&) const = default;
+
+    BusRoute forPlatform(PlatformScope scope) const
+    {
+        BusRoute result = *this;
+        result.platforms.clear();
+        if (!scope) return result;
+        const auto found = platforms.find(*scope);
+        if (found == platforms.end()) return result;
+        if (found->second.sendLevelDb) result.sendLevelDb = *found->second.sendLevelDb;
+        if (found->second.duckTarget) result.duckTarget = *found->second.duckTarget;
+        return result;
+    }
+
+    QJsonObject toJson(bool sidechain) const
+    {
+        QJsonObject row{{QStringLiteral("id"), id.toString(QUuid::WithoutBraces)},
+                        {QStringLiteral("targetBusID"), static_cast<qint64>(targetBusID)},
+                        {QStringLiteral("sendLevel"), sendLevelDb}};
+        if (sidechain) row[QStringLiteral("duckTarget")] = duckTarget;
+        if (platforms.empty()) return row;
+        QJsonObject cellsByPlatform;
+        for (const auto& [platform, cells] : platforms) {
+            QJsonObject values;
+            if (cells.sendLevelDb) values[QStringLiteral("sendLevel")] = *cells.sendLevelDb;
+            if (cells.duckTarget) values[QStringLiteral("duckTarget")] = *cells.duckTarget;
+            cellsByPlatform.insert(platform.toString(QUuid::WithoutBraces), values);
+        }
+        row[QStringLiteral("platforms")] = cellsByPlatform;
+        return row;
+    }
+
+    static std::optional<BusRoute> fromJson(const QJsonObject& row, bool sidechain)
+    {
+        const auto readTarget = [](const QJsonValue& value) -> std::optional<uint32_t> {
+            const double number = value.toDouble(-1.0);
+            if (!value.isDouble() || !std::isfinite(number) || std::trunc(number) != number || number <= 0.0
+                || number > static_cast<double>(std::numeric_limits<uint32_t>::max())) return std::nullopt;
+            return static_cast<uint32_t>(number);
+        };
+        const auto readLevel = [](const QJsonValue& value) -> std::optional<float> {
+            if (!value.isDouble() || !std::isfinite(value.toDouble())
+                || value.toDouble() < -96.0 || value.toDouble() > 24.0) return std::nullopt;
+            return static_cast<float>(value.toDouble());
+        };
+        for (auto it = row.begin(); it != row.end(); ++it)
+            if (it.key() != QLatin1String("id") && it.key() != QLatin1String("targetBusID")
+                && it.key() != QLatin1String("sendLevel") && it.key() != QLatin1String("platforms")
+                && !(sidechain && it.key() == QLatin1String("duckTarget"))) return std::nullopt;
+        BusRoute route;
+        route.id = QUuid(row.value(QStringLiteral("id")).toString());
+        const auto target = readTarget(row.value(QStringLiteral("targetBusID")));
+        const auto level = readLevel(row.value(QStringLiteral("sendLevel")));
+        const auto duck = row.value(QStringLiteral("duckTarget"));
+        if (route.id.isNull() || !target || !level || (!duck.isUndefined() && !duck.isBool())) return std::nullopt;
+        route.targetBusID = *target;
+        route.sendLevelDb = *level;
+        route.duckTarget = duck.toBool();
+        const auto platforms = row.value(QStringLiteral("platforms"));
+        if (!platforms.isUndefined() && !platforms.isObject()) return std::nullopt;
+        const auto cellsByPlatform = platforms.toObject();
+        for (auto it = cellsByPlatform.begin(); it != cellsByPlatform.end(); ++it) {
+            const QUuid platform(it.key());
+            const auto values = it.value().toObject();
+            if (platform.isNull() || !it.value().isObject() || values.isEmpty()) return std::nullopt;
+            BusRouteCells cells;
+            for (auto cell = values.begin(); cell != values.end(); ++cell) {
+                if (cell.key() == QLatin1String("sendLevel")) {
+                    if (!(cells.sendLevelDb = readLevel(cell.value()))) return std::nullopt;
+                } else if (sidechain && cell.key() == QLatin1String("duckTarget") && cell.value().isBool()) {
+                    cells.duckTarget = cell.value().toBool();
+                } else {
+                    return std::nullopt;
+                }
+            }
+            route.platforms.emplace(platform, cells);
+        }
+        return route;
+    }
+};
+
 // Journal of cross-references scrubbed when a subtree is deleted, so undo can
 // replay them. Survivors reference into the deleted set through bus routing
 // and sends.
@@ -179,9 +276,10 @@ struct DeletedSubtreeRefLog {
     };
     struct SendRef {
         uint32_t ownerObjectID = 0;
-        PlatformScope scope;
-        PlayablePropertyStateV1 before;
-        PlayablePropertyStateV1 after;
+        std::vector<BusRoute> sendsBefore;
+        std::vector<BusRoute> sidechainsBefore;
+        std::vector<BusRoute> sendsAfter;
+        std::vector<BusRoute> sidechainsAfter;
     };
     struct OutputBusRef {
         uint32_t itemObjectID = 0;

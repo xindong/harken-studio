@@ -8,7 +8,6 @@
 #include "Core/PlatformContextService.h"
 #include "Core/ProjectManager.h"
 
-#include <QSet>
 #include <QMenu>
 
 namespace harken::studio {
@@ -25,8 +24,8 @@ AttenuationFieldDecorator::AttenuationFieldDecorator(
     auto& project = ProjectManager::instance();
     connect(&project, &ProjectManager::itemPropertyChanged, this,
             [this](ProjectItem* item, const QString& property, const QObject*) {
-        if (item && (item->type == ProjectItem::Type::Attenuation
-                     || property == QLatin1String("fieldGroups")))
+        if (item && ((item->type == ProjectItem::Type::Attenuation && property != QLatin1String("dirty"))
+                     || (!pageProvidesGroups_ && property == QLatin1String("fieldGroups"))))
             refreshPresentation();
     });
     connect(&project, &ProjectManager::itemRenamed, this,
@@ -51,48 +50,45 @@ AttenuationFieldDecorator::AttenuationFieldDecorator(
 
 void AttenuationFieldDecorator::bind(ProjectItem* item)
 {
-    item_ = item;
-    refreshPresentation();
+    bindGroups(item, {});
 }
 
-void AttenuationFieldDecorator::refreshPresentation()
+void AttenuationFieldDecorator::bindGroups(ProjectItem* item, const InspectorGroupLookup& groups)
+{
+    item_ = item;
+    const auto* view = groups ? groups(FieldGroupId::SpatialRating) : nullptr;
+    pageProvidesGroups_ = view != nullptr;
+    refreshPresentation(view);
+}
+
+void AttenuationFieldDecorator::refreshGroups(ProjectItem* item, const InspectorGroupLookup& groups)
+{
+    if (item && groups(FieldGroupId::SpatialRating)) bindGroups(item, groups);
+}
+
+void AttenuationFieldDecorator::refreshPresentation(const FieldGroupInspectorView* supplied)
 {
     QStringList names;
-    bool mixed = false;
     attenuationGuid_ = QUuid{};
     setEnabled(false);
     const auto* project = ProjectManager::instance().currentProject();
     if (item_ && project) {
-        const auto view = buildFieldGroupInspectorView(
-            *project, item_->guid, FieldGroupId::SpatialRating,
-            PlatformContextService::instance().context());
+        const auto& view = supplied ? *supplied : buildFieldGroupInspectorView(
+            *project, item_->guid, FieldGroupId::SpatialRating, PlatformContextService::instance().context());
         const auto references = view.field(QStringLiteral("spatialAttenuationRef"));
-        QSet<QUuid> bindings;
-        for (const auto& entry : references.perScope) {
-            QUuid binding;
-            const auto* attenuation = AttenuationStore::findByGuid(project, entry.second.toUuid());
-            if (attenuation) {
-                binding = attenuation->hostItem()->guid;
-                if (attenuation->dimension(dimension_)) {
-                    names.append(attenuation->hostItem()->name);
-                }
-            }
-            bindings.insert(binding);
+        if (const auto* attenuation = AttenuationStore::findByGuid(project, references.value.toUuid())) {
+            attenuationGuid_ = attenuation->hostItem()->guid;
+            if (attenuation->dimension(dimension_)) names.append(attenuation->hostItem()->name);
         }
-        mixed = bindings.size() > 1;
-        if (!mixed && bindings.size() == 1)
-            attenuationGuid_ = *bindings.begin();
         if (!view.valid) {
             setBound(false);
             setToolTip(tr("Attenuation\nUnavailable"));
             return;
         }
     }
-    names.removeDuplicates();
     setEnabled(!attenuationGuid_.isNull());
     setBound(!names.isEmpty());
-    QString summary = names.isEmpty() ? tr("Unbound") : names.join(QLatin1Char('\n'));
-    if (mixed) summary.prepend(tr("Mixed bindings\n"));
+    const QString summary = names.isEmpty() ? tr("Unbound") : names.join(QLatin1Char('\n'));
     setToolTip(tr("Attenuation\n%1").arg(summary));
 }
 

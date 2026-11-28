@@ -28,21 +28,10 @@ void FilterPreviewField::setFilter(const FilterState& filter, double sampleRate)
     update();
 }
 
-void FilterPreviewField::setMixed(bool mixed)
-{
-    mixed_ = mixed;
-    update();
-}
-
 void FilterPreviewField::paintPreview(QPainter& painter, const QRectF& bounds)
 {
     painter.setRenderHint(QPainter::Antialiasing);
     const auto& theme = ThemeManager::instance();
-    if (mixed_) {
-        painter.setPen(theme.colors().textSecondary);
-        painter.drawText(bounds, Qt::AlignCenter, QStringLiteral("—"));
-        return;
-    }
     CurvePlotProfile profile;
     profile.axisScale = CurveAxisScale::LinearValue;
     profile.yMin = -48.0f;

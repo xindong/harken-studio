@@ -857,7 +857,6 @@ bool copyStudioDefinitionPayload(
     node.outputBusVolume = effective.output.outputBusVolume;
     node.sends.clear();
     for (const auto& send : effective.send.sends) {
-        if (send.type != SendType::Send) continue;
         const auto* target = identity.find(send.targetBusID);
         if (!target || target->kind != RuntimeIdentityKindV1::Bus)
             return fail(QStringLiteral("Send Bus identity is missing"));

@@ -40,6 +40,27 @@ public:
         return std::pow(10.0f, db / 20.0f);
     }
 
+    static QVariant routesToVariant(const std::vector<BusRoute>& routes, bool sidechain)
+    {
+        QVariantList out;
+        for (const auto& route : routes) out.push_back(route.toJson(sidechain).toVariantMap());
+        return out;
+    }
+
+    static bool routesFromVariant(const QVariant& value, bool sidechain, std::vector<BusRoute>& routes)
+    {
+        std::vector<BusRoute> parsed;
+        QSet<QUuid> ids;
+        for (const QVariant& entry : value.toList()) {
+            const auto route = BusRoute::fromJson(QJsonObject::fromVariantMap(entry.toMap()), sidechain);
+            if (!route || ids.contains(route->id)) return false;
+            ids.insert(route->id);
+            parsed.push_back(*route);
+        }
+        routes = std::move(parsed);
+        return true;
+    }
+
     VMixNode() = default;
     ~VMixNode() override = default;
 
@@ -57,7 +78,22 @@ public:
     float    outputBusVolume = 0.0f;
     harken::studio::types::ObjectId outputBusRef{};
 
-    std::vector<Send> sends;
+    std::vector<BusRoute> sends;
+    std::vector<BusRoute> sidechains;
+
+    std::vector<Send> effectiveSends(PlatformScope scope) const
+    {
+        std::vector<Send> result;
+        for (const auto& row : sends) {
+            const auto route = row.forPlatform(scope);
+            result.push_back({route.targetBusID, dbToLinear(route.sendLevelDb), SendType::Send, false});
+        }
+        for (const auto& row : sidechains) {
+            const auto route = row.forPlatform(scope);
+            result.push_back({route.targetBusID, dbToLinear(route.sendLevelDb), SendType::Sidechain, route.duckTarget});
+        }
+        return result;
+    }
 
     BindingLedger bindings;
     EffectChainLedger effects;
@@ -72,6 +108,7 @@ public:
     void toJsonExtra(QJsonObject& j) const override
     {
         if (!sends.empty()) j[QStringLiteral("sends")] = QJsonArray::fromVariantList(getField(QStringLiteral("sends")).toList());
+        if (!sidechains.empty()) j[QStringLiteral("sidechains")] = QJsonArray::fromVariantList(getField(QStringLiteral("sidechains")).toList());
         if (!bindings.isEmpty()) j[QStringLiteral("bindings")] = bindings.toJson();
         if (!effects.isEmpty())  j[QStringLiteral("effects")]  = effects.toJson();
         if (!effectPlatforms.empty()) {
@@ -88,9 +125,12 @@ public:
         if (!value.isUndefined()
             && (!value.isObject() || !FilterSemantics::fromJson(value.toObject()))) return false;
         if (!ReflectedComponent<VMixNode>::fromJson(j)) return false;
-        return !j.contains(QStringLiteral("sends"))
-            || (j.value(QStringLiteral("sends")).isArray()
-                && setField(QStringLiteral("sends"), j.value(QStringLiteral("sends")).toVariant()));
+        for (const auto* key : {"sends", "sidechains"}) {
+            const auto routes = j.value(QLatin1String(key));
+            if (!routes.isUndefined()
+                && (!routes.isArray() || !setField(QLatin1String(key), routes.toVariant()))) return false;
+        }
+        return true;
     }
 
     void fromJsonExtra(const QJsonObject& j) override
@@ -189,34 +229,36 @@ inline const PropertySchema& VMixNode::schema()
               { .field="sendLevel", .type=PropType::Float, .label="Volume", .unit=" dB",
                 .min=HK_PACK_PROPERTY_SEND_LEVEL_MIN, .max=HK_PACK_PROPERTY_SEND_LEVEL_MAX, .def=0.0, .decimals=1,
                 .toolTip="Gain applied to the sent signal or sidechain detector input." },
-              { .field="type", .type=PropType::String, .label="Type", .def="Send" },
+          },
+          .get=[](const harken::studio::IComponent* c){
+              return routesToVariant(static_cast<const VMixNode*>(c)->sends, false);
+          },
+          .set=[](harken::studio::IComponent* c, const QVariant& v) -> bool {
+              auto* m = static_cast<VMixNode*>(c);
+              if (m->hostItem() && PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(m->hostItem()->type)) return false;
+              return routesFromVariant(v, false, m->sends);
+          },
+          .serializeWhen=[](const harken::studio::IComponent* c){ return !static_cast<const VMixNode*>(c)->sends.empty(); } },
+        { .field="sidechains", .type=PropType::List, .label="Sidechains", .section=PropertySection::Sidechain,
+          .elementSchema={
+              { .field="targetBusID", .type=PropType::ObjectRef, .label="Target", .def=0u,
+                .refFilter=static_cast<int>(ProjectItem::Type::Bus) },
+              { .field="sendLevel", .type=PropType::Float, .label="Volume", .unit=" dB",
+                .min=HK_PACK_PROPERTY_SEND_LEVEL_MIN, .max=HK_PACK_PROPERTY_SEND_LEVEL_MAX, .def=0.0, .decimals=1,
+                .toolTip="Gain applied to the sidechain detector input." },
               { .field="duckTarget", .type=PropType::Bool, .label="Target Ducking", .def=false,
                 .options={{"Off", false, "Sidechain to..."}, {"On", true, "Sidechain to... (Ducking Enabled)"}},
                 .toolTip="Use this sidechain to drive built-in ducking on the target bus." },
           },
           .get=[](const harken::studio::IComponent* c){
-              QVariantList out;
-              for (const Send& s : static_cast<const VMixNode*>(c)->sends) {
-                  auto row = s.toJson();
-                  row[QStringLiteral("sendLevel")] = linearToDb(s.sendLevel);
-                  out.push_back(row.toVariantMap());
-              }
-              return QVariant(out);
+              return routesToVariant(static_cast<const VMixNode*>(c)->sidechains, true);
           },
           .set=[](harken::studio::IComponent* c, const QVariant& v) -> bool {
               auto* m = static_cast<VMixNode*>(c);
               if (m->hostItem() && PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(m->hostItem()->type)) return false;
-              std::vector<Send> sends;
-              for (const QVariant& e : v.toList()) {
-                  auto send = Send::fromJson(QJsonObject::fromVariantMap(e.toMap()));
-                  if (!send) return false;
-                  send->sendLevel = dbToLinear(send->sendLevel);
-                  sends.push_back(*send);
-              }
-              m->sends = std::move(sends);
-              return true;
+              return routesFromVariant(v, true, m->sidechains);
           },
-          .serializeWhen=[](const harken::studio::IComponent* c){ return !static_cast<const VMixNode*>(c)->sends.empty(); } },
+          .serializeWhen=[](const harken::studio::IComponent* c){ return !static_cast<const VMixNode*>(c)->sidechains.empty(); } },
         });
         constexpr std::array<PropertySection, 4> sections{
             PropertySection::FilterLowPass, PropertySection::FilterHighPass,

@@ -2,6 +2,7 @@
 #include "Core/ThemeLayout.h"
 
 #include "Core/ActionManager.h"
+#include "Core/Components/VMixNode.h"
 #include "Core/ConversionEditing.h"
 #include "Core/PlatformContextService.h"
 #include "Core/ProjectManager.h"
@@ -9,6 +10,8 @@
 #include "Core/QtControlSkin.h"
 #include "Core/FieldGroupProjectAdapter.h"
 #include "Drawers/ListFieldDrawer.h"
+#include "Widgets/Shared/PlatformLocalMarker.h"
+#include "Core/FilterAuthoring.h"
 #include "Widgets/Common/CollapsibleSection.h"
 #include "Widgets/Common/ParameterBinding.h"
 #include "Widgets/Common/ParameterSlider.h"
@@ -16,6 +19,7 @@
 
 #include <QCheckBox>
 #include <QHBoxLayout>
+#include <QHash>
 #include <QJsonArray>
 #include <QLabel>
 #include <QMenu>
@@ -63,6 +67,94 @@ std::optional<QJsonValue> referenceActionValue(const QVariant& value)
     return QJsonValue(item->guid.toString(QUuid::WithoutBraces));
 }
 
+const QString kRouteTarget = QStringLiteral("targetBusID");
+
+QStringList routeCells(const QString& field)
+{
+    if (field == QLatin1String("sidechains"))
+        return {kRouteTarget, QStringLiteral("sendLevel"), QStringLiteral("duckTarget")};
+    return {kRouteTarget, QStringLiteral("sendLevel")};
+}
+
+template <typename Convert>
+std::optional<QVariantList> convertRouteTargets(const QVariantList& rows, Convert&& convert)
+{
+    QVariantList result;
+    for (const auto& entry : rows) {
+        auto row = entry.toMap();
+        const auto shared = convert(row.value(kRouteTarget));
+        if (!shared) return {};
+        row[kRouteTarget] = *shared;
+        result.append(row);
+    }
+    return result;
+}
+
+std::optional<QVariant> editorTarget(const QVariant& value)
+{
+    return referenceEditorValue(value);
+}
+
+std::optional<QVariant> actionTarget(const QVariant& value)
+{
+    const auto ref = referenceActionValue(value);
+    return ref ? std::optional<QVariant>(ref->toVariant()) : std::nullopt;
+}
+
+QVariantList mergeRouteRows(const QVariantList& raw, const QVariantList& displayed, const QVariantList& edited,
+                            const QStringList& cells, const std::optional<QString>& platform)
+{
+    const QString idKey = QStringLiteral("id");
+    const QString platformsKey = QStringLiteral("platforms");
+    QHash<QString, QVariantMap> rawById;
+    for (const auto& entry : raw) rawById.insert(entry.toMap().value(idKey).toString(), entry.toMap());
+    QHash<QString, QVariantMap> shownById;
+    for (const auto& entry : displayed) shownById.insert(entry.toMap().value(idKey).toString(), entry.toMap());
+    QSet<QString> used;
+    QVariantList result;
+    for (const auto& entry : edited) {
+        const auto row = entry.toMap();
+        auto id = row.value(idKey).toString();
+        const auto found = rawById.constFind(id);
+        if (found == rawById.cend() || used.contains(id)) {
+            if (id.isEmpty() || used.contains(id)) id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+            QVariantMap created{{idKey, id}};
+            for (const auto& cell : cells) created.insert(cell, row.value(cell));
+            used.insert(id);
+            result.append(created);
+            continue;
+        }
+        used.insert(id);
+        auto merged = *found;
+        const auto shown = shownById.value(id);
+        auto platforms = merged.value(platformsKey).toMap();
+        for (const auto& cell : cells) {
+            if (row.value(cell) == shown.value(cell)) continue;
+            if (platform && cell != kRouteTarget) {
+                auto values = platforms.value(*platform).toMap();
+                values.insert(cell, row.value(cell));
+                platforms.insert(*platform, values);
+                continue;
+            }
+            merged.insert(cell, row.value(cell));
+            for (auto it = platforms.begin(); it != platforms.end();) {
+                auto values = it.value().toMap();
+                values.remove(cell);
+                if (values.isEmpty()) {
+                    it = platforms.erase(it);
+                } else {
+                    it.value() = values;
+                    ++it;
+                }
+            }
+        }
+        if (platforms.isEmpty()) merged.remove(platformsKey);
+        else merged.insert(platformsKey, platforms);
+        result.append(merged);
+    }
+    return result;
+}
+
 }
 
 std::optional<FieldGroupId> PropertyEditorEngine::fieldGroup(const QString& field) const
@@ -77,12 +169,81 @@ std::optional<FieldGroupId> PropertyEditorEngine::fieldGroup(const QString& fiel
     default:
         return {};
     }
-    if (field == QLatin1String("effects")) return FieldGroupId::Effect;
-    if (field == QLatin1String("settingsRef")) return FieldGroupId::Conversion;
+    return FieldGroupForField(field.toStdString());
+}
+
+bool PropertyEditorEngine::supportsPlatformLocal(const QString& field) const
+{
+    if (const auto group = fieldGroup(field)) {
+        const auto* property = PlayablePropertyAuthoringV1::fieldByName(field);
+        return !property || (FieldGroupFieldMask(static_cast<harkenplayableproperties::PlayablePropertyIdV1>(property->id))
+            & FieldGroupPlatformMask(*group)) != 0;
+    }
+    if (field == QLatin1String("filter")) return true;
     const auto* property = PlayablePropertyAuthoringV1::fieldByName(field);
-    return property ? FieldGroupForProperty(
-        static_cast<harkenplayableproperties::PlayablePropertyIdV1>(property->id))
-        : std::nullopt;
+    return property && !PlayablePropertyAuthoringV1::isComponentStored(property->id)
+        && PlayablePropertyAuthoringV1::isEditorExposed(property->id)
+        && PlayablePropertyAuthoringV1::isSlotApplicable(itemType_, property->id);
+}
+
+std::optional<PlatformLocalAddress> PropertyEditorEngine::platformLocalAddress(const QString& field) const
+{
+    using Kind = PlatformLocalAddress::Kind;
+    if (!currentItem_ || !supportsPlatformLocal(field) || (conversionViews_.size() > 1 && fieldGroup(field) == FieldGroupId::Conversion)) return {};
+    if (const auto group = fieldGroup(field)) {
+        const auto found = groupBindings_.find(*group);
+        if (found == groupBindings_.end() || !found->second.view.valid) return {};
+        return PlatformLocalAddress{Kind::GroupField, field, *group, found->second.view.canInherit};
+    }
+    if (FilterAuthoring::isField(field)) return PlatformLocalAddress{Kind::Filter, field};
+    return PlatformLocalAddress{Kind::Property,
+        QString::fromLatin1(PlayablePropertyAuthoringV1::fieldByName(field)->fieldName)};
+}
+
+std::optional<PlatformLocalAddress> PropertyEditorEngine::routeCellAddress(
+    const QString& field, const QUuid& row, const QString& cell) const
+{
+    using Kind = PlatformLocalAddress::Kind;
+    if (!currentItem_ || cell == kRouteTarget) return {};
+    if (currentItem_->type == ProjectItem::Type::Bus)
+        return PlatformLocalAddress{Kind::RowCell, field, FieldGroupId::Send, false, row, cell};
+    const auto group = fieldGroup(field);
+    const auto found = group ? groupBindings_.find(*group) : groupBindings_.end();
+    if (found == groupBindings_.end() || !found->second.view.valid) return {};
+    return PlatformLocalAddress{Kind::RowCell, field, *group, found->second.view.canInherit, row, cell};
+}
+
+void PropertyEditorEngine::decorateRouteCells(QWidget* control, const PropertyDescriptor& descriptor)
+{
+    ListFieldDrawer::setWidgetCellDecorator(control,
+        [self = QPointer<PropertyEditorEngine>(this), control, descriptor]
+        (QWidget* cellControl, const QVariantMap& row, const QString& cell) -> QWidget* {
+            const auto element = std::find_if(descriptor.elementSchema.begin(), descriptor.elementSchema.end(),
+                [&cell](const PropertyDescriptor& field) { return field.field == cell; });
+            const auto address = self && element != descriptor.elementSchema.end()
+                ? self->routeCellAddress(descriptor.field, QUuid(row.value(QStringLiteral("id")).toString()), cell)
+                : std::nullopt;
+            if (!address || address->row.isNull()) return cellControl;
+            auto* marker = new PlatformLocalMarker(cellControl->parentWidget());
+            marker->setValueFormatter(PlatformLocalMarker::formatterFor(*element));
+            marker->bind(self->currentItem_, address);
+            for (const auto& binding : self->bindings_)
+                if (binding.widget == control) marker->setEditable(self->canEditField(binding));
+            return attachPlatformMarker(cellControl, marker, cellControl->parentWidget());
+        });
+}
+
+void PropertyEditorEngine::refreshPlatformMarkers()
+{
+    for (const auto& binding : bindings_) {
+        if (binding.marker) {
+            binding.marker->bind(currentItem_, platformLocalAddress(binding.field));
+            binding.marker->setEditable(canEditField(binding));
+        } else if (binding.drawer && binding.widget) {
+            for (auto* marker : binding.widget->findChildren<PlatformLocalMarker*>())
+                marker->setEditable(canEditField(binding));
+        }
+    }
 }
 
 void PropertyEditorEngine::buildGroupHeader(FieldGroupId group, CollapsibleSection* section, bool showRangeName)
@@ -101,6 +262,7 @@ void PropertyEditorEngine::buildGroupHeader(FieldGroupId group, CollapsibleSecti
         switch (group) {
         case FieldGroupId::Output: label = tr("Inherit Output"); break;
         case FieldGroupId::Send: label = tr("Inherit Sends"); break;
+        case FieldGroupId::Sidechain: label = tr("Inherit Sidechains"); break;
         case FieldGroupId::Effect: label = tr("Inherit Effects"); break;
         case FieldGroupId::SpatialRating: label = tr("Inherit Spatial Rating"); break;
         case FieldGroupId::Conversion: label = tr("Inherit Conversion"); break;
@@ -126,7 +288,7 @@ void PropertyEditorEngine::buildGroupHeader(FieldGroupId group, CollapsibleSecti
             refreshFieldGroups();
             return;
         }
-        auto args = binding.view.actionArgs();
+        auto args = binding.view.actionArgs(true);
         args.insert(QStringLiteral("mode"), inherit->isChecked()
             ? QStringLiteral("Inherit") : QStringLiteral("Local"));
         executeGroupAction(group, QStringLiteral("set_field_group_mode"), std::move(args));
@@ -189,13 +351,15 @@ void PropertyEditorEngine::previewGroupField(FieldBinding& binding, double value
     auto& project = ProjectManager::instance();
     if (!group || !property || !project.currentProject()) return;
     const auto& view = groupBindings_.at(*group).view;
-    const auto prepared = prepareFieldGroupEdit(*project.currentProject(), {
-        currentItem_->guid, *group, view.editScopes,
-        SetFieldGroupField{static_cast<harkenplayableproperties::PlayablePropertyIdV1>(property->id),
-            static_cast<float>(value)}, view.expectedBefore});
-    if (!prepared.ok()) return;
+    const auto id = static_cast<harkenplayableproperties::PlayablePropertyIdV1>(property->id);
+    const auto preview = binding.groupPreviewActive
+        ? previewFieldGroupNumber(*project.currentProject(), *currentItem_, view.editScopes,
+              id, static_cast<float>(value), previewAncestry(view, false))
+        : prepareFieldGroupEdit(*project.currentProject(), {currentItem_->guid, *group, view.editScopes,
+              SetFieldGroupField{id, static_cast<float>(value)}, view.expectedBefore}).after;
+    if (!preview) return;
     binding.groupPreviewActive = true;
-    emit project.fieldGroupsPreviewed(currentItem_, *prepared.after);
+    emit project.fieldGroupsPreviewed(currentItem_, *preview);
 }
 
 void PropertyEditorEngine::finishGroupPreview(FieldBinding& binding)
@@ -206,42 +370,66 @@ void PropertyEditorEngine::finishGroupPreview(FieldBinding& binding)
         emit ProjectManager::instance().fieldGroupsPreviewed(currentItem_, currentItem_->fieldGroups);
 }
 
-void PropertyEditorEngine::previewGroupSends(FieldBinding& binding, const QVariant& value)
+QVariantList PropertyEditorEngine::mergedRouteRows(const QString& field, const QVariant& edited) const
+{
+    QVariantList raw;
+    QVariantList displayed;
+    if (currentItem_->type == ProjectItem::Type::Bus) {
+        raw = currentItem_->comp<VMixNode>()->getField(field).toList();
+        displayed = readField(field).toList();
+    } else {
+        raw = convertRouteTargets(groupBindings_.at(*fieldGroup(field)).view.field(field).shared.toList(),
+                                  editorTarget).value_or(QVariantList{});
+        displayed = groupFieldValue(field).toList();
+    }
+    const auto& context = PlatformContextService::instance().context();
+    const auto platform = context.all || context.selected.isEmpty()
+        ? std::optional<QString>{} : std::optional<QString>(context.primary.toString(QUuid::WithoutBraces));
+    return mergeRouteRows(raw, displayed, edited.toList(), routeCells(field), platform);
+}
+
+void PropertyEditorEngine::previewGroupRoutes(FieldBinding& binding, const QVariant& value)
 {
     if (updating_ || !canEditField(binding)) return;
     auto& manager = ProjectManager::instance();
-    if (!manager.currentProject()) return;
-    const auto& view = groupBindings_.at(FieldGroupId::Send).view;
-    SendFieldGroup sends;
-    for (const auto& entry : value.toList()) {
-        const auto row = entry.toMap();
-        bool valid = false;
-        const auto id = row.value(QStringLiteral("targetBusID")).toUInt(&valid);
-        const auto* target = valid ? manager.findItemByObjectID(id) : nullptr;
-        if (!target || target->type != ProjectItem::Type::Bus) return;
-        SendFieldGroupRow send{toFieldGroupGuid(target->guid), row.value(QStringLiteral("sendLevel")).toFloat()};
-        if (!readSendRoute(QJsonObject::fromVariantMap(row), send.type, send.duckTarget)) return;
-        sends.sends.push_back(std::move(send));
+    const auto group = fieldGroup(binding.field);
+    const auto rows = convertRouteTargets(mergedRouteRows(binding.field, value), actionTarget);
+    if (!manager.currentProject() || !group || !rows) return;
+    const auto json = QJsonArray::fromVariantList(*rows);
+    FieldGroupEditOperation operation;
+    if (*group == FieldGroupId::Send) {
+        SendFieldGroup sends;
+        if (!fieldGroupRouteRowsFromJson(json, sends.sends)) return;
+        operation = ReplaceFieldGroupSends{std::move(sends)};
+    } else {
+        SidechainFieldGroup sidechains;
+        if (!fieldGroupRouteRowsFromJson(json, sidechains.sidechains)) return;
+        operation = ReplaceFieldGroupSidechains{std::move(sidechains)};
     }
+    FieldGroupEditScopes shared;
+    shared.shared = true;
     const auto prepared = prepareFieldGroupEdit(*manager.currentProject(), {
-        currentItem_->guid, FieldGroupId::Send, view.editScopes,
-        ReplaceFieldGroupSends{std::move(sends)}, view.expectedBefore});
+        currentItem_->guid, *group, shared, std::move(operation), groupBindings_.at(*group).view.expectedBefore});
     if (!prepared.ok()) return;
     binding.groupPreviewActive = true;
     emit manager.fieldGroupsPreviewed(currentItem_, *prepared.after);
 }
 
-void PropertyEditorEngine::previewBusSends(FieldBinding& binding, const QVariant& value)
+void PropertyEditorEngine::previewBusRoutes(FieldBinding& binding, const QVariant& value)
 {
     if (updating_ || !canEditField(binding) || currentItem_->type != ProjectItem::Type::Bus) return;
-    if (!binding.editSession) {
-        const auto& context = PlatformContextService::instance().context();
-        const auto platforms = context.all || context.selected.isEmpty()
-            ? std::optional<QVector<ProjectPlatformId>>{} : context.selected;
+    if (!binding.editSession)
         binding.editSession = std::make_unique<PropertyEditSession>(
-            currentItem_, binding.field, readField(binding.field), this, platforms);
-    }
-    binding.editSession->preview(value);
+            currentItem_, binding.field, currentItem_->comp<VMixNode>()->getField(binding.field), this);
+    binding.editSession->preview(mergedRouteRows(binding.field, value));
+}
+
+InspectorGroupLookup PropertyEditorEngine::groupLookup() const
+{
+    return [this](FieldGroupId group) -> const FieldGroupInspectorView* {
+        const auto it = groupBindings_.find(group);
+        return it == groupBindings_.end() ? nullptr : &it->second.view;
+    };
 }
 
 void PropertyEditorEngine::refreshFieldGroups()
@@ -258,15 +446,17 @@ void PropertyEditorEngine::refreshFieldGroups()
     updating_ = true;
     const auto* project = ProjectManager::instance().currentProject();
     conversionViews_.clear();
+    std::optional<FieldGroupInspectorRead> reader;
+    if (project && currentItem_ && !groupBindings_.empty()) reader.emplace(*project);
     for (auto& [group, binding] : groupBindings_) {
-        binding.view = project && currentItem_
-            ? buildFieldGroupInspectorView(*project, currentItem_->guid, group, context)
+        binding.view = reader
+            ? reader->read(currentItem_->guid, group, context)
             : FieldGroupInspectorView{};
         if (group == FieldGroupId::Conversion && project && currentItem_
             && conversionSelection_.size() > 1) {
             auto& aggregate = binding.view;
             for (const auto& guid : conversionSelection_) {
-                auto selected = buildFieldGroupInspectorView(*project, guid, group, context);
+                auto selected = reader->read(guid, group, context);
                 aggregate.valid &= selected.valid;
                 aggregate.canInherit &= selected.canInherit;
                 aggregate.fieldsEditable &= selected.fieldsEditable;
@@ -277,7 +467,7 @@ void PropertyEditorEngine::refreshFieldGroups()
             }
         }
         const auto& view = binding.view;
-        QString tooltip = project ? view.sourceTooltip(*project) : QString();
+        QString tooltip = reader ? reader->sourceTooltip(view) : QString();
         if (!view.diagnostics.isEmpty()) tooltip = view.diagnostics.join(QLatin1Char('\n'));
         if (!binding.error.isEmpty()) tooltip.prepend(binding.error + QLatin1Char('\n'));
         for (const auto& inherit : binding.inheritControls) {
@@ -291,13 +481,40 @@ void PropertyEditorEngine::refreshFieldGroups()
             inherit->setToolTip(tooltip);
         }
     }
-    for (auto& binding : bindings_)
-        if (fieldGroup(binding.field)) applyGroupFieldView(binding);
+    const auto groups = groupLookup();
+    for (auto& binding : bindings_) {
+        if (fieldGroup(binding.field)) applyGroupFieldView(binding, reader ? &*reader : nullptr);
+        else if (binding.decorator) binding.decorator->refreshGroups(currentItem_, groups);
+        else for (auto* decorator : binding.decorators) decorator->refreshGroups(currentItem_, groups);
+    }
+    refreshPlatformMarkers();
     for (const auto& section : sectionBindings_)
         if (section.provider && section.widget)
-            section.provider->refresh(section.widget, currentItem_, QStringLiteral("fieldGroups"));
+            section.provider->refreshGroups(section.widget, currentItem_, groups);
     updating_ = wasUpdating;
     evalEditConditions();
+}
+
+std::vector<FieldGroupDefinitionView> PropertyEditorEngine::previewAncestry(
+    const FieldGroupInspectorView& view, bool includePreviews) const
+{
+    std::vector<FieldGroupDefinitionView> definitions;
+    auto* item = currentItem_;
+    for (qsizetype i = 0; i < view.ancestry.size(); ++i) {
+        if (!item || item->guid != view.ancestry[i])
+            item = ProjectManager::instance().findItemByGuid(view.ancestry[i]);
+        if (!item) return {};
+        auto definition = fieldGroupDefinitionView(*item);
+        definition.parentGuid = i + 1 < view.ancestry.size() ? toFieldGroupGuid(view.ancestry[i + 1])
+            : project_schema::AuthoringGuid{};
+        if (includePreviews) {
+            const auto found = groupPreviews_.find(item->guid);
+            if (found != groupPreviews_.end()) definition.groups = &found->second;
+        }
+        definitions.push_back(definition);
+        item = item->parent;
+    }
+    return definitions;
 }
 
 void PropertyEditorEngine::refreshFieldGroupPreview(
@@ -305,26 +522,21 @@ void PropertyEditorEngine::refreshFieldGroupPreview(
 {
     const auto* project = ProjectManager::instance().currentProject();
     if (!currentItem_ || !provider || !project || groupBindings_.empty()) return;
+    const auto route = std::find_if(groupBindings_.begin(), groupBindings_.end(),
+        [](const auto& entry) { return entry.second.view.valid; });
+    if (route == groupBindings_.end() || !route->second.view.ancestry.contains(provider->guid)) return;
     if (groups == provider->fieldGroups) groupPreviews_.erase(provider->guid);
     else groupPreviews_[provider->guid] = groups;
     if (updating_) return;
-    std::map<FieldGroupScope, FieldGroupEffectiveSnapshot> snapshots;
-    for (const auto& [group, binding] : groupBindings_) {
-        if (group != FieldGroupId::Output && group != FieldGroupId::Send) continue;
-        if (!binding.view.valid) continue;
-        for (const auto& entry : binding.view.perScope) {
-            if (snapshots.contains(entry.scope)) continue;
-            auto snapshot = buildFieldGroupEffectiveSnapshot(*project, entry.scope,
-                [this](const ProjectItem& item) {
-                    const auto preview = groupPreviews_.find(item.guid);
-                    return preview == groupPreviews_.end() ? &item.fieldGroups : &preview->second;
-                });
-            if (!snapshot.ok()) return;
-            snapshots.emplace(entry.scope, std::move(snapshot));
-        }
-    }
+    const auto* master = ProjectManager::instance().getMasterBusItem();
+    if (!master) return;
+    const auto ancestors = previewAncestry(route->second.view, true);
+    if (ancestors.empty()) return;
+    const FieldGroupResolver resolver(ancestors, toFieldGroupGuid(master->guid));
+    if (!resolver.ok()) return;
     for (auto& binding : bindings_) {
-        if ((binding.field != QLatin1String("outputBusVolume") && binding.field != QLatin1String("sends"))
+        if ((binding.field != QLatin1String("outputBusVolume") && binding.field != QLatin1String("sends")
+             && binding.field != QLatin1String("sidechains"))
             || !binding.widget || binding.groupPreviewActive
             || (binding.parameterBinding && binding.parameterBinding->isEditing())) continue;
         const auto parameters = binding.widget->findChildren<ParameterBinding*>();
@@ -339,25 +551,15 @@ void PropertyEditorEngine::refreshFieldGroupPreview(
         const auto preview = groupPreviews_.find(currentItem_->guid);
         if (preview != groupPreviews_.end()) view.expectedBefore = preview->second;
         for (auto& entry : view.perScope) {
-            const auto& definitions = snapshots.at(entry.scope).definitions;
-            const auto effective = definitions.find(toFieldGroupGuid(currentItem_->guid));
-            if (effective == definitions.end()) return;
-            entry.resolved.payload = *group == FieldGroupId::Output
-                ? FieldGroupPayload(effective->second.output) : FieldGroupPayload(effective->second.send);
+            const auto effective = resolver.Resolve(ancestors.front().guid, entry.scope, *group);
+            if (!effective.ok()) return;
+            entry.resolved = *effective.value;
         }
         const auto value = groupFieldValue(binding.field, &view);
-        const bool mixed = !value.isValid();
         if (binding.type == PropType::Float)
             updateInheritedNumber(binding, fieldAccess(binding), value);
-        if (binding.drawer) {
-            binding.drawer->bind(binding.widget, mixed ? QVariant(QVariantList{}) : value, currentItem_);
-            ListFieldDrawer::setWidgetMixed(binding.widget, mixed);
-        } else if (mixed) {
-            if (auto* slider = qobject_cast<ParameterSlider*>(binding.widget.data()))
-                slider->setMixedValue(true);
-        } else {
-            setGroupFieldWidgetValue(binding, value);
-        }
+        if (binding.drawer) binding.drawer->bind(binding.widget, value, currentItem_);
+        else if (value.isValid()) setGroupFieldWidgetValue(binding, value);
     }
 }
 
@@ -373,31 +575,13 @@ QVariant PropertyEditorEngine::groupFieldValue(
     if (*group == FieldGroupId::Conversion && conversionViews_.size() > 1)
         for (const auto& selected : conversionViews_) {
             const auto other = selected.field(field);
-            if (!selected.valid || !other.uniform || other.value != value.value) return {};
+            if (!selected.valid || !other.valid || other.value != value.value) return {};
         }
-    if (*group == FieldGroupId::Send && view.editScopes.shared && view.fieldsEditable) {
-        QVariantList rows;
-        if (view.expectedBefore.send.shared.localHistory)
-            for (const auto& row : view.expectedBefore.send.shared.localHistory->sends) {
-                QVariantMap entry{{QStringLiteral("targetBusID"), fromFieldGroupGuid(row.targetBusID)},
-                    {QStringLiteral("sendLevel"), row.sendLevel},
-                    {QStringLiteral("type"), sendTypeName(row.type)}, {QStringLiteral("duckTarget"), row.duckTarget}};
-                rows.append(entry);
-            }
-        value.value = rows;
-        value.uniform = true;
-    }
-    if (!view.valid || !value.uniform) return {};
+    if (!view.valid || !value.valid) return {};
     if (value.value.metaType().id() == QMetaType::QUuid)
         return referenceEditorValue(value.value);
-    if (*group != FieldGroupId::Send) return value.value;
-    QVariantList rows;
-    for (const auto& entry : value.value.toList()) {
-        auto row = entry.toMap();
-        row[QStringLiteral("targetBusID")] = referenceEditorValue(row.value(QStringLiteral("targetBusID")));
-        rows.append(row);
-    }
-    return rows;
+    if (*group != FieldGroupId::Send && *group != FieldGroupId::Sidechain) return value.value;
+    return *convertRouteTargets(value.value.toList(), editorTarget);
 }
 
 bool PropertyEditorEngine::groupReferenceSelectable(const QString& field, uint32_t candidate, SendType type, bool duckTarget) const
@@ -410,21 +594,30 @@ bool PropertyEditorEngine::groupReferenceSelectable(const QString& field, uint32
     if (*group == FieldGroupId::Conversion)
         return target->type == ProjectItem::Type::Conversion;
     if (target->type != ProjectItem::Type::Bus) return false;
-    const auto peer = groupBindings_.find(*group == FieldGroupId::Output
-        ? FieldGroupId::Send : FieldGroupId::Output);
-    if (peer == groupBindings_.end() || !peer->second.view.valid) return false;
-    if (*group == FieldGroupId::Send && (type == SendType::Send || duckTarget)) {
-        const auto output = peer->second.view.field(QStringLiteral("outputBusRef"));
-        for (const auto& scope : output.perScope)
-            if (scope.second.toUuid() == target->guid) return false;
-    } else if (*group == FieldGroupId::Output) {
-        const auto sends = peer->second.view.field(QStringLiteral("sends"));
-        for (const auto& scope : sends.perScope)
-            for (const auto& row : scope.second.toList())
-                if ((row.toMap().value(QStringLiteral("type")) == sendTypeName(SendType::Send)
-                     || row.toMap().value(QStringLiteral("duckTarget")).toBool())
-                    && row.toMap().value(QStringLiteral("targetBusID")).toUuid() == target->guid)
+    const auto peerField = [this](FieldGroupId peer, const QString& name) -> std::optional<FieldGroupInspectorFieldView> {
+        const auto found = groupBindings_.find(peer);
+        if (found == groupBindings_.end()) return FieldGroupInspectorFieldView{true, {}, {}, {}};
+        if (!found->second.view.valid) return {};
+        return found->second.view.field(name);
+    };
+    if (*group != FieldGroupId::Output) {
+        if (type == SendType::Sidechain && !duckTarget) return true;
+        const auto output = peerField(FieldGroupId::Output, QStringLiteral("outputBusRef"));
+        if (!output) return false;
+        return std::none_of(output->perScope.begin(), output->perScope.end(),
+            [&](const auto& scope) { return scope.second.toUuid() == target->guid; });
+    }
+    for (const auto& [peer, name] : {std::pair{FieldGroupId::Send, QStringLiteral("sends")},
+                                     std::pair{FieldGroupId::Sidechain, QStringLiteral("sidechains")}}) {
+        const auto rows = peerField(peer, name);
+        if (!rows) return false;
+        for (const auto& scope : rows->perScope)
+            for (const auto& entry : scope.second.toList()) {
+                const auto row = entry.toMap();
+                if ((peer == FieldGroupId::Send || row.value(QStringLiteral("duckTarget")).toBool())
+                    && row.value(QStringLiteral("targetBusID")).toUuid() == target->guid)
                     return false;
+            }
     }
     return true;
 }
@@ -437,7 +630,7 @@ void PropertyEditorEngine::setGroupFieldWidgetValue(const FieldBinding& binding,
     setWidgetValue(binding.widget, binding.widgetType, value);
 }
 
-bool PropertyEditorEngine::applyGroupFieldView(FieldBinding& binding)
+bool PropertyEditorEngine::applyGroupFieldView(FieldBinding& binding, const FieldGroupInspectorRead* reader)
 {
     const auto group = fieldGroup(binding.field);
     if (!group || !binding.widget) return false;
@@ -445,7 +638,6 @@ bool PropertyEditorEngine::applyGroupFieldView(FieldBinding& binding)
     if (found == groupBindings_.end()) return false;
     const auto& view = found->second.view;
     const QVariant value = groupFieldValue(binding.field);
-    const bool mixed = !value.isValid();
     const auto guard = [self = QPointer<PropertyEditorEngine>(this), field = binding.field,
                         view, revision = groupEditRevision_] {
         if (!self || !self->groupContextMatches(view, revision)) return false;
@@ -458,13 +650,13 @@ bool PropertyEditorEngine::applyGroupFieldView(FieldBinding& binding)
         binding.drawer->bind(ref, value, currentItem_);
     } else if (binding.drawer) {
         ListFieldDrawer::setWidgetEditGuard(binding.widget, guard);
-        if (*group == FieldGroupId::Send) {
+        if (*group == FieldGroupId::Send || *group == FieldGroupId::Sidechain) {
             const auto self = QPointer<PropertyEditorEngine>(this);
             ListFieldDrawer::setWidgetPreviewCallbacks(binding.widget,
                 [self, widget = binding.widget](const QVariant& preview) {
                     if (!self) return;
                     for (auto& entry : self->bindings_)
-                        if (entry.widget == widget) { self->previewGroupSends(entry, preview); return; }
+                        if (entry.widget == widget) { self->previewGroupRoutes(entry, preview); return; }
                 },
                 [self, widget = binding.widget] {
                     if (!self) return;
@@ -472,28 +664,18 @@ bool PropertyEditorEngine::applyGroupFieldView(FieldBinding& binding)
                         if (entry.widget == widget) { self->finishGroupPreview(entry); return; }
                 });
         }
-        binding.drawer->bind(binding.widget, mixed ? QVariant(QVariantList{}) : value, currentItem_);
-        ListFieldDrawer::setWidgetMixed(binding.widget, mixed);
-    } else if (mixed) {
-        if (auto* slider = qobject_cast<ParameterSlider*>(binding.widget.data()))
-            slider->setMixedValue(true);
-        if (auto* check = qobject_cast<QCheckBox*>(binding.widget.data())) {
-            QSignalBlocker blocker(check);
-            check->setTristate(true);
-            check->setCheckState(Qt::PartiallyChecked);
-        }
-    } else {
+        binding.drawer->bind(binding.widget, value, currentItem_);
+    } else if (value.isValid()) {
         setGroupFieldWidgetValue(binding, value);
     }
-    if (const auto* project = ProjectManager::instance().currentProject()) {
-        QString tooltip = view.sourceTooltip(*project, binding.field);
-        if (mixed) tooltip.prepend(*group == FieldGroupId::Conversion && conversionViews_.size() > 1
-            ? tr("Mixed values across selected objects.\n") : *group == FieldGroupId::Send
-            ? tr("Mixed table. Select a single platform to edit.\n") : tr("Mixed values across platforms.\n"));
-        binding.mixedTooltip = tooltip;
+    if (ProjectManager::instance().currentProject()) {
+        QString tooltip = reader ? reader->sourceTooltip(view, binding.field) : QString();
+        if (!value.isValid() && conversionViews_.size() > 1)
+            tooltip.prepend(tr("Mixed values across selected objects.\n"));
+        binding.groupTooltip = tooltip;
         binding.widget->setToolTip(tooltip);
     }
-    if (binding.decorator) binding.decorator->bind(currentItem_);
+    if (binding.decorator) binding.decorator->bindGroups(currentItem_, groupLookup());
     return true;
 }
 
@@ -512,16 +694,15 @@ PropertyEditorEngine::FieldAccess PropertyEditorEngine::fieldAccess(const FieldB
         const auto* property = PlayablePropertyAuthoringV1::fieldByName(binding.field);
         const auto& context = PlatformContextService::instance().context();
         if (property && !context.selected.isEmpty() && !context.all
-            && (binding.type == PropType::ObjectRef || binding.type == PropType::List))
+            && (binding.type == PropType::ObjectRef
+                || (binding.type == PropType::List && itemType_ != ProjectItem::Type::Bus)))
             return FieldAccess::Disabled;
         return FieldAccess::Editable;
     }
     const auto found = groupBindings_.find(*group);
     if (found == groupBindings_.end()) return FieldAccess::Disabled;
     const auto& view = found->second.view;
-    if (!groupContextMatches(view, groupEditRevision_)
-        || (*group == FieldGroupId::Send && !view.editScopes.shared && !view.sendsUniform))
-        return FieldAccess::Disabled;
+    if (!groupContextMatches(view, groupEditRevision_)) return FieldAccess::Disabled;
     if (view.fieldsEditable) return FieldAccess::Editable;
     return view.effectiveInherit && !view.inheritanceMixed ? FieldAccess::Inherited : FieldAccess::Disabled;
 }
@@ -535,17 +716,29 @@ void PropertyEditorEngine::commitFieldChange(
     if (found == bindings_.end() || !canEditField(*found)) return;
     const auto group = fieldGroup(field);
     if (!group) {
-        if (currentItem_->type == ProjectItem::Type::Bus && field == QLatin1String("sends")
-            && found->editSession) {
-            auto session = std::move(found->editSession);
-            session->preview(value);
+        if (currentItem_->type == ProjectItem::Type::Bus
+            && (field == QLatin1String("sends") || field == QLatin1String("sidechains"))) {
+            const auto rows = mergedRouteRows(field, value);
+            auto session = found->editSession ? std::move(found->editSession)
+                : std::make_unique<PropertyEditSession>(
+                      currentItem_, field, currentItem_->comp<VMixNode>()->getField(field), this);
+            session->preview(rows);
             session->commit();
             return;
         }
         emit fieldChanged(field, readField(field), value);
         return;
     }
-    auto args = groupArgs.value_or(groupBindings_.at(*group).view.actionArgs());
+    if (*group == FieldGroupId::Send || *group == FieldGroupId::Sidechain) {
+        const auto rows = convertRouteTargets(mergedRouteRows(field, value), actionTarget);
+        if (!rows) return;
+        auto args = groupBindings_.at(*group).view.actionArgs(true);
+        args.insert(field, QJsonArray::fromVariantList(*rows));
+        executeGroupAction(*group, *group == FieldGroupId::Send
+            ? QStringLiteral("replace_field_group_sends") : QStringLiteral("replace_field_group_sidechains"), std::move(args));
+        return;
+    }
+    auto args = groupArgs.value_or(groupBindings_.at(*group).view.actionArgs(!supportsPlatformLocal(field)));
     if (*group == FieldGroupId::Conversion) {
         const auto ref = referenceActionValue(value);
         if (!ref) return;
@@ -556,31 +749,16 @@ void PropertyEditorEngine::commitFieldChange(
     }
     const auto* property = PlayablePropertyAuthoringV1::fieldByName(field);
     if (!property) return;
-    QString action = QStringLiteral("set_field_group_field");
-    if (*group == FieldGroupId::Send) {
-        QJsonArray rows;
-        for (const auto& entry : value.toList()) {
-            const auto row = entry.toMap();
-            const auto ref = referenceActionValue(row.value(QStringLiteral("targetBusID")));
-            if (!ref) return;
-            auto send = QJsonObject::fromVariantMap(row);
-            send[QStringLiteral("targetBusID")] = *ref;
-            rows.append(send);
-        }
-        action = QStringLiteral("replace_field_group_sends");
-        args.insert(QStringLiteral("sends"), rows);
+    args.insert(QStringLiteral("field"), QString::fromLatin1(property->jsonKey));
+    if (property->referenceRole == harkenplayableproperties::PlayablePropertyReferenceRoleV1::OutputBus
+        || property->referenceRole == harkenplayableproperties::PlayablePropertyReferenceRoleV1::Attenuation) {
+        const auto ref = referenceActionValue(value);
+        if (!ref) return;
+        args.insert(QStringLiteral("value"), *ref);
     } else {
-        args.insert(QStringLiteral("field"), QString::fromLatin1(property->jsonKey));
-        if (property->referenceRole == harkenplayableproperties::PlayablePropertyReferenceRoleV1::OutputBus
-            || property->referenceRole == harkenplayableproperties::PlayablePropertyReferenceRoleV1::Attenuation) {
-            const auto ref = referenceActionValue(value);
-            if (!ref) return;
-            args.insert(QStringLiteral("value"), *ref);
-        } else {
-            args.insert(QStringLiteral("value"), QJsonValue::fromVariant(value));
-        }
+        args.insert(QStringLiteral("value"), QJsonValue::fromVariant(value));
     }
-    executeGroupAction(*group, action, std::move(args));
+    executeGroupAction(*group, QStringLiteral("set_field_group_field"), std::move(args));
 }
 
 void PropertyEditorEngine::executeGroupAction(FieldGroupId group, const QString& action, QJsonObject args)
@@ -599,7 +777,7 @@ void PropertyEditorEngine::executeGroupAction(FieldGroupId group, const QString&
             : std::nullopt;
         const auto settings = action == QLatin1String("set_field_group_field")
             ? std::optional<QUuid>(QUuid(args.value(QStringLiteral("value")).toString())) : std::nullopt;
-        const auto platform = view.editScopes.shared ? PlatformScope{}
+        const auto platform = inherit || view.editScopes.shared ? PlatformScope{}
             : PlatformScope{fromFieldGroupGuid(view.editScopes.platforms.front())};
         cancelGroupEdits();
         QString error;
@@ -611,7 +789,8 @@ void PropertyEditorEngine::executeGroupAction(FieldGroupId group, const QString&
         return;
     }
     cancelGroupEdits(action == QStringLiteral("set_field_group_field")
-        || action == QStringLiteral("replace_field_group_sends"));
+        || action == QStringLiteral("replace_field_group_sends")
+        || action == QStringLiteral("replace_field_group_sidechains"));
     const auto result = ActionManager::instance().execute(action, args, ActionSource::GUI, this);
     QString error;
     if (!result.success) {
@@ -637,24 +816,14 @@ void PropertyEditorEngine::showGroupMenu(FieldGroupId group, QWidget* parent, co
     auto* menu = new QMenu(parent);
     menu->setObjectName(QStringLiteral("fieldGroupMenu_") + groupName(group));
     menu->setAttribute(Qt::WA_DeleteOnClose);
-    const auto add = [&](const QString& title, const QString& mode, bool rebuild = false) {
-        auto* action = menu->addAction(title);
-        action->setObjectName(rebuild ? QStringLiteral("rebuildLocal") : mode);
-        if (rebuild) action->setEnabled(binding.view.canInherit);
-        connect(action, &QAction::triggered, this,
-            [this, group, mode, rebuild, view = binding.view, revision = groupEditRevision_] {
-                if (!groupContextMatches(view, revision) || (rebuild && !view.canInherit)) return;
-                auto args = view.actionArgs();
-                if (!rebuild) args.insert(QStringLiteral("mode"), mode);
-                executeGroupAction(group, rebuild ? QStringLiteral("rebuild_field_group_local")
-                    : QStringLiteral("set_field_group_mode"), std::move(args));
-            });
-    };
-    if (!binding.view.editScopes.shared) {
-        add(tr("Reset Inherit"), QStringLiteral("UseShared"));
-        menu->addSeparator();
-    }
-    add(tr("Rebuild Local from Current Effective Values"), {}, true);
+    auto* rebuild = menu->addAction(tr("Rebuild Local from Current Effective Values"));
+    rebuild->setObjectName(QStringLiteral("rebuildLocal"));
+    rebuild->setEnabled(binding.view.canInherit);
+    connect(rebuild, &QAction::triggered, this,
+        [this, group, view = binding.view, revision = groupEditRevision_] {
+            if (!groupContextMatches(view, revision) || !view.canInherit) return;
+            executeGroupAction(group, QStringLiteral("rebuild_field_group_local"), view.actionArgs(true));
+        });
     menu->popup(globalPosition);
 }
 

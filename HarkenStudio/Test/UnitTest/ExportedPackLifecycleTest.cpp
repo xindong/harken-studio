@@ -471,7 +471,7 @@ void authorDiscreteVariableControl(const std::shared_ptr<harken::studio::Project
         ASSERT_TRUE(grid.addRow(audibleChild->guid));
         ASSERT_TRUE(grid.setCell(0, 0, silentValue));
         ASSERT_TRUE(grid.setCell(1, 0, audibleValue));
-        EXPECT_TRUE(selection->selections.shared.setMatchGrid(grid));
+        EXPECT_TRUE(selection->selections.setMatchGrid(grid));
     }
 }
 
@@ -490,7 +490,7 @@ void authorContinuousVariableControl(const std::shared_ptr<harken::studio::Proje
         mixing.rows.front().children[0].points = {{0.0f, 1.0f}, {0.25f, 1.0f}, {0.75f, 0.0f}, {1.0f, 0.0f}};
         mixing.rows.front().children[1].points = {{0.0f, 0.0f}, {0.25f, 0.0f}, {0.75f, 1.0f}, {1.0f, 1.0f}};
         for (auto& child : mixing.rows.front().children) child.normalize();
-        EXPECT_TRUE(selection->selections.shared.setMixing(mixing));
+        EXPECT_TRUE(selection->selections.setMixing(mixing));
     }
 }
 

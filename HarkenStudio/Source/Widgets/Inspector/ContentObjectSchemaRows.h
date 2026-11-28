@@ -40,7 +40,7 @@ inline PropertySchema contentObjectInspectorRows(ProjectItem::Type type)
         if (!storage) continue;
         PropertyDescriptor descriptor = field.wire
                 == harkenplayableproperties::PlayablePropertyWireV1::RowSpan
-            ? sendsInspectorDescriptor() : *storage;
+            ? routesInspectorDescriptor(SendType::Send) : *storage;
         descriptor.field = QLatin1String(field.fieldName);
         descriptor.jsonKey = QLatin1String(field.jsonKey);
         descriptor.flags.sourceIndicator = false;
@@ -60,7 +60,7 @@ inline PropertySchema contentObjectInspectorRows(ProjectItem::Type type)
         }
         out.insert(position, std::move(descriptor));
         if (field.wire == harkenplayableproperties::PlayablePropertyWireV1::RowSpan)
-            out.push_back(sendsInspectorDescriptor(SendType::Sidechain));
+            out.push_back(routesInspectorDescriptor(SendType::Sidechain));
     }
     if (const auto* filter = pickSchemaField(VMixNode::schema(), QLatin1String("filter"))) {
         auto afterPitch = std::find_if(out.begin(), out.end(), [](const PropertyDescriptor& d) {

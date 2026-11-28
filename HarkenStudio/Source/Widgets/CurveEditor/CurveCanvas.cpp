@@ -1936,48 +1936,11 @@ CurveRenderData CurveCanvas::renderData() const
     const double xStep = axes.xStep;
     const double yStep = axes.yStep;
 
+    const auto toScreen = [this](const CurvePointDef& point) { return pointToScreen(point); };
     const auto discretePath = [&](const QVector<CurvePointDef>& points,
                                   const QVector<CurveHandlePairDef>& handles) {
-        const auto valueAt = [&](float x) {
-            if (!profile_.endpointsFollowDomain && (x < points.front().x || x > points.back().x))
-                return 0.0f;
-            return curveBezierValueAt(points, handles, x, axisScale());
-        };
-        QPainterPath steps;
-        const float start = profile_.endpointsFollowDomain ? xMin_ : std::max(xMin_, points.front().x);
-        const float end = profile_.endpointsFollowDomain ? xMax_ : std::min(xMax_, points.back().x);
-        if (start >= end) return steps;
-        int sample = VariableSemantics::discreteRead(start);
-        steps.moveTo(pointToScreen(
-            {start, valueAt(static_cast<float>(sample))}));
-        const double firstBoundary = static_cast<double>(sample) + 0.5;
-        const double boundaryCount = std::max(0.0,
-            std::ceil(static_cast<double>(end) - firstBoundary));
-        if (boundaryCount <= graph.width() * 2.0) {
-            for (int index = 0; index < static_cast<int>(boundaryCount); ++index) {
-                const float boundary = static_cast<float>(firstBoundary + index);
-                const float before = valueAt(static_cast<float>(sample));
-                const float after = valueAt(static_cast<float>(sample + 1));
-                steps.lineTo(pointToScreen({boundary, before}));
-                steps.lineTo(pointToScreen({boundary, after}));
-                ++sample;
-            }
-            steps.lineTo(pointToScreen(
-                {end, valueAt(static_cast<float>(sample))}));
-        } else {
-            const int samples = std::max(1, static_cast<int>(graph.width()));
-            float previousValue = valueAt(static_cast<float>(sample));
-            for (int i = 1; i <= samples; ++i) {
-                const float x = start + (end - start)
-                    * static_cast<float>(i) / static_cast<float>(samples);
-                const int pointSample = VariableSemantics::discreteRead(x);
-                const float value = valueAt(static_cast<float>(pointSample));
-                steps.lineTo(pointToScreen({x, previousValue}));
-                steps.lineTo(pointToScreen({x, value}));
-                previousValue = value;
-            }
-        }
-        return steps;
+        return curveStepPath(points, handles, axisScale(), xMin_, xMax_, profile_.endpointsFollowDomain,
+                             graph.width(), toScreen);
     };
 
     if (points_.size() >= 2) {
@@ -2001,27 +1964,8 @@ CurveRenderData CurveCanvas::renderData() const
             drawn.colorRole = overlay.colorRole;
             drawn.color = overlay.color;
             drawn.selectable = overlay.selectable;
-            drawn.path.moveTo(pointToScreen({profile_.endpointsFollowDomain
-                ? std::min(xMin_, overlay.points.front().x) : overlay.points.front().x, overlay.points.front().value}));
-            drawn.path.lineTo(pointToScreen(overlay.points.front()));
-            for (int i = 0; i + 1 < overlay.points.size(); ++i) {
-                const CurvePointDef& left = overlay.points.at(i);
-                const CurvePointDef& right = overlay.points.at(i + 1);
-                const double screenWidth =
-                    std::abs(pointToScreen(right).x() - pointToScreen(left).x())
-                    * devicePixelRatioF();
-                const int samples = std::clamp(
-                    static_cast<int>(std::ceil(screenWidth)), 16, 512);
-                for (int step = 1; step < samples; ++step) {
-                    const float t = static_cast<float>(step) / samples;
-                    const float x = left.x + (right.x - left.x) * t;
-                    const float value = curveBezierValueAt(overlay.points, overlay.handles, x, axisScale());
-                    drawn.path.lineTo(pointToScreen({x, value}));
-                }
-                drawn.path.lineTo(pointToScreen(right));
-            }
-            if (profile_.endpointsFollowDomain)
-                drawn.path.lineTo(pointToScreen({std::max(xMax_, overlay.points.back().x), overlay.points.back().value}));
+            drawn.path = curveSampledPath(overlay.points, overlay.handles, axisScale(), xMin_, xMax_,
+                                          profile_.endpointsFollowDomain, devicePixelRatioF(), toScreen);
             if (profile_.discretePreview) drawn.discretePath = discretePath(overlay.points, overlay.handles);
             data.overlays.append(drawn);
         }

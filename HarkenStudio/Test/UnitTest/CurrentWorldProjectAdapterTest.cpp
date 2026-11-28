@@ -12,6 +12,7 @@
 #include "FieldGroupProjectAdapter.h"
 #include "ContainerBehaviorSemantics.h"
 #include "Components/VAction.h"
+#include "Components/VMixNode.h"
 #include "Components/VSelection.h"
 #include "Components/VVariable.h"
 #include "Support/ProjectPlatformTestUtils.h"
@@ -85,8 +86,8 @@ ProjectData makeRandomProject(std::shared_ptr<ProjectItem>* outContainer,
     selection->mode = SelectionMode::Random;
     selection->behavior.discipline = RandomDiscipline::Draw;
     selection->behavior.avoidRepeat = 0;
-    selection->selections.shared.find(0)->weight = 0;
-    selection->selections.shared.find(1)->weight = 3;
+    selection->selections.random.shared.find(0)->weight = 0;
+    selection->selections.random.shared.find(1)->weight = 3;
 
     ProjectFileBinding binding;
     binding.rootItem = layer;
@@ -165,17 +166,9 @@ TEST(CurrentWorldProjectAdapter, BusDuckingUsesSelectedPlatformAndFullWidthHandl
                            0x80000001u, harkentest::StudioObjectId(71));
     appendChild(master, source);
     appendChild(master, target);
-    const auto locator = PlayablePropertyAuthoringV1::definitionLocator(*source);
-    ASSERT_TRUE(locator);
-    const auto sendsId = static_cast<std::uint8_t>(harkenplayableproperties::PlayablePropertyIdV1::Sends);
-    const auto rows = [&](double gain) {
-        return QJsonArray{QJsonObject{{QStringLiteral("targetBusID"), static_cast<double>(target->objectID)},
-                                     {QStringLiteral("sendLevel"), gain}, {QStringLiteral("type"), QStringLiteral("Sidechain")},
-                                     {QStringLiteral("duckTarget"), true}}};
-    };
-    ASSERT_TRUE(PlayablePropertyAuthoringV1::setOverride(*source, *locator, sendsId, rows(-6), std::nullopt));
     const auto windows = HarkenTest::PlatformIds::Windows;
-    ASSERT_TRUE(PlayablePropertyAuthoringV1::setOverride(*source, *locator, sendsId, rows(-12), windows));
+    source->comp<VMixNode>()->sidechains = {
+        {QUuid::createUuid(), target->objectID, -6.0f, true, {{windows, {.sendLevelDb = -12.0f}}}}};
     CurrentWorldBuildOptions options;
     QString error;
     const auto shared = buildCurrentWorldSyncRequest(project, std::nullopt, &error, nullptr, &options, 1);
@@ -248,7 +241,7 @@ TEST(CurrentWorldProjectAdapter, SelectionHistoryAndOccurrencesSurviveAuthoringB
     std::shared_ptr<ProjectItem> sound;
     auto project = makeRandomProject(&container, &sound);
     auto* selection = container->comp<VSelection>();
-    selection->selections.shared.find(0)->weight = 1;
+    selection->selections.random.shared.find(0)->weight = 1;
     for (unsigned index = 2; index < 65; ++index)
         ASSERT_TRUE(PlayablePropertyAuthoringV1::addContainerChildOccurrence(*container, sound->guid));
     selection->behavior.avoidRepeat = 64;

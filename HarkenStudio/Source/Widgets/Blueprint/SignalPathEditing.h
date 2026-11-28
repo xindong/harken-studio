@@ -60,7 +60,6 @@ struct SignalPathConnectPlan
     std::vector<FieldGroupParentSnapshot> busOutputResets;
     std::vector<BusSendState> busSendsBefore;
     std::vector<BusSendState> busSendsAfter;
-    std::vector<BusSendState> observedBusSends;
     std::vector<SignalPathClipSnapshot> observedClips;
     std::vector<SignalPathSelectionSnapshot> observedSelections;
     std::vector<FieldGroupDefinitionSnapshot> observedGroups;

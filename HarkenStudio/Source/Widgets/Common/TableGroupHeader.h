@@ -26,6 +26,7 @@ public:
     Qt::CheckState checkState() const;
     void setCheckEnabled(bool enabled);
     void setExpanded(bool expanded);
+    void setTrailingWidget(QWidget* widget);
     bool isExpanded() const { return expanded_; }
     static int preferredHeight(ThemeManager* themeManager);
     static QRect checkBoxRect(const QRect& rect, ThemeManager* themeManager, const QWidget* widget);
@@ -51,6 +52,7 @@ private:
     TableGroupOptions options_;
     QCheckBox* checkBox_ = nullptr;
     QToolButton* chevron_ = nullptr;
+    QWidget* trailing_ = nullptr;
     bool expanded_ = true;
 };
 

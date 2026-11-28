@@ -14,17 +14,6 @@ namespace {
 using Property = harkenplayableproperties::PlayablePropertyIdV1;
 using Guid = harken::studio::project_schema::AuthoringGuid;
 
-bool parseGuid(const QJsonValue& value, Guid& guid)
-{
-    if (!value.isString()) return false;
-    const auto text = value.toString();
-    const QUuid parsed(text);
-    if (text.size() != 36 || parsed.toString(QUuid::WithoutBraces).compare(text, Qt::CaseInsensitive) != 0)
-        return false;
-    guid = toFieldGroupGuid(parsed);
-    return true;
-}
-
 ActionResult invalid(const QString& message)
 {
     return {false, {}, QStringLiteral("INVALID_PARAM"), message};
@@ -38,13 +27,14 @@ ActionResult executeGroupEdit(ProjectManager* manager, const QString& action,
     auto& project = *manager->currentProject();
     FieldGroupEditRequest request;
     Guid definition;
-    if (!parseGuid(args.value(QStringLiteral("definition_guid")), definition)
+    if (!parseFieldGroupGuid(args.value(QStringLiteral("definition_guid")), definition)
         || harken::studio::project_schema::IsNull(definition))
         return invalid(QStringLiteral("definition_guid must identify an object definition"));
     request.definition = fromFieldGroupGuid(definition);
     const auto groupName = args.value(QStringLiteral("group")).toString();
     if (groupName == QStringLiteral("output")) request.group = FieldGroupId::Output;
     else if (groupName == QStringLiteral("send")) request.group = FieldGroupId::Send;
+    else if (groupName == QStringLiteral("sidechain")) request.group = FieldGroupId::Sidechain;
     else if (groupName == QStringLiteral("spatialRating")) request.group = FieldGroupId::SpatialRating;
     else if (groupName == QStringLiteral("effect")) request.group = FieldGroupId::Effect;
     else if (groupName == QStringLiteral("conversion")) request.group = FieldGroupId::Conversion;
@@ -81,28 +71,19 @@ ActionResult executeGroupEdit(ProjectManager* manager, const QString& action,
         const auto mode = args.value(QStringLiteral("mode")).toString();
         if (mode == QStringLiteral("Local")) request.operation = SetFieldGroupMode{FieldGroupMode::Local};
         else if (mode == QStringLiteral("Inherit")) request.operation = SetFieldGroupMode{FieldGroupMode::Inherit};
-        else if (mode == QStringLiteral("UseShared")) request.operation = SetFieldGroupMode{FieldGroupMode::UseShared};
         else return invalid(QStringLiteral("Unknown field group mode"));
     } else if (action == QStringLiteral("rebuild_field_group_local")) {
         request.operation = RebuildLocalFieldGroup{};
     } else if (action == QStringLiteral("replace_field_group_sends")) {
-        if (!args.value(QStringLiteral("sends")).isArray())
-            return invalid(QStringLiteral("sends must be a complete array"));
         SendFieldGroup sends;
-        for (const auto& entry : args.value(QStringLiteral("sends")).toArray()) {
-            const auto row = entry.toObject();
-            SendFieldGroupRow send;
-            if (!entry.isObject() || row.size() != 2 + row.contains(QStringLiteral("type"))
-                    + row.contains(QStringLiteral("duckTarget"))
-                || !parseGuid(row.value(QStringLiteral("targetBusID")), send.targetBusID)
-                || !row.value(QStringLiteral("sendLevel")).isDouble())
-                return invalid(QStringLiteral("Invalid send row"));
-            if (!readSendRoute(row, send.type, send.duckTarget))
-                return invalid(QStringLiteral("Invalid send route"));
-            send.sendLevel = static_cast<float>(row.value(QStringLiteral("sendLevel")).toDouble());
-            sends.sends.push_back(send);
-        }
+        if (!fieldGroupRouteRowsFromJson(args.value(QStringLiteral("sends")), sends.sends))
+            return invalid(QStringLiteral("sends must be a complete array of rows"));
         request.operation = ReplaceFieldGroupSends{std::move(sends)};
+    } else if (action == QStringLiteral("replace_field_group_sidechains")) {
+        SidechainFieldGroup sidechains;
+        if (!fieldGroupRouteRowsFromJson(args.value(QStringLiteral("sidechains")), sidechains.sidechains))
+            return invalid(QStringLiteral("sidechains must be a complete array of rows"));
+        request.operation = ReplaceFieldGroupSidechains{std::move(sidechains)};
     } else if (action == QStringLiteral("replace_field_group_effects")) {
         if (!args.value(QStringLiteral("effects")).isArray())
             return invalid(QStringLiteral("effects must be a complete array"));
@@ -111,14 +92,17 @@ ActionResult executeGroupEdit(ProjectManager* manager, const QString& action,
             return invalid(QStringLiteral("Invalid effect chain"));
         request.operation = ReplaceFieldGroupEffects{std::move(effects)};
     } else if (request.group == FieldGroupId::Conversion) {
-        if (action != QStringLiteral("set_field_group_field")
-            || args.value(QStringLiteral("field")) != QJsonValue(QStringLiteral("settingsRef")))
+        if (args.value(QStringLiteral("field")) != QJsonValue(QStringLiteral("settingsRef")))
             return invalid(QStringLiteral("Conversion only supports settingsRef edits"));
-        Guid ref{};
-        const auto value = args.value(QStringLiteral("value"));
-        if (!value.isNull() && !parseGuid(value, ref))
-            return invalid(QStringLiteral("Conversion settings must be a GUID or null"));
-        request.operation = SetConversionFieldGroup{ConversionFieldGroup{ref}};
+        if (action == QStringLiteral("clear_field_group_field_override")) {
+            request.operation = ClearConversionFieldGroupOverride{};
+        } else {
+            Guid ref{};
+            const auto value = args.value(QStringLiteral("value"));
+            if (!value.isNull() && !parseFieldGroupGuid(value, ref))
+                return invalid(QStringLiteral("Conversion settings must be a GUID or null"));
+            request.operation = SetConversionFieldGroup{ConversionFieldGroup{ref}};
+        }
     } else {
         const auto name = args.value(QStringLiteral("field")).toString();
         const auto* field = PlayablePropertyAuthoringV1::fieldByJsonKey(name);
@@ -130,7 +114,7 @@ ActionResult executeGroupEdit(ProjectManager* manager, const QString& action,
             const auto value = args.value(QStringLiteral("value"));
             if (edit.property == Property::OutputBusRef || edit.property == Property::SpatialAttenuationRef) {
                 Guid ref{};
-                if (!(value.isNull() && edit.property == Property::OutputBusRef) && !parseGuid(value, ref))
+                if (!(value.isNull() && edit.property == Property::OutputBusRef) && !parseFieldGroupGuid(value, ref))
                     return invalid(QStringLiteral("Group reference must be a GUID"));
                 edit.value = ref;
             } else if (edit.property == Property::SpatialIs3DEnabled) {
@@ -193,7 +177,8 @@ ActionResult executeGroupEdit(ProjectManager* manager, const QString& action,
 void registerFieldGroupActions(ActionManager& manager, ProjectManager* projectManager)
 {
     for (const auto* name : {"set_field_group_mode", "set_field_group_field",
-                             "replace_field_group_sends", "replace_field_group_effects", "rebuild_field_group_local",
+                             "replace_field_group_sends", "replace_field_group_sidechains",
+                             "replace_field_group_effects", "rebuild_field_group_local",
                              "clear_field_group_field_override"}) {
         ActionDef action;
         action.id = QLatin1String(name);

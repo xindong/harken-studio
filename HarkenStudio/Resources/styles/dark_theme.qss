@@ -712,10 +712,6 @@ QPlainTextEdit[fieldRole="inspectorText"]:disabled {
     border-color: @borderSecondary@;
 }
 
-QPlainTextEdit[fieldRole="inspectorText"] QScrollBar:vertical {
-    border-left: @borderWidth@px solid @borderSecondary@;
-}
-
 /* ==========================================================================
    Combo Boxes
    Fusion paints these from the palette Light/Mid/Dark gradient unless the
@@ -965,16 +961,9 @@ QTableView::indicator:indeterminate:disabled {
     image: url("@checkboxIndeterminateDisabled@");
 }
 
-QCheckBox[fieldRole="inspector"] {
+QCheckBox[fieldRole="inspector"],
+QCheckBox[platformMarked="true"] {
     spacing: 0px;
-}
-
-QDoubleSpinBox[mixedAcrossPlatforms="true"] {
-    color: @textSecondary@;
-}
-
-QSlider[mixedAcrossPlatforms="true"]::handle:horizontal {
-    background-color: @accent@;
 }
 
 /* ==========================================================================
@@ -1742,7 +1731,9 @@ QLabel[settingsRole="subtitle"]:disabled,
 QLabel[nodeContentRole="label"]:disabled,
 QLabel[nodeContentRole="value"]:disabled,
 QLabel[roValue="true"]:disabled { color: @textDisabled@; }
-QWidget[readOnlyNumbers="true"]:enabled harken--studio--TableCell:enabled > QLabel[readableNumber="true"]:disabled,
+QWidget[readOnlyNumbers="true"]:enabled harken--studio--TableCell[readableNumber="true"]:enabled QLabel[roValue="true"]:disabled,
+QWidget[readOnlyNumbers="true"]:enabled harken--studio--TableCell[readableNumber="true"]:enabled QDoubleSpinBox:disabled,
+QWidget[readOnlyNumbers="true"]:enabled harken--studio--TableCell[readableNumber="true"]:enabled QDoubleSpinBox QLineEdit:disabled,
 QWidget[readOnlyNumbers="true"]:enabled > harken--studio--ParameterSlider QDoubleSpinBox:disabled,
 QWidget[readOnlyNumbers="true"]:enabled > harken--studio--ParameterSlider QDoubleSpinBox QLineEdit:disabled {
     color: @textPrimary@;
@@ -1755,6 +1746,10 @@ harken--studio--ObjectRefWidget {
     padding: 0px;
     min-height: @fieldContentHeight@px;
     max-height: @fieldContentHeight@px;
+}
+QWidget[fieldRole="preview"][flexibleRows="true"] {
+    min-height: 0px;
+    max-height: 16777215px;
 }
 QWidget[fieldRole="preview"]:disabled,
 QWidget[fieldRole="preview"][dimmed="true"],

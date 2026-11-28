@@ -42,8 +42,7 @@ PlatformContextService::PlatformContextService(
     , storage_(std::move(storage))
 {
     auto& pm = ProjectManager::instance();
-    connect(&pm, &ProjectManager::projectOpened, this,
-            [this](ProjectData*) { recompute(); });
+    connect(&pm, &ProjectManager::projectSessionOpened, this, &PlatformContextService::recompute);
     connect(&pm, &ProjectManager::projectClosed, this, &PlatformContextService::recompute);
     connect(&pm, &ProjectManager::targetPlatformsChanged, this,
             [this](QStringList) { recompute(); });

@@ -372,7 +372,6 @@ static void syncGeneralAudioProperties(ProjectItem* item, harken::studio::types:
     if (item->type == ProjectItem::Type::Sound) {
         std::vector<std::pair<harken::studio::types::ObjectId, float>> sends;
         for (const auto& send : groups.send.sends) {
-            if (send.type != SendType::Send) continue;
             sends.emplace_back(manager.busRuntimeHandleForId(
                 snapshot.objects.at(send.targetBusID)->objectID), send.sendLevel);
         }
@@ -670,9 +669,9 @@ void ProjectManager::refreshPreviewConversions()
     bindPreviewMediaContext();
     const bool converted = PreviewMediaModeService::instance().mode() == PreviewMediaMode::Converted;
     const auto platform = PlatformContextService::instance().context().primary;
-    const auto snapshot = std::make_shared<const FieldGroupEffectiveSnapshot>(
+    const auto snapshot = converted ? std::make_shared<const FieldGroupEffectiveSnapshot>(
         buildFieldGroupEffectiveSnapshot(*m_currentProject,
-            toFieldGroupScope(currentWorldPlatformScope(PlatformContextService::instance().context()))));
+            toFieldGroupScope(currentWorldPlatformScope(PlatformContextService::instance().context())))) : nullptr;
     QVector<ProjectItem*> changed;
     for (auto* item : ProjectPlatformSemantics::referenceOwners(*m_currentProject)) {
         if (item->type != ProjectItem::Type::Sound) continue;

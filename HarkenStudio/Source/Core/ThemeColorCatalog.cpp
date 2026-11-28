@@ -68,7 +68,7 @@ const QVector<ThemeColorRole>& studioDefaultColorRoles()
          }},
         {QStringLiteral("accent.secondary"), QStringLiteral("States"),
          QStringLiteral("Secondary accent"),
-         QStringLiteral("Customized settings and shortcuts, matching rows in the discrete grid preview, and the top border of the current tab in an unfocused dock group."),
+         QStringLiteral("Customized settings and shortcuts, matching rows in the discrete grid preview, the current tab line in an unfocused dock group, and editable platform marks with overrides only on other platforms."),
          {
              {QStringLiteral("accent.secondary"), std::nullopt},
              {QStringLiteral("qtAds.activeTabAccent"), std::nullopt},
@@ -93,7 +93,7 @@ const QVector<ThemeColorRole>& studioDefaultColorRoles()
          }},
         {QStringLiteral("text.disabled"), QStringLiteral("States"),
          QStringLiteral("Disabled"),
-         QStringLiteral("Text and icons in unavailable controls."),
+         QStringLiteral("Text and icons in unavailable controls, and read-only platform marks whose value has a platform override."),
          {
              {QStringLiteral("text.disabled"), std::nullopt},
              {QStringLiteral("qtPalette.disabledText"), std::nullopt},
@@ -170,7 +170,7 @@ const QVector<ThemeColorRole>& studioDefaultColorRoles()
          }},
         {QStringLiteral("panel.background"), QStringLiteral("Background"),
          QStringLiteral("Panel background"),
-         QStringLiteral("Panel surfaces, the outer canvas of curve editors and the startup logo backdrop."),
+         QStringLiteral("Panel surfaces, the outer canvas of curve editors, the startup logo backdrop and platform marks without a platform override."),
          {
              {QStringLiteral("panel.background"), std::nullopt},
              {QStringLiteral("curve.canvasBackground"), std::nullopt},

@@ -129,9 +129,9 @@ TEST(CanonicalRuntimeProjectAdapterTest, EffectiveGroupsShareAuthoringIdentityAc
     EffectFieldGroup platformEffects;
     ASSERT_TRUE(platformEffects.effects.replace({platform}));
     layer->fieldGroups.effects.platforms[toFieldGroupGuid(HarkenTest::PlatformIds::Windows)] =
-        {FieldGroupMode::Local, platformEffects};
+        {FieldGroupMode::UseShared, platformEffects};
     layer->fieldGroups.effects.platforms[toFieldGroupGuid(HarkenTest::PlatformIds::Android)] =
-        {FieldGroupMode::Local, EffectFieldGroup{}};
+        {FieldGroupMode::UseShared, EffectFieldGroup{}};
     auto dormant = shared;
     dormant.guid = QUuid::createUuid();
     dormant.bypass = true;

@@ -9,6 +9,7 @@
 #include "InspectorCustomization.h"
 #include "InspectorCustomizationRegistry.h"
 #include "FieldGroupInspectorView.h"
+#include "Core/PlatformLocalState.h"
 
 #include <QObject>
 #include <QPointer>
@@ -29,6 +30,7 @@ namespace harken::studio {
 struct ProjectItem;
 class IComponent;
 class ParameterBinding;
+class PlatformLocalMarker;
 class PropertyEditSession;
 
 class PropertyEditorEngine : public QObject
@@ -110,7 +112,8 @@ private:
         std::optional<BindingAddress> bindingAddress;
         QString editCondition;
         std::function<std::optional<FieldDomain>(const IComponent*)> domain;
-        QString mixedTooltip;
+        QString groupTooltip;
+        QPointer<PlatformLocalMarker> marker;
         bool readOnly = false;
         std::optional<QJsonObject> groupEditArgs;
         quint64 groupEditRevision = 0;
@@ -143,15 +146,25 @@ private:
     };
 
     std::optional<FieldGroupId> fieldGroup(const QString& field) const;
+    bool supportsPlatformLocal(const QString& field) const;
+    std::optional<PlatformLocalAddress> platformLocalAddress(const QString& field) const;
+    std::optional<PlatformLocalAddress> routeCellAddress(const QString& field, const QUuid& row,
+                                                         const QString& cell) const;
+    void decorateRouteCells(QWidget* control, const PropertyDescriptor& descriptor);
+    void refreshPlatformMarkers();
     void buildGroupHeader(FieldGroupId group, class CollapsibleSection* section, bool showRangeName);
     void refreshFieldGroups();
+    InspectorGroupLookup groupLookup() const;
+    std::vector<FieldGroupDefinitionView> previewAncestry(
+        const FieldGroupInspectorView& view, bool includePreviews) const;
     void refreshFieldGroupPreview(ProjectItem* provider, const DefinitionFieldGroups& groups);
     void cancelGroupEdits(bool preserveListRows = false);
     void previewGroupField(FieldBinding& binding, double value);
-    void previewGroupSends(FieldBinding& binding, const QVariant& value);
-    void previewBusSends(FieldBinding& binding, const QVariant& value);
+    QVariantList mergedRouteRows(const QString& field, const QVariant& edited) const;
+    void previewGroupRoutes(FieldBinding& binding, const QVariant& value);
+    void previewBusRoutes(FieldBinding& binding, const QVariant& value);
     void finishGroupPreview(FieldBinding& binding);
-    bool applyGroupFieldView(FieldBinding& binding);
+    bool applyGroupFieldView(FieldBinding& binding, const FieldGroupInspectorRead* reader);
     void setGroupFieldWidgetValue(const FieldBinding& binding, const QVariant& value);
     QVariant groupFieldValue(const QString& field, const FieldGroupInspectorView* preview = nullptr) const;
     bool groupReferenceSelectable(const QString& field, uint32_t candidate,

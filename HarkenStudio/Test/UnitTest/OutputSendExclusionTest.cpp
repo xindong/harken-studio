@@ -16,6 +16,8 @@
 #include <QApplication>
 #include <QTemporaryDir>
 
+#include <cmath>
+
 namespace {
 
 void ensureApp()
@@ -61,6 +63,13 @@ protected:
     QTemporaryDir tempDir;
 };
 
+harken::studio::BusRoute route(uint32_t target, float sendLevelDb,
+                               std::map<QUuid, harken::studio::BusRouteCells> platforms = {},
+                               bool duckTarget = false)
+{
+    return {QUuid::createUuid(), target, sendLevelDb, duckTarget, std::move(platforms)};
+}
+
 }
 
 TEST_F(OutputSendExclusionTest, MasterKeepsItsOwnUuidAcrossSaveAndOpen)
@@ -93,12 +102,8 @@ TEST_F(OutputSendExclusionTest, RouteCommandsRestoreCompleteAuthoredProperty)
                                       ProjectItem::Type::Bus);
     ASSERT_NE(source, nullptr);
     ASSERT_NE(target, nullptr);
-    const QJsonArray rows{
-        QJsonObject{{"targetBusID", static_cast<qint64>(target->objectID)},
-                    {"sendLevel", -9.0}, {"type", "Send"}, {"duckTarget", false}},
-        QJsonObject{{"targetBusID", static_cast<qint64>(target->objectID)},
-                    {"sendLevel", -3.0}, {"type", "Sidechain"}, {"duckTarget", false}}};
-    ASSERT_TRUE(restoreBusSendState(*source, {source->guid, {}, {true, rows}}));
+    ASSERT_TRUE(restoreBusSendState(*source, {source->guid, {route(target->objectID, -9.0f)},
+                                              {route(target->objectID, -3.0f)}}));
     const auto before = captureBusSendState(*source);
     ASSERT_TRUE(before);
     auto& actions = ActionManager::instance();
@@ -134,91 +139,6 @@ TEST_F(OutputSendExclusionTest, RouteCommandsRestoreCompleteAuthoredProperty)
     EXPECT_EQ(captureBusSendState(*source), disconnected);
     disconnect.undo();
     EXPECT_EQ(captureBusSendState(*source), before);
-}
-
-TEST_F(OutputSendExclusionTest, StructuralEditsPreserveIndependentRoutingScopes)
-{
-    using namespace harken::studio;
-    auto& manager = ProjectManager::instance();
-    auto& undo = UndoRedoManager::instance();
-    auto* source = manager.createItem(manager.getMasterBusItem(), QStringLiteral("Source"),
-                                      ProjectItem::Type::Bus);
-    auto* platformSource = manager.createItem(manager.getMasterBusItem(), QStringLiteral("PlatformSource"),
-                                              ProjectItem::Type::Bus);
-    auto* target = manager.createItem(manager.getMasterBusItem(), QStringLiteral("Target"),
-                                      ProjectItem::Type::Bus);
-    ASSERT_NE(source, nullptr);
-    ASSERT_NE(platformSource, nullptr);
-    ASSERT_NE(target, nullptr);
-    const auto targetId = target->objectID;
-    const auto targetGuid = target->guid;
-    const auto windows = manager.currentProject()->platforms[0].id;
-    const auto android = manager.currentProject()->platforms[1].id;
-    QJsonArray rows;
-    for (const auto& [type, duckTarget] : {std::pair{SendType::Send, false},
-                                          std::pair{SendType::Sidechain, true},
-                                          std::pair{SendType::Sidechain, false}}) {
-        rows.append(QJsonObject{{"targetBusID", static_cast<qint64>(targetId)},
-            {"type", sendTypeName(type)}, {"duckTarget", duckTarget}, {"sendLevel", -6.0}});
-    }
-    ASSERT_TRUE(restoreBusSendState(*source, {source->guid, {}, {true, rows}}));
-    rows.removeAt(0);
-    ASSERT_TRUE(restoreBusSendState(*source, {source->guid, windows, {true, rows}}));
-    ASSERT_TRUE(restoreBusSendState(*platformSource, {platformSource->guid, windows, {true, rows}}));
-    const auto snapshot = [&] {
-        std::vector<BusSendState> states;
-        for (const auto* item : {source, platformSource})
-            for (const auto& scope : busRoutingScopes(*manager.currentProject()))
-                states.push_back(*captureBusSendState(*item, scope));
-        return states;
-    };
-    const auto before = snapshot();
-    auto& context = PlatformContextService::instance();
-    context.setSelected({windows}, windows);
-    const auto platformReceives = manager.collectIncomingSends(targetId);
-    ASSERT_EQ(platformReceives.size(), 4u);
-    for (const auto& receive : platformReceives) EXPECT_EQ(receive.type, SendType::Sidechain);
-    context.setSelected({android}, android);
-    const auto sharedReceives = manager.collectIncomingSends(targetId);
-    ASSERT_EQ(sharedReceives.size(), 3u);
-    for (const auto& receive : sharedReceives) EXPECT_EQ(receive.fromBusID, source->objectID);
-    undo.clear();
-
-    ASSERT_TRUE(manager.deleteItem(target));
-    for (const auto* item : {source, platformSource})
-        for (const auto& scope : busRoutingScopes(*manager.currentProject())) {
-            const auto sends = effectiveBusSends(*item, scope);
-            ASSERT_TRUE(sends);
-            EXPECT_TRUE(sends->empty());
-        }
-    const auto deleted = snapshot();
-    ASSERT_TRUE(manager.saveProject());
-    ASSERT_TRUE(undo.undo());
-    EXPECT_EQ(snapshot(), before);
-    ASSERT_TRUE(undo.redo());
-    EXPECT_EQ(snapshot(), deleted);
-    ASSERT_TRUE(undo.undo());
-    EXPECT_EQ(snapshot(), before);
-    target = manager.findItemByGuid(targetGuid);
-    ASSERT_NE(target, nullptr);
-
-    ASSERT_TRUE(manager.moveItem(source, target));
-    for (const auto& scope : busRoutingScopes(*manager.currentProject())) {
-        const auto sends = effectiveBusSends(*source, scope);
-        ASSERT_TRUE(sends);
-        ASSERT_EQ(sends->size(), 1u);
-        EXPECT_EQ(sends->front().type, SendType::Sidechain);
-        EXPECT_FALSE(sends->front().duckTarget);
-    }
-    EXPECT_FALSE(captureBusSendState(*source, android)->value.present);
-    const auto moved = snapshot();
-    ASSERT_TRUE(manager.saveProject());
-    ASSERT_TRUE(undo.undo());
-    EXPECT_EQ(source->parent, manager.getMasterBusItem());
-    EXPECT_EQ(snapshot(), before);
-    ASSERT_TRUE(undo.redo());
-    EXPECT_EQ(source->parent, target);
-    EXPECT_EQ(snapshot(), moved);
 }
 
 TEST_F(OutputSendExclusionTest, UnsupportedCommandFieldsRejectBeforeAuthoringOrAuditionMutation)
@@ -284,43 +204,28 @@ TEST_F(OutputSendExclusionTest, RoutingEditsRejectCyclesAtomicallyAcrossLandingS
     ASSERT_NE(other, nullptr);
     const auto windows = manager.currentProject()->platforms[0].id;
     const auto android = manager.currentProject()->platforms[1].id;
-    const QJsonArray shared{
-        QJsonObject{{"targetBusID", static_cast<qint64>(other->objectID)},
-            {"type", "Send"}, {"duckTarget", false}, {"sendLevel", -6.0}}};
-    const QJsonArray overlay{
-        QJsonObject{{"targetBusID", static_cast<qint64>(other->objectID)},
-            {"type", "Sidechain"}, {"duckTarget", false}, {"sendLevel", -12.0}}};
-    ASSERT_TRUE(restoreBusSendState(*source, {source->guid, {}, {true, shared}}));
-    ASSERT_TRUE(restoreBusSendState(*source, {source->guid, android, {true, overlay}}));
-    ASSERT_TRUE(restoreBusSendState(*target, {target->guid, windows, {true, QJsonArray{
-        QJsonObject{{"targetBusID", static_cast<qint64>(source->objectID)},
-            {"type", "Send"}, {"duckTarget", false}, {"sendLevel", -9.0}}}}}));
+    ASSERT_TRUE(restoreBusSendState(*source, {source->guid, {route(other->objectID, -6.0f)}, {}}));
+    ASSERT_TRUE(restoreBusSendState(*target, {target->guid,
+        {route(source->objectID, -9.0f)}, {}}));
     ASSERT_TRUE(validateBusRouting(*manager.currentProject()).isEmpty());
     const auto snapshot = [&] {
         std::vector<BusSendState> states;
-        for (const auto* item : {source, target, other})
-            for (const auto& scope : busRoutingScopes(*manager.currentProject()))
-                states.push_back(*captureBusSendState(*item, scope));
+        for (const auto* item : {source, target, other}) states.push_back(*captureBusSendState(*item));
         return states;
     };
     const auto before = snapshot();
-    ASSERT_FALSE(captureBusSendState(*source, windows)->value.present);
-    ASSERT_TRUE(captureBusSendState(*source, android)->value.present);
     actions.clearAllForTesting();
     registerProjectActions(actions, &manager, nullptr);
     undo.clear();
-    PlatformContextService::instance().setSelected({android}, android);
-    const QJsonArray rows{
-        QJsonObject{{"targetBusID", static_cast<qint64>(target->objectID)},
-            {"type", "Send"}, {"duckTarget", false}, {"sendLevel", -3.0}}};
+    const auto rowId = before[0].sends.front().id.toString(QUuid::WithoutBraces);
     QJsonObject request{{"authoring_handle", static_cast<qint64>(source->objectID)},
-        {"property", "sends"}, {"value", rows}};
-    for (const bool sharedEdit : {false, true}) {
-        SCOPED_TRACE(sharedEdit);
+        {"property", "sends"}, {"value", QJsonArray{QJsonObject{{"id", rowId},
+            {"targetBusID", static_cast<qint64>(target->objectID)}, {"sendLevel", -3.0}}}}};
+    for (const bool platformLanding : {true, false}) {
+        SCOPED_TRACE(platformLanding);
         auto candidate = request;
-        if (!sharedEdit)
-            candidate.insert(QStringLiteral("platform_ids"), QJsonArray{
-                android.toString(QUuid::WithoutBraces), windows.toString(QUuid::WithoutBraces)});
+        if (platformLanding)
+            candidate.insert(QStringLiteral("platform_ids"), QJsonArray{android.toString(QUuid::WithoutBraces)});
         const int count = undo.undoStack()->count();
         const int index = undo.undoStack()->index();
         const auto result = actions.execute(QStringLiteral("set_item_property"), candidate);
@@ -330,14 +235,16 @@ TEST_F(OutputSendExclusionTest, RoutingEditsRejectCyclesAtomicallyAcrossLandingS
         EXPECT_EQ(undo.undoStack()->index(), index);
         EXPECT_TRUE(validateBusRouting(*manager.currentProject()).isEmpty());
     }
-    request.insert(QStringLiteral("platform_ids"), QJsonArray{
-        android.toString(QUuid::WithoutBraces)});
-    const auto accepted = actions.execute(QStringLiteral("set_item_property"), request);
-    ASSERT_TRUE(accepted.success) << accepted.errorMessage.toStdString();
-    EXPECT_EQ(captureBusSendState(*source, android)->value,
-              (PlayablePropertyStateV1{true, rows}));
-    EXPECT_FALSE(captureBusSendState(*source, windows)->value.present);
-    EXPECT_EQ(captureBusSendState(*source)->value, (PlayablePropertyStateV1{true, shared}));
+    const QJsonArray accepted{QJsonObject{{"id", rowId},
+        {"targetBusID", static_cast<qint64>(other->objectID)}, {"sendLevel", -6.0},
+        {"platforms", QJsonObject{{android.toString(QUuid::WithoutBraces),
+            QJsonObject{{"sendLevel", -12.0}}}}}}};
+    request.insert(QStringLiteral("value"), accepted);
+    const auto result = actions.execute(QStringLiteral("set_item_property"), request);
+    ASSERT_TRUE(result.success) << result.errorMessage.toStdString();
+    EXPECT_EQ(effectiveBusSends(*source, android)->front().targetBusID, other->objectID);
+    EXPECT_FLOAT_EQ(effectiveBusSends(*source, android)->front().sendLevel, std::pow(10.0f, -12.0f / 20.0f));
+    EXPECT_FLOAT_EQ(effectiveBusSends(*source, windows)->front().sendLevel, std::pow(10.0f, -6.0f / 20.0f));
     EXPECT_TRUE(validateBusRouting(*manager.currentProject()).isEmpty());
     const auto after = snapshot();
     ASSERT_EQ(undo.undoStack()->count(), 1);
@@ -345,85 +252,6 @@ TEST_F(OutputSendExclusionTest, RoutingEditsRejectCyclesAtomicallyAcrossLandingS
     EXPECT_EQ(snapshot(), before);
     ASSERT_TRUE(undo.redo());
     EXPECT_EQ(snapshot(), after);
-}
-
-TEST_F(OutputSendExclusionTest, GraphRouteEditsPreserveUnselectedScopesAndRestoreOverlayAbsence)
-{
-    using namespace harken::studio;
-    auto& manager = ProjectManager::instance();
-    auto& undo = UndoRedoManager::instance();
-    auto* source = manager.createItem(manager.getMasterBusItem(), QStringLiteral("Source"), ProjectItem::Type::Bus);
-    auto* target = manager.createItem(manager.getMasterBusItem(), QStringLiteral("Target"), ProjectItem::Type::Bus);
-    auto* other = manager.createItem(manager.getMasterBusItem(), QStringLiteral("Other"), ProjectItem::Type::Bus);
-    ASSERT_NE(source, nullptr);
-    ASSERT_NE(target, nullptr);
-    ASSERT_NE(other, nullptr);
-    const auto windows = manager.currentProject()->platforms[0].id;
-    const auto android = manager.currentProject()->platforms[1].id;
-    const QJsonArray rows{
-        QJsonObject{{"targetBusID", static_cast<qint64>(target->objectID)}, {"type", "Send"}, {"duckTarget", false}, {"sendLevel", -3.0}},
-        QJsonObject{{"targetBusID", static_cast<qint64>(target->objectID)}, {"type", "Sidechain"}, {"duckTarget", false}, {"sendLevel", -12.0}}};
-    ASSERT_TRUE(restoreBusSendState(*source, {source->guid, {}, {true, rows}}));
-    ASSERT_TRUE(restoreBusSendState(*source, {source->guid, android, {true, QJsonArray{rows[1]}}}));
-    PlatformContextService::instance().setSelected({windows}, windows, false);
-    const auto snapshot = [&] {
-        std::vector<BusSendState> states;
-        for (const auto& scope : busRoutingScopes(*manager.currentProject()))
-            states.push_back(*captureBusSendState(*source, scope));
-        return states;
-    };
-    const auto before = snapshot();
-    const auto graph = buildSignalPathGraph(*manager.currentProject(), {}, toFieldGroupGuid(windows),
-        {source->objectID, target->objectID, other->objectID});
-    ASSERT_TRUE(graph.ok());
-    const auto edge = std::find_if(graph.edges.begin(), graph.edges.end(), [&](const auto& entry) {
-        return entry.kind == SignalPathEdgeKind::Send && entry.type == SendType::Sidechain
-            && graph.nodes[entry.from.occurrenceIndex].objectID == source->objectID;
-    });
-    ASSERT_NE(edge, graph.edges.end());
-    auto disconnect = prepareSignalPathDisconnect(graph, {static_cast<size_t>(std::distance(graph.edges.begin(), edge))});
-    ASSERT_TRUE(disconnect.ok()) << disconnect.error.toStdString();
-    undo.clear();
-    ASSERT_TRUE(applySignalPathConnect(std::move(disconnect)));
-    ASSERT_TRUE(captureBusSendState(*source, windows)->value.present);
-    EXPECT_EQ(busSendRows(*source, windows), (std::optional<QJsonArray>{QJsonArray{rows[0]}}));
-    EXPECT_EQ(captureBusSendState(*source), std::optional{before[0]});
-    EXPECT_EQ(captureBusSendState(*source, android), std::optional{before[2]});
-    const auto disconnected = snapshot();
-    ASSERT_TRUE(undo.undo());
-    EXPECT_EQ(snapshot(), before);
-    EXPECT_FALSE(captureBusSendState(*source, windows)->value.present);
-    ASSERT_TRUE(undo.redo());
-    EXPECT_EQ(snapshot(), disconnected);
-    ASSERT_TRUE(undo.undo());
-
-    const auto endpoint = [&](const ProjectItem* item) {
-        const auto node = std::find_if(graph.nodes.begin(), graph.nodes.end(),
-            [&](const auto& entry) { return entry.objectID == item->objectID; });
-        return SignalPathEndpoint{static_cast<size_t>(std::distance(graph.nodes.begin(), node)), 0};
-    };
-    auto connect = prepareSignalPathConnect(graph, endpoint(source), endpoint(other), true);
-    ASSERT_TRUE(connect.ok()) << connect.error.toStdString();
-    ASSERT_TRUE(applySignalPathConnect(std::move(connect)));
-    ASSERT_TRUE(busSendRows(*source, windows));
-    EXPECT_EQ(busSendRows(*source, windows)->size(), 3);
-    EXPECT_EQ(captureBusSendState(*source), std::optional{before[0]});
-    EXPECT_EQ(captureBusSendState(*source, android), std::optional{before[2]});
-    const auto connected = snapshot();
-    ASSERT_TRUE(undo.undo());
-    EXPECT_EQ(snapshot(), before);
-    ASSERT_TRUE(undo.redo());
-    EXPECT_EQ(snapshot(), connected);
-    ASSERT_TRUE(undo.undo());
-    auto stale = prepareSignalPathDisconnect(graph, {static_cast<size_t>(std::distance(graph.edges.begin(), edge))});
-    ASSERT_TRUE(stale.ok()) << stale.error.toStdString();
-    auto changedShared = rows;
-    changedShared.append(QJsonObject{{"targetBusID", static_cast<qint64>(other->objectID)},
-        {"type", "Sidechain"}, {"duckTarget", false}, {"sendLevel", -6.0}});
-    ASSERT_TRUE(restoreBusSendState(*source, {source->guid, {}, {true, changedShared}}));
-    const auto changed = snapshot();
-    EXPECT_FALSE(applySignalPathConnect(std::move(stale)));
-    EXPECT_EQ(snapshot(), changed);
 }
 
 TEST_F(OutputSendExclusionTest, CombinedGraphRouteAndParentEditsReplayCompleteScopedState)
@@ -439,17 +267,10 @@ TEST_F(OutputSendExclusionTest, CombinedGraphRouteAndParentEditsReplayCompleteSc
     ASSERT_NE(source, nullptr);
     ASSERT_NE(other, nullptr);
     const auto windows = manager.currentProject()->platforms[0].id;
-    const QJsonArray rows{
-        QJsonObject{{"targetBusID", static_cast<qint64>(master->objectID)}, {"type", "Send"}, {"duckTarget", false}, {"sendLevel", -6.0}},
-        QJsonObject{{"targetBusID", static_cast<qint64>(other->objectID)}, {"type", "Send"}, {"duckTarget", false}, {"sendLevel", -9.0}}};
-    ASSERT_TRUE(restoreBusSendState(*source, {source->guid, {}, {true, rows}}));
+    ASSERT_TRUE(restoreBusSendState(*source, {source->guid,
+        {route(master->objectID, -6.0f), route(other->objectID, -9.0f)}, {}}));
     PlatformContextService::instance().setSelected({windows}, windows, false);
-    const auto snapshot = [&] {
-        std::vector<BusSendState> states;
-        for (const auto& scope : busRoutingScopes(*manager.currentProject()))
-            states.push_back(*captureBusSendState(*source, scope));
-        return states;
-    };
+    const auto snapshot = [&] { return *captureBusSendState(*source); };
     const auto before = snapshot();
     for (const auto* removedTarget : {master, other}) {
         SCOPED_TRACE(removedTarget->name.toStdString());

@@ -1021,6 +1021,23 @@ TEST_F(ProjectDocumentRoundTripTest, UnchangedDocumentsPreserveBytesAndModificat
     QMap<QString, QByteArray> committed;
     QMap<QString, QDateTime> modificationTimes;
     const auto paths = documentPathsById(projectDirectory_);
+    const QString sparseId = containerGuid_.toString(QUuid::WithoutBraces);
+    auto sparse = readObject(paths.value(sparseId));
+    auto content = HarkenTest::projectContent(sparse);
+    auto components = content.value(QStringLiteral("components")).toObject();
+    ASSERT_EQ(components.value(QStringLiteral("mixnode")).toObject().keys(),
+              QStringList{QStringLiteral("filter")});
+    components.remove(QStringLiteral("mixnode"));
+    content.insert(QStringLiteral("components"), components);
+    sparse.insert(QStringLiteral("content"), content);
+    writeObject(paths.value(sparseId), sparse);
+    auto projectDocument = readObject(projectPath_);
+    auto projectContent = HarkenTest::projectContent(projectDocument);
+    auto audio = projectContent.value(QStringLiteral("audio")).toObject();
+    ASSERT_TRUE(audio.take(QStringLiteral("defaultConversions")).isObject());
+    projectContent.insert(QStringLiteral("audio"), audio);
+    projectDocument.insert(QStringLiteral("content"), projectContent);
+    writeObject(projectPath_, projectDocument);
     for (const auto& path : paths) {
         QFile file(path);
         ASSERT_TRUE(file.open(QIODevice::ReadWrite)) << path.toStdString();
@@ -1033,6 +1050,7 @@ TEST_F(ProjectDocumentRoundTripTest, UnchangedDocumentsPreserveBytesAndModificat
 
     ASSERT_TRUE(manager.loadProject(projectPath_));
     undo.clearHistory();
+    EXPECT_FALSE(manager.hasUnsavedChanges());
     ASSERT_TRUE(manager.saveProject());
     for (auto it = committed.cbegin(); it != committed.cend(); ++it) {
         EXPECT_EQ(readFile(it.key()), it.value()) << it.key().toStdString();
@@ -1073,6 +1091,28 @@ TEST_F(ProjectDocumentRoundTripTest, UnchangedDocumentsPreserveBytesAndModificat
         EXPECT_EQ(QFileInfo(it.key()).lastModified(), modificationTimes.value(it.key()))
             << it.key().toStdString();
     }
+    auto* container = manager.findItemByGuid(containerGuid_);
+    ASSERT_NE(container, nullptr);
+    ASSERT_TRUE(manager.renameItem(container, QStringLiteral("Renamed choice")));
+    ASSERT_TRUE(manager.saveProject());
+    const auto renamedPath = documentPathsById(projectDirectory_).value(sparseId);
+    const auto renamed = HarkenTest::projectContent(readObject(renamedPath));
+    EXPECT_EQ(renamed.value(QStringLiteral("components")), components);
+    EXPECT_EQ(HarkenTest::projectContent(readObject(projectPath_)).value(QStringLiteral("audio")), audio);
+    auto& actions = ActionManager::instance();
+    actions.clearAllForTesting();
+    const auto clearActions = qScopeGuard([&] { actions.clearAllForTesting(); });
+    registerProjectActions(actions, &manager, nullptr);
+    const auto edit = actions.execute(QStringLiteral("set_item_property"), {
+        {QStringLiteral("authoring_handle"), static_cast<qint64>(container->objectID)},
+        {QStringLiteral("property"), QStringLiteral("filterLowPassFrequency")},
+        {QStringLiteral("value"), 4812.0}});
+    ASSERT_TRUE(edit.success) << edit.errorMessage.toStdString();
+    ASSERT_TRUE(manager.saveProject());
+    EXPECT_NE(HarkenTest::projectContent(readObject(renamedPath)), renamed);
+    ASSERT_TRUE(undo.undo());
+    ASSERT_TRUE(manager.saveProject());
+    EXPECT_EQ(HarkenTest::projectContent(readObject(renamedPath)), renamed);
 }
 
 TEST_F(ProjectDocumentRoundTripTest, OrdinaryEditsAndUndoPreserveTheSameDocumentsAcrossSavePaths)
@@ -1103,9 +1143,9 @@ TEST_F(ProjectDocumentRoundTripTest, OrdinaryEditsAndUndoPreserveTheSameDocument
         if (item->type == ProjectItem::Type::Bus) {
             properties.append({QStringLiteral("volume"), -6.0});
             if (item != manager.getMasterBusItem())
-                properties.append({QStringLiteral("sends"), QJsonArray{QJsonObject{
+                properties.append({QStringLiteral("sidechains"), QJsonArray{QJsonObject{
+                    {QStringLiteral("id"), QUuid::createUuid().toString(QUuid::WithoutBraces)},
                     {QStringLiteral("targetBusID"), static_cast<qint64>(manager.getMasterBusItem()->objectID)},
-                    {QStringLiteral("type"), QStringLiteral("Sidechain")},
                     {QStringLiteral("duckTarget"), false},
                     {QStringLiteral("sendLevel"), -6.0}}}});
         } else if (item->type == ProjectItem::Type::Action) {

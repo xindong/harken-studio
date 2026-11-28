@@ -31,43 +31,6 @@ ExternalEditorPanel::ExternalEditorPanel(QWidget* parent)
     auto* layout = new QVBoxLayout(this);
     ThemeLayout::margins(layout, ThemeLayout::Space::Panel);
     layout->setSpacing(0);
-    curves_ = new QWidget(this);
-    auto* curvesLayout = new QVBoxLayout(curves_);
-    curvesLayout->setContentsMargins(0, 0, 0, 0);
-    ThemeLayout::spacing(curvesLayout, ThemeLayout::Space::Section);
-    bindings_ = new BindingFieldEditor(curves_);
-    curvesLayout->addWidget(bindings_);
-    curve_ = new CurveEditorWidget(curves_);
-    curve_->layout()->setContentsMargins(0, 0, 0, 0);
-    curvesLayout->addWidget(curve_, 1);
-    curvesScroll_ = new QScrollArea(this);
-    curvesScroll_->setWidgetResizable(true);
-    curvesScroll_->setFrameShape(QFrame::NoFrame);
-    curvesScroll_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    curvesScroll_->setWidget(curves_);
-    layout->addWidget(curvesScroll_, 1);
-    sourceView_ = new QSplitter(Qt::Vertical, this);
-    source_ = new SourceRangeEditor({}, nullptr, sourceView_,
-        [this](const SoundSourceDef& source) { commitSource(source); });
-    sourceView_->addWidget(source_);
-    sourceProperties_ = new SourceFilePropertiesView(sourceView_);
-    sourceView_->addWidget(sourceProperties_);
-    sourceView_->setStretchFactor(0, 1);
-    sourceView_->setStretchFactor(1, 0);
-    layout->addWidget(sourceView_, 1);
-    filter_ = new FilterEditorWidget(this);
-    layout->addWidget(filter_, 1);
-    connect(filter_, &FilterEditorWidget::externalEditorRequested,
-            this, &ExternalEditorPanel::externalEditorRequested);
-    showContent(nullptr);
-    connect(bindings_, &BindingFieldEditor::curveSelectionChanged, this,
-            [this](const CurveSelection& selection) {
-        if (selection_.kind != ExternalEditorSelection::Kind::Binding) return;
-        selection_.curve = selection;
-        curve_->bindSelection(selection);
-    });
-    connect(bindings_, &BindingFieldEditor::navigateRequested,
-            this, &ExternalEditorPanel::navigateRequested);
     auto& project = ProjectManager::instance();
     connect(&project, &ProjectManager::projectClosed, this, &ExternalEditorPanel::clearEditor);
     connect(&project, &ProjectManager::itemMoved, this,
@@ -106,6 +69,64 @@ ExternalEditorPanel::ExternalEditorPanel(QWidget* parent)
     installFocusFilterRecursively(this);
 }
 
+void ExternalEditorPanel::ensureCurveEditor()
+{
+    if (curvesScroll_) return;
+    curvesScroll_ = new QScrollArea(this);
+    curvesScroll_->setWidgetResizable(true);
+    curvesScroll_->setFrameShape(QFrame::NoFrame);
+    curvesScroll_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    auto* curves = new QWidget();
+    auto* curvesLayout = new QVBoxLayout(curves);
+    curvesLayout->setContentsMargins(0, 0, 0, 0);
+    ThemeLayout::spacing(curvesLayout, ThemeLayout::Space::Section);
+    curve_ = new CurveEditorWidget(curves);
+    curve_->layout()->setContentsMargins(0, 0, 0, 0);
+    curvesLayout->addWidget(curve_, 1);
+    curvesScroll_->setWidget(curves);
+    layout()->addWidget(curvesScroll_);
+}
+
+void ExternalEditorPanel::ensureBindingEditor()
+{
+    if (bindings_) return;
+    ensureCurveEditor();
+    auto* curves = curvesScroll_->widget();
+    bindings_ = new BindingFieldEditor(curves);
+    static_cast<QVBoxLayout*>(curves->layout())->insertWidget(0, bindings_);
+    connect(bindings_, &BindingFieldEditor::curveSelectionChanged, this,
+            [this](const CurveSelection& selection) {
+        if (selection_.kind != ExternalEditorSelection::Kind::Binding) return;
+        selection_.curve = selection;
+        curve_->bindSelection(selection);
+    });
+    connect(bindings_, &BindingFieldEditor::navigateRequested,
+            this, &ExternalEditorPanel::navigateRequested);
+}
+
+void ExternalEditorPanel::ensureSourceEditor()
+{
+    if (sourceView_) return;
+    sourceView_ = new QSplitter(Qt::Vertical, this);
+    source_ = new SourceRangeEditor({}, nullptr, sourceView_,
+        [this](const SoundSourceDef& source) { commitSource(source); });
+    sourceView_->addWidget(source_);
+    sourceProperties_ = new SourceFilePropertiesView(sourceView_);
+    sourceView_->addWidget(sourceProperties_);
+    sourceView_->setStretchFactor(0, 1);
+    sourceView_->setStretchFactor(1, 0);
+    layout()->addWidget(sourceView_);
+}
+
+void ExternalEditorPanel::ensureFilterEditor()
+{
+    if (filter_) return;
+    filter_ = new FilterEditorWidget(this);
+    layout()->addWidget(filter_);
+    connect(filter_, &FilterEditorWidget::externalEditorRequested,
+            this, &ExternalEditorPanel::externalEditorRequested);
+}
+
 ProjectItem* ExternalEditorPanel::boundItem() const
 {
     return ProjectManager::instance().findItemByGuid(selection_.ownerGuid);
@@ -138,64 +159,64 @@ void ExternalEditorPanel::bindSelection(const CurveSelection& selection)
 
 void ExternalEditorPanel::bindSelection(const ExternalEditorSelection& selection)
 {
-    selection_ = selection;
     using Kind = ExternalEditorSelection::Kind;
-    if (selection_.kind != Kind::Binding)
+    const Kind previous = selection_.kind;
+    selection_ = selection;
+    if (previous == Kind::Binding && selection_.kind != Kind::Binding) {
         bindings_->bind(nullptr, {});
-    if (selection_.kind != Kind::Source) {
+        bindings_->hide();
+    }
+    if ((previous == Kind::Binding || previous == Kind::Attenuation)
+        && selection_.kind != Kind::Binding && selection_.kind != Kind::Attenuation)
+        curve_->clear();
+    if (previous == Kind::Source && selection_.kind != Kind::Source) {
         source_->setSource({}, nullptr);
         sourceProperties_->setSource({}, {}, 0);
     }
-    if (selection_.kind != Kind::Filter)
+    if (previous == Kind::Filter && selection_.kind != Kind::Filter)
         filter_->bindItem(nullptr);
-    bindings_->setVisible(selection_.kind == Kind::Binding);
     switch (selection_.kind) {
     case Kind::Binding: {
         const auto selectedCurve = selection.curve;
+        ensureBindingEditor();
+        bindings_->show();
         bindings_->bind(boundItem(), selection_.bindingAddress);
         if (selectedCurve.bindingStableId != harken::studio::types::ObjectId{})
             bindings_->selectBinding(selectedCurve.hostGuid, selectedCurve.bindingStableId);
-        showContent(curves_);
+        showContent(curvesScroll_);
         break;
     }
     case Kind::Attenuation:
+        ensureCurveEditor();
         curve_->bindSelection(selection_.curve);
-        showContent(curves_);
+        showContent(curvesScroll_);
         refreshAttenuationReference();
         break;
     case Kind::Source:
-        curve_->clear();
-        showContent(sourceView_);
+        ensureSourceEditor();
         refreshSource();
         break;
     case Kind::Filter:
-        curve_->clear();
+        ensureFilterEditor();
         filter_->bindItem(boundItem());
         showContent(filter_);
         break;
     case Kind::None:
-        clearEditor();
+        showContent(nullptr);
         break;
     }
 }
 
 void ExternalEditorPanel::clearEditor()
 {
-    selection_ = {};
-    bindings_->bind(nullptr, {});
-    curve_->clear();
-    source_->setSource({}, nullptr);
-    sourceProperties_->setSource({}, {}, 0);
-    filter_->bindItem(nullptr);
-    showContent(nullptr);
+    bindSelection(ExternalEditorSelection{});
 }
 
 void ExternalEditorPanel::showContent(QWidget* content)
 {
-    curves_->setVisible(content == curves_);
-    curvesScroll_->setVisible(content == curves_);
-    sourceView_->setVisible(content == sourceView_);
-    filter_->setVisible(content == filter_);
+    if (curvesScroll_) curvesScroll_->setVisible(content == curvesScroll_);
+    if (sourceView_) sourceView_->setVisible(content == sourceView_);
+    if (filter_) filter_->setVisible(content == filter_);
     updateGeometry();
     emit titleChanged();
 }
@@ -248,13 +269,13 @@ void ExternalEditorPanel::refreshAttenuationReference()
     const auto view = buildFieldGroupInspectorView(*project, selection_.ownerGuid,
         FieldGroupId::SpatialRating, PlatformContextService::instance().context());
     const auto reference = view.field(QStringLiteral("spatialAttenuationRef"));
-    const auto* attenuation = view.valid && reference.uniform
+    const auto* attenuation = view.valid && reference.valid
         ? AttenuationStore::findByGuid(project, reference.value.toUuid()) : nullptr;
     const auto dimension = selection_.curve.dimension;
     selection_.curve = CurveSelection::attenuation(
         attenuation ? attenuation->hostItem()->guid : QUuid{}, attenuation ? attenuation->hostItem()->name : QString{}, dimension);
     curve_->bindSelection(selection_.curve);
-    showContent(attenuation && attenuation->dimension(dimension) ? curves_ : nullptr);
+    showContent(attenuation && attenuation->dimension(dimension) ? curvesScroll_ : nullptr);
 }
 
 void ExternalEditorPanel::commitSource(const SoundSourceDef& replacement)

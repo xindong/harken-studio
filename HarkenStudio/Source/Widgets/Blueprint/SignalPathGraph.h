@@ -119,7 +119,6 @@ struct SignalPathGraph
     bool ok() const { return diagnostics.empty(); }
 };
 
-bool matchesSignalPathSendRow(const QJsonObject& row, uint32_t target, SendType type, bool duckTarget);
 
 SignalPathGraph buildSignalPathGraph(
     const ProjectData& project, const std::vector<SignalPathIdentity>& sources,

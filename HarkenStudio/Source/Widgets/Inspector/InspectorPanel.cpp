@@ -123,11 +123,17 @@ InspectorPanel::InspectorPanel(QWidget* parent)
     });
     connect(&ProjectManager::instance(), &ProjectManager::busChanged,
             this, [this](uint32_t busID, const QString& prop, const QObject* origin) {
-        if ((prop != QLatin1String("sends") && prop != QLatin1String("send")
-             && prop != QLatin1String("outputBusVolume"))
+        if ((prop != QLatin1String("sends") && prop != QLatin1String("sidechains")
+             && prop != QLatin1String("send") && prop != QLatin1String("outputBusVolume"))
             || (origin && ownsEditorOrigin(origin))) return;
-        if (auto* item = ProjectManager::instance().findBusItem(busID))
-            d->refreshBoundPages(item, prop == QLatin1String("send") ? QStringLiteral("sends") : prop);
+        auto* item = ProjectManager::instance().findBusItem(busID);
+        if (!item) return;
+        if (prop != QLatin1String("send")) {
+            d->refreshBoundPages(item, prop);
+            return;
+        }
+        d->refreshBoundPages(item, QStringLiteral("sends"));
+        d->refreshBoundPages(item, QStringLiteral("sidechains"));
     });
 
     connect(&ProjectManager::instance(), &ProjectManager::itemMoved,
@@ -190,13 +196,13 @@ InspectorPanel::~InspectorPanel()
 
 void InspectorPanelPrivate::refreshBoundPages(ProjectItem* item, const QString& prop)
 {
-    if (prop == QLatin1String("sourceName")) return;
+    if (prop == QLatin1String("sourceName") || prop == QLatin1String("dirty")) return;
     if (busEngine_ && currentBusItem_) {
         if (prop == QLatin1String("fieldGroups") || prop == QLatin1String("outputBusId")
             || prop == QLatin1String("outputBusVolume"))
             busEngine_->refreshField(QStringLiteral("inputs"));
         if (prop == QLatin1String("fieldGroups") || prop == QLatin1String("sends")
-            || prop == QLatin1String("send"))
+            || prop == QLatin1String("sidechains") || prop == QLatin1String("send"))
             busEngine_->refreshField(QStringLiteral("receives"));
     }
     const auto refreshOrRebind = [&](PropertyEditorEngine* engine, ProjectItem* current) {

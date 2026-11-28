@@ -164,29 +164,19 @@ bool IPCServer::prepareRollbackStepForAction(const QString& cmd,
             return false;
         }
         writeSendRoute(*previewEntry, type, duckTarget);
-        bool sendExists = false;
-        Send oldSend;
-        const auto& srcSends = srcMix->sends;
-        for (const auto& send : srcSends)
-        {
-            if (send.targetBusID == targetBusID && send.type == type && send.duckTarget == duckTarget)
-            {
-                sendExists = true;
-                oldSend = send;
-                break;
-            }
-        }
-
         const auto before = captureBusSendState(*srcItem);
         if (!before) {
             if (error) *error = "Unable to read Send configuration.";
             return false;
         }
+        const auto oldRoute = findBusRoute(*before, targetBusID, type, duckTarget);
+        const bool sendExists = oldRoute.has_value();
+        const float oldLevel = sendExists ? VMixNode::dbToLinear(oldRoute->sendLevelDb) : 0.0f;
         *rollbackStep = QJsonObject{
             {"kind", "restore_sends"},
             {"bus_guid", srcSelector},
-            {"present", before->value.present},
-            {"value", before->value.value}
+            {"sends", VMixNode::routesToVariant(before->sends, false).toJsonArray()},
+            {"sidechains", VMixNode::routesToVariant(before->sidechains, true).toJsonArray()}
         };
 
         if (cmd == QLatin1String("set_send"))
@@ -200,7 +190,7 @@ bool IPCServer::prepareRollbackStepForAction(const QString& cmd,
             if (sendExists)
             {
                 (*previewEntry)["before"] = QJsonObject{
-                    {"level", oldSend.sendLevel}
+                    {"level", oldLevel}
                 };
             }
             (*previewEntry)["after"] = QJsonObject{
@@ -221,7 +211,7 @@ bool IPCServer::prepareRollbackStepForAction(const QString& cmd,
             (*previewEntry)["src_bus_id"] = static_cast<qint64>(srcID);
             (*previewEntry)["target_bus_id"] = static_cast<qint64>(targetBusID);
             (*previewEntry)["before"] = QJsonObject{
-                {"level", oldSend.sendLevel}
+                {"level", oldLevel}
             };
             (*previewEntry)["after"] = QJsonObject{{"removed", true}};
             return true;
@@ -232,7 +222,7 @@ bool IPCServer::prepareRollbackStepForAction(const QString& cmd,
         (*previewEntry)["src_bus"] = srcName;
         (*previewEntry)["src_bus_id"] = static_cast<qint64>(srcID);
         (*previewEntry)["target_bus_id"] = static_cast<qint64>(targetBusID);
-        (*previewEntry)["before"] = QJsonObject{{"level", oldSend.sendLevel}};
+        (*previewEntry)["before"] = QJsonObject{{"level", oldLevel}};
         (*previewEntry)["after"] = QJsonObject{{"level", newLevel}};
         return true;
     }
@@ -610,9 +600,10 @@ bool IPCServer::executeRollbackStep(const QJsonObject& step, QString* error)
         auto& manager = ProjectManager::instance();
         const QUuid guid(step.value("bus_guid").toString());
         auto* item = manager.findItemByGuid(guid);
-        const BusSendState state{guid, {}, {
-            step.value("present").toBool(), step.value("value")}};
-        if (!item || !restoreBusSendState(*item, state)) {
+        BusSendState state{guid, {}, {}};
+        if (!item || !VMixNode::routesFromVariant(step.value("sends").toVariant(), false, state.sends)
+            || !VMixNode::routesFromVariant(step.value("sidechains").toVariant(), true, state.sidechains)
+            || !restoreBusSendState(*item, state)) {
             if (error) *error = "Unable to restore Send configuration.";
             return false;
         }

@@ -5,27 +5,14 @@
 #include "InspectorLayout.h"
 #include "Shared/SchemaFieldPick.h"
 
-#include <algorithm>
-
 namespace harken::studio {
 
-inline PropertyDescriptor sendsInspectorDescriptor(SendType type = SendType::Send)
+inline PropertyDescriptor routesInspectorDescriptor(SendType type)
 {
-    auto d = *pickSchemaField(VMixNode::schema(), QLatin1String("sends"));
     const bool sidechain = type == SendType::Sidechain;
-    d.listRowFilter.insert(QStringLiteral("type"), sendTypeName(type));
-    if (sidechain) {
-        d.storageField = d.field;
-        d.field = QStringLiteral("sidechains");
-        d.label = QStringLiteral("Sidechains");
-        d.section = PropertySection::Sidechain;
-        d.listAddChoiceField = QStringLiteral("duckTarget");
-    } else {
-        d.listRowFilter.insert(QStringLiteral("duckTarget"), false);
-    }
-    std::erase_if(d.elementSchema, [sidechain](const auto& ed) {
-        return ed.field == QLatin1String("type") || (!sidechain && ed.field == QLatin1String("duckTarget"));
-    });
+    auto d = *pickSchemaField(VMixNode::schema(),
+        sidechain ? QLatin1String("sidechains") : QLatin1String("sends"));
+    if (sidechain) d.listAddChoiceField = QStringLiteral("duckTarget");
     for (auto& ed : d.elementSchema)
         if (ed.field == QLatin1String("targetBusID"))
             ed.refSelectableForElement = [type](uint32_t host, const QVariantMap& row, uint32_t target) {
@@ -38,7 +25,6 @@ inline PropertyDescriptor sendsInspectorDescriptor(SendType type = SendType::Sen
             if (i == index) continue;
             const auto other = rows[i].toMap();
             if (other.value(QStringLiteral("targetBusID")) == row.value(QStringLiteral("targetBusID"))
-                && other.value(QStringLiteral("type")) == row.value(QStringLiteral("type"))
                 && other.value(QStringLiteral("duckTarget")).toBool() == row.value(QStringLiteral("duckTarget")).toBool())
                 return QObject::tr("A route with these settings already targets this bus.");
         }

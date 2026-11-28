@@ -106,7 +106,6 @@ void ObjectRefWidget::setRefDomain(RefDomain domain)
         return;
     cancelPendingSelection();
     domain_ = domain;
-    mixedValue_ = false;
     objectID_ = 0;
     unresolvedReference_.clear();
     validationError_.clear();
@@ -295,9 +294,8 @@ void ObjectRefWidget::setHovered(bool hovered)
 
 void ObjectRefWidget::setCurrentObjectID(uint32_t objectID)
 {
-    if (mixedValue_ || !unresolvedReference_.isEmpty() || objectID_ != objectID)
+    if (!unresolvedReference_.isEmpty() || objectID_ != objectID)
         cancelPendingSelection();
-    mixedValue_ = false;
     unresolvedReference_.clear();
     validationError_.clear();
     if (objectID_ != objectID) {
@@ -309,24 +307,11 @@ void ObjectRefWidget::setCurrentObjectID(uint32_t objectID)
 
 void ObjectRefWidget::setUnresolvedReference(QString stableId)
 {
-    if (mixedValue_ || objectID_ != 0 || unresolvedReference_ != stableId)
+    if (objectID_ != 0 || unresolvedReference_ != stableId)
         cancelPendingSelection();
-    mixedValue_ = false;
     objectID_ = 0;
     validationError_.clear();
     unresolvedReference_ = std::move(stableId);
-    bindChanged();
-    refreshDisplay();
-}
-
-void ObjectRefWidget::setMixedValue()
-{
-    if (!mixedValue_)
-        cancelPendingSelection();
-    objectID_ = 0;
-    unresolvedReference_.clear();
-    validationError_.clear();
-    mixedValue_ = true;
     bindChanged();
     refreshDisplay();
 }
@@ -350,8 +335,6 @@ void ObjectRefWidget::refreshDisplay()
     hasItem_ = adapter.exists(objectID_);
     if (hasItem_)
         nameLabel_->setText(adapter.displayName(objectID_));
-    else if (mixedValue_)
-        nameLabel_->setText(tr("Mixed"));
     else if (!unresolvedReference_.isEmpty() || objectID_ != 0)
         nameLabel_->setText(tr("Missing"));
     else
@@ -375,13 +358,12 @@ void ObjectRefWidget::refreshToolTip()
             tip = inheritedTooltip_.isEmpty()
                 ? tr("Inherited routing: %1\nSelect a bus to override.").arg(target)
                 : inheritedTooltip_.arg(target);
-    } else if (!mixedValue_) {
-        if (!unresolvedReference_.isEmpty() || objectID_ != 0)
-            tip = unresolvedReference_.isEmpty()
-                ? tr("The referenced object no longer exists.")
-                : tr("Missing: %1").arg(unresolvedReference_);
-        else if (required_ && !inherited_)
-            tip = tr("No object selected.");
+    } else if (!unresolvedReference_.isEmpty() || objectID_ != 0) {
+        tip = unresolvedReference_.isEmpty()
+            ? tr("The referenced object no longer exists.")
+            : tr("Missing: %1").arg(unresolvedReference_);
+    } else if (required_ && !inherited_) {
+        tip = tr("No object selected.");
     }
     if (!validationError_.isEmpty())
         tip = validationError_;
@@ -444,15 +426,15 @@ void ObjectRefWidget::refreshStyle()
     const bool dim = readOnly_ || !selectorEnabled_;
     nameLabel_->setEnabled(!dim);
     QtControlSkin::setSemanticProperty(nameLabel_, "readableReference", hasReadableReadOnlyValue());
-    const bool invalid = !mixedValue_ && (!validationError_.isEmpty()
+    const bool invalid = !validationError_.isEmpty()
         || (hasItem_ && !refDomainAdapter(domain_).isAvailable(objectID_))
         || (!hasItem_ && (objectID_ != 0 || !unresolvedReference_.isEmpty()
-                         || (required_ && !inherited_))));
+                         || (required_ && !inherited_)));
     QtControlSkin::setSemanticProperty(this, "inputInvalid", invalid);
     QtControlSkin::setSemanticProperty(this, "dimmed", dim);
     QtControlSkin::setSemanticProperty(nameLabel_, "inherited", inherited_);
     QtControlSkin::setSemanticProperty(nameLabel_, "emptyValue",
-        !hasItem_ && !mixedValue_ && objectID_ == 0 && unresolvedReference_.isEmpty());
+        !hasItem_ && objectID_ == 0 && unresolvedReference_.isEmpty());
     QtControlSkin::setSemanticProperty(nameLabel_, "inputInvalid", invalid);
 }
 
@@ -558,7 +540,7 @@ void ObjectRefWidget::contextMenuEvent(QContextMenuEvent* e)
 {
     const bool canReset = inheritSupport_ && !inherited_;
     const bool canClear = clearSupport_ && !inherited_
-        && (objectID_ != 0 || !unresolvedReference_.isEmpty() || mixedValue_);
+        && (objectID_ != 0 || !unresolvedReference_.isEmpty());
     if (!canEdit() || (!canReset && !canClear)) {
         QWidget::contextMenuEvent(e);
         return;

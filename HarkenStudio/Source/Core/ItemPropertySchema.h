@@ -24,7 +24,7 @@ inline QJsonObject setItemPropertySchema()
         QStringLiteral("kind"), QStringLiteral("range"), QStringLiteral("rangeMin"),
         QStringLiteral("rangeMax"), QStringLiteral("defaultValue"), QStringLiteral("labels"),
         QStringLiteral("transitions"), QStringLiteral("steps"), QStringLiteral("filter"),
-        QStringLiteral("effects")};
+        QStringLiteral("effects"), QStringLiteral("sidechains")};
     for (const auto& field : FilterSemantics::fields())
         propertyNames.append(QLatin1String(field.field));
     for (const auto& field : VEffect::schema())
@@ -155,8 +155,10 @@ inline QJsonObject setItemPropertySchema()
                     QStringLiteral("resumeFromLast")}}}},
             {QStringLiteral("selections"), QJsonObject{
                 {QStringLiteral("type"), QStringLiteral("object")},
-                {QStringLiteral("description"), QStringLiteral("Complete selection tables for shared and each platform override. Every table has entries, matchAxes, matchRows, blendAxes, occurrenceOrdinalHighWater and ruleOrdinalHighWater. matchRows are ordered Match rules {stableRuleOrdinal, target, cells}: stableRuleOrdinal is unique and below ruleOrdinalHighWater; target is the childGuid of an entry, or null for a rule without a child; cells has one value per matchAxes Variable, where null matches any value, an integer is a Variable value and {labelId} is a Variable label. Rules without a target are kept in the project and skipped at playback.")},
-                {QStringLiteral("required"), QJsonArray{QStringLiteral("shared"), QStringLiteral("platforms")}}}},
+                {QStringLiteral("description"), QStringLiteral("Complete selection lists. matchAxes (ordered Variable GUIDs) and blendAxes ({guid, variable}) are shared by every mode and every platform. random, sequence, match and blend each hold occurrenceOrdinalHighWater, ruleOrdinalHighWater, a shared list and optional platforms {platformId: list}; a platform list replaces the shared list of that mode on that platform as a whole, and mode picks the mode that plays. Every list has entries and matchRows. matchRows are ordered Match rules {stableRuleOrdinal, target, cells}: stableRuleOrdinal is unique and below ruleOrdinalHighWater; target is the childGuid of an entry, or null for a rule without a child; cells maps a matchAxes Variable GUID to an integer Variable value or {labelId}, and a missing Variable matches any value. Curves name their blendAxes row with blendGuid. Rules without a target are kept in the project and skipped at playback.")},
+                {QStringLiteral("required"), QJsonArray{QStringLiteral("matchAxes"), QStringLiteral("blendAxes"),
+                                                        QStringLiteral("random"), QStringLiteral("sequence"),
+                                                        QStringLiteral("match"), QStringLiteral("blend")}}}},
             {QStringLiteral("sources"), QJsonObject{
                 {QStringLiteral("type"), QStringLiteral("object")},
                 {QStringLiteral("required"), QJsonArray{

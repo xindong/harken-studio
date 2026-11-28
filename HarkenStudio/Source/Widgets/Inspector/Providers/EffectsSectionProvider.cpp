@@ -19,10 +19,14 @@
 #include "Widgets/Selector/ObjectRefWidget.h"
 #include "Widgets/Selector/SelectorWindow.h"
 #include "Widgets/Shared/InspectorFormRow.h"
+#include "Widgets/Shared/PlatformLocalMarker.h"
 
 #include <QApplication>
 #include <QCheckBox>
 #include <QHBoxLayout>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QSet>
 #include <QLabel>
 #include <QMenu>
 #include <QMouseEvent>
@@ -75,7 +79,9 @@ public:
             return canEdit() && isCurrentContext()
                 && from >= 0 && from < count && to >= 0 && to < count;
         });
-        layout->addWidget(table_);
+        mark_ = new PlatformLocalMarker(this);
+        mark_->setValuesView(showChainDifferences);
+        layout->addWidget(attachPlatformMarker(table_, mark_, this));
         auto* footer = table_->footer();
         add_ = footer->addButton();
         add_->setObjectName(QStringLiteral("listAdd_effects"));
@@ -116,23 +122,19 @@ public:
                 this, [this] { bind(nullptr); });
     }
 
-    void bind(ProjectItem* item)
+    void bind(ProjectItem* item, const FieldGroupInspectorView* supplied = nullptr)
     {
         const QUuid guid = item ? item->guid : QUuid{};
         const auto* mix = item ? item->comp<VMixNode>() : nullptr;
         const auto* project = ProjectManager::instance().currentProject();
         const bool grouped = item && PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(item->type);
-        const auto view = grouped && project ? buildFieldGroupInspectorView(*project, guid,
+        const auto view = supplied ? *supplied : grouped && project ? buildFieldGroupInspectorView(*project, guid,
             FieldGroupId::Effect, PlatformContextService::instance().context()) : FieldGroupInspectorView{};
         const auto& context = PlatformContextService::instance().context();
-        auto effects = mix ? mix->effectsForPlatform(context.all ? std::nullopt
-            : currentWorldPlatformScope(context)) : EffectChainLedger{};
-        bool mixed = false;
+        auto effects = mix ? mix->effectsForPlatform(currentWorldPlatformScope(context)) : EffectChainLedger{};
         QString tooltip;
         if (grouped) {
-            const auto effective = view.effectChain();
-            effects = effective.value_or(EffectChainLedger{});
-            mixed = view.valid && !effective;
+            effects = view.effectChain().value_or(EffectChainLedger{});
             tooltip = project ? view.sourceTooltip(*project) : QString{};
         }
         if (!inspector_) {
@@ -148,7 +150,7 @@ public:
             }
         }
         if (boundGuid_ == guid && effects_ == effects && initialized_
-            && grouped_ == grouped && mixed_ == mixed && toolTip() == tooltip
+            && grouped_ == grouped && toolTip() == tooltip
             && groupView_.context == view.context && groupView_.expectedBefore == view.expectedBefore
             && context_ == context
             && groupView_.valid == view.valid && groupView_.fieldsEditable == view.fieldsEditable) return;
@@ -157,7 +159,6 @@ public:
         effects_ = std::move(effects);
         grouped_ = grouped;
         groupView_ = view;
-        mixed_ = mixed;
         context_ = context;
         setToolTip(tooltip);
         initialized_ = true;
@@ -222,7 +223,7 @@ private:
         const auto* item = boundItem();
         if (!item || !isEnabled()) return false;
         if (context_ != PlatformContextService::instance().context()) return false;
-        if (grouped_ && (!groupView_.valid || !groupView_.fieldsEditable || mixed_
+        if (grouped_ && (!groupView_.valid || !groupView_.fieldsEditable
             || groupView_.expectedBefore != item->fieldGroups
             || groupView_.context != PlatformContextService::instance().context())) return false;
         const auto& effects = effects_.entries();
@@ -246,12 +247,8 @@ private:
             {QStringLiteral("authoring_handle"), static_cast<qint64>(item->objectID)},
             {QStringLiteral("property"), QStringLiteral("effects")}};
         args.insert(grouped_ ? QStringLiteral("effects") : QStringLiteral("value"), ledger.toJson());
-        if (!grouped_ && !context_.all && !context_.selected.isEmpty()) {
-            QJsonArray platforms;
-            for (const auto& platform : context_.selected)
-                platforms.append(ProjectPlatformSemantics::idString(platform));
-            args.insert(QStringLiteral("platform_ids"), platforms);
-        }
+        if (const auto platform = platformEditScope(context_); !grouped_ && platform)
+            args.insert(QStringLiteral("platform_ids"), QJsonArray{ProjectPlatformSemantics::idString(*platform)});
         const auto result = ActionManager::instance().execute(grouped_
             ? QStringLiteral("replace_field_group_effects") : QStringLiteral("set_item_property"),
             args, ActionSource::GUI, this, undoParent);
@@ -414,6 +411,65 @@ private:
         if (!commit(std::move(effects))) rebuild();
     }
 
+    static const ProjectItem* presetTarget(const EffectEntry& effect)
+    {
+        const auto* target = effect.mode == EffectMode::Custom
+            ? nullptr : ProjectManager::instance().findItemByGuid(effect.effectGuid);
+        return target && target->type == ProjectItem::Type::Effect ? target : nullptr;
+    }
+
+    static QString slotName(const EffectEntry& effect)
+    {
+        if (effect.mode == EffectMode::Custom)
+            return tr("%1 (Local)").arg(EffectChainSemantics::displayName(effect.custom.type));
+        const auto* target = presetTarget(effect);
+        return target ? target->name : tr("Missing");
+    }
+
+    static QString parameterText(const EffectDefinition& definition)
+    {
+        QStringList parts;
+        const auto& schema = VEffect::schema();
+        for (size_t index = 0; index < std::min(schema.size(), definition.parameters.size()); ++index)
+            parts.append(QStringLiteral("%1 %2").arg(schema[index].label,
+                PlatformLocalMarker::formatterFor(schema[index])(definition.parameters[index])));
+        return parts.join(QStringLiteral(", "));
+    }
+
+    static void showChainDifferences(QGridLayout* layout, QWidget* popup, const QList<PlatformMarkValue>& values)
+    {
+        std::vector<EffectChainLedger> chains;
+        for (const auto& entry : values)
+            chains.push_back(EffectChainLedger::fromJson(QJsonArray::fromVariantList(entry.value.toList())));
+        const bool identical = std::all_of(chains.begin(), chains.end(),
+            [&chains](const EffectChainLedger& chain) { return chain == chains.front(); });
+        size_t count = 0;
+        for (const auto& chain : chains) count = std::max(count, chain.size());
+        std::vector<QStringList> rows;
+        for (size_t index = 0; !identical && index < count; ++index) {
+            QStringList cells;
+            QSet<QByteArray> entries;
+            for (const auto& chain : chains) {
+                if (index >= chain.size()) {
+                    cells.append(QString{});
+                    entries.insert({});
+                    continue;
+                }
+                const auto& effect = chain.entries()[index];
+                cells.append(effect.bypass ? tr("%1 (Off)").arg(slotName(effect)) : slotName(effect));
+                entries.insert(QJsonDocument(QJsonArray{effect.toJson()}).toJson(QJsonDocument::Compact));
+            }
+            if (entries.size() > 1 && QSet<QString>(cells.begin(), cells.end()).size() == 1)
+                for (size_t column = 0; column < chains.size(); ++column)
+                    if (const auto& effect = chains[column].entries()[index]; effect.mode == EffectMode::Custom)
+                        cells[column] = tr("%1: %2").arg(cells[column], parameterText(effect.custom));
+            cells.prepend(QString::number(index + 1));
+            rows.push_back(cells);
+        }
+        showPlatformComparison(layout, popup, tr("Slot"), values, rows,
+                               tr("All platforms use the same effects"), Qt::AlignLeft);
+    }
+
     void cancelPendingEdits()
     {
         for (auto* row : rows_) {
@@ -444,10 +500,13 @@ private:
         const bool editable = canEdit();
         add_->setEnabled(editable && effects_.size() < EffectChainLedger::kCapacity);
         table_->footer()->setVisible(editable);
-        table_->bodyMessage()->setText(mixed_ ? tr("Mixed table\nSelect a single platform to edit")
-            : groupView_.diagnostics.join(QLatin1Char('\n')));
-        table_->bodyMessage()->setVisible(mixed_ || (grouped_ && !groupView_.valid));
+        table_->bodyMessage()->setText(groupView_.diagnostics.join(QLatin1Char('\n')));
+        table_->bodyMessage()->setVisible(grouped_ && !groupView_.valid);
         auto* item = boundItem();
+        mark_->bind(item, PlatformLocalAddress{.kind = PlatformLocalAddress::Kind::EffectChain,
+            .field = QStringLiteral("effects"), .group = FieldGroupId::Effect,
+            .canInherit = grouped_ && groupView_.canInherit});
+        mark_->setEditable(editable);
         if (item) {
             const auto& effects = effects_.entries();
             for (size_t index = 0; index < effects.size(); ++index) {
@@ -455,10 +514,8 @@ private:
                 const QUuid guid = effect.guid;
                 const uint64_t generation = generation_;
                 const bool custom = effect.mode == EffectMode::Custom;
-                auto* target = custom ? nullptr : ProjectManager::instance().findItemByGuid(effect.effectGuid);
-                if (target && target->type != ProjectItem::Type::Effect) target = nullptr;
-                const QString name = custom ? tr("%1 (Local)").arg(EffectChainSemantics::displayName(effect.custom.type))
-                    : target ? target->name : tr("Missing");
+                const auto* target = presetTarget(effect);
+                const QString name = slotName(effect);
                 auto* row = new QWidget(table_->rowsWidget());
                 row->setObjectName(QStringLiteral("effectRow"));
                 row->setProperty("effectGuid", guid);
@@ -614,10 +671,10 @@ private:
     FieldGroupInspectorView groupView_;
     PlatformContext context_;
     bool grouped_ = false;
-    bool mixed_ = false;
     QString search_;
     QPointer<InspectorPanel> inspector_;
     TableWidget* table_ = nullptr;
+    PlatformLocalMarker* mark_ = nullptr;
     QToolButton* add_ = nullptr;
     QMenu* addMenu_ = nullptr;
     QToolButton* remove_ = nullptr;
@@ -636,6 +693,16 @@ QWidget* EffectsSectionProvider::build(QWidget* parent)
 void EffectsSectionProvider::bind(QWidget* widget, ProjectItem* item)
 {
     static_cast<EffectsListWidget*>(widget)->bind(item);
+}
+
+void EffectsSectionProvider::bindGroups(QWidget* widget, ProjectItem* item, const InspectorGroupLookup& groups)
+{
+    static_cast<EffectsListWidget*>(widget)->bind(item, groups(FieldGroupId::Effect));
+}
+
+void EffectsSectionProvider::refreshGroups(QWidget* widget, ProjectItem* item, const InspectorGroupLookup& groups)
+{
+    bindGroups(widget, item, groups);
 }
 
 bool EffectsSectionProvider::refresh(QWidget* widget, ProjectItem* item, const QString& field)

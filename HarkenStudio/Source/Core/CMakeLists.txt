@@ -58,6 +58,8 @@ add_library(harken_studio_core STATIC
     PlatformContext.h
     PlatformContextService.cpp
     PlatformContextService.h
+    PlatformLocalState.cpp
+    PlatformLocalState.h
     LanguageContextService.cpp
     LanguageContextService.h
     PreviewMediaModeService.cpp

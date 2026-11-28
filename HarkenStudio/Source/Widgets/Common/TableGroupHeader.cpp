@@ -154,8 +154,18 @@ void TableGroupHeader::resizeEvent(QResizeEvent* event)
     layoutControls();
 }
 
+void TableGroupHeader::setTrailingWidget(QWidget* widget)
+{
+    trailing_ = widget;
+    widget->setParent(this);
+    layoutControls();
+}
+
 void TableGroupHeader::layoutControls()
 {
+    if (trailing_)
+        trailing_->setGeometry(width() - trailing_->width(), 0, trailing_->width(),
+                               height() - themeManager_->metrics().borderWidth);
     if (checkBox_) checkBox_->setGeometry(checkBoxRect(rect(), themeManager_, checkBox_));
     if (chevron_) chevron_->setGeometry(chevronRect(rect(), themeManager_));
 }

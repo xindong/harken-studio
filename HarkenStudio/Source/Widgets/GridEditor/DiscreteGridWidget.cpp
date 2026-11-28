@@ -352,8 +352,8 @@ void DiscreteGridWidget::reload()
 {
     const QSignalBlocker blocker(table_);
     const auto* sel = boundItem_ ? boundItem_->comp<VSelection>() : nullptr;
-    const auto next = sel ? sel->selections.table(currentWorldPlatformScope(
-        PlatformContextService::instance().context())).matchGrid() : DiscreteGridDef{};
+    const auto next = sel ? sel->matchGrid(currentWorldPlatformScope(
+        PlatformContextService::instance().context())) : DiscreteGridDef{};
     const int selectedColumn = matrix_->selectedColumn();
     bool columnSelected = selectedColumn >= 0;
     const int oldAxis = selectedColumn >= 0 ? selectedColumn - kFirstAxisColumn : table_->currentColumn() - kFirstAxisColumn;
@@ -598,18 +598,9 @@ bool DiscreteGridWidget::commitGrid(const DiscreteGridDef& next, const QString& 
         return false;
     const auto& context = PlatformContextService::instance().context();
     SelectionData candidate = sel->selections;
-    if (context.all || context.selected.isEmpty()) {
-        if (!candidate.shared.setMatchGrid(next)) return false;
-        for (auto& table : candidate.platforms)
-            if (!table.setMatchGrid(next)) return false;
-    } else {
-        for (const auto& platform : context.selected)
-            if (!candidate.editTable(platform).setMatchGrid(next)) return false;
-    }
-    for (auto it = candidate.platforms.begin(); it != candidate.platforms.end();) {
-        if (it.value() == candidate.shared) it = candidate.platforms.erase(it);
-        else ++it;
-    }
+    if (!candidate.canEdit(SelectionMode::Match, currentWorldPlatformScope(context), platformEditScope(context))
+        || !candidate.setMatchGrid(next, platformEditScope(context)))
+        return false;
     const auto result = ActionManager::instance().execute(
         QStringLiteral("set_item_property"),
         QJsonObject{

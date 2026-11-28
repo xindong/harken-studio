@@ -565,13 +565,13 @@ TEST(ProjectContract, ParentDependenciesKeepInheritedTargetsWithoutExpandingPlay
     };
     const auto selection = [&](const QStringList& children, const QString& variable = QString()) {
         harken::studio::SelectionData data;
-        data.shared.occurrenceOrdinalHighWater = children.size();
+        data.random.shared.occurrenceOrdinalHighWater = children.size();
         for (qsizetype index = 0; index < children.size(); ++index) {
             const auto ordinal = static_cast<uint32_t>(index);
-            data.shared.entries.push_back({QUuid(children.at(index)), ordinal,
+            data.random.shared.entries.push_back({QUuid(children.at(index)), ordinal,
                 {{ordinal, ordinal, 50}}, {}});
         }
-        if (!variable.isEmpty()) data.shared.matchAxes.push_back(QUuid(variable));
+        if (!variable.isEmpty()) data.matchAxes.push_back(QUuid(variable));
         return QJsonObject{{QStringLiteral("selection"), QJsonObject{
             {QStringLiteral("selections"), data.toJson()}}}};
     };
@@ -635,6 +635,32 @@ TEST(ProjectContract, ParentDependenciesKeepInheritedTargetsWithoutExpandingPlay
     EXPECT_TRUE(parentReads.contains(QStringLiteral("Layers/Main.vp")));
     EXPECT_TRUE(parentReads.contains(QStringLiteral("Layers/Sibling.vp")));
     EXPECT_FALSE(parentReads.contains(QStringLiteral("Layers/Descendant.vp")));
+
+    const QString parentPath = QStringLiteral("Layers/Parent.vp");
+    auto restored = parent;
+    auto restoredContent = HarkenTest::projectContent(restored);
+    restoredContent.insert(QStringLiteral("fieldGroups"),
+                           HarkenTest::projectContent(original).value(QStringLiteral("fieldGroups")));
+    restored.insert(QStringLiteral("content"), restoredContent);
+    auto previous = baseline;
+    for (const auto& replacement : {restored, parent}) {
+        harken::studio::ProjectContractValidationDetails details;
+        harken::studio::ProjectContractValidationBaseline updated, fresh;
+        const auto& registry = harken::studio::ProjectContractRegistry::instance();
+        ASSERT_TRUE(registry.validateIncrementalSnapshot(directory.path(), root, true,
+            {{parentPath, replacement}}, {}, previous, &updated, nullptr, &details).isEmpty());
+        auto snapshot = documents;
+        snapshot.insert(parentPath, replacement);
+        ASSERT_TRUE(registry.validateSnapshot(directory.path(), root, true, snapshot, nullptr,
+            &fresh, QStringLiteral("Baseline.hsp"), false).isEmpty());
+        EXPECT_TRUE(details.fullValidation);
+        EXPECT_TRUE(details.readPaths.contains(QStringLiteral("Baseline.hsp")));
+        for (auto document = documents.cbegin(); document != documents.cend(); ++document) {
+            EXPECT_TRUE(details.readPaths.contains(document.key()));
+            EXPECT_EQ(updated.dependencyPaths({document.key()}), fresh.dependencyPaths({document.key()}));
+        }
+        previous = std::move(updated);
+    }
 }
 
 TEST(ProjectContract, SnapshotOverridesDiskDocumentsWithoutHidingOtherInvalidFiles)
@@ -949,6 +975,9 @@ TEST(ProjectTransaction, DeltaReadConflictDoesNotRestoreExternalDependencyConten
     ASSERT_TRUE(file.open(QIODevice::ReadOnly));
     const QByteArray hash = QCryptographicHash::hash(file.readAll(), QCryptographicHash::Sha256);
     file.close();
+    const QFileInfo originalInfo(dependency);
+    const auto originalSize = originalInfo.size();
+    const auto originalTime = originalInfo.lastModified();
     harken::studio::ProjectTransaction::DeltaPlan plan;
     plan.writes = {{QStringLiteral("Baseline.hsp"), QByteArrayLiteral("{\"value\":2}")}};
     plan.readSet = {{QStringLiteral("Nodes/dependency.vp"), hash}};
@@ -956,8 +985,13 @@ TEST(ProjectTransaction, DeltaReadConflictDoesNotRestoreExternalDependencyConten
     auto transaction = harken::studio::ProjectTransaction::beginDelta(projectPath, plan, &error);
     ASSERT_NE(transaction, nullptr) << error.toStdString();
     ASSERT_TRUE(transaction->applyDelta(&error)) << error.toStdString();
-    const QJsonObject external{{QStringLiteral("external"), true}};
+    const QJsonObject external{{QStringLiteral("value"), 3}};
     writeJson(dependency, external);
+    ASSERT_TRUE(file.open(QIODevice::ReadWrite));
+    ASSERT_TRUE(file.setFileTime(originalTime, QFileDevice::FileModificationTime));
+    file.close();
+    ASSERT_EQ(QFileInfo(dependency).size(), originalSize);
+    ASSERT_EQ(QFileInfo(dependency).lastModified(), originalTime);
     EXPECT_FALSE(transaction->commit(false, &error));
     ASSERT_TRUE(transaction->rollback(&error)) << error.toStdString();
     EXPECT_EQ(readJson(projectPath), original);

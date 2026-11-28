@@ -39,6 +39,10 @@ struct ReplaceFieldGroupSends {
     SendFieldGroup value;
 };
 
+struct ReplaceFieldGroupSidechains {
+    SidechainFieldGroup value;
+};
+
 struct ReplaceFieldGroupEffects {
     EffectFieldGroup value;
 };
@@ -51,10 +55,12 @@ struct ClearFieldGroupFieldOverride {
     harkenplayableproperties::PlayablePropertyIdV1 property;
 };
 
+struct ClearConversionFieldGroupOverride {};
+
 using FieldGroupEditOperation = std::variant<
     SetFieldGroupMode, RebuildLocalFieldGroup,
-    SetFieldGroupField, ReplaceFieldGroupSends, ReplaceFieldGroupEffects,
-    SetConversionFieldGroup, ClearFieldGroupFieldOverride>;
+    SetFieldGroupField, ReplaceFieldGroupSends, ReplaceFieldGroupSidechains, ReplaceFieldGroupEffects,
+    SetConversionFieldGroup, ClearFieldGroupFieldOverride, ClearConversionFieldGroupOverride>;
 
 struct FieldGroupEditRequest {
     QUuid definition;
@@ -124,6 +130,11 @@ struct FieldGroupProjectValidation {
 
 FieldGroupEditResult prepareFieldGroupEdit(
     ProjectData& project, const FieldGroupEditRequest& request);
+
+std::optional<DefinitionFieldGroups> previewFieldGroupNumber(
+    const ProjectData& project, const ProjectItem& item, const FieldGroupEditScopes& scopes,
+    harkenplayableproperties::PlayablePropertyIdV1 property, float value,
+    std::span<const FieldGroupDefinitionView> ancestry);
 
 FieldGroupEditResult prepareFieldGroupRestore(
     ProjectData& project, const QUuid& definition,

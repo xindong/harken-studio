@@ -227,6 +227,7 @@ void TableWidget::setColumns(const QString& key, const QList<TableColumn>& colum
     highlightResizeColumn(-1);
     qDeleteAll(labels_);
     labels_.clear();
+    headerTrailing_.clear();
     columns_ = columns;
     visualOrder_.clear();
     for (int i = 0; i < columns.size(); ++i) visualOrder_.append(i);
@@ -252,6 +253,15 @@ void TableWidget::setColumns(const QString& key, const QList<TableColumn>& colum
 QLabel* TableWidget::headerCell(int column) const
 {
     return labels_.at(column);
+}
+
+void TableWidget::setHeaderTrailingWidget(int column, QWidget* widget)
+{
+    widget->setParent(header_);
+    widget->installEventFilter(this);
+    headerTrailing_.insert(column, widget);
+    updateCellMetrics(labels_.at(column));
+    scheduleLayout();
 }
 
 void TableWidget::setColumnWeights(const QString& key, const QList<int>& weights)
@@ -1206,8 +1216,11 @@ void TableWidget::updateCellMetrics(QWidget* cell)
 {
     const auto& metrics = themeManager_->metrics().table;
     if (auto* label = qobject_cast<QLabel*>(cell)) {
+        const auto column = labels_.indexOf(label);
+        const auto trailing = column >= 0 ? headerTrailing_.value(column) : QPointer<QWidget>{};
         cell->setContentsMargins(metrics.cellPaddingX, metrics.cellPaddingY,
-                                metrics.cellPaddingX, metrics.cellPaddingY);
+                                metrics.cellPaddingX + (trailing && !trailing->isHidden() ? trailing->width() : 0),
+                                metrics.cellPaddingY);
         if (cell->property("tableRowNumber").toBool()) label->setAlignment(Qt::AlignCenter);
     }
 }
@@ -1361,6 +1374,14 @@ void TableWidget::refreshLayout()
         labels_[i]->setFixedWidth(widths_[i]);
     }
     header_->layout()->activate();
+    for (auto it = headerTrailing_.cbegin(); it != headerTrailing_.cend(); ++it) {
+        if (!it.value()) continue;
+        auto* label = labels_[it.key()];
+        const int border = it.key() == lastVisibleColumn ? 0 : themeManager_->metrics().borderWidth;
+        it.value()->setGeometry(label->geometry().right() + 1 - border - it.value()->width(), label->y(),
+                                it.value()->width(), label->height() - themeManager_->metrics().borderWidth);
+        it.value()->raise();
+    }
     for (const auto& row : rowBindings_) {
         for (int i = 0; i < row.cells.size(); ++i)
             if (row.cells[i]) row.cells[i]->setFixedWidth(widths_[i]);
@@ -1410,6 +1431,13 @@ void TableWidget::refreshResizeHighlight()
 
 bool TableWidget::eventFilter(QObject* watched, QEvent* event)
 {
+    if (event->type() == QEvent::ShowToParent || event->type() == QEvent::HideToParent) {
+        for (auto it = headerTrailing_.cbegin(); it != headerTrailing_.cend(); ++it) {
+            if (it.value() != watched) continue;
+            updateCellMetrics(labels_.at(it.key()));
+            scheduleLayout();
+        }
+    }
     if (event->type() == QEvent::Wheel && options_.bodySizing == TableBodySizing::Content
         && ((scroll_ && watched == scroll_->viewport()) || (view_ && watched == view_->viewport()))) {
         event->ignore();

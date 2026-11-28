@@ -11,12 +11,6 @@
 
 namespace harken::studio {
 
-bool matchesSignalPathSendRow(const QJsonObject& row, uint32_t target, SendType type, bool duckTarget)
-{
-    const auto send = Send::fromJson(row);
-    return send && send->targetBusID == target && send->type == type && send->duckTarget == duckTarget;
-}
-
 namespace {
 
 namespace Slots = ReferenceSlotResolution;
@@ -266,13 +260,16 @@ private:
             fromFieldGroupGuid(effective.outputSource.definition), effective.outputSource.scope};
         const SignalPathRoutingSource sendSource{
             fromFieldGroupGuid(effective.sendSource.definition), effective.sendSource.scope};
+        const SignalPathRoutingSource sidechainSource{
+            fromFieldGroupGuid(effective.sidechainSource.definition), effective.sidechainSource.scope};
         edge(terminal, busEndpoint(routing.outputBusID, pathIndex),
              SignalPathEdgeKind::Output, pathIndex, 0.0f, outputSource);
         std::set<uint32_t> visited;
         appendBus(routing.outputBusID, pathIndex, visited);
         for (const auto& send : routing.sends) {
             edge(terminal, busEndpoint(send.targetBusID, pathIndex),
-                 SignalPathEdgeKind::Send, pathIndex, send.sendLevel, sendSource, send.type, send.duckTarget);
+                 SignalPathEdgeKind::Send, pathIndex, send.sendLevel,
+                 send.type == SendType::Sidechain ? sidechainSource : sendSource, send.type, send.duckTarget);
             appendBus(send.targetBusID, pathIndex, visited);
         }
     }

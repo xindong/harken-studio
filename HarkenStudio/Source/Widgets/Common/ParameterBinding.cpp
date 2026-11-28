@@ -149,11 +149,9 @@ void ParameterBinding::setValue(double value)
 void ParameterBinding::commitValue(double value)
 {
     if (editing_ || !std::isfinite(value)) return;
-    const bool wasMixed = mixedValue_;
     const bool wasNormalized = normalizationPending_;
-    mixedValue_ = false;
     normalizationPending_ = false;
-    if (updateValue(value) || wasMixed || wasNormalized)
+    if (updateValue(value) || wasNormalized)
         emit valueCommitted(value_);
 }
 
@@ -176,7 +174,6 @@ void ParameterBinding::commitEdit()
 {
     if (!editing_) return;
     editing_ = false;
-    mixedValue_ = false;
     if (!qFuzzyCompare(editStartValue_ + 1.0, value_ + 1.0))
         normalizationPending_ = false;
     emit editEnded(editStartValue_, value_, true);

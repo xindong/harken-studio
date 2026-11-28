@@ -67,6 +67,7 @@
 
 #ifdef Q_OS_WIN
 #include <QtCore/qt_windows.h>
+#include <io.h>
 #endif
 
 #include <algorithm>
@@ -1849,7 +1850,7 @@ TEST(ProjectPackExport, ExportsContainerAndVariableProjectDeterministically)
         if (i == 5) {
             auto grid = selection->matchGrid();
             ASSERT_TRUE(grid.addAxis(variable->guid));
-            EXPECT_TRUE(selection->selections.shared.setMatchGrid(grid));
+            EXPECT_TRUE(selection->selections.setMatchGrid(grid));
         }
         for (int j = 0; j < 2; ++j) {
             const QString file = QStringLiteral("demo_%1_%2.wav").arg(i).arg(j);
@@ -1867,7 +1868,7 @@ TEST(ProjectPackExport, ExportsContainerAndVariableProjectDeterministically)
                     auto grid = selection->matchGrid();
                     ASSERT_TRUE(grid.addRow(sound->guid));
                     ASSERT_TRUE(grid.setCell(j, 0, j));
-                    EXPECT_TRUE(selection->selections.shared.setMatchGrid(grid));
+                    EXPECT_TRUE(selection->selections.setMatchGrid(grid));
                 }
             }
         }
@@ -2147,8 +2148,8 @@ TEST(ProjectPackExport, ExternalLocalizedOccurrenceKeepsInvalidOwnershipRejected
         {{QStringLiteral("External"), 21, 3}}));
     ASSERT_NO_FATAL_FAILURE(localizeSoloSound(project, soloSourceId));
     auto container = makeItem(QStringLiteral("ExternalVoice"), harken::studio::ProjectItem::Type::Container, 3);
-    container->comp<harken::studio::VSelection>()->selections.shared.occurrenceOrdinalHighWater = 1;
-    EXPECT_TRUE(container->comp<harken::studio::VSelection>()->selections.shared.setOccurrenceRows({{project.layers.front().rootItem->children.at(1)->guid, 0, {}}}));
+    container->comp<harken::studio::VSelection>()->selections.random.shared.occurrenceOrdinalHighWater = 1;
+    EXPECT_TRUE(container->comp<harken::studio::VSelection>()->selections.random.shared.setOccurrenceRows({{project.layers.front().rootItem->children.at(1)->guid, 0, {}}}));
     addChild(project.layers.front().rootItem, container);
     harken::studio::ProjectPackExporter exporter;
     harken::studio::ProjectPackExporter::ExportOptions opts;
@@ -2759,9 +2760,9 @@ TEST(ProjectPackExport, PartialPublicationUpdatesSharedSoundRoutesIndependently)
         {{"One", 21, kSharedSoundObjectId}, {"Two", 22, kSharedSoundObjectId}}));
     const auto bus = makeItem("Music", ProjectItem::Type::Bus, 202);
     addChild(project.busses.front().rootItem, bus);
-    auto& sends = project.layers.front().rootItem->fieldGroups.send.shared;
-    sends = {FieldGroupMode::Local,
-             SendFieldGroup{{{toFieldGroupGuid(bus->guid), -12.0f, project_schema::SendType::Sidechain, true}}}};
+    auto& sidechains = project.layers.front().rootItem->fieldGroups.sidechain.shared;
+    sidechains = {FieldGroupMode::Local, SidechainFieldGroup{{{toFieldGroupGuid(QUuid::createUuid()),
+                                                               toFieldGroupGuid(bus->guid), -12.0f, true}}}};
 
     ProjectPackExporter exporter;
     ProjectPackExporter::ExportOptions options;
@@ -2773,7 +2774,7 @@ TEST(ProjectPackExport, PartialPublicationUpdatesSharedSoundRoutesIndependently)
     QMap<QString, QByteArray> previous;
     for (const QString& name : {QStringLiteral("One.bytes"), QStringLiteral("Two.bytes"), QStringLiteral("Init.bytes")})
         previous.insert(name, readFileBytes(live.filePath(name)));
-    sends.localHistory->sends.front().sendLevel = -6.0f;
+    sidechains.localHistory->sidechains.front().sendLevel = -6.0f;
     options.updateSelectedOnly = true;
     options.onlyPackPaths = {QStringLiteral("One")};
     const auto updatedOne = exportPacks();
@@ -3225,6 +3226,15 @@ TEST(ProjectPackExport, PersistentSourceDigestsTrackContentAcrossReloadAndReplac
     };
     const auto original = digest(asset.absolutePath);
     const auto modified = QFileInfo(asset.absolutePath).lastModified();
+#ifdef Q_OS_WIN
+    FILE_BASIC_INFO originalTimes{};
+    {
+        QFile source(asset.absolutePath);
+        ASSERT_TRUE(source.open(QIODevice::ReadOnly));
+        const auto handle = reinterpret_cast<HANDLE>(_get_osfhandle(source.handle()));
+        ASSERT_TRUE(GetFileInformationByHandleEx(handle, FileBasicInfo, &originalTimes, sizeof(originalTimes)));
+    }
+#endif
     {
         harken::studio::BuildSourceInputs inputs(directory.path(), {{asset.sourceID, asset}});
         const auto input = inputs.inspect(asset);
@@ -3237,19 +3247,30 @@ TEST(ProjectPackExport, PersistentSourceDigestsTrackContentAcrossReloadAndReplac
     ASSERT_EQ(stored.size(), 1);
     asset = stored.front();
     EXPECT_EQ(asset.contentHash, original);
-    EXPECT_FALSE(asset.sourceState.isEmpty());
+    bool reusable = false;
+    {
+        QFile source(asset.absolutePath);
+        ASSERT_TRUE(harken::studio::openSourceFile(source));
+        const auto state = harken::studio::sourceFileState(source, &reusable);
+        EXPECT_EQ(asset.sourceState, reusable ? state : QByteArray{});
+    }
     {
         harken::studio::BuildSourceInputs inputs(directory.path(), {{asset.sourceID, asset}});
         const auto input = inputs.inspect(asset);
         ASSERT_TRUE(input);
         EXPECT_EQ(input->contentHash, original);
-        EXPECT_EQ(input->inputPath, asset.absolutePath);
+        EXPECT_EQ(input->inputPath == asset.absolutePath, reusable);
     }
     ASSERT_NO_FATAL_FAILURE(writeWavF32(asset.absolutePath, std::vector<float>(32, -0.25f), 1, 48000));
     {
         QFile source(asset.absolutePath);
         ASSERT_TRUE(source.open(QIODevice::ReadWrite));
+#ifdef Q_OS_WIN
+        const auto handle = reinterpret_cast<HANDLE>(_get_osfhandle(source.handle()));
+        ASSERT_TRUE(SetFileInformationByHandle(handle, FileBasicInfo, &originalTimes, sizeof(originalTimes)));
+#else
         ASSERT_TRUE(source.setFileTime(modified, QFileDevice::FileModificationTime));
+#endif
     }
     const auto changed = digest(asset.absolutePath);
     EXPECT_NE(changed, original);
@@ -3963,7 +3984,8 @@ TEST(ProjectPackExport, EffectiveMediaChangesRebuildOnlyTheirConsumers)
     bind(*layer, *firstPreset);
     bind(*secondSound, *secondPreset);
     layer->fieldGroups.conversion.platforms[toFieldGroupGuid(HarkenTest::platformId("Android"))] =
-        {FieldGroupMode::Local, ConversionFieldGroup{toFieldGroupGuid(androidPreset->guid)}};
+        {FieldGroupMode::UseShared, ConversionFieldGroup{toFieldGroupGuid(androidPreset->guid)},
+         FieldGroupPropertyMask(FieldGroupId::Conversion)};
     bool compiled = false;
     const auto build = [&](bool force = false) {
         QString error;

@@ -496,16 +496,15 @@ void AttenuationStore::notifyReferencesChanged(ProjectData* project,
         if (projectManager) emit projectManager->errorOccurred(error);
         return;
     }
+    std::vector<ProjectItem*> owners;
+    owners.reserve(refs.size());
     for (const auto& ref : refs)
-    {
-        ProjectItem* item = ref.item;
-        if (!item)
-            continue;
-        ProjectManager::resyncItemToRuntime(item);
-        if (projectManager)
+        owners.push_back(ref.item);
+    ProjectManager::resyncItemsToRuntime(owners);
+    if (projectManager)
+        for (auto* owner : owners)
             for (const auto& propertyName : propertyNames)
-                emit projectManager->itemPropertyChanged(item, propertyName);
-    }
+                emit projectManager->itemPropertyChanged(owner, propertyName);
 }
 
 bool AttenuationStore::applyBinding(ProjectManager* projectManager,

@@ -173,8 +173,7 @@ void ParameterValueEditor::cancelPendingInput()
     const QSignalBlocker spinBlocker(spinBox_);
     const QSignalBlocker choiceBlocker(comboBox_);
     spinBox_->setValue(binding_->toDisplayValue(binding_->value()));
-    comboBox_->setCurrentIndex(binding_->mixedValue() ? -1
-        : choiceModel_->rowForValue(binding_->value()));
+    comboBox_->setCurrentIndex(choiceModel_->rowForValue(binding_->value()));
 }
 
 bool ParameterValueEditor::event(QEvent* event)
@@ -201,8 +200,7 @@ void ParameterValueEditor::syncMetadata()
     comboBox_->setAccessibleName(name);
     choiceModel_->refresh();
     comboBox_->setEnabled(choiceModel_->rowCount() > 0);
-    comboBox_->setCurrentIndex(binding_->mixedValue() ? -1
-        : choiceModel_->rowForValue(binding_->value()));
+    comboBox_->setCurrentIndex(choiceModel_->rowForValue(binding_->value()));
     setFocusProxy(binding_->discreteSelection()
         ? static_cast<QWidget*>(comboBox_) : static_cast<QWidget*>(spinBox_));
     syncToolTips();
@@ -223,12 +221,10 @@ void ParameterValueEditor::syncToolTips()
     if (!binding_)
         return;
     QString text = toolTip();
-    if (!binding_->mixedValue()) {
-        if (!text.isEmpty()) text += QLatin1Char('\n');
-        text += QStringLiteral("%1 %2").arg(
-            formatDecimal(binding_->toDisplayValue(binding_->value()), binding_->decimals()),
-            binding_->unit().trimmed()).trimmed();
-    }
+    if (!text.isEmpty()) text += QLatin1Char('\n');
+    text += QStringLiteral("%1 %2").arg(
+        formatDecimal(binding_->toDisplayValue(binding_->value()), binding_->decimals()),
+        binding_->unit().trimmed()).trimmed();
     spinBox_->setToolTip(text);
     comboBox_->setToolTip(text);
 }
