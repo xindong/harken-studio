@@ -49,13 +49,13 @@ const QVector<ThemeColorRole>& studioDefaultColorRoles()
          }},
         {QStringLiteral("accent.text"), QStringLiteral("Foreground"),
          QStringLiteral("Foreground on accent"),
-         QStringLiteral("Text and icons on accent-filled controls, selections and highlighted menus."),
+         QStringLiteral("Text and icons on accent-filled controls and selections."),
          {
              {QStringLiteral("accent.text"), std::nullopt},
              {QStringLiteral("qtPalette.highlightedText"), std::nullopt},
          }},
         {QStringLiteral("accent.primary"), QStringLiteral("States"),
-         QStringLiteral("Accent"),
+         QStringLiteral("Primary accent"),
          QStringLiteral("Active controls, focus borders, slider fill and curve editing handles."),
          {
              {QStringLiteral("accent.primary"), std::nullopt},
@@ -201,7 +201,7 @@ const QVector<ThemeColorRole>& studioDefaultColorRoles()
          }},
         {QStringLiteral("background.selected"), QStringLiteral("Interaction"),
          QStringLiteral("Selected background"),
-         QStringLiteral("Selected rows, cells, tabs and segmented options."),
+         QStringLiteral("Selected rows, cells, tabs and segmented options, open menu bar items and the current command in popup menus."),
          {
              {QStringLiteral("background.selected"), std::nullopt},
          }},

@@ -585,7 +585,7 @@ void AppearancePage::refreshPresets()
         colorPresets_->setItemData(i, available ? presetSwatch(*base, colorRoles_, overrides, themeManager_->metrics()) : QPixmap(), Qt::UserRole + 1);
         model->item(i)->setEnabled(available);
         colorPresets_->setItemData(i, available
-            ? tr("Use the %1 palette of this theme. Edits are saved for this theme and palette.\nMain background · Controls · Selection · Accent · Primary foreground\nSecondary foreground · Success · Warning · Error · Secondary accent").arg(name)
+            ? tr("Use the %1 palette of this theme. Edits are saved for this theme and palette.\nMain background · Controls · Selection · Primary accent · Primary foreground\nSecondary foreground · Success · Warning · Error · Secondary accent").arg(name)
             : tr("Unavailable"), Qt::ToolTipRole);
     }
     colorPresets_->setCurrentIndex(colorPresets_->findData(appearance_.paletteId));

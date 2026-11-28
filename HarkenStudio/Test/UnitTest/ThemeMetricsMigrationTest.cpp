@@ -817,7 +817,7 @@ TEST(ThemeMetricsMigration, MenuStateColorsCoverPaddingWithoutChangingGeometry)
             const auto image = renderWidget(bar);
             QImage expected = normal;
             QPainter painter(&expected);
-            painter.fillRect(actionRect, pressed ? manager->colors().accent : manager->colors().hoverOverlay);
+            painter.fillRect(actionRect, pressed ? manager->colors().bgSelected : manager->colors().hoverOverlay);
             painter.end();
             for (const QPoint point : {QPoint(actionRect.left() + 1, actionRect.center().y()),
                                        QPoint(actionRect.center().x(), actionRect.top() + 1),
@@ -828,13 +828,13 @@ TEST(ThemeMetricsMigration, MenuStateColorsCoverPaddingWithoutChangingGeometry)
     checkStates();
     auto preview = manager->appearance();
     const QColor hover(QStringLiteral("#806d3a91"));
-    const QColor accent(QStringLiteral("#ff217d9b"));
+    const QColor selected(QStringLiteral("#ff217d9b"));
     preview.colors[preview.themeId][preview.paletteId].insert(QStringLiteral("background.hoverOverlay"), hover);
-    preview.colors[preview.themeId][preview.paletteId].insert(QStringLiteral("accent.primary"), accent);
+    preview.colors[preview.themeId][preview.paletteId].insert(QStringLiteral("background.selected"), selected);
     ASSERT_TRUE(manager->previewAppearance(preview).ok());
     QCoreApplication::processEvents();
     EXPECT_EQ(manager->colors().hoverOverlay, hover);
-    EXPECT_EQ(manager->colors().accent, accent);
+    EXPECT_EQ(manager->colors().bgSelected, selected);
     EXPECT_EQ(bar.actionGeometry(action), actionRect);
     EXPECT_EQ(bar.sizeHint(), sizeHint);
     checkStates();

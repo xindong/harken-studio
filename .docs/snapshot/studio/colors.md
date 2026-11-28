@@ -137,7 +137,7 @@ PR 审查后补充修复：Assistant 在原消息和待确认控件上更新字�
 
 ## Studio Default 颜色职责
 
-Studio Default 在 Colors 中用 Foreground 调整文字和单色图标，用 Background 调整窗口、面板和控件的底色。States 包含强调、次级强调、成功、警告、错误和禁用，Tools 管理播放及工具栏动作的专用颜色。现有主题自行定义职责目录。
+Studio Default 在 Colors 中用 Foreground 调整文字和单色图标，用 Background 调整窗口、面板和控件的底色。States 包含主要强调、次级强调、成功、警告、错误和禁用，Tools 管理播放及工具栏动作的专用颜色。现有主题自行定义职责目录。
 
 | 职责 | 主题键 | 使用边界 |
 |---|---|---|
@@ -145,11 +145,11 @@ Studio Default 在 Colors 中用 Foreground 调整文字和单色图标，用 Ba
 | 次要前景 | `text.secondary` | 注释说明、表格列头、输入占位提示、其他空状态、坐标刻度、单位、状态栏摘要、日志类别、继承引用和面包屑 |
 | 标题前景 | `text.title` | 已加粗的分节与分组标题，包括 Inspector section、Explorer 的 Assets / Resources、设置与偏好标题、GroupBox、模板标题和表格内部的分组条目 |
 | 禁用 | `text.disabled` | 不可用控件的文字和单色图标 |
-| 强调 | `accent.primary` | 控件激活、焦点与强调边框、滑条填充、曲线编辑点与手柄激活 |
-| 强调底上的前景 | `accent.text` | 高亮菜单和实色强调按钮上的文字与单色图标 |
+| 主要强调 | `accent.primary` | 控件激活、焦点与强调边框、滑条填充、曲线编辑点与手柄激活 |
+| 强调底上的前景 | `accent.text` | 实色强调控件和强调底色选区内的文字与单色图标 |
 | 基础表面 | `background.primary/secondary/tertiary` | 节点主体在选中前后均使用 tertiary，选中时只高亮边框 |
-| 悬停叠色 | `background.hoverOverlay` | 菜单栏当前项、普通和强调按钮、工具栏选择器、参数滑块手柄、Explorer 分组标题、树行和页签共用。叠色的 Alpha 决定原底色的可见程度。滑块手柄按住拖动期间继续显示叠色 |
-| 选中背景 | `background.selected` | 树、列表、表格单元格、普通页签和 Inspector 页签使用选中底色，Dark 默认为 `#143C48`，Light 默认为 `#ACD6E0`。Dock 页签顶线另外表示面板焦点，表格拖放线表示插入位置 |
+| 悬停叠色 | `background.hoverOverlay` | 菜单栏中仅悬停的标题、普通和强调按钮、工具栏选择器、参数滑块手柄、Explorer 分组标题、树行和页签共用。叠色的 Alpha 决定原底色的可见程度。滑块手柄按住拖动期间继续显示叠色 |
+| 选中背景 | `background.selected` | 展开的菜单标题、弹出菜单中的当前命令、树、列表、表格单元格、普通页签和 Inspector 页签使用选中底色，Dark 默认为 `#143C48`，Light 默认为 `#ACD6E0`。Dock 页签顶线另外表示面板焦点，表格拖放线表示插入位置 |
 | 拖放目标 | `background.dropTarget` | 可接收拖放的树行、Resources 分节标题和蓝图节点上叠加的半透明底色；行内文字与图标保持可见，不画左侧强调条 |
 | 首要边界 | `border.primary` | 界面框架排布分割、面板边界和内容分隔线；包括 Dock 面板、画布外框、声道分隔及面板滚动条 |
 | 次要边界 | `border.secondary` | 控件与按钮描边、表格完整外框、网格及行列分隔、控件内滚动条；禁用态控件描边仍属此类 |
@@ -217,7 +217,7 @@ Track 与 Segment 的拖动、拉伸吸附对齐线统一使用现有 Track 样�
 
 对象引用进入只读或关闭选择入口时，有效对象的名称和图标使用主要前景，可继续导航。可编辑状态下，继承引用保留次要文字，失效引用保留错误色。整个控件禁用时使用禁用文字。分段控件进入数值编辑时使用主要文字，普通分段选项保持原有层次。
 
-菜单栏常态与悬停文字的绘制位置 `shell.menuText`、`shell.menuHoverText` 均绑定首要文字；下拉菜单普通文字同样使用首要文字。菜单栏与下拉菜单不可用时使用禁用文字，强调背景上的文字使用 `accent.text`。
+菜单栏标题悬停时使用 `background.hoverOverlay`，展开后使用 `background.selected`。在弹出菜单和子菜单中，鼠标或方向键定位到的命令使用 `background.selected`。可用命令的文字、快捷键、勾选标记和子菜单箭头使用主要前景，禁用命令使用禁用前景。
 
 同一颜色可能由 QSS、QPainter 或 QPalette 消费；绘制技术和所在面板都不构成新增颜色角色的理由。透明度、渐变与交互几何可以不同，颜色来源仍可共享。
 
@@ -272,7 +272,7 @@ Studio Default 提供 76 个可编辑源颜色角色，共 12 类。每项包含
 | 分类 | 数量 | 开放范围 |
 |---|---|---|
 | Foreground | 4 | 主要前景、次要前景、标题前景、强调底上的前景 |
-| States | 6 | 强调、次级强调、成功、警告、错误、禁用 |
+| States | 6 | 主要强调、次级强调、成功、警告、错误、禁用 |
 | Tools | 6 | 播放、停止、复位、平台联动、远程连接、数据采集 |
 | Background | 7 | 主背景、控件背景、抬升背景、面板、标题、轨道、交替轨道 |
 | Interaction | 7 | 悬停叠色、选中背景、拖放目标、三类边界、滑块底轨 |
@@ -284,7 +284,7 @@ Studio Default 提供 76 个可编辑源颜色角色，共 12 类。每项包含
 | Blueprint | 9 | 画布、网格点、三类端口、三类关系连线、节点波形 |
 | Startup | 4 | 启动波浪的暗部、低色阶、高色阶和高光 |
 
-入口为可停靠的 **Preferences → Appearance** 面板。页签上方可选择 `Theme`、`Editor Scale` 与 `Information Language`。`Theme` 切换完整主题，包括字体、图标及控件尺寸。下方的 **Theme Configuration** 分组沿用 Inspector 的分类页签，在 **Colors**、**Typography** 和 **Spacing & Sizing** 之间切换。两个面板的分类页签在各种宽高下都横排在内容顶部。Colors 包含 Color Palette、分类与搜索、详细颜色表格及重置操作。切换主题时选中目标主题的默认色卡，Color Palette 仅列出该主题提供的色卡。字段沿用标准表单列比例；色卡选择不改变主题身份或非颜色属性。下拉框左侧显示色卡名称，右侧色条按顺序展示主背景、控件背景、选中背景、强调色、主要前景、次要前景、成功、警告、错误、次级强调十种渲染颜色。色条通过当前主题绑定生成，不依赖主题使用固定的职责名称。
+入口为可停靠的 **Preferences → Appearance** 面板。页签上方可选择 `Theme`、`Editor Scale` 与 `Information Language`。`Theme` 切换完整主题，包括字体、图标及控件尺寸。下方的 **Theme Configuration** 分组沿用 Inspector 的分类页签，在 **Colors**、**Typography** 和 **Spacing & Sizing** 之间切换。两个面板的分类页签在各种宽高下都横排在内容顶部。Colors 包含 Color Palette、分类与搜索、详细颜色表格及重置操作。切换主题时选中目标主题的默认色卡，Color Palette 仅列出该主题提供的色卡。字段沿用标准表单列比例；色卡选择不改变主题身份或非颜色属性。下拉框左侧显示色卡名称，右侧色条按顺序展示主背景、控件背景、选中背景、主要强调、主要前景、次要前景、成功、警告、错误、次级强调十种渲染颜色。色条通过当前主题绑定生成，不依赖主题使用固定的职责名称。
 
 Colors 编辑当前主题的当前色卡。即使另一个主题使用相同色卡 ID，颜色修改也彼此隔离。分类和搜索共同过滤颜色列表，搜索覆盖职责名称、分类、用途说明及颜色键。列表并列展示当前颜色与 `Palette Default`，两列默认使用 48 个逻辑像素宽的色块，下方等宽的 4 个逻辑像素细条与色块紧贴、共用外边框，中间仅以一条边框线分隔。色块外框与内部横线使用次要边界 `border.secondary`，两列均随实时预览刷新。细条按 Alpha 值显示不透明度：0 为空条，255 为满条；填充固定白色、背景固定黑色，不参与色卡管理。悬停在任一单元格可查看该颜色的用途。双击该行，或将焦点移至该行后按 Enter，可打开 `ColorEditorDialog`。上方是 SV 二维选色区域和窄 H 色相条，下方分别排列 H/S/V、R/G/B 数值，支持透明度的职责另显示 A 滑条与数值，使用公有 `LinearSliderPresenter`。次级强调只编辑颜色，其表格色块下方的不透明度细条始终为满条。H 为 0–359，S/V 为 0–100，R/G/B/A 为 0–255，数值不显示单位后缀；A 独立于两种色彩坐标，修改透明度不重算 RGB。底部操作行左侧的 20×20 吸管图标用于屏幕拾色；拾色保留当前 A 值；拾色时按 Esc 取消此次拾取并恢复拾色前的颜色。
 
@@ -350,12 +350,13 @@ Studio Default 已保存的 `text.muted` 覆盖迁入同一色卡的 `text.secon
 
 | 已移除的键 | 共同来源 |
 |---|---|
-| `border.accent`、`slider.fill`、`knob.arc`、`shell.menuPressed` | `accent.primary` |
+| `border.accent`、`slider.fill`、`knob.arc` | `accent.primary` |
 | `panel.border` | `border.primary` |
 | `knob.face`、`shell.buttonPressed` | `background.tertiary` |
 | `shell.menuHover` | `background.hoverOverlay` |
 | `shell.buttonHover` | `background.hoverOverlay` |
-| `shell.menuPressedText` | `accent.text` |
+| `shell.menuPressed` | `background.selected` |
+| `shell.menuPressedText` | `text.primary` |
 
 以上 10 个 UI 字段连同独立配置键均已删除，保留的消费者直接使用共同来源。表中的旋钮绑定是历史收束记录，旋钮实现与剩余的指示线职责已在 2026-11-01 清理。窗口关闭按钮、标题栏文字等仍保留其视觉职责。
 

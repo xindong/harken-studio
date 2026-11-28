@@ -183,8 +183,8 @@ QMenuBar::item:selected {
 }
 
 QMenuBar::item:pressed {
-    background-color: @accent@;
-    color: @accentText@;
+    background-color: @bgSelected@;
+    color: @textPrimary@;
 }
 
 QMenuBar::item:disabled {
@@ -213,8 +213,8 @@ QMenu::item {
 }
 
 QMenu::item:selected {
-    background-color: @accent@;
-    color: @accentText@;
+    background-color: @bgSelected@;
+    color: @textPrimary@;
 }
 
 QMenu::item:disabled {
@@ -2182,8 +2182,8 @@ QDialog QLabel {
 }
 
 #titleBarMenuBar::item:pressed {
-    background-color: @accent@;
-    color: @accentText@;
+    background-color: @bgSelected@;
+    color: @textPrimary@;
 }
 
 #titleBarMenuBar::item:disabled {

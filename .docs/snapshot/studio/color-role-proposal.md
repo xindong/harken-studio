@@ -1,6 +1,6 @@
 # Studio Default 颜色职责调整方案原文
 
-2026-11-28 已落实 Interaction 的悬停与选中调整。菜单栏当前项、普通及强调控件共用 `background.hoverOverlay`。树、列表、表格和普通页签用 `background.selected` 表示选中，Dock 焦点与拖放位置各自保留指示线。[当前职责与绘制范围](colors.md#studio-default-颜色职责)
+2026-11-28 已落实 Interaction 的悬停与选中调整。菜单栏标题悬停时与普通及强调控件共用 `background.hoverOverlay`。展开的菜单标题、弹出菜单中的当前命令、树、列表、表格和普通页签用 `background.selected` 表示选中，Dock 焦点与拖放位置各自保留指示线。[当前职责与绘制范围](colors.md#studio-default-颜色职责)
 
 ## 方案原文
 
