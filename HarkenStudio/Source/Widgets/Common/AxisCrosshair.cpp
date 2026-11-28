@@ -44,8 +44,12 @@ void AxisIndicatorButton::paintEvent(QPaintEvent*)
     const auto circle = QRectF(rect()).adjusted(inset, inset, -inset, -inset);
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing);
-    const auto& background = underMouse() ? colors.bgHover : theme->domains.curve.colors.readoutBackground;
-    drawIndicatorSurface(painter, background, circle, circle.width() / 2, QPen(colors.borderSecondary, borderWidth));
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(theme->domains.curve.colors.readoutBackground);
+    painter.drawEllipse(circle);
+    painter.setBrush(isEnabled() && underMouse() ? QBrush(colors.hoverOverlay) : QBrush(Qt::NoBrush));
+    painter.setPen(QPen(colors.borderSecondary, borderWidth));
+    painter.drawEllipse(circle);
     const int extent = theme->ui.metrics.iconExtent;
     icon().paint(&painter, (width() - extent) / 2, (height() - extent) / 2, extent, extent);
 }

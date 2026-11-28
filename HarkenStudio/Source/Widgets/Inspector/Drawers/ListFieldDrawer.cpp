@@ -521,7 +521,7 @@ private:
                 if (restoreFocus)
                     for (size_t i = 0; i < rowWidgets_.size(); ++i)
                         if (rowWidgets_[i]->property("selected").toBool()) {
-                            rowEditors_[i][0]->setFocus(Qt::OtherFocusReason);
+                            rowEditors_[i][0].editor->setFocus(Qt::OtherFocusReason);
                             break;
                         }
                 if (changed) notify();
@@ -761,12 +761,15 @@ private:
             {
                 if (hasRowOrder_ && ci == 0) {
                     if (anchorCol_ == 0)
-                        static_cast<QLabel*>(rowEditors_[i][ci])->setText(elem.value(anchorField()).toString());
+                        static_cast<QLabel*>(rowEditors_[i][ci].editor)->setText(elem.value(anchorField()).toString());
                     continue;
                 }
                 const auto& ed = desc_.elementSchema[ci];
                 const QVariant v = elem.value(ed.field, ed.def);
-                QWidget* editor = rowEditors_[i][ci];
+                const auto& rowEditor = rowEditors_[i][ci];
+                QWidget* editor = rowEditor.editor;
+                if (ed.type == PropType::Float)
+                    updateReadableNumber(rowEditor.cell, v);
                 if (ed.type == PropType::Bool && desc_.flags.readOnly
                     && v.isValid() != (qobject_cast<QCheckBox*>(editor) != nullptr)) return false;
                 const QSignalBlocker blocker(editor);
@@ -866,7 +869,7 @@ private:
             const int last = static_cast<int>(desc_.elementSchema.size()) - 1;
             const auto& shares = defaultShares_;
             QList<QWidget*> cells;
-            std::vector<QWidget*> editors;
+            std::vector<RowEditor> editors;
             for (int ci = 0; ci <= last; ++ci)
             {
                 if (hasRowOrder_ && ci == 0) {
@@ -883,15 +886,17 @@ private:
                         number->setToolTip(tr("Double-click to edit index; drag to move row"));
                     h->addWidget(number);
                     cells.append(number);
-                    editors.push_back(number);
+                    editors.push_back({number, nullptr});
                     continue;
                 }
                 const auto& ed = desc_.elementSchema[ci];
                 const bool stretch = ci == last;
                 auto* cell = box_->createCell(row);
-                QWidget* editor =
-                    buildElementEditor(ed, i, elem.value(ed.field, ed.def), cell, stretch);
-                editors.push_back(editor);
+                const QVariant value = elem.value(ed.field, ed.def);
+                if (ed.type == PropType::Float)
+                    updateReadableNumber(cell, value);
+                QWidget* editor = buildElementEditor(ed, i, value, cell, stretch);
+                editors.push_back({editor, cell});
                 auto* slider = qobject_cast<ParameterSlider*>(editor);
                 const auto decorate = [&](QWidget* control) {
                     return cellDecorator_ ? cellDecorator_(control, elem, ed.field) : control;
@@ -1068,6 +1073,14 @@ private:
         }
     }
 
+    void updateReadableNumber(TableCell* cell, const QVariant& value)
+    {
+        bool numeric = false;
+        const double number = value.toDouble(&numeric);
+        QtControlSkin::setSemanticProperty(cell, "readableNumber",
+            runtimeReadOnly_ && numeric && !value.isNull() && std::isfinite(number));
+    }
+
     QWidget* buildFloatEditor(const PropertyDescriptor& ed, int row, const QVariant& v,
                               QWidget* parent, bool stretch, bool staticReadOnly)
     {
@@ -1143,7 +1156,11 @@ private:
     QPointer<QMenu> addMenu_;
     QToolButton* removeBtn_ = nullptr;
     std::vector<QWidget*> rowWidgets_;
-    std::vector<std::vector<QWidget*>> rowEditors_;
+    struct RowEditor {
+        QWidget* editor;
+        TableCell* cell;
+    };
+    std::vector<std::vector<RowEditor>> rowEditors_;
     std::vector<int> defaultShares_;
     std::optional<FieldDomain> domain_;
     QPointer<QLineEdit> anchorEdit_;

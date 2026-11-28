@@ -30,6 +30,9 @@
 namespace harken::studio {
 namespace {
 
+const QStringList retiredStudioDefaultColorRoles{QStringLiteral("accent.hover"), QStringLiteral("background.hover"),
+                                                QStringLiteral("slider.track")};
+
 void writeStyleOverrides(ISettingsStorage& storage, const ThemeAppearance& appearance)
 {
     QVariantMap metrics;
@@ -380,6 +383,53 @@ ThemePackageLoadResult ThemeManager::customizedCandidate(
             colors.insert(color.key(), color.value());
         themeColors->insert(result.candidate->defaultPaletteId, colors);
     }
+    for (auto [owner, palettes] : appearance.colors.asKeyValueRange())
+    {
+        const ThemePackageCandidate* base = &*result.candidate;
+        ThemePackageLoadResult other;
+        if (owner != appearance.themeId)
+        {
+            if (palettes == committedAppearance_.colors.value(owner) ||
+                std::none_of(palettes.cbegin(), palettes.cend(), [](const auto& colors) {
+                    const auto color = colors.constFind(QStringLiteral("accent.secondary"));
+                    return color != colors.cend() && color->alphaF() != 1.0f;
+                }))
+                continue;
+            other = loadBaseTheme(owner);
+            if (!other.ok())
+                continue;
+            base = &*other.candidate;
+        }
+        for (const auto& palette : base->palettes)
+        {
+            auto overrides = palettes.find(palette.id);
+            if (overrides == palettes.end())
+                continue;
+            if (base->usesStudioDefaultColorRoles && owner == appearance.themeId)
+            {
+                const QString info = QStringLiteral("status.info");
+                const QString secondary = QStringLiteral("accent.secondary");
+                const auto committed = committedAppearance_.colors.value(owner);
+                auto saved = palette.id == base->defaultPaletteId ? committed.value(QString())
+                                                                 : ThemeColorOverrides{};
+                saved.insert(committed.value(palette.id));
+                for (const auto& key : retiredStudioDefaultColorRoles)
+                    if (saved.contains(key) && overrides->value(key) == saved.value(key))
+                        overrides->remove(key);
+                const auto oldInfo = saved.constFind(info);
+                if (oldInfo != saved.cend() && overrides->value(info) == *oldInfo)
+                {
+                    if (!overrides->contains(secondary))
+                        overrides->insert(secondary, *oldInfo);
+                    overrides->remove(info);
+                }
+                const auto prior = saved.value(secondary, saved.value(info));
+                if (prior.isValid() && prior.alphaF() != 1.0f && overrides->value(secondary) == prior)
+                    normalizeOpaqueThemeColors(base->colorRoles, *overrides, palette.snapshot->ui.colors.bgPrimary);
+            }
+            normalizeOpaqueThemeColors(base->colorRoles, *overrides);
+        }
+    }
     for (auto theme = appearance.colors.cbegin(); theme != appearance.colors.cend(); ++theme)
     {
         for (auto palette = theme->cbegin(); palette != theme->cend(); ++palette)
@@ -567,28 +617,43 @@ bool ThemeManager::persistAppearance(
     storage_->beginGroup(QStringLiteral("Appearance"));
     storage_->setValue(QStringLiteral("ThemeId"), appearance.themeId);
     storage_->setValue(QStringLiteral("PaletteId"), appearance.paletteId);
-    QVariantMap customizations;
-    for (auto theme = appearance.colors.cbegin(); theme != appearance.colors.cend(); ++theme)
-    {
-        QVariantMap palettes;
-        for (auto palette = theme->cbegin(); palette != theme->cend(); ++palette)
-        {
-            QVariantMap overrides;
-            for (auto color = palette->cbegin(); color != palette->cend(); ++color)
-                overrides.insert(color.key(), color->name(QColor::HexArgb));
-            if (!overrides.isEmpty())
-                palettes.insert(palette.key(), overrides);
-        }
-        if (!palettes.isEmpty())
-            customizations.insert(theme.key(), palettes);
-    }
-    storage_->setValue(QStringLiteral("ThemePaletteColors"), customizations);
+    storage_->setValue(QStringLiteral("ThemePaletteColors"), storedPaletteColors(appearance));
     writeStyleOverrides(*storage_, appearance);
     storage_->remove(QStringLiteral("Colors"));
     storage_->remove(QStringLiteral("PaletteColors"));
     storage_->endGroup();
     storage_->sync();
     return true;
+}
+
+QVariantMap ThemeManager::storedPaletteColors(const ThemeAppearance& appearance) const
+{
+    QVariantMap customizations;
+    for (auto theme = appearance.colors.cbegin(); theme != appearance.colors.cend(); ++theme)
+    {
+        const QString secondary = QStringLiteral("accent.secondary");
+        bool inherited = theme.key() == builtinThemeId();
+        if (!inherited && std::any_of(theme->cbegin(), theme->cend(), [&](const auto& entries) {
+                return entries.contains(secondary);
+            }))
+        {
+            const auto loaded = loadBaseTheme(theme.key());
+            inherited = loaded.ok() && loaded.candidate->usesStudioDefaultColorRoles;
+        }
+        QVariantMap palettes;
+        for (auto palette = theme->cbegin(); palette != theme->cend(); ++palette)
+        {
+            QVariantMap overrides;
+            for (auto color = palette->cbegin(); color != palette->cend(); ++color)
+                overrides.insert(color.key(), color->name(inherited && color.key() == secondary
+                    && color->alphaF() == 1.0f ? QColor::HexRgb : QColor::HexArgb));
+            if (!overrides.isEmpty())
+                palettes.insert(palette.key(), overrides);
+        }
+        if (!palettes.isEmpty())
+            customizations.insert(theme.key(), palettes);
+    }
+    return customizations;
 }
 
 ThemeAppearance ThemeManager::persistedAppearance() const
@@ -618,10 +683,11 @@ ThemeAppearance ThemeManager::persistedAppearance() const
         appearance.themeId = themeId(id);
     appearance.paletteId = storage_->value(QStringLiteral("PaletteId")).toString();
     readStyleOverrides(*storage_, appearance);
-    if (storage_->contains(QStringLiteral("ThemePaletteColors")))
+    const bool currentFormat = storage_->contains(QStringLiteral("ThemePaletteColors"));
+    const auto storedThemes = storage_->value(QStringLiteral("ThemePaletteColors")).toMap();
+    if (currentFormat)
     {
-        const auto themes = storage_->value(QStringLiteral("ThemePaletteColors")).toMap();
-        for (auto theme = themes.cbegin(); theme != themes.cend(); ++theme)
+        for (auto theme = storedThemes.cbegin(); theme != storedThemes.cend(); ++theme)
         {
             const auto palettes = theme->toMap();
             for (auto palette = palettes.cbegin(); palette != palettes.cend(); ++palette)
@@ -648,6 +714,44 @@ ThemeAppearance ThemeManager::persistedAppearance() const
         appearance.paletteId.clear();
     }
     storage_->endGroup();
+    const QString retiredInfo = QStringLiteral("status.info");
+    const QString secondary = QStringLiteral("accent.secondary");
+    bool normalized = false;
+    for (auto [owner, palettes] : appearance.colors.asKeyValueRange())
+    {
+        if (std::none_of(palettes.cbegin(), palettes.cend(), [&](const auto& colors) {
+                return colors.contains(retiredInfo) || colors.contains(secondary)
+                    || std::any_of(retiredStudioDefaultColorRoles.cbegin(), retiredStudioDefaultColorRoles.cend(),
+                                   [&](const QString& key) { return colors.contains(key); });
+            }))
+            continue;
+        const auto base = loadBaseTheme(owner);
+        if (!base.ok() || !base.candidate->usesStudioDefaultColorRoles)
+            continue;
+        for (auto& colors : palettes)
+        {
+            for (const auto& key : retiredStudioDefaultColorRoles)
+                if (colors.remove(key))
+                    normalized = true;
+            auto info = colors.find(retiredInfo);
+            if (info == colors.end())
+                continue;
+            if (!colors.contains(secondary))
+                colors.insert(secondary, *info);
+            colors.remove(retiredInfo);
+            normalized = true;
+        }
+        for (const auto& palette : base.candidate->palettes)
+        {
+            auto overrides = palettes.find(palette.id);
+            if (overrides == palettes.end() || !overrides->contains(secondary))
+                continue;
+            normalizeOpaqueThemeColors(base.candidate->colorRoles, *overrides, palette.snapshot->ui.colors.bgPrimary);
+            const auto stored = storedThemes.value(owner).toMap().value(palette.id).toMap();
+            if (stored.value(secondary).toString() != overrides->value(secondary).name(QColor::HexRgb))
+                normalized = true;
+        }
+    }
     auto studioColors = appearance.colors.find(builtinThemeId());
     if (studioColors != appearance.colors.end())
     {
@@ -675,6 +779,15 @@ ThemeAppearance ThemeManager::persistedAppearance() const
             colors.remove(QStringLiteral("text.muted"));
         }
     }
+    if (normalized && storage_->isWritable())
+    {
+        storage_->setValue(QStringLiteral("Appearance/ThemePaletteColors"), storedPaletteColors(appearance));
+        if (!currentFormat)
+            storage_->remove(QStringLiteral("Appearance/PaletteId"));
+        storage_->remove(QStringLiteral("Appearance/Colors"));
+        storage_->remove(QStringLiteral("Appearance/PaletteColors"));
+        storage_->sync();
+    }
     return appearance;
 }
 
@@ -685,16 +798,12 @@ void ThemeManager::paintBindAffordance(QPainter& p, const QRect& rect, BindGlyph
 
     const auto& themeColors = colors();
     const auto& geometry = metrics();
-    QColor fg = !enabled ? themeColors.textDisabled
-                         : (active ? themeColors.accent : themeColors.textPrimary);
-    if (hover && enabled)
-        fg = active ? themeColors.accentHover : themeColors.textPrimary;
+    const QColor fg = !enabled ? themeColors.textDisabled
+                               : (active ? themeColors.accent : themeColors.textPrimary);
 
     if (hover && enabled) {
-        QColor bg = themeColors.accent;
-        bg.setAlphaF(bg.alphaF() * (active ? 46 : 30) / 255.0);
         p.setPen(Qt::NoPen);
-        p.setBrush(bg);
+        p.setBrush(themeColors.hoverOverlay);
         const qreal inset = geometry.borderWidth;
         p.drawRoundedRect(QRectF(rect).adjusted(inset, inset, -inset, -inset),
                           geometry.radiusSmall, geometry.radiusSmall);
@@ -719,7 +828,7 @@ void ThemeManager::paintBindAffordance(QPainter& p, const QRect& rect, BindGlyph
     p.drawRoundedRect(front, radius, radius);
     if (active) {
         QColor fill = themeColors.accent;
-        fill.setAlphaF(fill.alphaF() * (hover ? 235 : 200) / 255.0);
+        fill.setAlphaF(fill.alphaF() * 200 / 255.0);
         p.setBrush(fill);
         p.drawRoundedRect(front, radius, radius);
     }

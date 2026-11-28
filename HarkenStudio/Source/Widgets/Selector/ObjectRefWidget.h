@@ -87,6 +87,7 @@ private:
     void refreshMetrics();
     void refreshLayout();
     void refreshIcon();
+    bool hasReadableReadOnlyValue() const;
     void refreshStyle();
     void updatePickVisibility();
     void setHovered(bool hovered);

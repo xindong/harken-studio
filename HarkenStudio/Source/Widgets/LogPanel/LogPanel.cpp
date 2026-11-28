@@ -50,6 +50,27 @@ LogTextEdit::LogTextEdit(QWidget* parent)
     connect(&FontManager::instance(), &FontManager::fontChanged, this, [this] {
         setFont(FontManager::instance().getFont(FontRole::Mono, AppSettings::instance().panelFontSize(PanelId::Log)));
     });
+    auto& manager = ThemeManager::instance();
+    connect(&manager, &ThemeManager::appearanceChanged, this,
+            [this, previous = manager.snapshot()->domains.log.category](const ThemeSnapshotPtr& theme) mutable {
+        const QColor color = theme->domains.log.category;
+        if (previous == color) return;
+        previous = color;
+        QTextCharFormat category;
+        category.setForeground(color);
+        QTextCursor cursor(document());
+        cursor.beginEditBlock();
+        for (auto block = document()->begin(); block.isValid(); block = block.next()) {
+            const auto formats = block.textFormats();
+            for (const auto& range : formats) {
+                if (!range.format.boolProperty(QTextFormat::UserProperty)) continue;
+                cursor.setPosition(block.position() + range.start);
+                cursor.setPosition(cursor.position() + range.length, QTextCursor::KeepAnchor);
+                cursor.mergeCharFormat(category);
+            }
+        }
+        cursor.endEditBlock();
+    });
     int fontSize = AppSettings::instance().panelFontSize(PanelId::Log);
     setFont(FontManager::instance().getFont(FontRole::Mono, fontSize));
 }
@@ -66,7 +87,8 @@ void LogTextEdit::appendEntry(const LogEntry& entry)
                       formatForLevel(entry.level));
     
     QTextCharFormat catFormat;
-    catFormat.setForeground(ThemeManager::instance().colors().info);
+    catFormat.setProperty(QTextFormat::UserProperty, true);
+    catFormat.setForeground(ThemeManager::instance().snapshot()->domains.log.category);
     cursor.insertText(QString("[%1] ").arg(entry.category, -8), catFormat);
     
     cursor.insertText(entry.message + "\n", formatForLevel(entry.level));

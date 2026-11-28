@@ -252,7 +252,7 @@ ads--CResizeHandle {
     result.replace(QStringLiteral("@BG_SECONDARY@"), colorValue(colors.bgSecondary));
     result.replace(QStringLiteral("@BORDER_PRIMARY@"), colorValue(colors.borderPrimary));
     result.replace(QStringLiteral("@HOVER_OVERLAY@"), colorValue(colors.hoverOverlay));
-    result.replace(QStringLiteral("@ACTIVE_TAB_ACCENT@"), rgba(colors.accent, style.activeTabAccentOpacity));
+    result.replace(QStringLiteral("@ACTIVE_TAB_ACCENT@"), colorValue(style.activeTabAccent));
     result.replace(QStringLiteral("@ACCENT@"), colorValue(colors.accent));
     result.replace(QStringLiteral("@INACTIVE_TAB_TEXT@"), colorValue(colors.textSecondary));
     result.replace(QStringLiteral("@TEXT_PRIMARY@"), colorValue(colors.textPrimary));

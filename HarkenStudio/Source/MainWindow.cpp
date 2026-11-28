@@ -1399,6 +1399,7 @@ void MainWindow::setupMainToolBar()
     auto* layoutSelector = new ToolBarMenuComboBox(toolbar);
     layoutSelector->setObjectName(QStringLiteral("layoutSelector"));
     layoutSelector->setAccessibleName(tr("Layout"));
+    layoutSelector->setToolTip(tr("Select editor layout"));
     toolbar->addTrailingWidget(layoutSelector);
     auto* layoutsMenu = layoutSelector->menu();
     layoutsMenu->setTitle(tr("Layout"));
@@ -1409,13 +1410,12 @@ void MainWindow::setupMainToolBar()
         const QString name = layoutController_->hasNamedLayout()
             ? layoutController_->currentNamedLayout() : tr("Default");
         layoutSelector->setDisplayText(name);
-        layoutSelector->setToolTip(tr("Layout: %1").arg(name));
     };
     connect(layoutController_, &LayoutController::currentLayoutChanged, layoutSelector, refreshLayout);
     layoutController_->rebuildLayoutsMenu();
     refreshLayout();
 
-    auto* remoteAction = new QAction(tr("Remote Connect"), toolbar);
+    auto* remoteAction = new QAction(tr("Remote Connection"), toolbar);
     remoteAction->setCheckable(true);
     auto* button = toolbar->addLeadingAction(remoteAction, QStringLiteral("remoteConnectButton"));
 
@@ -1426,7 +1426,6 @@ void MainWindow::setupMainToolBar()
         remoteAction->setChecked(connected);
         remoteAction->setIcon(ThemeManager::instance().resolveIcon(
             QString::fromLatin1(ThemeAssetIds::RemoteConnect)).icon);
-        remoteAction->setToolTip(tr("Remote Connect\n%1").arg(remoteConnection_->statusText()));
         button->setAccessibleDescription(remoteConnection_->statusText());
     };
     connect(remoteAction, &QAction::triggered, this, [this, refresh] {
@@ -1438,23 +1437,22 @@ void MainWindow::setupMainToolBar()
     connect(&ThemeManager::instance(), &ThemeManager::appearanceChanged, button, refresh);
     refresh();
 
-    auto* captureAction = new QAction(tr("Start Capture"), toolbar);
+    auto* captureAction = new QAction(tr("Data Capture"), toolbar);
     captureAction->setObjectName(QStringLiteral("captureAction"));
     captureAction->setCheckable(true);
     auto* captureButton = toolbar->addLeadingAction(captureAction, QStringLiteral("captureButton"));
     const auto refreshCapture = [this, captureAction, captureButton] {
         const bool capturing = eventCaptureController_->canStop();
+        const bool canStart = eventCaptureController_->canStart();
         captureAction->setChecked(capturing);
-        captureAction->setEnabled(capturing || eventCaptureController_->canStart());
+        captureAction->setEnabled(capturing || canStart);
         captureAction->setIcon(ThemeManager::instance().resolveIcon(QString::fromLatin1(
             ThemeAssetIds::MonitorCapture)).icon);
-        const QString action = capturing ? tr("Stop Capture") : tr("Start Capture");
-        captureAction->setText(action);
-        captureAction->setToolTip(tr("%1\n%2\n%3").arg(action,
-            capturing ? eventCaptureController_->targetText() : eventCaptureController_->availableTargetText(),
-            eventCaptureController_->statusText()));
-        captureButton->setAccessibleName(action);
-        captureButton->setAccessibleDescription(eventCaptureController_->statusText());
+        QString details = eventCaptureController_->statusText();
+        if (canStart)
+            details = tr("%1\n%2").arg(eventCaptureController_->availableTargetText(), details);
+        captureAction->setToolTip(tr("%1\n%2").arg(captureAction->text(), details));
+        captureButton->setAccessibleDescription(details);
     };
     connect(captureAction, &QAction::triggered, this, [this, refreshCapture] {
         if (eventCaptureController_->canStop()) eventCaptureController_->stop();

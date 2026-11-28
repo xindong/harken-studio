@@ -178,13 +178,13 @@ QMenuBar::item {
 }
 
 QMenuBar::item:selected {
-    background-color: @bgHover@;
+    background-overlay: @hoverOverlay@;
     color: @textPrimary@;
 }
 
 QMenuBar::item:pressed {
-    background-color: @accent@;
-    color: @accentText@;
+    background-color: @bgSelected@;
+    color: @textPrimary@;
 }
 
 QMenuBar::item:disabled {
@@ -213,8 +213,8 @@ QMenu::item {
 }
 
 QMenu::item:selected {
-    background-color: @accent@;
-    color: @accentText@;
+    background-color: @bgSelected@;
+    color: @textPrimary@;
 }
 
 QMenu::item:disabled {
@@ -276,9 +276,6 @@ QToolButton[segmentedControl="true"] {
     min-height: @fieldContentHeight@px;
     max-height: @fieldContentHeight@px;
 }
-QToolButton[segmentedControl="true"]:hover:enabled {
-    border-color: @accent@;
-}
 QToolButton[segmentedControl="true"]:checked {
     background: @bgSelected@;
 }
@@ -286,6 +283,10 @@ QToolButton[segmentedControl="true"][auditionOnly="true"]:checked {
     background: transparent;
     color: @accent@;
     border-color: @accent@;
+}
+QToolButton[segmentedControl="true"]:hover:enabled {
+    border-color: @accent@;
+    background-overlay: @hoverOverlay@;
 }
 QToolButton[segmentedControl="true"]:disabled { color: @textDisabled@; }
 QToolButton[segmentedControl="true"][segmentPosition="joined"],
@@ -333,32 +334,28 @@ QToolBar#platformBar QToolButton[segmentedControl="true"]:checked:enabled {
     color: @accentText@;
 }
 QToolBar#platformBar QToolButton[segmentedControl="true"]:checked:hover:enabled {
-    background: @accentHover@;
+    background-overlay: @hoverOverlay@;
 }
 QToolBar#platformBar QToolButton[segmentedControl="true"]:disabled {
     background: transparent;
     color: @textDisabled@;
 }
 QToolBar#platformBar QToolButton#remoteConnectButton:checked:enabled {
-    background: @warning@;
+    background: @toolRemote@;
     color: @accentText@;
-}
-QToolBar#platformBar QToolButton#remoteConnectButton:checked:hover:enabled {
-    background: @warningHover@;
 }
 QToolBar#platformBar QToolButton#captureButton:checked:enabled {
-    background: @error@;
+    background: @toolCapture@;
     color: @accentText@;
-}
-QToolBar#platformBar QToolButton#captureButton:checked:hover:enabled {
-    background: @errorHover@;
 }
 QToolBar#platformBar QToolButton#platformBarAll:checked:enabled {
-    background: @success@;
+    background: @toolAll@;
     color: @accentText@;
 }
+QToolBar#platformBar QToolButton#remoteConnectButton:checked:hover:enabled,
+QToolBar#platformBar QToolButton#captureButton:checked:hover:enabled,
 QToolBar#platformBar QToolButton#platformBarAll:checked:hover:enabled {
-    background: @successHover@;
+    background-overlay: @hoverOverlay@;
 }
 QWidget#playbackControls {
     background-color: @bgTertiary@;
@@ -378,7 +375,7 @@ QWidget#playbackControls QToolButton#playBtn[layoutDirection="RightToLeft"] {
     border-bottom-right-radius: @radiusMedium@px;
 }
 QToolBar#platformBar #playbackControls QToolButton#playBtn[playing="true"] {
-    background: @successSoft@;
+    background: @toolPlaySoft@;
 }
 
 /* Inline editor of a numeric segment: it sits inside the segment button, so it
@@ -469,7 +466,6 @@ QTabBar::tab {
 QTabBar::tab:selected {
     background-color: @bgSelected@;
     color: @accent@;
-    border-top: @accentBorderWidth@px solid @accent@;
 }
 
 QTabBar::tab:hover:!selected {
@@ -578,7 +574,7 @@ QPushButton[splitButtonPart="primary"][primaryAction="true"]:enabled {
 }
 
 QPushButton[splitButtonPart="primary"][primaryAction="true"]:hover:enabled {
-    background-color: @accentHover@;
+    background-overlay: @hoverOverlay@;
 }
 
 QPushButton[splitButtonPart="primary"][primaryAction="true"]:pressed:enabled {
@@ -875,7 +871,6 @@ QAbstractSpinBox[fieldRole="compact"]:disabled {
 
 #logAutoScrollBtn:checked {
     background-color: @bgSelected@;
-    border-color: @accent@;
 }
 
 QCheckBox {
@@ -1016,14 +1011,8 @@ QTreeView::item:disabled, QListView::item:disabled, QTableView::item:disabled {
     background: transparent;
 }
 
-/* Accent bar via border only on flat lists — on trees/tables Qt repeats the
-   ::item border per row-panel/cell, so those paint it in code instead. */
 QListView::item {
     border-left: @accentBorderWidth@px solid transparent;
-}
-
-QListView::item:selected {
-    border-left: @accentBorderWidth@px solid @accent@;
 }
 
 QTableView, QTableWidget {
@@ -1087,9 +1076,8 @@ QSlider::handle:horizontal {
     border-radius: @radiusMedium@px;
 }
 
-QSlider::handle:horizontal:hover {
-    background-color: @brightText@;
-    box-shadow: 0 0 @sectionGap@px @accent@;
+QSlider::handle:horizontal:hover:enabled {
+    background-overlay: @hoverOverlay@;
 }
 
 QSlider::sub-page:horizontal {
@@ -1131,9 +1119,9 @@ QSlider[sliderRole="parameter"]::handle:horizontal {
     border-radius: 0px;
 }
 
-QSlider[sliderRole="parameter"]::handle:horizontal:hover,
-QSlider[sliderRole="parameter"]::handle:horizontal:pressed {
-    background-color: @accentHover@;
+QSlider[sliderRole="parameter"]::handle:horizontal:hover:enabled,
+QSlider[sliderRole="parameter"]::handle:horizontal:pressed:enabled {
+    background-overlay: @hoverOverlay@;
 }
 
 QSlider[sliderRole="parameter"]::groove:horizontal:disabled,
@@ -1171,9 +1159,9 @@ QSlider[sliderRole="parameter"]::handle:vertical {
     border-radius: 0px;
 }
 
-QSlider[sliderRole="parameter"]::handle:vertical:hover,
-QSlider[sliderRole="parameter"]::handle:vertical:pressed {
-    background-color: @accentHover@;
+QSlider[sliderRole="parameter"]::handle:vertical:hover:enabled,
+QSlider[sliderRole="parameter"]::handle:vertical:pressed:enabled {
+    background-overlay: @hoverOverlay@;
 }
 
 QSlider[sliderRole="parameter"]::groove:vertical:disabled,
@@ -1470,7 +1458,6 @@ QWidget#settingsSearchBar {
 #settingsCategoryList::item:selected {
     background-color: @bgSelected@;
     color: @accent@;
-    border-left-color: @accent@;
 }
 
 #settingsCategoryList::item:hover:!selected {
@@ -1633,7 +1620,6 @@ QLabel[aboutRole="value"] {
 #dropZoneFileList::item:selected {
     background-color: @bgSelected@;
     color: @accent@;
-    border-left-color: @accent@;
 }
 
 /* ==========================================================================
@@ -1702,12 +1688,10 @@ QFrame#listBox QWidget[listRow="true"][rowDetailsVisible="true"] { border-bottom
 QFrame#listBox QWidget#listRow[selected="true"],
 QFrame#listBox QWidget[listRow="true"][selected="true"] {
     background-color: @bgSelected@;
-    border-left-color: @accent@;
 }
 QFrame#listBox[cellSelection="true"] QWidget#listRow[selected="true"],
 QFrame#listBox[cellSelection="true"] QWidget[listRow="true"][selected="true"] {
     background-color: @bgPrimary@;
-    border-left-color: transparent;
 }
 QFrame#listBox[cellSelection="true"] QWidget[tableRowNumber="true"] {
     border-left: @accentBorderWidth@px solid transparent;
@@ -1715,7 +1699,6 @@ QFrame#listBox[cellSelection="true"] QWidget[tableRowNumber="true"] {
 }
 QFrame#listBox[cellSelection="true"] QWidget[tableRowNumber="true"][selected="true"] {
     background-color: @bgSelected@;
-    border-left-color: @accent@;
 }
 QWidget#listFoot {
     background-color: @headerBackground@;
@@ -1748,6 +1731,13 @@ QLabel[settingsRole="subtitle"]:disabled,
 QLabel[nodeContentRole="label"]:disabled,
 QLabel[nodeContentRole="value"]:disabled,
 QLabel[roValue="true"]:disabled { color: @textDisabled@; }
+QWidget[readOnlyNumbers="true"]:enabled harken--studio--TableCell[readableNumber="true"]:enabled QLabel[roValue="true"]:disabled,
+QWidget[readOnlyNumbers="true"]:enabled harken--studio--TableCell[readableNumber="true"]:enabled QDoubleSpinBox:disabled,
+QWidget[readOnlyNumbers="true"]:enabled harken--studio--TableCell[readableNumber="true"]:enabled QDoubleSpinBox QLineEdit:disabled,
+QWidget[readOnlyNumbers="true"]:enabled > harken--studio--ParameterSlider QDoubleSpinBox:disabled,
+QWidget[readOnlyNumbers="true"]:enabled > harken--studio--ParameterSlider QDoubleSpinBox QLineEdit:disabled {
+    color: @textPrimary@;
+}
 QWidget[fieldRole="preview"],
 harken--studio--ObjectRefWidget {
     background-color: @bgSecondary@;
@@ -1780,7 +1770,6 @@ QWidget[fieldRole="preview"][rangeWarning="true"] {
 }
 harken--studio--ObjectRefWidget[selected="true"] {
     background-color: @bgSelected@;
-    border-color: @accent@;
 }
 harken--studio--ObjectRefWidget[dropActive="true"] { border-color: @accent@; }
 harken--studio--ObjectRefWidget QLabel { background: transparent; border: none; }
@@ -1789,6 +1778,7 @@ harken--studio--ObjectRefWidget QLabel#refName[inherited="true"] { color: @textS
 harken--studio--ObjectRefWidget QLabel#refName[emptyValue="true"] { color: @textSecondary@; }
 harken--studio--ObjectRefWidget QLabel#refName[inputInvalid="true"] { color: @error@; }
 harken--studio--ObjectRefWidget QLabel#refName:disabled { color: @textDisabled@; }
+harken--studio--ObjectRefWidget:enabled QLabel#refName[readableReference="true"]:disabled { color: @textPrimary@; }
 
 QLineEdit[inputInvalid="true"]:enabled,
 QPlainTextEdit[inputInvalid="true"]:enabled,
@@ -1856,7 +1846,6 @@ QWidget#inspectorTabBar QToolButton:pressed { background-color: @bgTertiary@; co
 QWidget#inspectorTabBar QToolButton:checked {
     background-color: @bgSelected@;
     color: @accent@;
-    border-top-color: @accent@;
 }
 QScrollArea[inspectorTabPage="true"] { border: @borderWidth@px solid @borderPrimary@; }
 QLabel[bindingUnit="dB"],
@@ -1995,9 +1984,9 @@ QAbstractItemView[tableRole="data"]::item {
     padding: @tableCellPaddingY@px @tableCellPaddingX@px;
     border: none;
 }
-QAbstractItemView[tableRole="data"]::item:hover:!selected { background-color: @bgPrimary@; }
 QAbstractItemView[tableRole="data"]::item:selected { background-color: @bgSelected@; }
 QAbstractItemView[columnAccents="true"]::item:alternate:!selected { background-color: @bgSecondary@; }
+QAbstractItemView[tableRole="data"]::item:hover:!selected { background-overlay: @hoverOverlay@; }
 QAbstractItemView[rowProgress="true"]::item,
 QAbstractItemView[rowProgress="true"]::item:selected,
 QAbstractItemView[rowProgress="true"]::item:hover:!selected,
@@ -2183,13 +2172,13 @@ QDialog QLabel {
 }
 
 #titleBarMenuBar::item:selected {
-    background-color: @bgHover@;
+    background-overlay: @hoverOverlay@;
     color: @textPrimary@;
 }
 
 #titleBarMenuBar::item:pressed {
-    background-color: @accent@;
-    color: @accentText@;
+    background-color: @bgSelected@;
+    color: @textPrimary@;
 }
 
 #titleBarMenuBar::item:disabled {

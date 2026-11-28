@@ -226,7 +226,7 @@ void PlatformLocalMarker::paintEvent(QPaintEvent*)
     if (state_ != State::None) {
         QColor fill = editable_ ? colors.accent : colors.textDisabled;
         if (editable_ && state_ == State::OtherPlatform)
-            fill.setAlphaF(fill.alphaF() * snapshot->thirdParty.qtAds.activeTabAccentOpacity);
+            fill = snapshot->thirdParty.qtAds.activeTabAccent;
         painter.fillRect(rect(), fill);
     }
     if (hovered_ && interactive()) painter.fillRect(rect(), colors.hoverOverlay);

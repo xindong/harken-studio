@@ -19,7 +19,7 @@ class ColorEditorDialog : public BaseDialog
     Q_OBJECT
 
 public:
-    explicit ColorEditorDialog(const QColor& color, QWidget* parent = nullptr);
+    explicit ColorEditorDialog(const QColor& color, QWidget* parent = nullptr, bool opaque = false);
     static QString hexText(const QColor& color);
     QColor currentColor() const { return color_; }
     void setCurrentColor(const QColor& color);
@@ -33,7 +33,7 @@ protected:
     void keyPressEvent(QKeyEvent* event) override;
 
 private:
-    void publishColor(const QColor& color);
+    void publishColor(QColor color);
     void publishHsv();
     void pickScreenColor();
     bool updateScreenColor();

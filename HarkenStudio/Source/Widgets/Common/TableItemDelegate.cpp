@@ -104,7 +104,11 @@ void TableItemDelegate::initStyleOption(QStyleOptionViewItem* option, const QMod
     case TableTextState::Disabled: text = colors.textDisabled; break;
     case TableTextState::Error: text = colors.error; break;
     case TableTextState::Modified: text = colors.accent; break;
-    case TableTextState::Custom: text = colors.info; break;
+    case TableTextState::Custom: {
+        const auto visual = themeManager_->widgetAppearance().visual(option->widget, option->state, u"item");
+        text = QtControlSkin(themeManager_->snapshot()).customValueTextColor(*option, visual);
+        break;
+    }
     case TableTextState::Success: text = colors.success; break;
     case TableTextState::Warning: text = colors.warning; break;
     case TableTextState::Normal: break;
@@ -168,8 +172,6 @@ void TableItemDelegate::paint(QPainter* painter, const QStyleOptionViewItem& opt
     const auto* table = qobject_cast<const QTableView*>(option.widget);
     if (!table || !table->showGrid())
         painter->drawLine(option.rect.bottomLeft(), option.rect.bottomRight());
-    if (styled.state.testFlag(QStyle::State_Selected) && option.rect.left() == 0)
-        painter->fillRect(QRect(option.rect.left(), option.rect.top(), themeManager_->metrics().accentBorderWidth, option.rect.height()), colors.accent);
     if (index.siblingAtColumn(0).data(TableDropTargetRole).toBool()) {
         painter->setPen(colors.accent);
         painter->drawLine(option.rect.topLeft(), option.rect.topRight());

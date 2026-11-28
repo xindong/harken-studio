@@ -330,9 +330,6 @@ void ProjectTreeWidget::drawRow(QPainter* painter, const QStyleOptionViewItem& o
                                 const QModelIndex& index) const
 {
     QTreeWidget::drawRow(painter, option, index);
-    if (selectionModel()->isSelected(index))
-        TreeRowStyle::paintRowAccent(painter, option.rect);
-
     if (highlightedItem_ && itemFromIndex(index) == highlightedItem_)
         TreeRowStyle::paintDropHighlight(painter, option.rect);
 }

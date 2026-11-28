@@ -28,6 +28,7 @@ struct ThemeColorRole
     QString label;
     QString description;
     QVector<ThemeColorBinding> bindings;
+    bool opaque = false;
     bool operator==(const ThemeColorRole&) const = default;
 };
 

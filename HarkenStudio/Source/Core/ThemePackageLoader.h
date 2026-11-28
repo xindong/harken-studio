@@ -43,6 +43,7 @@ struct ThemePackageCandidate
     QMap<QString, QString> assetRoots;
     QStringList inheritanceOrder;
     QVector<ThemeColorRole> colorRoles;
+    bool usesStudioDefaultColorRoles = true;
     QList<ColorPalette> palettes;
     QString defaultPaletteId;
     std::shared_ptr<const PreparedThemeFonts> preparedFonts;

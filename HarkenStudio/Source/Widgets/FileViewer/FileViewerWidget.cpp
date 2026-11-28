@@ -646,11 +646,11 @@ void FileViewerWidget::applyAuditionTheme()
     const auto theme = manager.snapshot();
     const auto& colors = theme->ui.colors;
     const ThemeAssetVariant playVariant{
-        playButton_->iconSize(), playButton_->devicePixelRatioF(), 0, colors.success};
+        playButton_->iconSize(), playButton_->devicePixelRatioF(), 0, colors.toolPlay};
     playButton_->setIcon(manager.resolveIcon(
         QString::fromLatin1(ThemeAssetIds::AuditionPlay), playVariant).icon);
     const ThemeAssetVariant stopVariant{
-        stopButton_->iconSize(), stopButton_->devicePixelRatioF(), 0, colors.error};
+        stopButton_->iconSize(), stopButton_->devicePixelRatioF(), 0, colors.toolStop};
     stopButton_->setIcon(manager.resolveIcon(
         QString::fromLatin1(ThemeAssetIds::AuditionStop), stopVariant).icon);
 }

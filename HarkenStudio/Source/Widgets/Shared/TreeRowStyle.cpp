@@ -79,12 +79,6 @@ void paintDropHighlight(QPainter* p, const QRect& rowRect)
     p->fillRect(rowRect, ThemeManager::instance().colors().bgDropTarget);
 }
 
-void paintRowAccent(QPainter* p, const QRect& rowRect)
-{
-    p->fillRect(QRect(rowRect.left(), rowRect.top(), ThemeManager::instance().metrics().accentBorderWidth, rowRect.height()),
-                ThemeManager::instance().colors().accent);
-}
-
 static void paintBucketRow(QPainter* p, const QStyleOptionViewItem& opt)
 {
     const QRect r = opt.rect;

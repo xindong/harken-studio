@@ -244,7 +244,10 @@ bool ObjectRefWidget::event(QEvent* e)
             refreshMetrics();
         else if (e->type() == QEvent::DevicePixelRatioChange)
             refreshIcon();
-        else if (e->type() == QEvent::Resize || e->type() == QEvent::LayoutRequest)
+        else if (e->type() == QEvent::EnabledChange && (readOnly_ || !selectorEnabled_)) {
+            refreshIcon();
+            refreshStyle();
+        } else if (e->type() == QEvent::Resize || e->type() == QEvent::LayoutRequest)
             refreshLayout();
         else if (e->type() == QEvent::ToolTipChange)
             nameLabel_->setToolTip(toolTip());
@@ -404,7 +407,7 @@ void ObjectRefWidget::refreshIcon()
         iconLabel_->clear();
         return;
     }
-    const bool dim = readOnly_ || !selectorEnabled_;
+    const bool dim = (readOnly_ || !selectorEnabled_) && !hasReadableReadOnlyValue();
     const auto& adapter = refDomainAdapter(domain_);
     const QIcon icon = adapter.icon(objectID_, adapter.isAvailable(objectID_)
         ? QColor() : ThemeManager::instance().colors().error);
@@ -412,10 +415,17 @@ void ObjectRefWidget::refreshIcon()
                                      dim ? QIcon::Disabled : QIcon::Normal));
 }
 
+bool ObjectRefWidget::hasReadableReadOnlyValue() const
+{
+    return isEnabled() && (readOnly_ || !selectorEnabled_) && hasItem_ && validationError_.isEmpty()
+        && refDomainAdapter(domain_).isAvailable(objectID_);
+}
+
 void ObjectRefWidget::refreshStyle()
 {
     const bool dim = readOnly_ || !selectorEnabled_;
     nameLabel_->setEnabled(!dim);
+    QtControlSkin::setSemanticProperty(nameLabel_, "readableReference", hasReadableReadOnlyValue());
     const bool invalid = !validationError_.isEmpty()
         || (hasItem_ && !refDomainAdapter(domain_).isAvailable(objectID_))
         || (!hasItem_ && (objectID_ != 0 || !unresolvedReference_.isEmpty()

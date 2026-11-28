@@ -20,7 +20,6 @@ constexpr int kBucketRole = Qt::UserRole + 1;
 QTreeWidgetItem* makeFolderRow(const QString& text);
 QTreeWidgetItem* makeBucketRow(const QString& folderKey);
 
-void paintRowAccent(QPainter* p, const QRect& rowRect);
 void paintDropHighlight(QPainter* p, const QRect& rowRect);
 void paintItemContents(QPainter* p, const QStyleOptionViewItem& option);
 

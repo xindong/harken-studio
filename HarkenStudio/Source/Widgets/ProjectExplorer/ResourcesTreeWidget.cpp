@@ -493,8 +493,6 @@ void ResourcesTreeWidget::drawRow(QPainter* painter, const QStyleOptionViewItem&
                               const QModelIndex& index) const
 {
     QTreeWidget::drawRow(painter, options, index);
-    if (selectionModel()->isSelected(index))
-        TreeRowStyle::paintRowAccent(painter, options.rect);
     if (index == dropFolder_)
         TreeRowStyle::paintDropHighlight(painter, options.rect);
 }

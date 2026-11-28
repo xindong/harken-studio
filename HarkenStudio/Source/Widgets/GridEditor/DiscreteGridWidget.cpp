@@ -185,7 +185,7 @@ DiscreteGridWidget::DiscreteGridWidget(QWidget* parent)
     connect(&ThemeManager::instance(), &ThemeManager::appearanceChanged, this, [this] {
         if (winner_ >= 0 && winner_ < table_->rowCount()) {
             const QSignalBlocker blocker(table_->model());
-            const QBrush highlight(ThemeManager::instance().colors().bgHover);
+            const QBrush highlight(ThemeManager::instance().colors().accentSecondary);
             for (int axis = 0; axis < static_cast<int>(grid_.axes.size()); ++axis)
                 table_->item(winner_, axis + kFirstAxisColumn)->setBackground(highlight);
         }
@@ -519,7 +519,7 @@ void DiscreteGridWidget::refreshDerived()
 
     const auto findings = GridSemantics::lintDiscreteGrid(grid_);
     const auto& colors = ThemeManager::instance().colors();
-    const QBrush highlight(colors.bgHover);
+    const QBrush highlight(colors.accentSecondary);
     const QSignalBlocker blocker(table_->model());
     for (int r = 0; r < static_cast<int>(grid_.rows.size()); ++r) {
         QString warning;

@@ -531,6 +531,9 @@ bool HarkenStyle::eventFilter(QObject* watched, QEvent* event)
             if (qobject_cast<QAbstractButton*>(widget)) { state &= ~State_Sunken; refresh = true; }
             break;
         case QEvent::EnabledChange:
+            if (widget->property("readOnlyNumbers").toBool())
+                scheduleAppearanceRefresh(widget);
+            [[fallthrough]];
         case QEvent::Show:
             refresh = true;
             break;
