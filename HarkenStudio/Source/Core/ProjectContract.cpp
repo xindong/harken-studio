@@ -309,10 +309,18 @@ QSet<QString> referencedDocumentPaths(const QJsonObject& document,
                 addReference(curve.toObject().value(QStringLiteral("variable")));
         }
     };
-    addSelectionReferences(selections.value(QStringLiteral("shared")).toObject());
-    const QJsonObject selectionPlatforms = selections.value(QStringLiteral("platforms")).toObject();
-    for (auto table = selectionPlatforms.constBegin(); table != selectionPlatforms.constEnd(); ++table)
+    for (auto table = selections.constBegin(); table != selections.constEnd(); ++table)
         addSelectionReferences(table.value().toObject());
+    if (selections.value(QStringLiteral("matchAxes")).isArray()) {
+        addSelectionReferences(selections);
+        for (const auto* mode : {"random", "sequence", "match", "blend"}) {
+            const QJsonObject tables = selections.value(QLatin1String(mode)).toObject();
+            addSelectionReferences(tables.value(QStringLiteral("shared")).toObject());
+            const QJsonObject platforms = tables.value(QStringLiteral("platforms")).toObject();
+            for (auto table = platforms.constBegin(); table != platforms.constEnd(); ++table)
+                addSelectionReferences(table.value().toObject());
+        }
+    }
     for (const auto& rule : selection.value(QStringLiteral("transitions")).toObject()
              .value(QStringLiteral("rules")).toArray()) {
         const QJsonObject transition = rule.toObject();

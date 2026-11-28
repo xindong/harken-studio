@@ -1850,7 +1850,7 @@ TEST(ProjectPackExport, ExportsContainerAndVariableProjectDeterministically)
         if (i == 5) {
             auto grid = selection->matchGrid();
             ASSERT_TRUE(grid.addAxis(variable->guid));
-            EXPECT_TRUE(selection->selections.shared.setMatchGrid(grid));
+            EXPECT_TRUE(selection->selections.setMatchGrid(grid));
         }
         for (int j = 0; j < 2; ++j) {
             const QString file = QStringLiteral("demo_%1_%2.wav").arg(i).arg(j);
@@ -1868,7 +1868,7 @@ TEST(ProjectPackExport, ExportsContainerAndVariableProjectDeterministically)
                     auto grid = selection->matchGrid();
                     ASSERT_TRUE(grid.addRow(sound->guid));
                     ASSERT_TRUE(grid.setCell(j, 0, j));
-                    EXPECT_TRUE(selection->selections.shared.setMatchGrid(grid));
+                    EXPECT_TRUE(selection->selections.setMatchGrid(grid));
                 }
             }
         }
@@ -2148,8 +2148,8 @@ TEST(ProjectPackExport, ExternalLocalizedOccurrenceKeepsInvalidOwnershipRejected
         {{QStringLiteral("External"), 21, 3}}));
     ASSERT_NO_FATAL_FAILURE(localizeSoloSound(project, soloSourceId));
     auto container = makeItem(QStringLiteral("ExternalVoice"), harken::studio::ProjectItem::Type::Container, 3);
-    container->comp<harken::studio::VSelection>()->selections.shared.occurrenceOrdinalHighWater = 1;
-    EXPECT_TRUE(container->comp<harken::studio::VSelection>()->selections.shared.setOccurrenceRows({{project.layers.front().rootItem->children.at(1)->guid, 0, {}}}));
+    container->comp<harken::studio::VSelection>()->selections.random.shared.occurrenceOrdinalHighWater = 1;
+    EXPECT_TRUE(container->comp<harken::studio::VSelection>()->selections.random.shared.setOccurrenceRows({{project.layers.front().rootItem->children.at(1)->guid, 0, {}}}));
     addChild(project.layers.front().rootItem, container);
     harken::studio::ProjectPackExporter exporter;
     harken::studio::ProjectPackExporter::ExportOptions opts;
@@ -2760,9 +2760,9 @@ TEST(ProjectPackExport, PartialPublicationUpdatesSharedSoundRoutesIndependently)
         {{"One", 21, kSharedSoundObjectId}, {"Two", 22, kSharedSoundObjectId}}));
     const auto bus = makeItem("Music", ProjectItem::Type::Bus, 202);
     addChild(project.busses.front().rootItem, bus);
-    auto& sends = project.layers.front().rootItem->fieldGroups.send.shared;
-    sends = {FieldGroupMode::Local,
-             SendFieldGroup{{{toFieldGroupGuid(bus->guid), -12.0f, project_schema::SendType::Sidechain, true}}}};
+    auto& sidechains = project.layers.front().rootItem->fieldGroups.sidechain.shared;
+    sidechains = {FieldGroupMode::Local, SidechainFieldGroup{{{toFieldGroupGuid(QUuid::createUuid()),
+                                                               toFieldGroupGuid(bus->guid), -12.0f, true}}}};
 
     ProjectPackExporter exporter;
     ProjectPackExporter::ExportOptions options;
@@ -2774,7 +2774,7 @@ TEST(ProjectPackExport, PartialPublicationUpdatesSharedSoundRoutesIndependently)
     QMap<QString, QByteArray> previous;
     for (const QString& name : {QStringLiteral("One.bytes"), QStringLiteral("Two.bytes"), QStringLiteral("Init.bytes")})
         previous.insert(name, readFileBytes(live.filePath(name)));
-    sends.localHistory->sends.front().sendLevel = -6.0f;
+    sidechains.localHistory->sidechains.front().sendLevel = -6.0f;
     options.updateSelectedOnly = true;
     options.onlyPackPaths = {QStringLiteral("One")};
     const auto updatedOne = exportPacks();
@@ -3984,7 +3984,8 @@ TEST(ProjectPackExport, EffectiveMediaChangesRebuildOnlyTheirConsumers)
     bind(*layer, *firstPreset);
     bind(*secondSound, *secondPreset);
     layer->fieldGroups.conversion.platforms[toFieldGroupGuid(HarkenTest::platformId("Android"))] =
-        {FieldGroupMode::Local, ConversionFieldGroup{toFieldGroupGuid(androidPreset->guid)}};
+        {FieldGroupMode::UseShared, ConversionFieldGroup{toFieldGroupGuid(androidPreset->guid)},
+         FieldGroupPropertyMask(FieldGroupId::Conversion)};
     bool compiled = false;
     const auto build = [&](bool force = false) {
         QString error;

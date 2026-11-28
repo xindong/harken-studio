@@ -7,7 +7,7 @@
 #include "InspectorSlotStrip.h"
 #include "BindingFieldDecorator.h"
 #include "Widgets/Shared/InspectorFormRow.h"
-#include "Widgets/Shared/PlatformFieldMerge.h"
+#include "Widgets/Shared/PlatformLocalMarker.h"
 #include "Drawers/ListFieldDrawer.h"
 #include "Core/PlatformContextService.h"
 #include "Widgets/Selector/ObjectRefWidget.h"
@@ -44,6 +44,7 @@
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
+
 #include <QAbstractButton>
 #include <QToolButton>
 #include <QStackedWidget>
@@ -60,8 +61,6 @@
 #include <QEnterEvent>
 #include <QCursor>
 #include <QMouseEvent>
-#include <QPainter>
-#include <QPainterPath>
 #include <QResizeEvent>
 #include <QScrollBar>
 #include <QFont>
@@ -89,40 +88,31 @@ std::optional<QVector<ProjectPlatformId>> currentAuthoringPlatforms()
     return selected;
 }
 
-PlatformFieldView filterFieldView(const ProjectItem& item, const QString& field)
+PlatformScope displayedPlatform()
 {
-    PlatformFieldView view;
-    const auto& context = PlatformContextService::instance().context();
-    if (context.selected.isEmpty()) {
-        view.value = FilterAuthoring::readProperty(item, field).value_or(PlayablePropertyStateV1{});
-        return view;
-    }
-    for (const auto& platform : context.selected) {
-        const auto state = FilterAuthoring::readProperty(item, field, platform);
-        if (!state) continue;
-        if (view.perPlatform.isEmpty()) view.value = *state;
-        else if (view.value.value != state->value) view.uniform = false;
-        view.perPlatform.append({platform, *state});
-    }
-    return view;
+    return currentWorldPlatformScope(PlatformContextService::instance().context());
 }
 
-class MixedAcrossPlatformsCheckBox final : public QCheckBox
+void showFilterDifferences(QGridLayout* layout, QWidget* popup, const QList<PlatformMarkValue>& values)
 {
-public:
-    using QCheckBox::QCheckBox;
-
-protected:
-    void nextCheckState() override
-    {
-        if (checkState() == Qt::PartiallyChecked) {
-            setCheckState(Qt::Checked);
-            setTristate(false);
-            return;
-        }
-        QCheckBox::nextCheckState();
+    std::vector<FilterState> states;
+    for (const auto& entry : values)
+        states.push_back(FilterSemantics::fromJson(QJsonObject::fromVariantMap(entry.value.toMap()))
+            .value_or(FilterSemantics::defaultState()));
+    std::vector<QStringList> rows;
+    for (const auto& descriptor : VMixNode::schema()) {
+        const auto* field = FilterSemantics::fieldInfo(descriptor.field);
+        if (!field || std::all_of(states.begin(), states.end(), [&](const FilterState& state) {
+                return FilterSemantics::value(state, *field) == FilterSemantics::value(states.front(), *field);
+            })) continue;
+        QStringList cells{QStringLiteral("%1 %2").arg(inspectorSectionInfo(descriptor.section).title, descriptor.label)};
+        const auto format = PlatformLocalMarker::formatterFor(descriptor);
+        for (const auto& state : states) cells.append(format(FilterSemantics::value(state, *field)));
+        rows.push_back(cells);
     }
-};
+    showPlatformComparison(layout, popup, PropertyEditorEngine::tr("Parameter"), values, rows,
+                           PropertyEditorEngine::tr("All platforms use the same filter"), Qt::AlignRight);
+}
 
 class ResizablePlainTextEdit final : public QPlainTextEdit
 {
@@ -138,19 +128,12 @@ public:
         setViewportMargins(QtControlSkin::current().fieldTextMargins());
         QtControlSkin::setSemanticProperty(this, "fieldRole",
                                           QStringLiteral("inspectorText"));
-        grip_ = new ResizeGrip(this);
-        grip_->setObjectName(QStringLiteral("plainTextResizeGrip"));
-        positionGrip();
-        grip_->hide();
+        edge_ = new ResizeEdge(this);
+        edge_->setObjectName(QStringLiteral("plainTextResizeEdge"));
         auto* scrollBar = verticalScrollBar();
         connect(scrollBar, &QScrollBar::rangeChanged, this,
-                [this, scrollBar](int minimum, int maximum) {
-                    scrollBar->setEnabled(minimum < maximum);
-                    positionGrip();
-                });
+                [scrollBar](int minimum, int maximum) { scrollBar->setEnabled(minimum < maximum); });
         scrollBar->setEnabled(scrollBar->minimum() < scrollBar->maximum());
-        connect(horizontalScrollBar(), &QScrollBar::rangeChanged, this,
-                [this] { positionGrip(); });
         connect(&ThemeManager::instance(), &ThemeManager::themeChanged, this,
                 [this] {
                     setViewportMargins(QtControlSkin::current().fieldTextMargins());
@@ -160,49 +143,30 @@ public:
                             * ThemeManager::instance().snapshot()->uiScale), nextHeight)
                         : nextHeight);
                     fieldHeight_ = nextHeight;
-                    grip_->rebaseDrag();
+                    edge_->rebaseDrag();
                 });
     }
 
 protected:
-    void enterEvent(QEnterEvent* event) override
-    {
-        grip_->show();
-        grip_->raise();
-        QPlainTextEdit::enterEvent(event);
-    }
-
-    void leaveEvent(QEvent* event) override
-    {
-        if (!grip_->isDragging()
-            && !rect().contains(mapFromGlobal(QCursor::pos())))
-            grip_->hide();
-        QPlainTextEdit::leaveEvent(event);
-    }
-
     void resizeEvent(QResizeEvent* event) override
     {
         QPlainTextEdit::resizeEvent(event);
-        positionGrip();
+        positionEdge();
     }
 
 private:
-    class ResizeGrip final : public QWidget
+    class ResizeEdge final : public QWidget
     {
     public:
-        explicit ResizeGrip(ResizablePlainTextEdit* edit)
+        explicit ResizeEdge(ResizablePlainTextEdit* edit)
             : QWidget(edit), edit_(edit)
         {
             ThemeManager::instance().bindMetrics(this, [this](const ThemeMetrics& metrics) {
-                setFixedSize(metrics.control.smallIconExtent, metrics.control.smallIconExtent);
+                setFixedHeight(std::max(2, metrics.table.resizeHandleRadius) * 2);
+                edit_->positionEdge();
             });
-            setCursor(Qt::SizeFDiagCursor);
-            setAttribute(Qt::WA_TranslucentBackground);
-            connect(&ThemeManager::instance(), &ThemeManager::appearanceChanged,
-                    this, qOverload<>(&QWidget::update));
+            setCursor(Qt::SizeVerCursor);
         }
-
-        bool isDragging() const { return dragging_; }
 
         void rebaseDrag()
         {
@@ -212,9 +176,6 @@ private:
         }
 
     protected:
-        void enterEvent(QEnterEvent*) override { update(); }
-        void leaveEvent(QEvent*) override { update(); }
-
         void mousePressEvent(QMouseEvent* event) override
         {
             if (event->button() != Qt::LeftButton) return;
@@ -222,7 +183,6 @@ private:
             startGlobalY_ = event->globalPosition().y();
             startHeight_ = edit_->height();
             grabMouse();
-            update();
             event->accept();
         }
 
@@ -244,8 +204,6 @@ private:
         {
             if (!dragging_ || event->button() != Qt::LeftButton) return;
             finishDragging();
-            if (!edit_->rect().contains(edit_->mapFromGlobal(QCursor::pos())))
-                hide();
             event->accept();
         }
 
@@ -254,26 +212,8 @@ private:
             if (event->type() == QEvent::UngrabMouse
                 || event->type() == QEvent::Hide
                 || event->type() == QEvent::WindowDeactivate)
-                cancelDragging();
+                dragging_ = false;
             return QWidget::event(event);
-        }
-
-        void paintEvent(QPaintEvent*) override
-        {
-            QPainter painter(this);
-            QColor color = palette().color(QPalette::Text);
-            if (isEnabled() && (underMouse() || dragging_))
-                color = ThemeManager::instance().colors().accent;
-            else
-                color.setAlphaF(color.alphaF() * 0.45);
-            QPen pen(color, 2.0, Qt::SolidLine, Qt::SquareCap,
-                     Qt::MiterJoin);
-            painter.setPen(pen);
-            QPainterPath path;
-            path.moveTo(3, 11);
-            path.lineTo(11, 11);
-            path.lineTo(11, 3);
-            painter.drawPath(path);
         }
 
     private:
@@ -283,14 +223,6 @@ private:
             dragging_ = false;
             if (QWidget::mouseGrabber() == this)
                 releaseMouse();
-            update();
-        }
-
-        void cancelDragging()
-        {
-            if (!dragging_) return;
-            dragging_ = false;
-            update();
         }
 
         ResizablePlainTextEdit* edit_ = nullptr;
@@ -299,14 +231,14 @@ private:
         int startHeight_ = 0;
     };
 
-    void positionGrip()
+    void positionEdge()
     {
-        const QRect contentRect = viewport()->geometry().marginsAdded(viewportMargins());
-        grip_->move(contentRect.right() - grip_->width() + 1,
-                    contentRect.bottom() - grip_->height() + 1);
+        if (!edge_) return;
+        edge_->setGeometry(0, height() - edge_->height(), width(), edge_->height());
+        edge_->raise();
     }
 
-    ResizeGrip* grip_ = nullptr;
+    ResizeEdge* edge_ = nullptr;
     int fieldHeight_ = 0;
     qreal requestedBaseHeight_ = 0;
 };
@@ -315,40 +247,6 @@ bool objectReferenceRole(PlayablePropertyReferenceRoleV1 role)
 {
     return role == PlayablePropertyReferenceRoleV1::OutputBus
         || role == PlayablePropertyReferenceRoleV1::Attenuation;
-}
-
-QString drawerMixedTooltip(ProjectItem& owner,
-                           const PlayablePropertyLocatorV1& locator,
-                           uint8_t propertyId)
-{
-    const PlatformContext& context = PlatformContextService::instance().context();
-    if (context.selected.isEmpty())
-        return {};
-    const PlatformFieldView view = platformFieldView(
-        owner, locator, propertyId, context);
-    if (view.uniform)
-        return {};
-    return platformFieldMixedTooltip(view, ProjectManager::instance().currentProject()->platforms);
-}
-
-void applyDrawerMixedTooltip(QWidget* widget,
-                             QString& lastMixed,
-                             ProjectItem* owner,
-                             const PlayablePropertyLocatorV1& locator,
-                             uint8_t propertyId)
-{
-    if (!widget) return;
-    const QString mixed = owner
-        ? drawerMixedTooltip(*owner, locator, propertyId)
-        : QString();
-    if (!mixed.isEmpty()) {
-        widget->setToolTip(mixed);
-        lastMixed = mixed;
-        return;
-    }
-    if (!lastMixed.isEmpty() && widget->toolTip() == lastMixed)
-        widget->setToolTip(QString());
-    lastMixed.clear();
 }
 
 bool itemMatchesReferenceRole(const ProjectItem& item,
@@ -383,19 +281,6 @@ std::optional<QJsonValue> editorWireValue(
 std::optional<QVariant> editorValue(
     const PlayablePropertyAuthoringV1::Field& field, const QJsonValue& value)
 {
-    if (field.id == static_cast<uint8_t>(PlayablePropertyIdV1::Sends)) {
-        if (!value.isArray()) return std::nullopt;
-        QVariantList rows;
-        for (const auto& entry : value.toArray()) {
-            auto row = entry.toObject();
-            SendType type;
-            bool duckTarget;
-            if (!entry.isObject() || !readSendRoute(row, type, duckTarget)) return std::nullopt;
-            writeSendRoute(row, type, duckTarget);
-            rows.append(row.toVariantMap());
-        }
-        return rows;
-    }
     if (!objectReferenceRole(field.referenceRole)) return value.toVariant();
     if (!value.isString()) return std::nullopt;
     harken::studio::types::ObjectId stableId{};
@@ -510,11 +395,6 @@ PropertyEditorEngine::editablePlayableLocator(
     const auto* property = PlayablePropertyAuthoringV1::fieldByName(field);
     if (!currentItem_ || !property)
         return std::nullopt;
-    if (currentItem_->type == ProjectItem::Type::Bus
-        && property->id == static_cast<uint8_t>(PlayablePropertyIdV1::OutputBusVolume)) {
-        if (owner) *owner = currentItem_;
-        return std::nullopt;
-    }
     const auto locator = PlayablePropertyAuthoringV1::definitionLocator(*currentItem_);
     if (!locator) return std::nullopt;
     if (owner) *owner = currentItem_;
@@ -630,7 +510,7 @@ QJsonObject PropertyEditorEngine::synthConfig(const PropertyDescriptor& d)
 
 QWidget* PropertyEditorEngine::buildField(const PropertyDescriptor& d, QWidget* parent)
 {
-    const QString field = d.storageField.isEmpty() ? d.field : d.storageField;
+    const QString& field = d.field;
     auto& reg = InspectorCustomizationRegistry::instance();
 
     QWidget* control = nullptr;
@@ -659,15 +539,14 @@ QWidget* PropertyEditorEngine::buildField(const PropertyDescriptor& d, QWidget* 
             if (d.type == PropType::ObjectRef) descriptor.refSelectable = selectable;
             for (auto& element : descriptor.elementSchema) {
                 if (element.type != PropType::ObjectRef) continue;
-                if (field == QLatin1String("sends")) {
+                if (field == QLatin1String("sends") || field == QLatin1String("sidechains")) {
+                    const auto type = field == QLatin1String("sidechains") ? SendType::Sidechain : SendType::Send;
                     element.refSelectable = {};
                     element.refSelectableForElement =
-                        [self = QPointer<PropertyEditorEngine>(this), field]
+                        [self = QPointer<PropertyEditorEngine>(this), field, type]
                         (uint32_t, const QVariantMap& row, uint32_t candidate) {
-                            SendType type;
-                            bool duckTarget;
-                            return self && readSendRoute(QJsonObject::fromVariantMap(row), type, duckTarget)
-                                && self->groupReferenceSelectable(field, candidate, type, duckTarget);
+                            return self && self->groupReferenceSelectable(
+                                field, candidate, type, row.value(QStringLiteral("duckTarget")).toBool());
                         };
                 } else {
                     element.refSelectable = selectable;
@@ -675,6 +554,8 @@ QWidget* PropertyEditorEngine::buildField(const PropertyDescriptor& d, QWidget* 
             }
         }
         control = drawer->build(descriptor, parent);
+        if (field == QLatin1String("sends") || field == QLatin1String("sidechains"))
+            decorateRouteCells(control, descriptor);
     }
     else
     {
@@ -686,7 +567,7 @@ QWidget* PropertyEditorEngine::buildField(const PropertyDescriptor& d, QWidget* 
             return nullptr;
         if (type.isEmpty()) return nullptr;
         if (type == QLatin1String("checkbox")) {
-            auto* check = new MixedAcrossPlatformsCheckBox(parent);
+            auto* check = new QCheckBox(parent);
             check->setObjectName(QStringLiteral("prop_") + d.field);
             control = check;
         } else if (type == QLatin1String("multiline_text")) {
@@ -779,6 +660,12 @@ QWidget* PropertyEditorEngine::buildField(const PropertyDescriptor& d, QWidget* 
     // Expanding — not merely handing the layout a stretch factor — is what makes
     // it fill inside the inspector's nested scroll-area/tab chain; passing an
     // alignment instead pins the editor at its natural size (used by checkbox).
+    PlatformLocalMarker* marker = nullptr;
+    if (supportsPlatformLocal(field) && !d.flags.readOnly && d.type != PropType::List) {
+        marker = new PlatformLocalMarker(row);
+        marker->setValueFormatter(PlatformLocalMarker::formatterFor(d));
+        if (qobject_cast<FilterPreviewField*>(control)) marker->setValuesView(showFilterDifferences);
+    }
     auto fillValueColumn = [&](QWidget* w, Qt::Alignment align = {}) {
         auto* cell = new QWidget(row);
         DebugTint::tintContainer(cell, DebugTint::Role::Flex);
@@ -786,12 +673,13 @@ QWidget* PropertyEditorEngine::buildField(const PropertyDescriptor& d, QWidget* 
         auto* cl = new QHBoxLayout(cell);
         if (align)
         {
-            cl->addWidget(w, 0, align);
+            cl->addWidget(marker ? attachPlatformMarker(w, marker, cell) : w, 0, align);
         }
         else
         {
             w->setSizePolicy(QSizePolicy::Expanding, w->sizePolicy().verticalPolicy());
-            cl->addWidget(w, 1);
+            cl->addWidget(marker ? attachPlatformMarker(w, marker, cell, type == QLatin1String("slider")
+                ? PlatformMarkerHeight::Field : PlatformMarkerHeight::Control) : w, 1);
         }
         h->addWidget(cell);
         ThemeManager::instance().bindMetrics(cell, [cell, cl, h, list = d.type == PropType::List](const ThemeMetrics& metrics) {
@@ -861,6 +749,7 @@ QWidget* PropertyEditorEngine::buildField(const PropertyDescriptor& d, QWidget* 
     b.widgetType = type;
     b.type = d.type;
     b.widget = control;
+    b.marker = marker;
     if (auto* slider = qobject_cast<ParameterSlider*>(control))
         b.parameterBinding = slider->binding();
     b.drawer = drawer;
@@ -885,13 +774,14 @@ QWidget* PropertyEditorEngine::buildField(const PropertyDescriptor& d, QWidget* 
         drawer->connectChanged(control, [this, field, control](const QVariant& v) {
             commitFieldChange(field, v, {}, control);
         });
-        if (field == QLatin1String("sends") && itemType_ == ProjectItem::Type::Bus) {
+        if ((field == QLatin1String("sends") || field == QLatin1String("sidechains"))
+            && itemType_ == ProjectItem::Type::Bus) {
             const auto self = QPointer<PropertyEditorEngine>(this);
             ListFieldDrawer::setWidgetPreviewCallbacks(control,
                 [self, control](const QVariant& value) {
                     if (!self) return;
                     for (auto& entry : self->bindings_)
-                        if (entry.widget == control) { self->previewBusSends(entry, value); return; }
+                        if (entry.widget == control) { self->previewBusRoutes(entry, value); return; }
                 },
                 [self, control] {
                     if (!self) return;
@@ -1044,7 +934,7 @@ QWidget* PropertyEditorEngine::buildPage(QWidget* parent)
         std::set<FieldGroupId> inheritedGroups;
         for (const auto& field : schema_) {
             if (field.section != info.section) continue;
-            const auto group = fieldGroup(field.storageField.isEmpty() ? field.field : field.storageField);
+            const auto group = fieldGroup(field.field);
             if (group) inheritedGroups.insert(*group);
         }
         for (const auto group : inheritedGroups)
@@ -1296,19 +1186,11 @@ bool PropertyEditorEngine::applyPlayableFieldView(const FieldBinding& binding)
 {
     if (!binding.widget || binding.drawer) return false;
     if (currentItem_ && FilterAuthoring::isField(binding.field)) {
-        const auto view = filterFieldView(*currentItem_, binding.field);
-        if (view.uniform) {
-            setWidgetValue(binding.widget, binding.widgetType, view.value.value.toVariant());
-            binding.widget->setToolTip(binding.field == QLatin1String("filter")
-                ? tr("Open Filter Editor") : QString());
-        } else {
-            if (auto* slider = qobject_cast<ParameterSlider*>(binding.widget.data()))
-                slider->setMixedValue(true);
-            if (auto* preview = qobject_cast<FilterPreviewField*>(binding.widget.data()))
-                preview->setMixed(true);
-            if (const auto* project = ProjectManager::instance().currentProject())
-                binding.widget->setToolTip(platformFieldMixedTooltip(view, project->platforms));
-        }
+        const auto state = FilterAuthoring::readProperty(*currentItem_, binding.field, displayedPlatform());
+        if (!state) return false;
+        setWidgetValue(binding.widget, binding.widgetType, state->value.toVariant());
+        binding.widget->setToolTip(binding.field == QLatin1String("filter")
+            ? tr("Open Filter Editor") : QString());
         return true;
     }
     ProjectItem* owner = nullptr;
@@ -1324,76 +1206,12 @@ bool PropertyEditorEngine::applyPlayableFieldView(const FieldBinding& binding)
         return true;
     }
 
-    const PlatformContext context = PlatformContextService::instance().context();
-    if (context.selected.isEmpty()) {
-        const auto state = PlayablePropertyAuthoringV1::readProperty(
-            *owner, *locator, property->id, std::nullopt);
-        if (!state) return false;
-        const auto value = editorValue(*property, state->value);
-        if (!value) return false;
-        setWidgetValue(binding.widget, binding.widgetType, *value);
-        return true;
-    }
-
-    PlatformFieldView view = platformFieldView(
-        *owner, *locator, property->id, context);
-    if (view.uniform) {
-        const auto value = editorValue(*property, view.value.value);
-        if (!value) return false;
-        setWidgetValue(binding.widget, binding.widgetType, *value);
-        if (auto* slider = qobject_cast<ParameterSlider*>(binding.widget.data()))
-            slider->setToolTip(QString());
-        else if (auto* check = qobject_cast<QCheckBox*>(binding.widget.data()))
-            check->setToolTip(QString());
-        else if (auto* combo = qobject_cast<QComboBox*>(
-                     innerWidget(binding.widget, binding.widgetType)))
-            combo->setToolTip(QString());
-        else if (auto* segmented = qobject_cast<ValueSegmentedControl*>(binding.widget.data()))
-            segmented->setToolTip(QString());
-        return true;
-    }
-
-    const PropertyDescriptor* descriptor = nullptr;
-    for (const auto& row : schema_) {
-        if (row.field == binding.field) {
-            descriptor = &row;
-            break;
-        }
-    }
-    const QString tooltip = platformFieldMixedTooltip(view, ProjectManager::instance().currentProject()->platforms, descriptor);
-    if (binding.widgetType == QLatin1String("slider")) {
-        if (auto* slider = qobject_cast<ParameterSlider*>(binding.widget.data())) {
-            slider->setMixedValue(true);
-            slider->setToolTip(tooltip);
-        }
-        return true;
-    }
-    if (binding.widgetType == QLatin1String("checkbox")) {
-        if (auto* check = qobject_cast<QCheckBox*>(binding.widget.data())) {
-            QSignalBlocker blocker(check);
-            check->setTristate(true);
-            check->setCheckState(Qt::PartiallyChecked);
-            check->setToolTip(tooltip);
-        }
-        return true;
-    }
-    if (binding.widgetType == QLatin1String("combo")) {
-        if (auto* combo = qobject_cast<QComboBox*>(
-                innerWidget(binding.widget, binding.widgetType))) {
-            QSignalBlocker blocker(combo);
-            combo->setPlaceholderText(QStringLiteral("—"));
-            combo->setCurrentIndex(-1);
-            combo->setToolTip(tooltip);
-        }
-        return true;
-    }
-    if (binding.widgetType == QLatin1String("value_segmented")) {
-        if (auto* segmented = qobject_cast<ValueSegmentedControl*>(binding.widget.data())) {
-            segmented->setValue(QVariant());
-            segmented->setToolTip(tooltip);
-        }
-        return true;
-    }
+    const auto state = PlayablePropertyAuthoringV1::readProperty(
+        *owner, *locator, property->id, displayedPlatform());
+    if (!state) return false;
+    const auto value = editorValue(*property, state->value);
+    if (!value) return false;
+    setWidgetValue(binding.widget, binding.widgetType, *value);
     return true;
 }
 
@@ -1403,7 +1221,6 @@ void PropertyEditorEngine::setWidgetValue(QWidget* widget, const QString& widget
         if (auto* preview = qobject_cast<FilterPreviewField*>(widget)) {
             const auto filter = FilterSemantics::fromJson(QJsonObject::fromVariantMap(value.toMap()));
             if (filter) {
-                preview->setMixed(false);
                 const auto* project = ProjectManager::instance().currentProject();
                 preview->setFilter(*filter, project ? project->sampleRate : 48000.0);
             }
@@ -1415,10 +1232,8 @@ void PropertyEditorEngine::setWidgetValue(QWidget* widget, const QString& widget
         // No blockSignals here: ParameterSlider::setValue is already silent, and
         // an in-session setValue must deliver interactiveEditEnd(committed=false)
         // so the engine cancels the interrupted session instead of orphaning it.
-        if (auto* s = qobject_cast<ParameterSlider*>(widget)) {
-            s->setMixedValue(false);
+        if (auto* s = qobject_cast<ParameterSlider*>(widget))
             s->setValue(value.toDouble());
-        }
         return;
     }
 
@@ -1564,35 +1379,29 @@ IComponent* PropertyEditorEngine::resolveComponentTyped(ProjectItem* item, Compo
 QVariant PropertyEditorEngine::readField(const QString& field) const
 {
     if (currentItem_ && FilterAuthoring::isField(field)) {
-        const auto view = filterFieldView(*currentItem_, field);
-        return view.uniform ? view.value.value.toVariant() : QVariant{};
+        const auto state = FilterAuthoring::readProperty(*currentItem_, field, displayedPlatform());
+        return state ? state->value.toVariant() : QVariant{};
     }
     if (fieldGroup(field)) return groupFieldValue(field);
+    if (currentItem_ && currentItem_->type == ProjectItem::Type::Bus
+        && (field == QLatin1String("sends") || field == QLatin1String("sidechains"))) {
+        const auto* mix = currentItem_->comp<VMixNode>();
+        const bool sidechain = field == QLatin1String("sidechains");
+        std::vector<BusRoute> rows;
+        for (const auto& row : sidechain ? mix->sidechains : mix->sends)
+            rows.push_back(row.forPlatform(displayedPlatform()));
+        return VMixNode::routesToVariant(rows, sidechain);
+    }
     if (const auto* property = PlayablePropertyAuthoringV1::fieldByName(field)) {
         ProjectItem* owner = nullptr;
         const auto locator = editablePlayableLocator(field, &owner);
         if (locator && owner) {
             if (PlayablePropertyAuthoringV1::isComponentStored(property->id))
                 return playableBaseEditorValue(*owner, *locator, *property);
-            const PlatformContext context =
-                PlatformContextService::instance().context();
-            if (context.selected.isEmpty()) {
-                const auto state = PlayablePropertyAuthoringV1::readProperty(
-                    *owner, *locator, property->id, std::nullopt);
-                if (state) {
-                    const auto value = editorValue(*property, state->value);
-                    if (value) return *value;
-                    return {};
-                }
-            } else {
-                const PlatformFieldView view = platformFieldView(
-                    *owner, *locator, property->id, context);
-                if (!view.uniform)
-                    return {};
-                const auto value = editorValue(*property, view.value.value);
-                if (value) return *value;
-                return {};
-            }
+            const auto state = PlayablePropertyAuthoringV1::readProperty(
+                *owner, *locator, property->id, displayedPlatform());
+            if (state)
+                return editorValue(*property, state->value).value_or(QVariant{});
         }
     }
     if (currentItem_)
@@ -1657,22 +1466,7 @@ void PropertyEditorEngine::bindItem(ProjectItem* item)
         if (!b.widget) continue;
         if (fieldGroup(b.field)) continue;
         if (b.drawer) {
-            QVariant drawerValue = readField(b.field);
-            ProjectItem* owner = nullptr;
-            const auto* property = PlayablePropertyAuthoringV1::fieldByName(b.field);
-            const auto locator = property
-                ? editablePlayableLocator(b.field, &owner) : std::nullopt;
-            if (property && locator && owner && drawerValue.isValid() == false
-                && property->referenceRole != PlayablePropertyReferenceRoleV1::Attenuation) {
-                const PlatformContext context =
-                    PlatformContextService::instance().context();
-                if (!context.selected.isEmpty())
-                    drawerValue = playableBaseEditorValue(*owner, *locator, *property);
-            }
-            b.drawer->bind(b.widget, drawerValue, item);
-            if (property && locator && owner)
-                applyDrawerMixedTooltip(b.widget, b.mixedTooltip, owner, *locator,
-                    property->id);
+            b.drawer->bind(b.widget, readField(b.field), item);
         }
         else
         {
@@ -1702,6 +1496,7 @@ void PropertyEditorEngine::bindItem(ProjectItem* item)
                 decorator->bindGroups(item, groupLookup());
     }
     updating_ = false;
+    refreshPlatformMarkers();
 
     for (const auto& s : sectionBindings_)
         if (s.provider && s.widget)
@@ -1771,22 +1566,7 @@ bool PropertyEditorEngine::refreshField(const QString& field)
         if ((!fieldMatch && !addressMatch && !coarseHang) || !b.widget) continue;
         updating_ = true;
         if (b.drawer) {
-            QVariant drawerValue = readField(b.field);
-            ProjectItem* owner = nullptr;
-            const auto* property = PlayablePropertyAuthoringV1::fieldByName(b.field);
-            const auto locator = property
-                ? editablePlayableLocator(b.field, &owner) : std::nullopt;
-            if (property && locator && owner && drawerValue.isValid() == false
-                && property->referenceRole != PlayablePropertyReferenceRoleV1::Attenuation) {
-                const PlatformContext context =
-                    PlatformContextService::instance().context();
-                if (!context.selected.isEmpty())
-                    drawerValue = playableBaseEditorValue(*owner, *locator, *property);
-            }
-            b.drawer->bind(b.widget, drawerValue, currentItem_);
-            if (property && locator && owner)
-                applyDrawerMixedTooltip(b.widget, b.mixedTooltip, owner, *locator,
-                    property->id);
+            b.drawer->bind(b.widget, readField(b.field), currentItem_);
         }
         else
         {
@@ -1808,7 +1588,7 @@ bool PropertyEditorEngine::refreshField(const QString& field)
                 decorator->bindGroups(currentItem_, groupLookup());
         updating_ = false;
         handled = true;
-        if (!addressFilter && !coarseBindings && !FilterAuthoring::isField(field) && field != QLatin1String("sends")) break;
+        if (!addressFilter && !coarseBindings && !FilterAuthoring::isField(field)) break;
     }
 
     for (const auto& s : sectionBindings_) {
@@ -1869,7 +1649,8 @@ void PropertyEditorEngine::evalEditConditions()
             b.widget->setEnabled(editable);
         if (auto* strip = dynamic_cast<InspectorSlotStrip*>(b.decorator))
             strip->setEnabled(editable);
-        if (fieldGroup(b.field)) b.widget->setToolTip(b.mixedTooltip);
+        if (fieldGroup(b.field)) b.widget->setToolTip(b.groupTooltip);
+        if (b.marker) b.marker->setEditable(editable);
         if (b.topicHost)
             if (auto* label = b.topicHost->findChild<QLabel*>(QStringLiteral("label_") + b.field))
                 label->setEnabled(editable);

@@ -399,9 +399,10 @@ TEST_F(ProjectPlatformBuild, BuildingPreservesAuthoredComponentsAndParentAliases
     ASSERT_TRUE(ledger.ensure(low)->properties.setValue(
         harkenplayableproperties::PlayablePropertyIdV1::Volume, -6.0f));
     sound->platformOverrides = ledger;
-    EXPECT_TRUE(container->comp<harken::studio::VSelection>()->selections.shared.setOccurrenceRows({{child->guid, 0, 50}}));
-    container->comp<harken::studio::VSelection>()->selections.shared.occurrenceOrdinalHighWater = 1;
-    container->comp<harken::studio::VSelection>()->selections.editTable(low).entries.front().occurrences.front().weight = 25;
+    auto& random = container->comp<harken::studio::VSelection>()->selections.random;
+    EXPECT_TRUE(random.shared.setOccurrenceRows({{child->guid, 0, 50}}));
+    random.platforms[low] = random.shared;
+    random.platforms[low].entries.front().occurrences.front().weight = 25;
     const auto selectionsJson = container->comp<harken::studio::VSelection>()->selections.toJson();
     Clip clip;
     clip.clipGuid = QUuid::createUuid();

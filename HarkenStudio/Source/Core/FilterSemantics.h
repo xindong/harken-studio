@@ -53,7 +53,6 @@ bool isDefault(const FilterState& state);
 bool isValid(const FilterState& state);
 QJsonObject toJson(const FilterState& state);
 std::optional<FilterState> fromJson(const QJsonObject& json);
-std::optional<FilterState> applyOverlay(const FilterState& base, const QJsonObject& json);
 double sectionResponseDb(FilterKind kind, const FilterSection& section,
                          double frequency, double sampleRate = 48000.0);
 double responseDb(const FilterState& state, double frequency,

@@ -87,9 +87,10 @@ void appendBusSendEdges(const VMixNode& mix,
     const uint32_t fromId = busObjectID;
     if (fromId == 0) return;
 
-    for (size_t i = 0; i < mix.sends.size(); ++i)
+    const auto sends = mix.effectiveSends({});
+    for (size_t i = 0; i < sends.size(); ++i)
     {
-        const auto& send = mix.sends[i];
+        const auto& send = sends[i];
         if (send.targetBusID == 0) continue;
         BlueprintEdgeView e;
         e.fromItemId = fromId;

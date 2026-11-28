@@ -16,7 +16,6 @@
 #include <QLabel>
 #include <QScrollArea>
 #include <QSplitter>
-#include <QStackedWidget>
 #include <QVBoxLayout>
 
 namespace harken::studio {
@@ -50,14 +49,8 @@ FilterEditorWidget::FilterEditorWidget(QWidget* parent) : QWidget(parent)
     splitter->setChildrenCollapsible(false);
     content->addWidget(splitter);
     layout->addWidget(frame);
-    graph_ = new QStackedWidget(splitter);
-    canvas_ = new FilterResponseCanvas(graph_);
-    graph_->addWidget(canvas_);
-    auto* mixed = new QLabel(tr("Mixed values across platforms"), graph_);
-    mixed->setAlignment(Qt::AlignCenter);
-    QtControlSkin::setSemanticProperty(mixed, "textRole", QStringLiteral("secondary"));
-    graph_->addWidget(mixed);
-    splitter->addWidget(graph_);
+    canvas_ = new FilterResponseCanvas(splitter);
+    splitter->addWidget(canvas_);
     fields_ = new PropertyEditorEngine(this);
     PropertySchema schema;
     for (const auto& descriptor : VMixNode::schema())
@@ -95,30 +88,29 @@ FilterEditorWidget::FilterEditorWidget(QWidget* parent) : QWidget(parent)
             if (!gestureActive_ || !item) return;
             auto filter = canvas_->filter();
             filter.sections[static_cast<size_t>(kind)] = {frequency, q, gain};
-            const auto fields = FilterSemantics::fields();
-            for (size_t i = 0; i < fields.size(); ++i) {
-                const auto& field = fields[i];
-                if (field.kind != kind) continue;
-                const auto start = FilterSemantics::value(gestureStart_, field);
-                const auto value = FilterSemantics::value(filter, field);
-                if (!gestures_[i] && value != start)
-                    gestures_[i] = std::make_unique<PropertyEditSession>(item,
-                        QLatin1String(field.field), start, this, authoringPlatforms());
-                if (gestures_[i]) gestures_[i]->preview(value);
+            const auto platforms = authoringPlatforms();
+            if (!gesture_) {
+                gestureBase_ = FilterAuthoring::effectiveState(*item,
+                    platforms ? PlatformScope(platforms->front()) : std::nullopt);
+                gesture_ = std::make_unique<PropertyEditSession>(item, QStringLiteral("filter"),
+                    FilterSemantics::toJson(gestureBase_).toVariantMap(), this, platforms);
             }
+            auto next = gestureBase_;
+            for (const auto& field : FilterSemantics::fields())
+                if (FilterSemantics::value(filter, field) != FilterSemantics::value(gestureStart_, field))
+                    FilterSemantics::setValue(next, field, FilterSemantics::value(filter, field));
+            gesture_->preview(FilterSemantics::toJson(next).toVariantMap());
         });
     connect(canvas_, &FilterResponseCanvas::editFinished, this, [this] {
         gestureActive_ = false;
-        AutoComplexUndo undo(tr("Edit Filter"));
-        bool grouped = false;
-        for (auto& gesture : gestures_) {
-            if (!gesture) continue;
-            if (gesture->currentValue() == gesture->startValue()) gesture->cancel();
+        if (gesture_) {
+            AutoComplexUndo undo(tr("Edit Filter"));
+            if (gesture_->currentValue() == gesture_->startValue()) gesture_->cancel();
             else {
-                if (!grouped) grouped = undo.open();
-                gesture->commit();
+                undo.open();
+                gesture_->commit();
             }
-            gesture.reset();
+            gesture_.reset();
         }
         refresh();
     });
@@ -163,10 +155,8 @@ void FilterEditorWidget::bindItem(ProjectItem* item)
 void FilterEditorWidget::cancelGesture()
 {
     gestureActive_ = false;
-    for (auto& gesture : gestures_) {
-        if (gesture) gesture->cancel();
-        gesture.reset();
-    }
+    if (gesture_) gesture_->cancel();
+    gesture_.reset();
     canvas_->cancelEdit();
 }
 
@@ -176,19 +166,11 @@ void FilterEditorWidget::refresh(const QObject* originator)
     if (!item || !item->comp<VMixNode>()) {
         canvas_->setReadOnly(true);
         canvas_->setFilter({});
-        graph_->setCurrentIndex(0);
         return;
     }
-    const auto& context = PlatformContextService::instance().context();
-    auto filter = FilterAuthoring::effectiveState(*item);
-    bool mixed = false;
-    if (!context.selected.isEmpty()) {
-        filter = FilterAuthoring::effectiveState(*item, context.selected.front());
-        for (const auto& platform : context.selected)
-            mixed |= filter != FilterAuthoring::effectiveState(*item, platform);
-    }
-    graph_->setCurrentIndex(mixed ? 1 : 0);
-    canvas_->setReadOnly(mixed);
+    const auto filter = FilterAuthoring::effectiveState(*item,
+        currentWorldPlatformScope(PlatformContextService::instance().context()));
+    canvas_->setReadOnly(false);
     canvas_->setFilter(filter, ProjectManager::instance().currentProject()->sampleRate);
     if (originator != fields_) fields_->refreshField(QStringLiteral("filter"));
 }

@@ -145,6 +145,7 @@ private:
     bool encodeComponentReferences(QJsonObject* components) const;
     bool decodeComponentReferences(QJsonObject* components) const;
     bool rewriteEffectReferences(QJsonArray* effects, bool encode) const;
+    bool rewriteRouteReferences(QJsonArray* rows, bool encode) const;
     bool rewriteFieldGroupEffectReferences(QJsonObject* groups, bool encode) const;
     bool removeRetiredPlayableProperties(QJsonObject* properties) const;
     bool rewritePlayableReferenceFields(QJsonObject* properties, bool encode) const;

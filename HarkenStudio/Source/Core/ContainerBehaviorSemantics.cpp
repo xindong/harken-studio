@@ -147,7 +147,7 @@ QString childWeightLabel(const VSelection& selection)
 int effectiveChildWeight(const VSelection& selection,
                          uint32_t stableOccurrenceOrdinal, PlatformScope scope)
 {
-    const auto* row = selection.selections.table(scope).find(stableOccurrenceOrdinal);
+    const auto* row = selection.selections.table(SelectionMode::Random, scope).find(stableOccurrenceOrdinal);
     return std::clamp(row ? row->weight : kDefaultChildWeight,
                       minimumChildWeight(selection),
                       kMaxChildWeight);
@@ -169,7 +169,7 @@ int maxAvoidRepeat(const VSelection& selection,
 int effectiveAvoidRepeat(const VSelection& selection, PlatformScope scope)
 {
     QList<uint32_t> ordinals;
-    for (const auto& row : selection.selections.table(scope).occurrenceRows())
+    for (const auto& row : selection.selections.table(selection.mode, scope).occurrenceRows())
         ordinals.append(row.stableOccurrenceOrdinal);
     return std::clamp(selection.behavior.avoidRepeat, 0, maxAvoidRepeat(selection, ordinals, scope));
 }
@@ -179,7 +179,7 @@ bool validateSelections(const VSelection& selection, QString* error)
     if (selection.mode != SelectionMode::Random || selection.isQueue()
         || selection.behavior.discipline != RandomDiscipline::Draw)
         return true;
-    for (const auto* table : selection.selections.tables()) {
+    for (const auto* table : selection.selections.random.tables()) {
         const auto rows = table->occurrenceRows();
         if (!rows.empty() && std::none_of(rows.begin(), rows.end(),
                 [](const auto& row) { return row.weight > 0; })) {

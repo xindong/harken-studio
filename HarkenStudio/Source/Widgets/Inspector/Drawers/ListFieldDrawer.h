@@ -16,8 +16,9 @@ public:
     static void setWidgetEditGuard(QWidget* widget, std::function<bool()> guard);
     static void setWidgetPreviewCallbacks(QWidget* widget,
         std::function<void(const QVariant&)> preview, std::function<void()> finished);
+    static void setWidgetCellDecorator(QWidget* widget,
+        std::function<QWidget*(QWidget* control, const QVariantMap& row, const QString& field)> decorator);
     static void cancelWidgetEdits(QWidget* widget, bool preserveRows = false);
-    static void setWidgetMixed(QWidget* widget, bool mixed);
 };
 
 }

@@ -56,7 +56,7 @@ PropertyDescriptor receivesDescriptor()
         .elementSchema={
             { .field="source", .type=PropType::ObjectRef, .label="Source" },
             level,
-            *pickSchemaField(sendColumns, QLatin1String("type")),
+            { .field="type", .type=PropType::String, .label="Type", .def="Send" },
             { .field="duckTarget", .type=PropType::Bool, .label="Ducking" },
         },
         .listPresentation=ListPresentation::Display,
@@ -102,8 +102,8 @@ const PropertySchema& busInspectorSchema()
                 d.flags.readOnly = true;
         out.push_back(effectsInspectorDescriptor());
         out.push_back(inputsDescriptor());
-        out.push_back(sendsInspectorDescriptor());
-        out.push_back(sendsInspectorDescriptor(SendType::Sidechain));
+        out.push_back(routesInspectorDescriptor(SendType::Send));
+        out.push_back(routesInspectorDescriptor(SendType::Sidechain));
         out.push_back(receivesDescriptor());
         out.push_back(notesInspectorDescriptor());
         return out;

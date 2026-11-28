@@ -96,6 +96,7 @@ const QHash<QString, ComponentFields>& componentAuthorityFields()
                                   std::pair{"mixnode", "outputBusRef"},
                                   std::pair{"mixnode", "effects"},
                                   std::pair{"mixnode", "effectsPlatforms"},
+                                  std::pair{"mixnode", "sidechains"},
                                   std::pair{"audio", "outputBusOverride"},
                                   std::pair{"audio", "overrideBits"},
                                   std::pair{"spatial", "attenuation"},
@@ -637,6 +638,45 @@ bool ProjectSerializer::loadParentReference(const QJsonObject& json,
     return true;
 }
 
+bool ProjectSerializer::rewriteRouteReferences(QJsonArray* rows, bool encode) const
+{
+    const QString id = QStringLiteral("targetBusID");
+    const QString ref = QStringLiteral("targetBusRef");
+    const auto rewrite = [&](QJsonObject& owner) {
+        if (encode) {
+            const auto target = static_cast<uint32_t>(owner.value(id).toInteger(0));
+            const QJsonObject reference = persistentReference(target, ProjectItem::Type::Bus);
+            if (target == 0 || reference.isEmpty()) return false;
+            owner.remove(id);
+            owner[ref] = reference;
+            return true;
+        }
+        uint32_t target = 0;
+        if (!transientReference(owner.value(ref), ProjectItem::Type::Bus, &target)) return false;
+        owner.remove(ref);
+        owner[id] = static_cast<qint64>(target);
+        return true;
+    };
+    for (qsizetype index = 0; index < rows->size(); ++index) {
+        if (!(*rows)[index].isObject()) return false;
+        auto row = (*rows)[index].toObject();
+        if (!rewrite(row)) return false;
+        if (row.contains(QStringLiteral("platforms"))) {
+            if (!row.value(QStringLiteral("platforms")).isObject()) return false;
+            auto platforms = row.value(QStringLiteral("platforms")).toObject();
+            for (auto it = platforms.begin(); it != platforms.end(); ++it) {
+                if (!it.value().isObject()) return false;
+                auto cells = it.value().toObject();
+                if (cells.contains(encode ? id : ref) && !rewrite(cells)) return false;
+                it.value() = cells;
+            }
+            row[QStringLiteral("platforms")] = platforms;
+        }
+        (*rows)[index] = row;
+    }
+    return true;
+}
+
 bool ProjectSerializer::rewriteEffectReferences(QJsonArray* effects, bool encode) const
 {
     if (!effects) return false;
@@ -761,22 +801,13 @@ bool ProjectSerializer::encodeComponentReferences(QJsonObject* components) const
             if (!reference.isEmpty())
                 mix[QStringLiteral("outputBusRef")] = reference;
         }
-        if (mix.contains(QStringLiteral("sends"))) {
-            if (!mix.value(QStringLiteral("sends")).isArray()) return false;
-            QJsonArray sends;
-            for (const QJsonValue& value : mix.value(QStringLiteral("sends")).toArray()) {
-                if (!value.isObject()) return false;
-                QJsonObject send = value.toObject();
-                const uint32_t id = static_cast<uint32_t>(
-                    send.value(QStringLiteral("targetBusID")).toInteger(0));
-                const QJsonObject reference = persistentReference(
-                    id, ProjectItem::Type::Bus);
-                if (id == 0 || reference.isEmpty()) return false;
-                send.remove(QStringLiteral("targetBusID"));
-                send[QStringLiteral("targetBusRef")] = reference;
-                sends.append(send);
-            }
-            mix[QStringLiteral("sends")] = sends;
+        for (const auto* key : {"sends", "sidechains"}) {
+            const QLatin1String name(key);
+            if (!mix.contains(name)) continue;
+            if (!mix.value(name).isArray()) return false;
+            auto rows = mix.value(name).toArray();
+            if (!rewriteRouteReferences(&rows, true)) return false;
+            mix[name] = rows;
         }
         if (mix.contains(QStringLiteral("effects"))) {
             if (!mix.value(QStringLiteral("effects")).isArray()) return false;
@@ -852,21 +883,13 @@ bool ProjectSerializer::decodeComponentReferences(QJsonObject* components) const
             mix.remove(QStringLiteral("outputBusRef"));
             mix[QStringLiteral("outputBusId")] = static_cast<qint64>(id);
         }
-        if (mix.contains(QStringLiteral("sends"))) {
-            if (!mix.value(QStringLiteral("sends")).isArray()) return false;
-            QJsonArray sends;
-            for (const QJsonValue& value : mix.value(QStringLiteral("sends")).toArray()) {
-                if (!value.isObject()) return false;
-                QJsonObject send = value.toObject();
-                uint32_t id = 0;
-                if (!transientReference(send.value(QStringLiteral("targetBusRef")),
-                                        ProjectItem::Type::Bus, &id))
-                    return false;
-                send.remove(QStringLiteral("targetBusRef"));
-                send[QStringLiteral("targetBusID")] = static_cast<qint64>(id);
-                sends.append(send);
-            }
-            mix[QStringLiteral("sends")] = sends;
+        for (const auto* key : {"sends", "sidechains"}) {
+            const QLatin1String name(key);
+            if (!mix.contains(name)) continue;
+            if (!mix.value(name).isArray()) return false;
+            auto rows = mix.value(name).toArray();
+            if (!rewriteRouteReferences(&rows, false)) return false;
+            mix[name] = rows;
         }
         if (mix.contains(QStringLiteral("effects"))) {
             if (!mix.value(QStringLiteral("effects")).isArray()) return false;
@@ -994,28 +1017,8 @@ bool ProjectSerializer::rewritePlayableReferenceFields(QJsonObject* properties,
         if (field.id != 8) continue;
         const QJsonValue value = properties->value(key);
         if (!value.isArray()) return false;
-        QJsonArray sends;
-        for (const QJsonValue& rowValue : value.toArray()) {
-            if (!rowValue.isObject()) return false;
-            QJsonObject row = rowValue.toObject();
-            if (encode) {
-                const uint32_t targetId = static_cast<uint32_t>(
-                    row.value(QStringLiteral("targetBusID")).toInteger(0));
-                const QJsonObject reference = persistentReference(
-                    targetId, ProjectItem::Type::Bus);
-                if (targetId == 0 || reference.isEmpty()) return false;
-                row.remove(QStringLiteral("targetBusID"));
-                row[QStringLiteral("targetBusRef")] = reference;
-            } else {
-                uint32_t targetId = 0;
-                if (!transientReference(row.value(QStringLiteral("targetBusRef")),
-                                        ProjectItem::Type::Bus, &targetId))
-                    return false;
-                row.remove(QStringLiteral("targetBusRef"));
-                row[QStringLiteral("targetBusID")] = static_cast<qint64>(targetId);
-            }
-            sends.append(row);
-        }
+        auto sends = value.toArray();
+        if (!rewriteRouteReferences(&sends, encode)) return false;
         (*properties)[key] = sends;
     }
     return true;

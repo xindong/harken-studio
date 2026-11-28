@@ -343,10 +343,7 @@ private:
             if (auto* combo = qobject_cast<QComboBox*>(editor_->parentWidget()))
                 field = combo;
         }
-        const bool emptyMixedValue = field->property("mixedAcrossPlatforms").toBool()
-            && editor_->text().isEmpty();
-        QtControlSkin::setSemanticProperty(field, "inputInvalid",
-                                           rejected || (!acceptable && !emptyMixedValue));
+        QtControlSkin::setSemanticProperty(field, "inputInvalid", rejected || !acceptable);
     }
 
     QLineEdit* editor_;

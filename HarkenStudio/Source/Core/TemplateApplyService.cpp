@@ -143,18 +143,17 @@ void remapTree(ProjectItem* item, const TemplateIdentityMap& identities)
     remapAttenuationReferences(item->platformOverrides, identities);
     if (auto* selection = item->comp<VSelection>()) {
         QHash<QUuid, QUuid> rowGuids;
+        selection->selections.remapVariables(identities.guids);
+        for (auto& row : selection->selections.blendAxes) {
+            rowGuids.insert(row.guid, QUuid::createUuid());
+            row.guid = rowGuids.value(row.guid);
+        }
         for (auto* table : selection->selections.tables()) {
-            for (auto& axis : table->matchAxes) axis = identities.guids.value(axis, axis);
-            for (auto& row : table->mixingRows) {
-                if (!rowGuids.contains(row.guid)) rowGuids.insert(row.guid, QUuid::createUuid());
-                row.guid = rowGuids.value(row.guid);
-                row.variable = identities.guids.value(row.variable, row.variable);
-            }
             for (auto& row : table->matchRows)
                 row.target = identities.guids.value(row.target, row.target);
             for (auto& entry : table->entries) {
                 entry.childGuid = identities.guids.value(entry.childGuid, entry.childGuid);
-                for (auto& curve : entry.curves) curve.rowGuid = rowGuids.value(curve.rowGuid);
+                for (auto& curve : entry.curves) curve.rowGuid = rowGuids.value(curve.rowGuid, curve.rowGuid);
             }
         }
         for (auto& rule : selection->transitions.rules)
@@ -484,20 +483,20 @@ bool TemplateApplyService::seedTemplateInto(
     for (auto* item : authoredByGuid) {
         auto* selection = item->comp<VSelection>();
         if (!selection) continue;
-        for (auto* table : selection->selections.tables()) {
-            for (size_t axis = 0; axis < table->matchAxes.size(); ++axis) {
-                auto* variableItem = authoredByGuid.value(table->matchAxes[axis], nullptr);
-                auto* variable = variableItem ? variableItem->comp<VVariable>() : nullptr;
-                if (!variable) return setErr(QStringLiteral("Template Grid axis has no Variable"));
+        for (const auto& axis : selection->selections.matchAxes) {
+            auto* variableItem = authoredByGuid.value(axis, nullptr);
+            auto* variable = variableItem ? variableItem->comp<VVariable>() : nullptr;
+            if (!variable) return setErr(QStringLiteral("Template Grid axis has no Variable"));
+            for (auto* table : selection->selections.tables())
                 for (auto& row : table->matchRows) {
-                    auto& cell = row.cells[axis];
-                    if (!cell) continue;
-                    if (!cell->labelId.isNull()) {
-                        if (!VariableSemantics::labelById(variable->labels, cell->labelId))
+                    const auto cell = row.cells.find(axis);
+                    if (cell == row.cells.end()) continue;
+                    if (!cell->second.labelId.isNull()) {
+                        if (!VariableSemantics::labelById(variable->labels, cell->second.labelId))
                             return setErr(QStringLiteral("Template Grid Label identity is missing"));
                         continue;
                     }
-                    const int index = cell->legacyValue;
+                    const int index = cell->second.legacyValue;
                     if (index < 0 || index > VariableSemantics::kStepExactIntBound)
                         return setErr(QStringLiteral("Template Grid Label index is invalid"));
                     const auto* label = VariableSemantics::labelAtIndex(variable->labels, index);
@@ -505,9 +504,8 @@ bool TemplateApplyService::seedTemplateInto(
                         variable->labels.push_back({index, {}});
                         label = &variable->labels.back();
                     }
-                    cell = DiscreteGridCell(label->id);
+                    cell->second = DiscreteGridCell(label->id);
                 }
-            }
         }
     }
     for (const auto& value : pending) {

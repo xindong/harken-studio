@@ -71,7 +71,7 @@ std::unique_ptr<EffectEditorPanel::Selection> EffectEditorPanel::resolveSelectio
     const auto* project = ProjectManager::instance().currentProject();
     if (!mix || !project) return {};
     const auto& context = selection->context;
-    selection->chain = mix->effectsForPlatform(context.all ? std::nullopt : currentWorldPlatformScope(context));
+    selection->chain = mix->effectsForPlatform(currentWorldPlatformScope(context));
     selection->editable = context.all || context.selected.size() == 1;
     if (PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(item->type)) {
         selection->grouped = true;
@@ -392,12 +392,8 @@ void EffectEditorPanel::commitParameter(size_t index, double value)
             args = {{QStringLiteral("authoring_handle"), static_cast<qint64>(boundItem()->objectID)},
                     {QStringLiteral("property"), QStringLiteral("effects")},
                     {QStringLiteral("value"), chain.toJson()}};
-            if (!current->context.all && !current->context.selected.isEmpty()) {
-                QJsonArray platforms;
-                for (const auto& platform : current->context.selected)
-                    platforms.append(ProjectPlatformSemantics::idString(platform));
-                args.insert(QStringLiteral("platform_ids"), platforms);
-            }
+            if (const auto platform = platformEditScope(current->context))
+                args.insert(QStringLiteral("platform_ids"), QJsonArray{ProjectPlatformSemantics::idString(*platform)});
         }
     }
     const auto result = ActionManager::instance().execute(command, args, ActionSource::GUI, this);

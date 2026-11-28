@@ -4,6 +4,7 @@
 #include "ProjectTypes.h"
 
 #include <map>
+#include <QJsonObject>
 #include <QtEndian>
 
 namespace harken::studio {
@@ -44,6 +45,116 @@ QUuid fromFieldGroupGuid(harken::studio::project_schema::AuthoringGuid guid)
     qToBigEndian<quint64>(guid.high, bytes.data());
     qToBigEndian<quint64>(guid.low, bytes.data() + 8);
     return QUuid::fromRfc4122(bytes);
+}
+
+bool parseFieldGroupGuid(const QJsonValue& value, harken::studio::project_schema::AuthoringGuid& guid)
+{
+    if (!value.isString()) return false;
+    const auto text = value.toString();
+    const QUuid parsed(text);
+    if (text.size() != 36 || parsed.toString(QUuid::WithoutBraces).compare(text, Qt::CaseInsensitive) != 0)
+        return false;
+    guid = toFieldGroupGuid(parsed);
+    return true;
+}
+
+namespace {
+
+template <typename Row>
+bool routeRowsFromJson(const QJsonValue& value, std::vector<Row>& rows)
+{
+    using Guid = harken::studio::project_schema::AuthoringGuid;
+    if (!value.isArray()) return false;
+    for (const auto& entry : value.toArray()) {
+        const auto object = entry.toObject();
+        Row row;
+        constexpr bool sidechain = requires { row.duckTarget; };
+        for (auto it = object.begin(); it != object.end(); ++it)
+            if (it.key() != QLatin1String("id") && it.key() != QLatin1String("targetBusID")
+                && it.key() != QLatin1String("sendLevel") && it.key() != QLatin1String("platforms")
+                && !(sidechain && it.key() == QLatin1String("duckTarget")))
+                return false;
+        if (!entry.isObject() || !parseFieldGroupGuid(object.value(QStringLiteral("id")), row.id)
+            || !parseFieldGroupGuid(object.value(QStringLiteral("targetBusID")), row.targetBusID)
+            || !object.value(QStringLiteral("sendLevel")).isDouble())
+            return false;
+        row.sendLevel = static_cast<float>(object.value(QStringLiteral("sendLevel")).toDouble());
+        if constexpr (sidechain) {
+            const auto duck = object.value(QStringLiteral("duckTarget"));
+            if (!duck.isUndefined() && !duck.isBool()) return false;
+            row.duckTarget = duck.toBool();
+        }
+        const auto platforms = object.value(QStringLiteral("platforms"));
+        if (!platforms.isUndefined() && !platforms.isObject()) return false;
+        const auto cellsByPlatform = platforms.toObject();
+        for (auto it = cellsByPlatform.begin(); it != cellsByPlatform.end(); ++it) {
+            Guid platform;
+            if (!parseFieldGroupGuid(it.key(), platform) || !it.value().isObject()) return false;
+            typename decltype(row.platforms)::mapped_type cells;
+            const auto values = it.value().toObject();
+            for (auto cell = values.begin(); cell != values.end(); ++cell) {
+                if (cell.key() == QLatin1String("sendLevel") && cell.value().isDouble()) {
+                    cells.sendLevel = static_cast<float>(cell.value().toDouble());
+                } else if constexpr (sidechain) {
+                    if (cell.key() != QLatin1String("duckTarget") || !cell.value().isBool()) return false;
+                    cells.duckTarget = cell.value().toBool();
+                } else {
+                    return false;
+                }
+            }
+            row.platforms.emplace(platform, cells);
+        }
+        rows.push_back(std::move(row));
+    }
+    return true;
+}
+
+template <typename Row>
+QJsonArray routeRowsToJson(const std::vector<Row>& rows)
+{
+    const auto guidText = [](harken::studio::project_schema::AuthoringGuid guid) {
+        return fromFieldGroupGuid(guid).toString(QUuid::WithoutBraces);
+    };
+    QJsonArray result;
+    for (const auto& row : rows) {
+        QJsonObject object{{QStringLiteral("id"), guidText(row.id)},
+                           {QStringLiteral("targetBusID"), guidText(row.targetBusID)},
+                           {QStringLiteral("sendLevel"), row.sendLevel}};
+        if constexpr (requires { row.duckTarget; }) object.insert(QStringLiteral("duckTarget"), row.duckTarget);
+        QJsonObject platforms;
+        for (const auto& [platform, cells] : row.platforms) {
+            QJsonObject values;
+            if (cells.sendLevel) values.insert(QStringLiteral("sendLevel"), *cells.sendLevel);
+            if constexpr (requires { cells.duckTarget; })
+                if (cells.duckTarget) values.insert(QStringLiteral("duckTarget"), *cells.duckTarget);
+            platforms.insert(guidText(platform), values);
+        }
+        if (!platforms.isEmpty()) object.insert(QStringLiteral("platforms"), platforms);
+        result.append(object);
+    }
+    return result;
+}
+
+}
+
+bool fieldGroupRouteRowsFromJson(const QJsonValue& value, std::vector<SendFieldGroupRow>& rows)
+{
+    return routeRowsFromJson(value, rows);
+}
+
+bool fieldGroupRouteRowsFromJson(const QJsonValue& value, std::vector<SidechainFieldGroupRow>& rows)
+{
+    return routeRowsFromJson(value, rows);
+}
+
+QJsonArray fieldGroupRouteRowsToJson(const std::vector<SendFieldGroupRow>& rows)
+{
+    return routeRowsToJson(rows);
+}
+
+QJsonArray fieldGroupRouteRowsToJson(const std::vector<SidechainFieldGroupRow>& rows)
+{
+    return routeRowsToJson(rows);
 }
 
 FieldGroupScope toFieldGroupScope(PlatformScope scope)
@@ -244,29 +355,34 @@ FieldGroupEffectiveSnapshot buildFieldGroupEffectiveSnapshot(
     for (const auto& definition : view.definitions) {
         const auto output = resolver.Resolve(definition.guid, scope, FieldGroupId::Output);
         const auto send = resolver.Resolve(definition.guid, scope, FieldGroupId::Send);
+        const auto sidechain = resolver.Resolve(definition.guid, scope, FieldGroupId::Sidechain);
         const auto spatial = resolver.Resolve(definition.guid, scope, FieldGroupId::SpatialRating);
         const auto effects = resolver.Resolve(definition.guid, scope, FieldGroupId::Effect);
         const auto conversion = resolver.Resolve(definition.guid, scope, FieldGroupId::Conversion);
-        for (const auto* resolved : {&output, &send, &spatial, &effects, &conversion}) {
+        for (const auto* resolved : {&output, &send, &sidechain, &spatial, &effects, &conversion}) {
             append(resolved->diagnostics, definition.guid);
             if (resolved->value)
                 append(references.Validate(resolved->value->group,
                     resolved->value->payload), definition.guid);
         }
-        if (!output.ok() || !send.ok() || !spatial.ok() || !effects.ok() || !conversion.ok()) continue;
+        if (!output.ok() || !send.ok() || !sidechain.ok() || !spatial.ok() || !effects.ok()
+            || !conversion.ok()) continue;
         EffectiveDefinitionFieldGroups groups{
             std::get<OutputFieldGroup>(output.value->payload),
             std::get<SendFieldGroup>(send.value->payload),
             std::get<SpatialRatingFieldGroup>(spatial.value->payload),
             output.value->source, send.value->source, spatial.value->source,
             std::get<EffectFieldGroup>(effects.value->payload), effects.value->source,
-            std::get<ConversionFieldGroup>(conversion.value->payload), conversion.value->source};
-        for (const auto& row : groups.send.sends) {
-            if ((row.type == harken::studio::project_schema::SendType::Send || row.duckTarget)
-                && row.targetBusID == groups.output.outputBusRef)
+            std::get<ConversionFieldGroup>(conversion.value->payload), conversion.value->source,
+            std::get<SidechainFieldGroup>(sidechain.value->payload), sidechain.value->source};
+        for (const auto& row : groups.send.sends)
+            if (row.targetBusID == groups.output.outputBusRef)
+                fail(QStringLiteral("A Send cannot target the effective Output"),
+                     definition.guid, QStringLiteral("targetBusID"));
+        for (const auto& row : groups.sidechain.sidechains)
+            if (row.duckTarget && row.targetBusID == groups.output.outputBusRef)
                 fail(QStringLiteral("Only a Sidechain with Target Ducking off can target the effective Output"),
                      definition.guid, QStringLiteral("targetBusID"));
-        }
         result.definitions.emplace(definition.guid, std::move(groups));
     }
     if (!result.ok()) {

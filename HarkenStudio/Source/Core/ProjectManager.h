@@ -106,6 +106,9 @@ public:
     friend ActionResult handlePlayableItemProperty(ProjectManager*, ProjectItem*,
                                                    const QString&, const QJsonObject&,
                                                    const QObject*);
+    friend ActionResult handleBusRoutesItemProperty(ProjectManager*, ProjectItem*,
+                                                    const QString&, const QJsonObject&,
+                                                    const QObject*);
     friend ActionResult handleNotesItemProperty(ProjectManager*, ProjectItem*,
                                                 const QString&, const QJsonObject&,
                                                 const QObject*);

@@ -120,8 +120,7 @@ bool ParameterControlHost::eventFilter(QObject* watched, QEvent* event)
             connect(menu, &QMenu::aboutToHide, menu, &QObject::deleteLater);
             auto* reset = menu->addAction(tr("Reset"));
             reset->setEnabled(!binding_->isEditing()
-                && (binding_->mixedValue()
-                    || !qFuzzyCompare(binding_->value() + 1.0, binding_->defaultValue() + 1.0)));
+                && !qFuzzyCompare(binding_->value() + 1.0, binding_->defaultValue() + 1.0));
             connect(reset, &QAction::triggered, this, [this] {
                 if (isEnabled())
                     binding_->commitValue(binding_->defaultValue());
@@ -142,11 +141,9 @@ void ParameterControlHost::syncToolTips()
     presenter_->setToolTip(toolTip());
     const QString unit = binding_->unit().trimmed();
     QString text = toolTip();
-    if (!binding_->mixedValue()) {
-        if (!text.isEmpty()) text += QLatin1Char('\n');
-        text += QStringLiteral("%1 %2").arg(
-            formatDecimal(binding_->toDisplayValue(binding_->value()), binding_->decimals()), unit).trimmed();
-    }
+    if (!text.isEmpty()) text += QLatin1Char('\n');
+    text += QStringLiteral("%1 %2").arg(
+        formatDecimal(binding_->toDisplayValue(binding_->value()), binding_->decimals()), unit).trimmed();
     presenter_->primaryEditor()->setToolTip(text);
     if (auto* editor = presenter_->valueEditor())
         editor->setToolTip(text);

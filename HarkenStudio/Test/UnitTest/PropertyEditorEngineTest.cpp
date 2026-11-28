@@ -208,8 +208,7 @@ TEST(PropertyEditorEnginePlatformContext, SwitchingMatchesFreshBindingWithoutAut
             const auto* expected = referencePage->findChild<ParameterSlider*>(field);
             ASSERT_NE(actual, nullptr);
             ASSERT_NE(expected, nullptr);
-            EXPECT_EQ(actual->mixedValue(), expected->mixedValue());
-            if (!expected->mixedValue()) EXPECT_EQ(actual->value(), expected->value());
+            EXPECT_EQ(actual->value(), expected->value());
             EXPECT_EQ(actual->toolTip(), expected->toolTip());
         }
         auto* actualPreview = page->findChild<FilterPreviewField*>("prop_filter");
@@ -222,103 +221,6 @@ TEST(PropertyEditorEnginePlatformContext, SwitchingMatchesFreshBindingWithoutAut
         EXPECT_FALSE(undo.canUndo());
         EXPECT_EQ(changes, 0);
     }
-}
-
-TEST(PropertyEditorEngineRouting, FilteredTablesPreservePeerRoutesAndUndo)
-{
-    using namespace harken::studio;
-    ensureApp();
-    registerBuiltinInspectorCustomizations();
-    auto& manager = ProjectManager::instance();
-    auto& history = UndoRedoManager::instance();
-    ActionManager::instance().clearAllForTesting();
-    registerProjectActions(ActionManager::instance(), &manager, nullptr);
-    QTemporaryDir directory;
-    ProjectConfig config;
-    config.name = QStringLiteral("FilteredRoutes");
-    config.location = directory.path();
-    ASSERT_TRUE(manager.createProject(config));
-    const auto close = qScopeGuard([&] {
-        history.clear();
-        manager.closeProject();
-        ActionManager::instance().clearAllForTesting();
-    });
-    auto* sound = manager.createItem(nullptr, QStringLiteral("Source"), ProjectItem::Type::Sound);
-    auto* target = manager.createItem(manager.getMasterBusItem(), QStringLiteral("A"), ProjectItem::Type::Bus);
-    auto* other = manager.createItem(manager.getMasterBusItem(), QStringLiteral("B"), ProjectItem::Type::Bus);
-    ASSERT_TRUE(sound && target && other);
-    const SendFieldGroupRow send{toFieldGroupGuid(target->guid), -1.0f, SendType::Send, false};
-    const SendFieldGroupRow sidechain{toFieldGroupGuid(target->guid), -6.0f, SendType::Sidechain, false};
-    const SendFieldGroupRow otherSend{toFieldGroupGuid(other->guid), -12.0f, SendType::Send, false};
-    const SendFieldGroup initial{{send, sidechain, otherSend}};
-    sound->fieldGroups.send.shared = {FieldGroupMode::Local, initial};
-    history.clear();
-    InspectorPanel panel;
-    panel.showItemInspector(sound);
-    auto* sends = panel.findChild<QWidget*>(QStringLiteral("prop_sends"));
-    auto* sidechains = panel.findChild<QWidget*>(QStringLiteral("prop_sidechains"));
-    ASSERT_TRUE(sends && sidechains);
-    const auto numbers = sends->findChildren<QLabel*>(QStringLiteral("tableRowNumber"));
-    ASSERT_EQ(numbers.size(), 2);
-    EXPECT_EQ(numbers[1]->text(), QStringLiteral("2"));
-    const auto sideNumbers = sidechains->findChildren<QLabel*>(QStringLiteral("tableRowNumber"));
-    ASSERT_EQ(sideNumbers.size(), 1);
-    EXPECT_EQ(sideNumbers.front()->text(), QStringLiteral("1"));
-    auto* add = sidechains->findChild<QToolButton*>(QStringLiteral("listAdd_sidechains"));
-    ASSERT_NE(add, nullptr);
-    add->click();
-    auto* menu = sidechains->findChild<QMenu*>(QStringLiteral("listAddMenu_sidechains"));
-    ASSERT_NE(menu, nullptr);
-    ASSERT_EQ(menu->actions().size(), 2);
-    EXPECT_EQ(menu->actions()[0]->text(), QStringLiteral("Sidechain to..."));
-    EXPECT_EQ(menu->actions()[1]->text(), QStringLiteral("Sidechain to... (Ducking Enabled)"));
-    menu->close();
-    auto* check = sidechains->findChild<QCheckBox*>();
-    ASSERT_NE(check, nullptr);
-    ASSERT_TRUE(check->isEnabled());
-    check->click();
-    auto enabled = sidechain;
-    enabled.duckTarget = true;
-    EXPECT_EQ(sound->fieldGroups.send.shared.localHistory, (SendFieldGroup{{send, enabled, otherSend}}));
-    auto* table = sends->findChild<TableWidget*>();
-    ASSERT_NE(table, nullptr);
-    table->moveRow(0, 2);
-    EXPECT_EQ(sound->fieldGroups.send.shared.localHistory, (SendFieldGroup{{otherSend, enabled, send}}));
-    auto* remove = sends->findChild<QToolButton*>(QStringLiteral("listRemoveSelected_sends"));
-    ASSERT_TRUE(remove && remove->isEnabled());
-    remove->click();
-    EXPECT_EQ(sound->fieldGroups.send.shared.localHistory, (SendFieldGroup{{otherSend, enabled}}));
-    ASSERT_EQ(history.undoStack()->count(), 3);
-    history.undo();
-    history.undo();
-    history.undo();
-    EXPECT_EQ(sound->fieldGroups.send.shared.localHistory, initial);
-    const auto locator = PlayablePropertyAuthoringV1::definitionLocator(*target);
-    const auto* property = PlayablePropertyAuthoringV1::fieldByName(QStringLiteral("sends"));
-    ASSERT_TRUE(locator && property);
-    QJsonArray busRows{QJsonObject{{"targetBusID", static_cast<qint64>(other->objectID)}, {"sendLevel", -9.0}}};
-    ASSERT_TRUE(PlayablePropertyAuthoringV1::setOverride(*target, *locator, property->id, busRows, std::nullopt));
-    InspectorPanel busPanel;
-    busPanel.showItemInspector(target);
-    auto* receives = busPanel.findChild<QWidget*>(QStringLiteral("prop_receives"));
-    ASSERT_NE(receives, nullptr);
-    auto* busSends = busPanel.findChild<QWidget*>(QStringLiteral("prop_sends"));
-    ASSERT_NE(busSends, nullptr);
-    EXPECT_EQ(busSends->findChildren<QLabel*>(QStringLiteral("tableRowNumber")).size(), 1);
-    const auto incoming = receives->findChildren<QWidget*>(QStringLiteral("listRow"));
-    ASSERT_EQ(incoming.size(), 2);
-    auto* sendRow = incoming[0]->layout();
-    auto* sendDuckingCell = sendRow->itemAt(sendRow->count() - 1)->widget();
-    ASSERT_NE(sendDuckingCell, nullptr);
-    EXPECT_EQ(sendDuckingCell->findChild<QCheckBox*>(), nullptr);
-    const auto labels = sendDuckingCell->findChildren<QLabel*>();
-    EXPECT_TRUE(std::all_of(labels.begin(), labels.end(), [](const QLabel* label) {
-        return label->text().isEmpty();
-    }));
-    auto* ducking = incoming[1]->findChild<QCheckBox*>();
-    ASSERT_NE(ducking, nullptr);
-    EXPECT_FALSE(ducking->isEnabled());
-    EXPECT_FALSE(ducking->isChecked());
 }
 
 TEST(PropertyEditorEngineSelection, SharedReferencesKeepMixedInheritanceAndAtomicHistoryAcrossPlatforms)

@@ -5,6 +5,9 @@
 #include "FieldGroups.h"
 #include "ProjectPlatform.h"
 
+#include <QJsonArray>
+#include <QJsonValue>
+
 #include <functional>
 #include <map>
 #include <vector>
@@ -22,6 +25,12 @@ FieldGroupDefinitionView fieldGroupDefinitionView(const ProjectItem& item);
 harken::studio::project_schema::AuthoringGuid toFieldGroupGuid(const QUuid& guid);
 QUuid fromFieldGroupGuid(harken::studio::project_schema::AuthoringGuid guid);
 FieldGroupScope toFieldGroupScope(PlatformScope scope);
+bool parseFieldGroupGuid(const QJsonValue& value, harken::studio::project_schema::AuthoringGuid& guid);
+
+bool fieldGroupRouteRowsFromJson(const QJsonValue& value, std::vector<SendFieldGroupRow>& rows);
+bool fieldGroupRouteRowsFromJson(const QJsonValue& value, std::vector<SidechainFieldGroupRow>& rows);
+QJsonArray fieldGroupRouteRowsToJson(const std::vector<SendFieldGroupRow>& rows);
+QJsonArray fieldGroupRouteRowsToJson(const std::vector<SidechainFieldGroupRow>& rows);
 
 struct FieldGroupProjectView {
     std::vector<FieldGroupDefinitionView> definitions;
@@ -59,6 +68,8 @@ struct EffectiveDefinitionFieldGroups {
     FieldGroupSource effectsSource;
     ConversionFieldGroup conversion;
     FieldGroupSource conversionSource;
+    SidechainFieldGroup sidechain;
+    FieldGroupSource sidechainSource;
 };
 
 struct FieldGroupEffectiveSnapshot {

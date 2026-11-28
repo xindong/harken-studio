@@ -251,8 +251,8 @@ bool validateOwnedGridTargets(const ProjectItem& owner, QString* error)
     const auto* selection = owner.comp<VSelection>();
     if (!selection) return true;
     for (const auto* table : selection->selections.tables())
-        if (!validateGridRowTargets(owner, table->matchGrid(), "discrete", error)
-            || !MixingSemantics::validateTargets(owner, table->mixing(), error))
+        if (!validateGridRowTargets(owner, table->matchGrid(selection->selections.matchAxes), "discrete", error)
+            || !MixingSemantics::validateTargets(owner, table->mixing(selection->selections.blendAxes), error))
             return false;
     return true;
 }

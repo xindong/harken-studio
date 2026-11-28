@@ -149,8 +149,8 @@ MixingEditorWidget::MixingEditorWidget(QWidget* parent) : QWidget(parent)
         [this](ProjectItem* item, const QString& property, const QObject*) {
             if (!boundItem_) return;
             if (item == boundItem_ && property == QStringLiteral("selections")) {
-                mixing_ = boundItem_->comp<VSelection>()->selections.table(currentWorldPlatformScope(
-                    PlatformContextService::instance().context())).mixing();
+                mixing_ = boundItem_->comp<VSelection>()->mixing(currentWorldPlatformScope(
+                    PlatformContextService::instance().context()));
                 if (!committingCurve_) scheduleReload();
                 else refreshDerived();
             } else if (item && mixing_.rowIndexForVariable(item->guid) >= 0) scheduleReload();
@@ -225,8 +225,7 @@ void MixingEditorWidget::reload()
     const int scroll = view_->verticalScrollBar()->value();
     const auto* selection = boundItem_ ? boundItem_->comp<VSelection>() : nullptr;
     mixing_ = selection && selection->mode == SelectionMode::Blend
-        ? selection->selections.table(currentWorldPlatformScope(
-            PlatformContextService::instance().context())).mixing() : MixingDef{};
+        ? selection->mixing(currentWorldPlatformScope(PlatformContextService::instance().context())) : MixingDef{};
     views_.clear();
     model_->setRowCount(0);
     model_->setRowCount(static_cast<int>(mixing_.rows.size()));
@@ -451,16 +450,10 @@ void MixingEditorWidget::loadCurves(int index)
         profile.color = ThemeManager::instance().colors().categoricalColor(view.selected);
     if (variable) profile.setVariableAxis(variable->kind, variable->labels);
     view.canvas->setProfile(profile);
-    float minimum = variable ? variable->rangeMin : 0.0f;
-    float maximum = variable ? variable->rangeMax : 100.0f;
     view.canvas->setEnabled(variable != nullptr);
     QVector<MixingCurveClip> clips;
     for (int child = 0; child < static_cast<int>(row.children.size()); ++child) {
         const auto curve = scaledCurve(row.children[child], 100.0f);
-        for (const auto& point : curve.points) {
-            minimum = std::min(minimum, point.x);
-            maximum = std::max(maximum, point.x);
-        }
         const bool selected = child == view.selected;
         QtControlSkin::setSemanticProperty(view.childRows[child], "selected", selected);
         if (selected) {
@@ -470,6 +463,7 @@ void MixingEditorWidget::loadCurves(int index)
         clips.append({target ? target->name : tr("Missing"), curve.points, curve.handles});
     }
     view.children->refreshLayout();
+    const auto [minimum, maximum] = MixingRowCanvas::curveDomain(row);
     view.canvas->setXDomain(minimum, maximum);
     view.canvas->setClips(clips, view.selected);
     view.removeChild->setEnabled(validChild(index, view.selected));
@@ -548,18 +542,9 @@ bool MixingEditorWidget::commit(const MixingDef& next, const QString& text)
     preview_.reset();
     const auto& context = PlatformContextService::instance().context();
     SelectionData candidate = boundItem_->comp<VSelection>()->selections;
-    if (context.all || context.selected.isEmpty()) {
-        if (!candidate.shared.setMixing(next)) return false;
-        for (auto& table : candidate.platforms)
-            if (!table.setMixing(next)) return false;
-    } else {
-        for (const auto& platform : context.selected)
-            if (!candidate.editTable(platform).setMixing(next)) return false;
-    }
-    for (auto it = candidate.platforms.begin(); it != candidate.platforms.end();) {
-        if (it.value() == candidate.shared) it = candidate.platforms.erase(it);
-        else ++it;
-    }
+    if (!candidate.canEdit(SelectionMode::Blend, currentWorldPlatformScope(context), platformEditScope(context))
+        || !candidate.setMixing(next, platformEditScope(context)))
+        return false;
     const auto result = ActionManager::instance().execute(QStringLiteral("set_item_property"), QJsonObject{
         {QStringLiteral("authoring_handle"), static_cast<qint64>(boundItem_->objectID)},
         {QStringLiteral("property"), QStringLiteral("selections")},

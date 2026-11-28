@@ -87,32 +87,38 @@ void cleanPlayable(QJsonObject& properties, const QSet<QUuid>& guids)
 
 void cleanSelectionTable(QJsonObject& table, const QSet<QUuid>& guids)
 {
-    const auto axes = table.value(QStringLiteral("matchAxes")).toArray();
-    QList<int> removedAxes;
-    for (int i = 0; i < axes.size(); ++i)
-        if (deleted(axes.at(i), guids)) removedAxes.append(i);
-    if (!removedAxes.isEmpty())
-        table.insert(QStringLiteral("matchAxes"), filtered(axes, [&](const auto& row) {
-            return deleted(row, guids);
-        }));
-    editArray(table, QStringLiteral("blendAxes"), [&](QJsonObject& axis) {
-        if (deleted(axis.value(QStringLiteral("variable")), guids))
-            axis.insert(QStringLiteral("variable"), QJsonValue::Null);
-    });
     const auto entries = filtered(table.value(QStringLiteral("entries")).toArray(), [&](const auto& row) {
         return deleted(row.toObject().value(QStringLiteral("childGuid")), guids);
     });
     editArray(table, QStringLiteral("matchRows"), [&](QJsonObject& row) {
         if (deleted(row.value(QStringLiteral("target")), guids))
             row.insert(QStringLiteral("target"), QJsonValue::Null);
-        if (removedAxes.isEmpty()) return;
-        auto cells = row.value(QStringLiteral("cells")).toArray();
-        for (auto it = removedAxes.crbegin(); it != removedAxes.crend(); ++it)
-            if (*it < cells.size()) cells.removeAt(*it);
+        auto cells = row.value(QStringLiteral("cells")).toObject();
+        for (const auto& axis : cells.keys())
+            if (deleted(axis, guids)) cells.remove(axis);
         row.insert(QStringLiteral("cells"), cells);
     });
     if (table.contains(QStringLiteral("entries")))
         table.insert(QStringLiteral("entries"), entries);
+}
+
+void cleanSelections(QJsonObject& selections, const QSet<QUuid>& guids)
+{
+    if (selections.contains(QStringLiteral("matchAxes")))
+        selections.insert(QStringLiteral("matchAxes"), filtered(selections.value(QStringLiteral("matchAxes")).toArray(),
+            [&](const auto& row) { return deleted(row, guids); }));
+    editArray(selections, QStringLiteral("blendAxes"), [&](QJsonObject& axis) {
+        if (deleted(axis.value(QStringLiteral("variable")), guids))
+            axis.insert(QStringLiteral("variable"), QJsonValue::Null);
+    });
+    for (const auto* mode : {"random", "sequence", "match", "blend"})
+        editObject(selections, QLatin1String(mode), [&](QJsonObject& tables) {
+            editObject(tables, QStringLiteral("shared"), [&](QJsonObject& table) { cleanSelectionTable(table, guids); });
+            editObject(tables, QStringLiteral("platforms"), [&](QJsonObject& platforms) {
+                for (const auto& platform : platforms.keys())
+                    editObject(platforms, platform, [&](QJsonObject& table) { cleanSelectionTable(table, guids); });
+            });
+        });
 }
 
 QJsonValue rowIdentity(const QJsonValue& value)
@@ -332,11 +338,7 @@ QJsonObject PhysicalFolderReferenceEdits::removeReferences(QJsonObject content,
         });
         editObject(components, QStringLiteral("selection"), [&](QJsonObject& selection) {
             editObject(selection, QStringLiteral("selections"), [&](QJsonObject& selections) {
-                editObject(selections, QStringLiteral("shared"), [&](auto& table) { cleanSelectionTable(table, guids); });
-                editObject(selections, QStringLiteral("platforms"), [&](QJsonObject& platforms) {
-                    for (const auto& key : platforms.keys())
-                        editObject(platforms, key, [&](auto& table) { cleanSelectionTable(table, guids); });
-                });
+                cleanSelections(selections, guids);
             });
             editObject(selection, QStringLiteral("transitions"), [&](QJsonObject& transitions) {
                 transitions.insert(QStringLiteral("rules"), filtered(transitions.value(QStringLiteral("rules")).toArray(), [&](const auto& row) {

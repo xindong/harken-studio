@@ -1143,9 +1143,9 @@ TEST_F(ProjectDocumentRoundTripTest, OrdinaryEditsAndUndoPreserveTheSameDocument
         if (item->type == ProjectItem::Type::Bus) {
             properties.append({QStringLiteral("volume"), -6.0});
             if (item != manager.getMasterBusItem())
-                properties.append({QStringLiteral("sends"), QJsonArray{QJsonObject{
+                properties.append({QStringLiteral("sidechains"), QJsonArray{QJsonObject{
+                    {QStringLiteral("id"), QUuid::createUuid().toString(QUuid::WithoutBraces)},
                     {QStringLiteral("targetBusID"), static_cast<qint64>(manager.getMasterBusItem()->objectID)},
-                    {QStringLiteral("type"), QStringLiteral("Sidechain")},
                     {QStringLiteral("duckTarget"), false},
                     {QStringLiteral("sendLevel"), -6.0}}}});
         } else if (item->type == ProjectItem::Type::Action) {

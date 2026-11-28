@@ -19,19 +19,10 @@ namespace harken::studio {
 
 namespace {
 
-using harkenplayableproperties::PlayablePropertyIdV1;
-
 std::vector<PropertyEditSession*>& sessionRegistry()
 {
     static std::vector<PropertyEditSession*> registry;
     return registry;
-}
-
-bool isBusOutputVolumeField(const ProjectItem* item,
-                            const PlayablePropertyAuthoringV1::Field* field)
-{
-    return item && item->type == ProjectItem::Type::Bus && field
-        && field->id == static_cast<uint8_t>(PlayablePropertyIdV1::OutputBusVolume);
 }
 
 PlayablePropertyStateV1 overlaySlotState(
@@ -59,22 +50,22 @@ PropertyEditSession::PropertyEditSession(ProjectItem* item, QString propertyName
     currentValue_ = startValue_;
     if (item_ && propertyName_ == QLatin1String("effects")) captureEffectStart();
     if (item_ && FilterAuthoring::isField(propertyName_)) captureFilterStart();
-    if (item_) {
+    if (isRouteEdit()) {
+        platforms_.reset();
+        startValue_ = item_->comp<VMixNode>()->getField(propertyName_);
+        currentValue_ = startValue_;
+    } else if (item_) {
         const auto* field = PlayablePropertyAuthoringV1::fieldByName(propertyName_);
-        if (isBusOutputVolumeField(item_, field)) {
-            propertyName_ = QString::fromLatin1(field->fieldName);
-        } else {
-            const auto locator = PlayablePropertyAuthoringV1::definitionLocator(*item_);
-            if (field && locator) {
-                playableLocator_ = *locator;
-                playablePropertyId_ = field->id;
-                capturePlayableStart();
-                if (playableStartState_)
-                    propertyName_ = QString::fromLatin1(field->fieldName);
-                else {
-                    playableLocator_.reset();
-                    playablePropertyId_ = 0;
-                }
+        const auto locator = PlayablePropertyAuthoringV1::definitionLocator(*item_);
+        if (field && locator) {
+            playableLocator_ = *locator;
+            playablePropertyId_ = field->id;
+            capturePlayableStart();
+            if (playableStartState_)
+                propertyName_ = QString::fromLatin1(field->fieldName);
+            else {
+                playableLocator_.reset();
+                playablePropertyId_ = 0;
             }
         }
     }
@@ -98,16 +89,7 @@ PropertyEditSession::PropertyEditSession(ProjectItem* owner,
     }
     const auto* field = PlayablePropertyAuthoringV1::fieldById(propertyId);
     if (field) propertyName_ = QString::fromLatin1(field->fieldName);
-    if (isBusOutputVolumeField(item_, field)) {
-        playableLocator_.reset();
-        playablePropertyId_ = 0;
-        if (const auto* mix = item_->comp<VMixNode>()) {
-            startValue_ = mix->outputBusVolume;
-            currentValue_ = startValue_;
-        }
-    } else if (item_ && field) {
-        capturePlayableStart();
-    }
+    if (item_ && field) capturePlayableStart();
     sessionRegistry().push_back(this);
 }
 
@@ -159,7 +141,8 @@ void PropertyEditSession::cancelActiveFor(ProjectItem* owner, const QString& fie
             || (owner && owner->type == ProjectItem::Type::Effect);
         const bool filter = session->filterStartState_ && (session->propertyName_ == field
             || field == QLatin1String("filter") || session->propertyName_ == QLatin1String("filter"));
-        if (effects || filter) session->cancel();
+        const bool routes = session->isRouteEdit() && session->propertyName_ == field;
+        if (effects || filter || routes) session->cancel();
     }
 }
 
@@ -174,7 +157,7 @@ void PropertyEditSession::captureFilterStart()
         ProjectManager::instance().getTargetPlatforms()));
     for (const auto& platform : targets) {
         if (platform == ProjectPlatformId{}) continue;
-        const auto state = FilterAuthoring::readProperty(*item_, propertyName_, platform, true);
+        const auto state = FilterAuthoring::readProperty(*item_, QStringLiteral("filter"), platform, true);
         if (state) snapshot.overlays.append({platform, *state});
     }
     filterStartState_ = std::move(snapshot);
@@ -183,7 +166,7 @@ void PropertyEditSession::captureFilterStart()
 void PropertyEditSession::restoreFilterStart()
 {
     for (const auto& [platform, state] : filterStartState_->overlays)
-        FilterAuthoring::restoreProperty(*item_, propertyName_, state, platform);
+        FilterAuthoring::restoreProperty(*item_, QStringLiteral("filter"), state, platform);
     if (filterStartState_->writesSharedBase)
         FilterAuthoring::restoreProperty(*item_, propertyName_, filterStartState_->base, std::nullopt);
 }
@@ -193,7 +176,7 @@ bool PropertyEditSession::previewFilter(const QJsonValue& value)
     if (filterStartState_->writesSharedBase) {
         if (!FilterAuthoring::setOverride(*item_, propertyName_, value, std::nullopt)) return false;
         for (const auto& [platform, state] : filterStartState_->overlays)
-            FilterAuthoring::clearOverride(*item_, propertyName_, platform);
+            FilterAuthoring::clearOverride(*item_, QStringLiteral("filter"), platform);
         return true;
     }
     for (const auto& [platform, state] : filterStartState_->overlays) {
@@ -207,7 +190,7 @@ bool PropertyEditSession::filterStateChanged() const
     if (filterStartState_->writesSharedBase
         && FilterAuthoring::readProperty(*item_, propertyName_) != filterStartState_->base) return true;
     for (const auto& [platform, state] : filterStartState_->overlays)
-        if (FilterAuthoring::readProperty(*item_, propertyName_, platform, true) != state) return true;
+        if (FilterAuthoring::readProperty(*item_, QStringLiteral("filter"), platform, true) != state) return true;
     return false;
 }
 
@@ -255,22 +238,20 @@ bool PropertyEditSession::previewEffects(const QVariant& value)
         mix->effects = chain;
         mix->effectPlatforms.clear();
     } else {
-        for (const auto& [platform, unused] : effectStartState_->overlays) {
-            if (chain == mix->effects) mix->effectPlatforms.erase(platform);
-            else mix->effectPlatforms[platform] = chain;
-        }
+        for (const auto& [platform, unused] : effectStartState_->overlays) mix->effectPlatforms[platform] = chain;
     }
     return true;
 }
 
 bool PropertyEditSession::isBusEdit() const
 {
-    if (!item_ || item_->comp<VBus>() == nullptr)
-        return false;
-    if (propertyName_ == QStringLiteral("pan"))
-        return true;
-    return isBusOutputVolumeField(
-        item_, PlayablePropertyAuthoringV1::fieldByName(propertyName_));
+    return item_ && item_->comp<VBus>() && propertyName_ == QStringLiteral("pan");
+}
+
+bool PropertyEditSession::isRouteEdit() const
+{
+    return item_ && item_->type == ProjectItem::Type::Bus
+        && (propertyName_ == QLatin1String("sends") || propertyName_ == QLatin1String("sidechains"));
 }
 
 bool PropertyEditSession::applyValue(const QVariant& value, bool live)
@@ -386,6 +367,14 @@ bool PropertyEditSession::playableStateChanged() const
 void PropertyEditSession::preview(const QVariant& newValue)
 {
     if (state_ != State::Active || !item_) return;
+    if (isRouteEdit()) {
+        if (item_->comp<VMixNode>()->setField(propertyName_, newValue)) {
+            currentValue_ = newValue;
+            ProjectManager::instance().applyBusRuntimeState(item_);
+            emit ProjectManager::instance().itemPropertyPreviewed(item_, propertyName_, originator_);
+        }
+        return;
+    }
     if (effectStartState_) {
         if (previewEffects(newValue)) {
             currentValue_ = newValue;
@@ -405,13 +394,8 @@ void PropertyEditSession::preview(const QVariant& newValue)
             playablePropertyId_, newValue);
         if (json && previewPlayable(*json)) {
             currentValue_ = newValue;
-            if (item_->type == ProjectItem::Type::Bus) {
-                auto& pm = ProjectManager::instance();
-                if (propertyName_ == QStringLiteral("sends"))
-                    pm.applyBusRuntimeState(item_);
-                else
-                    pm.pushBusPropertyLive(item_, propertyName_);
-            }
+            if (item_->type == ProjectItem::Type::Bus)
+                ProjectManager::instance().pushBusPropertyLive(item_, propertyName_);
             emit ProjectManager::instance().itemPropertyPreviewed(item_, propertyName_, originator_);
         }
         return;
@@ -428,6 +412,17 @@ void PropertyEditSession::commit()
     if (state_ != State::Active) return;
     state_ = State::Committed;
     if (!item_) return;
+    if (isRouteEdit()) {
+        item_->comp<VMixNode>()->setField(propertyName_, startValue_);
+        if (currentValue_ == startValue_) return;
+        ActionManager::instance().execute(QStringLiteral("set_item_property"),
+            QJsonObject{
+                {QStringLiteral("authoring_handle"), static_cast<qint64>(item_->objectID)},
+                {QStringLiteral("property"), propertyName_},
+                {QStringLiteral("value"), QJsonValue::fromVariant(currentValue_)}},
+            ActionSource::Internal, originator_);
+        return;
+    }
     if (effectStartState_) {
         restoreEffectStart();
         ActionManager::instance().execute(QStringLiteral("set_item_property"),
@@ -481,6 +476,13 @@ void PropertyEditSession::cancel()
     if (state_ != State::Active) return;
     state_ = State::Cancelled;
     if (!item_) return;
+    if (isRouteEdit()) {
+        item_->comp<VMixNode>()->setField(propertyName_, startValue_);
+        currentValue_ = startValue_;
+        ProjectManager::instance().applyBusRuntimeState(item_);
+        emit ProjectManager::instance().itemPropertyPreviewed(item_, propertyName_, originator_);
+        return;
+    }
     if (effectStartState_) {
         restoreEffectStart();
         currentValue_ = startValue_;
@@ -497,13 +499,8 @@ void PropertyEditSession::cancel()
     if (playableLocator_ && playableStartState_) {
         restorePlayableStart();
         currentValue_ = startValue_;
-        if (item_->type == ProjectItem::Type::Bus) {
-            auto& pm = ProjectManager::instance();
-            if (propertyName_ == QStringLiteral("sends"))
-                pm.applyBusRuntimeState(item_);
-            else
-                pm.pushBusPropertyLive(item_, propertyName_);
-        }
+        if (item_->type == ProjectItem::Type::Bus)
+            ProjectManager::instance().pushBusPropertyLive(item_, propertyName_);
         emit ProjectManager::instance().itemPropertyPreviewed(item_, propertyName_, originator_);
         return;
     }

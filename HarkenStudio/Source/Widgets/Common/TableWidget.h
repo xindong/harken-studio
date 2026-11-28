@@ -4,6 +4,7 @@
 #include "TableGroupHeader.h"
 
 #include <QFrame>
+#include <QHash>
 #include <QModelIndex>
 #include <QPointer>
 
@@ -96,6 +97,7 @@ public:
     void setColumnWeights(const QString& key, const QList<int>& weights);
     int columnCount() const { return static_cast<int>(columns_.size()); }
     QLabel* headerCell(int column) const;
+    void setHeaderTrailingWidget(int column, QWidget* widget);
     void setColumnMinimumWidth(int column, int width);
     void setColumnVisible(int column, bool visible);
     QWidget* header() const { return header_; }
@@ -211,6 +213,7 @@ private:
     QList<QMetaObject::Connection> modelConnections_;
     QList<TableColumn> columns_;
     QList<QLabel*> labels_;
+    QHash<int, QPointer<QWidget>> headerTrailing_;
     QList<bool> hiddenColumns_;
     QList<Row> rowBindings_;
     TableColumnLayout columnLayout_;

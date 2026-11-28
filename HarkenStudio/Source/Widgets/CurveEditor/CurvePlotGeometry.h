@@ -4,6 +4,9 @@
 #include "Core/VariableSemantics.h"
 #include "CurveRenderer.h"
 
+#include <QPainterPath>
+
+#include <functional>
 #include <optional>
 #include <vector>
 
@@ -65,5 +68,14 @@ private:
     QFont tickFont_;
     QFont labelFont_;
 };
+
+using CurveScreenMapping = std::function<QPointF(const CurvePointDef&)>;
+
+QPainterPath curveSampledPath(const QVector<CurvePointDef>& points, const QVector<CurveHandlePairDef>& handles,
+                              CurveAxisScale scale, float xMin, float xMax, bool followDomain, qreal pixelRatio,
+                              const CurveScreenMapping& toScreen);
+QPainterPath curveStepPath(const QVector<CurvePointDef>& points, const QVector<CurveHandlePairDef>& handles,
+                           CurveAxisScale scale, float xMin, float xMax, bool followDomain, qreal plotWidth,
+                           const CurveScreenMapping& toScreen);
 
 }

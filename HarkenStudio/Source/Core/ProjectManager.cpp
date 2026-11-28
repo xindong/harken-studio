@@ -4309,16 +4309,15 @@ std::shared_ptr<ProjectItem> ProjectManager::cloneSubtreeDetached(
         }
         if (auto* selection = node->comp<VSelection>()) {
             QHash<QUuid, QUuid> rowGuids;
-            for (auto* table : selection->selections.tables()) {
-                for (auto& axis : table->matchAxes) axis = guidMap.value(axis, axis);
-                for (auto& row : table->mixingRows) {
-                    if (!rowGuids.contains(row.guid)) rowGuids.insert(row.guid, QUuid::createUuid());
-                    row.guid = rowGuids.value(row.guid);
-                    row.variable = guidMap.value(row.variable, row.variable);
-                }
-                for (auto& entry : table->entries)
-                    for (auto& curve : entry.curves) curve.rowGuid = rowGuids.value(curve.rowGuid);
+            auto& data = selection->selections;
+            data.remapVariables(guidMap);
+            for (auto& row : data.blendAxes) {
+                rowGuids.insert(row.guid, QUuid::createUuid());
+                row.guid = rowGuids.value(row.guid);
             }
+            for (auto* table : data.tables())
+                for (auto& entry : table->entries)
+                    for (auto& curve : entry.curves) curve.rowGuid = rowGuids.value(curve.rowGuid, curve.rowGuid);
             for (TransitionRuleDef& rule : selection->transitions.rules) {
                 for (auto* reference : {&rule.source, &rule.target}) {
                     if (!*reference) continue;
@@ -4770,25 +4769,24 @@ std::optional<DefinitionFieldGroups> ProjectManager::captureRootFieldGroups(
         after.shared.localHistory = values[0];
         after.shared.localFields = FieldGroupPropertyMask(Payload::groupId);
         after.platforms.clear();
+        if (IsFieldGroupRowList(group)) return true;
         for (std::size_t i = 1; i < scopes.size(); ++i) {
             const auto platform = *scopes[i];
             const auto original = before.platforms.find(platform);
-            auto mode = original == before.platforms.end()
-                ? FieldGroupMode::UseShared : original->second.mode;
-            if (mode == after.shared.mode) mode = FieldGroupMode::UseShared;
-            const auto fields = FieldGroupDifferenceMask(values[i], values[0]);
+            auto fields = FieldGroupDifferenceMask(values[i], values[0]);
+            if (original != before.platforms.end() && original->second.localHistory)
+                fields |= original->second.localFields;
             if (fields != 0) {
                 Payload payload;
                 CopyFieldGroupFields(payload, values[i], fields);
-                after.platforms.emplace(platform, GroupState<Payload>{mode, std::move(payload), fields});
-            } else if (mode != FieldGroupMode::UseShared) {
-                after.platforms.emplace(platform, GroupState<Payload>{mode, {}});
+                after.platforms.emplace(platform, GroupState<Payload>{FieldGroupMode::UseShared, std::move(payload), fields});
             }
         }
         return true;
     };
     if (!capture(authored.output, result.output, FieldGroupId::Output)
         || !capture(authored.send, result.send, FieldGroupId::Send)
+        || !capture(authored.sidechain, result.sidechain, FieldGroupId::Sidechain)
         || !capture(authored.spatialRating, result.spatialRating, FieldGroupId::SpatialRating)
         || !capture(authored.effects, result.effects, FieldGroupId::Effect)
         || !capture(authored.conversion, result.conversion, FieldGroupId::Conversion))
@@ -5114,10 +5112,6 @@ bool ProjectManager::deleteItemInternal(ProjectItem* parent, const std::shared_p
     return true;
 }
 
-namespace {
-bool replaceSends(ProjectItem& owner, VMixNode& mix, std::vector<Send> next);
-}
-
 DeletedSubtreeRefLog ProjectManager::cleanupIllegalPlaybackReferences(ProjectData* project)
 {
     DeletedSubtreeRefLog log;
@@ -5163,10 +5157,7 @@ DeletedSubtreeRefLog ProjectManager::cleanupIllegalPlaybackReferences(ProjectDat
         }
         if (auto* selection = owner->comp<VSelection>()) {
             SelectionData next = selection->selections;
-            for (auto* table : next.tables())
-                table->removeMembers([&](const auto& entry) {
-                    return gridTargetIllegal(*owner, entry.childGuid);
-                });
+            next.removeMembers([&](const auto& entry) { return gridTargetIllegal(*owner, entry.childGuid); });
             if (next != selection->selections) {
                 log.selections.push_back({owner->objectID, selection->selections});
                 selection->selections = std::move(next);
@@ -5427,26 +5418,18 @@ DeletedSubtreeRefLog ProjectManager::cleanupReferencesToDeletedSubtree(ProjectIt
         if (deletedObjects.contains(owner->objectID)
             || PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(owner->type)) return;
         if (owner->type != ProjectItem::Type::Bus) return;
-        bool changed = false;
-        for (const auto& scope : busRoutingScopes(*project)) {
-            const auto before = captureBusSendState(*owner, scope);
-            if (!before || !before->value.present) continue;
-            QJsonArray kept;
-            for (const auto& value : before->value.value.toArray()) {
-                const auto target = static_cast<uint32_t>(value.toObject().value(QStringLiteral("targetBusID")).toInteger());
-                if (!deletedObjects.contains(target)) kept.append(value);
-            }
-            if (kept == before->value.value.toArray()) continue;
-            auto after = *before;
-            after.value.value = kept;
-            if (!restoreBusSendState(*owner, after)) continue;
-            log.sends.push_back({owner->objectID, scope, before->value, after.value});
-            changed = true;
-        }
-        if (!changed) return;
+        const auto before = captureBusSendState(*owner);
+        if (!before) return;
+        const auto keep = [&](std::vector<BusRoute> rows) {
+            std::erase_if(rows, [&](const BusRoute& row) { return deletedObjects.contains(row.targetBusID); });
+            return rows;
+        };
+        const BusSendState after{owner->guid, keep(before->sends), keep(before->sidechains)};
+        if (after == *before || !restoreBusSendState(*owner, after)) return;
+        log.sends.push_back({owner->objectID, before->sends, before->sidechains, after.sends, after.sidechains});
         owner->markDirty();
         AudioEngine::instance().runtimeSyncCoordinator().markCurrentWorldMutation();
-        emit self.busChanged(owner->objectID, QStringLiteral("sends"));
+        emit self.busChanged(owner->objectID, QStringLiteral("send"));
     });
 
     DeletedSubtreeRefLog playback = cleanupIllegalPlaybackReferences(project);
@@ -5522,12 +5505,12 @@ void ProjectManager::restoreReferencesFromLog(const DeletedSubtreeRefLog& log,
 
     for (const auto& ref : log.sends) {
         auto* owner = findById(ref.ownerObjectID);
-        const auto current = owner ? captureBusSendState(*owner, ref.scope) : std::nullopt;
-        if (!current || current->value != ref.after
-            || !restoreBusSendState(*owner, {owner->guid, ref.scope, ref.before})) continue;
+        const auto current = owner ? captureBusSendState(*owner) : std::nullopt;
+        if (!current || current->sends != ref.sendsAfter || current->sidechains != ref.sidechainsAfter
+            || !restoreBusSendState(*owner, {owner->guid, ref.sendsBefore, ref.sidechainsBefore})) continue;
         owner->markDirty();
         self.applyBusRuntimeState(owner);
-        emit self.busChanged(owner->objectID, QStringLiteral("sends"));
+        emit self.busChanged(owner->objectID, QStringLiteral("send"));
     }
 
     for (const auto& ref : log.selections) {
@@ -6089,10 +6072,12 @@ std::vector<Send> ProjectManager::aggregateVoiceSendsForItem(
     if (!snapshot.ok() || owner == snapshot.objects.end() || owner->second != item
         || effective == snapshot.definitions.end())
         return out;
-    for (const auto& send : effective->second.send.sends) {
+    for (const auto& send : effective->second.send.sends)
         out.push_back({snapshot.objects.at(send.targetBusID)->objectID,
-                       VMixNode::dbToLinear(send.sendLevel), send.type, send.duckTarget});
-    }
+                       VMixNode::dbToLinear(send.sendLevel), SendType::Send, false});
+    for (const auto& sidechain : effective->second.sidechain.sidechains)
+        out.push_back({snapshot.objects.at(sidechain.targetBusID)->objectID,
+                       VMixNode::dbToLinear(sidechain.sendLevel), SendType::Sidechain, sidechain.duckTarget});
     return out;
 }
 
@@ -6404,13 +6389,17 @@ std::vector<IncomingSendInfo> ProjectManager::collectIncomingSends(uint32_t busI
         }
         const auto guid = toFieldGroupGuid(item->guid);
         const auto effective = snapshot.definitions.find(guid);
-        if (effective == snapshot.definitions.end()
-            || effective->second.sendSource.definition != guid)
-            return;
-        for (const auto& send : effective->second.send.sends) {
-            if (snapshot.objects.at(send.targetBusID)->objectID == busId)
-                out.push_back({item->objectID, item->guid, item->name, VMixNode::dbToLinear(send.sendLevel), send.type, send.duckTarget});
-        }
+        if (effective == snapshot.definitions.end()) return;
+        if (effective->second.sendSource.definition == guid)
+            for (const auto& send : effective->second.send.sends)
+                if (snapshot.objects.at(send.targetBusID)->objectID == busId)
+                    out.push_back({item->objectID, item->guid, item->name,
+                                   VMixNode::dbToLinear(send.sendLevel), SendType::Send, false});
+        if (effective->second.sidechainSource.definition == guid)
+            for (const auto& sidechain : effective->second.sidechain.sidechains)
+                if (snapshot.objects.at(sidechain.targetBusID)->objectID == busId)
+                    out.push_back({item->objectID, item->guid, item->name,
+                                   VMixNode::dbToLinear(sidechain.sendLevel), SendType::Sidechain, sidechain.duckTarget});
     });
     return out;
 }
@@ -6497,6 +6486,14 @@ BusRouteSnapshot buildBusRouteSnapshot(const ProjectManager& pm, PlatformScope s
     return g;
 }
 
+std::vector<PlatformScope> editedRoutingScopes(const ProjectData& project)
+{
+    const auto& context = PlatformContextService::instance().context();
+    return context.all || context.selected.isEmpty()
+        ? busRoutingScopes(project)
+        : std::vector<PlatformScope>(context.selected.begin(), context.selected.end());
+}
+
 }
 
 bool ProjectManager::sendWouldCycle(uint32_t fromBusID, uint32_t toBusID) const
@@ -6504,11 +6501,7 @@ bool ProjectManager::sendWouldCycle(uint32_t fromBusID, uint32_t toBusID) const
     if (fromBusID == 0 || toBusID == 0) return false;
     if (fromBusID == toBusID) return true;
     if (!m_currentProject) return false;
-    const auto& context = PlatformContextService::instance().context();
-    const auto scopes = context.all || context.selected.isEmpty()
-        ? busRoutingScopes(*m_currentProject)
-        : std::vector<PlatformScope>(context.selected.begin(), context.selected.end());
-    for (const auto& scope : scopes)
+    for (const auto& scope : editedRoutingScopes(*m_currentProject))
         if (busFlowReaches(buildBusRouteSnapshot(*this, scope), toBusID, fromBusID)) return true;
     return false;
 }
@@ -6635,29 +6628,6 @@ bool writePlayableDefinitionOverride(ProjectItem& owner,
     if (!wire) return false;
     return PlayablePropertyAuthoringV1::setOverride(
         owner, *locator, field->id, *wire, std::nullopt);
-}
-
-bool replaceSends(ProjectItem& owner, VMixNode& mix, std::vector<Send> next)
-{
-    if (PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(owner.type)) return false;
-    const auto id = static_cast<uint8_t>(
-        harkenplayableproperties::PlayablePropertyIdV1::Sends);
-    if (PlayablePropertyAuthoringV1::isDefinitionType(owner.type)) {
-        const auto locator = PlayablePropertyAuthoringV1::definitionLocator(owner);
-        if (!locator
-            || !PlayablePropertyAuthoringV1::isSlotApplicable(owner.type, id))
-            return false;
-        QJsonArray rows;
-        for (const Send& send : next) {
-            auto row = send.toJson();
-            row[QStringLiteral("sendLevel")] = VMixNode::linearToDb(send.sendLevel);
-            rows.append(row);
-        }
-        return PlayablePropertyAuthoringV1::setOverride(
-            owner, *locator, id, rows, std::nullopt);
-    }
-    mix.sends = std::move(next);
-    return true;
 }
 
 }
@@ -6825,12 +6795,13 @@ ProjectItem* ProjectManager::findSendOwnerItem(uint32_t objectID) const
 bool ProjectManager::sendTargetSelectable(uint32_t srcObjectID, uint32_t targetBusID, SendType type, bool duckTarget) const
 {
     if (!sendTargetStructurallySelectable(srcObjectID, targetBusID, type, duckTarget)) return false;
-    ProjectItem* src = findSendOwnerItem(srcObjectID);
-    const auto* mix = src ? src->comp<VMixNode>() : nullptr;
-
-    for (const auto& send : mix->sends)
-        if (send.targetBusID == targetBusID && send.type == type && send.duckTarget == duckTarget) return false;
-
+    const auto* mix = findSendOwnerItem(srcObjectID)->comp<VMixNode>();
+    const auto& rows = type == SendType::Sidechain ? mix->sidechains : mix->sends;
+    for (const auto& scope : busRoutingScopes(*m_currentProject))
+        for (const auto& row : rows) {
+            const auto route = row.forPlatform(scope);
+            if (route.targetBusID == targetBusID && route.duckTarget == duckTarget) return false;
+        }
     return true;
 }
 
@@ -6862,84 +6833,49 @@ bool ProjectManager::outputBusSelectable(uint32_t srcObjectID, uint32_t candidat
 
     ProjectItem* src = findSendOwnerItem(srcObjectID);
     const auto* mix = src ? src->comp<VMixNode>() : nullptr;
-    if (!mix) return true;
+    if (!mix || !m_currentProject) return true;
 
-    for (const auto& send : mix->sends)
-        if ((send.type == SendType::Send || send.duckTarget) && send.targetBusID == candidateBusID) return false;
+    for (const auto& scope : editedRoutingScopes(*m_currentProject))
+        for (const auto& send : mix->effectiveSends(scope))
+            if ((send.type == SendType::Send || send.duckTarget) && send.targetBusID == candidateBusID) return false;
     return true;
 }
 
 bool ProjectManager::upsertSendInternal(uint32_t srcObjectID, uint32_t targetBusID, float sendLevel,
                                        SendType type, bool duckTarget)
 {
-    if (!project_schema::IsValidSendRoute(type, duckTarget)) return false;
-    ProjectItem* srcItem = findSendOwnerItem(srcObjectID);
-    auto* srcMix = srcItem ? srcItem->comp<VMixNode>() : nullptr;
-    auto* targetBC = findVBus(targetBusID);
-    if (!srcMix || !targetBC) return false;
-
-    const bool srcIsBus = srcItem->type == ProjectItem::Type::Bus;
-    std::vector<Send> next = srcMix->sends;
-    bool existed = false;
-    for (auto& send : next) {
-        if (send.targetBusID == targetBusID && send.type == type && send.duckTarget == duckTarget) {
-            send.sendLevel = sendLevel;
-            existed = true;
-            break;
-        }
-    }
-
-    if (!existed) next.push_back(Send{targetBusID, sendLevel, type, duckTarget});
-    if (srcIsBus) {
-        if (!m_currentProject) return false;
-        QJsonArray rows;
-        for (const auto& send : next) {
-            auto row = send.toJson();
-            row[QStringLiteral("sendLevel")] = VMixNode::linearToDb(send.sendLevel);
-            rows.append(row);
-        }
-        if (!validateBusRouting(*m_currentProject, {{srcItem->guid, {}, {true, rows}}}).isEmpty())
-            return false;
-    }
-
-    if (!replaceSends(*srcItem, *srcMix, std::move(next)))
+    if (!project_schema::IsValidSendRoute(type, duckTarget) || !m_currentProject) return false;
+    ProjectItem* srcItem = findBusItem(srcObjectID);
+    if (!srcItem || !findVBus(targetBusID)) return false;
+    auto next = captureBusSendState(*srcItem);
+    if (!next) return false;
+    auto& rows = type == SendType::Sidechain ? next->sidechains : next->sends;
+    const auto found = std::find_if(rows.begin(), rows.end(), [&](const BusRoute& row) {
+        return row.targetBusID == targetBusID && row.duckTarget == duckTarget;
+    });
+    if (found != rows.end())
+        found->sendLevelDb = VMixNode::linearToDb(sendLevel);
+    else
+        rows.push_back({QUuid::createUuid(), targetBusID, VMixNode::linearToDb(sendLevel), duckTarget, {}});
+    if (!validateBusRouting(*m_currentProject, {*next}).isEmpty() || !restoreBusSendState(*srcItem, *next))
         return false;
-
-    if (srcIsBus) {
-        AudioEngine::instance().runtimeSyncCoordinator().markCurrentWorldMutation();
-        emit busChanged(srcObjectID, QStringLiteral("send"));
-    } else {
-        propagateItemSendsLive(srcItem);
-        srcItem->markDirty();
-        emit itemPropertyChanged(srcItem, QStringLiteral("send"));
-    }
+    AudioEngine::instance().runtimeSyncCoordinator().markCurrentWorldMutation();
+    emit busChanged(srcObjectID, QStringLiteral("send"));
     return true;
 }
 
 bool ProjectManager::removeSendInternal(uint32_t srcObjectID, uint32_t targetBusID, SendType type, bool duckTarget)
 {
-    ProjectItem* srcItem = findSendOwnerItem(srcObjectID);
-    auto* srcMix = srcItem ? srcItem->comp<VMixNode>() : nullptr;
-    if (!srcMix) return false;
-
-    std::vector<Send> next = srcMix->sends;
-    const auto erased = std::remove_if(
-        next.begin(), next.end(),
-        [targetBusID, type, duckTarget](const Send& s) { return s.targetBusID == targetBusID && s.type == type && s.duckTarget == duckTarget; });
-    if (erased == next.end()) return false;
-    next.erase(erased, next.end());
-
-    if (!replaceSends(*srcItem, *srcMix, std::move(next)))
+    ProjectItem* srcItem = findBusItem(srcObjectID);
+    auto next = srcItem ? captureBusSendState(*srcItem) : std::nullopt;
+    if (!next) return false;
+    auto& rows = type == SendType::Sidechain ? next->sidechains : next->sends;
+    if (!std::erase_if(rows, [&](const BusRoute& row) {
+            return row.targetBusID == targetBusID && row.duckTarget == duckTarget;
+        }) || !restoreBusSendState(*srcItem, *next))
         return false;
-
-    if (srcItem->type == ProjectItem::Type::Bus) {
-        AudioEngine::instance().runtimeSyncCoordinator().markCurrentWorldMutation();
-        emit busChanged(srcObjectID, QStringLiteral("send"));
-    } else {
-        propagateItemSendsLive(srcItem);
-        srcItem->markDirty();
-        emit itemPropertyChanged(srcItem, QStringLiteral("send"));
-    }
+    AudioEngine::instance().runtimeSyncCoordinator().markCurrentWorldMutation();
+    emit busChanged(srcObjectID, QStringLiteral("send"));
     return true;
 }
 

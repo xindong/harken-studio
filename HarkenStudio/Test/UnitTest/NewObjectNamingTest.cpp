@@ -76,7 +76,7 @@ TEST_F(NewObjectNamingTest, CopiesRemapDescendantIdentitiesAndReferences)
             EXPECT_NE(child->guid, root->children[i]->guid);
             EXPECT_EQ(child->parent, clone);
             EXPECT_EQ(child->parentRef.guid, clone->guid);
-            EXPECT_EQ(clone->comp<VSelection>()->selections.shared.occurrenceRows()[i].childGuid, child->guid);
+            EXPECT_EQ(clone->comp<VSelection>()->selections.random.shared.occurrenceRows()[i].childGuid, child->guid);
         }
         const QUuid guid = clone->guid;
         ASSERT_TRUE(UndoRedoManager::instance().undo());

@@ -31,7 +31,7 @@ DefinitionFieldGroups LocalGroups(std::uint64_t bus, float volume)
 {
     DefinitionFieldGroups groups;
     groups.output.shared = Local(OutputFieldGroup{G(bus), volume});
-    groups.send.shared = Local(SendFieldGroup{{{G(bus + 1), volume}}});
+    groups.send.shared = Local(SendFieldGroup{{{G(bus + 4), G(bus + 1), volume}}});
     groups.spatialRating.shared = Local(
         SpatialRatingFieldGroup{0.5f, true, G(bus + 2), 2.0f});
     groups.effects.shared = Local(EffectFieldGroup{});
@@ -83,16 +83,12 @@ TEST(FieldGroupResolution, CyclesInvalidateTheWholeContextEvenWhenQueriedElsewhe
     EXPECT_FALSE(selfCycle.Resolve(G(1), {}, Group::Output).value);
 }
 
-TEST(FieldGroupResolution, EveryGroupSelectsOneOwnershipSourceAndRespectsPlatformMode)
+TEST(FieldGroupResolution, InheritanceIsSharedByEveryPlatform)
 {
     const auto root = MakeRootFieldGroups(kMaster);
-    auto parent = LocalGroups(101, -3.0f);
+    const auto parent = LocalGroups(101, -3.0f);
     DefinitionFieldGroups child;
     const auto platform = G(200);
-    parent.output.platforms[platform] = {Mode::Inherit, {}};
-    parent.send.platforms[platform] = {Mode::Inherit, {}};
-    parent.spatialRating.platforms[platform] = {Mode::Inherit, {}};
-    parent.effects.platforms[platform] = {Mode::Inherit, {}};
     const std::array definitions{
         FieldGroupDefinitionView{G(1), ContentKind::Layer, {}, &root},
         FieldGroupDefinitionView{G(2), ContentKind::Container, G(1), &parent},
@@ -102,17 +98,18 @@ TEST(FieldGroupResolution, EveryGroupSelectsOneOwnershipSourceAndRespectsPlatfor
     for (const auto group : {Group::Output, Group::Send, Group::SpatialRating, Group::Effect, Group::Conversion}) {
         SCOPED_TRACE(FieldGroupName(group));
         const auto shared = resolver.Resolve(G(3), {}, group);
-        const auto overridden = resolver.Resolve(G(3), platform, group);
+        const auto scoped = resolver.Resolve(G(3), platform, group);
         ASSERT_TRUE(shared.ok());
-        ASSERT_TRUE(overridden.ok());
-        EXPECT_EQ(shared.value->source.definition, G(2));
-        const auto platformOwner = group == Group::Conversion ? G(2) : G(1);
-        EXPECT_EQ(overridden.value->source.definition, platformOwner);
-        EXPECT_TRUE(shared.value->effectiveInherit);
-        EXPECT_TRUE(overridden.value->effectiveInherit);
-        EXPECT_EQ(shared.value->payload, resolver.Resolve(G(2), {}, group).value->payload);
-        EXPECT_EQ(overridden.value->payload, resolver.Resolve(platformOwner, platform, group).value->payload);
+        ASSERT_TRUE(scoped.ok());
+        EXPECT_EQ(shared.value->source.definition, scoped.value->source.definition);
+        EXPECT_EQ(shared.value->effectiveInherit, scoped.value->effectiveInherit);
     }
+    auto platformMode = parent;
+    platformMode.output.platforms[platform] = {Mode::Inherit, {}};
+    const std::array rejected{
+        FieldGroupDefinitionView{G(1), ContentKind::Layer, {}, &root},
+        FieldGroupDefinitionView{G(2), ContentKind::Container, G(1), &platformMode}};
+    EXPECT_TRUE(HasCode(FieldGroupResolver(rejected, kMaster).diagnostics(), Code::InvalidMode));
 }
 
 TEST(FieldGroupResolution, RejectedEffectReplacementPreservesStateAndParsedChainsCannotBypassCapacity)

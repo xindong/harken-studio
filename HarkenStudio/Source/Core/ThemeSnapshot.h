@@ -307,6 +307,7 @@ struct ThemeMetrics
         int valueColumnWidth = 0;
         int linkSlotWidth = 0;
         int bindingSlotWidth = 0;
+        int platformMarkerWidth = 0;
         int slotSpacing = 0;
         int separatorHeight = 0;
         int rangeSeparatorWidth = 0;

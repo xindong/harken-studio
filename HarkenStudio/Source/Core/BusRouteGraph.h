@@ -12,14 +12,15 @@ namespace harken::studio {
 struct BusSendState
 {
     QUuid bus;
-    PlatformScope scope;
-    PlayablePropertyStateV1 value;
+    std::vector<BusRoute> sends;
+    std::vector<BusRoute> sidechains;
     bool operator==(const BusSendState&) const = default;
 };
 
-std::optional<BusSendState> captureBusSendState(const ProjectItem& bus, PlatformScope scope = {});
+std::optional<BusSendState> captureBusSendState(const ProjectItem& bus);
+std::optional<BusRoute> findBusRoute(const BusSendState& state, uint32_t targetBusID, SendType type, bool duckTarget);
 bool restoreBusSendState(ProjectItem& bus, const BusSendState& state);
-std::optional<QJsonArray> busSendRows(const ProjectItem& bus, PlatformScope scope = {});
+BusSendState withoutOutputConflicts(BusSendState state, uint32_t outputBusID);
 std::optional<std::vector<Send>> effectiveBusSends(const ProjectItem& bus, PlatformScope scope = {});
 std::vector<PlatformScope> busRoutingScopes(const ProjectData& project);
 QString validateBusRouting(const ProjectData& project,

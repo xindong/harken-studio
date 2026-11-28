@@ -54,7 +54,9 @@ TEST(PlatformOverrideSerialization, IndependentAuthoringGroupsSurviveRoundTripAn
     auto* row = authored.ensure(platform);
     row->properties.presence.Set(harkenplayableproperties::PlayablePropertyIdV1::Volume);
     ASSERT_TRUE(row->properties.setValue(harkenplayableproperties::PlayablePropertyIdV1::Volume, -6.0f));
-    row->filter = QJsonObject{{QStringLiteral("lowPass"), QJsonObject{{QStringLiteral("frequency"), 1000.0}}}};
+    harken::studio::FilterState filter;
+    filter.sections[0].frequency = 1000.0;
+    row->filter = harken::studio::FilterSemantics::toJson(filter);
     const auto json = PlayablePropertyAuthoringV1::platformOverridesToJson(authored);
     harken::studio::PlatformOverrideLedgerV1 restored;
     QString error;

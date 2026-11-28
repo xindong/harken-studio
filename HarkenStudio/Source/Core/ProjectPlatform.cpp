@@ -64,6 +64,22 @@ public:
         }
     }
 
+    void rowPlatforms(const QJsonValue& rows, const QString& path)
+    {
+        qsizetype index = 0;
+        for (const auto& value : rows.toArray()) {
+            const auto rowPath = path + QStringLiteral("[%1]/platforms").arg(index++);
+            const auto platforms = value.toObject().value(QStringLiteral("platforms"));
+            if (!platforms.isUndefined() && !platforms.isObject()) {
+                errors.append(QStringLiteral("Row platform values must be an object at %1").arg(rowPath));
+                continue;
+            }
+            const auto cells = platforms.toObject();
+            for (auto cell = cells.begin(); cell != cells.end(); ++cell)
+                reference(cell.key(), rowPath + QChar('/') + cell.key());
+        }
+    }
+
     void object(const QJsonValue& value, const QString& path)
     {
         if (value.isArray()) {
@@ -119,8 +135,8 @@ public:
                     errors.append(error + QStringLiteral(" at ") + childPath);
                     continue;
                 }
-                for (auto p = selections->platforms.cbegin(); p != selections->platforms.cend(); ++p)
-                    reference(p.key(), childPath + QChar('/') + p.key());
+                for (const auto& platform : selections->platformIds())
+                    reference(idString(platform), childPath + QChar('/') + idString(platform));
             } else if (it.key() == QStringLiteral("effectsPlatforms")) {
                 if (!it.value().isObject()) {
                     errors.append(QStringLiteral("Effect platforms must be an object at %1").arg(childPath));
@@ -129,6 +145,9 @@ public:
                 const auto rows = it.value().toObject();
                 for (auto row = rows.begin(); row != rows.end(); ++row)
                     reference(row.key(), childPath + QChar('/') + row.key());
+            } else if (it.key() == QStringLiteral("sends") || it.key() == QStringLiteral("sidechains")) {
+                rowPlatforms(it.value(), childPath);
+                object(it.value(), childPath);
             } else if (it.key() == QStringLiteral("fieldGroups")) {
                 const auto groups = it.value().toObject();
                 const auto platforms = groups.value(QStringLiteral("platforms"));
@@ -137,6 +156,11 @@ public:
                 const auto rows = platforms.toObject();
                 for (auto row = rows.begin(); row != rows.end(); ++row)
                     reference(row.key(), childPath + QChar('/') + row.key());
+                const auto shared = groups.value(QStringLiteral("shared")).toObject();
+                for (const auto& [group, field] : {std::pair{"send", "sends"}, std::pair{"sidechain", "sidechains"}})
+                    rowPlatforms(shared.value(QLatin1String(group)).toObject().value(QStringLiteral("values"))
+                                     .toObject().value(QLatin1String(field)),
+                                 childPath + QStringLiteral("/shared/%1/values/%2").arg(group, field));
             } else {
                 object(it.value(), childPath);
             }

@@ -104,8 +104,6 @@ struct PropertyDescriptor
     std::function<bool(uint32_t, const QVariantMap&, uint32_t)> refSelectableForElement;
     QString toolTip;
     std::function<QVariantMap(const QVariantMap&, const QString&, const QVariant&)> editElement;
-    QVariantMap listRowFilter;
-    QString storageField;
 };
 
 using PropertySchema = std::vector<PropertyDescriptor>;

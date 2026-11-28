@@ -875,23 +875,11 @@ MoveItemCommand::MoveItemCommand(
 
     if (item->type == ProjectItem::Type::Bus && newParent
         && newParent->type == ProjectItem::Type::Bus) {
-        if (const auto* project = ProjectManager::instance().currentProject()) {
-            for (const auto& scope : busRoutingScopes(*project)) {
-                const auto before = captureBusSendState(*item, scope);
-                if (!before || !before->value.present) continue;
-                QJsonArray rows;
-                for (const auto& value : before->value.value.toArray()) {
-                    const auto row = value.toObject();
-                    SendType type;
-                    bool duckTarget;
-                    if (row.value(QStringLiteral("targetBusID")).toInteger() != newParent->objectID
-                        || (readSendRoute(row, type, duckTarget) && type == SendType::Sidechain && !duckTarget))
-                        rows.append(value);
-                }
-                if (rows == before->value.value.toArray()) continue;
-                sendsBeforeMove_.push_back(*before);
-                sendsAfterMove_.push_back({item->guid, scope, {true, rows}});
-            }
+        const auto before = captureBusSendState(*item);
+        const auto after = withoutOutputConflicts(*before, newParent->objectID);
+        if (after != *before) {
+            sendsBeforeMove_.push_back(*before);
+            sendsAfterMove_.push_back(after);
         }
     }
 
@@ -944,7 +932,7 @@ bool MoveItemCommand::apply(bool redo)
     const auto& expectedSends = redo ? sendsBeforeMove_ : sendsAfterMove_;
     const auto& replacementSends = redo ? sendsAfterMove_ : sendsBeforeMove_;
     for (const auto& expected : expectedSends) {
-        const auto current = captureBusSendState(*item_, expected.scope);
+        const auto current = captureBusSendState(*item_);
         if (!current || *current != expected) return false;
     }
     if (item_->type == ProjectItemType::Bus) {
@@ -977,7 +965,7 @@ bool MoveItemCommand::apply(bool redo)
     if (!replacementSends.empty()) {
         item_->markDirty();
         manager.applyBusRuntimeState(item_);
-        emit manager.busChanged(item_->objectID, QStringLiteral("sends"));
+        emit manager.busChanged(item_->objectID, QStringLiteral("send"));
     }
     emit manager.itemMoved(item_, previousParent, item_->parent);
     return true;
@@ -1277,8 +1265,8 @@ bool MoveItemCommand::redoHierarchy()
                 return false;
         }
         if (newParent_->type == ProjectItem::Type::Container
-            && !newParent_->comp<VSelection>()->selections.shared.occurrenceRows().empty())
-            newOccurrence_ = newParent_->comp<VSelection>()->selections.shared.occurrenceRows().back();
+            && !newParent_->comp<VSelection>()->selections.random.shared.occurrenceRows().empty())
+            newOccurrence_ = newParent_->comp<VSelection>()->selections.random.shared.occurrenceRows().back();
         ProjectManager::restoreReferencesFromLog(redoPlaybackRefLog_, project);
         finishSelectionMove();
         applyTrackTimeline(newTrackClips_);

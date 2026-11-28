@@ -269,7 +269,7 @@ void ExternalEditorPanel::refreshAttenuationReference()
     const auto view = buildFieldGroupInspectorView(*project, selection_.ownerGuid,
         FieldGroupId::SpatialRating, PlatformContextService::instance().context());
     const auto reference = view.field(QStringLiteral("spatialAttenuationRef"));
-    const auto* attenuation = view.valid && reference.uniform
+    const auto* attenuation = view.valid && reference.valid
         ? AttenuationStore::findByGuid(project, reference.value.toUuid()) : nullptr;
     const auto dimension = selection_.curve.dimension;
     selection_.curve = CurveSelection::attenuation(

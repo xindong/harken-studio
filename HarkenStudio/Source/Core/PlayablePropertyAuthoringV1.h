@@ -312,20 +312,9 @@ public:
         const QUuid& childGuid,
         const std::optional<SelectionEntry>& restored = std::nullopt,
         SelectionEntry* installed = nullptr);
-    static std::optional<SelectionEntry>
-        removeContainerChildOccurrence(ProjectItem& container,
-                                       const QUuid& childGuid);
     static std::vector<SelectionEntry>
         removeContainerChildOccurrences(ProjectItem& container,
                                         const QUuid& childGuid);
-    static std::optional<SelectionEntry>
-        removeContainerChildOccurrence(ProjectItem& container,
-                                       uint32_t stableOccurrenceOrdinal);
-    static bool replaceContainerChildOccurrence(
-        ProjectItem& container,
-        uint32_t stableOccurrenceOrdinal,
-        const QUuid& childGuid,
-        SelectionEntry* previous = nullptr);
     static bool replaceContainerChildOccurrence(
         const ProjectItem& container, SelectionTable& ledger,
         uint32_t stableOccurrenceOrdinal, const QUuid& childGuid,

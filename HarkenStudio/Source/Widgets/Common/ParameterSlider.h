@@ -28,8 +28,6 @@ public:
     void setSuffix(const QString& suffix);
     void setDecimals(int decimals);
 
-    void setMixedValue(bool mixed);
-    bool mixedValue() const { return mixedValue_; }
     void cancelPendingInput();
 
 public slots:
@@ -41,17 +39,6 @@ signals:
     void interactiveEditBegin(double startValue);
     void interactivePreview(double currentValue);
     void interactiveEditEnd(double startValue, double endValue, bool committed);
-
-protected:
-    void presenterInstalled() override;
-
-private:
-    void applyMixedDisplay();
-    void clearMixedDisplay();
-    void onMixedInteractionStarted();
-
-    bool mixedValue_ = false;
-    bool mixedTextEdited_ = false;
 };
 
 }
