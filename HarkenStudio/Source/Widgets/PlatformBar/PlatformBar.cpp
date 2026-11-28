@@ -89,14 +89,15 @@ PlatformBar::PlatformBar(PlatformContextService& service, QWidget* parent)
 
     platformCombo_ = new ToolBarComboBox(leading);
     platformCombo_->setObjectName(QStringLiteral("platformBarSelector"));
+    platformCombo_->setToolTip(tr("Current audition and work platform"));
     leadingLayout->addWidget(platformCombo_);
 
     allButton_ = new QToolButton(leading);
     allButton_->setObjectName(QStringLiteral("platformBarAll"));
     allButton_->setProperty("flatIconButton", true);
     allButton_->setText(QStringLiteral("ALL"));
-    allButton_->setAccessibleName(tr("Edit All Platforms"));
-    allButton_->setToolTip(tr("Edit All Platforms"));
+    allButton_->setAccessibleName(tr("Link Platforms"));
+    allButton_->setToolTip(allButton_->accessibleName());
     allButton_->setCheckable(true);
     allButton_->setAutoRaise(true);
     allButton_->setToolButtonStyle(Qt::ToolButtonTextOnly);
@@ -113,7 +114,7 @@ PlatformBar::PlatformBar(PlatformContextService& service, QWidget* parent)
     previewModeCombo_ = new ToolBarComboBox(leading);
     previewModeCombo_->setObjectName(QStringLiteral("platformBarPreviewMode"));
     previewModeCombo_->setAccessibleName(tr("Preview Media"));
-    previewModeCombo_->setToolTip(tr("Preview Media"));
+    previewModeCombo_->setToolTip(tr("Current playback source"));
     previewModeCombo_->addItem(tr("Original"), static_cast<int>(PreviewMediaMode::Original));
     previewModeCombo_->addItem(tr("Converted"), static_cast<int>(PreviewMediaMode::Converted));
     leadingLayout->addWidget(previewModeCombo_);
@@ -247,8 +248,6 @@ void PlatformBar::applyContext(const PlatformContext& context)
     platformCombo_->setCurrentIndex(platformCombo_->findData(context.primary));
     const QString role = context.all ? tr("Audition Platform") : tr("Edit and Audition Platform");
     platformCombo_->setAccessibleName(role);
-    platformCombo_->setToolTip(QStringLiteral("%1\n%2").arg(
-        role, platformCombo_->currentData(Qt::ToolTipRole).toString()));
     updating_ = false;
 }
 

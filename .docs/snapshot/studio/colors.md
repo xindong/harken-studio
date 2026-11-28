@@ -77,7 +77,7 @@ Dock 标签栏以 `chrome.titleBarHeight` 为行高基准，默认总高 30 个�
 
 `ThemeLayout::Space` 只剩 `None / Tight / Control / Section / Panel`，原 Medium / Large / XLarge 不再对业务开放；QSS 也不再提供 `@spacing*@`，改用 `@panelPadding@`、`@sectionGap@`、`@controlGap@`、`@tightGap@`、`@rowInset@`、`@fieldHeight@`、`@sectionHeaderHeight@` 与控件文字左右留白 `@textPadding@`。工具条类区域统一为左右面板内边距、上下紧凑间距。主窗口菜单栏、浮动面板和对话框的标题栏共用 `chrome.titleBarHeight`，默认 30 个逻辑像素。主窗口工具栏使用 `chrome.mainWindowToolBarHeight`，默认 36 个逻辑像素。内容行在工具栏内垂直居中，容器高度包含该行及上下紧凑间距。字体或菜单项需要更多空间时，标题栏按内容增高。HarkenStyle 将 `QToolBar` 的条目边距和框架宽度设为 0。蓝图画布节点内部行保持世界坐标中的原有密度，不套用面板行高。
 
-主窗口工具栏的平台、语言和布局选择器共用 `ToolBarComboBox`。选择器与 Remote、Capture、ALL 按钮共用工具栏控件高度，基准是 `fieldHeight + controlGap`，默认 24 个逻辑像素，并至少容纳字体和图标。Remote 和 Capture 按钮为正方形，图标使用 `iconExtent`，默认 20 个逻辑像素。ALL 按钮的宽度随文字和左右留白确定。选择器使用直角且无描边。选择器与普通按钮共用常态底色 `background.tertiary`，文字和箭头取 `text.primary`。悬停时两者都在各自底色上叠加 `background.hoverOverlay`。工具栏选择器展开或获得键盘导航焦点时也显示该叠加色。鼠标操作收起弹窗后，指针移开即恢复常态底色。平台和语言弹出选项列表，布局弹出操作菜单。
+主窗口工具栏的平台、语言、播放源和布局选择器共用 `ToolBarComboBox`。平台、播放源和布局选择器的悬停提示分别为 `Current audition and work platform`、`Current playback source` 和 `Select editor layout`。选择器与 Remote Connection、Data Capture、Link Platforms 按钮共用工具栏控件高度，基准是 `fieldHeight + controlGap`，默认 24 个逻辑像素，并至少容纳字体和图标。Remote Connection 和 Data Capture 按钮为正方形，图标使用 `iconExtent`，默认 20 个逻辑像素。Link Platforms 按钮显示 ALL，宽度随文字和左右留白确定。选择器使用直角且无描边。选择器与普通按钮共用常态底色 `background.tertiary`，文字和箭头取 `text.primary`。悬停时两者都在各自底色上叠加 `background.hoverOverlay`。工具栏选择器展开或获得键盘导航焦点时也显示该叠加色。鼠标操作收起弹窗后，指针移开即恢复常态底色。平台、语言和播放源弹出选项列表，布局弹出操作菜单。
 
 工具栏中央按阅读方向依次排列 Play、Stop、Reset，三者共用普通按钮底色 `background.tertiary` 和 24 个逻辑像素的工具栏控件高度。`background.hoverOverlay` 只叠加在指针所在的可用按钮上，播放中的 Play 使用 `tool.play` 提示。Play 和 Reset 的外侧使用 `radius.medium` 圆角，默认 6 个逻辑像素。Stop 为直角，两侧各留 1 个逻辑像素的空隙，露出工具栏背景。
 
@@ -137,7 +137,7 @@ PR 审查后补充修复：Assistant 在原消息和待确认控件上更新字�
 
 ## Studio Default 颜色职责
 
-Studio Default 在 Colors 中提供 Foreground、Semantic Colors 和 Tool 三个相关分组。Foreground 统一文字、单色图标的可读层级，Semantic Colors 定义强调、次级强调、成功、警告、错误和禁用，Tool 管理播放及工具栏动作的专用颜色。现有主题自行定义职责目录。
+Studio Default 在 Colors 中用 Foreground 调整文字和单色图标，用 Background 调整窗口、面板和控件的底色。States 包含强调、次级强调、成功、警告、错误和禁用，Tools 管理播放及工具栏动作的专用颜色。现有主题自行定义职责目录。
 
 | 职责 | 主题键 | 使用边界 |
 |---|---|---|
@@ -159,10 +159,10 @@ Studio Default 在 Colors 中提供 Foreground、Semantic Colors 和 Tool 三个
 | 次级强调 | `accent.secondary` | 失焦 Dock 组当前页签的顶线、自定义快捷键和已自定义的外观值。文字与顶线使用同一 RGB 实色 |
 | 结果与诊断 | `status.success/warning/error` | 发布成功、带警告完成、失败、无效引用等状态，以及时间序列状态标记、阈值线与 Monitor 游标精度 |
 | 播放工具 | `tool.play/stop/reset` | 播放、停止及复位控件 |
-| 工具栏 | `tool.all/remote/capture` | ALL、Remote、Capture 分别配置开启时的颜色 |
+| 工具栏 | `tool.all/remote/capture` | Link Platforms、Remote Connection、Data Capture 分别配置平台联动、远程连接和数据采集开启时的按钮底色 |
 | 分类色板 | `palette.categorical0` 至 `palette.categorical6` | 区分多个条目，不承担固定对象类型或强度数值语义 |
 
-次级强调保留原失焦组当前页签顶线的实际显示颜色，Dark 为 `#085F6A`，Light 为 `#CEE2E8`。两张色卡都将该颜色保存为不透明的 RGB，调整 Dock 底色后顶线仍显示配置的颜色。Tool 的六项职责沿用对应控件原有颜色，各项可独立调整。默认目录移除了 Information，旧色卡中为此职责保存的自定义颜色迁入次级强调，已有次级强调设置优先。旧配置中的半透明次级强调按所在色卡的主要背景合成为 RGB，保留原来的顶线颜色。
+次级强调保留原失焦组当前页签顶线的实际显示颜色，Dark 为 `#085F6A`，Light 为 `#CEE2E8`。两张色卡都将该颜色保存为不透明的 RGB，调整 Dock 底色后顶线仍显示配置的颜色。Tools 的六项职责沿用对应控件原有颜色，各项可独立调整。默认目录移除了 Information，旧色卡中为此职责保存的自定义颜色迁入次级强调，已有次级强调设置优先。旧配置中的半透明次级强调按所在色卡的主要背景合成为 RGB，保留原来的顶线颜色。
 
 自带职责目录的旧主题可继续用原配色控制自定义值、日志类别、Dock 顶线和工具按钮。主题作者为其中一项显式指定新绘制位置后，该位置采用新配置。
 
@@ -271,7 +271,7 @@ Studio Default 提供 71 个可编辑源颜色角色，共 11 类。每项包含
 | 分类 | 数量 | 开放范围 |
 |---|---|---|
 | Text | 4 | 首要文字、次要文字、标题文字、禁用文字 |
-| Surfaces | 7 | 主背景、控件背景、抬升背景、面板、标题、轨道、交替轨道 |
+| Background | 7 | 主背景、控件背景、抬升背景、面板、标题、轨道、交替轨道 |
 | Interaction | 10 | 强调及悬停、强调底文字、悬停/选中背景、拖放目标、三类边界、滑条底轨 |
 | Feedback | 4 | 成功、警告、错误、信息 |
 | Categorical palette | 7 | 区分多个条目的七个分类色 |
@@ -359,13 +359,13 @@ Studio Default 已保存的 `text.muted` 覆盖迁入同一色卡的 `text.secon
 
 ## 主题参数收束（2026-11-07）
 
-**颜色。** `ThemeColors` 不再保留同义槽位：`textMuted` 并入 `text.secondary`，`viewBorder` 与 `sectionSeparator` 并入 `border.primary`，菜单栏文字并入首要文字，窗口按钮文字使用次要文字、悬停使用首要文字，关闭按钮按下时的文字按背景计算对比色；Control Panel 背景使用 `panel.background`，播放与停止图标使用各自的 Tool 颜色，拖放目标在 2026-11-08 改由独立的 `background.dropTarget` 职责承担（见上文职责表）。Qt-ADS 的关闭按钮色复用窗口关闭按钮色，未激活标签文字使用次要文字；Dock 外框底色 `chromeBackground` 暂无对应职责，仍为色卡值。`bus.background`、`timeline.clipBorder`、`timeline.clipSelectedBorder` 没有绘制消费者，连同可编辑职责一起删除，已保存的覆盖在恢复设置时移除。
+**颜色。** `ThemeColors` 不再保留同义槽位：`textMuted` 并入 `text.secondary`，`viewBorder` 与 `sectionSeparator` 并入 `border.primary`，菜单栏文字并入首要文字，窗口按钮文字使用次要文字、悬停使用首要文字，关闭按钮按下时的文字按背景计算对比色；Control Panel 背景使用 `panel.background`，播放与停止图标使用各自的 Tools 分组颜色，拖放目标在 2026-11-08 改由独立的 `background.dropTarget` 职责承担（见上文职责表）。Qt-ADS 的关闭按钮色复用窗口关闭按钮色，未激活标签文字使用次要文字；Dock 外框底色 `chromeBackground` 暂无对应职责，仍为色卡值。`bus.background`、`timeline.clipBorder`、`timeline.clipSelectedBorder` 没有绘制消费者，连同可编辑职责一起删除，已保存的覆盖在恢复设置时移除。
 
 无消费者的渲染槽位一并删除：Scene3D、Spatial、Monitor、Feedback 整组，Meter 的基础色、Stereo、Layout、示波器色、clipBackground 与 Spectrogram timeText，Waveform 的 line / fill / cursor / regionMarker / selectionHighlight，Music 的 trackColors / loopRegion，以及若干节点、蓝图与 Timeline 的未用色。时间序列图的多条曲线改用分类色板区分。主题包中这些键，以及同义别名 `curve.line`、`meter.peakMeter.gradientGreen`、`meter.peakMeter.gradientGreenStop`，均按未知键拒绝。
 
 **状态层。** 普通交互表面的悬浮叠加由 `background.hoverOverlay` 单独配置 RGB 和 Alpha。Dark 默认 `#14E0E0E0`，Light 默认 `#14202B38`，格式为 `#AARRGGBB`。带状态含义的颜色通过 `ThemeColors::stateColor` 向首要文字色混合 8%（悬停）、12%（按下）、16%（强调），保留源 Alpha。画布图形标记（Timeline marker、编辑游标、Source 波形视图手柄）的悬停与选中使用 `Highlight`，按首要文字相对底色的明暗方向调亮或调暗 35%。未选中的 Mixing 曲线使用源 Alpha 的 50%。QSS 的柔和底色统一使用 `ThemeSoftTintAlpha`（36 / 255）。
 
-**QSS 令牌。** 颜色令牌与 QSS 一一对应，删除了没有使用者的令牌，工具栏状态按钮使用各自的 Tool 颜色及其悬停状态；尺寸令牌随布局收束合并为 `@iconExtent@`、`@smallIconExtent@` 等档位名称。未匹配任何控件的 `.TrackHeader`、`.ClipBlock`、`.NodeHeader`、`.NodeBody` 规则已删除。
+**QSS 令牌。** 颜色令牌与 QSS 一一对应，删除了没有使用者的令牌，工具栏状态按钮使用各自的 Tools 分组颜色及其悬停状态；尺寸令牌随布局收束合并为 `@iconExtent@`、`@smallIconExtent@` 等档位名称。未匹配任何控件的 `.TrackHeader`、`.ClipBlock`、`.NodeHeader`、`.NodeBody` 规则已删除。
 
 2026-11-07 在 Windows、Qt 6.11.0、`build-nc` RelWithDebInfo 下，`harken_studio` 与 `harken_studio_tests` 构建通过；主题、样式、颜色、设置、表格、Timeline、Meter、曲线、蓝图、Inspector、缩放与字体相关的 231 项测试中 230 项通过、1 项符号链接用例跳过。完整编辑器测试 687 项中 684 项通过、1 项跳过，2 项失败：`EditorDockLayoutTest.ColorRefreshPreservesBlueprintEditorsAndStructureRefreshReplacesThem` 单独运行通过，属于前文记录的跨套件隔离问题；`EditorProjectPackExporterManifest.PartialPublicationCombinesScheduleAndEffectCapacity` 在运行时 `ActivateCanonicalMembersV1` 返回 -415，位于 Pack 导出与引擎激活路径，本次未改动相关代码。QSS 归属检查及其 6 项脚本测试通过，`--self-test` 返回 `ok: true`。2026-11-08 的布局职责收束使用离屏真实窗口探针，在 Dark / Light 下截取主窗口、Explorer、Inspector、Preferences、Project Settings、Log、Information、Blueprint 与 Timeline（Segment / Track），并导出各面板边距、控件高度与行高；与 main 基线对照确认 Explorer 搜索栏上边距、分区标题、行高与表格行高的统一，以及 Inspector Playback 分节在离屏截图中需等待展开动画结束才显示内容（main 同样存在）。
 
