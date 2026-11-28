@@ -2,6 +2,6 @@
 
 namespace harken::studio::SchemaBuild {
 
-inline constexpr char kSnapshotHash[] = "e872bb69162d8cfb38ff66c9f4b23b31446bbcd65e43f7d30eb28fc228834bfa";
+inline constexpr char kSnapshotHash[] = "29a445827004f783c55ba4ebf41fd2c524383d25c434d32408bd81a431cd3035";
 
 }

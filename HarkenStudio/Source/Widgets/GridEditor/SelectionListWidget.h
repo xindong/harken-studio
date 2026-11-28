@@ -48,6 +48,7 @@ private:
     bool replaceOccurrence(uint32_t stableOccurrenceOrdinal, uint32_t objectId);
     void removeSelected();
     SelectionTable modeTable() const;
+    bool canEditTable() const;
     PlatformScope displayedPlatform() const;
     bool commitOccurrences(const std::vector<SelectionEntry>& edited);
     void moveRow(int from, int to);

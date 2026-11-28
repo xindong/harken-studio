@@ -86,8 +86,8 @@ ProjectData makeRandomProject(std::shared_ptr<ProjectItem>* outContainer,
     selection->mode = SelectionMode::Random;
     selection->behavior.discipline = RandomDiscipline::Draw;
     selection->behavior.avoidRepeat = 0;
-    selection->selections.random.find(0)->weight = 0;
-    selection->selections.random.find(1)->weight = 3;
+    selection->selections.random.shared.find(0)->weight = 0;
+    selection->selections.random.shared.find(1)->weight = 3;
 
     ProjectFileBinding binding;
     binding.rootItem = layer;
@@ -241,7 +241,7 @@ TEST(CurrentWorldProjectAdapter, SelectionHistoryAndOccurrencesSurviveAuthoringB
     std::shared_ptr<ProjectItem> sound;
     auto project = makeRandomProject(&container, &sound);
     auto* selection = container->comp<VSelection>();
-    selection->selections.random.find(0)->weight = 1;
+    selection->selections.random.shared.find(0)->weight = 1;
     for (unsigned index = 2; index < 65; ++index)
         ASSERT_TRUE(PlayablePropertyAuthoringV1::addContainerChildOccurrence(*container, sound->guid));
     selection->behavior.avoidRepeat = 64;

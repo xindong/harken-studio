@@ -55,12 +55,12 @@ public:
 
     DiscreteGridDef matchGrid(PlatformScope scope = std::nullopt) const
     {
-        return selections.match.matchGrid(scope);
+        return selections.matchGrid(scope);
     }
 
     MixingDef mixing(PlatformScope scope = std::nullopt) const
     {
-        return selections.blend.mixing(scope);
+        return selections.mixing(scope);
     }
 
     std::vector<SelectionEntry> activeRows(PlatformScope scope = std::nullopt) const;

@@ -1438,16 +1438,6 @@
           "minimum": 0,
           "type": "integer"
         },
-        "platforms": {
-          "additionalProperties": {
-            "$ref": "#/$defs/selectionCurveShape"
-          },
-          "minProperties": 1,
-          "propertyNames": {
-            "$ref": "#/$defs/uuid"
-          },
-          "type": "object"
-        },
         "points": {
           "items": {
             "items": {
@@ -2197,40 +2187,6 @@
         }
       ]
     },
-    "selectionCurveShape": {
-      "additionalProperties": false,
-      "properties": {
-        "handles": {
-          "items": {
-            "items": {
-              "type": "number"
-            },
-            "maxItems": 4,
-            "minItems": 4,
-            "type": "array"
-          },
-          "maxItems": 7,
-          "type": "array"
-        },
-        "points": {
-          "items": {
-            "items": {
-              "type": "number"
-            },
-            "maxItems": 2,
-            "minItems": 2,
-            "type": "array"
-          },
-          "maxItems": 8,
-          "type": "array"
-        }
-      },
-      "required": [
-        "points",
-        "handles"
-      ],
-      "type": "object"
-    },
     "selectionEntry": {
       "additionalProperties": false,
       "properties": {
@@ -2290,23 +2246,9 @@
       "additionalProperties": false,
       "properties": {
         "cells": {
-          "items": {
+          "additionalProperties": {
             "$ref": "#/$defs/selectionMatchCell"
           },
-          "type": "array"
-        },
-        "platforms": {
-          "additionalProperties": {
-            "additionalProperties": {
-              "$ref": "#/$defs/selectionMatchCell"
-            },
-            "minProperties": 1,
-            "propertyNames": {
-              "$ref": "#/$defs/uuid"
-            },
-            "type": "object"
-          },
-          "minProperties": 1,
           "propertyNames": {
             "$ref": "#/$defs/uuid"
           },
@@ -2335,6 +2277,40 @@
       ],
       "type": "object"
     },
+    "selectionModeTables": {
+      "additionalProperties": false,
+      "properties": {
+        "occurrenceOrdinalHighWater": {
+          "maximum": 4294967296,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "platforms": {
+          "additionalProperties": {
+            "$ref": "#/$defs/selectionTable"
+          },
+          "minProperties": 1,
+          "propertyNames": {
+            "$ref": "#/$defs/uuid"
+          },
+          "type": "object"
+        },
+        "ruleOrdinalHighWater": {
+          "maximum": 4294967296,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "shared": {
+          "$ref": "#/$defs/selectionTable"
+        }
+      },
+      "required": [
+        "occurrenceOrdinalHighWater",
+        "ruleOrdinalHighWater",
+        "shared"
+      ],
+      "type": "object"
+    },
     "selectionOccurrence": {
       "additionalProperties": false,
       "properties": {
@@ -2342,18 +2318,6 @@
           "maximum": 4294967295,
           "minimum": 0,
           "type": "integer"
-        },
-        "platforms": {
-          "additionalProperties": {
-            "maximum": 100,
-            "minimum": 0,
-            "type": "integer"
-          },
-          "minProperties": 1,
-          "propertyNames": {
-            "$ref": "#/$defs/uuid"
-          },
-          "type": "object"
         },
         "stableOccurrenceOrdinal": {
           "maximum": 4294967295,
@@ -2376,6 +2340,31 @@
     "selectionTable": {
       "additionalProperties": false,
       "properties": {
+        "entries": {
+          "items": {
+            "$ref": "#/$defs/selectionEntry"
+          },
+          "type": "array"
+        },
+        "matchRows": {
+          "items": {
+            "$ref": "#/$defs/selectionMatchRow"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "entries",
+        "matchRows"
+      ],
+      "type": "object"
+    },
+    "selections": {
+      "additionalProperties": false,
+      "properties": {
+        "blend": {
+          "$ref": "#/$defs/selectionModeTables"
+        },
         "blendAxes": {
           "items": {
             "oneOf": [
@@ -2412,11 +2401,8 @@
           },
           "type": "array"
         },
-        "entries": {
-          "items": {
-            "$ref": "#/$defs/selectionEntry"
-          },
-          "type": "array"
+        "match": {
+          "$ref": "#/$defs/selectionModeTables"
         },
         "matchAxes": {
           "items": {
@@ -2424,50 +2410,16 @@
           },
           "type": "array"
         },
-        "matchRows": {
-          "items": {
-            "$ref": "#/$defs/selectionMatchRow"
-          },
-          "type": "array"
-        },
-        "occurrenceOrdinalHighWater": {
-          "maximum": 4294967296,
-          "minimum": 0,
-          "type": "integer"
-        },
-        "ruleOrdinalHighWater": {
-          "maximum": 4294967296,
-          "minimum": 0,
-          "type": "integer"
-        }
-      },
-      "required": [
-        "occurrenceOrdinalHighWater",
-        "ruleOrdinalHighWater",
-        "entries",
-        "matchAxes",
-        "matchRows",
-        "blendAxes"
-      ],
-      "type": "object"
-    },
-    "selections": {
-      "additionalProperties": false,
-      "properties": {
-        "blend": {
-          "$ref": "#/$defs/selectionTable"
-        },
-        "match": {
-          "$ref": "#/$defs/selectionTable"
-        },
         "random": {
-          "$ref": "#/$defs/selectionTable"
+          "$ref": "#/$defs/selectionModeTables"
         },
         "sequence": {
-          "$ref": "#/$defs/selectionTable"
+          "$ref": "#/$defs/selectionModeTables"
         }
       },
       "required": [
+        "matchAxes",
+        "blendAxes",
         "random",
         "sequence",
         "match",
@@ -3796,6 +3748,27 @@
             "components",
             "selection",
             "selections",
+            "*",
+            "shared",
+            "entries",
+            "*",
+            "childGuid"
+          ],
+          "targetTypes": [
+            "Sound",
+            "Container",
+            "Track",
+            "Segment"
+          ]
+        },
+        {
+          "kind": "guid",
+          "path": [
+            "components",
+            "selection",
+            "selections",
+            "*",
+            "platforms",
             "*",
             "entries",
             "*",

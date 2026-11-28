@@ -565,13 +565,13 @@ TEST(ProjectContract, ParentDependenciesKeepInheritedTargetsWithoutExpandingPlay
     };
     const auto selection = [&](const QStringList& children, const QString& variable = QString()) {
         harken::studio::SelectionData data;
-        data.random.occurrenceOrdinalHighWater = children.size();
+        data.random.shared.occurrenceOrdinalHighWater = children.size();
         for (qsizetype index = 0; index < children.size(); ++index) {
             const auto ordinal = static_cast<uint32_t>(index);
-            data.random.entries.push_back({QUuid(children.at(index)), ordinal,
+            data.random.shared.entries.push_back({QUuid(children.at(index)), ordinal,
                 {{ordinal, ordinal, 50}}, {}});
         }
-        if (!variable.isEmpty()) data.match.matchAxes.push_back(QUuid(variable));
+        if (!variable.isEmpty()) data.matchAxes.push_back(QUuid(variable));
         return QJsonObject{{QStringLiteral("selection"), QJsonObject{
             {QStringLiteral("selections"), data.toJson()}}}};
     };

@@ -1849,7 +1849,7 @@ TEST(ProjectPackExport, ExportsContainerAndVariableProjectDeterministically)
         if (i == 5) {
             auto grid = selection->matchGrid();
             ASSERT_TRUE(grid.addAxis(variable->guid));
-            EXPECT_TRUE(selection->selections.match.setMatchGrid(grid));
+            EXPECT_TRUE(selection->selections.setMatchGrid(grid));
         }
         for (int j = 0; j < 2; ++j) {
             const QString file = QStringLiteral("demo_%1_%2.wav").arg(i).arg(j);
@@ -1867,7 +1867,7 @@ TEST(ProjectPackExport, ExportsContainerAndVariableProjectDeterministically)
                     auto grid = selection->matchGrid();
                     ASSERT_TRUE(grid.addRow(sound->guid));
                     ASSERT_TRUE(grid.setCell(j, 0, j));
-                    EXPECT_TRUE(selection->selections.match.setMatchGrid(grid));
+                    EXPECT_TRUE(selection->selections.setMatchGrid(grid));
                 }
             }
         }
@@ -2147,8 +2147,8 @@ TEST(ProjectPackExport, ExternalLocalizedOccurrenceKeepsInvalidOwnershipRejected
         {{QStringLiteral("External"), 21, 3}}));
     ASSERT_NO_FATAL_FAILURE(localizeSoloSound(project, soloSourceId));
     auto container = makeItem(QStringLiteral("ExternalVoice"), harken::studio::ProjectItem::Type::Container, 3);
-    container->comp<harken::studio::VSelection>()->selections.random.occurrenceOrdinalHighWater = 1;
-    EXPECT_TRUE(container->comp<harken::studio::VSelection>()->selections.random.setOccurrenceRows({{project.layers.front().rootItem->children.at(1)->guid, 0, {}}}));
+    container->comp<harken::studio::VSelection>()->selections.random.shared.occurrenceOrdinalHighWater = 1;
+    EXPECT_TRUE(container->comp<harken::studio::VSelection>()->selections.random.shared.setOccurrenceRows({{project.layers.front().rootItem->children.at(1)->guid, 0, {}}}));
     addChild(project.layers.front().rootItem, container);
     harken::studio::ProjectPackExporter exporter;
     harken::studio::ProjectPackExporter::ExportOptions opts;

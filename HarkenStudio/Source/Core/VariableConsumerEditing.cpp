@@ -49,7 +49,7 @@ bool retarget(ProjectData* project, const QUuid& fromGuid, const QUuid& toGuid)
         const auto* selection = host ? host->comp<VSelection>() : nullptr;
         if (!selection || !targetVariable) return false;
         QList<PlatformScope> scopes{std::nullopt};
-        for (const auto& platform : selection->selections.match.platformIds()) scopes.append(platform);
+        for (const auto& [platform, table] : selection->selections.match.platforms) scopes.append(platform);
         for (const auto& scope : scopes) {
             const auto grid = selection->matchGrid(scope);
             if (grid.axisIndex(toGuid) >= 0 && grid.axisIndex(toGuid) != consumer.axisIndex) return false;
@@ -80,19 +80,18 @@ bool retarget(ProjectData* project, const QUuid& fromGuid, const QUuid& toGuid)
         case VariableConsumerKind::DiscreteGridAxis: {
             auto* selection = host->comp<VSelection>();
             if (!selection || consumer.axisIndex < 0 ||
-                consumer.axisIndex >= static_cast<int>(selection->selections.match.matchAxes.size()))
+                consumer.axisIndex >= static_cast<int>(selection->selections.matchAxes.size()))
                 return false;
-            auto& table = selection->selections.match;
-            table.remapMatchAxes({{table.matchAxes[static_cast<size_t>(consumer.axisIndex)], toGuid}});
+            selection->selections.replaceMatchAxis(static_cast<size_t>(consumer.axisIndex), toGuid);
             host->markDirty();
             break;
         }
         case VariableConsumerKind::ContinuousGridAxis: {
             auto* selection = host->comp<VSelection>();
             if (!selection || consumer.axisIndex < 0 ||
-                consumer.axisIndex >= static_cast<int>(selection->selections.blend.mixingRows.size()))
+                consumer.axisIndex >= static_cast<int>(selection->selections.blendAxes.size()))
                 return false;
-            selection->selections.blend.mixingRows[static_cast<size_t>(consumer.axisIndex)].variable = toGuid;
+            selection->selections.blendAxes[static_cast<size_t>(consumer.axisIndex)].variable = toGuid;
             host->markDirty();
             break;
         }
@@ -146,21 +145,20 @@ bool clear(ProjectData* project, const QUuid& fromGuid)
         case VariableConsumerKind::DiscreteGridAxis: {
             auto* selection = host->comp<VSelection>();
             if (!selection) return false;
-            auto& table = selection->selections.match;
-            auto grid = table.matchGrid();
-            if (!grid.removeAxis(consumer.axisIndex) || !table.setMatchGrid(grid)) return false;
+            auto grid = selection->selections.matchGrid();
+            if (!grid.removeAxis(consumer.axisIndex) || !selection->selections.setMatchGrid(grid, std::nullopt))
+                return false;
             host->markDirty();
             break;
         }
         case VariableConsumerKind::ContinuousGridAxis: {
             auto* selection = host->comp<VSelection>();
             if (!selection || consumer.axisIndex < 0
-                || consumer.axisIndex >= static_cast<int>(selection->selections.blend.mixingRows.size()))
+                || consumer.axisIndex >= static_cast<int>(selection->selections.blendAxes.size()))
                 return false;
-            auto& table = selection->selections.blend;
-            auto mixing = table.mixing();
+            auto mixing = selection->selections.mixing();
             mixing.rows.erase(mixing.rows.begin() + consumer.axisIndex);
-            if (!table.setMixing(mixing)) return false;
+            if (!selection->selections.setMixing(mixing, std::nullopt)) return false;
             host->markDirty();
             break;
         }

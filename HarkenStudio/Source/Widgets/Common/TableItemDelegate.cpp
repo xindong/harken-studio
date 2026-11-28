@@ -55,19 +55,9 @@ QWidget* TableItemDelegate::createEditor(QWidget* parent, const QStyleOptionView
     return editor;
 }
 
-QStyleOptionViewItem TableItemDelegate::markerFreeOption(const QStyleOptionViewItem& option,
-                                                         const QModelIndex& index) const
-{
-    QStyleOptionViewItem result = option;
-    if (index.data(TablePlatformMarkerRole).toBool())
-        result.rect.setRight(option.rect.right() - themeManager_->metrics().inspector.platformMarkerWidth);
-    return result;
-}
-
-void TableItemDelegate::updateEditorGeometry(QWidget* editor, const QStyleOptionViewItem& cell,
+void TableItemDelegate::updateEditorGeometry(QWidget* editor, const QStyleOptionViewItem& option,
                                              const QModelIndex& index) const
 {
-    const auto option = markerFreeOption(cell, index);
     if (option.widget && option.widget->property("compositeTable").toBool()) {
         editor->setGeometry(option.rect);
         return;
@@ -131,10 +121,9 @@ void TableItemDelegate::initStyleOption(QStyleOptionViewItem* option, const QMod
     }
 }
 
-void TableItemDelegate::paint(QPainter* painter, const QStyleOptionViewItem& cell,
+void TableItemDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option,
                              const QModelIndex& index) const
 {
-    const auto option = markerFreeOption(cell, index);
     QStyleOptionViewItem styled = option;
     const auto numberColumn = option.widget ? option.widget->property("rowNumberColumn") : QVariant();
     const bool composite = option.widget && option.widget->property("compositeTable").toBool();

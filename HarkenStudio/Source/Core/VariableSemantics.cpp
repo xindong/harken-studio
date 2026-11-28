@@ -240,12 +240,13 @@ QStringList restoreLoadedLabelReferences(ProjectData& project)
     const auto restore = [&](auto&& self, ProjectItem* item) -> void {
         if (!item) return;
         if (auto* selection = item->comp<VSelection>()) {
-            for (auto* table : selection->selections.tables()) {
-                for (size_t axis = 0; axis < table->matchAxes.size(); ++axis) {
-                    auto* variable = variables.value(table->matchAxes[axis], nullptr);
+            for (const auto& axis : selection->selections.matchAxes) {
+                auto* variable = variables.value(axis, nullptr);
+                for (auto* table : selection->selections.tables()) {
                     for (auto& row : table->matchRows) {
-                        if (axis >= row.cells.size() || !row.cells[axis]) continue;
-                        auto& cell = *row.cells[axis];
+                        const auto found = row.cells.find(axis);
+                        if (found == row.cells.end()) continue;
+                        auto& cell = found->second;
                         if (!cell.labelId.isNull()) continue;
                         const auto matches = variable ? std::count_if(variable->labels.begin(), variable->labels.end(),
                             [&](const auto& label) { return label.anchor == cell.legacyValue; }) : 0;
@@ -256,7 +257,7 @@ QStringList restoreLoadedLabelReferences(ProjectData& project)
                         }
                         const auto* label = labelAtIndex(variable->labels, cell.legacyValue);
                         if (!label) {
-                            variable->labels.push_back({cell.legacyValue, {}, QUuid::createUuidV5(table->matchAxes[axis],
+                            variable->labels.push_back({cell.legacyValue, {}, QUuid::createUuidV5(axis,
                                 QByteArray("grid-label-") + QByteArray::number(cell.legacyValue))});
                             label = &variable->labels.back();
                         }

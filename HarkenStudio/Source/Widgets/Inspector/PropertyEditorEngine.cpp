@@ -1231,10 +1231,8 @@ void PropertyEditorEngine::setWidgetValue(QWidget* widget, const QString& widget
         // No blockSignals here: ParameterSlider::setValue is already silent, and
         // an in-session setValue must deliver interactiveEditEnd(committed=false)
         // so the engine cancels the interrupted session instead of orphaning it.
-        if (auto* s = qobject_cast<ParameterSlider*>(widget)) {
-            s->setMixedValue(false);
+        if (auto* s = qobject_cast<ParameterSlider*>(widget))
             s->setValue(value.toDouble());
-        }
         return;
     }
 

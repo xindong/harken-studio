@@ -2,6 +2,9 @@
 #include "Widgets/Inspector/InspectorLayout.h"
 
 #include "Core/Components/VSelection.h"
+#include "Core/Components/VVariable.h"
+#include "Core/GridSemantics.h"
+#include "Core/VariableSemantics.h"
 #include "Core/ContainerBehaviorSemantics.h"
 #include "Core/ActionManager.h"
 #include "Core/ContextInfo.h"
@@ -11,17 +14,24 @@
 #include "Core/PlatformContextService.h"
 #include "Core/QtControlSkin.h"
 #include "Core/ThemeManager.h"
+#include "Widgets/Common/PreviewField.h"
+#include "Widgets/GridEditor/MixingRowCanvas.h"
 #include "Widgets/Inspector/InspectorPanel.h"
 #include "Widgets/Shared/InspectorFormRow.h"
+#include "Widgets/Shared/PlatformLocalMarker.h"
 #include "Widgets/Shared/SchemaFieldPick.h"
 
 #include <QComboBox>
 #include <QCheckBox>
+#include <QGridLayout>
+#include <QJsonObject>
 #include <QLabel>
+#include <QPainter>
 #include <QSignalBlocker>
 #include <QSpinBox>
 #include <QVBoxLayout>
 
+#include <algorithm>
 #include <memory>
 
 namespace harken::studio {
@@ -33,6 +43,266 @@ const PropertyDescriptor& selectionModeDescriptor()
     const auto* descriptor = pickSchemaField(VSelection::schema(), QLatin1String("mode"));
     Q_ASSERT(descriptor);
     return *descriptor;
+}
+
+QString itemName(const QUuid& guid)
+{
+    const auto* item = ProjectManager::instance().findItemByGuid(guid);
+    return item ? item->name : QObject::tr("(missing)");
+}
+
+QString cellText(const QUuid& axis, const DiscreteGridCell& cell)
+{
+    const auto* item = ProjectManager::instance().findItemByGuid(axis);
+    const auto* variable = item ? item->comp<VVariable>() : nullptr;
+    const auto value = GridSemantics::discreteCellValue(cell, variable);
+    if (!value) return QObject::tr("(missing)");
+    return variable ? VariableSemantics::labelTextForValue(*value, variable->labels).value_or(QString::number(*value))
+                    : QString::number(*value);
+}
+
+class SelectionsPreview final : public PreviewField
+{
+public:
+    explicit SelectionsPreview(QWidget* parent)
+        : PreviewField(parent)
+    {
+        setObjectName(QStringLiteral("prop_selections"));
+        setProperty("flexibleRows", true);
+        setCursor(Qt::PointingHandCursor);
+        setToolTip(QObject::tr("Open Selection Editor"));
+        ThemeManager::instance().bindMetrics(this, [this](const ThemeMetrics&) { refresh(); });
+    }
+
+    void bind(const ProjectItem* item)
+    {
+        item_ = item ? item->guid : QUuid{};
+        refresh();
+    }
+
+    void refresh()
+    {
+        updateGeometry();
+        update();
+    }
+
+    QSize sizeHint() const override
+    {
+        return {PreviewField::sizeHint().width(), rowCount() * pitch() + border()};
+    }
+
+    QSize minimumSizeHint() const override
+    {
+        return {PreviewField::minimumSizeHint().width(), sizeHint().height()};
+    }
+
+protected:
+    void paintPreview(QPainter& painter, const QRectF&) override
+    {
+        const auto* selection = boundSelection();
+        if (!selection) return;
+        const auto& data = selection->selections;
+        const auto scope = currentWorldPlatformScope(PlatformContextService::instance().context());
+        const auto& table = data.table(selection->mode, scope);
+        for (int row = 1; row < rowCount(); ++row)
+            painter.fillRect(QRectF(0, row * pitch(), width(), border()),
+                             ThemeManager::instance().colors().borderSecondary);
+        switch (selection->mode) {
+        case SelectionMode::Random: {
+            std::vector<std::pair<QString, double>> cells;
+            for (const auto& occurrence : table.occurrenceRows())
+                cells.push_back({itemName(occurrence.childGuid), static_cast<double>(occurrence.weight)});
+            paintCells(painter, band(0), cells);
+            break;
+        }
+        case SelectionMode::Sequence: {
+            std::vector<std::pair<QString, double>> cells;
+            const auto occurrences = table.occurrenceRows();
+            for (size_t index = 0; index < occurrences.size(); ++index)
+                cells.push_back({QStringLiteral("%1 %2").arg(index + 1).arg(itemName(occurrences[index].childGuid)), 1.0});
+            paintCells(painter, band(0), cells);
+            break;
+        }
+        case SelectionMode::Match: {
+            std::vector<std::pair<QString, double>> cells;
+            for (const auto& rule : table.matchRows) {
+                QStringList conditions;
+                for (const auto& axis : data.matchAxes)
+                    if (const auto cell = rule.cells.find(axis); cell != rule.cells.end())
+                        conditions.append(cellText(axis, cell->second));
+                cells.push_back({QStringLiteral("%1 → %2").arg(
+                    conditions.isEmpty() ? QStringLiteral("*") : conditions.join(QStringLiteral(", ")),
+                    rule.target.isNull() ? QObject::tr("(none)") : itemName(rule.target)), 1.0});
+            }
+            paintCells(painter, band(0), cells);
+            break;
+        }
+        case SelectionMode::Blend: {
+            const auto mixing = data.mixing(scope);
+            for (int row = 0; row < static_cast<int>(mixing.rows.size()); ++row) {
+                painter.save();
+                painter.setClipRect(QRectF(border(), row * pitch() + border(), width() - 2 * border(), pitch() - border()));
+                MixingRowCanvas::paintPreview(painter, band(row), mixing.rows[static_cast<size_t>(row)]);
+                painter.restore();
+            }
+            break;
+        }
+        }
+    }
+
+private:
+    const VSelection* boundSelection() const
+    {
+        const auto* item = item_.isNull() ? nullptr : ProjectManager::instance().findItemByGuid(item_);
+        return item ? item->comp<VSelection>() : nullptr;
+    }
+
+    int rowCount() const
+    {
+        const auto* selection = boundSelection();
+        return selection && selection->mode == SelectionMode::Blend
+            ? std::max(1, static_cast<int>(selection->selections.blendAxes.size())) : 1;
+    }
+
+    static int border() { return ThemeManager::instance().metrics().borderWidth; }
+    static int pitch() { return QtControlSkin::current().fieldHeight() - border(); }
+
+    QRectF band(int row) const
+    {
+        const qreal padding = ThemeManager::instance().metrics().spacingCompact;
+        return QRectF(0, row * pitch(), width(), pitch() + border()).adjusted(padding, padding, -padding, -padding);
+    }
+
+    void paintCells(QPainter& painter, const QRectF& area, const std::vector<std::pair<QString, double>>& cells) const
+    {
+        double total = 0.0;
+        for (const auto& [text, weight] : cells) total += weight;
+        const auto& colors = ThemeManager::instance().colors();
+        double left = area.left();
+        for (size_t index = 0; index < cells.size(); ++index) {
+            const double width = total > 0.0 ? area.width() * cells[index].second / total : area.width() / cells.size();
+            const QRectF cell(left, area.top(), width, area.height());
+            left += width;
+            if (width <= 0.0) continue;
+            QColor fill = colors.categoricalColor(static_cast<int>(index));
+            fill.setAlphaF(fill.alphaF() * 0.45);
+            painter.fillRect(cell.adjusted(0.5, 0, -0.5, 0), fill);
+            painter.setPen(colors.textPrimary);
+            painter.drawText(cell.adjusted(3, 0, -2, 0), Qt::AlignVCenter | Qt::AlignLeft,
+                painter.fontMetrics().elidedText(cells[index].first, Qt::ElideRight, static_cast<int>(cell.width() - 5)));
+        }
+    }
+
+    QUuid item_;
+};
+
+QString conditionText(const SelectionMatchRow& row, const SelectionData& data)
+{
+    QStringList parts{row.target.isNull() ? QObject::tr("(none)") : itemName(row.target)};
+    for (const auto& axis : data.matchAxes) {
+        const auto cell = row.cells.find(axis);
+        if (cell == row.cells.end()) continue;
+        parts.append(QStringLiteral("%1: %2").arg(itemName(axis), cellText(axis, cell->second)));
+    }
+    return parts.join(QStringLiteral(" · "));
+}
+
+std::vector<QStringList> selectionRows(SelectionMode mode, const std::vector<SelectionTable>& tables,
+                                       const SelectionData& data)
+{
+    std::vector<QStringList> rows;
+    const QString absent = QStringLiteral("—");
+    if (mode == SelectionMode::Sequence) {
+        size_t count = 0;
+        for (const auto& table : tables) count = std::max(count, table.occurrenceRows().size());
+        for (size_t index = 0; index < count; ++index) {
+            QStringList cells{QString::number(index + 1)};
+            for (const auto& table : tables) {
+                const auto occurrences = table.occurrenceRows();
+                cells.append(index < occurrences.size() ? itemName(occurrences[index].childGuid) : absent);
+            }
+            rows.push_back(cells);
+        }
+        return rows;
+    }
+    if (mode == SelectionMode::Match) {
+        std::vector<uint32_t> ordinals;
+        for (const auto& table : tables)
+            for (const auto& row : table.matchRows)
+                if (std::find(ordinals.begin(), ordinals.end(), row.stableRuleOrdinal) == ordinals.end())
+                    ordinals.push_back(row.stableRuleOrdinal);
+        for (size_t index = 0; index < ordinals.size(); ++index) {
+            QStringList cells{QString::number(index + 1)};
+            for (const auto& table : tables) {
+                const auto row = std::find_if(table.matchRows.begin(), table.matchRows.end(),
+                    [&](const SelectionMatchRow& rule) { return rule.stableRuleOrdinal == ordinals[index]; });
+                cells.append(row == table.matchRows.end() ? absent : conditionText(*row, data));
+            }
+            rows.push_back(cells);
+        }
+        return rows;
+    }
+    if (mode == SelectionMode::Blend) {
+        std::vector<QUuid> children;
+        for (const auto& table : tables)
+            for (const auto& entry : table.entries)
+                if (std::find(children.begin(), children.end(), entry.childGuid) == children.end())
+                    children.push_back(entry.childGuid);
+        for (const auto& child : children) {
+            QStringList cells{itemName(child)};
+            for (const auto& table : tables) {
+                const auto* member = table.member(child);
+                QStringList curves;
+                for (const auto& axis : data.blendAxes)
+                    for (const auto& curve : member ? member->curves : std::vector<SelectionCurve>{})
+                        if (curve.rowGuid == axis.guid)
+                            curves.append(QStringLiteral("%1 (%2)").arg(
+                                axis.variable.isNull() ? QObject::tr("(none)") : itemName(axis.variable))
+                                .arg(curve.points.size()));
+                cells.append(member ? curves.join(QStringLiteral(", ")) : absent);
+            }
+            rows.push_back(cells);
+        }
+        return rows;
+    }
+    std::vector<SelectionEntry> occurrences;
+    for (const auto& table : tables)
+        for (const auto& row : table.occurrenceRows())
+            if (std::none_of(occurrences.begin(), occurrences.end(), [&](const SelectionEntry& entry) {
+                    return entry.stableOccurrenceOrdinal == row.stableOccurrenceOrdinal;
+                }))
+                occurrences.push_back(row);
+    for (const auto& occurrence : occurrences) {
+        QStringList cells{itemName(occurrence.childGuid)};
+        for (const auto& table : tables) {
+            const auto* row = table.find(occurrence.stableOccurrenceOrdinal);
+            cells.append(row ? QString::number(row->weight) : absent);
+        }
+        rows.push_back(cells);
+    }
+    return rows;
+}
+
+void showSelectionDifferences(const QUuid& owner, QGridLayout* layout, QWidget* popup,
+                              const QList<PlatformMarkValue>& values)
+{
+    const auto* item = ProjectManager::instance().findItemByGuid(owner);
+    const auto* selection = item ? item->comp<VSelection>() : nullptr;
+    if (!selection) return;
+    const auto& data = selection->selections;
+    const auto& shared = data.modeTables(selection->mode).shared;
+    std::vector<SelectionTable> tables;
+    for (const auto& entry : values)
+        tables.push_back(SelectionTable::fromJson(QJsonObject::fromVariantMap(entry.value.toMap()),
+            shared.occurrenceOrdinalHighWater, shared.ruleOrdinalHighWater, data.matchAxes, data.blendAxes)
+            .value_or(SelectionTable{}));
+    const bool identical = std::all_of(tables.begin(), tables.end(),
+        [&](const SelectionTable& table) { return table.toJson() == tables.front().toJson(); });
+    const QString title = selection->mode == SelectionMode::Sequence ? QStringLiteral("#")
+        : selection->mode == SelectionMode::Match ? QObject::tr("Rule") : QObject::tr("Child");
+    showPlatformComparison(layout, popup, title, values,
+                           identical ? std::vector<QStringList>{} : selectionRows(selection->mode, tables, data),
+                           QObject::tr("All platforms use the same selection list"), Qt::AlignLeft);
 }
 
 class SelectionSectionWidget : public QWidget
@@ -59,6 +329,23 @@ public:
             this, QStringLiteral("mode"), modeDescriptor.label, mode_,
             {}, occupiedSlots).row;
         layout->addWidget(modeRow_);
+
+        selections_ = new SelectionsPreview(this);
+        selectionsMark_ = new PlatformLocalMarker(this);
+        selectionsMark_->setValuesView([this](QGridLayout* grid, QWidget* popup, const QList<PlatformMarkValue>& values) {
+            showSelectionDifferences(boundItem_ ? boundItem_->guid : QUuid{}, grid, popup, values);
+        });
+        selectionsRow_ = makeInspectorFormRow(
+            this, QStringLiteral("selections"), tr("Selections"),
+            attachPlatformMarker(selections_, selectionsMark_, this), {}, occupiedSlots).row;
+        layout->addWidget(selectionsRow_);
+        connect(selections_, &PreviewField::clicked, this, [this] {
+            for (QWidget* current = parentWidget(); current; current = current->parentWidget())
+                if (auto* panel = qobject_cast<InspectorPanel*>(current)) {
+                    panel->requestEditorLaunch(QStringLiteral("selections"));
+                    return;
+                }
+        });
 
         variableResponse_ = new QComboBox(this);
         variableResponse_->setObjectName(QStringLiteral("prop_variableResponse"));
@@ -174,7 +461,9 @@ public:
             if (!result.success) refresh();
         });
         connect(&PlatformContextService::instance(), &PlatformContextService::contextChanged,
-                this, [this](const PlatformContext&) { refreshBehavior(); });
+                this, [this](const PlatformContext&) { refreshBehavior(); selections_->refresh(); });
+        connect(&ProjectManager::instance(), &ProjectManager::itemRenamed,
+                selections_, [this] { selections_->refresh(); });
 
         placeholder_ = new QLabel(
             QObject::tr("Selection behavior is unavailable for this mode."), this);
@@ -188,6 +477,7 @@ public:
                  [this](ProjectItem* item, const QString& property, const QObject*) {
             if (!boundItem_)
                 return;
+            selections_->refresh();
             if (item == boundItem_
                 && (property == QStringLiteral("mode")
                     || property == QStringLiteral("playType")
@@ -228,12 +518,18 @@ public:
             ContextInfo::tag(row, ContextTopic::forField(
                 ComponentType::Selection, field, label, guid, type, name));
         };
+        tagBehavior(selectionsRow_, QStringLiteral("selections"), QStringLiteral("Selections"));
         tagBehavior(variableResponseRow_, QStringLiteral("variableResponse"), QStringLiteral("Variable Response"));
         tagBehavior(playTypeRow_, QStringLiteral("playType"), QStringLiteral("Play Type"));
         tagBehavior(disciplineRow_, QStringLiteral("discipline"), QStringLiteral("Discipline"));
         tagBehavior(avoidRepeatRow_, QStringLiteral("avoidRepeat"), QStringLiteral("Min Repeat Gap"));
         tagBehavior(memoryScopeRow_, QStringLiteral("memoryScope"), QStringLiteral("Memory Scope"));
         tagBehavior(resumeFromLastRow_, QStringLiteral("resumeFromLast"), QStringLiteral("Resume From Last"));
+        selections_->bind(item);
+        PlatformLocalAddress address;
+        address.kind = PlatformLocalAddress::Kind::Selections;
+        address.field = QStringLiteral("selections");
+        selectionsMark_->bind(item, item ? std::optional(address) : std::nullopt);
         refresh();
     }
 
@@ -346,15 +642,12 @@ private:
         memoryScopeRow_->setVisible(visibility.memoryScope);
         resumeFromLastRow_->setVisible(visibility.resumeFromLast);
         discipline_->setCurrentIndex(discipline_->findData(static_cast<int>(selection->behavior.discipline)));
+        const auto scope = currentWorldPlatformScope(PlatformContextService::instance().context());
         QList<uint32_t> occurrenceOrdinals;
-        for (const auto& occurrence : selection->selections.table(selection->mode).occurrenceRows())
+        for (const auto& occurrence : selection->selections.table(selection->mode, scope).occurrenceRows())
             occurrenceOrdinals.push_back(occurrence.stableOccurrenceOrdinal);
-        avoidRepeat_->setRange(
-            0, ContainerBehaviorSemantics::maxAvoidRepeat(
-                   *selection, occurrenceOrdinals,
-                   currentWorldPlatformScope(PlatformContextService::instance().context())));
-        avoidRepeat_->setValue(ContainerBehaviorSemantics::effectiveAvoidRepeat(*selection,
-            currentWorldPlatformScope(PlatformContextService::instance().context())));
+        avoidRepeat_->setRange(0, ContainerBehaviorSemantics::maxAvoidRepeat(*selection, occurrenceOrdinals, scope));
+        avoidRepeat_->setValue(ContainerBehaviorSemantics::effectiveAvoidRepeat(*selection, scope));
         memoryScope_->setCurrentIndex(memoryScope_->findData(static_cast<int>(selection->behavior.memoryScope)));
         resumeFromLast_->setChecked(selection->behavior.resumeFromLast);
         refreshingBehavior_ = false;
@@ -364,6 +657,8 @@ private:
     {
         const auto* selection = boundItem_ ? boundItem_->comp<VSelection>() : nullptr;
         mode_->setEnabled(selection != nullptr);
+        selectionsRow_->setVisible(selection != nullptr);
+        selectionsMark_->refresh();
         if (selection) {
             QSignalBlocker blocker(mode_);
             mode_->setCurrentIndex(mode_->findData(
@@ -399,6 +694,9 @@ private:
     ProjectItem* boundItem_ = nullptr;
     QWidget* modeRow_ = nullptr;
     QComboBox* mode_ = nullptr;
+    QWidget* selectionsRow_ = nullptr;
+    SelectionsPreview* selections_ = nullptr;
+    PlatformLocalMarker* selectionsMark_ = nullptr;
     QWidget* playTypeRow_ = nullptr;
     QComboBox* playType_ = nullptr;
     QWidget* spliceByMarkerRow_ = nullptr;

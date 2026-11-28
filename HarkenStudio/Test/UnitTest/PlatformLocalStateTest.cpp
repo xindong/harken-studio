@@ -94,13 +94,13 @@ TEST(PlatformLocalState, EveryStoreKeepsEqualLocalValuesAndRestoresHistory)
     auto* variable = variableItem->comp<VVariable>();
     variable->labels = {{1, QStringLiteral("One")}};
     auto& selections = container->comp<VSelection>()->selections;
-    auto grid = selections.match.matchGrid();
+    auto grid = selections.matchGrid();
     ASSERT_TRUE(grid.addAxis(variableItem->guid) && grid.addRow(member->guid)
                 && grid.setCell(0, 0, DiscreteGridCell(variable->labels.front().id)));
-    ASSERT_TRUE(selections.match.setMatchGrid(grid));
-    ASSERT_TRUE(selections.blend.setMixing({{{variableItem->guid,
-        {{member->guid, {{0.0f, 0.0f}, {100.0f, 1.0f}}, {{25.0f, 0.25f, 75.0f, 0.75f}}}}}}}));
-    ASSERT_FALSE(selections.random.occurrenceRows().empty());
+    ASSERT_TRUE(selections.setMatchGrid(grid, std::nullopt));
+    ASSERT_TRUE(selections.setMixing({{{variableItem->guid,
+        {{member->guid, {{0.0f, 0.0f}, {100.0f, 1.0f}}, {{25.0f, 0.25f, 75.0f, 0.75f}}}}}}}, std::nullopt));
+    ASSERT_FALSE(selections.random.shared.occurrenceRows().empty());
     history.clear();
 
     struct Case { ProjectItem* item; PlatformLocalAddress address; };
@@ -127,12 +127,7 @@ TEST(PlatformLocalState, EveryStoreKeepsEqualLocalValuesAndRestoresHistory)
         {layer, {Kind::RowCell, QStringLiteral("sidechains"), FieldGroupId::Sidechain, false, layerSidechain,
                  QStringLiteral("duckTarget")}},
         {layer, {Kind::EffectChain, QStringLiteral("effects"), FieldGroupId::Effect}},
-        {container, {.kind = Kind::SelectionWeight,
-                     .ordinal = selections.random.occurrenceRows().front().stableOccurrenceOrdinal}},
-        {container, {.kind = Kind::SelectionCondition, .ordinal = selections.match.matchRows.front().stableRuleOrdinal,
-                     .column = variableItem->guid}},
-        {container, {.kind = Kind::SelectionCurve, .row = selections.blend.mixingRows.front().guid,
-                     .column = member->guid}},
+        {container, {Kind::Selections, QStringLiteral("selections")}},
     };
 
     ProjectSerializer serializer;

@@ -165,8 +165,8 @@ VariableRangeEditPlan prepare(const ProjectData& project, const ProjectItem& var
                 plan.before.selections.insert(host->guid, selection->selections);
                 plan.after.selections.insert(host->guid, selection->selections);
             }
-            auto& table = plan.after.selections[host->guid].blend;
-            const auto rowGuid = table.mixingRows[consumer.axisIndex].guid;
+            auto& data = plan.after.selections[host->guid];
+            const auto rowGuid = data.blendAxes[consumer.axisIndex].guid;
             const auto adjust = [&](QVector<CurvePointDef>& points, QVector<CurveHandlePairDef>& handles) {
                 if (!validCurve(points, handles)) {
                     curveError(*host, points.size());
@@ -183,13 +183,10 @@ VariableRangeEditPlan prepare(const ProjectData& project, const ProjectItem& var
                 }
                 if (!validCurve(points, handles)) curveError(*host, points.size());
             };
-            for (auto& member : table.entries) {
-                for (auto& curve : member.curves) {
-                    if (curve.rowGuid != rowGuid) continue;
-                    adjust(curve.points, curve.handles);
-                    for (auto& [platform, shape] : curve.platforms) adjust(shape.points, shape.handles);
-                }
-            }
+            for (auto* table : data.blend.tables())
+                for (auto& member : table->entries)
+                    for (auto& curve : member.curves)
+                        if (curve.rowGuid == rowGuid) adjust(curve.points, curve.handles);
         } else if (consumer.kind == VariableConsumerKind::ActionSetVariable
                    && !seenActions.contains(host->guid)) {
             seenActions.insert(host->guid);

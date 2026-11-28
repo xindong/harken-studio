@@ -1265,8 +1265,8 @@ bool MoveItemCommand::redoHierarchy()
                 return false;
         }
         if (newParent_->type == ProjectItem::Type::Container
-            && !newParent_->comp<VSelection>()->selections.random.occurrenceRows().empty())
-            newOccurrence_ = newParent_->comp<VSelection>()->selections.random.occurrenceRows().back();
+            && !newParent_->comp<VSelection>()->selections.random.shared.occurrenceRows().empty())
+            newOccurrence_ = newParent_->comp<VSelection>()->selections.random.shared.occurrenceRows().back();
         ProjectManager::restoreReferencesFromLog(redoPlaybackRefLog_, project);
         finishSelectionMove();
         applyTrackTimeline(newTrackClips_);

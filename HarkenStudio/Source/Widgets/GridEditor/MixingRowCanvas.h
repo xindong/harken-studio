@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Core/MixingSemantics.h"
 #include "Widgets/CurveEditor/CurveCanvas.h"
 
 namespace harken::studio {
@@ -22,6 +23,8 @@ public:
     void cancelDrag() override;
     static void paintClipFill(QPainter& painter, const QPainterPath& path, qreal top, qreal bottom,
                               const QColor& color, bool selected);
+    static std::pair<float, float> curveDomain(const MixingRowDef& row);
+    static void paintPreview(QPainter& painter, const QRectF& area, const MixingRowDef& row);
 
 signals:
     void clipSelected(int clip);

@@ -1,7 +1,10 @@
 #include "MixingRowCanvas.h"
 
+#include "Core/Components/VVariable.h"
 #include "Core/FontManager.h"
+#include "Core/ProjectManager.h"
 #include "Core/ThemeManager.h"
+#include "Widgets/CurveEditor/CurvePlotGeometry.h"
 
 #include <QApplication>
 #include <QKeyEvent>
@@ -175,6 +178,58 @@ void MixingRowCanvas::paintClipFill(QPainter& painter, const QPainterPath& path,
     gradient.setColorAt(0.0, upper);
     gradient.setColorAt(1.0, lower);
     painter.fillPath(fill, gradient);
+}
+
+std::pair<float, float> MixingRowCanvas::curveDomain(const MixingRowDef& row)
+{
+    const auto* item = ProjectManager::instance().findItemByGuid(row.variable);
+    const auto* variable = item ? item->comp<VVariable>() : nullptr;
+    float minimum = variable ? variable->rangeMin : 0.0f;
+    float maximum = variable ? variable->rangeMax : 100.0f;
+    for (const auto& child : row.children)
+        for (const auto& point : child.points) {
+            minimum = std::min(minimum, point.x);
+            maximum = std::max(maximum, point.x);
+        }
+    return {minimum, maximum};
+}
+
+void MixingRowCanvas::paintPreview(QPainter& painter, const QRectF& area, const MixingRowDef& row)
+{
+    const auto [minimum, maximum] = curveDomain(row);
+    if (maximum <= minimum) return;
+    const auto* item = ProjectManager::instance().findItemByGuid(row.variable);
+    const auto* variable = item ? item->comp<VVariable>() : nullptr;
+    const bool discrete = variable && variable->kind == VariableKind::Step;
+    auto& theme = ThemeManager::instance();
+    const auto& metrics = theme.snapshot()->domains.curve.metrics;
+    const auto toScreen = [&](const CurvePointDef& point) {
+        return QPointF(area.left() + (point.x - minimum) / (maximum - minimum) * area.width(),
+                       area.bottom() - point.value * area.height());
+    };
+    painter.save();
+    for (int index = 0; index < static_cast<int>(row.children.size()); ++index) {
+        const auto& curve = row.children[index];
+        if (curve.points.size() < 2) continue;
+        const auto path = discrete
+            ? curveStepPath(curve.points, curve.handles, CurveAxisScale::LinearValue, minimum, maximum, false,
+                            area.width(), toScreen)
+            : curveSampledPath(curve.points, curve.handles, CurveAxisScale::LinearValue, minimum, maximum, false,
+                               painter.device()->devicePixelRatioF(), toScreen);
+        if (path.isEmpty()) continue;
+        const auto color = theme.colors().categoricalColor(index);
+        painter.setRenderHint(QPainter::Antialiasing);
+        paintClipFill(painter, path, area.top(), area.bottom(), color, true);
+        painter.setPen(QPen(color, metrics.curveLineWidth, Qt::SolidLine,
+                            discrete ? Qt::SquareCap : Qt::RoundCap, discrete ? Qt::MiterJoin : Qt::RoundJoin));
+        painter.drawPath(path);
+        painter.setRenderHint(QPainter::Antialiasing, false);
+        painter.setPen(QPen(color, 1.0, Qt::SolidLine, Qt::FlatCap));
+        for (const auto& endpoint : {path.pointAtPercent(0.0), path.currentPosition()})
+            if (endpoint.x() > area.left() + 0.5 && endpoint.x() < area.right() - 0.5)
+                painter.drawLine(endpoint, QPointF(endpoint.x(), area.bottom()));
+    }
+    painter.restore();
 }
 
 void MixingRowCanvas::mousePressEvent(QMouseEvent* event)

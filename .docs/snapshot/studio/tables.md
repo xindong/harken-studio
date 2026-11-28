@@ -126,22 +126,22 @@
 | Random | #、Child、Weight、Waveform | 支持重复 Child、引用替换、增删、拖入与排序；Single + Draw 使用频率权重，Shuffle / Queue 使用顺序权重 |
 | Sequence | #、Child、Waveform | 与 Random 共用条目编辑，不显示 Weight |
 | Match | #、Child、Waveform、Variable 条件列 | 双维度矩阵；行与变量列分别选择及排序，变量列顺序影响匹配优先级 |
-| Blend | #、Variable 与 Child 副表、混合曲线画布 | 每行一个可选 Variable，Child 副表含 Child、Mixing 与 Waveform；支持独立行高与控制区比例调宽 |
+| Blend | #、Variable 与 Child 副表、混合曲线画布 | 每行一个可选 Variable，Child 副表含 Child 与 Waveform；支持独立行高与控制区比例调宽 |
 
-注：四种模式各自保存独立的条目列表，切换模式保留其他模式的数据；Inspector 只保留模式与行为字段。预览及 Pack 仅消费当前模式与平台。
+注：四种模式各自保存独立的条目列表，切换模式保留其他模式的数据；Inspector 保留模式、Selections 预览窗与行为字段。预览及 Pack 仅消费当前模式与平台。
 
 | 平台配置 | 当前表现 |
 |---|---|
-| 共享范围 | 模式、行及行序、Child 引用、Match 的 Variable 列、Blend 行的 Variable 与 Variable Response 由所有平台共享；增删、排序与替换 Child 作用于全部平台；Sequence 没有平台值 |
-| 平台值 | Random 的 Weight、Match 每个条件单元格、Blend 每个 Child 的混合曲线可按平台不同，各带平台标记；All Platforms 修改共享值并清除各平台对应单元格，单平台只修改当前平台，与共享相同的平台值予以保留 |
-| Match 标记 | 占据条件单元格右侧，单元格的绘制、悬停、选中与下拉编辑均避开标记区域；左键查看各平台条件，右键覆盖或移除当前平台的值 |
-| Blend 标记 | 位于 Mixing 缩略图右侧；曲线没有单一数值，查看时只列出各平台使用共享还是本地曲线 |
+| 共享范围 | 模式、Match 的 Variable 列、Blend 行的 Variable、Variable Response 与行为设置由所有平台共享；新增或删除 Variable 列、Blend 行作用于全部平台的表 |
+| 平台单位 | 每种模式的整张列表是一个平台覆写单元，含 Child、出现次数、顺序、Weight、Match 条件行与 Blend 曲线；单平台下的修改先复制当前生效的列表为该平台的列表再修改，与共享相同的平台列表予以保留；All Platforms 修改共享列表、不改动各平台列表，若当前平台已有自己的列表则编辑器只读；列表内不带平台标记，移除覆写只能整张移除 |
+| Child 同步 | 容器新增的 Child 同时加入 Random、Sequence 的共享列表和各平台列表；删除 Child 时从所有模式、所有平台的列表移除；各平台列表沿用同一套行编号 |
+| 打包 | 预览及 Pack 只按当前平台、当前模式的列表展开 Child；平台列表未选中的 Child 及其音频不进入该平台的包，Action 或 Track 直接引用的除外 |
 
 | 共同行为 | 当前表现 |
 |---|---|
 | Child 选择范围 | 仅当前 Container 的类型匹配直属孩子；父级仅显示归属，不可选 |
 | Waveform | 显示 Child 为 Sound 时当前平台、语言的激活源；其他类型留空；点击有效波形打开对应源编辑器 |
-| 默认列比例 | 除 # 外：Random 为 20% / 20% / 60%，Sequence 为 40% / 60%，Match 为 25% / 25% / 首个条件列 50%；Blend 副表为 30% / 30% / 40% |
+| 默认列比例 | 除 # 外：Random 为 20% / 20% / 60%，Sequence 为 40% / 60%，Match 为 25% / 25% / 首个条件列 50%；Blend 副表为 40% / 60% |
 | 行试听 | Random、Sequence、Match 选中 Child 行设为试听目标；Inspector 与编辑器保持当前 Container；清选恢复当前层级 Container |
 | 引用替换与刷新 | 成功替换已选 Child 后同步试听目标；其他行编辑、被动刷新和焦点变化不接管目标 |
 | Control | 未固定时跟随试听目标，固定时保留绑定；Reset 跟随试听目标 |
@@ -162,7 +162,7 @@
 | 坐标与类型 | 横轴为 Variable，纵轴为 0–100% 混合比例；Smooth 连续曲线，Step 整数与 Label 阶梯预览，更换变量保留原坐标 |
 | 范围变更 | Variable 最小值必须小于最大值，Step 取整后也必须满足；通过基本校验即弹出 Stretch / Fix / Cancel，确认后才扫描消费方并仅计算所选方案。Stretch 同比缩放曲线和写值；Fix 保持 X 并裁剪曲线，完全越界的 Blend 成员保留为零增益，Binding 扩展区间延续端点值，写值钳制到新范围。扫描发现不可达 Match 条件后明确确认是否保留；所有变化共用一步撤销，取消不扫描、不写入，无法保持合法曲线时整体拒绝；既存越界曲线纳入画布范围，保持可编辑 |
 | 曲线编辑 | 点坐标、增删点、贝塞尔手柄、复制粘贴及撤销；标题平移整个横向区间，首尾外为 0%，拖动松开提交一步撤销 |
-| 选择与试听 | Child 与曲线选择联动；Mixing 缩略图显示该 Child 在当前平台的曲线，与画布共用同一曲线几何（Step 变量为阶梯），带同样的渐变填充，曲线范围外不绘制，0% 与 100% 均完整显示；画布中的虚线在缩略图中改为实线：Step 的连续参考线按画布透明度绘制，曲线首尾的竖线在不位于缩略图左右边界时绘制；拖动画布时同步预览，点击选中该 Child 并在相邻画布中编辑，不打开窗口；试听游标使用 Control 覆盖值，Child 提示显示各行增益及跨行结果 |
+| 选择与试听 | Child 与曲线选择联动；试听游标使用 Control 覆盖值，Child 提示显示各行增益及跨行结果 |
 | 合成关系 | 同行同一 Child 仅一条曲线；跨行引用共用播放且增益相乘，成员不自动归一化 |
 
 ## Effects 表格与共享资产

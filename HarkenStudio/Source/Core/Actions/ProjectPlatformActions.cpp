@@ -98,8 +98,7 @@ void removeReferences(OwnerState& owner, const ProjectPlatformId& id)
         for (auto& row : owner.bus->sidechains) row.platforms.erase(id);
     }
     for (auto& ledger : owner.clips) ledger.erase(id);
-    if (owner.selections)
-        for (auto* table : owner.selections->tables()) table->removePlatform(id);
+    if (owner.selections) owner.selections->removePlatform(id);
     if (owner.sources)
         for (auto* set : SoundSourceSemantics::sourceSets(*owner.sources))
             set->platforms.remove(Platforms::idString(id));

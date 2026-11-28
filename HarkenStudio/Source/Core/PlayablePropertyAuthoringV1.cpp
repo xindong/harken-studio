@@ -649,7 +649,7 @@ uint32_t PlayablePropertyAuthoringV1::containerChildOccurrenceCount(
         return 0;
     uint32_t count = 0;
     const auto* selection = container.comp<VSelection>();
-    for (const auto& row : selection->selections.table(selection->mode).occurrenceRows(scope)) {
+    for (const auto& row : selection->selections.table(selection->mode, scope).occurrenceRows()) {
         if (row.childGuid == childGuid)
             ++count;
     }
@@ -1279,15 +1279,20 @@ bool PlayablePropertyAuthoringV1::addContainerChildOccurrence(
     auto* selection = container.comp<VSelection>();
     if (!selection) return false;
     auto next = selection->selections;
-    const auto row = restored.value_or(SelectionEntry{childGuid, static_cast<uint32_t>(
-        std::max(next.random.occurrenceOrdinalHighWater, next.sequence.occurrenceOrdinalHighWater)), 50});
-    if (!restored && std::max(next.random.occurrenceOrdinalHighWater, next.sequence.occurrenceOrdinalHighWater)
-            > std::numeric_limits<uint32_t>::max())
-        return false;
-    for (auto* table : {&next.random, &next.sequence})
-        if (!table->find(row.stableOccurrenceOrdinal)
-            && !addContainerChildOccurrence(container, *table, childGuid, row))
-            return false;
+    uint64_t highWater = 0;
+    for (const auto* tables : {&next.random, &next.sequence})
+        for (const auto* table : tables->tables()) highWater = std::max(highWater, table->occurrenceOrdinalHighWater);
+    if (!restored && highWater > std::numeric_limits<uint32_t>::max()) return false;
+    const auto row = restored.value_or(SelectionEntry{childGuid, static_cast<uint32_t>(highWater), 50});
+    for (auto* tables : {&next.random, &next.sequence}) {
+        for (auto* table : tables->tables())
+            if (!table->find(row.stableOccurrenceOrdinal)
+                && !addContainerChildOccurrence(container, *table, childGuid, row))
+                return false;
+        uint64_t allocated = 0;
+        for (const auto* table : tables->tables()) allocated = std::max(allocated, table->occurrenceOrdinalHighWater);
+        for (auto* table : tables->tables()) table->occurrenceOrdinalHighWater = allocated;
+    }
     selection->selections = std::move(next);
     if (installed) *installed = row;
     return true;
@@ -1337,15 +1342,15 @@ PlayablePropertyAuthoringV1::removeContainerChildOccurrences(
     std::vector<SelectionEntry> removed;
     auto* selection = container.comp<VSelection>();
     if (!selection) return removed;
-    for (const auto* table : {&selection->selections.random, &selection->selections.sequence})
-        for (const auto& row : table->occurrenceRows())
-            if (row.childGuid == childGuid
-                && std::none_of(removed.begin(), removed.end(), [&](const SelectionEntry& entry) {
-                       return entry.stableOccurrenceOrdinal == row.stableOccurrenceOrdinal;
-                   }))
-                removed.push_back(row);
-    for (auto* table : selection->selections.tables())
-        table->removeMembers([&](const auto& member) { return member.childGuid == childGuid; });
+    for (const auto* tables : {&selection->selections.random, &selection->selections.sequence})
+        for (const auto* table : tables->tables())
+            for (const auto& row : table->occurrenceRows())
+                if (row.childGuid == childGuid
+                    && std::none_of(removed.begin(), removed.end(), [&](const SelectionEntry& entry) {
+                           return entry.stableOccurrenceOrdinal == row.stableOccurrenceOrdinal;
+                       }))
+                    removed.push_back(row);
+    selection->selections.removeMembers([&](const auto& member) { return member.childGuid == childGuid; });
     return removed;
 }
 

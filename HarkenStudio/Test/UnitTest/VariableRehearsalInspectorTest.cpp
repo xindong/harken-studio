@@ -86,7 +86,7 @@ protected:
         ASSERT_TRUE(grid.addAxis(smooth_->guid));
         ASSERT_TRUE(grid.addRow(child_->guid));
         ASSERT_TRUE(grid.setCell(0, 0, harken::studio::DiscreteGridCell(smoothVariable->labels.front().id)));
-        ASSERT_TRUE(selection->selections.match.setMatchGrid(grid));
+        ASSERT_TRUE(selection->selections.setMatchGrid(grid));
 
         harken::studio::UndoRedoManager::instance().clear();
     }
@@ -138,11 +138,11 @@ TEST_F(VariableRehearsalInspectorTest, RangeChangesPreserveConsumerShapeAndUndoA
         {{0.0f, 0.0f}, {40.0f, 0.8f}, {100.0f, 0.2f}},
         {{10.0f, 0.1f, 30.0f, 0.7f}, {55.0f, 0.9f, 80.0f, 0.4f}}};
     harken::studio::MixingDef mixing{{{smooth_->guid, {curve}}}};
-    ASSERT_TRUE(selection->selections.blend.setMixing(mixing));
+    ASSERT_TRUE(selection->selections.setMixing(mixing));
     const auto platform = manager.currentProject()->platforms.front().id;
-    auto platformMixing = selection->selections.blend.mixing();
+    auto platformMixing = selection->selections.mixing();
     platformMixing.rows.front().children.front().points[1].value = 0.5f;
-    ASSERT_TRUE(selection->selections.blend.editMixing(platformMixing, platform, platform));
+    ASSERT_TRUE(selection->selections.setMixing(platformMixing, platform));
     const auto before = selection->selections;
     auto* otherContainer = manager.createItem(nullptr, QStringLiteral("Other_Container"),
         harken::studio::ProjectItem::Type::Container);
@@ -153,7 +153,7 @@ TEST_F(VariableRehearsalInspectorTest, RangeChangesPreserveConsumerShapeAndUndoA
     auto* otherSelection = otherContainer->comp<harken::studio::VSelection>();
     auto otherMixing = mixing;
     otherMixing.rows.front().children.front().target = otherChild->guid;
-    ASSERT_TRUE(otherSelection->selections.blend.setMixing(otherMixing));
+    ASSERT_TRUE(otherSelection->selections.setMixing(otherMixing));
     const auto otherBefore = otherSelection->selections.toJson();
 
     harken::studio::MixingEditorWidget editor;
@@ -168,8 +168,8 @@ TEST_F(VariableRehearsalInspectorTest, RangeChangesPreserveConsumerShapeAndUndoA
     const auto* variable = smooth_->comp<harken::studio::VVariable>();
     const float span = variable->rangeMax - variable->rangeMin;
     for (const harken::studio::PlatformScope scope : {harken::studio::PlatformScope{}, harken::studio::PlatformScope{platform}}) {
-        const auto oldCurve = before.blend.mixing(scope).rows.front().children.front();
-        const auto newCurve = selection->selections.blend.mixing(scope).rows.front().children.front();
+        const auto oldCurve = before.mixing(scope).rows.front().children.front();
+        const auto newCurve = selection->selections.mixing(scope).rows.front().children.front();
         for (int sample = 0; sample <= 20; ++sample) {
             const float fraction = static_cast<float>(sample) / 20.0f;
             EXPECT_NEAR(newCurve.gainAt(variable->rangeMin + fraction * span),
@@ -203,7 +203,7 @@ TEST_F(VariableRehearsalInspectorTest, UnrepresentableRangeChangesLeaveNoPartial
     harken::studio::MixingChildDef curve{child_->guid,
         {{0.0f, 0.0f}, {50.0f, 1.0f}, {100.0f, 0.0f}}, {}};
     curve.normalize();
-    ASSERT_TRUE(selection->selections.blend.setMixing({{{smooth_->guid, {curve}}}}));
+    ASSERT_TRUE(selection->selections.setMixing({{{smooth_->guid, {curve}}}}));
     const auto before = selection->selections.toJson();
     const auto declaration = smooth_->comp<harken::studio::VVariable>()->toJson();
     harken::studio::UndoRedoManager::instance().clear();
@@ -253,15 +253,15 @@ TEST_F(VariableRehearsalInspectorTest, RangePoliciesPreserveConsumerFunctionsAnd
     harken::studio::MixingChildDef curve{child_->guid,
         {{0.0f, 0.1f}, {40.0f, 0.8f}, {100.0f, 0.3f}},
         {{10.0f, 0.2f, 30.0f, 0.7f}, {55.0f, 0.9f, 80.0f, 0.4f}}};
-    ASSERT_TRUE(selection->selections.blend.setMixing({{{smooth_->guid, {curve}}}}));
+    ASSERT_TRUE(selection->selections.setMixing({{{smooth_->guid, {curve}}}}));
     const auto platform = manager.currentProject()->platforms.front().id;
     auto outside = curve;
     outside.points = {{70.0f, 1.0f}, {100.0f, 0.5f}};
     outside.handles.clear();
     outside.normalize();
-    auto platformMixing = selection->selections.blend.mixing();
+    auto platformMixing = selection->selections.mixing();
     platformMixing.rows.front().children.front() = outside;
-    ASSERT_TRUE(selection->selections.blend.editMixing(platformMixing, platform, platform));
+    ASSERT_TRUE(selection->selections.setMixing(platformMixing, platform));
     const auto oldSelection = selection->selections;
 
     auto* mix = child_->comp<harken::studio::VMixNode>();
@@ -326,8 +326,8 @@ TEST_F(VariableRehearsalInspectorTest, RangePoliciesPreserveConsumerFunctionsAnd
             EXPECT_NEAR(harken::studio::BindingSemantics::contribution(*updatedBinding, variable->kind, x, 20.0f, 60.0f),
                         harken::studio::BindingSemantics::contribution(oldBinding, variable->kind, oldX, 0.0f, 100.0f), 0.001f);
             for (const harken::studio::PlatformScope scope : {harken::studio::PlatformScope{}, harken::studio::PlatformScope{platform}}) {
-                const auto original = oldSelection.blend.mixing(scope).rows.front().children.front();
-                const auto updated = selection->selections.blend.mixing(scope).rows.front().children.front();
+                const auto original = oldSelection.mixing(scope).rows.front().children.front();
+                const auto updated = selection->selections.mixing(scope).rows.front().children.front();
                 EXPECT_EQ(updated.target, original.target);
                 EXPECT_NEAR(updated.gainAt(x), original.gainAt(oldX), 0.0001f);
             }
@@ -356,7 +356,7 @@ TEST_F(VariableRehearsalInspectorTest, InspectorCancelIsReadOnlyAndEachChoiceCom
     auto curve = harken::studio::MixingChildDef::unity(child_->guid, 0.0f, 100.0f);
     curve.points.back().value = 0.0f;
     curve.handles = {{0.0f, 1.0f, 100.0f, 0.0f}};
-    ASSERT_TRUE(selection->selections.blend.setMixing({{{smooth_->guid, {curve}}}}));
+    ASSERT_TRUE(selection->selections.setMixing({{{smooth_->guid, {curve}}}}));
     ASSERT_TRUE(manager.saveProject());
     harken::studio::UndoRedoManager::instance().clear();
     const auto before = selection->selections.toJson();

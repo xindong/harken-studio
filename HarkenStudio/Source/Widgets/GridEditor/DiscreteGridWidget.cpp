@@ -17,7 +17,6 @@
 #include "Widgets/Common/MatrixTableWidget.h"
 #include "Widgets/Selector/ObjectRefNavigation.h"
 #include "Widgets/Selector/ObjectRefWidget.h"
-#include "Widgets/Shared/PlatformLocalMarker.h"
 
 #include <QAction>
 #include <QApplication>
@@ -63,18 +62,6 @@ QString matchValueText(int value, const VVariable& variable)
     return value >= variable.rangeMin && value <= variable.rangeMax
             && value == defaultMatchValue(variable)
         ? QObject::tr("%1 (Default)").arg(text) : text;
-}
-
-QString conditionText(const QVariant& value, const QUuid& axis)
-{
-    if (value.typeId() == QMetaType::Nullptr) return QObject::tr("* (Any)");
-    const auto* item = ProjectManager::instance().findItemByGuid(axis);
-    const auto* variable = item ? item->comp<VVariable>() : nullptr;
-    const auto cell = value.typeId() == QMetaType::QUuid ? DiscreteGridCell(value.toUuid())
-                                                         : DiscreteGridCell(value.toInt());
-    const auto anchor = GridSemantics::discreteCellValue(cell, variable);
-    if (!anchor) return QObject::tr("(missing)");
-    return variable ? matchValueText(*anchor, *variable) : QString::number(*anchor);
 }
 
 QString invalidCellMessage(int value, const ProjectItem& variableItem,
@@ -254,7 +241,6 @@ DiscreteGridWidget::DiscreteGridWidget(QWidget* parent)
 
 bool DiscreteGridWidget::eventFilter(QObject* watched, QEvent* event)
 {
-    if (watched == table_->viewport() && event->type() == QEvent::Resize) layoutCellMarkers();
     if (boundItem_ && !updating_ && watched == table_->viewport()
         && event->type() == QEvent::MouseButtonPress) {
         const auto* mouse = static_cast<QMouseEvent*>(event);
@@ -347,13 +333,6 @@ void DiscreteGridWidget::buildUi()
         [this](int from, int to) { moveAxis(from - kFirstAxisColumn, to - kFirstAxisColumn); });
     connect(matrix_, &MatrixTableWidget::columnSelectionChanged, this,
         [this] { if (!updating_) refreshActions(); });
-    ThemeManager::instance().bindMetrics(this, [this](const ThemeMetrics&) { layoutCellMarkers(); });
-    for (auto* header : {table_->horizontalHeader(), table_->verticalHeader()}) {
-        connect(header, &QHeaderView::sectionResized, this, [this] { layoutCellMarkers(); });
-        connect(header, &QHeaderView::sectionMoved, this, [this] { layoutCellMarkers(); });
-    }
-    for (auto* bar : {table_->horizontalScrollBar(), table_->verticalScrollBar()})
-        connect(bar, &QScrollBar::valueChanged, this, [this] { layoutCellMarkers(); });
 }
 
 void DiscreteGridWidget::setBoundItem(ProjectItem* item)
@@ -523,42 +502,9 @@ void DiscreteGridWidget::rebuildTable()
 
     updating_ = false;
     rebuildReferenceWidgets();
-    rebuildCellMarkers();
     for (int row = 0; row < rowCount; ++row)
         for (int axis = 0; axis < axisCount; ++axis)
             table_->item(row, axis + kFirstAxisColumn)->setData(GridBaseToolTipRole, table_->item(row, axis + kFirstAxisColumn)->toolTip());
-}
-
-void DiscreteGridWidget::rebuildCellMarkers()
-{
-    for (auto& [marker, cell] : cellMarkers_) delete marker;
-    cellMarkers_.clear();
-    for (int row = 0; boundItem_ && row < static_cast<int>(grid_.rows.size()); ++row) {
-        if (!grid_.rows[row].stableRuleOrdinal) continue;
-        for (int axis = 0; axis < static_cast<int>(grid_.axes.size()); ++axis) {
-            auto* marker = new PlatformLocalMarker(table_->viewport());
-            marker->setEdges(Qt::LeftEdge);
-            marker->setValueFormatter([guid = grid_.axes[axis]](const QVariant& value) {
-                return conditionText(value, guid);
-            });
-            marker->bind(boundItem_, PlatformLocalAddress{.kind = PlatformLocalAddress::Kind::SelectionCondition,
-                .ordinal = *grid_.rows[row].stableRuleOrdinal, .column = grid_.axes[axis]});
-            marker->show();
-            table_->item(row, axis + kFirstAxisColumn)->setData(TablePlatformMarkerRole, true);
-            cellMarkers_.push_back({marker, {row, axis + kFirstAxisColumn}});
-        }
-    }
-    layoutCellMarkers();
-}
-
-void DiscreteGridWidget::layoutCellMarkers()
-{
-    const int width = ThemeManager::instance().metrics().inspector.platformMarkerWidth;
-    for (auto& [marker, cell] : cellMarkers_) {
-        const QRect rect = table_->visualRect(table_->model()->index(cell.first, cell.second));
-        marker->setVisible(rect.isValid() && !rect.isEmpty());
-        marker->setGeometry(rect.right() + 1 - width, rect.top(), width, rect.height());
-    }
 }
 
 void DiscreteGridWidget::refreshDerived()
@@ -652,7 +598,8 @@ bool DiscreteGridWidget::commitGrid(const DiscreteGridDef& next, const QString& 
         return false;
     const auto& context = PlatformContextService::instance().context();
     SelectionData candidate = sel->selections;
-    if (!candidate.match.editMatchGrid(next, currentWorldPlatformScope(context), platformEditScope(context)))
+    if (!candidate.canEdit(SelectionMode::Match, currentWorldPlatformScope(context), platformEditScope(context))
+        || !candidate.setMatchGrid(next, platformEditScope(context)))
         return false;
     const auto result = ActionManager::instance().execute(
         QStringLiteral("set_item_property"),

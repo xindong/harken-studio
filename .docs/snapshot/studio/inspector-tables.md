@@ -22,7 +22,7 @@
 | Bus | Inputs | Route > Input | Source / Volume | 输出路由的反向查询，只读 |
 | Bus | Receives | Route > Receive | # / Source / Volume / Type / Ducking | Send、Sidechain 的反向查询，只读 |
 
-表注：Volume 以 dB 显示。Container 的 Selections 位于独立 Selection Editor，Inspector 保留 Mode、Play Type 及对应行为字段；独立表格见[表格快照](tables.md)。
+表注：Volume 以 dB 显示。Container 的选择列表在独立 Selection Editor 中编辑；Inspector 的 Selection 分区在 Mode 下方提供 Selections 预览窗，显示当前平台、当前模式的列表：Random 为按 Weight 分段的比例条，Sequence 为按顺序等宽排列的带序号步骤格，Match 为按规则顺序等宽排列的“条件 → Child”格，三者各段按分类色填充并写入名称，放不下时截断；Blend 每个 Mixing 行占一行，绘制该行各 Child 的曲线叠加，画法与 Selection Editor 的 Mixing 画布一致（Step 变量只画生效的阶梯，不画画布中用于判断透明度的连续参考线；带渐变填充，曲线范围外不绘制，首尾竖线为实线），颜色按 Child 在该行的顺序取分类色；预览窗单行高与其他预览窗相同，Blend 有多行时按行数增高，行间以 1 像素次要边界分隔；没有内容时留空。单击打开 Selection Editor，平台标记贴在预览窗右侧，代表当前模式的整张列表，单击以标准表格对比各平台的列表，右键覆盖或移除当前平台的列表；其余保留 Play Type 及对应行为字段；独立表格见[表格快照](tables.md)。
 
 ## 公共展示与操作
 
@@ -63,7 +63,7 @@
 | 路由 / 目标与增益 | 增益范围为 −96 至 +24 dB。同一来源和目标可各有一条 Send、未勾选的 Sidechain、勾选的 Sidechain。与 Output 同目标时只允许未勾选的 Sidechain，按平台不同的 Target Ducking 也须满足这一点。冲突的选择和切换禁用，任一平台冲突或成环时整次编辑被拒绝 |
 | 路由 / 继承与平台 | 继承时行只读，Volume 显示为禁用的滑条与带框数值，与 Target 一致，标记照常附着。Send、Sidechain 是两份独立数据，各有一个跨平台共享的 Inherit。所有平台的混音链路相同：行、行序与 Target 由所有平台共享，没有平台标记，任何平台下修改 Target 都写入共享值，并保留该行的 Volume 和各平台值；只有 Volume 及 Sidechain 的 Target Ducking 可按平台不同。All Platforms 修改共享值并清除各平台的对应单元格，单平台只改当前平台，与共享相同的平台值予以保留。Bus 改变输出时，只清除与新输出冲突的平台 Target Ducking，Volume 保留。继承的 Ducking 在最终 Sound 上生效，Bus 也可以触发目标 Bus 的 Ducking |
 | 路由 / 反查 | Receives 列出当前平台有效路由。Type 为 Send 或 Sidechain，Ducking 在 Send 行留空，在 Sidechain 行显示居中的只读勾选框。可拖动 Type 与 Ducking 之间的分隔线调整列宽。信号图中的发送连线仅标注 Send 或 Sidechain。编辑和撤销作用于所选路由及平台 |
-| 平台标记 | 可按平台覆盖的控件右侧贴合 8 个逻辑像素宽的标记；Sources 的 Active 标记在表头右侧，Send、Sidechain 的 Volume、Target Ducking 单元格各带一个标记，Effects 表格右侧带一个整链标记；Output、Send、Sidechain 的 Target 跨平台共享，不带标记。标记附着在具体参数上，没有行的表格（如空的 Send）不显示单元格标记。标记独立于所附控件，与控件共用边框，不受控件悬停、选中或编辑影响；表头标记不参与列的拖动与调宽。无平台值时使用面板背景色，各处表现一致；可编辑时，仅其他平台有平台值使用 Dock 非焦点标签的强调线颜色，当前平台有平台值使用强调色；只读（含继承）时按所示值的来源判断，任一平台有覆写即以禁用文字色填充，不区分当前平台与其他平台。悬停提示统一为 Platform Mark；仅在可单击或可右键操作时显示悬停反馈，只读且无平台值的标记无悬停反馈。着色时单击列出各平台的值，平台名左对齐、值右对齐，当前平台标注 (current)；继承时列出来源的值。右键菜单为 Override on Current Platform 或 Remove Platform Override；All Platforms 下覆盖后自动切换为单平台编辑。字段组继承时不显示未生效的本地历史。蓝图暂未提供标记 |
+| 平台标记 | 可按平台覆盖的控件右侧贴合 8 个逻辑像素宽的标记；Sources 的 Active 标记在表头右侧，Send、Sidechain 的 Volume、Target Ducking 单元格各带一个标记，Effects 表格右侧带一个整链标记，Container 的 Selections 预览窗右侧带一个当前模式整张列表的标记；Output、Send、Sidechain 的 Target 跨平台共享，不带标记。标记附着在具体参数上，没有行的表格（如空的 Send）不显示单元格标记。标记独立于所附控件，与控件共用边框，不受控件悬停、选中或编辑影响；表头标记不参与列的拖动与调宽。无平台值时使用面板背景色，各处表现一致；可编辑时，仅其他平台有平台值使用 Dock 非焦点标签的强调线颜色，当前平台有平台值使用强调色；只读（含继承）时按所示值的来源判断，任一平台有覆写即以禁用文字色填充，不区分当前平台与其他平台。悬停提示统一为 Platform Mark；仅在可单击或可右键操作时显示悬停反馈，只读且无平台值的标记无悬停反馈。着色时单击列出各平台的值，平台名左对齐、值右对齐，当前平台标注 (current)；继承时列出来源的值。右键菜单为 Override on Current Platform 或 Remove Platform Override；All Platforms 下覆盖后自动切换为单平台编辑。字段组继承时不显示未生效的本地历史。蓝图暂未提供标记 |
 | Sources / Language | 关闭时显示普通组，开启时显示全部项目语言组（含空组）；Toolbar 当前语言置顶，其余按项目语言顺序；两类数据分别保留 |
 | Sources / 拖入 | 组内导入边框限定目标语言组；Original 引用框独立处理引用替换与高光，拒绝的拖入不转为组内导入 |
 | Sources / Active | 同一平台与语言只选一个来源；始终显示当前平台的选择，平台标记在表头右侧，区分语言时在各语言分组右侧 |

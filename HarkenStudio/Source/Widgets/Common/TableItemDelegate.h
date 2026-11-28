@@ -14,8 +14,7 @@ enum TableDataRole {
     TableGroupCollapsibleRole,
     TableColumnAccentRole,
     TableRowProgressRole,
-    TableRowProgressStateRole,
-    TablePlatformMarkerRole
+    TableRowProgressStateRole
 };
 
 enum class TableTextState { Normal, Muted, Disabled, Error, Modified, Custom, Success, Warning };
@@ -40,8 +39,6 @@ protected:
                                const QModelIndex& index) const;
 
 private:
-    QStyleOptionViewItem markerFreeOption(const QStyleOptionViewItem& option, const QModelIndex& index) const;
-
     ThemeManager* themeManager_;
     QPoint hoverPosition_{-1, -1};
 };

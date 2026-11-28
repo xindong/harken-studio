@@ -528,7 +528,7 @@ TransitionMountState transitionMountState(const ProjectItem& item, PlatformScope
     if (selection->isQueue())
         return TransitionMountState::Editable;
     if (selection->mode != SelectionMode::Match
-        || selection->selections.match.matchAxes.empty())
+        || selection->selections.matchAxes.empty())
         return TransitionMountState::None;
     return selection->variableResponse() == VariableResponse::Live
         ? TransitionMountState::Editable : TransitionMountState::Idle;

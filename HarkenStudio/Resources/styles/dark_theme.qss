@@ -971,14 +971,6 @@ QCheckBox[platformMarked="true"] {
     spacing: 0px;
 }
 
-QDoubleSpinBox[mixedAcrossPlatforms="true"] {
-    color: @textSecondary@;
-}
-
-QSlider[mixedAcrossPlatforms="true"]::handle:horizontal {
-    background-color: @accent@;
-}
-
 /* ==========================================================================
    Lists, Trees, Tables
    ========================================================================== */
@@ -1764,6 +1756,10 @@ harken--studio--ObjectRefWidget {
     padding: 0px;
     min-height: @fieldContentHeight@px;
     max-height: @fieldContentHeight@px;
+}
+QWidget[fieldRole="preview"][flexibleRows="true"] {
+    min-height: 0px;
+    max-height: 16777215px;
 }
 QWidget[fieldRole="preview"]:disabled,
 QWidget[fieldRole="preview"][dimmed="true"],

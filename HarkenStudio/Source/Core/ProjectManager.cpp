@@ -4281,16 +4281,15 @@ std::shared_ptr<ProjectItem> ProjectManager::cloneSubtreeDetached(
         }
         if (auto* selection = node->comp<VSelection>()) {
             QHash<QUuid, QUuid> rowGuids;
-            for (auto* table : selection->selections.tables()) {
-                table->remapMatchAxes(guidMap);
-                for (auto& row : table->mixingRows) {
-                    if (!rowGuids.contains(row.guid)) rowGuids.insert(row.guid, QUuid::createUuid());
-                    row.guid = rowGuids.value(row.guid);
-                    row.variable = guidMap.value(row.variable, row.variable);
-                }
-                for (auto& entry : table->entries)
-                    for (auto& curve : entry.curves) curve.rowGuid = rowGuids.value(curve.rowGuid);
+            auto& data = selection->selections;
+            data.remapVariables(guidMap);
+            for (auto& row : data.blendAxes) {
+                rowGuids.insert(row.guid, QUuid::createUuid());
+                row.guid = rowGuids.value(row.guid);
             }
+            for (auto* table : data.tables())
+                for (auto& entry : table->entries)
+                    for (auto& curve : entry.curves) curve.rowGuid = rowGuids.value(curve.rowGuid, curve.rowGuid);
             for (TransitionRuleDef& rule : selection->transitions.rules) {
                 for (auto* reference : {&rule.source, &rule.target}) {
                     if (!*reference) continue;
@@ -5128,10 +5127,7 @@ DeletedSubtreeRefLog ProjectManager::cleanupIllegalPlaybackReferences(ProjectDat
         }
         if (auto* selection = owner->comp<VSelection>()) {
             SelectionData next = selection->selections;
-            for (auto* table : next.tables())
-                table->removeMembers([&](const auto& entry) {
-                    return gridTargetIllegal(*owner, entry.childGuid);
-                });
+            next.removeMembers([&](const auto& entry) { return gridTargetIllegal(*owner, entry.childGuid); });
             if (next != selection->selections) {
                 log.selections.push_back({owner->objectID, selection->selections});
                 selection->selections = std::move(next);

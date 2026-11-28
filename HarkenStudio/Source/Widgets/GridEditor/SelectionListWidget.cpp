@@ -17,7 +17,6 @@
 #include "Widgets/Selector/ObjectRefNavigation.h"
 #include "Widgets/Selector/ObjectRefWidget.h"
 #include "Widgets/Selector/SelectorWindow.h"
-#include "Widgets/Shared/PlatformLocalMarker.h"
 #include "Widgets/Shared/ProjectItemMime.h"
 
 #include <QApplication>
@@ -297,10 +296,9 @@ QWidget* SelectionListWidget::buildRow(int index, const SelectionEntry& occurren
         if (generation != generation_) return;
         commitWeight(stableOccurrenceOrdinal, value);
     });
-    auto* marker = new PlatformLocalMarker(weightCell);
-    marker->bind(boundItem_, PlatformLocalAddress{.kind = PlatformLocalAddress::Kind::SelectionWeight,
-        .ordinal = occurrence.stableOccurrenceOrdinal});
-    weightCell->addWidget(attachPlatformMarker(weight, marker, weightCell));
+    weight->setEnabled(canEditTable());
+    reference->setEnabled(canEditTable());
+    weightCell->addWidget(weight);
     weightCell->setVisible(weightVisible_);
     layout->addWidget(weightCell);
 
@@ -328,7 +326,7 @@ void SelectionListWidget::selectRow(int index)
         row->style()->polish(row);
     }
     removeButton_->setEnabled(
-        boundItem_ && index >= 0
+        canEditTable() && index >= 0
         && index < static_cast<int>(rowWidgets_.size()));
 }
 
@@ -387,7 +385,7 @@ bool SelectionListWidget::addChildren(const QList<uint32_t>& objectIds)
         if (!PlayablePropertyAuthoringV1::addContainerChildOccurrence(*boundItem_, table, child->guid))
             return false;
     }
-    if (!commitOccurrences(table.occurrenceRows(displayedPlatform()))) return false;
+    if (!commitOccurrences(table.occurrenceRows())) return false;
     rebuildRows();
     return true;
 }
@@ -405,7 +403,7 @@ bool SelectionListWidget::replaceOccurrence(uint32_t stableOccurrenceOrdinal, ui
     const bool updateAudition = selected_ >= 0
         && selected_ < static_cast<int>(rowWidgets_.size())
         && rowWidgets_[selected_]->property("stableOccurrenceOrdinal").toUInt() == stableOccurrenceOrdinal;
-    if (!commitOccurrences(table.occurrenceRows(displayedPlatform()))) return false;
+    if (!commitOccurrences(table.occurrenceRows())) return false;
     rebuildRows();
     if (updateAudition) emit auditionTargetRequested(child->guid);
     return true;
@@ -417,7 +415,7 @@ void SelectionListWidget::removeSelected()
         || selected_ >= static_cast<int>(modeTable().occurrenceRows().size()))
         return;
     box_->removeSelectedRow([this] {
-        auto rows = modeTable().occurrenceRows(displayedPlatform());
+        auto rows = modeTable().occurrenceRows();
         rows.erase(rows.begin() + selected_);
         if (!commitOccurrences(rows)) return false;
         rebuildRows();
@@ -428,7 +426,14 @@ void SelectionListWidget::removeSelected()
 SelectionTable SelectionListWidget::modeTable() const
 {
     const auto* selection = boundItem_->comp<VSelection>();
-    return selection->selections.table(selection->mode);
+    return selection->selections.table(selection->mode, displayedPlatform());
+}
+
+bool SelectionListWidget::canEditTable() const
+{
+    const auto* selection = boundItem_ ? boundItem_->comp<VSelection>() : nullptr;
+    return selection && selection->selections.canEdit(selection->mode, displayedPlatform(),
+        platformEditScope(PlatformContextService::instance().context()));
 }
 
 PlatformScope SelectionListWidget::displayedPlatform() const
@@ -441,7 +446,7 @@ bool SelectionListWidget::commitOccurrences(const std::vector<SelectionEntry>& e
     if (!boundItem_) return false;
     const auto* selection = boundItem_->comp<VSelection>();
     auto candidate = selection->selections;
-    if (!candidate.editTable(selection->mode).editOccurrenceRows(edited, displayedPlatform(),
+    if (!canEditTable() || !candidate.setOccurrenceRows(selection->mode, edited,
             platformEditScope(PlatformContextService::instance().context())))
         return false;
     selfWriting_ = true;
@@ -457,7 +462,7 @@ bool SelectionListWidget::commitOccurrences(const std::vector<SelectionEntry>& e
 
 void SelectionListWidget::moveRow(int from, int to)
 {
-    auto order = modeTable().occurrenceRows(displayedPlatform());
+    auto order = modeTable().occurrenceRows();
     auto moved = order[static_cast<size_t>(from)];
     order.erase(order.begin() + from);
     order.insert(order.begin() + to, std::move(moved));
@@ -469,7 +474,7 @@ void SelectionListWidget::moveRow(int from, int to)
 void SelectionListWidget::commitWeight(uint32_t stableOccurrenceOrdinal, int value)
 {
     if (refreshingWeights_ || !boundItem_) return;
-    auto rows = modeTable().occurrenceRows(displayedPlatform());
+    auto rows = modeTable().occurrenceRows();
     const auto row = std::find_if(rows.begin(), rows.end(), [&](const SelectionEntry& entry) {
         return entry.stableOccurrenceOrdinal == stableOccurrenceOrdinal;
     });
@@ -547,11 +552,11 @@ void SelectionListWidget::rebuildRows()
     rowWidgets_.clear();
     selected_ = -1;
     removeButton_->setEnabled(false);
-    addButton_->setEnabled(boundItem_ != nullptr);
+    addButton_->setEnabled(canEditTable());
     if (!boundItem_) return;
 
     int index = 0;
-    for (const auto& occurrence : modeTable().occurrenceRows(displayedPlatform())) {
+    for (const auto& occurrence : modeTable().occurrenceRows()) {
         ProjectItem* child = occurrenceTarget(occurrence.childGuid);
         if (!child) continue;
         QWidget* row = buildRow(index, occurrence, child);

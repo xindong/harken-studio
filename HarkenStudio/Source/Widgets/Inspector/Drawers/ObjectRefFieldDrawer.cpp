@@ -44,9 +44,7 @@ void ObjectRefFieldDrawer::bind(QWidget* widget, const QVariant& value, ProjectI
     w->setInheritSupport(false);
     w->setInherited(false);
     w->setSelectorEnabled(!busHost || !busRef);
-    if (!value.isValid())
-        w->setMixedValue();
-    else if (value.metaType().id() == QMetaType::QString
+    if (value.metaType().id() == QMetaType::QString
         && value.toString() != QLatin1String("0"))
         w->setUnresolvedReference(value.toString());
     else

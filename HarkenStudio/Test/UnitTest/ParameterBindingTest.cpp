@@ -2,23 +2,6 @@
 
 #include <gtest/gtest.h>
 
-TEST(ParameterBinding, CommitPreservesMixedStateSetByItsCallback)
-{
-    harken::studio::ParameterBinding binding;
-    binding.setRange(0.0, 100.0);
-    binding.setValue(20.0);
-    binding.setMixedValue(true);
-    int commits = 0;
-    QObject::connect(&binding, &harken::studio::ParameterBinding::valueCommitted, &binding,
-                     [&](double) {
-                         ++commits;
-                         binding.setMixedValue(true);
-                     });
-    binding.commitValue(20.0);
-    EXPECT_EQ(commits, 1);
-    EXPECT_TRUE(binding.mixedValue());
-}
-
 TEST(ParameterBinding, DomainChangesAllowExplicitCommitOfNormalizedValues)
 {
     for (const bool quantized : {false, true}) {

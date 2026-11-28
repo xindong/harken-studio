@@ -208,8 +208,7 @@ TEST(PropertyEditorEnginePlatformContext, SwitchingMatchesFreshBindingWithoutAut
             const auto* expected = referencePage->findChild<ParameterSlider*>(field);
             ASSERT_NE(actual, nullptr);
             ASSERT_NE(expected, nullptr);
-            EXPECT_EQ(actual->mixedValue(), expected->mixedValue());
-            if (!expected->mixedValue()) EXPECT_EQ(actual->value(), expected->value());
+            EXPECT_EQ(actual->value(), expected->value());
             EXPECT_EQ(actual->toolTip(), expected->toolTip());
         }
         auto* actualPreview = page->findChild<FilterPreviewField*>("prop_filter");

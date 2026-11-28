@@ -16,7 +16,6 @@ namespace harken::studio {
 struct ProjectItem;
 class ObjectRefWidget;
 class MatrixTableWidget;
-class PlatformLocalMarker;
 
 class DiscreteGridWidget : public QWidget
 {
@@ -65,8 +64,6 @@ private:
 
     void moveAxis(int from, int to);
     void rebuildReferenceWidgets();
-    void rebuildCellMarkers();
-    void layoutCellMarkers();
     void refreshActions();
 
     std::vector<std::optional<float>> axisEvalValues() const;
@@ -87,7 +84,6 @@ private:
     MatrixTableWidget* matrix_ = nullptr;
     std::vector<ObjectRefWidget*> axisHeaderRefs_;
     std::vector<ObjectRefWidget*> targetRefs_;
-    std::vector<std::pair<PlatformLocalMarker*, std::pair<int, int>>> cellMarkers_;
 };
 
 }

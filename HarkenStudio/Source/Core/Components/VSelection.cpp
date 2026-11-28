@@ -96,19 +96,11 @@ bool parseMixingRows(const QJsonValue& source, std::vector<SelectionMixingRow>& 
     return true;
 }
 
-QJsonValue cellJson(const std::optional<DiscreteGridCell>& cell)
+QJsonValue cellJson(const DiscreteGridCell& cell)
 {
-    if (!cell) return QJsonValue::Null;
-    if (!cell->labelId.isNull())
-        return QJsonObject{{QStringLiteral("labelId"), cell->labelId.toString(QUuid::WithoutBraces)}};
-    return cell->legacyValue;
-}
-
-QJsonArray cellsJson(const std::vector<std::optional<DiscreteGridCell>>& cells)
-{
-    QJsonArray result;
-    for (const auto& cell : cells) result.append(cellJson(cell));
-    return result;
+    if (!cell.labelId.isNull())
+        return QJsonObject{{QStringLiteral("labelId"), cell.labelId.toString(QUuid::WithoutBraces)}};
+    return cell.legacyValue;
 }
 
 bool parseCell(const QJsonValue& value, std::optional<DiscreteGridCell>& cell)
@@ -133,49 +125,33 @@ bool parsePlatformKey(const QString& key, QUuid& platform)
     return !platform.isNull() && platformKey(platform) == key;
 }
 
-QJsonObject shapeJson(const QVector<CurvePointDef>& points, const QVector<CurveHandlePairDef>& handles)
-{
-    QJsonArray pointValues;
-    QJsonArray handleValues;
-    for (const auto& point : points) pointValues.append(QJsonArray{point.x, point.value});
-    for (const auto& handle : handles)
-        handleValues.append(QJsonArray{handle.h1x, handle.h1y, handle.h2x, handle.h2y});
-    return {{QStringLiteral("points"), pointValues}, {QStringLiteral("handles"), handleValues}};
-}
-
-std::optional<SelectionCurveShape> parseShape(const QUuid& rowGuid, const QUuid& variable, const QUuid& target,
-                                              const QJsonValue& points, const QJsonValue& handles)
-{
-    const auto mixing = MixingDef::fromJson(QJsonArray{QJsonObject{
-        {QStringLiteral("guid"), rowGuid.toString(QUuid::WithoutBraces)},
-        {QStringLiteral("variable"), variable.isNull() ? QJsonValue(QJsonValue::Null)
-            : QJsonValue(variable.toString(QUuid::WithoutBraces))},
-        {QStringLiteral("children"), QJsonArray{QJsonObject{
-            {QStringLiteral("target"), target.toString(QUuid::WithoutBraces)},
-            {QStringLiteral("points"), points}, {QStringLiteral("handles"), handles}}}}}});
-    if (!mixing) return std::nullopt;
-    const auto& child = mixing->rows.front().children.front();
-    return SelectionCurveShape{child.points, child.handles};
-}
-
 QJsonObject curveJson(const SelectionCurve& curve)
 {
-    auto result = shapeJson(curve.points, curve.handles);
-    result.insert(QStringLiteral("blendGuid"), curve.rowGuid.toString(QUuid::WithoutBraces));
-    result.insert(QStringLiteral("order"), static_cast<qint64>(curve.order));
-    if (curve.platforms.empty()) return result;
-    QJsonObject platforms;
-    for (const auto& [platform, shape] : curve.platforms)
-        platforms.insert(platformKey(platform), shapeJson(shape.points, shape.handles));
-    result.insert(QStringLiteral("platforms"), platforms);
-    return result;
+    QJsonArray points;
+    QJsonArray handles;
+    for (const auto& point : curve.points) points.append(QJsonArray{point.x, point.value});
+    for (const auto& handle : curve.handles)
+        handles.append(QJsonArray{handle.h1x, handle.h1y, handle.h2x, handle.h2y});
+    return {{QStringLiteral("points"), points}, {QStringLiteral("handles"), handles},
+            {QStringLiteral("blendGuid"), curve.rowGuid.toString(QUuid::WithoutBraces)},
+            {QStringLiteral("order"), static_cast<qint64>(curve.order)}};
 }
 
-int axisIndex(const std::vector<QUuid>& axes, const QUuid& axis)
+template <typename Tables>
+auto modeTablesOf(Tables& data, SelectionMode mode) -> decltype(&data.random)
 {
-    const auto found = std::find(axes.begin(), axes.end(), axis);
-    return found == axes.end() ? -1 : static_cast<int>(std::distance(axes.begin(), found));
+    switch (mode) {
+    case SelectionMode::Sequence: return &data.sequence;
+    case SelectionMode::Match: return &data.match;
+    case SelectionMode::Blend: return &data.blend;
+    case SelectionMode::Random: break;
+    }
+    return &data.random;
 }
+
+constexpr std::pair<const char*, SelectionMode> kModes[] = {
+    {"random", SelectionMode::Random}, {"sequence", SelectionMode::Sequence},
+    {"match", SelectionMode::Match}, {"blend", SelectionMode::Blend}};
 
 }
 
@@ -220,15 +196,13 @@ const SelectionMember* SelectionTable::memberForOccurrence(uint32_t ordinal) con
     return nullptr;
 }
 
-std::vector<SelectionEntry> SelectionTable::occurrenceRows(PlatformScope scope) const
+std::vector<SelectionEntry> SelectionTable::occurrenceRows() const
 {
     std::vector<std::pair<uint32_t, SelectionEntry>> ordered;
     for (const auto& entry : entries)
-        for (const auto& occurrence : entry.occurrences) {
-            const auto platform = scope ? occurrence.platformWeights.find(*scope) : occurrence.platformWeights.end();
-            ordered.push_back({occurrence.order, {entry.childGuid, occurrence.stableOccurrenceOrdinal,
-                platform == occurrence.platformWeights.end() ? occurrence.weight : platform->second}});
-        }
+        for (const auto& occurrence : entry.occurrences)
+            ordered.push_back({occurrence.order,
+                {entry.childGuid, occurrence.stableOccurrenceOrdinal, occurrence.weight}});
     std::stable_sort(ordered.begin(), ordered.end(),
         [](const auto& a, const auto& b) { return a.first < b.first; });
     std::vector<SelectionEntry> result;
@@ -252,11 +226,6 @@ std::vector<SelectionEntry> SelectionTable::memberRows() const
 
 bool SelectionTable::setOccurrenceRows(const std::vector<SelectionEntry>& rows)
 {
-    std::map<uint32_t, std::map<QUuid, int>> platformWeights;
-    for (const auto& entry : entries)
-        for (const auto& occurrence : entry.occurrences)
-            if (!occurrence.platformWeights.empty())
-                platformWeights.emplace(occurrence.stableOccurrenceOrdinal, occurrence.platformWeights);
     SelectionTable next = *this;
     for (auto& entry : next.entries) {
         const bool retained = std::any_of(rows.begin(), rows.end(), [&](const auto& row) {
@@ -312,43 +281,11 @@ bool SelectionTable::setOccurrenceRows(const std::vector<SelectionEntry>& rows)
             next.entries.push_back({row.childGuid, memberOrdinal, {}, {}});
             entry = &next.entries.back();
         }
-        const auto platform = platformWeights.find(row.stableOccurrenceOrdinal);
-        entry->occurrences.push_back({row.stableOccurrenceOrdinal, static_cast<uint32_t>(index), row.weight,
-            platform == platformWeights.end() ? std::map<QUuid, int>{} : platform->second});
+        entry->occurrences.push_back({row.stableOccurrenceOrdinal, static_cast<uint32_t>(index), row.weight});
         next.occurrenceOrdinalHighWater = std::max(next.occurrenceOrdinalHighWater,
             static_cast<uint64_t>(row.stableOccurrenceOrdinal) + 1);
     }
     next.removeMembers([](const auto& entry) { return entry.occurrences.empty(); });
-    *this = std::move(next);
-    return true;
-}
-
-bool SelectionTable::editOccurrenceRows(const std::vector<SelectionEntry>& edited, PlatformScope displayed,
-                                        PlatformScope target)
-{
-    const auto shown = occurrenceRows(displayed);
-    std::vector<SelectionEntry> rows;
-    std::vector<std::pair<uint32_t, int>> changed;
-    for (auto row : edited) {
-        const auto* authored = find(row.stableOccurrenceOrdinal);
-        const auto before = std::find_if(shown.begin(), shown.end(), [&](const SelectionEntry& entry) {
-            return entry.stableOccurrenceOrdinal == row.stableOccurrenceOrdinal;
-        });
-        if (authored && before != shown.end() && row.weight != before->weight) {
-            changed.push_back({row.stableOccurrenceOrdinal, row.weight});
-            if (target) row.weight = authored->weight;
-        } else if (authored && before != shown.end()) {
-            row.weight = authored->weight;
-        }
-        rows.push_back(row);
-    }
-    SelectionTable next = *this;
-    if (!next.setOccurrenceRows(rows)) return false;
-    for (const auto& [ordinal, weight] : changed) {
-        auto* occurrence = next.find(ordinal);
-        if (target) occurrence->platformWeights[*target] = weight;
-        else occurrence->platformWeights.clear();
-    }
     *this = std::move(next);
     return true;
 }
@@ -360,30 +297,26 @@ void SelectionTable::removeMembers(const std::function<bool(const SelectionMembe
         if (!row.target.isNull() && !member(row.target)) row.target = QUuid{};
 }
 
-DiscreteGridDef SelectionTable::matchGrid(PlatformScope scope) const
+DiscreteGridDef SelectionTable::matchGrid(const std::vector<QUuid>& axes) const
 {
     DiscreteGridDef result;
-    result.axes = matchAxes;
+    result.axes = axes;
     for (const auto& row : matchRows) {
-        auto cells = row.cells;
-        const auto platform = scope ? row.platformCells.find(*scope) : row.platformCells.end();
-        if (platform != row.platformCells.end())
-            for (const auto& [axis, cell] : platform->second)
-                if (const int index = axisIndex(matchAxes, axis); index >= 0) cells[static_cast<size_t>(index)] = cell;
-        result.rows.push_back({row.target, cells, row.stableRuleOrdinal});
+        std::vector<std::optional<DiscreteGridCell>> cells;
+        for (const auto& axis : axes) {
+            const auto cell = row.cells.find(axis);
+            cells.push_back(cell == row.cells.end() ? std::nullopt : std::optional(cell->second));
+        }
+        result.rows.push_back({row.target, std::move(cells), row.stableRuleOrdinal});
     }
     return result;
 }
 
 bool SelectionTable::setMatchGrid(const DiscreteGridDef& grid)
 {
-    std::map<uint32_t, std::map<QUuid, std::map<QUuid, std::optional<DiscreteGridCell>>>> platformCells;
-    for (const auto& row : matchRows)
-        if (!row.platformCells.empty()) platformCells.emplace(row.stableRuleOrdinal, row.platformCells);
     SelectionTable next = *this;
     std::vector<QUuid> axes;
     if (!parseAxes(axisJson(grid.axes), axes)) return false;
-    next.matchAxes = std::move(axes);
     next.matchRows.clear();
     QSet<uint32_t> ordinals;
     for (const auto& row : grid.rows) {
@@ -398,11 +331,9 @@ bool SelectionTable::setMatchGrid(const DiscreteGridDef& grid)
         if (ordinals.contains(ordinal)) return false;
         ordinals.insert(ordinal);
         next.ruleOrdinalHighWater = std::max(next.ruleOrdinalHighWater, static_cast<uint64_t>(ordinal) + 1);
-        SelectionMatchRow rule{ordinal, row.target, row.cells, {}};
-        if (const auto saved = platformCells.find(ordinal); saved != platformCells.end())
-            for (const auto& [platform, cells] : saved->second)
-                for (const auto& [axis, cell] : cells)
-                    if (axisIndex(next.matchAxes, axis) >= 0) rule.platformCells[platform][axis] = cell;
+        SelectionMatchRow rule{ordinal, row.target, {}};
+        for (size_t index = 0; index < axes.size(); ++index)
+            if (row.cells[index]) rule.cells.emplace(axes[index], *row.cells[index]);
         next.matchRows.push_back(std::move(rule));
     }
     next.removeMembers([&](const SelectionMember& member) {
@@ -413,73 +344,16 @@ bool SelectionTable::setMatchGrid(const DiscreteGridDef& grid)
     return true;
 }
 
-bool SelectionTable::editMatchGrid(const DiscreteGridDef& edited, PlatformScope displayed, PlatformScope target)
-{
-    struct Change { uint32_t ordinal; QUuid axis; std::optional<DiscreteGridCell> cell; };
-    const auto shown = matchGrid(displayed);
-    auto shared = edited;
-    std::vector<Change> changes;
-    for (auto& row : shared.rows) {
-        if (!row.stableRuleOrdinal) continue;
-        const auto authored = std::find_if(matchRows.begin(), matchRows.end(),
-            [&](const SelectionMatchRow& rule) { return rule.stableRuleOrdinal == *row.stableRuleOrdinal; });
-        const auto before = std::find_if(shown.rows.begin(), shown.rows.end(),
-            [&](const auto& rule) { return rule.stableRuleOrdinal == row.stableRuleOrdinal; });
-        if (authored == matchRows.end() || before == shown.rows.end()) continue;
-        for (size_t index = 0; index < shared.axes.size(); ++index) {
-            const int shownIndex = axisIndex(shown.axes, shared.axes[index]);
-            const int authoredIndex = axisIndex(matchAxes, shared.axes[index]);
-            if (shownIndex < 0 || authoredIndex < 0) continue;
-            const auto& previous = authored->cells[static_cast<size_t>(authoredIndex)];
-            if (row.cells[index] == before->cells[static_cast<size_t>(shownIndex)]) {
-                row.cells[index] = previous;
-                continue;
-            }
-            changes.push_back({*row.stableRuleOrdinal, shared.axes[index], row.cells[index]});
-            if (target) row.cells[index] = previous;
-        }
-    }
-    SelectionTable next = *this;
-    if (!next.setMatchGrid(shared)) return false;
-    for (const auto& change : changes) {
-        auto& rule = *std::find_if(next.matchRows.begin(), next.matchRows.end(),
-            [&](const SelectionMatchRow& row) { return row.stableRuleOrdinal == change.ordinal; });
-        if (target) {
-            rule.platformCells[*target][change.axis] = change.cell;
-            continue;
-        }
-        for (auto& [platform, cells] : rule.platformCells) cells.erase(change.axis);
-        std::erase_if(rule.platformCells, [](const auto& entry) { return entry.second.empty(); });
-    }
-    *this = std::move(next);
-    return true;
-}
-
-void SelectionTable::remapMatchAxes(const QHash<QUuid, QUuid>& guids)
-{
-    for (auto& axis : matchAxes) axis = guids.value(axis, axis);
-    for (auto& row : matchRows)
-        for (auto& [platform, cells] : row.platformCells) {
-            std::map<QUuid, std::optional<DiscreteGridCell>> mapped;
-            for (const auto& [axis, cell] : cells) mapped.emplace(guids.value(axis, axis), cell);
-            cells = std::move(mapped);
-        }
-}
-
-MixingDef SelectionTable::mixing(PlatformScope scope) const
+MixingDef SelectionTable::mixing(const std::vector<SelectionMixingRow>& axes) const
 {
     MixingDef result;
-    for (const auto& mixingRow : mixingRows) {
-        MixingRowDef row{mixingRow.variable, {}, mixingRow.guid};
+    for (const auto& axis : axes) {
+        MixingRowDef row{axis.variable, {}, axis.guid};
         std::vector<std::pair<uint32_t, MixingChildDef>> ordered;
         for (const auto& entry : entries)
-            for (const auto& curve : entry.curves) {
-                if (curve.rowGuid != mixingRow.guid) continue;
-                const auto platform = scope ? curve.platforms.find(*scope) : curve.platforms.end();
-                ordered.push_back({curve.order, platform == curve.platforms.end()
-                    ? MixingChildDef{entry.childGuid, curve.points, curve.handles}
-                    : MixingChildDef{entry.childGuid, platform->second.points, platform->second.handles}});
-            }
+            for (const auto& curve : entry.curves)
+                if (curve.rowGuid == axis.guid)
+                    ordered.push_back({curve.order, MixingChildDef{entry.childGuid, curve.points, curve.handles}});
         std::stable_sort(ordered.begin(), ordered.end(),
             [](const auto& a, const auto& b) { return a.first < b.first; });
         for (auto& value : ordered) row.children.push_back(std::move(value.second));
@@ -491,96 +365,24 @@ MixingDef SelectionTable::mixing(PlatformScope scope) const
 bool SelectionTable::setMixing(const MixingDef& mixing)
 {
     if (!MixingDef::fromJson(mixing.toJson())) return false;
-    std::map<std::pair<QUuid, QUuid>, std::map<QUuid, SelectionCurveShape>> platforms;
-    for (const auto& entry : entries)
-        for (const auto& curve : entry.curves)
-            if (!curve.platforms.empty()) platforms.emplace(std::pair{curve.rowGuid, entry.childGuid}, curve.platforms);
     SelectionTable next = *this;
-    next.mixingRows.clear();
     for (auto& entry : next.entries) entry.curves.clear();
-    for (const auto& row : mixing.rows) {
-        next.mixingRows.push_back({row.guid, row.variable});
+    for (const auto& row : mixing.rows)
         for (size_t index = 0; index < row.children.size(); ++index) {
             const auto& child = row.children[index];
             auto* entry = ensureMember(next, child.target);
             if (!entry) return false;
-            const auto saved = platforms.find({row.guid, child.target});
-            entry->curves.push_back({row.guid, child.points, child.handles, static_cast<uint32_t>(index),
-                saved == platforms.end() ? std::map<QUuid, SelectionCurveShape>{} : saved->second});
+            entry->curves.push_back({row.guid, child.points, child.handles, static_cast<uint32_t>(index)});
         }
-    }
     next.removeMembers([](const SelectionMember& member) { return member.curves.empty(); });
     *this = std::move(next);
     return true;
 }
 
-bool SelectionTable::editMixing(const MixingDef& edited, PlatformScope displayed, PlatformScope target)
-{
-    struct Change { QUuid row; QUuid child; SelectionCurveShape shape; };
-    const auto shown = mixing(displayed);
-    auto shared = edited;
-    std::vector<Change> changes;
-    for (auto& row : shared.rows) {
-        const int shownRow = shown.rowIndex(row.guid);
-        if (shownRow < 0) continue;
-        const auto& shownChildren = shown.rows[static_cast<size_t>(shownRow)].children;
-        for (auto& child : row.children) {
-            const auto before = std::find_if(shownChildren.begin(), shownChildren.end(),
-                [&](const MixingChildDef& candidate) { return candidate.target == child.target; });
-            const auto* entry = member(child.target);
-            const auto authored = entry ? std::find_if(entry->curves.begin(), entry->curves.end(),
-                [&](const SelectionCurve& curve) { return curve.rowGuid == row.guid; }) : std::vector<SelectionCurve>::const_iterator{};
-            if (before == shownChildren.end() || !entry || authored == entry->curves.end()) continue;
-            if (child.points == before->points && child.handles == before->handles) {
-                child.points = authored->points;
-                child.handles = authored->handles;
-                continue;
-            }
-            changes.push_back({row.guid, child.target, {child.points, child.handles}});
-            if (!target) continue;
-            child.points = authored->points;
-            child.handles = authored->handles;
-        }
-    }
-    SelectionTable next = *this;
-    if (!next.setMixing(shared)) return false;
-    for (const auto& change : changes) {
-        auto& curves = next.member(change.child)->curves;
-        auto& curve = *std::find_if(curves.begin(), curves.end(),
-            [&](const SelectionCurve& candidate) { return candidate.rowGuid == change.row; });
-        if (target) curve.platforms[*target] = change.shape;
-        else curve.platforms.clear();
-    }
-    *this = std::move(next);
-    return true;
-}
-
-QSet<QUuid> SelectionTable::platformIds() const
-{
-    QSet<QUuid> result;
-    for (const auto& entry : entries) {
-        for (const auto& occurrence : entry.occurrences)
-            for (const auto& [platform, weight] : occurrence.platformWeights) result.insert(platform);
-        for (const auto& curve : entry.curves)
-            for (const auto& [platform, shape] : curve.platforms) result.insert(platform);
-    }
-    for (const auto& row : matchRows)
-        for (const auto& [platform, cells] : row.platformCells) result.insert(platform);
-    return result;
-}
-
-void SelectionTable::removePlatform(const QUuid& platform)
-{
-    for (auto& entry : entries) {
-        for (auto& occurrence : entry.occurrences) occurrence.platformWeights.erase(platform);
-        for (auto& curve : entry.curves) curve.platforms.erase(platform);
-    }
-    for (auto& row : matchRows) row.platformCells.erase(platform);
-}
-
 bool SelectionTable::operator==(const SelectionTable& other) const
 {
-    return toJson() == other.toJson();
+    return occurrenceOrdinalHighWater == other.occurrenceOrdinalHighWater
+        && ruleOrdinalHighWater == other.ruleOrdinalHighWater && toJson() == other.toJson();
 }
 
 QJsonObject SelectionTable::toJson() const
@@ -589,19 +391,11 @@ QJsonObject SelectionTable::toJson() const
     for (const auto& entry : entries) {
         QJsonArray occurrences;
         QJsonArray curves;
-        for (const auto& occurrence : entry.occurrences) {
-            QJsonObject row{
+        for (const auto& occurrence : entry.occurrences)
+            occurrences.append(QJsonObject{
                 {QStringLiteral("stableOccurrenceOrdinal"), static_cast<qint64>(occurrence.stableOccurrenceOrdinal)},
                 {QStringLiteral("order"), static_cast<qint64>(occurrence.order)},
-                {QStringLiteral("weight"), occurrence.weight}};
-            if (!occurrence.platformWeights.empty()) {
-                QJsonObject platforms;
-                for (const auto& [platform, weight] : occurrence.platformWeights)
-                    platforms.insert(platformKey(platform), weight);
-                row.insert(QStringLiteral("platforms"), platforms);
-            }
-            occurrences.append(row);
-        }
+                {QStringLiteral("weight"), occurrence.weight}});
         for (const auto& curve : entry.curves) curves.append(curveJson(curve));
         values.append(QJsonObject{
             {QStringLiteral("childGuid"), entry.childGuid.toString(QUuid::WithoutBraces)},
@@ -610,46 +404,33 @@ QJsonObject SelectionTable::toJson() const
     }
     QJsonArray rows;
     for (const auto& row : matchRows) {
-        QJsonObject rule{
+        QJsonObject cells;
+        for (const auto& [axis, cell] : row.cells) cells.insert(axis.toString(QUuid::WithoutBraces), cellJson(cell));
+        rows.append(QJsonObject{
             {QStringLiteral("stableRuleOrdinal"), static_cast<qint64>(row.stableRuleOrdinal)},
             {QStringLiteral("target"), row.target.isNull() ? QJsonValue(QJsonValue::Null)
                 : QJsonValue(row.target.toString(QUuid::WithoutBraces))},
-            {QStringLiteral("cells"), cellsJson(row.cells)}};
-        if (!row.platformCells.empty()) {
-            QJsonObject platforms;
-            for (const auto& [platform, cells] : row.platformCells) {
-                QJsonObject values;
-                for (const auto& [axis, cell] : cells) values.insert(axis.toString(QUuid::WithoutBraces), cellJson(cell));
-                platforms.insert(platformKey(platform), values);
-            }
-            rule.insert(QStringLiteral("platforms"), platforms);
-        }
-        rows.append(rule);
+            {QStringLiteral("cells"), cells}});
     }
-    return {{QStringLiteral("occurrenceOrdinalHighWater"), static_cast<qint64>(occurrenceOrdinalHighWater)},
-            {QStringLiteral("ruleOrdinalHighWater"), static_cast<qint64>(ruleOrdinalHighWater)},
-            {QStringLiteral("entries"), values}, {QStringLiteral("matchAxes"), axisJson(matchAxes)},
-            {QStringLiteral("matchRows"), rows}, {QStringLiteral("blendAxes"), mixingRowsJson(mixingRows)}};
+    return {{QStringLiteral("entries"), values}, {QStringLiteral("matchRows"), rows}};
 }
 
-std::optional<SelectionTable> SelectionTable::fromJson(const QJsonObject& json, QString* error)
+std::optional<SelectionTable> SelectionTable::fromJson(const QJsonObject& json, uint64_t occurrenceOrdinalHighWater,
+                                                       uint64_t ruleOrdinalHighWater,
+                                                       const std::vector<QUuid>& matchAxes,
+                                                       const std::vector<SelectionMixingRow>& blendAxes,
+                                                       QString* error)
 {
     auto fail = [error](const QString& message) -> std::optional<SelectionTable> {
         if (error) *error = message;
         return std::nullopt;
     };
-    if (json.size() != 6 || !json.value(QStringLiteral("entries")).isArray()
-        || !json.value(QStringLiteral("matchRows")).isArray()
-        || !unsignedInteger(json.value(QStringLiteral("occurrenceOrdinalHighWater")), 4294967296.0)
-        || !unsignedInteger(json.value(QStringLiteral("ruleOrdinalHighWater")), 4294967296.0))
-        return fail(QStringLiteral("Selection table must contain entries, matchRows, axes and identity allocation ranges"));
+    if (json.size() != 2 || !json.value(QStringLiteral("entries")).isArray()
+        || !json.value(QStringLiteral("matchRows")).isArray())
+        return fail(QStringLiteral("Selection table must contain entries and matchRows"));
     SelectionTable parsed;
-    parsed.occurrenceOrdinalHighWater = static_cast<uint64_t>(
-        json.value(QStringLiteral("occurrenceOrdinalHighWater")).toDouble());
-    parsed.ruleOrdinalHighWater = static_cast<uint64_t>(json.value(QStringLiteral("ruleOrdinalHighWater")).toDouble());
-    if (!parseAxes(json.value(QStringLiteral("matchAxes")), parsed.matchAxes)
-        || !parseMixingRows(json.value(QStringLiteral("blendAxes")), parsed.mixingRows))
-        return fail(QStringLiteral("Selection axes must have unique identities and Variable references"));
+    parsed.occurrenceOrdinalHighWater = occurrenceOrdinalHighWater;
+    parsed.ruleOrdinalHighWater = ruleOrdinalHighWater;
     QSet<QUuid> targets;
     QSet<uint32_t> memberIds;
     QSet<uint32_t> occurrenceIds;
@@ -674,24 +455,15 @@ std::optional<SelectionTable> SelectionTable::fromJson(const QJsonObject& json, 
         memberIds.insert(entry.stableMemberOrdinal);
         for (const auto& source : object.value(QStringLiteral("occurrences")).toArray()) {
             const auto row = source.toObject();
-            const auto platforms = row.value(QStringLiteral("platforms"));
-            if (!source.isObject() || row.size() != (platforms.isUndefined() ? 3 : 4)
+            if (!source.isObject() || row.size() != 3
                 || !unsignedInteger(row.value(QStringLiteral("stableOccurrenceOrdinal")))
                 || !unsignedInteger(row.value(QStringLiteral("order")))
-                || !unsignedInteger(row.value(QStringLiteral("weight")), 100.0)
-                || (!platforms.isUndefined() && (!platforms.isObject() || platforms.toObject().isEmpty())))
+                || !unsignedInteger(row.value(QStringLiteral("weight")), 100.0))
                 return fail(QStringLiteral("Selection occurrence is invalid"));
             SelectionOccurrence occurrence{
                 static_cast<uint32_t>(row.value(QStringLiteral("stableOccurrenceOrdinal")).toDouble()),
                 static_cast<uint32_t>(row.value(QStringLiteral("order")).toDouble()),
-                row.value(QStringLiteral("weight")).toInt(), {}};
-            const auto weights = platforms.toObject();
-            for (auto it = weights.begin(); it != weights.end(); ++it) {
-                QUuid platform;
-                if (!parsePlatformKey(it.key(), platform) || !unsignedInteger(it.value(), 100.0))
-                    return fail(QStringLiteral("Selection platform weight is invalid"));
-                occurrence.platformWeights.emplace(platform, it.value().toInt());
-            }
+                row.value(QStringLiteral("weight")).toInt()};
             if (occurrence.stableOccurrenceOrdinal >= parsed.occurrenceOrdinalHighWater
                 || occurrenceIds.contains(occurrence.stableOccurrenceOrdinal)
                 || occurrenceOrders.contains(occurrence.order))
@@ -703,22 +475,19 @@ std::optional<SelectionTable> SelectionTable::fromJson(const QJsonObject& json, 
         QSet<QUuid> curveRows;
         for (const auto& source : object.value(QStringLiteral("curves")).toArray()) {
             const auto curve = source.toObject();
-            const auto platforms = curve.value(QStringLiteral("platforms"));
-            if (!source.isObject() || curve.size() != (platforms.isUndefined() ? 4 : 5)
-                || !unsignedInteger(curve.value(QStringLiteral("order")))
-                || (!platforms.isUndefined() && (!platforms.isObject() || platforms.toObject().isEmpty())))
+            if (!source.isObject() || curve.size() != 4 || !unsignedInteger(curve.value(QStringLiteral("order"))))
                 return fail(QStringLiteral("Selection curve is invalid"));
             const SelectionMixingRow* mixingRow = nullptr;
             if (curve.contains(QStringLiteral("blendGuid"))) {
                 const QUuid guid(curve.value(QStringLiteral("blendGuid")).toString());
-                for (const auto& candidate : parsed.mixingRows)
+                for (const auto& candidate : blendAxes)
                     if (candidate.guid == guid) mixingRow = &candidate;
             } else {
                 const auto reference = curve.value(QStringLiteral("variable"));
                 const QUuid variable(reference.toString());
                 if (!reference.isNull() && (!reference.isString() || variable.isNull()))
                     return fail(QStringLiteral("Selection curve Variable is invalid"));
-                for (const auto& candidate : parsed.mixingRows) {
+                for (const auto& candidate : blendAxes) {
                     if (candidate.variable != variable) continue;
                     if (mixingRow) return fail(QStringLiteral("Selection curve Variable is ambiguous"));
                     mixingRow = &candidate;
@@ -742,19 +511,7 @@ std::optional<SelectionTable> SelectionTable::fromJson(const QJsonObject& json, 
             if (!mixing) return fail(QStringLiteral("Selection curve is invalid"));
             curveRows.insert(mixingRow->guid);
             const auto& child = mixing->rows.front().children.front();
-            SelectionCurve parsedCurve{mixingRow->guid, child.points, child.handles, order, {}};
-            const auto shapes = platforms.toObject();
-            for (auto it = shapes.begin(); it != shapes.end(); ++it) {
-                QUuid platform;
-                const auto values = it.value().toObject();
-                const auto shape = parsePlatformKey(it.key(), platform) && it.value().isObject() && values.size() == 2
-                    ? parseShape(mixingRow->guid, variable, entry.childGuid, values.value(QStringLiteral("points")),
-                                 values.value(QStringLiteral("handles")))
-                    : std::nullopt;
-                if (!shape) return fail(QStringLiteral("Selection platform curve is invalid"));
-                parsedCurve.platforms.emplace(platform, *shape);
-            }
-            entry.curves.push_back(std::move(parsedCurve));
+            entry.curves.push_back({mixingRow->guid, child.points, child.handles, order});
         }
         parsed.entries.push_back(std::move(entry));
     }
@@ -762,102 +519,276 @@ std::optional<SelectionTable> SelectionTable::fromJson(const QJsonObject& json, 
         const auto object = source.toObject();
         const auto target = object.value(QStringLiteral("target"));
         const auto cells = object.value(QStringLiteral("cells"));
-        const auto platforms = object.value(QStringLiteral("platforms"));
-        if (!source.isObject() || object.size() != (platforms.isUndefined() ? 3 : 4)
-            || !unsignedInteger(object.value(QStringLiteral("stableRuleOrdinal")))
-            || !cells.isArray()
-            || cells.toArray().size() != static_cast<qsizetype>(parsed.matchAxes.size())
-            || (!platforms.isUndefined() && (!platforms.isObject() || platforms.toObject().isEmpty())))
+        if (!source.isObject() || object.size() != 3
+            || !unsignedInteger(object.value(QStringLiteral("stableRuleOrdinal"))) || !cells.isObject())
             return fail(QStringLiteral("Selection match row is invalid"));
         SelectionMatchRow row{
             static_cast<uint32_t>(object.value(QStringLiteral("stableRuleOrdinal")).toDouble()),
-            QUuid(target.toString()), {}, {}};
-        const auto platformValues = platforms.toObject();
-        for (auto it = platformValues.begin(); it != platformValues.end(); ++it) {
-            QUuid platform;
-            const auto values = it.value().toObject();
-            if (!parsePlatformKey(it.key(), platform) || !it.value().isObject() || values.isEmpty())
-                return fail(QStringLiteral("Selection platform conditions are invalid"));
-            for (auto cell = values.begin(); cell != values.end(); ++cell) {
-                const QUuid axis(cell.key());
-                std::optional<DiscreteGridCell> parsedCell;
-                if (axisIndex(parsed.matchAxes, axis) < 0 || !parseCell(cell.value(), parsedCell))
-                    return fail(QStringLiteral("Selection platform condition is invalid"));
-                row.platformCells[platform][axis] = parsedCell;
-            }
-        }
+            QUuid(target.toString()), {}};
         if (!target.isNull() && (!target.isString() || !targets.contains(row.target)))
             return fail(QStringLiteral("Selection match row target must be null or a Selection member"));
         if (row.stableRuleOrdinal >= parsed.ruleOrdinalHighWater || ruleIds.contains(row.stableRuleOrdinal))
             return fail(QStringLiteral("Selection match row ordinal is outside its allocation range or reused"));
         ruleIds.insert(row.stableRuleOrdinal);
-        for (const auto& cell : cells.toArray()) {
+        const auto values = cells.toObject();
+        for (auto cell = values.begin(); cell != values.end(); ++cell) {
+            const QUuid axis(cell.key());
             std::optional<DiscreteGridCell> parsedCell;
-            if (!parseCell(cell, parsedCell)) return fail(QStringLiteral("Selection match row cell is invalid"));
-            row.cells.push_back(parsedCell);
+            if (std::find(matchAxes.begin(), matchAxes.end(), axis) == matchAxes.end()
+                || axis.toString(QUuid::WithoutBraces) != cell.key() || !parseCell(cell.value(), parsedCell))
+                return fail(QStringLiteral("Selection match row cell is invalid"));
+            if (parsedCell) row.cells.emplace(axis, *parsedCell);
         }
         parsed.matchRows.push_back(std::move(row));
     }
     return parsed;
 }
 
-const SelectionTable& SelectionData::table(SelectionMode mode) const
+const SelectionTable& SelectionModeTables::table(PlatformScope scope) const
 {
-    switch (mode) {
-    case SelectionMode::Sequence: return sequence;
-    case SelectionMode::Match: return match;
-    case SelectionMode::Blend: return blend;
-    case SelectionMode::Random: break;
-    }
-    return random;
+    if (scope)
+        if (const auto found = platforms.find(*scope); found != platforms.end()) return found->second;
+    return shared;
 }
 
-SelectionTable& SelectionData::editTable(SelectionMode mode)
+QList<const SelectionTable*> SelectionModeTables::tables() const
 {
-    return const_cast<SelectionTable&>(std::as_const(*this).table(mode));
+    QList<const SelectionTable*> result{&shared};
+    for (const auto& [platform, table] : platforms) result.append(&table);
+    return result;
+}
+
+QList<SelectionTable*> SelectionModeTables::tables()
+{
+    QList<SelectionTable*> result{&shared};
+    for (auto& [platform, table] : platforms) result.append(&table);
+    return result;
+}
+
+const SelectionModeTables& SelectionData::modeTables(SelectionMode mode) const
+{
+    return *modeTablesOf(*this, mode);
+}
+
+SelectionModeTables& SelectionData::editModeTables(SelectionMode mode)
+{
+    return *modeTablesOf(*this, mode);
+}
+
+const SelectionTable& SelectionData::table(SelectionMode mode, PlatformScope scope) const
+{
+    return modeTables(mode).table(scope);
 }
 
 QList<const SelectionTable*> SelectionData::tables() const
 {
-    return {&random, &sequence, &match, &blend};
+    QList<const SelectionTable*> result;
+    for (const auto& [key, mode] : kModes) result.append(modeTables(mode).tables());
+    return result;
 }
 
 QList<SelectionTable*> SelectionData::tables()
 {
-    return {&random, &sequence, &match, &blend};
+    QList<SelectionTable*> result;
+    for (const auto& [key, mode] : kModes) result.append(editModeTables(mode).tables());
+    return result;
+}
+
+DiscreteGridDef SelectionData::matchGrid(PlatformScope scope) const
+{
+    return match.table(scope).matchGrid(matchAxes);
+}
+
+MixingDef SelectionData::mixing(PlatformScope scope) const
+{
+    return blend.table(scope).mixing(blendAxes);
+}
+
+bool SelectionData::canEdit(SelectionMode mode, PlatformScope displayed, PlatformScope target) const
+{
+    if (target) return true;
+    return !displayed || !modeTables(mode).platforms.contains(*displayed);
+}
+
+bool SelectionData::editTable(SelectionMode mode, PlatformScope target,
+                              const std::function<bool(SelectionTable&)>& edit)
+{
+    auto& tables = editModeTables(mode);
+    uint64_t occurrences = 0;
+    uint64_t rules = 0;
+    for (const auto* table : tables.tables()) {
+        occurrences = std::max(occurrences, table->occurrenceOrdinalHighWater);
+        rules = std::max(rules, table->ruleOrdinalHighWater);
+    }
+    SelectionTable next = tables.table(target);
+    next.occurrenceOrdinalHighWater = occurrences;
+    next.ruleOrdinalHighWater = rules;
+    if (!edit(next)) return false;
+    const bool unchangedFork = target && !tables.platforms.contains(*target)
+        && next.toJson() == tables.shared.toJson();
+    if (!unchangedFork) (target ? tables.platforms[*target] : tables.shared) = next;
+    for (auto* table : tables.tables()) {
+        table->occurrenceOrdinalHighWater = next.occurrenceOrdinalHighWater;
+        table->ruleOrdinalHighWater = next.ruleOrdinalHighWater;
+    }
+    return true;
+}
+
+bool SelectionData::setOccurrenceRows(SelectionMode mode, const std::vector<SelectionEntry>& rows,
+                                      PlatformScope target)
+{
+    auto next = *this;
+    if (!next.editTable(mode, target, [&](SelectionTable& table) { return table.setOccurrenceRows(rows); }))
+        return false;
+    *this = std::move(next);
+    return true;
+}
+
+bool SelectionData::setMatchGrid(const DiscreteGridDef& grid, PlatformScope target)
+{
+    auto next = *this;
+    next.matchAxes.clear();
+    if (!parseAxes(axisJson(grid.axes), next.matchAxes)) return false;
+    for (auto* table : next.tables())
+        for (auto& row : table->matchRows)
+            std::erase_if(row.cells, [&](const auto& cell) {
+                return std::find(next.matchAxes.begin(), next.matchAxes.end(), cell.first) == next.matchAxes.end();
+            });
+    if (!next.editTable(SelectionMode::Match, target, [&](SelectionTable& table) { return table.setMatchGrid(grid); }))
+        return false;
+    *this = std::move(next);
+    return true;
+}
+
+bool SelectionData::setMixing(const MixingDef& mixing, PlatformScope target)
+{
+    if (!MixingDef::fromJson(mixing.toJson())) return false;
+    auto next = *this;
+    next.blendAxes.clear();
+    for (const auto& row : mixing.rows) next.blendAxes.push_back({row.guid, row.variable});
+    const auto kept = [&](const QUuid& guid) {
+        return std::any_of(next.blendAxes.begin(), next.blendAxes.end(),
+            [&](const SelectionMixingRow& axis) { return axis.guid == guid; });
+    };
+    for (auto* table : next.tables())
+        for (auto& entry : table->entries)
+            std::erase_if(entry.curves, [&](const SelectionCurve& curve) { return !kept(curve.rowGuid); });
+    for (auto* table : next.blend.tables())
+        table->removeMembers([](const SelectionMember& member) { return member.curves.empty(); });
+    if (!next.editTable(SelectionMode::Blend, target, [&](SelectionTable& table) { return table.setMixing(mixing); }))
+        return false;
+    *this = std::move(next);
+    return true;
+}
+
+bool SelectionData::setLocal(SelectionMode mode, const QUuid& platform, bool local)
+{
+    auto& tables = editModeTables(mode);
+    if (platform.isNull()) return false;
+    if (!local) return tables.platforms.erase(platform) > 0;
+    return tables.platforms.try_emplace(platform, tables.shared).second;
+}
+
+void SelectionData::removeMembers(const std::function<bool(const SelectionMember&)>& predicate)
+{
+    for (auto* table : tables()) table->removeMembers(predicate);
+}
+
+void SelectionData::remapVariables(const QHash<QUuid, QUuid>& guids)
+{
+    for (auto& axis : matchAxes) axis = guids.value(axis, axis);
+    for (auto& axis : blendAxes) axis.variable = guids.value(axis.variable, axis.variable);
+    for (auto* table : tables())
+        for (auto& row : table->matchRows) {
+            std::map<QUuid, DiscreteGridCell> mapped;
+            for (const auto& [axis, cell] : row.cells) mapped.emplace(guids.value(axis, axis), cell);
+            row.cells = std::move(mapped);
+        }
+}
+
+void SelectionData::replaceMatchAxis(size_t index, const QUuid& variable)
+{
+    const auto previous = matchAxes[index];
+    matchAxes[index] = variable;
+    for (auto* table : tables())
+        for (auto& row : table->matchRows)
+            if (const auto cell = row.cells.find(previous); cell != row.cells.end()) {
+                const auto value = cell->second;
+                row.cells.erase(cell);
+                row.cells.insert_or_assign(variable, value);
+            }
 }
 
 QSet<QUuid> SelectionData::platformIds() const
 {
     QSet<QUuid> result;
-    for (const auto* table : tables()) result.unite(table->platformIds());
+    for (const auto& [key, mode] : kModes)
+        for (const auto& [platform, table] : modeTables(mode).platforms) result.insert(platform);
     return result;
+}
+
+void SelectionData::removePlatform(const QUuid& platform)
+{
+    for (const auto& [key, mode] : kModes) editModeTables(mode).platforms.erase(platform);
 }
 
 QJsonObject SelectionData::toJson() const
 {
-    return {{QStringLiteral("random"), random.toJson()}, {QStringLiteral("sequence"), sequence.toJson()},
-            {QStringLiteral("match"), match.toJson()}, {QStringLiteral("blend"), blend.toJson()}};
+    QJsonObject result{{QStringLiteral("matchAxes"), axisJson(matchAxes)},
+                       {QStringLiteral("blendAxes"), mixingRowsJson(blendAxes)}};
+    for (const auto& [key, mode] : kModes) {
+        const auto& tables = modeTables(mode);
+        QJsonObject value{
+            {QStringLiteral("occurrenceOrdinalHighWater"), static_cast<qint64>(tables.shared.occurrenceOrdinalHighWater)},
+            {QStringLiteral("ruleOrdinalHighWater"), static_cast<qint64>(tables.shared.ruleOrdinalHighWater)},
+            {QStringLiteral("shared"), tables.shared.toJson()}};
+        if (!tables.platforms.empty()) {
+            QJsonObject platforms;
+            for (const auto& [platform, table] : tables.platforms) platforms.insert(platformKey(platform), table.toJson());
+            value.insert(QStringLiteral("platforms"), platforms);
+        }
+        result.insert(QLatin1String(key), value);
+    }
+    return result;
 }
 
 std::optional<SelectionData> SelectionData::fromJson(const QJsonObject& json, QString* error)
 {
-    SelectionData parsed;
-    const std::pair<const char*, SelectionTable*> modes[] = {
-        {"random", &parsed.random}, {"sequence", &parsed.sequence}, {"match", &parsed.match}, {"blend", &parsed.blend}};
-    if (json.size() != 4) {
-        if (error) *error = QStringLiteral("Selections must contain random, sequence, match and blend");
+    auto fail = [error](const QString& message) -> std::optional<SelectionData> {
+        if (error) *error = message;
         return std::nullopt;
-    }
-    for (const auto& [key, table] : modes) {
-        const auto value = json.value(QLatin1String(key));
-        if (!value.isObject()) {
-            if (error) *error = QStringLiteral("Selections must contain random, sequence, match and blend");
-            return std::nullopt;
+    };
+    SelectionData parsed;
+    if (json.size() != 6 || !parseAxes(json.value(QStringLiteral("matchAxes")), parsed.matchAxes)
+        || !parseMixingRows(json.value(QStringLiteral("blendAxes")), parsed.blendAxes))
+        return fail(QStringLiteral("Selections must contain matchAxes, blendAxes, random, sequence, match and blend"));
+    for (const auto& [key, mode] : kModes) {
+        const auto value = json.value(QLatin1String(key)).toObject();
+        const auto platforms = value.value(QStringLiteral("platforms"));
+        if (!json.value(QLatin1String(key)).isObject() || value.size() != (platforms.isUndefined() ? 3 : 4)
+            || !value.value(QStringLiteral("shared")).isObject()
+            || !unsignedInteger(value.value(QStringLiteral("occurrenceOrdinalHighWater")), 4294967296.0)
+            || !unsignedInteger(value.value(QStringLiteral("ruleOrdinalHighWater")), 4294967296.0)
+            || (!platforms.isUndefined() && (!platforms.isObject() || platforms.toObject().isEmpty())))
+            return fail(QStringLiteral("Selection mode %1 must contain shared, platforms and identity allocation ranges")
+                .arg(QLatin1String(key)));
+        const auto occurrences = static_cast<uint64_t>(value.value(QStringLiteral("occurrenceOrdinalHighWater")).toDouble());
+        const auto rules = static_cast<uint64_t>(value.value(QStringLiteral("ruleOrdinalHighWater")).toDouble());
+        auto& tables = parsed.editModeTables(mode);
+        auto shared = SelectionTable::fromJson(value.value(QStringLiteral("shared")).toObject(), occurrences, rules,
+                                               parsed.matchAxes, parsed.blendAxes, error);
+        if (!shared) return std::nullopt;
+        tables.shared = std::move(*shared);
+        const auto scopes = platforms.toObject();
+        for (auto it = scopes.begin(); it != scopes.end(); ++it) {
+            QUuid platform;
+            if (!parsePlatformKey(it.key(), platform) || !it.value().isObject())
+                return fail(QStringLiteral("Selection platform table is invalid"));
+            auto table = SelectionTable::fromJson(it.value().toObject(), occurrences, rules,
+                                                  parsed.matchAxes, parsed.blendAxes, error);
+            if (!table) return std::nullopt;
+            tables.platforms.emplace(platform, std::move(*table));
         }
-        auto parsedTable = SelectionTable::fromJson(value.toObject(), error);
-        if (!parsedTable) return std::nullopt;
-        *table = std::move(*parsedTable);
     }
     return parsed;
 }
@@ -927,11 +858,12 @@ void VSelection::fromJsonExtra(const QJsonObject& json)
     spliceByMarker = json.value(QStringLiteral("spliceByMarker")).toBool(false);
 }
 
+
 std::vector<SelectionEntry> VSelection::activeRows(PlatformScope scope) const
 {
-    const auto& table = selections.table(mode);
+    const auto& table = selections.table(mode, scope);
     if (mode == SelectionMode::Random || mode == SelectionMode::Sequence)
-        return table.occurrenceRows(scope);
+        return table.occurrenceRows();
     auto result = table.memberRows();
     std::erase_if(result, [&](const auto& row) {
         const auto* entry = table.member(row.childGuid);

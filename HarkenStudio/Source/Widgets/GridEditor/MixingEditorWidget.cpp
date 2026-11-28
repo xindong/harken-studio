@@ -17,10 +17,8 @@
 #include "Widgets/Common/TableWidget.h"
 #include "Widgets/Common/ResizableTableView.h"
 #include "Widgets/CurveEditor/CurveCanvas.h"
-#include "Widgets/CurveEditor/CurvePlotGeometry.h"
 #include "Widgets/Selector/ObjectRefNavigation.h"
 #include "Widgets/Selector/ObjectRefWidget.h"
-#include "Widgets/Shared/PlatformLocalMarker.h"
 
 #include <QAction>
 #include <QApplication>
@@ -28,7 +26,6 @@
 #include <QLabel>
 #include <QMenu>
 #include <QMouseEvent>
-#include <QPainter>
 #include <QScopedValueRollback>
 #include <QScrollBar>
 #include <QHeaderView>
@@ -90,82 +87,6 @@ void setReference(ObjectRefWidget* ref, const QUuid& guid)
 }
 
 }
-
-class MixingCurveThumbnail final : public QWidget
-{
-public:
-    MixingCurveThumbnail(int color, QWidget* parent)
-        : QWidget(parent)
-        , color_(color)
-    {
-        setObjectName(QStringLiteral("mixingCurveThumb"));
-        setAttribute(Qt::WA_TranslucentBackground);
-        setCursor(Qt::PointingHandCursor);
-        setToolTip(tr("Edit Mixing"));
-        setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-        QtControlSkin::setSemanticProperty(this, "fieldRole", QStringLiteral("preview"));
-        ThemeManager::instance().bindMetrics(this, [this](const ThemeMetrics&) {
-            setFixedHeight(QtControlSkin::current().fieldHeight());
-        });
-    }
-
-    void setCurve(const MixingChildDef& curve, std::pair<float, float> domain, bool discrete)
-    {
-        curve_ = curve;
-        domain_ = domain;
-        discrete_ = discrete;
-        update();
-    }
-
-protected:
-    void paintEvent(QPaintEvent*) override
-    {
-        QPainter painter(this);
-        QtControlSkin::paintFieldFrame(painter, this);
-        if (curve_.points.size() < 2 || domain_.second <= domain_.first) return;
-        auto& theme = ThemeManager::instance();
-        const qreal inset = theme.metrics().borderWidth / 2.0 + theme.metrics().spacingCompact;
-        const QRectF area = QRectF(rect()).adjusted(inset, inset, -inset, -inset);
-        const auto [minimum, maximum] = domain_;
-        const auto toScreen = [&](const CurvePointDef& point) {
-            return QPointF(area.left() + (point.x - minimum) / (maximum - minimum) * area.width(),
-                           area.bottom() - point.value * area.height());
-        };
-        const auto continuous = curveSampledPath(curve_.points, curve_.handles, CurveAxisScale::LinearValue,
-                                                 minimum, maximum, false, devicePixelRatioF(), toScreen);
-        const auto path = discrete_
-            ? curveStepPath(curve_.points, curve_.handles, CurveAxisScale::LinearValue, minimum, maximum, false,
-                            area.width(), toScreen)
-            : continuous;
-        if (path.isEmpty()) return;
-        const auto color = theme.colors().categoricalColor(color_);
-        const auto& metrics = theme.snapshot()->domains.curve.metrics;
-        const qreal border = theme.metrics().borderWidth;
-        painter.setClipRect(QRectF(rect()).adjusted(border, border, -border, -border));
-        painter.setRenderHint(QPainter::Antialiasing);
-        MixingRowCanvas::paintClipFill(painter, path, area.top(), area.bottom(), color, true);
-        if (discrete_) {
-            QColor guide = color;
-            guide.setAlphaF(guide.alphaF() * metrics.discreteGuideAlpha / 255.0);
-            painter.setPen(QPen(guide, metrics.discreteGuideLineWidth, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
-            painter.drawPath(continuous);
-        }
-        painter.setPen(QPen(color, metrics.curveLineWidth, Qt::SolidLine,
-                            discrete_ ? Qt::SquareCap : Qt::RoundCap, discrete_ ? Qt::MiterJoin : Qt::RoundJoin));
-        painter.drawPath(path);
-        painter.setRenderHint(QPainter::Antialiasing, false);
-        painter.setPen(QPen(color, 1.0, Qt::SolidLine, Qt::FlatCap));
-        for (const auto& endpoint : {path.pointAtPercent(0.0), path.currentPosition()})
-            if (endpoint.x() > area.left() + 0.5 && endpoint.x() < area.right() - 0.5)
-                painter.drawLine(endpoint, QPointF(endpoint.x(), area.bottom()));
-    }
-
-private:
-    MixingChildDef curve_;
-    std::pair<float, float> domain_;
-    bool discrete_ = false;
-    int color_ = 0;
-};
 
 MixingEditorWidget::MixingEditorWidget(QWidget* parent) : QWidget(parent)
 {
@@ -405,9 +326,8 @@ void MixingEditorWidget::buildRow(int index)
     view.children = new TableWidget(TableOptions{TableKind::Config, TableBodySizing::Expanding}, view.page);
     view.children->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
     view.children->setColumns(QStringLiteral("mixing.children"), {
-        {QStringLiteral("target"), tr("Child"), 300},
-        {QStringLiteral("mixing"), tr("Mixing"), 300},
-        {QStringLiteral("waveform"), tr("Waveform"), 400}});
+        {QStringLiteral("target"), tr("Child"), 400},
+        {QStringLiteral("waveform"), tr("Waveform"), 600}});
     auto* footer = view.children->footer();
     footer->addButton()->setToolTip(tr("Add Child"));
     view.removeChild = footer->removeButton();
@@ -461,14 +381,6 @@ void MixingEditorWidget::buildRow(int index)
         cell->addWidget(ref);
         rowLayout->addWidget(cell, 1);
         view.children->rowsLayout()->addWidget(childRow);
-        auto* mixingCell = view.children->createCell(childRow);
-        mixingCell->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-        auto* thumbnail = new MixingCurveThumbnail(child, mixingCell);
-        auto* marker = new PlatformLocalMarker(mixingCell);
-        marker->bind(boundItem_, PlatformLocalAddress{.kind = PlatformLocalAddress::Kind::SelectionCurve,
-            .row = row.guid, .column = target});
-        mixingCell->addWidget(attachPlatformMarker(thumbnail, marker, mixingCell));
-        rowLayout->addWidget(mixingCell);
         auto* activeSourceCell = view.children->createCell(childRow);
         activeSourceCell->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
         auto* activeSource = new ActiveSourcePreview(target, activeSourceCell);
@@ -476,10 +388,9 @@ void MixingEditorWidget::buildRow(int index)
                 this, &MixingEditorWidget::sourceEditorRequested);
         activeSourceCell->addWidget(activeSource);
         rowLayout->addWidget(activeSourceCell);
-        view.children->registerRow(childRow, {cell, mixingCell, activeSourceCell});
+        view.children->registerRow(childRow, {cell, activeSourceCell});
         view.childRows.push_back(childRow);
         view.refs.push_back(ref);
-        view.thumbnails.push_back(thumbnail);
         if (selectedChildren_.value(row.guid) == target) view.selected = child;
     }
     layout->addWidget(view.children, 1);
@@ -552,24 +463,10 @@ void MixingEditorWidget::loadCurves(int index)
         clips.append({target ? target->name : tr("Missing"), curve.points, curve.handles});
     }
     view.children->refreshLayout();
-    const auto [minimum, maximum] = curveDomain(row);
+    const auto [minimum, maximum] = MixingRowCanvas::curveDomain(row);
     view.canvas->setXDomain(minimum, maximum);
     view.canvas->setClips(clips, view.selected);
     view.removeChild->setEnabled(validChild(index, view.selected));
-}
-
-std::pair<float, float> MixingEditorWidget::curveDomain(const MixingRowDef& row) const
-{
-    const auto* item = ProjectManager::instance().findItemByGuid(row.variable);
-    const auto* variable = item ? item->comp<VVariable>() : nullptr;
-    float minimum = variable ? variable->rangeMin : 0.0f;
-    float maximum = variable ? variable->rangeMax : 100.0f;
-    for (const auto& child : row.children)
-        for (const auto& point : child.points) {
-            minimum = std::min(minimum, point.x);
-            maximum = std::max(maximum, point.x);
-        }
-    return {minimum, maximum};
 }
 
 void MixingEditorWidget::selectChild(int row, int child)
@@ -598,12 +495,6 @@ void MixingEditorWidget::refreshDerived()
         auto& view = views_[index];
         const auto value = values(mixing_.rows[index].variable);
         view.canvas->setPlayhead(value);
-        const auto domain = curveDomain(displayed.rows[index]);
-        const auto* variableItem = manager.findItemByGuid(mixing_.rows[index].variable);
-        const auto* variable = variableItem ? variableItem->comp<VVariable>() : nullptr;
-        const bool discrete = variable && variable->kind == VariableKind::Step;
-        for (int child = 0; child < static_cast<int>(view.thumbnails.size()); ++child)
-            view.thumbnails[child]->setCurve(displayed.rows[index].children[child], domain, discrete);
         for (int child = 0; child < static_cast<int>(view.refs.size()); ++child) {
             const auto& member = displayed.rows[index].children[child];
             const auto gain = mixing_.rows[index].variable.isNull()
@@ -651,7 +542,8 @@ bool MixingEditorWidget::commit(const MixingDef& next, const QString& text)
     preview_.reset();
     const auto& context = PlatformContextService::instance().context();
     SelectionData candidate = boundItem_->comp<VSelection>()->selections;
-    if (!candidate.blend.editMixing(next, currentWorldPlatformScope(context), platformEditScope(context)))
+    if (!candidate.canEdit(SelectionMode::Blend, currentWorldPlatformScope(context), platformEditScope(context))
+        || !candidate.setMixing(next, platformEditScope(context)))
         return false;
     const auto result = ActionManager::instance().execute(QStringLiteral("set_item_property"), QJsonObject{
         {QStringLiteral("authoring_handle"), static_cast<qint64>(boundItem_->objectID)},

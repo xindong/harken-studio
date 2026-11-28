@@ -29,8 +29,6 @@ public:
     QString annotationFor(double value) const;
     bool isEditing() const { return editing_; }
     bool normalizationPending() const { return normalizationPending_; }
-    bool mixedValue() const { return mixedValue_; }
-    void setMixedValue(bool mixed) { mixedValue_ = mixed; }
     double editStartValue() const { return editStartValue_; }
 
     double valueFromPosition(double position) const;
@@ -91,7 +89,6 @@ private:
     QString name_;
     std::function<QString(double)> annotation_;
     bool editing_ = false;
-    bool mixedValue_ = false;
     bool normalizationPending_ = false;
     double editStartValue_ = 0.0;
 };

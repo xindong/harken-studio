@@ -13,7 +13,6 @@ namespace harken::studio {
 
 struct ProjectItem;
 class CurveCanvas;
-class MixingCurveThumbnail;
 class MixingRowCanvas;
 class ResizableTableView;
 class ObjectRefWidget;
@@ -65,13 +64,11 @@ private:
         QToolButton* removeChild = nullptr;
         std::vector<QWidget*> childRows;
         std::vector<ObjectRefWidget*> refs;
-        std::vector<MixingCurveThumbnail*> thumbnails;
         int selected = -1;
     };
 
     void buildRow(int index);
     void loadCurves(int row);
-    std::pair<float, float> curveDomain(const MixingRowDef& row) const;
     void refreshRowSelection();
     void refreshDerived();
     void scheduleReload();

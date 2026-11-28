@@ -15,8 +15,7 @@ struct ProjectItem;
 
 struct PlatformLocalAddress
 {
-    enum class Kind { Property, Filter, GroupField, SourceActive, RowCell, EffectChain, SelectionWeight,
-                      SelectionCondition, SelectionCurve };
+    enum class Kind { Property, Filter, GroupField, SourceActive, RowCell, EffectChain, Selections };
 
     Kind kind = Kind::Property;
     QString field;
@@ -24,8 +23,6 @@ struct PlatformLocalAddress
     bool canInherit = false;
     QUuid row;
     QString cell;
-    uint32_t ordinal = 0;
-    QUuid column;
 
     bool operator==(const PlatformLocalAddress&) const = default;
 };

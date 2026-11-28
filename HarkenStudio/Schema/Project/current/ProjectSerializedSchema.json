@@ -2204,18 +2204,6 @@
           "type": "integer",
           "minimum": 0,
           "maximum": 100
-        },
-        "platforms": {
-          "type": "object",
-          "minProperties": 1,
-          "propertyNames": {
-            "$ref": "#/$defs/uuid"
-          },
-          "additionalProperties": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 100
-          }
         }
       },
       "required": [
@@ -2266,26 +2254,12 @@
           ]
         },
         "cells": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/selectionMatchCell"
-          }
-        },
-        "platforms": {
           "type": "object",
-          "minProperties": 1,
           "propertyNames": {
             "$ref": "#/$defs/uuid"
           },
           "additionalProperties": {
-            "type": "object",
-            "minProperties": 1,
-            "propertyNames": {
-              "$ref": "#/$defs/uuid"
-            },
-            "additionalProperties": {
-              "$ref": "#/$defs/selectionMatchCell"
-            }
+            "$ref": "#/$defs/selectionMatchCell"
           }
         }
       },
@@ -2293,40 +2267,6 @@
         "stableRuleOrdinal",
         "target",
         "cells"
-      ]
-    },
-    "selectionCurveShape": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "points": {
-          "type": "array",
-          "maxItems": 8,
-          "items": {
-            "type": "array",
-            "minItems": 2,
-            "maxItems": 2,
-            "items": {
-              "type": "number"
-            }
-          }
-        },
-        "handles": {
-          "type": "array",
-          "maxItems": 7,
-          "items": {
-            "type": "array",
-            "minItems": 4,
-            "maxItems": 4,
-            "items": {
-              "type": "number"
-            }
-          }
-        }
-      },
-      "required": [
-        "points",
-        "handles"
       ]
     },
     "selectionCurve": {
@@ -2472,16 +2412,6 @@
         },
         "blendGuid": {
           "$ref": "#/$defs/uuid"
-        },
-        "platforms": {
-          "type": "object",
-          "minProperties": 1,
-          "propertyNames": {
-            "$ref": "#/$defs/uuid"
-          },
-          "additionalProperties": {
-            "$ref": "#/$defs/selectionCurveShape"
-          }
         }
       },
       "required": [
@@ -2621,32 +2551,31 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "occurrenceOrdinalHighWater": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 4294967296
-        },
-        "ruleOrdinalHighWater": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 4294967296
-        },
         "entries": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/selectionEntry"
           }
         },
-        "matchAxes": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/uuid"
-          }
-        },
         "matchRows": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/selectionMatchRow"
+          }
+        }
+      },
+      "required": [
+        "entries",
+        "matchRows"
+      ]
+    },
+    "selections": {
+      "additionalProperties": false,
+      "properties": {
+        "matchAxes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/uuid"
           }
         },
         "blendAxes": {
@@ -2684,40 +2613,63 @@
               }
             ]
           }
-        }
-      },
-      "required": [
-        "occurrenceOrdinalHighWater",
-        "ruleOrdinalHighWater",
-        "entries",
-        "matchAxes",
-        "matchRows",
-        "blendAxes"
-      ]
-    },
-    "selections": {
-      "additionalProperties": false,
-      "properties": {
+        },
         "random": {
-          "$ref": "#/$defs/selectionTable"
+          "$ref": "#/$defs/selectionModeTables"
         },
         "sequence": {
-          "$ref": "#/$defs/selectionTable"
+          "$ref": "#/$defs/selectionModeTables"
         },
         "match": {
-          "$ref": "#/$defs/selectionTable"
+          "$ref": "#/$defs/selectionModeTables"
         },
         "blend": {
-          "$ref": "#/$defs/selectionTable"
+          "$ref": "#/$defs/selectionModeTables"
         }
       },
       "required": [
+        "matchAxes",
+        "blendAxes",
         "random",
         "sequence",
         "match",
         "blend"
       ],
       "type": "object"
+    },
+    "selectionModeTables": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "occurrenceOrdinalHighWater": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967296
+        },
+        "ruleOrdinalHighWater": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967296
+        },
+        "shared": {
+          "$ref": "#/$defs/selectionTable"
+        },
+        "platforms": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": {
+            "$ref": "#/$defs/uuid"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/selectionTable"
+          }
+        }
+      },
+      "required": [
+        "occurrenceOrdinalHighWater",
+        "ruleOrdinalHighWater",
+        "shared"
+      ]
     },
     "fieldGroupSharedEffect": {
       "additionalProperties": false,
@@ -3706,6 +3658,27 @@
             "components",
             "selection",
             "selections",
+            "*",
+            "shared",
+            "entries",
+            "*",
+            "childGuid"
+          ],
+          "targetTypes": [
+            "Sound",
+            "Container",
+            "Track",
+            "Segment"
+          ]
+        },
+        {
+          "kind": "guid",
+          "path": [
+            "components",
+            "selection",
+            "selections",
+            "*",
+            "platforms",
             "*",
             "entries",
             "*",

@@ -67,10 +67,10 @@ void visitItem(const ProjectItem* item, const QUuid& variableId,
             ref.axisIndex = static_cast<int>(index);
             out.push_back(ref);
         };
-        const auto& match = selection->selections.match.matchAxes;
+        const auto& match = selection->selections.matchAxes;
         for (size_t i = 0; i < match.size(); ++i)
             axis(match[i], i, VariableConsumerKind::DiscreteGridAxis);
-        const auto& blend = selection->selections.blend.mixingRows;
+        const auto& blend = selection->selections.blendAxes;
         for (size_t i = 0; i < blend.size(); ++i)
             axis(blend[i].variable, i, VariableConsumerKind::ContinuousGridAxis);
     }
@@ -259,7 +259,7 @@ AuditionVariableDependencies dependenciesForAudition(
                     }
                 };
                 if (selection->mode == SelectionMode::Match) {
-                    collectAxes(selection->selections.match.matchAxes, VariableConsumerKind::DiscreteGridAxis);
+                    collectAxes(selection->selections.matchAxes, VariableConsumerKind::DiscreteGridAxis);
                     for (const auto& row : selection->matchGrid(selectionScope).rows)
                         self(byGuid.value(row.target), self);
                 } else {
@@ -311,17 +311,21 @@ std::vector<InvalidDiscreteGridCell> invalidDiscreteGridCells(
         const auto* selection = host ? host->comp<VSelection>() : nullptr;
         if (!selection || consumer.axisIndex < 0)
             continue;
-        const auto grid = selection->matchGrid(consumer.platform);
-        for (int row = 0; row < static_cast<int>(grid.rows.size()); ++row) {
-            const auto cell = grid.cellAt(row, consumer.axisIndex);
-            if (!cell) continue;
-            auto value = GridSemantics::discreteCellValue(*cell, variable);
-            if (proposedLabels && !cell->labelId.isNull()) {
-                const auto* label = VariableSemantics::labelById(*proposedLabels, cell->labelId);
-                value = label ? std::optional<int>(label->anchor) : std::nullopt;
-            }
-            if (!value || *value < rangeMin || *value > rangeMax) {
-                out.push_back({consumer.hostGuid, row, consumer.axisIndex, value.value_or(0), consumer.platform});
+        std::vector<PlatformScope> scopes{consumer.platform};
+        if (!consumer.platform)
+            for (const auto& [platform, table] : selection->selections.match.platforms) scopes.push_back(platform);
+        for (const auto& scope : scopes) {
+            const auto grid = selection->matchGrid(scope);
+            for (int row = 0; row < static_cast<int>(grid.rows.size()); ++row) {
+                const auto cell = grid.cellAt(row, consumer.axisIndex);
+                if (!cell) continue;
+                auto value = GridSemantics::discreteCellValue(*cell, variable);
+                if (proposedLabels && !cell->labelId.isNull()) {
+                    const auto* label = VariableSemantics::labelById(*proposedLabels, cell->labelId);
+                    value = label ? std::optional<int>(label->anchor) : std::nullopt;
+                }
+                if (!value || *value < rangeMin || *value > rangeMax)
+                    out.push_back({consumer.hostGuid, row, consumer.axisIndex, value.value_or(0), scope});
             }
         }
     }

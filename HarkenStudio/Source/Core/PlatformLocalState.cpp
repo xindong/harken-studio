@@ -214,80 +214,13 @@ ActionResult editRowCell(const ProjectItem& item, const PlatformLocalAddress& ad
     return commitRows(item, address, *rows, originator);
 }
 
-template <typename Data>
-auto findRule(Data& data, uint32_t ordinal) -> decltype(&data.match.matchRows.front())
-{
-    const auto found = std::find_if(data.match.matchRows.begin(), data.match.matchRows.end(),
-        [&](const auto& row) { return row.stableRuleOrdinal == ordinal; });
-    return found == data.match.matchRows.end() ? nullptr : &*found;
-}
-
-template <typename Data>
-auto findCurve(Data& data, const PlatformLocalAddress& address) -> decltype(&data.blend.entries.front().curves.front())
-{
-    auto* member = data.blend.member(address.column);
-    if (!member) return nullptr;
-    const auto found = std::find_if(member->curves.begin(), member->curves.end(),
-        [&](const auto& curve) { return curve.rowGuid == address.row; });
-    return found == member->curves.end() ? nullptr : &*found;
-}
-
-std::optional<size_t> conditionAxis(const SelectionTable& table, const QUuid& axis)
-{
-    const auto found = std::find(table.matchAxes.begin(), table.matchAxes.end(), axis);
-    return found == table.matchAxes.end() ? std::nullopt
-                                          : std::optional(static_cast<size_t>(found - table.matchAxes.begin()));
-}
-
-QVariant conditionValue(const std::optional<DiscreteGridCell>& cell)
-{
-    if (!cell) return QVariant::fromValue(nullptr);
-    return cell->labelId.isNull() ? QVariant(cell->legacyValue) : QVariant(cell->labelId);
-}
-
-bool editSelectionCell(SelectionData& data, const PlatformLocalAddress& address, const ProjectPlatformId& platform,
-                       bool local)
-{
-    switch (address.kind) {
-    case Kind::SelectionWeight: {
-        auto* occurrence = data.random.find(address.ordinal);
-        if (!occurrence) return false;
-        if (local) occurrence->platformWeights.try_emplace(platform, occurrence->weight);
-        else occurrence->platformWeights.erase(platform);
-        return true;
-    }
-    case Kind::SelectionCondition: {
-        auto* rule = findRule(data, address.ordinal);
-        const auto axis = conditionAxis(data.match, address.column);
-        if (!rule || !axis) return false;
-        if (local) {
-            rule->platformCells[platform].try_emplace(address.column, rule->cells[*axis]);
-            return true;
-        }
-        const auto cells = rule->platformCells.find(platform);
-        if (cells == rule->platformCells.end()) return true;
-        cells->second.erase(address.column);
-        if (cells->second.empty()) rule->platformCells.erase(cells);
-        return true;
-    }
-    case Kind::SelectionCurve: {
-        auto* curve = findCurve(data, address);
-        if (!curve) return false;
-        if (local) curve->platforms.try_emplace(platform, SelectionCurveShape{curve->points, curve->handles});
-        else curve->platforms.erase(platform);
-        return true;
-    }
-    default: return false;
-    }
-}
-
-ActionResult changeSelectionCell(const ProjectItem& item, const PlatformLocalAddress& address,
-                                 const ProjectPlatformId& platform, bool local, const QObject* originator)
+ActionResult changeSelectionTable(const ProjectItem& item, const ProjectPlatformId& platform, bool local,
+                                  const QObject* originator)
 {
     const auto* selection = item.comp<VSelection>();
     if (!selection) return unavailable();
     auto data = selection->selections;
-    if (!editSelectionCell(data, address, platform, local)) return unavailable();
+    if (!data.setLocal(selection->mode, platform, local)) return unavailable();
     auto args = itemArgs(item, QStringLiteral("selections"));
     args.insert(QStringLiteral("value"), data.toJson());
     return execute(QStringLiteral("set_item_property"), args, originator);
@@ -352,21 +285,10 @@ QSet<ProjectPlatformId> localPlatforms(const ProjectData& project, const Project
                 && (!address.canInherit || item.fieldGroups.effects.shared.mode == FieldGroupMode::Local))
                 result.insert(fromFieldGroupGuid(platform));
         break;
-    case Kind::SelectionWeight:
+    case Kind::Selections:
         if (const auto* selection = item.comp<VSelection>())
-            if (const auto* occurrence = selection->selections.random.find(address.ordinal))
-                for (const auto& [platform, weight] : occurrence->platformWeights) result.insert(platform);
-        break;
-    case Kind::SelectionCondition:
-        if (const auto* selection = item.comp<VSelection>())
-            if (const auto* rule = findRule(selection->selections, address.ordinal))
-                for (const auto& [platform, cells] : rule->platformCells)
-                    if (cells.contains(address.column)) result.insert(platform);
-        break;
-    case Kind::SelectionCurve:
-        if (const auto* selection = item.comp<VSelection>())
-            if (const auto* curve = findCurve(selection->selections, address))
-                for (const auto& [platform, shape] : curve->platforms) result.insert(platform);
+            for (const auto& [platform, table] : selection->selections.modeTables(selection->mode).platforms)
+                result.insert(platform);
         break;
     }
     return result;
@@ -378,12 +300,10 @@ bool hasScalarValue(const PlatformLocalAddress& address)
     case Kind::Property:
     case Kind::GroupField:
     case Kind::SourceActive:
-    case Kind::RowCell:
-    case Kind::SelectionWeight:
-    case Kind::SelectionCondition: return true;
+    case Kind::RowCell: return true;
     case Kind::Filter:
     case Kind::EffectChain:
-    case Kind::SelectionCurve: return false;
+    case Kind::Selections: return false;
     }
     return false;
 }
@@ -430,25 +350,11 @@ QVariant effectiveValue(const ProjectData& project, ProjectItem& item,
         const auto* group = resolved ? std::get_if<EffectFieldGroup>(&resolved->payload) : nullptr;
         return group ? QVariant(group->effects.toJson().toVariantList()) : QVariant{};
     }
-    case Kind::SelectionWeight: {
+    case Kind::Selections: {
         const auto* selection = item.comp<VSelection>();
-        const auto* occurrence = selection ? selection->selections.random.find(address.ordinal) : nullptr;
-        if (!occurrence) return {};
-        const auto local = occurrence->platformWeights.find(platform);
-        return local == occurrence->platformWeights.end() ? occurrence->weight : local->second;
+        return selection ? QVariant(selection->selections.table(selection->mode, platform).toJson().toVariantMap())
+                         : QVariant{};
     }
-    case Kind::SelectionCondition: {
-        const auto* selection = item.comp<VSelection>();
-        const auto* rule = selection ? findRule(selection->selections, address.ordinal) : nullptr;
-        const auto axis = selection ? conditionAxis(selection->selections.match, address.column) : std::nullopt;
-        if (!rule || !axis) return {};
-        const auto cells = rule->platformCells.find(platform);
-        if (cells != rule->platformCells.end())
-            if (const auto local = cells->second.find(address.column); local != cells->second.end())
-                return conditionValue(local->second);
-        return conditionValue(rule->cells[*axis]);
-    }
-    case Kind::SelectionCurve: return {};
     }
     return {};
 }
@@ -497,10 +403,8 @@ ActionResult setLocal(const ProjectData& project, ProjectItem& item,
         args.insert(QStringLiteral("effects"), chain);
         return execute(QStringLiteral("replace_field_group_effects"), args, originator);
     }
-    case Kind::SelectionWeight:
-    case Kind::SelectionCondition:
-    case Kind::SelectionCurve:
-        return changeSelectionCell(item, address, platform, true, originator);
+    case Kind::Selections:
+        return changeSelectionTable(item, platform, true, originator);
     }
     return unavailable();
 }
@@ -537,10 +441,8 @@ ActionResult clearLocal(ProjectItem& item, const PlatformLocalAddress& address,
         args.insert(QStringLiteral("field"), QStringLiteral("effects"));
         return execute(QStringLiteral("clear_field_group_field_override"), args, originator);
     }
-    case Kind::SelectionWeight:
-    case Kind::SelectionCondition:
-    case Kind::SelectionCurve:
-        return changeSelectionCell(item, address, platform, false, originator);
+    case Kind::Selections:
+        return changeSelectionTable(item, platform, false, originator);
     }
     return unavailable();
 }

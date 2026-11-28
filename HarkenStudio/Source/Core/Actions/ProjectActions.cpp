@@ -1407,17 +1407,20 @@ ActionResult handleVariableItemProperty(ProjectManager* projectManager, ProjectI
             const auto* host = projectManager->findItemByGuid(consumer.hostGuid);
             const auto* selection = host ? host->comp<VSelection>() : nullptr;
             if (!selection) continue;
-            for (int row = 0; row < static_cast<int>(selection->matchGrid(consumer.platform).rows.size()); ++row) {
-                const auto cell = selection->matchGrid(consumer.platform).cellAt(row, consumer.axisIndex);
-                if (!cell) continue;
-                const auto* previous = cell->labelId.isNull()
-                    ? VariableSemantics::labelAtIndex(oldState.labels, cell->legacyValue)
-                    : VariableSemantics::labelById(oldState.labels, cell->labelId);
-                if (previous && !VariableSemantics::labelById(newState.labels, previous->id)) {
-                    return {false, {}, "VARIABLE_LABEL_REFERENCED",
-                        QObject::tr("Label '%1' is referenced by Grid '%2', row %3.")
-                            .arg(previous->name.isEmpty() ? QString::number(previous->anchor) : previous->name,
-                                 host->name).arg(row + 1)};
+            for (const auto* table : selection->selections.match.tables()) {
+                const auto grid = table->matchGrid(selection->selections.matchAxes);
+                for (int row = 0; row < static_cast<int>(grid.rows.size()); ++row) {
+                    const auto cell = grid.cellAt(row, consumer.axisIndex);
+                    if (!cell) continue;
+                    const auto* previous = cell->labelId.isNull()
+                        ? VariableSemantics::labelAtIndex(oldState.labels, cell->legacyValue)
+                        : VariableSemantics::labelById(oldState.labels, cell->labelId);
+                    if (previous && !VariableSemantics::labelById(newState.labels, previous->id)) {
+                        return {false, {}, "VARIABLE_LABEL_REFERENCED",
+                            QObject::tr("Label '%1' is referenced by Grid '%2', row %3.")
+                                .arg(previous->name.isEmpty() ? QString::number(previous->anchor) : previous->name,
+                                     host->name).arg(row + 1)};
+                    }
                 }
             }
         }
@@ -1791,53 +1794,13 @@ ActionResult handleSelectionsProperty(ProjectManager* manager, ProjectItem* item
     const auto previousTables = selection->selections.tables();
     QHash<QUuid, std::vector<VariableLabel>> oldLabels;
     QHash<QUuid, std::vector<VariableLabel>> newLabels;
+    if (!gridAxesAreUnique(parsed->matchAxes))
+        return {false, {}, "INVALID_SELECTIONS", "Invalid selection conditions"};
     for (auto* table : parsed->tables()) {
         if (!PlayablePropertyAuthoringV1::validateContainerOccurrenceTargets(*item, *table, &error))
             return {false, {}, "INVALID_CHILD_REFERENCE", error};
-        const auto grid = table->matchGrid();
-        if (!validGridTableJson(manager, item, grid.toJson()) || !gridAxesAreUnique(grid.axes))
+        if (!validGridTableJson(manager, item, table->matchGrid(parsed->matchAxes).toJson()))
             return {false, {}, "INVALID_SELECTIONS", "Invalid selection conditions"};
-        for (size_t axis = 0; axis < table->matchAxes.size(); ++axis) {
-            const auto variableGuid = table->matchAxes[axis];
-            auto* variableItem = manager->findItemByGuid(variableGuid);
-            auto* variable = variableItem ? variableItem->comp<VVariable>() : nullptr;
-            if (!variable) return {false, {}, "INVALID_TARGET", "Selection axis has no Variable"};
-            auto labels = newLabels.value(variableGuid, variable->labels);
-            const auto resolveCell = [&](std::optional<DiscreteGridCell>& cell) -> QString {
-                if (!cell) return {};
-                if (!cell->labelId.isNull())
-                    return VariableSemantics::labelById(labels, cell->labelId)
-                        ? QString{} : QStringLiteral("Selection Label does not belong to its Variable");
-                const int value = cell->legacyValue;
-                if (value < variable->rangeMin || value > variable->rangeMax)
-                    return QStringLiteral("Selection value is outside its Variable range");
-                const auto* label = VariableSemantics::labelAtIndex(labels, value);
-                if (!label) {
-                    labels.push_back({value, {}});
-                    label = &labels.back();
-                }
-                cell = DiscreteGridCell(label->id);
-                return {};
-            };
-            for (auto& row : table->matchRows) {
-                QString cellError = resolveCell(row.cells[axis]);
-                for (auto& [platform, cells] : row.platformCells)
-                    if (const auto found = cells.find(variableGuid); found != cells.end() && cellError.isEmpty())
-                        cellError = resolveCell(found->second);
-                if (!cellError.isEmpty()) return {false, {}, "INVALID_VARIABLE_LABEL", cellError};
-            }
-            if (!variableLabelsEqual(labels, variable->labels)) {
-                std::sort(labels.begin(), labels.end(), [](const auto& a, const auto& b) { return a.anchor < b.anchor; });
-                oldLabels.insert(variableGuid, variable->labels);
-                newLabels.insert(variableGuid, std::move(labels));
-            }
-        }
-        for (const auto& row : table->mixingRows) {
-            if (row.variable.isNull()) continue;
-            const auto* variable = manager->findItemByGuid(row.variable);
-            if (!variable || !variable->comp<VVariable>())
-                return {false, {}, "INVALID_TARGET", "Selection curve axis has no Variable"};
-        }
         for (const auto& row : table->occurrenceRows()) {
             const bool existing = std::any_of(previousTables.cbegin(), previousTables.cend(), [&](const auto* previous) {
                 const auto* member = previous->memberForOccurrence(row.stableOccurrenceOrdinal);
@@ -1850,6 +1813,43 @@ ActionResult handleSelectionsProperty(ProjectManager* manager, ProjectItem* item
                 [manager](uint32_t id) { return manager->findItemByObjectID(id); });
             if (!authoring) return {false, {}, "AUTHORING_RESTRICTED", authoring.message};
         }
+    }
+    for (const auto& variableGuid : parsed->matchAxes) {
+        auto* variableItem = manager->findItemByGuid(variableGuid);
+        auto* variable = variableItem ? variableItem->comp<VVariable>() : nullptr;
+        if (!variable) return {false, {}, "INVALID_TARGET", "Selection axis has no Variable"};
+        auto labels = variable->labels;
+        const auto resolveCell = [&](DiscreteGridCell& cell) -> QString {
+            if (!cell.labelId.isNull())
+                return VariableSemantics::labelById(labels, cell.labelId)
+                    ? QString{} : QStringLiteral("Selection Label does not belong to its Variable");
+            const int value = cell.legacyValue;
+            if (value < variable->rangeMin || value > variable->rangeMax)
+                return QStringLiteral("Selection value is outside its Variable range");
+            const auto* label = VariableSemantics::labelAtIndex(labels, value);
+            if (!label) {
+                labels.push_back({value, {}});
+                label = &labels.back();
+            }
+            cell = DiscreteGridCell(label->id);
+            return {};
+        };
+        for (auto* table : parsed->tables())
+            for (auto& row : table->matchRows)
+                if (const auto found = row.cells.find(variableGuid); found != row.cells.end())
+                    if (const auto cellError = resolveCell(found->second); !cellError.isEmpty())
+                        return {false, {}, "INVALID_VARIABLE_LABEL", cellError};
+        if (!variableLabelsEqual(labels, variable->labels)) {
+            std::sort(labels.begin(), labels.end(), [](const auto& a, const auto& b) { return a.anchor < b.anchor; });
+            oldLabels.insert(variableGuid, variable->labels);
+            newLabels.insert(variableGuid, std::move(labels));
+        }
+    }
+    for (const auto& row : parsed->blendAxes) {
+        if (row.variable.isNull()) continue;
+        const auto* variable = manager->findItemByGuid(row.variable);
+        if (!variable || !variable->comp<VVariable>())
+            return {false, {}, "INVALID_TARGET", "Selection curve axis has no Variable"};
     }
     VSelection candidate = *selection;
     candidate.selections = *parsed;

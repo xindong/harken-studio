@@ -45,7 +45,6 @@ add_executable(harken_studio_tests
     UnitTest/PlatformOverrideSerializationTest.cpp
     UnitTest/ProjectPlatformCommandTest.cpp
     UnitTest/ProjectPlatformBuildTest.cpp
-    UnitTest/PlatformFieldMergeTest.cpp
     UnitTest/PlatformLocalStateTest.cpp
     UnitTest/PlayablePropertyOccurrenceLifecycleTest.cpp
     UnitTest/ProjectInstanceTest.cpp
