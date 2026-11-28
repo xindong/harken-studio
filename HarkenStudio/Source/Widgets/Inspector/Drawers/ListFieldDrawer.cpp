@@ -251,8 +251,7 @@ public:
             });
         bool sameRows = value_.size() == next.size();
         for (int row = 0; sameRows && row < next.size(); ++row) {
-            if (orderedAnchors && value_[row].toMap().value(QStringLiteral("id"))
-                != next[row].toMap().value(QStringLiteral("id")))
+            if (value_[row].toMap().value(QStringLiteral("id")) != next[row].toMap().value(QStringLiteral("id")))
                 sameRows = false;
             for (const auto& field : desc_.elementSchema)
                 if (field.type == PropType::ObjectRef
