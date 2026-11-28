@@ -1443,11 +1443,16 @@ void MainWindow::setupMainToolBar()
     auto* captureButton = toolbar->addLeadingAction(captureAction, QStringLiteral("captureButton"));
     const auto refreshCapture = [this, captureAction, captureButton] {
         const bool capturing = eventCaptureController_->canStop();
+        const bool canStart = eventCaptureController_->canStart();
         captureAction->setChecked(capturing);
-        captureAction->setEnabled(capturing || eventCaptureController_->canStart());
+        captureAction->setEnabled(capturing || canStart);
         captureAction->setIcon(ThemeManager::instance().resolveIcon(QString::fromLatin1(
             ThemeAssetIds::MonitorCapture)).icon);
-        captureButton->setAccessibleDescription(eventCaptureController_->statusText());
+        QString details = eventCaptureController_->statusText();
+        if (canStart)
+            details = tr("%1\n%2").arg(eventCaptureController_->availableTargetText(), details);
+        captureAction->setToolTip(tr("%1\n%2").arg(captureAction->text(), details));
+        captureButton->setAccessibleDescription(details);
     };
     connect(captureAction, &QAction::triggered, this, [this, refreshCapture] {
         if (eventCaptureController_->canStop()) eventCaptureController_->stop();

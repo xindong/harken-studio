@@ -135,18 +135,26 @@ private:
     QIcon icon_;
 };
 
-QColor contrastTextColor(const QColor& background)
+qreal relativeLuminance(const QColor& color)
 {
     const auto linear = [](qreal channel) {
         return channel <= 0.04045
             ? channel / 12.92
             : std::pow((channel + 0.055) / 1.055, 2.4);
     };
-    const qreal luminance = 0.2126 * linear(background.redF())
-        + 0.7152 * linear(background.greenF())
-        + 0.0722 * linear(background.blueF());
-    const qreal foreground = luminance > 0.179 ? 0.0 : 1.0;
-    return QColor::fromRgbF(foreground, foreground, foreground);
+    return 0.2126 * linear(color.redF()) + 0.7152 * linear(color.greenF()) + 0.0722 * linear(color.blueF());
+}
+
+QColor contrastTextColor(const QColor& background)
+{
+    return relativeLuminance(background) > 0.179 ? Qt::black : Qt::white;
+}
+
+QColor blendRgb(const QColor& base, const QColor& tint, qreal amount)
+{
+    return QColor(qRound(std::lerp(base.red(), tint.red(), amount)),
+                  qRound(std::lerp(base.green(), tint.green(), amount)),
+                  qRound(std::lerp(base.blue(), tint.blue(), amount)));
 }
 
 QString styleSheetImagePath(const harken::studio::ThemeImageResource& resource)
@@ -597,6 +605,35 @@ QString QtControlSkin::colorSwatchStyle(const QColor& color)
     const QColor foreground = contrastTextColor(color);
     return QStringLiteral("QPushButton { background-color: %1; color: %2; }")
         .arg(color.name(QColor::HexArgb), foreground.name(QColor::HexArgb));
+}
+
+QColor QtControlSkin::customValueTextColor(const QStyleOptionViewItem& item, const ControlVisual& visual) const
+{
+    if (!(item.state & QStyle::State_Enabled)) return colors().textDisabled;
+    QColor background = colors().bgPrimary;
+    QColor surface = visual.background;
+    if (!surface.isValid()) {
+        if (item.state & QStyle::State_Selected) surface = item.palette.color(QPalette::Highlight);
+        else if (item.backgroundBrush.style() != Qt::NoBrush) surface = item.backgroundBrush.color();
+        else if (item.features & QStyleOptionViewItem::Alternate) surface = item.palette.color(QPalette::AlternateBase);
+    }
+    if (surface.isValid()) background = blendRgb(background, surface, surface.alphaF());
+    if (visual.backgroundOverlay.isValid())
+        background = blendRgb(background, visual.backgroundOverlay, visual.backgroundOverlay.alphaF());
+    const qreal backgroundLevel = relativeLuminance(background) + 0.05;
+    const auto readable = [backgroundLevel](const QColor& color) {
+        const qreal level = relativeLuminance(color) + 0.05;
+        return std::max(level, backgroundLevel) >= 4.5 * std::min(level, backgroundLevel);
+    };
+    const QColor preferred = colors().accentSecondary;
+    const QColor visible = blendRgb(background, preferred, preferred.alphaF());
+    if (readable(visible)) return preferred;
+    const QColor target = contrastTextColor(background);
+    for (int step = 1; step < 8; ++step) {
+        const QColor adjusted = blendRgb(visible, target, step / 8.0);
+        if (readable(adjusted)) return adjusted;
+    }
+    return target;
 }
 
 QString QtControlSkin::collapsibleIndicatorStyle(const QColor& color, int alpha,

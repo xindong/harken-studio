@@ -104,7 +104,11 @@ void TableItemDelegate::initStyleOption(QStyleOptionViewItem* option, const QMod
     case TableTextState::Disabled: text = colors.textDisabled; break;
     case TableTextState::Error: text = colors.error; break;
     case TableTextState::Modified: text = colors.accent; break;
-    case TableTextState::Custom: text = colors.accentSecondary; break;
+    case TableTextState::Custom: {
+        const auto visual = themeManager_->widgetAppearance().visual(option->widget, option->state, u"item");
+        text = QtControlSkin(themeManager_->snapshot()).customValueTextColor(*option, visual);
+        break;
+    }
     case TableTextState::Success: text = colors.success; break;
     case TableTextState::Warning: text = colors.warning; break;
     case TableTextState::Normal: break;

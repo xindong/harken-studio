@@ -77,7 +77,7 @@ Dock 标签栏以 `chrome.titleBarHeight` 为行高基准，默认总高 30 个�
 
 `ThemeLayout::Space` 只剩 `None / Tight / Control / Section / Panel`，原 Medium / Large / XLarge 不再对业务开放；QSS 也不再提供 `@spacing*@`，改用 `@panelPadding@`、`@sectionGap@`、`@controlGap@`、`@tightGap@`、`@rowInset@`、`@fieldHeight@`、`@sectionHeaderHeight@` 与控件文字左右留白 `@textPadding@`。工具条类区域统一为左右面板内边距、上下紧凑间距。主窗口菜单栏、浮动面板和对话框的标题栏共用 `chrome.titleBarHeight`，默认 30 个逻辑像素。主窗口工具栏使用 `chrome.mainWindowToolBarHeight`，默认 36 个逻辑像素。内容行在工具栏内垂直居中，容器高度包含该行及上下紧凑间距。字体或菜单项需要更多空间时，标题栏按内容增高。HarkenStyle 将 `QToolBar` 的条目边距和框架宽度设为 0。蓝图画布节点内部行保持世界坐标中的原有密度，不套用面板行高。
 
-主窗口工具栏的平台、语言、播放源和布局选择器共用 `ToolBarComboBox`。平台、播放源和布局选择器的悬停提示分别为 `Current audition and work platform`、`Current playback source` 和 `Select editor layout`。选择器与 Remote Connection、Data Capture、Link Platforms 按钮共用工具栏控件高度，基准是 `fieldHeight + controlGap`，默认 24 个逻辑像素，并至少容纳字体和图标。Remote Connection 和 Data Capture 按钮为正方形，图标使用 `iconExtent`，默认 20 个逻辑像素。Link Platforms 按钮显示 ALL，宽度随文字和左右留白确定。选择器使用直角且无描边。选择器与普通按钮共用常态底色 `background.tertiary`，文字和箭头取 `text.primary`。悬停时两者都在各自底色上叠加 `background.hoverOverlay`。工具栏选择器展开或获得键盘导航焦点时也显示该叠加色。鼠标操作收起弹窗后，指针移开即恢复常态底色。平台、语言和播放源弹出选项列表，布局弹出操作菜单。
+主窗口工具栏的平台、语言、播放源和布局选择器共用 `ToolBarComboBox`。平台、播放源和布局选择器的悬停提示分别为 `Current audition and work platform`、`Current playback source` 和 `Select editor layout`。Data Capture 可启动时，悬停提示和无障碍描述会列出本地预览或远程应用名称以及当前状态。采集期间显示正在采集的目标。选择器与 Remote Connection、Data Capture、Link Platforms 按钮共用工具栏控件高度，基准是 `fieldHeight + controlGap`，默认 24 个逻辑像素，并至少容纳字体和图标。Remote Connection 和 Data Capture 按钮为正方形，图标使用 `iconExtent`，默认 20 个逻辑像素。Link Platforms 按钮显示 ALL，宽度随文字和左右留白确定。选择器使用直角且无描边。选择器与普通按钮共用常态底色 `background.tertiary`，文字和箭头取 `text.primary`。悬停时两者都在各自底色上叠加 `background.hoverOverlay`。工具栏选择器展开或获得键盘导航焦点时也显示该叠加色。鼠标操作收起弹窗后，指针移开即恢复常态底色。平台、语言和播放源弹出选项列表，布局弹出操作菜单。
 
 工具栏中央按阅读方向依次排列 Play、Stop、Reset，三者共用普通按钮底色 `background.tertiary` 和 24 个逻辑像素的工具栏控件高度。`background.hoverOverlay` 只叠加在指针所在的可用按钮上，播放中的 Play 使用 `tool.play` 提示。Play 和 Reset 的外侧使用 `radius.medium` 圆角，默认 6 个逻辑像素。Stop 为直角，两侧各留 1 个逻辑像素的空隙，露出工具栏背景。
 
@@ -161,7 +161,7 @@ Studio Default 在 Colors 中用 Lines 调整布局边界、控件边框和坐�
 | 工具栏 | `tool.all/remote/capture` | Link Platforms、Remote Connection、Data Capture 分别配置平台联动、远程连接和数据采集开启时的按钮底色 |
 | 分类色板 | `palette.categorical0` 至 `palette.categorical6` | 区分多个条目，不承担固定对象类型或强度数值语义 |
 
-次级强调保留原失焦组当前页签顶线的实际显示颜色，Dark 为 `#085F6A`，Light 为 `#CEE2E8`。两张色卡都将该颜色保存为不透明的 RGB，调整 Dock 底色后顶线仍显示配置的颜色。Tools 的六项职责沿用对应控件原有颜色，各项可独立调整。默认目录移除了 Information，旧色卡中为此职责保存的自定义颜色迁入次级强调，已有次级强调设置优先。旧配置中的半透明次级强调按所在色卡的主要背景合成为 RGB，保留原来的顶线颜色。
+次级强调保留原失焦组当前页签顶线的实际显示颜色，Dark 为 `#085F6A`，Light 为 `#CEE2E8`。两张色卡都将该颜色保存为不透明的 RGB，调整 Dock 底色后顶线仍显示配置的颜色。快捷键和外观设置表以次级强调色显示自定义项。绘制文字时会按所在单元格的底色检查对比度，低于 4.5:1 时调整文字颜色。Tools 的六项职责沿用对应控件原有颜色，各项可独立调整。默认目录移除了 Information，旧色卡中为此职责保存的自定义颜色迁入次级强调，已有次级强调设置优先。旧配置中的半透明次级强调按所在色卡的主要背景合成为 RGB，保留原来的顶线颜色。
 
 自带职责目录的旧主题可继续用原配色控制自定义值、日志类别、Dock 顶线和工具按钮。主题作者为其中一项显式指定新绘制位置后，该位置采用新配置。
 

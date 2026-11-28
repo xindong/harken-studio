@@ -15,10 +15,12 @@ class QComboBox;
 class QFontMetrics;
 class QStyleOptionMenuItem;
 class QStyleOptionToolButton;
+class QStyleOptionViewItem;
 
 namespace harken::studio {
 
 class ThemeAssetResolver;
+struct ControlVisual;
 
 enum class PopupIconColumn { Reserved, Automatic };
 
@@ -61,6 +63,7 @@ public:
     void paintTableCellSelection(QPainter& painter, const QRect& rect) const;
 
     static QString colorSwatchStyle(const QColor& color);
+    QColor customValueTextColor(const QStyleOptionViewItem& item, const ControlVisual& visual) const;
     QString collapsibleIndicatorStyle(const QColor& color, int alpha,
                                       bool rail) const;
     QString collapsibleHeaderStyle(const QColor& indicator, bool custom, int level,
