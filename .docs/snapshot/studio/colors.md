@@ -137,7 +137,7 @@ PR 审查后补充修复：Assistant 在原消息和待确认控件上更新字�
 
 ## Studio Default 颜色职责
 
-Studio Default 在 Colors 中用 Foreground 调整文字和单色图标，用 Background 调整窗口、面板和控件的底色。States 包含主要强调、次级强调、成功、警告、错误和禁用，Tools 管理播放及工具栏动作的专用颜色。现有主题自行定义职责目录。
+Studio Default 在 Colors 中用 Lines 调整布局边界、控件边框和坐标线，用 Foreground 调整文字和单色图标，用 Background 调整窗口、面板和控件的底色。States 包含主要强调、次级强调、成功、警告、错误和禁用，Tools 管理播放及工具栏动作的专用颜色。现有主题自行定义职责目录。
 
 | 职责 | 主题键 | 使用边界 |
 |---|---|---|
@@ -147,13 +147,13 @@ Studio Default 在 Colors 中用 Foreground 调整文字和单色图标，用 Ba
 | 禁用 | `text.disabled` | 不可用控件的文字和单色图标 |
 | 主要强调 | `accent.primary` | 控件激活、焦点与强调边框、滑条填充、曲线编辑点与手柄激活 |
 | 强调底上的前景 | `accent.text` | 实色强调控件和强调底色选区内的文字与单色图标 |
-| 基础表面 | `background.primary/secondary/tertiary` | 节点主体在选中前后均使用 tertiary，选中时只高亮边框 |
+| 基础表面 | `background.primary/secondary/tertiary` | 参数滑轨与节点主体共用 tertiary。节点主体在选中前后均使用该底色，选中时只高亮边框 |
 | 悬停叠色 | `background.hoverOverlay` | 菜单栏中仅悬停的标题、普通和强调按钮、工具栏选择器、参数滑块手柄、Explorer 分组标题、树行和页签共用。叠色的 Alpha 决定原底色的可见程度。滑块手柄按住拖动期间继续显示叠色 |
 | 选中背景 | `background.selected` | 展开的菜单标题、弹出菜单中的当前命令、树、列表、表格单元格、普通页签和 Inspector 页签使用选中底色，Dark 默认为 `#143C48`，Light 默认为 `#ACD6E0`。Dock 页签顶线另外表示面板焦点，表格拖放线表示插入位置 |
-| 拖放目标 | `background.dropTarget` | 可接收拖放的树行、Resources 分节标题和蓝图节点上叠加的半透明底色；行内文字与图标保持可见，不画左侧强调条 |
-| 首要边界 | `border.primary` | 界面框架排布分割、面板边界和内容分隔线；包括 Dock 面板、画布外框、声道分隔及面板滚动条 |
-| 次要边界 | `border.secondary` | 控件与按钮描边、表格完整外框、网格及行列分隔、控件内滚动条；禁用态控件描边仍属此类 |
-| 刻度线 | `border.tick` | 时间轴、曲线、波形与 Meter 的刻度短线和坐标网格；刻度文字仍使用次要文字 |
+| 拖放叠色（Drop overlay） | `background.dropTarget` | 可接收拖放的树行、Resources 分节标题和蓝图节点上叠加的半透明底色；行内文字与图标保持可见，不画左侧强调条 |
+| 布局边界（Layout borders） | `border.primary` | 界面框架排布分割、面板边界和内容分隔线；包括 Dock 面板、画布外框、声道分隔及面板滚动条 |
+| 控件边框（Control borders） | `border.secondary` | 控件与按钮描边、表格完整外框、网格及行列分隔、控件内滚动条；禁用态控件描边仍属此类 |
+| 网格与刻度（Grid and ticks） | `border.tick` | 时间轴、曲线、波形与 Meter 的刻度短线和坐标网格；刻度文字仍使用次要文字 |
 | 面板与轨道表面 | `panel.background`、`header.background`、`track.background`、`track.backgroundAlternate`、`bus.background` | 保留既有较暗的工作区层次，不因 RGB 接近而合并为一个背景 |
 | 次级强调 | `accent.secondary` | 失焦 Dock 组当前页签的顶线、自定义快捷键、已自定义的外观值，以及离散网格预演命中行的轴单元格 |
 | 结果与诊断 | `status.success/warning/error` | 发布成功、带警告完成、失败、无效引用等状态，以及时间序列状态标记、阈值线与 Monitor 游标精度 |
@@ -191,7 +191,7 @@ Blueprint 内嵌 Meter 的宽度边界及通用表格的列宽边界在悬停时
 
 顶层 `CollapsibleSection` 分节标题保留首要色下边线，上边线按布局中的实际位置决定。位于布局内容起点的标题不重复画上边线，Inspector 首个可见标题与容器共用外框；后续标题绘制首要色上边线，与前一节内容分隔。筛选隐藏或恢复前面的分节后，标题随布局移动重新判断边界。普通标题与带自定义指示色的标题共用此规则。Dark / Light 的实际组件高对比离屏检查覆盖展开、收起、筛选后首节变化、重新显示、连续预览、取消恢复及预览/确认一致性，并联合检查容器外框与首个标题交接处只有一像素边线，166 项通过；记录位于 `.temp/section-joined-border-review/`。此前 `.temp/section-border-review/` 仅检查标题自身边线，未覆盖其与容器外框的叠加。
 
-参数 Slider 的横向、纵向和紧凑样式统一使用已有 `slider.track` 提供未填充轨道颜色；禁用态轨道也使用该职责，滑块与紧凑禁用态填充保留禁用色。启用态填充和滑块保留强调色。Toggle 的颜色绑定本轮不改。
+Studio Default 的横向参数滑杆、纵向推子和紧凑滑杆使用 `background.tertiary` 绘制未填充的底轨。普通参数滑杆禁用时，两段轨道都使用该背景。紧凑滑杆启用时，在底轨上叠加半透明主要强调色绘制已填充段。主题包可以通过 `slider.track` 显式指定滑轨颜色。使用 Studio Default 职责目录的色卡在升级时清理旧滑轨覆盖。
 
 滚动条滑块按所属区域复用边界职责：面板滚动区域、Explorer 项目树、Log 日志区、会话内容区以及 Timeline / 波形 / Blueprint 画布使用首要边界；表格、Notes、普通文本编辑器、下拉选项和弹窗列表内使用次要边界。共享 QSS 按滚动条的直接所属区域及既有 `scrollRole` 匹配，避免外层面板或控件影响嵌套区域。横纵方向、常态、悬停和拖动保持同一职责，移除原纵向悬停从首要切到次要的规则；原有禁用时隐藏滑块的规则保留，不新增颜色职责或默认值。
 
@@ -267,7 +267,7 @@ PR 集成复验基于已含 #194 的主线 `9235952a`：编辑器与测试目标
 
 ## 用户颜色定制
 
-Studio Default 提供 76 个可编辑源颜色角色，共 12 类。每项包含职责名称、用途说明、主题职责键和绘制绑定。外部主题可声明自己的目录，Appearance 按当前主题生成分类与颜色行。窗口壳层按钮细节、Logo 扫光和声谱图固定热力色阶未加入 Studio Default 的用户定制目录；启动波浪的四档色阶单独表达动画配色，Logo 底板复用 `panel.background`。
+Studio Default 提供 75 个可编辑源颜色角色，共 13 类。每项包含职责名称、用途说明、主题职责键和绘制绑定。外部主题可声明自己的目录，Appearance 按当前主题生成分类与颜色行。窗口壳层按钮细节、Logo 扫光和声谱图固定热力色阶未加入 Studio Default 的用户定制目录；启动波浪的四档色阶单独表达动画配色，Logo 底板复用 `panel.background`。
 
 | 分类 | 数量 | 开放范围 |
 |---|---|---|
@@ -275,7 +275,8 @@ Studio Default 提供 76 个可编辑源颜色角色，共 12 类。每项包含
 | States | 6 | 主要强调、次级强调、成功、警告、错误、禁用 |
 | Tools | 6 | 播放、停止、复位、平台联动、远程连接、数据采集 |
 | Background | 7 | 主背景、控件背景、抬升背景、面板、标题、轨道、交替轨道 |
-| Interaction | 7 | 悬停叠色、选中背景、拖放目标、三类边界、滑块底轨 |
+| Interaction | 3 | 悬停叠色、选中背景、拖放叠色 |
+| Lines | 3 | 布局边界、控件边框、网格与刻度 |
 | Categorical palette | 7 | 区分多个条目的七个分类色 |
 | Waveform | 7 | 静态波形低/高幅度、三段频率贡献、裁剪及循环标记 |
 | Curves | 4 | 音量衰减、音高衰减、参数绑定、Grid 淡变 |

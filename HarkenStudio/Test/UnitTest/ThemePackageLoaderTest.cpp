@@ -129,13 +129,15 @@ TEST(ThemePackageLoader, BuiltinThemeLoadsWithoutExternalPackages)
         EXPECT_EQ(loaded.candidate->manifest.displayName, preset.displayName);
         EXPECT_EQ(loaded.candidate->inheritanceOrder, QStringList{preset.id});
         ASSERT_EQ(loaded.candidate->palettes.size(), 2);
-        for (const auto& palette : loaded.candidate->palettes)
+        for (const auto& palette : loaded.candidate->palettes) {
+            EXPECT_EQ(palette.snapshot->ui.colors.sliderTrack, palette.snapshot->ui.colors.bgTertiary);
             for (const auto& role : loaded.candidate->colorRoles) {
                 SCOPED_TRACE(role.key.toStdString());
                 EXPECT_TRUE(palette.colors.value(role.key).isValid());
                 for (const auto& binding : role.bindings)
                     EXPECT_TRUE(harken::studio::readThemeColor(*palette.snapshot, binding.target).isValid());
             }
+        }
     }
     EXPECT_TRUE(ids.contains(harken::studio::builtinThemeId()));
     EXPECT_FALSE(QDir(missingRoot).exists());
@@ -193,12 +195,16 @@ TEST(ThemePackageLoader, ResolvesSharedColorsAfterInheritanceWithoutMutatingSnap
     const QColor inheritedLabel(QStringLiteral("#8a9bac"));
     const QColor childText(QStringLiteral("#e6d5c4"));
     const QColor childAccent(QStringLiteral("#cc88ee"));
+    const QColor track(QStringLiteral("#798091"));
     ASSERT_TRUE(writeColorPackage(root.path(), parentId, harken::studio::builtinThemeId(), {
         {QStringLiteral("text.primary"), parentText.name()},
         {QStringLiteral("text.secondary"), inheritedLabel.name()},
+        {QStringLiteral("background.tertiary"), QStringLiteral("#202530")},
+        {QStringLiteral("slider.track"), track.name()},
         {QStringLiteral("accent.primary"), QStringLiteral("#1abc9c")}}));
     ASSERT_TRUE(writeColorPackage(root.path(), childId, parentId, {
         {QStringLiteral("text.primary"), childText.name()},
+        {QStringLiteral("background.tertiary"), QStringLiteral("#404650")},
         {QStringLiteral("accent.primary"), childAccent.name()}}));
 
     const auto parent = harken::studio::loadThemePackageCandidate(root.path(), parentId);
@@ -207,6 +213,10 @@ TEST(ThemePackageLoader, ResolvesSharedColorsAfterInheritanceWithoutMutatingSnap
     ASSERT_TRUE(child.ok());
     const auto parentSnapshot = parent.candidate->snapshot;
     const auto childSnapshot = child.candidate->snapshot;
+    EXPECT_EQ(parentSnapshot->ui.colors.bgTertiary, QColor("#202530"));
+    EXPECT_EQ(childSnapshot->ui.colors.bgTertiary, QColor("#404650"));
+    EXPECT_EQ(parentSnapshot->ui.colors.sliderTrack, track);
+    EXPECT_EQ(childSnapshot->ui.colors.sliderTrack, track);
     EXPECT_EQ(parentSnapshot->domains.nodeGraphNode.contentValue, parentText);
     EXPECT_EQ(childSnapshot->domains.nodeGraphNode.contentValue, childText);
     EXPECT_EQ(childSnapshot->qtPalette.text, childText);

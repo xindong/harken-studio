@@ -76,7 +76,7 @@ ThemeSnapshot createBuiltinDarkTheme()
     colors.trackBackground = QColor("#0F1318");
     colors.trackBackgroundAlt = QColor("#131820");
 
-    colors.sliderTrack = QColor("#2A3140");
+    theme.inheritedColorSources.insert(QStringLiteral("slider.track"), QStringLiteral("background.tertiary"));
 
     colors.panelBackground = QColor("#10151F");
     colors.headerBackground = QColor("#1B2130");
@@ -348,7 +348,6 @@ ThemeSnapshot createBuiltinLightTheme()
     colors.toolCapture = colors.error;
     colors.trackBackground = QColor("#F8FAFC");
     colors.trackBackgroundAlt = QColor("#EEF3F7");
-    colors.sliderTrack = QColor("#B7C5D3");
     colors.panelBackground = QColor("#EEF2F6");
     colors.headerBackground = QColor("#E2E8EF");
     colors.shellCloseHover = QColor("#C93042");

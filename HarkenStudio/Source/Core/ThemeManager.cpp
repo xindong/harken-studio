@@ -30,7 +30,8 @@
 namespace harken::studio {
 namespace {
 
-const QStringList retiredHoverRoles{QStringLiteral("accent.hover"), QStringLiteral("background.hover")};
+const QStringList retiredStudioDefaultColorRoles{QStringLiteral("accent.hover"), QStringLiteral("background.hover"),
+                                                QStringLiteral("slider.track")};
 
 void writeStyleOverrides(ISettingsStorage& storage, const ThemeAppearance& appearance)
 {
@@ -412,7 +413,7 @@ ThemePackageLoadResult ThemeManager::customizedCandidate(
                 auto saved = palette.id == base->defaultPaletteId ? committed.value(QString())
                                                                  : ThemeColorOverrides{};
                 saved.insert(committed.value(palette.id));
-                for (const auto& key : retiredHoverRoles)
+                for (const auto& key : retiredStudioDefaultColorRoles)
                     if (saved.contains(key) && overrides->value(key) == saved.value(key))
                         overrides->remove(key);
                 const auto oldInfo = saved.constFind(info);
@@ -720,7 +721,7 @@ ThemeAppearance ThemeManager::persistedAppearance() const
     {
         if (std::none_of(palettes.cbegin(), palettes.cend(), [&](const auto& colors) {
                 return colors.contains(retiredInfo) || colors.contains(secondary)
-                    || std::any_of(retiredHoverRoles.cbegin(), retiredHoverRoles.cend(),
+                    || std::any_of(retiredStudioDefaultColorRoles.cbegin(), retiredStudioDefaultColorRoles.cend(),
                                    [&](const QString& key) { return colors.contains(key); });
             }))
             continue;
@@ -729,7 +730,7 @@ ThemeAppearance ThemeManager::persistedAppearance() const
             continue;
         for (auto& colors : palettes)
         {
-            for (const auto& key : retiredHoverRoles)
+            for (const auto& key : retiredStudioDefaultColorRoles)
                 if (colors.remove(key))
                     normalized = true;
             auto info = colors.find(retiredInfo);

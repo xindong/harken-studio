@@ -1622,6 +1622,7 @@ QMap<QString, QString> inheritedColorSources(const SemanticDocuments& documents,
             sources.insert(target, source);
     };
     inherit(QStringLiteral("accent.secondary"), QStringLiteral("status.info"));
+    inherit(QStringLiteral("slider.track"), QStringLiteral("background.tertiary"));
     inherit(QStringLiteral("qtAds.activeTabAccent"), QStringLiteral("accent.secondary"));
     inherit(QStringLiteral("qtAds.activeTabAccent"), QStringLiteral("accent.primary"));
     inherit(QStringLiteral("log.category"), QStringLiteral("status.info"));
@@ -2049,8 +2050,7 @@ ThemePackageLoadResult loadThemePackageCandidate(
         if (candidate.usesStudioDefaultColorRoles && legacyInfo != documents->tokens.colors.cend()
             && !roleOverrides.contains(QStringLiteral("accent.secondary")))
             roleOverrides.insert(QStringLiteral("accent.secondary"), QColor(*legacyInfo));
-        const auto sources = candidate.usesStudioDefaultColorRoles
-            ? QMap<QString, QString>() : inheritedColorSources(effective, colorRoles);
+        const auto sources = inheritedColorSources(effective, colorRoles);
         if (documents->colors)
         {
             if (!applySemantics(*documents, *package, effective.assets, snapshot,
